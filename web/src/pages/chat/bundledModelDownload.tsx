@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { AlertTriangle, X } from 'lucide-react'
 import { api, isLiveDownload, type BundledModelOffer, type DownloadJob, type OnboardingState } from '../../lib/api'
+import { isStaleWrite } from '../../lib/staleWrite'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { WavyProgress } from '../../ui/WavyProgress'
 import { fvs } from '../../design/fontWeight'
@@ -8,6 +9,12 @@ import { useModelDownloads } from '../settings/useModelDownloads'
 
 /** Bytes as a whole number of MiB — the unit the download offer and the progress row share. */
 export const mib = (n: number) => `${Math.round(n / (1024 * 1024))} MiB`
+
+/** A model-sized byte count in the same binary units at any size: whole MiB below a GiB, a
+ *  one-decimal GiB from there (the partial downloads the Models page offers to reclaim). The
+ *  server states sizes the same way (`local_models/fit.size_text`), so the offer, a refusal under
+ *  it and the page around it never label one number two ways. */
+export const modelBytes = (n: number) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GiB` : mib(n))
 
 /** `eta_s` as something a person reads. `0` means "not known yet", never "instant". */
 export function etaText(seconds: number): string {
@@ -29,15 +36,19 @@ export type BundledDownloadPhase = 'idle' | 'running' | 'failed' | 'done'
  *  The user asked for this model, and a download that left chat on the implicit fallback left it
  *  off every model list and unnamed wherever the chat model is named. Read live, not off a
  *  readiness read taken before the download: an existing binding is the user's, and it is never
- *  overwritten. Resolves to `''`, or to the refusal in the server's words. */
+ *  overwritten. The bind names the revision of the EMPTY chain it read, so a model bound between
+ *  that read and this write (another tab, onboarding) is refused by the gateway instead of
+ *  replaced — and that refusal is exactly "something else already is". Resolves to `''`, or to
+ *  the refusal in the server's words. */
 async function bindIfNothingIs(offer: BundledModelOffer): Promise<string> {
   try {
-    const now = await api.onboarding()
-    if ((now.chat_model_refs ?? []).length === 0) {
-      await api.setActiveModel('chat', [`${offer.provider}:${offer.model}`])
+    const now = await api.activeChain('chat')
+    if (now.value.length === 0) {
+      await api.setActiveModel('chat', [`${offer.provider}:${offer.model}`], now.revision)
     }
     return ''
   } catch (e) {
+    if (isStaleWrite(e)) return ''
     const raw = e instanceof Error ? e.message : String(e ?? '')
     try { return String(JSON.parse(raw)?.error ?? raw) || 'the binding was refused' } catch { return raw || 'the binding was refused' }
   }
@@ -164,7 +175,8 @@ export function useBundledModelDownload(): {
 }
 
 /** The running download, drawn the same on every surface: which model, bytes of the total, an
- *  ETA once one is known, a DETERMINATE bar when the total is known, and a reachable Cancel. */
+ *  ETA once one is known, a DETERMINATE bar when the total is known, and a reachable Cancel —
+ *  and, when the free-space check could not measure the disk, that it was never checked. */
 export function BundledDownloadProgress({ offer, job, onCancel }: {
   offer: BundledModelOffer; job: DownloadJob; onCancel: () => void
 }) {
@@ -181,6 +193,17 @@ export function BundledDownloadProgress({ offer, job, onCancel }: {
           : <WavyProgress width={200} />}
         <SquareIconButton icon={X} label="Cancel the model download" onClick={onCancel} />
       </div>
+      {job.warning && <DownloadWarning text={job.warning} />}
     </>
+  )
+}
+
+/** A download's own warning, under its progress: the server's sentence, as it wrote it. */
+export function DownloadWarning({ text }: { text: string }) {
+  return (
+    <p data-type="caption" className="mt-xs flex items-start gap-xs text-warn">
+      <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{text}</span>
+    </p>
   )
 }

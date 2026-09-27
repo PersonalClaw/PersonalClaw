@@ -267,13 +267,21 @@ async def create_task(provider_name: str = "native", **fields: Any) -> Task:
     return await prov.create_task(**fields)
 
 
-async def update_task(task_id: str, provider_name: str | None = None, **fields: Any) -> Task | None:
+async def update_task(
+    task_id: str,
+    provider_name: str | None = None,
+    *,
+    base_revision: str | None = None,
+    **fields: Any,
+) -> Task | None:
+    """Apply ``fields`` to the task. ``base_revision`` is a whole-form save's precondition — see
+    :meth:`TaskProvider.update_task`; every server-side writer omits it."""
     prov = await _routed(task_id, provider_name)
     if prov is None:
         return None
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
-    return await prov.update_task(task_id, **fields)
+    return await prov.update_task(task_id, base_revision=base_revision, **fields)
 
 
 async def engine_owned_refusal(
@@ -289,8 +297,8 @@ async def engine_owned_refusal(
 
     🔴 **Deliberately NOT applied inside :func:`update_task`.** The contract is an actor
     asymmetry, not a field lock: the engine sets a managed task's ``status``/``preview``/
-    ``evidence`` directly (``controller._write_projected_task``) and the loop writes task status
-    through this very façade, so a guard at the façade would refuse the one writer that is
+    ``evidence`` directly (``task_projection._write_projected_task``) and the loop writes task
+    status through this very façade, so a guard at the façade would refuse the one writer that is
     allowed. The façade cannot know who is calling; a door can. That is why this is an opt-in
     function beside ``update_task`` rather than a branch inside it.
 

@@ -35,7 +35,7 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
     if existing_ts and existing_chan:
         try:
             await delivery.deliver_text(
-                existing_chan, "🔗 Session linked from dashboard — continuing here.", existing_ts
+                existing_chan, "Session linked from the dashboard. Continuing here.", existing_ts
             )
         except Exception:
             pass
@@ -47,7 +47,7 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
     raw_channel = body.get("channel", "")
     # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
     title = redact_and_truncate(session.title or name, max_chars=200)
-    opening = f"\U0001f9f5 *{title}*\nSession linked from dashboard."
+    opening = f"*{title}*\nSession linked from the dashboard."
     if not raw_channel or raw_channel == "dm":
         # The owner's DM on the first channel that reaches the owner, with the id that channel
         # keeps for them — it used to be the first channel with the one shared id, which is
@@ -82,9 +82,9 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
         role = m.get("role", "")
         txt = redact_and_truncate(m.get("content") or "", max_chars=2000)
         if role in ("user", "assistant") and txt:
-            icon = "\U0001f9d1" if role == "user" else "\U0001f916"
+            speaker = "You" if role == "user" else "Assistant"
             try:
-                await delivery.deliver_text(target_channel, f"{icon} {txt}", thread_ts)
+                await delivery.deliver_text(target_channel, f"*{speaker}:* {txt}", thread_ts)
             except Exception:
                 pass
 

@@ -6,10 +6,12 @@ import json
 import logging
 import os
 import re
+import stat
 import uuid
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs
 
 from personalclaw.sel import SecurityEvent, SecurityEventLog
@@ -325,70 +327,166 @@ def is_sensitive_path(path_str: str) -> bool:
     """Return True if the path points to a sensitive location.
 
     Works for both absolute paths and ~/relative paths.
-    Used by hooks to block fs_read/ReadFile of credential files.
+    Used by hooks to block fs_read/ReadFile of credential files. A walk that asks about many
+    paths in one pass makes one :class:`SensitivePaths` and asks it instead.
     """
-    # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
-    # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
-    # `except` below deliberately continues with the UNRESOLVED string — which then matches no
-    # sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
-    #
-    # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
-    # `validate_file_path`, and the tempting fix there is to catch the exception and carry on —
-    # which would hand this function a path it cannot classify and take False for an answer. So
-    # the refusal belongs HERE as well, ahead of every caller.
-    #
-    # Fail CLOSED, the direction this function already argues for below: casefolding "can only
-    # over-block ... the safe direction for a credential guard and the error a user can see and
-    # report". A NUL is never part of a legitimate filename — POSIX and Windows both forbid it
-    # in a path component — so over-blocking costs nothing real.
-    if "\x00" in path_str:
-        return True
-    # Expand ~ and $HOME
-    expanded = os.path.expanduser(os.path.expandvars(path_str))
-    try:
-        resolved = str(Path(expanded).resolve())
-    except (OSError, ValueError):
-        resolved = expanded
+    return SensitivePaths()(path_str)
 
-    try:
-        home = str(Path.home().resolve())
-    except (OSError, ValueError):
+
+class SensitivePaths:
+    """:func:`is_sensitive_path`, with the protected locations resolved ONCE for a whole walk.
+
+    Resolving every protected location — its real path, and where each link inside it points —
+    was nearly all of one check's cost: 0.2 ms a path, 2.4 s of an import scan over the 11,700
+    transcript files a months-long Claude Code history holds (measured). An instance resolves
+    them when it is made and compares every path it is asked about with that one resolution.
+    Each REQUESTED path is still resolved on its own, on every call, so a link to a protected
+    file is refused exactly as :func:`is_sensitive_path` refuses it.
+
+    Make one per walk and drop it after: a protected location that becomes a link after the
+    instance was made is seen by the next one, not by this one.
+    """
+
+    def __init__(self) -> None:
         home = str(Path.home())
-    # CASE-INSENSITIVE comparison, because the comparison is the control.
-    #
-    # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
-    # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
-    # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
-    # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
-    # governance ceiling, was one shifted key away from being readable, across the ~70 call
-    # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
-    # `~` and `$HOME` (all verified blocked); it does not normalise case.
-    #
-    # Always casefold rather than probing the filesystem per call: a per-path probe is
-    # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
-    # casefolding can only over-block — a directory literally named `~/.SSH` that holds no
-    # credentials would be refused, which is the safe direction for a credential guard and
-    # the error a user can see and report.
-    resolved_cmp = resolved.casefold()
-    # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
-    # the same reason as everything else here: on macOS/Windows the filesystem is
-    # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
-    if os.path.basename(resolved_cmp) in {n.casefold() for n in OWN_SECRET_BASENAMES}:
-        return True
-    for sensitive_dir in _SENSITIVE_HOME_DIRS:
-        sensitive_path = os.path.join(home, sensitive_dir).casefold()
-        if resolved_cmp == sensitive_path or resolved_cmp.startswith(sensitive_path + os.sep):
+        protected: set[str] = set()
+        for sensitive_dir in _SENSITIVE_HOME_DIRS:
+            protected |= _protected_forms(os.path.join(home, sensitive_dir))
+        # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
+        # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
+        for entry in _pclaw_home_sensitive_paths():
+            protected |= _protected_forms(entry)
+        self._protected = tuple(protected)
+        self._own = frozenset(n.casefold() for n in OWN_SECRET_BASENAMES)
+
+    def __call__(self, path_str: str) -> bool:
+        # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
+        # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
+        # `except` below deliberately continues with the UNRESOLVED string — which then matches
+        # no sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
+        #
+        # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
+        # `validate_file_path`, and the tempting fix there is to catch the exception and carry on
+        # — which would hand this function a path it cannot classify and take False for an
+        # answer. So the refusal belongs HERE as well, ahead of every caller.
+        #
+        # Fail CLOSED, the direction this function already argues for below: casefolding "can
+        # only over-block ... the safe direction for a credential guard and the error a user can
+        # see and report". A NUL is never part of a legitimate filename — POSIX and Windows both
+        # forbid it in a path component — so over-blocking costs nothing real.
+        if "\x00" in path_str:
             return True
-    # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
-    # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
-    for entry in _pclaw_home_sensitive_paths():
-        try:
-            entry_cmp = str(Path(entry).resolve()).casefold()
-        except (OSError, ValueError):
-            entry_cmp = entry.casefold()
-        if resolved_cmp == entry_cmp or resolved_cmp.startswith(entry_cmp + os.sep):
+        # Expand ~ and $HOME, then compare every form of the request with every form of each
+        # protected location (:func:`_path_forms`).
+        expanded = os.path.expanduser(os.path.expandvars(path_str))
+        requested = _path_forms(expanded)
+        # CASE-INSENSITIVE comparison, because the comparison is the control.
+        #
+        # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
+        # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
+        # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
+        # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
+        # governance ceiling, was one shifted key away from being readable, across the ~70 call
+        # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
+        # `~` and `$HOME` (all verified blocked); it does not normalise case.
+        #
+        # Always casefold rather than probing the filesystem per call: a per-path probe is
+        # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
+        # casefolding can only over-block — a directory literally named `~/.SSH` that holds no
+        # credentials would be refused, which is the safe direction for a credential guard and
+        # the error a user can see and report.
+        #
+        # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
+        # the same reason as everything else here: on macOS/Windows the filesystem is
+        # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
+        if any(os.path.basename(form) in self._own for form in requested):
             return True
-    return False
+        return any(
+            form == entry or form.startswith(entry + os.sep)
+            for form in requested
+            for entry in self._protected
+        )
+
+
+def _path_forms(path: str) -> set[str]:
+    """*path* as written and as the filesystem resolves it, both absolute and casefolded.
+
+    As written means ``.`` and ``..`` folded and no link followed; resolved means every link
+    followed. The credential guard compares both forms of a request with both forms of each
+    protected location, because comparing one form lets a link walk around it. It compared
+    the resolved request with each location as written, so a ``~/.aws`` or ``~/.ssh`` that is
+    a symlink (a dotfile manager makes it one) was open to every file under it: the request
+    resolved to the link's target, which is not under ``~/.aws``. Resolving the protected
+    side alone would still leave a dangling link, which resolves to nowhere real, open by the
+    name it has.
+
+    Comparing more forms can only refuse more, which is the direction this guard errs in.
+    """
+    forms = {os.path.normpath(os.path.abspath(path)).casefold()}
+    try:
+        forms.add(os.path.realpath(path).casefold())
+    except (OSError, ValueError):
+        pass
+    return forms
+
+
+def _protected_forms(path: str) -> set[str]:
+    """Every form a protected location takes: :func:`_path_forms`, plus where each symlink
+    directly inside it points (:func:`_linked_entries`).
+
+    The link targets are what reach a caller that resolved the request before asking, which
+    most do (``hooks.validate_file_path`` realpaths first, and so the dashboard's file reader
+    does). With ``~/.ssh`` a real directory and ``~/.ssh/id_ed25519`` a link into a dotfiles
+    folder, such a caller asks about the dotfiles path, which is under no protected location
+    unless the link's target is one.
+    """
+    forms = {os.path.normpath(os.path.abspath(path)).casefold()}
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return forms
+    forms.add(real.casefold())
+    return forms | _linked_entries(real)
+
+
+#: ``directory -> (signature, targets)`` for :func:`_linked_entries`. A few protected
+#: directories per home, so it stays small; cleared wholesale if many homes pass through.
+_LINKED_ENTRIES: dict[str, tuple[tuple[int, int, int, int], frozenset[str]]] = {}
+
+
+def _linked_entries(directory: str) -> frozenset[str]:
+    """Where the symlinks directly inside *directory* point, resolved and casefolded.
+
+    Read again whenever the directory's inode, mtime, size or link count moves, which adding,
+    removing or replacing an entry does, and otherwise answered from the last read: this runs
+    on every check, and a check sits on every file a walk visits.
+    """
+    try:
+        st = os.stat(directory)
+    except (OSError, ValueError):
+        return frozenset()
+    if not stat.S_ISDIR(st.st_mode):
+        return frozenset()
+    signature = (st.st_ino, st.st_mtime_ns, st.st_size, st.st_nlink)
+    cached = _LINKED_ENTRIES.get(directory)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    targets: set[str] = set()
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink():
+                    try:
+                        targets.add(os.path.realpath(entry.path).casefold())
+                    except (OSError, ValueError):
+                        continue
+    except OSError:
+        return frozenset()
+    if len(_LINKED_ENTRIES) > 256:
+        _LINKED_ENTRIES.clear()
+    found = frozenset(targets)
+    _LINKED_ENTRIES[directory] = (signature, found)
+    return found
 
 
 # OS-managed roots that must never be created into / used as a workspace. Two tiers:
@@ -1162,6 +1260,74 @@ def restore_masked_spans(submitted: str, stored: str) -> str | None:
         return queue.pop(0) if queue else m.group(0)
 
     return _MASK_RE.sub(_take, submitted)
+
+
+#: What a save answers when it echoes one of our masks and the stored text that mask stood for can
+#: no longer be found. One sentence for every save path that restores masks.
+MASK_CONFLICT = (
+    "The stored copy of this content no longer lines up with the redacted version you edited, "
+    "so the hidden value behind a [REDACTED: …] marker cannot be recovered. Nothing was saved. "
+    "Re-open it to load the current version, or replace the marker with the value you want "
+    "stored."
+)
+
+
+class MaskConflict(ValueError):
+    """A save echoed a display mask whose stored value can no longer be located."""
+
+    def __init__(self) -> None:
+        super().__init__(MASK_CONFLICT)
+
+
+def keep_masked_spans(submitted: str, stored: str) -> str:
+    """The text a save persists when its editor was seeded from a :func:`redact_for_display` read.
+
+    Every such save path calls this with the value it is about to overwrite, so a mask the client
+    echoes back keeps the stored value it stood for (:func:`restore_masked_spans`). Raises
+    :class:`MaskConflict` rather than persisting a mask it cannot place.
+    """
+    restored = restore_masked_spans(submitted, stored)
+    if restored is None:
+        raise MaskConflict()
+    return restored
+
+
+def keep_masked_values(submitted: Any, stored: Any) -> Any:
+    """:func:`keep_masked_spans` over a JSON-shaped value: a loop's plan, a schedule's action.
+
+    Each string is restored against the string stored at the same place, the same key of a dict
+    or the same index of a list. A list item is first matched to a stored item that showed exactly
+    what the client sent, so moving an item it did not edit keeps its value. A place where the
+    store holds no string is the client's own text and passes through.
+    """
+    if isinstance(submitted, str):
+        return keep_masked_spans(submitted, stored) if isinstance(stored, str) else submitted
+    if isinstance(submitted, dict):
+        base = stored if isinstance(stored, dict) else {}
+        return {key: keep_masked_values(value, base.get(key)) for key, value in submitted.items()}
+    if isinstance(submitted, list):
+        items = stored if isinstance(stored, list) else []
+        used: set[int] = set()
+
+        def _shown_as(index: int, value: str) -> bool:
+            item = items[index]
+            return index not in used and isinstance(item, str) and redact_for_display(item) == value
+
+        kept: list[Any] = []
+        for index, value in enumerate(submitted):
+            if isinstance(value, str) and _MASK_RE.search(value):
+                # The same place first, then any other stored item not yet claimed. Two items
+                # that show alike are one value each, and no stored value is given out twice.
+                order = [index] if index < len(items) else []
+                order += [i for i in range(len(items)) if i != index]
+                match = next((i for i in order if _shown_as(i, value)), None)
+                if match is not None:
+                    used.add(match)
+                    kept.append(items[match])
+                    continue
+            kept.append(keep_masked_values(value, items[index] if index < len(items) else None))
+        return kept
+    return submitted
 
 
 # Suspicious bash patterns to flag during audit

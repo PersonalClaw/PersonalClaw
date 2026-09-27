@@ -63,6 +63,14 @@ MANIFEST_EXCLUDE: dict[str, str] = {
         "the service-worker script — browser-consumed client code that must sit at "
         "the origin root to register at scope '/'; UI transport, not an API"
     ),
+    "/THIRD_PARTY_NOTICES.txt": (
+        "the fonts' licence notices, a plain-text document Settings → Updates links for a "
+        "HUMAN reader — UI transport, not an API"
+    ),
+    "/THIRD_PARTY_NOTICES_NPM.txt": (
+        "the bundled npm packages' licence notices, a plain-text document Settings → Updates "
+        "links for a HUMAN reader — UI transport, not an API"
+    ),
     "/apps/{name}/ui/{tail}": "per-app UI asset serving — UI transport, not an API",
     "/apps/{name}/api/{tail}": (
         "per-app backend reverse-proxy — reached via the app-route tools (§4), "

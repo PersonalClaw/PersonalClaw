@@ -166,7 +166,7 @@ class TestConfigFourPoints:
 
     def test_point_d_editable_subset_is_present(self):
         """(d) the runtime-editable subset IS in `_EDITABLE_CONFIG`."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert "external_access.enabled" in _EDITABLE_CONFIG
         for s in _SURFACES:

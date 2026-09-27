@@ -27,8 +27,10 @@ from personalclaw.llm.base import (
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
     LLMEvent,
 )
+from personalclaw.llm.events import TOOL_META_AUTO_DENIED
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
@@ -400,6 +402,11 @@ class SubagentInfo:
     # child failure.
     cancelled: bool = False
     _outcome_noted: bool = False  # guards double-counting in the breaker/meter
+    # The store id of the trigger whose fire started this agent (its `invoke-agent` or
+    # `run-prompt` action), or "". An approval it asks for is listed under the trigger, and a call
+    # it is denied leaves a note that can run the trigger again (`dashboard/auto_denials.py`).
+    # Last, so no field an app passes by position moves (`sdk.channel` exports this class).
+    trigger_id: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1065,6 +1072,8 @@ class SubagentManager:
         parent_run: str = "",
         sandbox: str = "none",
         extra_env: dict[str, str] | None = None,
+        *,
+        trigger_id: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1106,6 +1115,8 @@ class SubagentManager:
                 or any caller-chosen fan-out key). Scopes the run-level concurrency
                 lane, the consecutive-failure breaker and the run budget so one
                 wide fan-out cannot starve or overspend against every other run.
+            trigger_id (str): The trigger whose fire this is (``ActionContext.trigger_id``),
+                kept on the info so its approvals and denials can name and re-run it.
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1296,6 +1307,7 @@ class SubagentManager:
             parent_run=parent_run,
             sandbox=sandbox or "none",
             extra_env=dict(extra_env or {}),
+            trigger_id=trigger_id or "",
         )
         info._raw_task = task  # unredacted prompt for ACP agent execution
 
@@ -2297,17 +2309,31 @@ class SubagentManager:
                     parent_session_key=info.parent_session_key,
                     agent_role=info.agent,
                 )
+            elif event.kind == EVENT_TOOL_RESULT and (event.tool_meta or {}).get(
+                TOOL_META_AUTO_DENIED
+            ):
+                # The native runtime declined a call that needed an approval: a subagent is
+                # unattended, so nobody could be asked. It told the model; this tells the owner,
+                # through the gateway, which can reach the Inbox.
+                await self._fire_event(
+                    "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
+                )
             elif event.kind == EVENT_COMPLETE:
                 # Capture the child's token/cost accounting before breaking — S2k
                 # discarded it here (subagent site).
+                from personalclaw.usage_ledger import answered_model
+
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
                 cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-                if not cost and info.model:
+                # Priced by the model that answered, which a spawn with no model of its own
+                # never named: its child ran on the chain's head and was charged nothing.
+                priced_by = answered_model(event, info.model)
+                if not cost and priced_by:
                     from personalclaw.pricing import estimate_cost
 
                     cost = estimate_cost(
-                        info.model,
+                        priced_by,
                         input_tokens=info.input_tokens,
                         output_tokens=info.output_tokens,
                         cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),

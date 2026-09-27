@@ -21,6 +21,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.workflows import task_projection
 from personalclaw.workflows.journal import TASK_VERIFIED, ledger
 
 
@@ -148,7 +149,7 @@ def test_an_unparseable_criterion_is_UNRUNNABLE_not_failed():
     run = WorkflowRun(id="r-1", workflow_name="t")
     wstore.create(run)
     controller = RunController(run, _spec([]), services=EngineServices())
-    assert asyncio.run(controller._run_criterion(12345)) is None
+    assert asyncio.run(task_projection._run_criterion(controller, 12345)) is None
 
 
 def test_a_criterion_of_None_is_unrunnable():
@@ -159,7 +160,7 @@ def test_a_criterion_of_None_is_unrunnable():
     run = WorkflowRun(id="r-1", workflow_name="t")
     wstore.create(run)
     controller = RunController(run, _spec([]), services=EngineServices())
-    assert asyncio.run(controller._run_criterion(None)) is None
+    assert asyncio.run(task_projection._run_criterion(controller, None)) is None
 
 
 def test_an_UNREADABLE_file_check_is_unrunnable_not_a_missing_phrase():
@@ -167,17 +168,13 @@ def test_an_UNREADABLE_file_check_is_unrunnable_not_a_missing_phrase():
     file this process cannot see, and reporting "the phrase is missing" would be a claim
     about content
     nobody read."""
-    from personalclaw.workflows.controller import RunController
-
-    assert RunController._read_criterion_file("/nonexistent/path/xyz") is None
+    assert task_projection._read_criterion_file("/nonexistent/path/xyz") is None
 
 
 def test_a_readable_file_is_returned_as_text(tmp_path):
-    from personalclaw.workflows.controller import RunController
-
     target = tmp_path / "out.txt"
     target.write_text("all green")
-    assert RunController._read_criterion_file(str(target)) == "all green"
+    assert task_projection._read_criterion_file(str(target)) == "all green"
 
 
 def test_the_projection_maps_the_tristate_to_DIFFERENT_blocked_kinds():
@@ -214,9 +211,7 @@ def test_verification_does_not_block_the_TICK():
     scheduled like the write."""
     import inspect
 
-    from personalclaw.workflows.controller import RunController
-
-    source = inspect.getsource(RunController._schedule_verification)
+    source = inspect.getsource(task_projection._schedule_verification)
     assert "loop.create_task" in source
 
 

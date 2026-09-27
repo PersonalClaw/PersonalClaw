@@ -7,6 +7,8 @@ import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
 import { invalidateKeys, useQuery } from '../../lib/data'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { catalogApps } from '../../lib/appCatalog'
 import { installTargetFor, useAppInstall } from '../../pages/apps/installConsent'
 import { SchemaField, schemaDefaults } from '../../pages/settings/ProviderConfigForm'
@@ -16,6 +18,7 @@ import { StepActions } from './StepActions'
 import { chatModelSummary } from './chatModelSummary'
 import { checkChatModel, thrownMessage, type ChatModelVerdict } from './checkChatModel'
 import { api, type AppCatalogEntry, type AppSummary, type BundledModelOffer as Offer, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch, type ProviderOptionValue } from '../../lib/api'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** ONBOARDING-UX S1 T1.2r — the essential-apps step: the flow's first act
  *  after the name, and the only place a fresh install can become a working agent
@@ -1217,11 +1220,27 @@ function BindModel({ configured, onBound }: {
   onBound: () => void
 }) {
   const { data: models, error, refresh } = useQuery('onboarding:chat-models', () => api.chatModels())
+  // The chat chain as this step found it, WITH its revision. Binding replaces the whole chain, so
+  // the write names the one it replaces: a model bound elsewhere since this step opened — another
+  // tab, the chat screen's model download — is refused, not silently thrown away.
+  const { data: chain, error: chainErr, refresh: refreshChain } = useQuery(
+    'onboarding:chat-chain', () => api.activeChain('chat'))
   const [binding, setBinding] = useState('')
   const [failed, setFailed] = useState('')
+  const rereadChain = () => { invalidateKeys('onboarding:chat-chain'); refreshChain() }
+  const guard = useStaleWriteGuard<string[]>({
+    read: () => api.activeChain('chat'),
+    write: (next, base) => api.setActiveModel('chat', next, base),
+    onSaved: () => { invalidateKeys('onboarding:chat-chain'); onBound() },
+    onDiscard: rereadChain,
+  })
+  const conflicted = guard.conflict !== null
 
-  if (models === undefined && error) return <LoadError what="chat models" error={error} onRetry={refresh} />
-  if (models === undefined) {
+  const loadErr = error ?? chainErr
+  if ((models === undefined || chain === undefined) && loadErr) {
+    return <LoadError what="chat models" error={loadErr} onRetry={() => { refresh(); rereadChain() }} />
+  }
+  if (models === undefined || chain === undefined) {
     return <Spinner what="chat models" />
   }
   if (models.length === 0) {
@@ -1231,7 +1250,8 @@ function BindModel({ configured, onBound }: {
   const bind = async (m: ChatModelOption) => {
     setBinding(m.name); setFailed('')
     const ref = m.provider ? `${m.provider}:${m.model_id}` : m.model_id
-    try { await api.setActiveModel('chat', [ref]); onBound() }
+    // `false` is a refused stale copy: the notice below holds this pick for the user to re-apply.
+    try { if (!(await guard.apply(chain, () => [ref]))) setBinding('') }
     catch (e) { setBinding(''); setFailed(thrownMessage(e) || 'Could not bind that model.') }
   }
 
@@ -1248,13 +1268,15 @@ function BindModel({ configured, onBound }: {
         </p>
       )}
       {failed && <div className="text-danger text-[0.8125rem]" role="alert">{failed}</div>}
+      <StaleWriteNotice guard={guard} what="Your chat model" />
       <motion.div className="flex flex-col gap-1.5" initial="initial" animate="animate"
         variants={{ animate: { transition: stagger(0.04) } }}>
         {models.map((m) => (
           <motion.div key={m.name} variants={listItemEnter}>
             <Button variant="ghost" size="md" shape="squircle" className="w-full justify-start"
-              loading={binding === m.name} disabled={!!binding && binding !== m.name}
-              disabledReason="Another model is being bound" onClick={() => bind(m)}>
+              loading={binding === m.name} disabled={(!!binding && binding !== m.name) || conflicted}
+              disabledReason={conflicted ? HELD_CHANGE_REASON : 'Another model is being bound'}
+              onClick={() => bind(m)}>
               <Cpu size={15} aria-hidden="true" className="shrink-0 text-primary" />
               <span className="min-w-0 truncate">{m.model_id}</span>
               <span className="shrink-0 text-on-surface-low text-[0.75rem]">{m.provider}</span>

@@ -203,7 +203,7 @@ export function AuditPanel() {
   // window exists to avoid, and `personalclaw security verify` already performs it — its own comment
   // calls it "an explicit offline audit". A button here would re-create the 20s+ hang the window was
   // added to fix, so the panel NAMES the command instead: the same choice `DurabilityPanel` makes for
-  // `personalclaw restore --replace`.
+  // `personalclaw restore <archive> --mode replace`.
   // 🔑 A CONFIRMED ACTION THAT FAILED SILENTLY, and the confirmed-delete ratchet could not see it: that
   // sweep matches `api.(delete|purge|revoke)*`, and this one is called `selRotate`. The user confirmed
   // archiving the audit log, the request failed, and the panel invalidated its verify cache and
@@ -372,7 +372,9 @@ function EventRow({ ev }: { ev: SelEvent }) {
       ? { background: 'color-mix(in srgb, var(--color-danger) 16%, var(--color-surface-container))' }
       : { background: 'var(--color-surface-container)' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left">
-        <span data-type="caption" className="w-14 shrink-0 font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
+        {/* At least the column, and wider for a longer word: a fixed `w-14` painted anything past
+            about eight characters over the pill beside it (`denied_revision_required`). */}
+        <span data-type="caption" className="min-w-14 shrink-0 whitespace-nowrap font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
         <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">{ev.event_type}</span>
         <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>
         {/* Not colour alone: the glyph + its accessible label carry the meaning too. */}

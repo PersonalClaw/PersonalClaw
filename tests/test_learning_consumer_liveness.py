@@ -5,9 +5,10 @@ whether the output was ever READ. This covers the sweep that does, and the half 
 detector rather than a nag.
 
 Driven end to end against the REAL machinery — the real `publish:` producer
-(`workflows/engine._open_publish_outcome`), the real Run Ledger, the real `outcome_resolver`, the
-real native artifact provider and pin store, the real proposal queue — under a tmp home. Nothing
-here asserts on a mock, because every defect this change can have is a wiring defect.
+(`workflows/publish_seam._open_publish_outcome`), the real Run Ledger, the real
+`outcome_resolver`, the real native artifact provider and pin store, the real proposal queue —
+under a tmp home. Nothing here asserts on a mock, because every defect this change can have is a
+wiring defect.
 
 What is asserted, and why each clause is load-bearing:
 
@@ -46,18 +47,18 @@ from personalclaw.learning import consumer_liveness, outcome_resolver
 from personalclaw.learning import proposals as P
 from personalclaw.ledger import outcomes
 from personalclaw.memory_service import MemoryService
-from personalclaw.workflows import engine as engine_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import pinned
+from personalclaw.workflows import pinned, publish_seam
 from personalclaw.workflows import store as store_mod
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
 #: A day in seconds, so the "matured" clock skips in units the horizon is expressed in.
 _DAY = 86400.0
 
-#: The publish horizon the engine declares (7 days). Read off the constant rather than retyped so a
-#: change to the engine's generosity does not quietly make these tests assert the old number.
-_HORIZON = engine_mod.PUBLISH_CONSUMPTION_HORIZON_SECS
+#: The publish horizon the publish seam declares (7 days). Read off the constant rather than
+#: retyped so a change to the seam's generosity does not quietly make these tests assert the old
+#: number.
+_HORIZON = publish_seam.PUBLISH_CONSUMPTION_HORIZON_SECS
 
 
 @pytest.fixture
@@ -91,15 +92,15 @@ def _provider():
 def _cycle(unit: str, slug: str) -> WorkflowRun:
     """One cycle of `unit`: a run that publishes `slug` and opens the real publish question.
 
-    Goes through `engine._open_publish_outcome` rather than hand-journalling a `pending_outcome`, so
-    a change to the producer's declared metric/source/horizon breaks these tests instead of leaving
-    them asserting a shape nothing writes.
+    Goes through `publish_seam._open_publish_outcome` rather than hand-journalling a
+    `pending_outcome`, so a change to the producer's declared metric/source/horizon breaks these
+    tests instead of leaving them asserting a shape nothing writes.
     """
     run = store_mod.create(WorkflowRun(id="", workflow_name=unit))
     run.status = RunStatus.COMPLETE
     store_mod.save(run)
     _provider().create(name=f"{slug} body", content="the deliverable", slug=slug, source="workflow")
-    engine_mod._open_publish_outcome(run.id, "emit", {"slug": slug, "action": "create"})
+    publish_seam._open_publish_outcome(run.id, "emit", {"slug": slug, "action": "create"})
     return run
 
 

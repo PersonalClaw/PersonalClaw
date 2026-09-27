@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Field, Select, TextArea } from '../../ui/forms'
 import { Markdown } from '../../ui/Markdown'
 import { api } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { presentSecrets, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import {
   missingRequired,
   SchemaField,
@@ -229,11 +231,28 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
   )
 }
 
+/** The form's starting values from a config read — schema defaults under the stored config, each
+ *  stored secret BLANKED — with the revision that read reported, which a save names. A set
+ *  sensitive field arrives as a mask sentinel; the input starts blank so the user isn't editing
+ *  dots, and a blank submit means "keep the stored secret" (the backend preserves it, #43). */
+function editableAppConfig(d: {
+  config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string
+}): Revisioned<Record<string, unknown>> {
+  const merged: Record<string, unknown> = {}
+  for (const [k, p] of Object.entries((d.schema as AppConfigSchema).properties ?? {})) {
+    if (p.default !== undefined) merged[k] = p.default
+  }
+  Object.assign(merged, d.config ?? {})
+  for (const k of d._secret_set ?? []) merged[k] = ''
+  return { value: merged, revision: d.revision }
+}
+
 /** Load + edit + persist an app's config against its schema. Returns the schema
  *  props, the effective values (saved over defaults), an editor, and a save fn.
  *  `loading` is true only while the read is in flight; `error` is the read's rejection (the hook
  *  used to DISCARD it, which made `loading` true forever on a failed read); `hasSchema` is false
- *  for a schema-less app. */
+ *  for a schema-less app. `guard` is the save's stale-write guard, for the consumer's
+ *  `StaleWriteNotice`. */
 export function useAppConfig(name: string) {
   const { data, error: loadErr, refresh } = useQuery(`app-config:${name}`, () => api.appConfig(name), { persist: false })
   const [values, setValues] = useState<Record<string, unknown> | null>(null)
@@ -241,6 +260,27 @@ export function useAppConfig(name: string) {
   const [err, setErr] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState(0)
   const reload = () => { invalidateKeys(`app-config:${name}`); refresh() }
+  // What to do once the save the user asked for lands — now, or after the notice re-applies it.
+  const onLanded = useRef<(() => void) | undefined>(undefined)
+  // 🔴 THE FILE IS SAVED WHOLE, over the revision the form read it at. The backend replaces the
+  // app's settings file with this form's values — and deletes the credentials the new one stops
+  // referencing — so a form opened before Settings → Providers, another tab, or the app itself
+  // saved it put its stale copy back over that save. A stale copy is now refused and the edit
+  // re-applied field by field on top of what is stored (`ui/StaleWriteNotice`), compared in the
+  // same defaults-and-blanked-secrets form this form edits.
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.appConfig(name).then(editableAppConfig),
+    write: (next, rev) => api.saveAppConfig(name, next, rev),
+    onSaved: () => {
+      invalidateKeys(`app-config:${name}`)
+      setValues(null)
+      setSavedAt(Date.now())
+      const done = onLanded.current
+      onLanded.current = undefined
+      done?.()
+    },
+    onDiscard: () => { onLanded.current = undefined; setValues(null); reload() },
+  })
 
   const schema = (data?.schema ?? {}) as AppConfigSchema
   const props = schema.properties ?? {}
@@ -250,16 +290,7 @@ export function useAppConfig(name: string) {
   // exist would otherwise gate Save on a field the form never renders, i.e. an unsavable form with
   // nothing to fill in.
   const required = (schema.required ?? []).filter((k) => k in props)
-  const cur: Record<string, unknown> = values ?? (() => {
-    const base: Record<string, unknown> = {}
-    for (const [k, p] of Object.entries(props)) if (p.default !== undefined) base[k] = p.default
-    const merged = { ...base, ...(data?.config ?? {}) }
-    // A set sensitive field arrives as a mask sentinel — start the input BLANK so
-    // the user isn't editing dots; a blank submit means "keep the stored secret"
-    // (the backend preserves it). Typing a value replaces it. (#43 write-only)
-    for (const k of secretSet) merged[k] = ''
-    return merged
-  })()
+  const cur: Record<string, unknown> = values ?? (data ? editableAppConfig(data).value : {})
 
   const set = (k: string, v: unknown) => setValues({ ...cur, [k]: v })
   const dirty = values !== null
@@ -290,19 +321,21 @@ export function useAppConfig(name: string) {
       return
     }
     setBusy(true); setErr(null)
+    onLanded.current = onDone
     try {
-      await api.saveAppConfig(name, cur)
-      invalidateKeys(`app-config:${name}`)
-      setValues(null)
-      setSavedAt(Date.now())
-      onDone?.()
-    } catch (e) { setErr(String((e as Error).message || e)) }
+      // `false` is a refused stale copy: the notice keeps the edit, the form stays open, and
+      // `onDone` runs if the user re-applies it.
+      const base = editableAppConfig(data)
+      await guard.save(base, cur, rebaseRecord(base.value, cur))
+    } catch (e) { onLanded.current = undefined; setErr(String((e as Error).message || e)) }
     finally { setBusy(false) }
   }
 
   // `loading` is the read still being IN FLIGHT — not merely "no data". A failed read has no data
   // either, and conflating the two is what showed "Loading…" forever with no way out.
+  // What the stale-write review shows for this form: its secrets as saved or hidden, never blank.
+  const present = presentSecrets((k) => !!props[k]?.['x-meta']?.sensitive, secretSet)
   return { loading: data === undefined && !loadErr, error: loadErr, reload,
     props, hasSchema, cur, set, save, busy, err, dirty, savedAt, secretSet,
-    required, missing, missingLabels }
+    required, missing, missingLabels, guard, present }
 }

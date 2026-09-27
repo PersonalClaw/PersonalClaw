@@ -337,52 +337,35 @@ def write_run_state(version: str) -> None:
 def write_updates_fields(fields: dict[str, str]) -> bool:
     """Persist ``updates.<key> = value`` for each of *fields* into ``config.json``.
 
-    A read-modify-write of the raw JSON, exactly as ``PATCH
-    /api/config/personalclaw`` does it — deliberately NOT ``AppConfig.save()``,
-    which serialises the whole dataclass tree and so would rewrite every block from
-    an in-memory view. Touching only the keys named here means an app-owned block
-    this build does not model (``providers``, ``use_cases``, ``slack``) is carried
-    through untouched, and a concurrent settings edit to an unrelated field is not
-    clobbered by a stale snapshot.
+    A read-modify-write of the raw JSON in the config transaction, exactly as ``PATCH
+    /api/config/personalclaw`` does it. Touching only the keys named here means an
+    app-owned block this build does not model (``providers``, ``use_cases``, ``slack``)
+    is carried through untouched, and the transaction means a settings edit another
+    process makes at the same moment is not clobbered either.
 
     Returns ``True`` on a completed write. Returns ``False`` — never raises — when
     the existing file cannot be read or parsed: an unreadable config is exactly when
     you cannot know what you are about to overwrite, and losing a user's providers to
     record a rollback hint would be a catastrophic trade. The caller degrades to "no
-    rollback offer", which is the safe direction.
+    rollback offer", which is the safe direction. The same when the write cannot get
+    its turn, or the disk refuses it.
     """
-    from personalclaw.atomic_write import atomic_write
-    from personalclaw.config.loader import config_path
+    from personalclaw.config.loader import ConfigWriteError
+    from personalclaw.config.transactions import mutate_config
 
-    path = config_path()
-    data: dict[str, object] = {}
-    if path.exists():
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("refusing to write updates state: %s exists but is unreadable", path)
-            return False
-        if raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                logger.warning("refusing to write updates state: %s is not valid JSON", path)
-                return False
-            if not isinstance(parsed, dict):
-                logger.warning("refusing to write updates state: %s is not a JSON object", path)
-                return False
-            data = parsed
+    def _apply(data: dict) -> None:
+        block = data.get("updates")
+        if not isinstance(block, dict):
+            block = data["updates"] = {}
+        block.update(fields)
 
-    block = data.get("updates")
-    if not isinstance(block, dict):
-        block = {}
-    block.update(fields)
-    data["updates"] = block
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+        mutate_config(_apply)
+    except ConfigWriteError as exc:
+        logger.warning("refusing to write updates state: %s", exc)
+        return False
     except OSError:
-        logger.warning("could not write updates state to %s", path, exc_info=True)
+        logger.warning("could not write updates state", exc_info=True)
         return False
     return True
 

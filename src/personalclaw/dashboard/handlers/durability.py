@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shlex
 import tempfile
 from pathlib import Path, PurePosixPath
 
@@ -393,6 +394,21 @@ async def api_durability_run(request: web.Request) -> web.Response:
     return web.json_response(result.to_dict())
 
 
+def _snapshot_archive(archive_id: str) -> Path | None:
+    """The snapshot *archive_id* names in the snapshot directory, or ``None`` for anything else.
+
+    Path containment: the archive must be one WE produced, named from the snapshot directory.
+    Accepting an arbitrary path over HTTP would let a caller point a restore at any tar on disk.
+    """
+    from personalclaw.snapshot import _default_snapshot_dir
+
+    snap_dir = Path(_default_snapshot_dir()).resolve()
+    candidate = (snap_dir / Path(archive_id).name).resolve()
+    if candidate.parent != snap_dir or not candidate.is_file():
+        return None
+    return candidate
+
+
 async def api_durability_archive_restore(request: web.Request) -> web.Response:
     """POST /api/durability/archive/{id}/restore {mode?, components?, confirm?} — §6.
 
@@ -422,7 +438,7 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
     executing IS proof the gateway is up, so the answer is known without asking the network.
     Refusing here is exact and cannot be defeated by a port. There is no ``--force`` mirror on
     purpose: overriding it is a local operator decision at a terminal (`personalclaw restore
-    --replace --force`), never an HTTP parameter.
+    <archive> --mode replace --force`), never an HTTP parameter.
 
     Replaces ``POST /api/durability/restore``: the archive id moves into the path, which is
     where §6 puts it and what makes the archive browser's rows addressable.
@@ -465,13 +481,18 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
             # so the message names the real reason rather than sending the caller to add a
             # flag that still cannot work.
             _audit_api(request, "durability_restore:replace", "denied", "gateway_running")
+            archive = _snapshot_archive(raw)
+            # Quoted, and only for an archive this directory holds: the message is a command a
+            # user will paste into a shell, and the id came in on the request.
+            path = shlex.quote(str(archive)) if archive else "<archive>"
             return web.json_response(
                 {
                     "error": {
                         "code": "gateway_running",
                         "message": (
                             "a replace restore rewrites state this gateway holds open; stop "
-                            "the gateway and run `personalclaw restore --replace` instead"
+                            f"the gateway and run `personalclaw restore {path} --mode replace` "
+                            "instead"
                         ),
                     }
                 },
@@ -517,13 +538,8 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
                 status=400,
             )
 
-    # Path containment: the archive must be one WE produced, named from the snapshot directory.
-    # Accepting an arbitrary path over HTTP would let a caller point a restore at any tar on disk.
-    from personalclaw.snapshot import _default_snapshot_dir
-
-    snap_dir = Path(_default_snapshot_dir()).resolve()
-    candidate = (snap_dir / Path(raw).name).resolve()
-    if candidate.parent != snap_dir or not candidate.is_file():
+    candidate = _snapshot_archive(raw)
+    if candidate is None:
         return web.json_response(
             {
                 "error": {

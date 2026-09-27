@@ -48,7 +48,7 @@ backend**.
   `.hg`, `.svn` (version-control metadata, whose tools run what it names),
   `__pycache__` (bytecode the interpreter would run instead of the scanned source)
   and `.venv`, `venv`, `.tox` (virtualenvs; the platform installs
-  `pythonDependencies` itself). What is left out is not scanned, not in the consent
+  `pythonDependencies` itself, and a sidecar's engine into `apps/<app>/venv`). What is left out is not scanned, not in the consent
   digest and not installed; a link into it is refused. Everything else is the app,
   `node_modules` included: a JavaScript app's dependencies are code it runs, so they
   install and are scanned like any other file. Skills follow the same rule
@@ -69,9 +69,10 @@ backend**.
 - **Every install waits for consent** — a clean scan is not consent.
   `POST /api/apps/preview {source}` stages the source and returns what installing
   it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
-  whether each is switched on, Python packages, dashboard code, its own server
-  process, the install hook, MCP servers), the scan, and a `consent` digest of the
-  staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
+  whether each is switched on, Python packages, the engine packages Install engine would
+  put in a sidecar's environment, dashboard code, its own server process, the install
+  hook, MCP servers), what it needs that PersonalClaw does not install, the scan, and a
+  `consent` digest of the staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
   have that digest; anything else — `confirm: true` included — answers 409 with
   the review. The install invariant is scanned-bytes == reviewed-bytes ==
   installed-bytes (no swap-after-scan window, and none after consent either).
@@ -80,6 +81,15 @@ backend**.
   what the app gets (compared with the installed copy's disclosure), or scans with
   warnings, needs the same `consent` digest (`POST /api/apps/preview {source, name}`);
   one that changes none of it needs none.
+- **An update keeps the app's state** — what its folder holds that no bundle ships:
+  `data/` (`sdk.util.app_data_dir`), copied into the new version before the swap so a
+  failed update gives the old version its data exactly as it left it, and `venv/`, the
+  Python environment a sidecar app's child runs in (`sdk.sidecar.sidecar_venv_dir`),
+  moved across by rename after the swap and before `onUpdate` runs, however large the
+  engine in it. A failed update hands back exactly what it moved; a crash in between is
+  finished by `recover_interrupted_updates` at the next start. Everything else in the
+  folder is the old version's files and goes with them. Removal takes `venv/` with the
+  app's files; the keep-data rung keeps `data/` alone.
 - **Finding an update** (`apps/catalog.updates_available`) — `/api/apps` marks an app
   whose source offers a newer version: a configured local source, by the app's name,
   and for an app installed from the Store, the pointer `installed.json` recorded
@@ -91,6 +101,29 @@ backend**.
   installed from (`updateSource`).
 - **Removal** distinguishes deactivate (providers deregistered, files kept)
   from force-uninstall.
+
+## What an app needs, and its engine
+
+- **Prerequisites** — `requires: [{name, why, how}]` (`manifest.Prerequisite`) lists what the
+  app needs on this machine that PersonalClaw does not install: the ComfyUI server Local Image
+  Generation sends its work to, a program a tool runs. Each is a name, what the app uses it
+  for and what to do to have it, within the lengths the dialog shows. Install consent leads
+  with them (*What it needs that PersonalClaw doesn't install*), the Store card says
+  "Needs ComfyUI", and an update that adds one asks again.
+- **An engine** — a provider with `execution: "sidecar"` runs in a child process with a Python
+  environment of its own, `apps/<app>/venv` (`local_models/sidecar.py`). Its engine is
+  `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and
+  pip's options end with `--` before them), installed into that environment and never into
+  `app-python`, and only when the owner presses **Install engine** on the app's card in
+  Settings → Providers or on its Configure page. The install is a job
+  (`POST /api/models/sidecar/{app}/install`): the environment, then pip, each step skipped
+  when already done, so a stopped install resumes. pip's output reaches the job's log tail as
+  it is written, the pip step may run for `DEPS_TIMEOUT_SECS` (two hours) before it is stopped,
+  and cancelling (`DELETE /api/models/downloads/{id}`) kills pip and what it started. A
+  finished install re-measures the app's availability. While it runs, an update or a removal
+  of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
+  delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else
+  did.
 
 ## Unload and load (`apps/app_runtime.py`)
 
@@ -176,7 +209,7 @@ The manifest's `permissions` block is enforced, with one documented exception
 
 | Permission | Enforcement |
 |---|---|
-| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents and agent definitions, skills, prompts and snippets, the orchestrator's routing notes, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. Every write to an agent, a skill or a prompt is `OwnerOnly` — they are the instructions your agents carry out with your tools — so an app ships skills in its manifest's `skills` and runs agent work through its `agent` grant. Your conversations are families too (chat, sessions, rooms, inbox, reveal): an `AppMay` row that carries `owns` names where the route addresses a conversation, and the middleware refuses one the calling app did not start (`_ChatSession.created_by_app`); a row marked `agent_work` (a turn) also needs the `agent` grant. Those families declare their READS route by route too (`READ_DECLARED_FAMILIES`): a read of one conversation carries `owns`, a list or a search answers an app with its own conversations only, and rooms and the inbox are the owner's. Your notification log is declared the same way: `GET /api/notifications` answers an app with the notifications it raised and those about a conversation it started (`DashboardState.notification_reaches`), and your notification settings and rules are the owner's. What you dictate is a family too (`/api/lexicon`): every write but the graph resync is `OwnerOnly`, because a term or a correction rewrites your transcripts, and its reads stay the allowlist's. Each app's provider is its own (`/api/providers`): every `/api/providers/{name}` row carries `owns` naming the app, so an app reaches its own provider's settings, instances and availability check and no other's, reads included; the list answers it with its own providers; `/api/providers/mcp-tools`, whose instances are every MCP server the gateway launches, is owner-only; and `/api/apps/{name}/config` is held to the calling app the same way. Your models are yours (`/api/model-providers`, `/api/models`): every route in both is `OwnerOnly`, reads included, because a model provider says where your model calls go and with which key, and a binding says which model each use runs on, your chats included; the onboarding wizard's one-click bind (`/api/onboarding/local-model/bind`), which adds a model provider and moves your chats onto it, is owner-only too. A write route in any family, or a read in a declared-read family, that has no declaration is refused to every app (`undeclared_security_route`); `HEAD` answers from the `GET` row |
+| `api` | prefix-allowlist middleware over gateway API paths — pathname only, query string stripped (server and SDK agree on this). Two halves no declaration widens: the owner-only registry (`OWNER_ONLY_API_PATHS`, whole subtrees such as `/api/mcp` and `/api/terminal`), and `ROUTE_AUTHZ`, which declares each write route in a security family (`SECURITY_ROUTE_FAMILIES`: automations, apps, packs, agents and agent definitions, skills, prompts and snippets, the orchestrator's routing notes, config, devices, channels…) `OwnerOnly` or `AppMay` with a reason. Every write to an agent, a skill or a prompt is `OwnerOnly` — they are the instructions your agents carry out with your tools — so an app ships skills in its manifest's `skills` and runs agent work through its `agent` grant. Your conversations are families too (chat, sessions, rooms, inbox, reveal): an `AppMay` row that carries `owns` names where the route addresses a conversation, and the middleware refuses one the calling app did not start (`_ChatSession.created_by_app`); a row marked `agent_work` (a turn) also needs the `agent` grant. Those families declare their READS route by route too (`READ_DECLARED_FAMILIES`): a read of one conversation carries `owns`, a list or a search answers an app with its own conversations only, and rooms and the inbox are the owner's. Your notification log is declared the same way: `GET /api/notifications` answers an app with the notifications it raised and those about a conversation it started (`DashboardState.notification_reaches`), and your notification settings and rules are the owner's. What you dictate is a family too (`/api/lexicon`): every write but the graph resync is `OwnerOnly`, because a term or a correction rewrites your transcripts, and its reads stay the allowlist's. Each app's provider is its own (`/api/providers`): every `/api/providers/{name}` row carries `owns` naming the app, so an app reaches its own provider's settings, instances and availability check and no other's, reads included; the list answers it with its own providers; `/api/providers/mcp-tools`, whose instances are every MCP server the gateway launches, is owner-only; and `/api/apps/{name}/config` is held to the calling app the same way. Your models are yours (`/api/model-providers`, `/api/models`): every route in both is `OwnerOnly`, reads included, because a model provider says where your model calls go and with which key, and a binding says which model each use runs on, your chats included; the onboarding wizard's one-click bind (`/api/onboarding/local-model/bind`), which adds a model provider and moves your chats onto it, is owner-only too. So is the rest of your first-run setup (`/api/onboarding`), reads included: its status and model check name your chat binding, its local-model probe and LAN sweep look for model servers on your machine and network, and its state is your setup's progress. A write route in any family, or a read in a declared-read family, that has no declaration is refused to every app (`undeclared_security_route`); `HEAD` answers from the `GET` row |
 | `config` | the exact settings (`voice.echo_filter_enabled`) `/api/config` reaches for this app. A second declaration on top of `api`, which must still name `/api/config` for the route. `GET /api/config/personalclaw` returns these fields and nothing else, and a write to any other answers `403 config_field_not_declared`. Deny by default. Naming a security setting is an install error (`manifest._config_permission_errors`) |
 | `events` | WebSocket fan-out filter — an app's socket only receives event types it declared, a frame about a conversation only when the app started that conversation, and an inbox item only when the app raised it (`dashboard/ws_state.py::frame_subject`); its session list holds its own rows, and a notification frame (the note, or `notification_logged`/`_removed`/`_ack`/`_unack` naming notes by `ts`) reaches it only about a notification it raised or one about a conversation it started. The envelope is `type` and `data`, so nothing on it says whether your tool calls run without asking. An app that may read `/api/approvals` (the approval relay) also hears the approval frames for yours |
 | `eventSubscriptions` | which **platform** events (`apps/app_events.py`: `session.created`, `knowledge.ingested`, `task.completed`) are delivered to the app. A DIFFERENT axis from `events` above, deliberately: `events` is the WS type allowlist, these are core-emitted facts, and holding one grants nothing about the other. `app_events.emit` is the only delivery path and is the whole gate — deny by default and **exact name only** (no prefix, no `*`), so a typo denies rather than widens. Delivered into the app's broker-owned inbox (the `appMessaging` queue, sender `@platform`, which no app can be named), drained over `GET /api/apps/message`. Payloads carry identifiers only, never prose: a subscription grants timing, not content an app's `api` scope may not cover. |
@@ -337,6 +370,35 @@ backend has no access to the gateway's SecurityEventLog).
   `createAppApi` / `createAppEvents` and mounts via `mount(el, ctx)`; the host
   resolves bare `react` / `@personalclaw/app-sdk` imports so app UIs don't
   bundle their own React.
+
+### Saving a whole document from an app page
+
+A route that replaces a whole document — an app's own settings (`PUT /api/apps/<name>/config`),
+a task, a knowledge item's body — refuses a write that does not name the copy it was built from
+([the contract](../reference/api-overview.md#request-and-response-conventions)). Its read
+reports a `revision`; keep it beside the value, and hand it back on the save:
+
+```js
+import { createAppApi, isStaleWrite } from '@personalclaw/app-sdk'
+
+const api = createAppApi(ctx)
+const read = await api.get(`/api/apps/${ctx.name}/config`)   // { config, revision, … }
+try {
+  await api.put(`/api/apps/${ctx.name}/config`, { ...read.config, collection: 'journal' },
+    { basedOn: read.revision })
+} catch (e) {
+  if (isStaleWrite(e)) {
+    // 409: the settings changed since this page read them (another tab, Settings → Providers,
+    // your own backend). Nothing was saved. Read again, re-apply the edit, save over the new
+    // revision — or show the user both and let them choose.
+  } else throw e
+}
+```
+
+`post`, `put` and `patch` take the same `{ basedOn }`; the client sends it as `If-Match`, the
+one header an app sets. A write that names no revision is refused with `428
+revision_required`. Every refusal rejects with the gateway's `status`, `code` and sentence
+(`e.message`), the same `ApiError` core's own pages get.
 
 ### The UI SDK's gated subpaths
 

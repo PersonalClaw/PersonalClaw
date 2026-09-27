@@ -76,6 +76,23 @@ def record_turn(u: TurnUsage) -> None:
         logger.debug("usage ledger append failed", exc_info=True)
 
 
+def answered_model(event: object, asked: str = "") -> str:
+    """The model id a turn is priced and recorded by: the one that ANSWERED it.
+
+    The native loop names that model on its terminal event (``served_model_ref``): a later model
+    of the turn's chain when the turn fell back, or the one serving in place of a model that could
+    not run. The id half of that ``"<entry>:<model>"`` ref is what this ledger's ``model`` and the
+    price table key on; the ref itself is neither. A backend that names none (an ACP agent CLI)
+    leaves ``asked``, the model the caller chose.
+    """
+    served = getattr(event, "served_model_ref", "")
+    if not isinstance(served, str) or not served:
+        return asked
+    # The entry name holds no colon and a model id may (``gpt-oss:20b``): split on the first.
+    _entry, colon, model_id = served.partition(":")
+    return (model_id if colon else served) or asked
+
+
 def record_from_event(
     event: object,
     *,
@@ -94,6 +111,9 @@ def record_from_event(
     the model has no price row AND the provider reported no cost — then ``cost_usd`` is
     an honest 0.0 the UI renders "unpriced". Fail-open through :func:`record_turn`.
 
+    ``model`` is the model the caller chose; the row is written for the model that answered
+    whenever the event names it (:func:`answered_model`).
+
     ``estimate_if_missing=False`` skips the fallback estimate — for a caller (the chat
     write-site) that ALREADY resolved ``event.cost_usd`` via ``estimate_cost`` itself,
     so re-estimating here would both waste the call and double-count it. ``priced`` still
@@ -104,6 +124,7 @@ def record_from_event(
 
     from personalclaw.pricing import estimate_cost, has_pricing
 
+    model = answered_model(event, model)
     input_tokens = int(getattr(event, "input_tokens", 0) or 0)
     output_tokens = int(getattr(event, "output_tokens", 0) or 0)
     cache_read = int(getattr(event, "cache_read_tokens", 0) or 0)

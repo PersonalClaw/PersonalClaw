@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from '../../lib/api'
+import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type WorkflowRunSummary } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { Button } from '../../ui/Button'
 import { PageTitle } from '../../ui/PageTitle'
 import { TextLink } from '../../ui/TextLink'
@@ -91,6 +91,9 @@ interface Attention {
   /** Every loop, whatever backs it (`GET /api/loops` lists run-backed loops too) — the Working
    *  lane's evidence for a loop no chat session carries. */
   loops: Loop[]
+  /** Every RUNNING workflow run — the Working lane's evidence for a run that is neither a chat
+   *  session nor a loop. */
+  runs: WorkflowRunSummary[]
 }
 
 /** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
@@ -143,13 +146,15 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, sessions, loops] = await Promise.all([
+  const [items, approvals, sessions, loops, running] = await Promise.all([
     api.inboxOpen(),
     api.approvals(),
     api.chatSessions(),
     api.uLoops(),
+    // 200 is the route's own ceiling (`api_runs_list`), far past what one install runs at once.
+    api.workflowRuns({ status: 'running', limit: 200 }),
   ])
-  return { items, approvals, activity: sessions.map(activityOf), loops }
+  return { items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -221,10 +226,15 @@ function endedText(err: unknown): string | null {
 }
 
 /** The frames that change what this view shows. Push, not a poll: the registry broadcasts
- *  `approval`/`approval_resolved`, the Inbox `inbox*`, and a session's run state `sessions`/
- *  `chat_status` — so a card appears, resolves or moves lane while the page is open, without a
- *  timer re-reading three endpoints on an idle tab. */
-function refreshesAttention(type: string): boolean {
+ *  `approval`/`approval_resolved`, the Inbox `inbox*`, a session's run state `sessions`/
+ *  `chat_status`, and the gateway's listing hint `refresh` names `workflow_runs` when a workflow
+ *  run starts, changes status or ends, and `loops` when a loop does — so a card appears,
+ *  resolves or moves lane while the page is open, without a timer re-reading five endpoints on an
+ *  idle tab. The two Working-lane lists had no frame here, so a run that finished or failed kept
+ *  its "running" card until a reload. */
+function refreshesAttention(m: WsMessage): boolean {
+  const type = m.type
+  if (type === 'refresh') return refreshKinds(m).some((k) => k === 'workflow_runs' || k === 'loops')
   return type === 'approval' || type === 'approval_resolved' || type.startsWith('inbox')
     || type === 'sessions' || type === 'chat_status'
 }
@@ -237,7 +247,7 @@ export function MissionControl() {
   // collapses into one re-read shortly after it settles; the same debounce Home applies to them.
   const debounce = useRef<number | undefined>(undefined)
   const onMessage = useCallback((m: WsMessage) => {
-    if (!refreshesAttention(m.type)) return
+    if (!refreshesAttention(m)) return
     if (debounce.current) clearTimeout(debounce.current)
     debounce.current = window.setTimeout(refresh, 300)
   }, [refresh])
@@ -248,8 +258,9 @@ export function MissionControl() {
   const approvals = data?.approvals ?? []
   const activity = data?.activity ?? []
   const loops = data?.loops ?? []
+  const runs = data?.runs ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
-  const lanes = useMemo(() => toLanes(items, approvals, activity, loops), [items, approvals, activity, loops])
+  const lanes = useMemo(() => toLanes(items, approvals, activity, loops, runs), [items, approvals, activity, loops, runs])
 
   const mark = useCallback((key: string, o: Outcome) => {
     setOutcomes((prev) => ({ ...prev, [key]: o }))
@@ -443,6 +454,15 @@ function AttentionCard({
         <p data-type="body-s" className="min-w-0 text-on-surface">
           {question.prompt}
         </p>
+      ) : null}
+      {/* Working work opens where it runs. The derivation already put each card's page on
+          `refs.link` (a loop's cockpit, a run's page); nothing rendered it, so a Working card was
+          a name with no way to reach the work it named. */}
+      {(card.origin === 'run' || card.origin === 'loop') && typeof card.refs?.link === 'string' ? (
+        <TextLink href={card.refs.link} ink="emphasis" size="sm"
+          aria-label={`${card.origin === 'run' ? 'Open the run' : 'Open the loop'}: ${subject}`}>
+          {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
+        </TextLink>
       ) : null}
 
       {/* The outcome, in words, in a live region. A resolved card that only changed colour is a

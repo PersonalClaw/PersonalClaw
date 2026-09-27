@@ -14,6 +14,8 @@ const { API } = vi.hoisted(() => ({
   API: {
     triggerHistory: vi.fn(),
     triggerRunDetail: vi.fn(),
+    // The schedule panel names a schedule's chat channel by its display name.
+    channels: vi.fn(() => Promise.resolve([])),
   },
 }))
 

@@ -9,6 +9,9 @@ import { TextArea, FieldError } from '../../ui/forms'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { SOURCE_TONE, noBaselineReason, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -177,30 +180,48 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
   )
 }
 
-/** Inline SKILL.md editor → GET content, PUT /api/skills/{name} {content}. */
+/** Inline SKILL.md editor → GET content, PUT /api/skills/{name} {content} over its revision. */
 function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => void; onSaved: () => void }) {
   // Cache the fetched SKILL.md so reopening the editor paints instantly; local
   // `content` is the editable copy, seeded from the cache when it lands.
   //
   // 🔴 NO FALLBACK. This read seeds an editor whose Save PUTs the whole document, and
   // `.catch(() => '')` made a failed read an empty SKILL.md: the field empty, Save enabled, no
-  // error — one click replaced the skill's instructions with nothing. It also persisted that ''
-  // under the key `FileView` reads for the same file. The failure is shown with a retry, and the
-  // editor waits for a real read.
-  const { data: fetched, error: fetchErr, refresh } = useQuery<string>(`skill:content:${name}:SKILL.md`, () => api.skillContent(name), { persist: true })
+  // error — one click replaced the skill's instructions with nothing. The failure is shown with a
+  // retry, and the editor waits for a real read.
+  //
+  // Its own key, not `FileView`'s. This read is the body a session LOADS — accepted refinements
+  // overlaid — with the revision of exactly that body; the file view reads SKILL.md's raw bytes.
+  // Two different documents used to share `skill:content:<name>:SKILL.md`, so whichever surface
+  // opened second first painted the other one's.
+  const key = `skill:document:${name}`
+  const { data: fetched, error: fetchErr, refresh } = useQuery<Revisioned<string>>(key, () => api.skillDocument(name), { persist: true })
+  // The copy `content` was seeded from — the base a save names, so it moves only with a re-seed.
+  const [base, setBase] = useState<Revisioned<string> | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  useEffect(() => { if (fetched !== undefined) setContent(fetched) }, [fetched])
+  useEffect(() => { if (fetched !== undefined) { setBase(fetched); setContent(fetched.value) } }, [fetched])
+  // 🔴 SAVED OVER THE COPY IT WAS BUILT FROM. The gateway rewrites skills on its own — the curator
+  // ages them, a session refines them, an app or pack update re-seeds them — and this editor used to
+  // save its copy straight over any of that. A stale copy is refused now, and the edit, which is a
+  // text change, is re-applied onto what is stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.skillDocument(name),
+    write: (next, revision) => api.updateSkill(name, next, revision),
+    onSaved: () => {
+      invalidateKeys(key); invalidateKeys(`skill:content:${name}:SKILL.md`); invalidateKeys(`skill:files:${name}`)
+      onSaved()
+    },
+    onDiscard: () => { invalidateKeys(key); refresh() },
+  })
+  const held = guard.conflict !== null
 
   async function save() {
-    if (content === null) return
+    if (content === null || base === null) return
     setBusy(true); setErr('')
-    try {
-      await api.updateSkill(name, content)
-      invalidateKeys(`skill:content:${name}:SKILL.md`); invalidateKeys(`skill:files:${name}`)
-      onSaved()
-    }
+    // `false` is a refusal the notice now holds, with the draft still on screen; success closes the editor.
+    try { if (!(await guard.save(base, content, rebaseText(base.value, content)))) setBusy(false) }
     catch (e) { setErr((e as Error).message || 'Save failed'); setBusy(false) }
   }
 
@@ -212,11 +233,14 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
         ? (fetchErr
           ? <LoadError what="SKILL.md" error={fetchErr} onRetry={refresh} />
           : <Skeleton className="h-72 w-full" />)
-        : <TextArea value={content} onChange={setContent} rows={18} mono />}
+        : <TextArea value={content} onChange={setContent} rows={18} mono disabled={held}
+            disabledReason={held ? HELD_CHANGE_REASON : undefined} />}
+      <StaleWriteNotice guard={guard} what="This skill" />
       {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s">
         <Button size="sm" variant="ghost" onClick={onBack}><X size={14} /> Cancel</Button>
-        <Button size="sm" onClick={save} loading={busy} disabled={busy || content === null}><Save size={14} /> Save</Button>
+        <Button size="sm" onClick={save} loading={busy} disabled={busy || content === null || held}
+          disabledReason={held ? HELD_CHANGE_REASON : undefined}><Save size={14} /> Save</Button>
       </div>
     </div>
   )

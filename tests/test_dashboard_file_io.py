@@ -164,8 +164,12 @@ class TestFileWrite:
     @pytest.mark.asyncio
     async def test_write_success(self, tmp_file, mock_sel, home_patch):
         async with TestClient(TestServer(_make_app())) as client:
+            # A save names the revision of the copy it replaces: the read's ETag.
+            read = await client.get(f"/api/file-read?path={tmp_file}")
             resp = await client.post(
-                "/api/file-write", json={"path": str(tmp_file), "content": "updated"}
+                "/api/file-write",
+                json={"path": str(tmp_file), "content": "updated"},
+                headers={"If-Match": read.headers["ETag"]},
             )
             assert resp.status == 200
             assert tmp_file.read_text() == "updated"
@@ -324,7 +328,9 @@ class TestOneNameContractAtBothEnds:
             assert "hi" in body
 
             written = await client.post(
-                "/api/file-write", json={"path": target, "content": "edited"}
+                "/api/file-write",
+                json={"path": target, "content": "edited"},
+                headers={"If-Match": read.headers["ETag"]},
             )
             assert (
                 written.status == 200
@@ -766,7 +772,7 @@ class TestSendMessage:
                 mock_rehydrate.assert_called_once_with(state, "chat-1-1712793600")
                 state.notify.assert_called_once()
                 call_args = state.notify.call_args[0]
-                assert call_args[1] == "⏰ test-cron"
+                assert call_args[1] == "Trigger: test-cron"
                 assert "session closed" in call_args[2]
 
     @pytest.mark.asyncio

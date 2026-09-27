@@ -50,6 +50,7 @@ from personalclaw.dashboard.chat_fork import (  # noqa: F401
 from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     MAX_COLOR_INDEX,
     api_chat,
+    api_chat_image_input,
     api_chat_mode,
     api_chat_screen_frame,
     api_chat_screen_frame_pin,

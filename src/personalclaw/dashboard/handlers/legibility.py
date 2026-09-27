@@ -21,6 +21,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.legibility.always_on import (
+    AlwaysOnItem,
     InstructionWriteError,
     collect_always_on,
     read_instruction,
@@ -32,6 +33,7 @@ from personalclaw.legibility.discover import (
     compute_discover,
     dismiss,
 )
+from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,12 @@ async def api_always_on(request: web.Request) -> web.Response:
     return web.json_response(inventory.to_dict())
 
 
+def _item_with_revision(item: AlwaysOnItem) -> dict:
+    """An item as the editor round-trip serves it: the verbatim body, plus the revision of that
+    body — what a PUT replacing it must name in ``If-Match`` (``personalclaw/stale_write.py``)."""
+    return {**item.to_dict(include_body=True), "revision": revision_of(item.body)}
+
+
 async def api_always_on_doc(request: web.Request) -> web.Response:
     """GET /api/legibility/always-on/doc?id=&project_id= — one body, verbatim, for the editor."""
     item_id = str(request.query.get("id", "")).strip()
@@ -118,7 +126,7 @@ async def api_always_on_doc(request: web.Request) -> web.Response:
         item = read_instruction(item_id, project_id=project_id, agent=agent)
     except InstructionWriteError as exc:
         return web.json_response({"error": exc.reason}, status=exc.status)
-    return web.json_response(item.to_dict(include_body=True))
+    return web.json_response(_item_with_revision(item))
 
 
 async def api_always_on_doc_write(request: web.Request) -> web.Response:
@@ -127,6 +135,10 @@ async def api_always_on_doc_write(request: web.Request) -> web.Response:
     Body: ``{"id": "...", "project_id": "...", "body": "..."}``. A refused or failed write is an
     error response, never a silent success — the underlying store reports failure as a bare
     ``False`` and rendering "Saved" over a discarded edit is the failure this guards.
+
+    Replacing a document that exists names the revision its read reported in ``If-Match``, and a
+    stale one is refused with ``409 stale_write``. Creating the overview — a project with none
+    yet, which no read can hand a revision for — needs none.
     """
     try:
         payload = await request.json()
@@ -143,8 +155,44 @@ async def api_always_on_doc_write(request: web.Request) -> web.Response:
     if not isinstance(body, str):
         return web.json_response({"error": "body must be a string"}, status=400)
     project_id = str(payload.get("project_id", "")).strip()
+    stale = _stale_instruction_refusal(request, item_id, project_id)
+    if stale is not None:
+        return stale
     try:
         item = write_instruction(item_id, body, project_id=project_id)
     except InstructionWriteError as exc:
         return web.json_response({"error": exc.reason}, status=exc.status)
-    return web.json_response({"ok": True, "item": item.to_dict(include_body=True)})
+    return web.json_response({"ok": True, "item": _item_with_revision(item)})
+
+
+def _stale_instruction_refusal(
+    request: web.Request, item_id: str, project_id: str
+) -> web.Response | None:
+    """The refusal a replace from a stale copy gets, else ``None`` (``write_instruction`` still
+    decides whether the item may be written at all).
+
+    🔴 THE OVERVIEW IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. It is not the page's alone:
+    every workflow run that completes in the project appends a line to it
+    (``RunController._revise_project_overview``), so an editor opened before a run finished used to
+    save its old copy over that line. Compared against the body the GET serves, with no await
+    between this check and the write.
+
+    An item not in effect is one with no content yet — the overview a PUT may create — so a PUT
+    naming no revision passes. A PUT that DOES name one was built from a document that has since
+    been emptied, and is refused like any other stale copy. A read-only item, and a request
+    naming no project, are left to the write's own refusal, which says what is wrong.
+    """
+    if not project_id:
+        return None
+    try:
+        current = read_instruction(item_id, project_id=project_id)
+    except InstructionWriteError:
+        if not claimed_revision(request):
+            return None
+        name = item_id.split(":", 1)[-1]
+        return stale_write_refusal(request, None, what=f"the project instruction {name!r}")
+    if not current.editable:
+        return None
+    return stale_write_refusal(
+        request, current.body, what=f"the project instruction {current.name!r}"
+    )

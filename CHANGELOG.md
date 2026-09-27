@@ -10,11 +10,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A sidecar app's engine installs from the dashboard: Install engine, on its card in Settings → Providers and on its Configure page.**
+
+- **Install consent and the Store card say what an app needs that PersonalClaw doesn't install.**
+
+- **Codex's compressed sessions come over too.**
+
 - **A task's due date now reminds you the day before, once, and you can turn that off per task.**
 
 - **A workflow can be edited in the dashboard.**
 
 - **A remote MCP server that signs in with OAuth connects: Sign in on its Tools page card, and it stays signed in.**
+
+- **⌘K searches what is inside the app, not only its pages.**
 
 - **An SDK change is a reviewed diff, and CI runs the first-party apps' contract on it.**
 
@@ -35,6 +43,35 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A model provider you add without choosing a model says so, and never answers on a model nobody chose; its Default Model is the model it answers with.**
+- **Mission Control follows a workflow run as it changes, an approval nobody answered no longer reads "(rejected)", and its Inbox note runs the call again where it was asked and resolves once it is answered.**
+- **Bringing your setup over answers in seconds on a months-long history, and imports all of it with progress you can stop.**
+
+- **An app update keeps the engine installed in the app's folder, as it keeps the app's data.**
+- **A chat turn is priced by the model that answered it, and a room member's turn falls back down its chain too.**
+- **The install scanner reads a language's rule only in that language.**
+- **Opening a chat you brought over from another tool no longer logs a 404.**
+- **A pasted image the model is shown is not also read into text, and what you see names it as you attached it.**
+- **A rewind confirmed while a run waits at a gate applies, a cancel closes the run's gates, and a step that parks on a sign-in page asks you.**
+- **An app's own page can save over the copy it read, and a refused save says what it refused.**
+- **A trigger refused away from the dashboard says where it is allowed, not who may allow it.**
+- **Rebinding a model in Settings → Models reaches everything already running, not only new chats.**
+- **A model bound in Settings → Models is the model that answers, even when its id has a slash in it.**
+- **A first model download checks free space before it starts.**
+- **A download refused for disk space says why in a sentence, a download that could not check the disk says so while it runs, and model sizes read in one unit.**
+- **Reading an image names the model that reads it, or says no image model is set up.**
+- **Tapping a due-task reminder's desktop notification opens Tasks.**
+
+- **The terminal draws its letters in its own font, and every bundled font draws the weights `fonts.css` says it has.**
+- **A failed download of the bundled chat model says what to do about it.**
+- **A chat turn whose model fails before it replies is answered by the next model in its chain, and says so; a provider's refusal names the real fix.**
+- **Every chat channel's trust is set on the Sender trust page, the Channel DM target sends, and a schedule's results reach the channel it names.**
+- **A screen reader hears how a chat turn ended: complete, stopped, or with an error.**
+
+- **Two programs saving settings at the same moment no longer undo each other.**
+
+- **Mission Control's Working lane lists every running workflow run, and a call denied without an answer is in the Inbox the next morning.**
+
 - **The chat and an app's Configure page see a failed channel read.**
 - **An app installed from the Store shows its update, and Update starts from where it came from.**
 
@@ -42,10 +79,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **On the project pages, Resume resumes, Plan a project plans, and an exported project can be imported again from the Projects page.**
 
+- **The npm packages bundled into the dashboard ship with their licence notices, and Settings → Updates links them.**
+
 - **A trigger's Run workflow action names its workflow, a restart's missed and interrupted runs wait on the Triggers page for your decision, and the HEARTBEAT.md queue is an automation you can see and switch off.**
 - **A channel set up in the dashboard knows its owner, and a chat can continue on it.**
 - **The answer to a message from a chat channel goes back to that channel.**
 
+- **A failed chat action says so, and leaves the page as it was.**
+
+- **A turn's details keep their telemetry line after a reload, and the gateway's messages say things in words.**
+
+- **The credential guard protects `~/.aws`, `~/.ssh` and the other credential locations when they are symlinks.**
+- **The Backups panel names a replace-restore command that works, and so does every other command PersonalClaw tells you to run.**
+- **Settings › Security says when Max memory and Max processes don't contain a child.**
 - **A model you chose is the model that answers, or PersonalClaw says it is not: an agent's missing model is no longer swapped in silence.**
 - **A browse task that stops at a sign-in page says why on its needs-input card.**
 
@@ -62,11 +108,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A service starts the gateway with the environment you install it from, and never with a secret.**
 - **The install kind comes from where the running package lives, never from the directory PersonalClaw was started in.**
 - **"Speak replies aloud" reads each finished reply out, and Speak says what is actually missing.**
+- **An image reaches a model that takes images as the image itself, and a pasted screenshot attaches.**
 
 - **An app update runs the new version at once, or says a restart is needed, and why.**
 - **Gateway startup, the Settings → Providers switch and agent sessions go through the one app load path too.**
 - **A proposal's second opinion no longer stops the gateway, and no decision stays hidden in Filtered.**
 - **An event trigger fires: a memory write, an inbox message or an app event runs its action once, and the run shows in the trigger's history.**
+
+- **A save from a page that is out of date is refused instead of overwriting a change made elsewhere.**
 
 - **A workflow step whose model is still generating is no longer stopped as stalled, and every step records what its model calls used, the failed ones included.**
 - **The chat header fits at every width, and a chat an app started says so under its title.**
@@ -151,6 +200,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A failed chat turn says what failed and lands where you can see it, and editing an earlier message no longer deletes the turns after it without a trace.**
 
 ### Security
+
+- **A file-backed artifact points only at a file PersonalClaw's own surfaces reach, so saving one can no longer overwrite a file anywhere on disk.**
+- **Saving something that shows a hidden credential no longer writes `[REDACTED: credential]` over the real value.**
+
+- **Allowing a trigger allows what it runs now, and only you allow one.**
+
+- **A trigger runs only what it was allowed to run, and a restart never allows anything.**
+
+- **A trigger file from an older version is read once, and what its triggers would run waits for you to allow it.**
+
+- **An app can no longer read your first-run setup or run its network scan.**
 
 - **An app can no longer change your models.**
 

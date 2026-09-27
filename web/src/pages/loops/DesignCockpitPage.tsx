@@ -10,8 +10,12 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { unavailableWhen } from '../../ui/unavailable'
 import { ReactWidgetFrame } from '../../ui/widget/ReactWidgetFrame'
 import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
+import type { Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { downloadText, safeFilename } from '../../lib/download'
 import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
 import { useRunStream } from './useRunStream'
@@ -22,6 +26,7 @@ import { promptInput } from '../../ui/dialog'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -41,6 +46,42 @@ export interface ResolvedTokens {
   overrides: Record<string, any>
   scheme: string
 }
+
+/** A design loop's `kind_config.token_overrides` — the tree every token edit changes. */
+export type TokenOverrides = Record<string, any>
+
+/** The overrides as a read of `loop` shows them, with the revision the same read reported — the
+ *  base a token edit names. */
+export function overridesOf(loop: Loop): Revisioned<TokenOverrides> {
+  return { value: ((loop.kind_config || {}) as Record<string, any>).token_overrides || {}, revision: loop.revision ?? '' }
+}
+
+/** THE token edit, as an operation: `ov` with ANY token set by dotted path (e.g. "radius.lg",
+ *  "typography.family.sans") — the vision's "choose ANY override to the defaults". An empty value
+ *  deletes the override (revert to default). Deep-merges so siblings are kept. Pure, so the same edit
+ *  re-applies onto the overrides as stored when the first try finds them changed. */
+export function withTokenOverride(ov: TokenOverrides, path: string, value: string): TokenOverrides {
+  const next = JSON.parse(JSON.stringify(ov || {}))
+  const segs = path.split('.')
+  const chain: any[] = [next]
+  let node = next
+  for (let i = 0; i < segs.length - 1; i++) { node[segs[i]] = node[segs[i]] || {}; node = node[segs[i]]; chain.push(node) }
+  const leaf = segs[segs.length - 1]
+  if (value.trim()) node[leaf] = value.trim()
+  else {
+    // Reset: delete the leaf AND prune now-empty parent objects so the override tree
+    // stays clean (no lingering {radius:{}} that inflates the override-group count).
+    delete node[leaf]
+    for (let i = chain.length - 1; i > 0; i--) {
+      if (Object.keys(chain[i]).length === 0) delete chain[i - 1][segs[i - 1]]; else break
+    }
+  }
+  return next
+}
+
+/** Why a token edit cannot start while an earlier refused one is held: the guard keeps ONE change
+ *  until the user reapplies or drops it, and a second edit landing would drop the first unseen. */
+export const TOKEN_EDIT_HELD = HELD_CHANGE_REASON
 
 
 /** Design loop cockpit. A design loop still follows the loop spine
@@ -144,9 +185,9 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   const canAct = (action: LoopAction) => !!status && LOOP_ACTION_SOURCE_STATUSES[action].has(status)
   // The token spec is editable ONLY pre-launch — once the loop has started, the backend
   // freezes it (store.update_spec returns None → the PUT 409s). Overrides applied after that
-  // silently no-op (updateULoop .catch swallows the 409, the promptInput modal closes as if it
-  // worked). So the token editor must go read-only for a started/terminal loop — show the
-  // resolved system, don't offer edits that can't persist.
+  // cannot persist — once they no-op'd silently (the write's `.catch` swallowed the 409 and the
+  // promptInput modal closed as if it worked). So the token editor must go read-only for a
+  // started/terminal loop — show the resolved system, don't offer edits that can't persist.
   //
   // "Pre-launch" is the backend's own `PRELAUNCH_STATUSES`, read from the one mirror rather
   // than respelled here. This was the fifth hand-written copy of that set, and the same set
@@ -187,6 +228,25 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     })
   }
 
+  // 🔴 A TOKEN EDIT IS AN OPERATION — "set radius.lg", "apply this brand ramp" — BUT THE WRITE REPLACES
+  // `token_overrides` WHOLE. It used to be built from the loop this page last read, and to send that
+  // read's `kind_config` back beside it: an override set since (the planning walkthrough's preview,
+  // another tab) was put back as this page last saw it, and the echoed config was the REDACTED view
+  // (`get_redacted`), so its masks could be written over real values. Now each edit names the
+  // revision of the copy it was built from, a refusal is re-applied as the same operation onto what
+  // is stored (`guard.apply`), and the write carries only `token_overrides` — the server merges it
+  // into the stored `kind_config` (`loop_routes._merge_kind_config`).
+  //
+  // The refetch lives in `onSaved`, which only a landed write reaches — the first try or one
+  // re-applied from the notice — so a refused or failed edit never re-renders as "nothing happened".
+  const guard = useStaleWriteGuard<TokenOverrides>({
+    read: async () => overridesOf(await api.uLoop(id)),
+    write: (next, revision) => api.saveULoopSpec(id, { kind_config: { token_overrides: next } }, revision),
+    onSaved: () => { loadLoop(); loadTokens() },
+    onDiscard: () => { loadLoop(); loadTokens() },
+  })
+  const held = guard.conflict !== null
+
   // Apply a chosen color as a primitive-scale override, persisted into the loop's
   // token_overrides so it cascades through every role/component/gradient that references
   // it. brand/accent/neutral are the three scales that most define a system's feel.
@@ -194,47 +254,20 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   // semantic roles reference steps across the ramp (bg→50/100, text→600/700, border→200,
   // brand.hover→600, …), so a single-step override would barely move the visible system.
   // A full ramp makes the screenshot's color actually take over surfaces/text/states.
-  const applyColorOverride = useCallback(async (scale: PaletteScale, hex: string) => {
+  const applyColorOverride = useCallback((scale: PaletteScale, hex: string) => {
     if (!loop) return
-    const kc = (loop.kind_config || {}) as Record<string, any>
-    const prev = (kc.token_overrides || {}) as Record<string, any>
-    const next = {
-      ...prev,
-      color: { ...(prev.color || {}), primitive: {
-        ...((prev.color || {}).primitive || {}),
-        [scale]: buildRamp(hex),
-      } },
-    }
-    if (!(await reportingWrite(`apply the ${scale} colour`,
-      () => api.updateULoop(id, { kind_config: { ...kc, token_overrides: next } })))) return
-    loadLoop(); loadTokens()
-  }, [loop, id, loadLoop, loadTokens])
+    const ramp = buildRamp(hex)
+    void reportingWrite(`apply the ${scale} colour`, () => guard.apply(overridesOf(loop), (ov) => ({
+      ...ov,
+      color: { ...(ov.color || {}), primitive: { ...((ov.color || {}).primitive || {}), [scale]: ramp } },
+    })))
+  }, [loop, guard.apply])
 
-  // Set ANY token by dotted path (e.g. "radius.lg", "typography.family.sans") in the
-  // loop's token_overrides — the vision's "choose ANY override to the defaults". An empty
-  // value deletes the override (revert to default). Deep-merges so siblings are kept.
-  const setTokenOverride = useCallback(async (path: string, value: string) => {
+  // Set ANY token by dotted path in the loop's token_overrides (`withTokenOverride`).
+  const setTokenOverride = useCallback((path: string, value: string) => {
     if (!loop) return
-    const kc = (loop.kind_config || {}) as Record<string, any>
-    const ov = JSON.parse(JSON.stringify(kc.token_overrides || {}))
-    const segs = path.split('.')
-    const chain: any[] = [ov]
-    let node = ov
-    for (let i = 0; i < segs.length - 1; i++) { node[segs[i]] = node[segs[i]] || {}; node = node[segs[i]]; chain.push(node) }
-    const leaf = segs[segs.length - 1]
-    if (value.trim()) node[leaf] = value.trim()
-    else {
-      // Reset: delete the leaf AND prune now-empty parent objects so the override tree
-      // stays clean (no lingering {radius:{}} that inflates the override-group count).
-      delete node[leaf]
-      for (let i = chain.length - 1; i > 0; i--) {
-        if (Object.keys(chain[i]).length === 0) delete chain[i - 1][segs[i - 1]]; else break
-      }
-    }
-    if (!(await reportingWrite(`set ${path}`,
-      () => api.updateULoop(id, { kind_config: { ...kc, token_overrides: ov } })))) return
-    loadLoop(); loadTokens()
-  }, [loop, id, loadLoop, loadTokens])
+    void reportingWrite(`set ${path}`, () => guard.apply(overridesOf(loop), (ov) => withTokenOverride(ov, path, value)))
+  }, [loop, guard.apply])
 
   if (notFound) return (
     <div className="grid h-full place-items-center text-on-surface-low">
@@ -359,9 +392,10 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2xl py-l">
-        {tab === 'tokens' && <TokensView tokens={tokens} tokensErr={tokensErr} scheme={scheme} overrideCount={overrideCount} onRefresh={loadTokens} onOverride={setTokenOverride} readOnly={specFrozen} />}
+        <StaleWriteNotice guard={guard} what="This design system" className="mb-l max-w-[64rem]" />
+        {tab === 'tokens' && <TokensView tokens={tokens} tokensErr={tokensErr} scheme={scheme} overrideCount={overrideCount} onRefresh={loadTokens} onOverride={setTokenOverride} readOnly={specFrozen} locked={held ? TOKEN_EDIT_HELD : undefined} />}
         {tab === 'canvas' && <CanvasView artifacts={reactArtifacts} loopId={id} />}
-        {tab === 'palette' && <PaletteView onApply={applyColorOverride} readOnly={specFrozen} />}
+        {tab === 'palette' && <PaletteView onApply={applyColorOverride} readOnly={specFrozen} locked={held ? TOKEN_EDIT_HELD : undefined} />}
         {tab === 'contrast' && <ContrastView tokens={tokens} tokensErr={tokensErr} onRefresh={loadTokens} scheme={scheme} />}
         {tab === 'exports' && <ExportsView loop={loop} tokens={tokens} tokensErr={tokensErr} components={reactArtifacts} docs={docArtifacts} />}
       </div>
@@ -480,7 +514,10 @@ function TokensUnread({ tokensErr, onRefresh }: { tokensErr?: unknown; onRefresh
 
 // ── Tokens view — live swatches + scales from the resolved token set ──
 
-export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh, onOverride, readOnly }: { tokens: ResolvedTokens | null; tokensErr?: unknown; scheme: Scheme; overrideCount?: number; onRefresh?: () => void; onOverride?: (path: string, value: string) => void; readOnly?: boolean }) {
+/** `locked` is why an override cannot be STARTED right now (a refused edit is held for the user to
+ *  settle) — the edit targets stay on screen and reachable, and say so; `readOnly` means there are
+ *  no edits on this loop at all. */
+export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh, onOverride, readOnly, locked }: { tokens: ResolvedTokens | null; tokensErr?: unknown; scheme: Scheme; overrideCount?: number; onRefresh?: () => void; onOverride?: (path: string, value: string) => void; readOnly?: boolean; locked?: string }) {
   if (!tokens) return <TokensUnread tokensErr={tokensErr} onRefresh={onRefresh} />
   const t = tokens.resolved
   // Token files carry `comment` keys for human context — strip them from any map we
@@ -586,9 +623,9 @@ export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh
                   <span data-type="caption" className="text-on-surface-low font-mono">{k} · {String(v)}</span>
                 </div>
               ) : (
-                <button key={k} type="button" title={`Override radius.${k} (now ${v})`}
+                <button key={k} type="button" {...unavailableWhen(!!locked, locked ?? '', { title: `Override radius.${k} (now ${v})` })}
                   onClick={async () => { const nv = await promptInput({ title: `Override radius.${k}`, label: `radius.${k} — new value (e.g. 0.5rem, 12px). Empty to reset to default.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`radius.${k}`, nv) }}
-                  className="flex flex-col items-center gap-1 group">
+                  className="flex flex-col items-center gap-1 group aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                   <span className="size-12 bg-surface-high border border-outline-variant/40 transition-colors group-hover:border-primary" style={{ borderRadius: v }} />
                   <span data-type="caption" className="text-on-surface-low font-mono group-hover:text-on-surface">{k}</span>
                 </button>
@@ -617,9 +654,9 @@ export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh
                   <span data-type="body-m" className="truncate text-on-surface" style={{ fontFamily: String(v) }}>The quick brown fox</span>
                 </div>
               ) : (
-                <button key={k} type="button" title={`Override typography.family.${k}`}
+                <button key={k} type="button" {...unavailableWhen(!!locked, locked ?? '', { title: `Override typography.family.${k}` })}
                   onClick={async () => { const nv = await promptInput({ title: `Override typography.family.${k}`, label: `typography.family.${k} — new font stack (e.g. "Roboto, sans-serif"). Empty to reset.`, initial: String(v), required: false }); if (nv !== null) onOverride?.(`typography.family.${k}`, nv) }}
-                  className="flex items-baseline gap-3 text-left group">
+                  className="flex items-baseline gap-3 text-left group aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                   <span data-type="caption" className="w-16 shrink-0 text-on-surface-low font-mono capitalize group-hover:text-on-surface">{k}</span>
                   <span data-type="body-m" className="truncate text-on-surface group-hover:text-primary" style={{ fontFamily: String(v) }}>The quick brown fox</span>
                 </button>
@@ -905,7 +942,7 @@ function ContrastBadges({ ratio }: { ratio: number }) {
 
 // ── Palette view — upload a screenshot, extract its dominant colors client-side ──
 
-function PaletteView({ onApply, readOnly }: { onApply: (scale: PaletteScale, hex: string) => void; readOnly?: boolean }) {
+function PaletteView({ onApply, readOnly, locked }: { onApply: (scale: PaletteScale, hex: string) => void; readOnly?: boolean; locked?: string }) {
   const [palette, setPalette] = useState<string[]>([])
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -956,7 +993,8 @@ function PaletteView({ onApply, readOnly }: { onApply: (scale: PaletteScale, hex
                 {!readOnly && (
                   <div className="ml-auto flex gap-1.5">
                     {PALETTE_SCALES.map(({ scale, label }) => (
-                      <Button key={scale} size="sm" variant="secondary" onClick={() => onApply(scale, hex)}>{label}</Button>
+                      <Button key={scale} size="sm" variant="secondary" onClick={() => onApply(scale, hex)}
+                        disabled={!!locked} disabledReason={locked}>{label}</Button>
                     ))}
                   </div>
                 )}

@@ -319,16 +319,16 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // so a failed create yields a session bound to a profile that does not exist. A library module with
   // no surface; the remedy is to propagate to the picker that called it.
   'lib/agents.ts': 1,
-  // 11: the side-chat open, the title regen, five optimistic organise writes (pin/folder/tags ×2/
+  // 9: the side-chat open, the title regen, three optimistic organise writes (pin/folder/
   // never-archive), the `/optimize` fall-through, the `/undo` fall-through, and the two auto-nudge
-  // controls.
+  // controls. The two tag writes left this list when they became one-tag edits that report a refusal.
   // (b) `/optimize` sends EITHER WAY, and its comment rules on it: "the turn appearing in the
   // transcript is already the answer to what did my click do."
   // (a) for the rest, and this file carries its own exemplar: `setLifecycle` two lines from
   // `setNeverArchive` already does `reportActionFailure` + an UNGATED `load()` (the refetch is the
   // repair for an optimistic move that already lied). The five organise writes are that same shape
   // with the report missing, and `userActionReported` already pinned three of their siblings.
-  'pages/ChatPage.tsx': 11,
+  'pages/ChatPage.tsx': 9,
   // (b) Ruled on twice: its own comment ("a background refresh must never block the open or surface
   // an error toast") and `userActionReported`'s header, which names it as one of two deliberate
   // silences because it is a `view`-trigger side effect of navigation, not an action.
@@ -376,10 +376,10 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   'pages/loops/DesignStepPreview.tsx': 1,
   // (a) A title rename that silently keeps the old name (`.catch(() => null)` then `if (updated)`).
   'pages/loops/LoopCockpitPage.tsx': 1,
-  // (a) ×3: a marketplace SKILL install ("leave un-installed; user can retry"), the pre-launch plan
-  // update whose `.catch(() => {})` lets the loop launch with the OLD plan under a success path, and
-  // the suggest-more-sub-goals click. The install and the plan write are the sharp two.
-  'pages/loops/LoopPlanReview.tsx': 3,
+  // (a) ×2: a marketplace SKILL install ("leave un-installed; user can retry") and the
+  // suggest-more-sub-goals click. The pre-launch plan write that was the third — its `.catch(() => {})`
+  // let the loop launch on the OLD plan under a success path — now reports and starts nothing.
+  'pages/loops/LoopPlanReview.tsx': 2,
   // (b) A dry-run PREVIEW behind a settings row; `setPreview(null)` hides a count, claims nothing.
   'pages/settings/ChatPanel.tsx': 1,
   // (a) The canonical panel's engagement toggle — the twin of the drawer copy above, and the same
@@ -409,8 +409,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // the answer to "did the reconnect work". (The MCP import beside it was the second, a
   // `try { … } finally { setBusy(null) }` with no catch; it reports through `reportingWrite` now.)
   'pages/tools/ToolsPage.tsx': 1,
-  // (a) A lifecycle-hook toggle, same no-catch family.
-  'pages/triggers/LifecycleDetail.tsx': 1,
   // (a) A 👍/👎 that stays optimistic on a failed record. "never break the host surface" argues for
   // not THROWING, not for silence — but the cost of one lost verdict is low and a toast per thumb
   // would be noise, so the remedy is a quiet inline revert rather than a report. Left as debt with
@@ -582,7 +580,9 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     expect(W.size, 'no write methods parsed out of lib/api.ts').toBeGreaterThan(300)
     const c = census()
     expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(30)
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(52)
+    // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
+    // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(48)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

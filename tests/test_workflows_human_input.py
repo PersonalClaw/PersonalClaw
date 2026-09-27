@@ -24,9 +24,10 @@ import time
 
 import pytest
 
+from personalclaw.workflows import gate_answers
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import store
+from personalclaw.workflows import mid_flight, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
@@ -247,7 +248,10 @@ class TestContinuations:
             "checks_run",
             "next_steps",
             "risks",
+            # What the asking step already tried; empty for a gate, which tried nothing.
+            "attempted",
         }
+        assert bundle["attempted"] == []
 
 
 # ── controller integration ───────────────────────────────────────────────────
@@ -276,8 +280,8 @@ class TestBlockedRun:
         """A run passes through needs_input repeatedly as the watchdog polls; a token per
         poll would leave a pile of individually-valid approval links for one question."""
         c, _status = await _blocked({"timeout_secs": 0})
-        c._ensure_continuation("root.children[1]")
-        c._ensure_continuation("root.children[1]")
+        gate_answers.ensure_continuation(c, "root.children[1]")
+        gate_answers.ensure_continuation(c, "root.children[1]")
         assert len(HI.list_continuations(c.run.id)) == 1
 
 
@@ -463,7 +467,7 @@ class TestRewindDropsTokens:
         c, _status = await _blocked({"timeout_secs": 0})
         assert HI.list_continuations(c.run.id)
         c.submit_mutation([{"op": "rewind", "node_id": "approve"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert HI.list_continuations(c.run.id) == []
 
     async def test_rewinding_an_unrelated_node_keeps_the_token(self) -> None:
@@ -473,5 +477,5 @@ class TestRewindDropsTokens:
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
         c.submit_mutation([{"op": "rewind", "node_id": "prep"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert HI.load_continuation(c.run.id, token) is not None

@@ -176,6 +176,8 @@ def test_a_freshly_created_blocking_hook_reports_not_enforcing(store, home):
         "name": "auditor",
         "event": HOOK_EVENT_PRE_TOOL_USE,
         "action": {"provider": "bash", "config": {"command": "exit 2"}},
+        # The owner's yes to the dialog a `bash` action is created behind.
+        "confirm": True,
     }
     req = make_mocked_request("POST", "/api/triggers", app=app)
     req["user"] = "tester"

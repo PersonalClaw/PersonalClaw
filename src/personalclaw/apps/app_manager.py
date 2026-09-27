@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -51,6 +52,7 @@ from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
+    APP_VENV_DIRNAME,
     INSTALLED_META_FILENAME,
     InstalledApp,
     _now_iso,
@@ -75,6 +77,13 @@ _QUARANTINE_DIRNAME = ".quarantine"
 _HOOK_DEFAULT_TIMEOUT = 60  # seconds; setup.onInstall/onUpdate cap
 _ROLLBACK_SUFFIX = ".rollback"  # ~/.personalclaw/apps/.{name}.rollback during update
 _APP_DATA_DIRNAME = "data"  # app-scoped state preserved across updates
+#: What an installed app's folder holds that no bundle ships: the app's STATE, which an update
+#: hands to the new version instead of dropping it with the old version's files. ``data/`` is
+#: the app's own (``sdk.util.app_data_dir``); ``venv/`` is the Python environment its sidecar
+#: runs in (``sdk.sidecar.sidecar_venv_dir``), with the engine installed there — gigabytes a
+#: removal takes with the app, and an update must not. Everything else in the folder is the
+#: installed version's files. ``installed.json`` is the gateway's record, carried on its own.
+_APP_STATE_DIRNAMES = (_APP_DATA_DIRNAME, APP_VENV_DIRNAME)
 #: ``~/.personalclaw/apps/.{name}.data`` — where a keep-data uninstall parks the
 #: app's ``data/`` so the next install of the same name can put it back.
 _PRESERVED_DATA_SUFFIX = ".data"
@@ -1032,6 +1041,44 @@ def _rollback_dir(name: str) -> Path:
     return apps_dir() / f".{_validate_app_name(name)}{_ROLLBACK_SUFFIX}"
 
 
+def _carry_state(
+    src: Path,
+    dst: Path,
+    *,
+    names: tuple[str, ...] | list[str] = _APP_STATE_DIRNAMES,
+    moved: list[str] | None = None,
+) -> list[str]:
+    """Move each of ``names`` (the app's state folders) that ``src`` holds and ``dst`` lacks
+    into ``dst``.
+
+    A rename, never a copy: ``src`` and ``dst`` are an app's live folder and its ``.rollback``,
+    both under ``apps/`` — one filesystem — so each move is atomic and costs the same for a
+    3 GB engine as for an empty folder, and an update never needs the disk twice over. A folder
+    ``dst`` already holds is ``dst``'s own and stays. A link is moved as the link.
+
+    Each move is appended to ``moved`` as it happens (a new list when none is given, returned),
+    so a caller undoing a carry that raised halfway knows exactly what reached ``dst``."""
+    done: list[str] = [] if moved is None else moved
+    for entry in names:
+        here, there = src / entry, dst / entry
+        if os.path.lexists(here) and not os.path.lexists(there):
+            here.rename(there)
+            done.append(entry)
+    return done
+
+
+def _drop_stale_rollback(rollback: Path, live: Path) -> list[str]:
+    """Remove the ``.rollback`` of an update whose swap completed, once it holds no state.
+
+    The update hands the old version's state to the new one after the swap, so a crash in
+    between leaves an engine in the rollback that the live version does not have. It goes to
+    the live version first; only the old version's files are removed. Returns what it carried.
+    """
+    carried = _carry_state(rollback, live)
+    shutil.rmtree(rollback, ignore_errors=True)
+    return carried
+
+
 def _preserved_data_dir(name: str) -> Path:
     """Where a keep-data uninstall parks an app's ``data/``: ``apps/.{name}.data``.
 
@@ -1275,10 +1322,18 @@ def update(
 
     State machine, rollback on ANY failure:
 
-      stage+scan new  →  preserve old data/  →  unload old  →  move live → .{name}.rollback
-                      →  swap new in  →  run onUpdate
+      stage+scan new  →  copy old data/ in  →  unload old  →  move live → .{name}.rollback
+                      →  swap new in  →  move the rest of the old state in  →  run onUpdate
         success:  drop .rollback, write installed.json, load new
-        failure:  restore .rollback → live, load OLD, drop the failed new
+        failure:  hand the state back to .rollback, set the failed new aside,
+                  restore .rollback → live, load OLD
+
+    The app's state — every folder in ``_APP_STATE_DIRNAMES`` — survives it. ``data/`` is COPIED
+    in before the swap, so a failed update gives the old version its data exactly as it left it;
+    ``venv/``, the engine a sidecar app runs, is MOVED across after the swap (a rename: it can be
+    gigabytes). Each step is one rename, so a crash anywhere leaves either the old version whole
+    in ``.rollback`` or the new one live with the state still to hand over, and
+    :func:`recover_interrupted_updates` finishes either.
 
     Unload and load are ``apps/app_runtime``'s — the same pair every lifecycle step uses — so
     the new version's code runs as soon as this returns, and whatever of the old version could
@@ -1396,12 +1451,15 @@ def update(
         was_enabled = previous_meta is None or previous_meta.enabled
         app_runtime.unload(name, old_manifest)
 
-        # ── the swap: live → .rollback, new → live ──
+        # ── the swap: live → .rollback, new → live, then the state the new files lack ──
         if rollback.exists():
-            shutil.rmtree(rollback, ignore_errors=True)
+            _drop_stale_rollback(rollback, live)
+        carried: list[str] = []
         shutil.move(str(live), str(rollback))
         try:
             shutil.move(str(staged), str(live))
+            # Before the hook, which may use it: an onUpdate that upgrades the engine in venv/.
+            _carry_state(rollback, live, moved=carried)
             (live / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
             _run_hook(
                 manifest.setup.onUpdate,
@@ -1410,11 +1468,16 @@ def update(
                 env_name="onUpdate",
             )
         except Exception as exc:  # noqa: BLE001 — ANY swap/hook failure → restore
-            # Restore: drop the failed new, move .rollback back to live, and load the old
-            # version again — as it was: a disabled app stays off.
-            shutil.rmtree(live, ignore_errors=True)
+            # Restore, and load the old version again — as it was: a disabled app stays off. What
+            # was carried into the failed new version goes back to the old one FIRST — exactly
+            # that, not a folder the failed hook made — and the failed new version is set aside
+            # (dropped by the `finally`) rather than deleted in place, so a crash between any two
+            # of these renames loses nothing.
+            _carry_state(live, rollback, names=carried)
+            if live.exists():
+                live.rename(staged)
             if rollback.exists():
-                shutil.move(str(rollback), str(live))
+                rollback.rename(live)
             if old_manifest is not None:
                 if was_enabled:
                     app_runtime.load(old_manifest)
@@ -1787,8 +1850,9 @@ def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
 def recover_interrupted_updates() -> list[str]:
     """Reconcile leftover ``.{name}.rollback`` dirs from an update that crashed
     mid-swap (called at startup). If ``live`` is missing/empty, restore from the
-    rollback; otherwise the swap completed and the rollback is stale — drop it.
-    Returns the names recovered."""
+    rollback; otherwise the swap completed and the rollback is stale — drop it, after
+    handing the live version whatever of the app's state the update had not moved over
+    yet (:func:`_drop_stale_rollback`). Returns the names recovered."""
     recovered: list[str] = []
     root = apps_dir()
     if not root.is_dir():
@@ -1809,8 +1873,13 @@ def recover_interrupted_updates() -> list[str]:
                 recovered.append(name)
                 _audit("update_recover", "restored", name)
             else:
-                shutil.rmtree(entry, ignore_errors=True)  # stale rollback
-                _audit("update_recover", "dropped_stale", name)
+                carried = _drop_stale_rollback(entry, live)
+                _audit(
+                    "update_recover",
+                    "dropped_stale",
+                    name,
+                    detail=f"carried={','.join(carried)}" if carried else "",
+                )
         except OSError:
             logger.warning("failed to reconcile rollback dir %s", entry, exc_info=True)
     return recovered

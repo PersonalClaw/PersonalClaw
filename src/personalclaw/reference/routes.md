@@ -117,7 +117,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
 - `GET /api/channels` — all comms transports with info + health.
 - `GET /api/channels/reply-targets` — list channels the bot can reply in.
-- `GET /api/channels/trust` — the whole sender-trust posture, per provider.
+- `GET /api/channels/trust` — the whole sender-trust posture, per chat channel.
+- `POST /api/channels/trust/{provider}/channels` — track one group.
+- `DELETE /api/channels/trust/{provider}/channels/{channel_id}` — stop tracking one group.
+- `DELETE /api/channels/trust/{provider}/pairing` — cancel the outstanding sender code.
+- `POST /api/channels/trust/{provider}/pairing` — mint a sender's code and return it once.
+- `PUT /api/channels/trust/{provider}/policies` — set the DM and/or group policy.
 - `DELETE /api/channels/trust/{provider}/senders/{sender_id}` — revoke one sender.
 - `GET /api/channels/{name}` — one transport's info + health.
 - `POST /api/channels/{name}/connect` — bring the transport online.
@@ -131,6 +136,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/folders` — create a project folder.
 - `DELETE /api/chat/folders/{id}` — delete a folder, ungroup its sessions.
 - `PATCH /api/chat/folders/{id}` — rename or reorder a folder.
+- `GET /api/chat/image-input` — whether an attached image reaches the model as one.
 - `POST /api/chat/mode` — set the tool APPROVAL mode (whether tools auto-approve).
 - `POST /api/chat/nav/resolve-links` — batch-summarize bare links.
 - `GET /api/chat/screen-frame` — can this session share its screen?
@@ -189,7 +195,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/side/turn` — ask one side question.
 - `POST /api/chat/sessions/{session}/stop` — cooperative stop with kill fallback.
 - `POST /api/chat/sessions/{session}/switch-variant` — switch which regenerated variant is active.
-- `PUT /api/chat/sessions/{session}/tags` — replace the session's tag list.
+- `PUT /api/chat/sessions/{session}/tags` — add tags to a session and remove tags from it.
 - `PATCH /api/chat/sessions/{session}/title` — rename a chat session.
 - `GET /api/chat/sessions/{session}/tool-result/{rid}` — the FULL raw output of
 - `POST /api/chat/sessions/{session}/undo` — roll back the last N conversation turns.
@@ -580,7 +586,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
 - `GET /api/onboarding/import` — what each source holds, and what importing each item does.
-- `POST /api/onboarding/import` — import the picked items and report outcomes.
+- `POST /api/onboarding/import` — start importing the picked items.
+- `DELETE /api/onboarding/import/job` — stop the running import after the item it is on.
+- `GET /api/onboarding/import/job` — the running or last import, and its report once finished.
+- `GET /api/onboarding/import/stream` — ``status`` frames: the reading pass and the import.
 - `GET /api/onboarding/local-model` — is a local Ollama reachable on localhost?
 - `POST /api/onboarding/local-model/bind` — credential-free bind of an endpoint.
 - `POST /api/onboarding/local-model/scan` — opt-in LAN sweep for an Ollama.
@@ -820,7 +829,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/voice/resolve` — which level wins, and why.
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
 - `GET /api/workflows` — _(no summary)_
-- `POST /api/workflows` — _(no summary)_
+- `POST /api/workflows` — validate a definition and, unless ``save: false``, save it.
 - `GET /api/workflows/attention` — per-template §4.4 attention summaries.
 - `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
 - `GET /api/workflows/manifest` — the machine-readable self-description of this instance.
@@ -855,7 +864,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/workspace` — GET the run's workspace review: changed files + the two reintegration verbs (§4.1).
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
-- `GET /api/workflows/{name}` — _(no summary)_
+- `GET /api/workflows/{name}` — one definition, and the ``revision`` a save over it names.
 - `POST /api/workflows/{name}/a2a-publish` — the template detail UI's publish toggle.
 - `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
 - `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.

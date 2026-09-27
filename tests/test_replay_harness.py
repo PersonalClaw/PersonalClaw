@@ -987,7 +987,7 @@ class TestConfigRoundTrip:
         assert cfg.learning.replay_max_dollars == 0.0
 
     def test_both_are_in_the_patch_allowlist(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert _EDITABLE_CONFIG["learning.replay_enabled"] == {"type": "bool"}
         spec = _EDITABLE_CONFIG["learning.replay_max_dollars"]

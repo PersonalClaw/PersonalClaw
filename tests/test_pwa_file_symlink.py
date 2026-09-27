@@ -1,5 +1,7 @@
-"""Tests for the dist-ROOT file handlers: /claw.svg, /manifest.webmanifest, /sw.js."""
+"""Tests for the dist-ROOT file handlers: /claw.svg, /manifest.webmanifest, /sw.js and the
+licence notices."""
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -286,3 +288,85 @@ def test_fonts_route_is_a_typed_handler_not_a_static_mount() -> None:
     source = Path(server_mod.__file__).read_text(encoding="utf-8")
     assert 'add_get("/fonts/{name}", handlers.font_asset)' in source
     assert 'add_static("/fonts"' not in source
+
+
+# ── The licence notices, /THIRD_PARTY_NOTICES.txt and /THIRD_PARTY_NOTICES_NPM.txt ──
+#
+# Settings → Updates links both. They are third-party text, so they are driven here through the
+# real security-headers middleware and SPA fallback, as the gateway stacks them.
+
+_NOTICES = (
+    ("/THIRD_PARTY_NOTICES.txt", "Third-party notices for the PersonalClaw dashboard\n"),
+    ("/THIRD_PARTY_NOTICES_NPM.txt", "Third-party notices for the PersonalClaw dashboard's code\n"),
+)
+
+
+def _notices_app() -> web.Application:
+    from personalclaw.dashboard import handlers
+    from personalclaw.dashboard.server import _security_headers_middleware, spa_fallback
+
+    app = web.Application(middlewares=[_security_headers_middleware, spa_fallback])
+    app.router.add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)
+    app.router.add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)
+    return app
+
+
+def _dist_with_index(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>PersonalClaw</title>")
+    return dist
+
+
+@pytest.mark.asyncio
+async def test_the_licence_notices_are_served_as_plain_text_a_browser_cannot_sniff(tmp_path):
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers import core
+
+    dist = _dist_with_index(tmp_path)
+    for path, body in _NOTICES:
+        (dist / path.lstrip("/")).write_text(body)
+    with patch.object(core, "_DIST_DIR", dist):
+        async with TestClient(TestServer(_notices_app())) as client:
+            for path, body in _NOTICES:
+                resp = await client.get(path)
+                assert resp.status == 200, path
+                assert resp.headers["Content-Type"] == "text/plain; charset=utf-8", path
+                assert resp.headers["X-Content-Type-Options"] == "nosniff", path
+                assert await resp.text() == body
+
+
+@pytest.mark.asyncio
+async def test_a_notice_the_build_did_not_write_is_a_404_not_the_dashboard(tmp_path):
+    """The SPA fallback turns a raised 404 into index.html, which a user opening the licence
+    link would read as the dashboard itself. The handler answers the 404 instead."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers import core
+
+    dist = _dist_with_index(tmp_path)
+    with patch.object(core, "_DIST_DIR", dist):
+        async with TestClient(TestServer(_notices_app())) as client:
+            for path, _body in _NOTICES:
+                resp = await client.get(path)
+                assert resp.status == 404, path
+                assert resp.content_type == "text/plain", path
+                assert "<!doctype" not in (await resp.text()).lower(), path
+
+
+def test_the_licence_notices_are_registered_at_the_paths_settings_links() -> None:
+    """The gateway serves both notices at the origin root, and Settings → Updates links those
+    same two paths (``updatesPanelLicences.test.tsx`` holds the links themselves)."""
+    from pathlib import Path
+
+    import personalclaw.dashboard.server as server_mod
+
+    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    assert 'add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)' in source
+    assert 'add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)' in source
+    panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/UpdatesPanel.tsx"
+    linked = set(
+        re.findall(r'href="(/THIRD_PARTY_NOTICES[^"]*)"', panel.read_text(encoding="utf-8"))
+    )
+    assert linked == {path for path, _body in _NOTICES}

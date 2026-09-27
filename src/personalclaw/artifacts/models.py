@@ -169,6 +169,39 @@ class ArtifactVersionConflict(ValueError):
         self.supplied = supplied
 
 
+class ArtifactStaleWrite(ValueError):
+    """A body save named a revision the artifact's body no longer has.
+
+    Raised by ``update(expect_revision=…)`` — the text-body twin of
+    :class:`ArtifactVersionConflict`: a page saves the WHOLE body it edited, and when the body
+    changed since its copy was read (the agent's ``artifact_update``, a workflow, a write to the
+    file it live-points at, another tab) the save would have undone that change. ``current`` is
+    the body as a read presents it NOW (:func:`redacted`), which the REST layer compares the
+    claimed revision against to word the refusal (`personalclaw/stale_write.py`) — it is never
+    sent to the client.
+    """
+
+    def __init__(self, slug: str, current: str) -> None:
+        super().__init__(
+            f"the body of artifact {slug!r} changed since it was read — re-read, re-apply"
+        )
+        self.slug = slug
+        self.current = current
+
+
+def redacted(text: str | None) -> str:
+    """*text* as every artifact read hands it out: the display mask (`security.redact_for_display`).
+
+    One definition for the REST layer, which serves it, and the provider, which checks a body
+    save's revision against it — a revision is only comparable when both take it of the same
+    projection, and it must never encode more than its reader could see. It is also the mask the
+    provider's save undoes (`security.keep_masked_spans`), which is exact only for this one.
+    """
+    from personalclaw.security import redact_for_display
+
+    return redact_for_display(text or "")
+
+
 @dataclass
 class ArtifactEvent:
     """A lifecycle entry in an artifact's activity timeline."""

@@ -47,10 +47,11 @@ const agent = {
   skills: [],
   tools: [],
   triggers: [],
+  revision: 'r1',
 } as SavedAgent
 
 beforeEach(() => {
-  agentMetadata.mockReset().mockResolvedValue('')
+  agentMetadata.mockReset().mockResolvedValue({ value: '', revision: 'r0' })
   routingStatus.mockReset().mockResolvedValue({ enabled: true, muted: [], dismissals: {} })
   mcpActive.mockReset().mockResolvedValue([])
   agentHooks.mockReset().mockResolvedValue({})

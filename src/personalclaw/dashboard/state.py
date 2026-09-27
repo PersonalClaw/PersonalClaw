@@ -62,8 +62,8 @@ logger = logging.getLogger(__name__)
 def _knowledge_embedder_factory():
     """Build a knowledge embedder from PClaw config (or None if disabled).
 
-    Used by the ingestion queue's terminal embed stage — same construction as the
-    knowledge handlers' ``_create_embedder``."""
+    Used by the ingestion queue's terminal embed stage — built per call, so it follows a
+    rebind in Settings → Models as ``knowledge.get_knowledge_embedder`` does."""
     try:
         from personalclaw.config.loader import config_path
         from personalclaw.knowledge.embedder import create_embedder_from_config
@@ -147,7 +147,7 @@ _DEFAULT_PORT = DASHBOARD_PORT
 _SSE_INTERVAL_SECS = 5
 _NOTIFICATIONS_FILE = "notifications.jsonl"
 _MAX_PERSISTED_NOTIFICATIONS = 200
-_AUTO_COMPACT_NOTICE = "🔄 Auto-compacted at {pct:.0f}%."
+_AUTO_COMPACT_NOTICE = "Auto-compacted at {pct:.0f}% of the context window."
 
 # Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
@@ -256,6 +256,7 @@ class _ChatSession:
         "_app",
         "created_by_app",
         "_last_turn_errored",
+        "_last_turn_outcome",
         "_followups_task",
         "_pending_variants",
         "_lock",
@@ -420,7 +421,9 @@ class _ChatSession:
         self._prompt_busy_retries: int = 0
         self._acp_pipe_death_retries: int = 0
         self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)
-        self._batch_rejected: bool = False
+        # How this turn's refused batch was refused ("rejected" | "expired" | "cancelled"), or "".
+        # The rest of the batch is refused without asking, and says so in the same words.
+        self._batch_rejected: str = ""
         self.color_index: int | None = None
         self.color_theme: str = ""
         # Natural voice, per-conversation scope: a TRI-state
@@ -446,6 +449,11 @@ class _ChatSession:
         # is decided on (`DashboardState.session_creating_app`).
         self.created_by_app: str = ""
         self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
+        # How the latest turn that left this session idle ended ("complete" | "stopped" |
+        # "error", `chat_runner.terminal_outcome_for_turn`), or "" while none has since this
+        # process started it. Served as session detail's `last_turn_outcome`, and cleared when a
+        # turn starts, so it only ever describes a turn that is over.
+        self._last_turn_outcome: str = ""
         # Follow-up chips: the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
         self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -1603,6 +1611,42 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # the blocking POST to a daemon thread and swallows its own failures.
         if rule is not None and "push" in rule.targets:
             self._push_target(kind, note)
+        # The `channel_dm` target: the note, in the owner's DM on the first connected channel
+        # that reaches them. A note a channel route already sent there (a schedule's Notify
+        # channel marks it `sent_to_channel`) is not sent twice.
+        if rule is not None and "channel_dm" in rule.targets and not note.get("sent_to_channel"):
+            self._channel_dm_target(note)
+
+    def _channel_dm_target(self, note: dict[str, Any]) -> None:
+        """Send *note* to the owner's DM on the first channel that reaches them.
+
+        A task on the gateway's loop, after the dashboard delivery above, so a slow or failing
+        channel never holds up the bell. When no channel can take it, the log says why; the note
+        is already in the bell and the Inbox, so nothing is lost.
+        """
+        from personalclaw.dashboard.channel_messages import channel_dm_text
+
+        text = channel_dm_text(note)
+        if not text:
+            return
+
+        async def _send() -> None:
+            from personalclaw.channel_delivery import reach_owner
+
+            outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+            if not outcome.delivered and not outcome.no_channel:
+                self._log.warning(
+                    "channel DM for %r reached nobody: %s", note.get("title"), outcome.sentence()
+                )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._log.debug("channel DM for %r: no event loop in this thread", note.get("title"))
+            return
+        task = loop.create_task(_send())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     def _announce_logged(self, note: dict[str, Any]) -> None:
         """Tell the bell a note was recorded WITHOUT being fired (a badge, a foreign addressee).
@@ -2237,12 +2281,15 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def push_refresh(self, *kinds: str) -> None:
         """Push a lightweight refresh hint for specific data types.
 
-        The frontend receives ``event: refresh`` with ``data: kind1,kind2``
+        The frontend receives a ``refresh`` frame whose ``data.kinds`` lists them,
         and fetches fresh data only for those types.  This replaces blind
         polling — the server tells the client *when* to refresh, not the
         client guessing on a timer.
 
-        Supported kinds: ``crons``, ``lessons``, ``agents``, ``history``.
+        Kinds in use: ``crons`` / ``cron_history`` (an automation changed / ran), ``loops``,
+        ``workflow_runs`` (a workflow run started, changed status or ended —
+        ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``, and the
+        self-update's ``update_available`` / ``updating`` / ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
 

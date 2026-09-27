@@ -712,8 +712,8 @@ class TestVerificationAndConfig:
 
     def test_config_round_trip(self, home):
         """dataclass → load() → to_dict(), plus the PATCH allowlist entry that writes it."""
+        from personalclaw.config.editable import _EDITABLE_CONFIG
         from personalclaw.config.loader import AppConfig
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
         _write_config(home, "two_way")
         cfg = AppConfig.load()

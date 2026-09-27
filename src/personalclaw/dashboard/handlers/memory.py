@@ -4,19 +4,34 @@ import asyncio
 import functools
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import ConfigWriteError
+from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body, require_string
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_values,
+    redact_credentials,
+    redact_exfiltration_urls,
+    redact_for_display,
+)
+from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
-from ._shared import _blocks_reads_session, _get_memory, _is_restricted_session
+from ._shared import (
+    _blocks_reads_session,
+    _get_memory,
+    _is_restricted_session,
+    config_write_refusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +61,25 @@ def _ranking_payload(capable: Any) -> dict[str, Any]:
         return RecallRanking(vector=False, full_text_search=False, entity_graph=False).to_dict()
 
 
-async def api_memory_preferences(request: web.Request) -> web.Response:
-    """GET/PUT /api/memory/preferences."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
+async def _memory_doc(
+    request: web.Request,
+    which: str,
+    read: Callable[[Any], str],
+    write: Callable[[Any, str], None],
+) -> web.Response:
+    """GET/PUT of one markdown memory document: the read carries ``revision`` beside
+    ``content``, and the PUT — which replaces the whole document — must name it in ``If-Match``.
+
+    🔴 THE DOCUMENT IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. These files are written by
+    the gateway as well as the page — the history consolidator rewrites preferences and projects
+    and appends to history, and the agent's ``memory_remember`` tool appends a preference — so an
+    editor opened before one of those writes used to save its old copy straight over it, and what
+    the agent had just learned was gone without a word. The comparison reads with the SAME reader
+    the GET uses (for history, the multi-day composite it returns), and nothing is awaited
+    between the comparison and the write. The success response carries what is stored now, and
+    its revision, because the write can reshape it (``write_projects`` adds the header).
+    """
+    mem = _get_memory(request.app["state"])
     if request.method == "PUT":
         try:
             body = await request.json()
@@ -58,45 +88,46 @@ async def api_memory_preferences(request: web.Request) -> web.Response:
         if not isinstance(body, dict):
             return web.json_response({"error": "JSON body must be an object"}, status=400)
         content = body.get("content", "")
-        mem.write_preferences(content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_preferences()})
+        stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
+        if stale is not None:
+            return stale
+        write(mem, content)
+        stored = read(mem)
+        return web.json_response({"ok": True, "content": stored, "revision": revision_of(stored)})
+    content = read(mem)
+    return web.json_response({"content": content, "revision": revision_of(content)})
+
+
+def _write_today_history(mem: Any, content: str) -> None:
+    """The history PUT writes today's daily file (the read is the recent-days composite)."""
+    atomic_write(mem._today_history_file(), content)
+
+
+async def api_memory_preferences(request: web.Request) -> web.Response:
+    """GET/PUT /api/memory/preferences."""
+    return await _memory_doc(
+        request,
+        "preferences",
+        lambda mem: mem.read_preferences(),
+        lambda mem, content: mem.write_preferences(content),
+    )
 
 
 async def api_memory_projects(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/projects."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
-    if request.method == "PUT":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON"}, status=400)
-        if not isinstance(body, dict):
-            return web.json_response({"error": "JSON body must be an object"}, status=400)
-        content = body.get("content", "")
-        mem.write_projects(content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_projects()})
+    return await _memory_doc(
+        request,
+        "projects",
+        lambda mem: mem.read_projects(),
+        lambda mem, content: mem.write_projects(content),
+    )
 
 
 async def api_memory_history(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/history — recent daily summaries."""
-    state: DashboardState = request.app["state"]
-    mem = _get_memory(state)
-    if request.method == "PUT":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid JSON"}, status=400)
-        if not isinstance(body, dict):
-            return web.json_response({"error": "JSON body must be an object"}, status=400)
-        content = body.get("content", "")
-        # Write to today's history file
-        today_path = mem._today_history_file()
-        atomic_write(today_path, content)
-        return web.json_response({"ok": True})
-    return web.json_response({"content": mem.read_recent_history()})
+    return await _memory_doc(
+        request, "history", lambda mem: mem.read_recent_history(), _write_today_history
+    )
 
 
 #: The `memory.*` fields this PUT writes, in the order the panel presents them. Each is
@@ -128,12 +159,12 @@ _SETTINGS_FIELDS: tuple[str, ...] = (
 
 async def api_memory_settings(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/settings — memory consolidation config."""
-    from personalclaw.config.loader import AppConfig, config_path  # noqa: F811
+    from personalclaw.config.loader import AppConfig  # noqa: F811
 
     cfg = AppConfig.load()
     if request.method == "PUT":
         from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         caller = request.get("user", "dashboard")
 
@@ -175,22 +206,30 @@ async def api_memory_settings(request: web.Request) -> web.Response:
         if not applied:
             return _deny("no settings provided")
 
-        # Read existing config, update memory section only
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
-
-        async with _get_config_lock():
-            path = config_path()
-            try:
-                data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            except Exception:
-                data = {}
-            mem = data.setdefault("memory", {})
+        # The memory section only, in the config transaction. An unreadable config.json is
+        # refused rather than read as `{}`: that read wrote `{"memory": …}` over the file and
+        # deleted every other setting and every configured model provider with it.
+        def _apply(data: dict) -> None:
+            mem = data.get("memory")
+            if not isinstance(mem, dict):
+                mem = data["memory"] = {}
             mem.update(applied)
             # Writing the vault mode also drops the retired `vault_enabled` bool, so
             # config.json cannot keep two answers about the same thing.
             if "vault_mode" in applied:
                 mem.pop("vault_enabled", None)
-            atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+
+        try:
+            await mutate_config_async(_apply)
+        except ConfigWriteError as exc:
+            _sel().log_api_access(
+                caller=caller,
+                operation="memory.settings.update",
+                outcome="error",
+                source="dashboard",
+                resources=type(exc).__name__,
+            )
+            return config_write_refusal(exc)
         _sel().log_api_access(
             caller=caller,
             operation="memory.settings.update",
@@ -243,9 +282,9 @@ def _redact_memory_field(val: object) -> object:
     if isinstance(val, (bytes, memoryview)):
         return None
     if isinstance(val, str):
-        val, _ = redact_exfiltration_urls(val)
-        val, _ = redact_credentials(val)
-        return val
+        # `redact_for_display`, the mask `api_memory_semantic_write` puts back when a fact read
+        # here is written back.
+        return redact_for_display(val)
     if isinstance(val, list):
         return [_redact_memory_field(item) for item in val]
     if isinstance(val, dict):
@@ -347,6 +386,18 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     source = body.get("source", "user_explicit")
     if not key or value is None:
         return web.json_response({"error": "key and value required"}, status=400)
+    # `api_memory_semantic` lists every fact masked, so a caller writing one back sends our marker
+    # for each hidden value in it. Put each back from the fact as stored.
+    stored = svc.get_semantic(key)
+    if stored is not None:
+        try:
+            previous = json.loads(stored.get("value_json") or "null")
+        except (TypeError, ValueError):
+            previous = None
+        try:
+            value = keep_masked_values(value, previous)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
     err = svc.set_semantic(key, value, confidence, source)
     if err is not None:
         code, message = err
@@ -593,18 +644,15 @@ _migrate_lock: asyncio.Lock | None = None
 
 
 async def _set_migrated(value: bool) -> None:
-    """Set memory.migrated in config.json."""
-    from personalclaw.config.loader import config_path  # noqa: F811
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    """Set memory.migrated in config.json, in the config transaction."""
 
-    async with _get_config_lock():
-        path = config_path()
-        try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
-        data.setdefault("memory", {})["migrated"] = value
-        atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+    def _apply(data: dict) -> None:
+        mem = data.get("memory")
+        if not isinstance(mem, dict):
+            mem = data["memory"] = {}
+        mem["migrated"] = value
+
+    await mutate_config_async(_apply)
 
 
 async def api_memory_episodic_search(request: web.Request) -> web.Response:
@@ -901,7 +949,12 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
         counts = await loop.run_in_executor(None, store.migrate_from_markdown)
     # Auto-set migrated=true if migration produced entries
     if counts.get("semantic", 0) > 0 or counts.get("episodic", 0) > 0:
-        await _set_migrated(True)
+        try:
+            await _set_migrated(True)
+        except ConfigWriteError:
+            # The migration itself is done; only the flag that records it is not. It is set on
+            # the running consolidator below, and the next migrate records it.
+            logger.warning("memory migrated, but config.json could not record it", exc_info=True)
         state: DashboardState = request.app["state"]
         if state.consolidator:
             state.consolidator._migrated = True

@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
-import { api } from '../../lib/api'
+import { api, type WorkflowRunDetailData } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+import type { Rebase, Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { Field, NumberField, TextInput } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { QuietButton } from '../../ui/QuietButton'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** The prelaunch per-run policy editor — the write surface over the run's
  *  sparse `SupervisorPolicy` overlay.
@@ -15,8 +19,10 @@ import { QuietButton } from '../../ui/QuietButton'
  *  user the overlay says something it does not. Each set knob carries its own "Clear"
  *  affordance, and the header offers "Clear all" (the store's `{}`-clears semantics).
  *
- *  Every commit PUTs the WHOLE overlay (replace semantics, matching the store contract) and
- *  re-syncs from the response, so what is rendered is always what was persisted.
+ *  Every commit PUTs the WHOLE overlay (replace semantics, matching the store contract) over the
+ *  revision of the copy it was built from, and re-syncs from the response, so what is rendered is
+ *  always what was persisted. A copy another tab has changed since is refused (`409 stale_write`)
+ *  and the edit is offered back for re-applying (`ui/StaleWriteNotice`).
  *
  *  The caller mounts this only for a PRELAUNCH run (`isPrelaunch`, mirroring the backend's
  *  phase gate): once launched the overlay is frozen — the engine's whole-row saves would
@@ -102,23 +108,55 @@ function TextOverride({ value, onCommit, ariaLabel, placeholder }: {
   )
 }
 
+type Overlay = Record<string, unknown>
+
+/** A run read's overlay with the revision the same read reported for it — what the editor seeds
+ *  from and what its first write names. */
+export const overlayOf = (run: WorkflowRunDetailData): Revisioned<Overlay> => ({
+  value: run.policy_overrides ?? {},
+  revision: run.revisions?.policy_overrides ?? '',
+})
+
 export function PolicyOverridesPanel({ runId, initial, onSaved }: {
   runId: string
-  /** The overlay as the run-detail read delivered it — only the knobs the user overrode. */
-  initial: Record<string, unknown>
-  onSaved?: (overrides: Record<string, unknown>) => void
+  /** The overlay as the run-detail read delivered it — only the knobs the user overrode — with
+   *  that read's revision of it (`overlayOf`). */
+  initial: Revisioned<Overlay>
+  onSaved?: (overrides: Overlay) => void
 }) {
-  const [overrides, setOverrides] = useState<Record<string, unknown>>(initial)
+  // What is stored, as the gateway last reported it: the overlay each edit is applied to, and the
+  // revision the write names.
+  const [stored, setStored] = useState<Revisioned<Overlay>>(initial)
+  const overrides = stored.value
   const [busy, setBusy] = useState(false)
+  // The copy the guard's own reads and writes returned — what a landed save or a discard re-syncs
+  // the panel from, so what is rendered is always what was persisted.
+  const latest = useRef<Revisioned<Overlay> | null>(null)
+  // 🔴 THE OVERLAY IS WRITTEN WHOLE, OVER THE COPY IT WAS BUILT FROM. Every edit PUTs this panel's
+  // overlay with one knob changed, so a tab opened before another tab's edit reverted that edit the
+  // moment it touched a different knob. A stale copy is refused now, and the edit — an operation on
+  // the overlay (this knob set, that one cleared) — is re-applied onto what is stored.
+  const guard = useStaleWriteGuard<Overlay>({
+    read: () => api.workflowRun(runId).then((run) => { latest.current = overlayOf(run); return latest.current }),
+    write: (next, revision) => api.setWorkflowRunPolicyOverrides(runId, next, revision).then((res) => {
+      latest.current = { value: res.policy_overrides, revision: res.revisions.policy_overrides }
+    }),
+    onSaved: () => {
+      if (!latest.current) return
+      setStored(latest.current)
+      onSaved?.(latest.current.value)
+    },
+    onDiscard: () => { if (latest.current) setStored(latest.current) },
+  })
+  const locked = busy || guard.conflict !== null
 
-  // One writer for every mutation: PUT the whole overlay (replace semantics) and re-sync
-  // from what the server persisted, so a refused write never leaves the UI claiming it won.
-  const commit = async (next: Record<string, unknown>) => {
+  // One writer for every mutation: the edit as an operation on the overlay, PUT as the whole overlay
+  // (replace semantics) and re-synced from what the server persisted, so a refused write never
+  // leaves the UI claiming it won.
+  const commit = async (op: Rebase<Overlay>) => {
     setBusy(true)
     try {
-      const res = await api.setWorkflowRunPolicyOverrides(runId, next)
-      setOverrides(res.policy_overrides ?? next)
-      onSaved?.(res.policy_overrides ?? next)
+      await guard.apply(stored, op)
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Saving policy overrides failed', 'error')
     } finally {
@@ -126,12 +164,12 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
     }
   }
 
-  const set = (key: string, value: unknown) => commit({ ...overrides, [key]: value })
-  const clear = (key: string) => {
-    const next = { ...overrides }
+  const set = (key: string, value: unknown) => commit((theirs) => ({ ...theirs, [key]: value }))
+  const clear = (key: string) => commit((theirs) => {
+    const next = { ...theirs }
     delete next[key]
-    commit(next)
-  }
+    return next
+  })
 
   const hasAny = POLICY_KNOBS.some(({ key }) => key in overrides)
 
@@ -143,8 +181,9 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
         </span>
         {hasAny && (
           <QuietButton
-            onClick={() => commit({})}
-            disabled={busy}
+            onClick={() => commit(() => ({}))}
+            disabled={locked}
+            disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : undefined}
             title="Clear every override — the run falls back to its kind defaults"
           >
             Clear all
@@ -155,7 +194,9 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
         Set only what this run should differ on; anything left unset follows the kind default.
         Editable until launch — a launched run&rsquo;s policy is frozen.
       </p>
-      <div className="flex flex-col gap-m">
+      {/* Every knob is locked while a refused save waits for the user's choice: the notice
+          re-applies the edit it kept, and a second edit made meanwhile would replace it. */}
+      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-m">
         {POLICY_KNOBS.map(({ key, label, hint, kind, seed }) => {
           const isSet = key in overrides
           const value = overrides[key]
@@ -167,7 +208,7 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
               right={isSet ? (
                 <QuietButton
                   onClick={() => clear(key)}
-                  disabled={busy}
+                  disabled={locked}
                   title={`Clear the ${label} override — this run falls back to the kind default`}
                 >
                   Clear override
@@ -182,7 +223,7 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
                   <span data-type="body-s" className="text-on-surface-low">Kind default</span>
                   <QuietButton
                     onClick={() => set(key, seed)}
-                    disabled={busy}
+                    disabled={locked}
                     title={`Override ${label} for this run only`}
                   >
                     Override
@@ -212,7 +253,8 @@ export function PolicyOverridesPanel({ runId, initial, onSaved }: {
             </Field>
           )
         })}
-      </div>
+      </fieldset>
+      <StaleWriteNotice guard={guard} what="This run's policy overrides" />
     </section>
   )
 }

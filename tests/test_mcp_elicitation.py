@@ -402,7 +402,7 @@ def test_the_grant_defaults_empty_on_a_fresh_install(fresh_home):
 def test_the_grant_is_patch_editable(fresh_home):
     """Clause 4. The write path — a field with no allowlist entry leaves
     ``test_config_roundtrip.py`` green while the Tools-page control 400s."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["security.mcp_elicitation_servers"]["type"] == "str_list"
 
@@ -437,14 +437,17 @@ def test_the_dashboard_control_reaches_the_field(fresh_home):
     invisible to every Python rail and to a passing frontend build.
     """
     api_ts = (REPO_ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
-    assert "'security.mcp_elicitation_servers'" in api_ts
-    assert "setMcpElicitationServers" in api_ts
+    # One server's grant in or out — never the list — so a tab opened before another tab's grant
+    # cannot revoke it (`personalclaw/stale_write.py`).
+    assert "patchConfigItem('security.mcp_elicitation_servers', 'add'" in api_ts
+    assert "patchConfigItem('security.mcp_elicitation_servers', 'remove'" in api_ts
 
     tools_page = (REPO_ROOT / "web" / "src" / "pages" / "tools" / "ToolsPage.tsx").read_text(
         encoding="utf-8"
     )
     assert "onToggleElicitation" in tools_page
-    assert "api.setMcpElicitationServers" in tools_page
+    assert "api.grantMcpElicitation" in tools_page
+    assert "api.revokeMcpElicitation" in tools_page
     assert "ask you questions" in tools_page
 
 
@@ -543,21 +546,21 @@ def test_the_question_window_fits_inside_the_call_ceiling():
     """The invariant the timeout behaviour rests on, pinned as arithmetic.
 
     Two numbers govern a granted question and they live in different modules:
-    ``mcp_client._CALL_TIMEOUT_SECS`` abandons the tool call, and
-    ``DashboardState._APPROVAL_TIMEOUT`` is the boundary's interactive window (two hours —
-    ``mcp:<server>`` matches none of the unattended markers that would shorten it). If the
-    boundary's window governed, the call would be abandoned while the card was still up and
-    the user's eventual answer would be delivered to nobody. Asserted here so a later change
-    to either constant reds this instead of quietly restoring that discard.
+    ``mcp_client._CALL_TIMEOUT_SECS`` abandons the tool call, and the approval boundary's
+    window (``DashboardState.approval_window_secs``, the owner's setting — two hours by default,
+    one minute at the least). If a window longer than the call governed, the call would be
+    abandoned while the card was still up and the user's eventual answer would be delivered to
+    nobody. The question's own window is shorter than the call, so whichever of the two ends the
+    wait first ends it while the call is still alive: a boundary window set shorter simply
+    expires the approval sooner, and the server is still answered. Asserted here so a later
+    change to either constant reds this instead of quietly restoring that discard.
     """
-    from personalclaw.dashboard.state import DashboardState
     from personalclaw.mcp_client import _CALL_TIMEOUT_SECS
     from personalclaw.mcp_elicitation import approval_window_secs
 
     window = approval_window_secs()
     assert window > 0
     assert window < _CALL_TIMEOUT_SECS, "a question may outlast the call that asked it"
-    assert window < DashboardState._APPROVAL_TIMEOUT, "the boundary's window still governs"
 
 
 @pytest.mark.asyncio

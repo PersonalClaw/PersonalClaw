@@ -34,7 +34,7 @@ const QUEUED: DownloadJob = {
   id: 'job-7', provider: 'ollama', model: 'llama3:8b', kind: 'weights', state: 'queued',
   progress: 0, speed_bps: 0, eta_s: 0,
   total_bytes: 4_600_000_000, downloaded_bytes: 0,
-  error: '', reason: '',
+  error: '', reason: '', warning: '',
 }
 
 /** An `EventSource` stand-in that records every URL it was opened with and lets a test push a

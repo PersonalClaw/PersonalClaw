@@ -272,6 +272,11 @@ _NATIVE_DESTRUCTION_RULES: tuple[str, ...] = (
     "destructive_truncate",  # blanks a file the OS owns
 )
 
+#: Node's one way to start a program: ``exec``, ``execSync``, ``spawn``, ``fork`` and ``execFile``
+#: all come from this module, so naming it names them all. The ``node_exec`` rule reads it, and so
+#: does the runtime-use analysis's "a JS file can start a process".
+_CHILD_PROCESS_RE = re.compile(r"\bchild_process\b")
+
 # WARNING-band script patterns (overridable): notable but not proof of malice.
 _WARNING_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("eval_exec", re.compile(r"\beval\s*[\"'(]")),
@@ -279,8 +284,19 @@ _WARNING_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("curl_network", re.compile(r"\b(?:curl|wget)\b")),
     ("sudo_use", re.compile(r"\bsudo\b")),
     ("python_exec", re.compile(r"\b(?:os\.system|subprocess\.(?:call|run|Popen)|exec\(|eval\()")),
+    ("node_exec", _CHILD_PROCESS_RE),
     ("crontab_write", re.compile(r"\bcrontab\b")),
 )
+
+#: The WARNING rules that read one LANGUAGE's API, and the file suffixes that language is written
+#: in. Read in another language, such a rule describes code that is not there: JavaScript's
+#: ``RegExp.prototype.exec(`` matched ``python_exec`` and told the owner a UI bundle runs
+#: programs. ``""`` is a file with no suffix, or a bare blob with no file at all. Neither names a
+#: language, so every language's rule reads them, the gate the native-destruction rules use.
+_RULE_LANGUAGE: dict[str, frozenset[str]] = {
+    "python_exec": frozenset({"", ".py"}),
+    "node_exec": frozenset({"", ".js", ".mjs", ".cjs", ".ts"}),
+}
 
 # Prompt-injection signals in manifest/frontmatter prose (WARNING band).
 _INJECTION_PROSE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
@@ -1171,7 +1187,6 @@ _CONVENTION_ENTRY_NAMES = frozenset({"worker.py", "__main__.py"})
 #: A test runner discovers `test_*.py` without anything naming them.
 _TEST_RUNNER_RE = re.compile(r"\b(?:py\.?test|unittest|nose2?|tox)\b", re.I)
 _PYTHON_RE = re.compile(r"\bpython[0-9.]*\b", re.I)
-_CHILD_PROCESS_RE = re.compile(r"\bchild_process\b")
 #: Loaders whose text is a PROGRAM that could start a Python script: shells and other
 #: script languages (read for a Python/test-runner mention) and JS (read for a way to start
 #: a process). Config formats are data and never execute on their own.
@@ -2272,7 +2287,11 @@ class SkillScanner:
                     _evidence(text, sens_raw),
                 )
             )
+        suffix = Path(rel).suffix.lower()
         for rule, pat in _WARNING_SCRIPT:
+            written_in = _RULE_LANGUAGE.get(rule)
+            if written_in is not None and suffix not in written_in:
+                continue  # another language's API: in this file the match is not that call
             m = pat.search(text)
             if m:
                 out.append(Finding("script", Verdict.WARNING, rule, rel, _evidence(text, m)))

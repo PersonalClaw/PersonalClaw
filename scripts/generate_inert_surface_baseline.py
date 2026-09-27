@@ -559,6 +559,28 @@ def _inert_trigger_kind_surfaces() -> list[tuple[str, str]]:
 
 # ── Kind: editable_config ─────────────────────────────────────────────────────
 
+#: Where the `_EDITABLE_CONFIG` literal lives, relative to the census root. Both kinds that read the
+#: allowlist (`editable_config` and `config_reader`) take it from here.
+_EDITABLE_REGISTRY = ("config", "editable.py")
+
+
+def _editable_registry_keys() -> tuple[Path, list[str]]:
+    """The registry file and its keys — or an error, never an empty answer.
+
+    A census that found no literal used to return no findings, which reads exactly like a clean
+    allowlist: moving the dict (or renaming it) would have turned both kinds that read it off while
+    they kept reporting green. So an unreadable file or a missing literal stops the census.
+    """
+    path = _src_root().joinpath(*_EDITABLE_REGISTRY)
+    tree = _parse(path)
+    keys = _editable_config_keys(tree) if tree is not None else []
+    if not keys:
+        raise RuntimeError(
+            f"no `_EDITABLE_CONFIG` literal found in {path} — the editable-config census would "
+            "read an empty allowlist as a clean one. Point `_EDITABLE_REGISTRY` at its home."
+        )
+    return path, keys
+
 
 def _editable_config_keys(tree: ast.Module) -> list[str]:
     """String keys of the module-level ``_EDITABLE_CONFIG`` dict (Assign or AnnAssign)."""
@@ -587,15 +609,9 @@ def _inert_editable_config_surfaces() -> list[tuple[str, str]]:
     """An ``_EDITABLE_CONFIG`` PATCH-allowlist key with no backing config leaf edits
     nothing: the PATCH validates then writes a path ``load()`` never reads. A key backs a
     leaf when it equals the leaf, is a section prefix of one, or nests under one (raw-dict
-    subpaths like ``dashboard.terminal.persist``). Attributed to the handler that owns the
-    allowlist."""
-    core = _src_root() / "dashboard" / "handlers" / "core.py"
-    tree = _parse(core)
-    if tree is None:
-        return []
-    keys = _editable_config_keys(tree)
-    if not keys:
-        return []
+    subpaths like ``dashboard.terminal.persist``). Attributed to the registry module that owns
+    the allowlist."""
+    registry, keys = _editable_registry_keys()
     leaves = set(_config_leaf_paths())
 
     def backed(key: str) -> bool:
@@ -603,7 +619,7 @@ def _inert_editable_config_surfaces() -> list[tuple[str, str]]:
             return True
         return any(leaf.startswith(key + ".") or key.startswith(leaf + ".") for leaf in leaves)
 
-    return [(_rel(core), f"{KIND_EDITABLE_CONFIG}:{key}") for key in keys if not backed(key)]
+    return [(_rel(registry), f"{KIND_EDITABLE_CONFIG}:{key}") for key in keys if not backed(key)]
 
 
 # ── Kind: config_reader ───────────────────────────────────────────────────────
@@ -1250,11 +1266,7 @@ def _inert_config_reader_paths(
     distinguish from live consumption.
     """
     if editable_paths is None:
-        core = _src_root() / "dashboard" / "handlers" / "core.py"
-        core_tree = _parse(core)
-        if core_tree is None:
-            return []
-        editable_paths = set(_editable_config_keys(core_tree))
+        editable_paths = set(_editable_registry_keys()[1])
     declared = [decl for decl in declarations if decl.path in editable_paths]
     readers = _direct_config_reader_paths(files, declared)
     readers.update(_config_accessor_reader_paths(files, declared))

@@ -42,7 +42,11 @@ class BrandedProviderSpec:
     protocol: str = "openai"  # "openai" | "anthropic" — which wire client to build
     default_base_url: str = ""  # the provider's OpenAI-/Anthropic-compatible base URL
     api_key_env: str = ""  # env var consulted when config carries no api_key
-    default_model: str = ""  # model when neither entry nor config pins one
+    # The model this app curates as its first choice: what Test connection asks for on a wire
+    # with no models route, and a model the family map reads (`spec_types_declaring_models`).
+    # Never served in place of a model nobody named: a call on an instance that names none
+    # (`ProviderEntry.own_model`) is refused, not answered by the app's pick.
+    default_model: str = ""
     max_tokens: int | None = None  # anthropic requires a max_tokens; openai leaves None
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
     fallback_models: tuple[dict[str, Any], ...] = ()  # catalog rows when discovery is unavailable

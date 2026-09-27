@@ -346,18 +346,30 @@ class TriggerStore(TriggerStoreProvider):
 
     # ── the cron migration ──
 
-    def migrate_from_crons(self, crons_path: Path | str | None = None) -> dict[str, Any]:
-        """Import `crons.json` into this store. Returns `migrate_crons`' report plus what was
-        written.
+    def migrate_from_crons(
+        self, crons_path: Path | str | None = None, *, now: float = 0.0
+    ) -> dict[str, Any]:
+        """Import `crons.json` into this store, once per home. Returns `migrate_crons`' report plus
+        what was written.
 
-        The old file is left ON DISK and untouched — §6 says "old file read-only one release", and
-        `personalclaw automation verify-migration` needs both sides to diff. Deleting it here would
-        make the diff command impossible to run at the one moment anyone would want it.
+        🔴 ONCE, and never over a row the store already has. This used to run on every boot and
+        take each job's config from the file — "`crons.json` is the source of truth for what the job
+        IS" — which stopped being true when the store became the only writer (S101) and the service
+        that wrote the file was deleted (S112). Measured on a scratch home before the change: an
+        owner's rename and new action on an imported cron were put back from the file on the next
+        restart, and a job added to the file later came in switched on, `created_by: user`, with
+        `bash` granted by the next pass. So the file is read once and renamed
+        `crons.json.imported-<date>` (kept: `verify-migration` diffs against that copy, and renaming
+        it back gives an older build its store); a home holding such a copy has imported, so a
+        `crons.json` found again is not read and the Doctor names it. A row already in the store is
+        the store's, and is left exactly as it is — which is also why a second boot, or one after a
+        crash midway, writes nothing twice.
 
-        Existing rows are PRESERVED: the import upserts by id rather than replacing the store, so
-        running it twice is idempotent and a trigger authored directly in `triggers.json` survives a
-        later migration pass.
+        Every row it does write goes through `legacy_import.admit`: the file records no consent for
+        what its jobs run, so none is carried, and a job that would run anything needing a grant
+        arrives switched off to wait for the owner's review.
         """
+        from personalclaw.triggers import legacy_import
         from personalclaw.triggers.migrate import migrate_crons
 
         source = Path(crons_path) if crons_path else (self._dir / "crons.json")
@@ -368,6 +380,19 @@ class TriggerStore(TriggerStoreProvider):
                 "lossless": True,
                 "written": 0,
                 "reason": "no crons.json",
+            }
+        if legacy_import.already_imported(source.parent, source.name):
+            logger.warning(
+                "%s is back after this home imported it; it is not read again (the Doctor says "
+                "what to do with it)",
+                source,
+            )
+            return {
+                "converted": 0,
+                "refused": 0,
+                "lossless": True,
+                "written": 0,
+                "reason": "crons.json was already imported; this copy is not read",
             }
         try:
             store = json.loads(source.read_text(encoding="utf-8"))
@@ -387,61 +412,51 @@ class TriggerStore(TriggerStoreProvider):
         # guessed: a first pass read `report.converted_rows`, which does not exist, so `written` was
         # always 0 while `converted` said 1. The migration reported success and persisted nothing —
         # exactly the silent no-op this program keeps finding, in the one path whose whole job
-        # is not
-        # losing the user's automations.
+        # is not losing the user's automations.
         written = 0
+        waiting = 0
         refused_rows: list[dict[str, Any]] = []
+        existing = {row.trigger.id for row in self.load()}
         for converted in getattr(report, "converted", None) or []:
             row = getattr(converted, "trigger", None)
             if not isinstance(row, dict):
                 continue
             trigger, issues = parse_trigger(row)
+            if trigger.id in existing:
+                continue
             errors = [i for i in issues if i.severity == "error"]
             if errors:
                 # Recorded, never dropped: a converted row the entity refuses is a contract mismatch
                 # between two shipped modules (that is how S87 found `interval`), and the user needs
                 # to see WHICH job did not make it rather than a count that silently disagrees.
                 refused_rows.append({"id": trigger.id, "errors": [i.message for i in errors]})
-                # 🔴 AND IT IS STILL WRITTEN, disabled. Measured while retiring the facade's
-                # legacy fallbacks: a `crons.json` row with an empty or unknown `schedule.kind`
-                # LOADS in `ScheduleService` but was `continue`d here — so it existed only in the
-                # legacy file. The fallbacks were its only representation, and deleting them (which
-                # is the whole point of the cutover) would have made the user's job vanish from the
-                # list with no error anywhere.
-                #
-                # `enabled=False` because a row that fails validation must not fire — `set_enabled`
-                # already refuses to enable one, so this cannot become a live trigger by
-                # accident. The store's own `ok=False` + `errors` are what the UI renders, which is
-                # strictly better than the old behaviour: the job is VISIBLE and says why it is
-                # broken, instead of being silently absent.
+                # 🔴 AND IT IS STILL WRITTEN, disabled. A `crons.json` row with an empty or
+                # unknown `schedule.kind` exists nowhere else once the file is retired, so dropping
+                # it would make the user's job vanish from the list with no error anywhere.
+                # `set_enabled` refuses to enable a row that fails validation, so it cannot
+                # become a live trigger by accident; the store's `ok=False` + `errors` are what the
+                # UI renders, so the job is VISIBLE and says why it is broken.
                 trigger.enabled = False
-                existing_refused = self.get(trigger.id)
-                if existing_refused is not None:
-                    _carry_runtime_state(existing_refused.trigger, trigger)
-                self.upsert(trigger)
-                continue
-            # 🔴 PRESERVE RUNTIME STATE on a re-migration. This docstring already
-            # promised "running it twice is idempotent", and for CONFIG it was — but the
-            # converted row carries an EMPTY `next_fire_at`, `run_count`, health, etc., so a
-            # plain upsert clobbered them. Boot armed `j-cron`, the next boot's
-            # migration blanked the arm, and the trigger was re-armed on EVERY boot — which
-            # re-phases a schedule (a 9am job armed at 03:00 becomes "next 9am from now") and
-            # loses the run history the UI reads. Config comes from `crons.json` (the source of
-            # truth for what the job IS); runtime state belongs to what has happened since.
-            existing = self.get(trigger.id)
-            if existing is not None:
-                _carry_runtime_state(existing.trigger, trigger)
+            if legacy_import.admit(trigger):
+                waiting += 1
             self.upsert(trigger)
-            written += 1
+            existing.add(trigger.id)
+            if not errors:
+                written += 1
+        retired = legacy_import.retire(source, now=now)
+        legacy_import.audit_import(
+            source.name, imported=written + len(refused_rows), waiting=waiting, retired=retired
+        )
         payload["written"] = written
+        payload["waiting_for_review"] = waiting
         payload["unparseable"] = refused_rows
-        payload["source_kept"] = True
+        payload["retired_to"] = retired.name if retired is not None else ""
         return payload
 
 
-#: Fields that belong to what has HAPPENED to a trigger, not to what it IS. A re-migration
-#: rewrites config from `crons.json` but must carry these across, or every boot blanks the arm
-#: and the history (measured: a 9am job re-armed each boot re-phases to "next 9am from now").
+#: Fields that belong to what has HAPPENED to a trigger in one home, not to what it IS — the
+#: fields a snapshot merge drops from a row it brings in from another home (`snapshot.py`), so an
+#: armed fire or a run count from elsewhere never arrives here as if it had happened here.
 RUNTIME_FIELDS: tuple[str, ...] = (
     "next_fire_at",
     "last_run_id",
@@ -451,34 +466,10 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "health_status",
     "last_error_summary",
     "state",
-    # 🔴 `enabled` IS one of these, and leaving it out un-did the user's off switch. Whether an
-    # automation is switched on is a fact about what has happened TO a trigger — a person turned it
-    # off — not about what it IS, and `crons.json` has its own stale copy. So a boot that
-    # re-migrated re-asserted the legacy value and a disabled trigger came back enabled and armed
-    # (#461). It is last in the tuple because the tuple is also `snapshot.py`'s field list.
+    # Whether an automation is switched on is a fact about what has happened TO a trigger — a
+    # person turned it on or off — and another home's switch is not this one's (#461).
     "enabled",
 )
-
-
-def _carry_runtime_state(existing: Trigger, incoming: Trigger) -> None:
-    """Copy runtime state from the row already in the store onto a freshly converted one.
-
-    Only the fields in `RUNTIME_FIELDS`, and only when the existing row actually HAS a value — a
-    blank existing field must not overwrite a converted one that carries something (the migration
-    does set `health_status` from the legacy `last_status`, for instance).
-
-    🔴 "Has a value" cannot be spelled `value not in (None, "", 0)` once a boolean is in the tuple.
-    `False == 0` in Python, so `False in (None, "", 0)` is True: adding `enabled` to the tuple
-    while leaving that test alone would have carried `enabled=True` and silently dropped
-    `enabled=False` — the one value that needed carrying, and the whole point of #461. A bool is
-    ALWAYS set; `False` is an answer, not an absence. The falsy-means-absent rule stays for the
-    counters (`run_count=0` genuinely means "no runs recorded here", and must not overwrite a count
-    the migration derived from the legacy row).
-    """
-    for name in RUNTIME_FIELDS:
-        value = getattr(existing, name, None)
-        if isinstance(value, bool) or value not in (None, "", 0):
-            setattr(incoming, name, value)
 
 
 #: 🔴 `health(store)` USED TO LIVE HERE, and it was the third place this store's warnings went to
@@ -493,3 +484,19 @@ def _carry_runtime_state(existing: Trigger, incoming: Trigger) -> None:
 #: own docstring argued that naming the broken ids beats counting them, and the same argument
 #: retires it. Inventing a caller to justify a producer is the defect this issue is about, one
 #: level up.
+
+
+def trigger_name(trigger_id: str) -> str:
+    """What a stored trigger is called, for a sentence that names it — ``""`` when it is not there.
+
+    Best-effort by design: the callers name a trigger in prose that is true without the name too
+    ("A trigger asked to run …"), so an unreadable store costs the name and nothing else.
+    """
+    if not trigger_id:
+        return ""
+    try:
+        row = TriggerStore().get(trigger_id)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not read the name of trigger %s", trigger_id, exc_info=True)
+        return ""
+    return str(row.trigger.name or "") if row is not None else ""

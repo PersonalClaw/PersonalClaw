@@ -11,15 +11,17 @@ import { ArtifactViewer } from './ArtifactViewer'
 // endpoint's tag filter is load-bearing (loop cockpits find their deliverables by it) —
 // but none of the frontend's updateArtifact call sites ever sent `tags`, so the details
 // rail rendered static pills a user could read and never change. These tests pin the
-// writer: add sends the FULL next array, remove likewise, the repaint comes from the
-// reload (pessimistic — same doctrine as every other write in this file: a refused
-// write must never leave an optimistic value on screen), and a refusal notifies.
+// writer: an add sends that ONE name as an add and a remove that one name as a remove —
+// never the page's copy of the whole list, which dropped any tag added elsewhere since
+// (the server applies each name to the tags stored when it lands) — the repaint comes
+// from the reload (pessimistic — same doctrine as every other write in this file: a
+// refused write must never leave an optimistic value on screen), and a refusal notifies.
 
 const SLUG = 'tagged-artifact'
 
 // Mutable server state — the repaint must come from a refetch, not local mutation.
 let serverTags: string[] = []
-const patches: Array<Record<string, unknown>> = []
+const patches: Array<{ add?: string[]; remove?: string[] }> = []
 let patchFail = ''
 const notified: string[] = []
 let notifyArrived!: () => void
@@ -49,10 +51,12 @@ vi.mock('../../lib/api', async (orig) => {
       artifactEvents: async () => ({ slug: SLUG, events: [] }),
       viewRender: async () => ({}),
       deployedArtifacts: async () => [],
-      updateArtifact: async (_s: string, body: Record<string, unknown>) => {
-        patches.push(body)
+      // What the gateway does with a per-name edit: applied to the tags stored NOW.
+      editArtifactTags: async (_s: string, edit: { add?: string[]; remove?: string[] }) => {
+        patches.push(edit)
         if (patchFail) throw new Error(patchFail)
-        if (Array.isArray(body.tags)) serverTags = body.tags as string[]
+        const kept = serverTags.filter((t) => !(edit.remove ?? []).includes(t))
+        serverTags = [...kept, ...(edit.add ?? []).filter((t) => !kept.includes(t))]
         return fixture()
       },
     },
@@ -90,22 +94,36 @@ async function addTag(value: string) {
 }
 
 describe('artifact tags editor (#669)', () => {
-  it('adding a tag PATCHes the full next array and repaints from the reload', async () => {
+  it('adding a tag sends that one name and repaints from the reload', async () => {
     mount()
     await addTag('reports')
-    await waitFor(() => expect(patches).toEqual([{ tags: ['reports'] }]))
+    await waitFor(() => expect(patches).toEqual([{ add: ['reports'], remove: [] }]))
     // The pill on screen is the refetched server state, not a local echo.
     await screen.findByText('reports')
     expect(serverTags).toEqual(['reports'])
   })
 
-  it('removing a tag PATCHes the array without it', async () => {
+  it('removing a tag sends that one name as a remove', async () => {
     serverTags = ['reports', 'loop:abc123']
     mount()
     fireEvent.click(await screen.findByLabelText('Remove reports'))
-    await waitFor(() => expect(patches).toEqual([{ tags: ['loop:abc123'] }]))
+    await waitFor(() => expect(patches).toEqual([{ add: [], remove: ['reports'] }]))
     await waitFor(() => expect(screen.queryByText('reports')).toBeNull())
     await screen.findByText('loop:abc123')
+  })
+
+  it('a tag added elsewhere after this page read the list survives an edit made here', async () => {
+    // The loss the per-name edit exists to stop: the page's copy is ['reports'], the agent then
+    // tags the artifact `loop:abc123`, and the user adds `q3`. Sending the page's list would have
+    // stored ['reports', 'q3'] and dropped the agent's tag without a word.
+    serverTags = ['reports']
+    mount()
+    await screen.findByText('reports')
+    serverTags = ['reports', 'loop:abc123']
+    await addTag('q3')
+    await waitFor(() => expect(patches).toEqual([{ add: ['q3'], remove: [] }]))
+    await screen.findByText('loop:abc123')
+    expect(serverTags).toEqual(['reports', 'loop:abc123', 'q3'])
   })
 
   it('a duplicate add is a no-op — no PATCH fires', async () => {

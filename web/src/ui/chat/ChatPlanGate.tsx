@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { Button } from '../Button'
 import { Markdown } from '../Markdown'
+import { StaleWriteNotice } from '../StaleWriteNotice'
 import { api, type PlanStep, type TaskMode } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { BUSY_REASON } from '../../ui/unavailable'
+
+/** A step's plan as the page shows it — the markdown an edit replaces — with the revision the same
+ *  read reported. */
+function draftOf(step: PlanStep): Revisioned<string> {
+  return { value: typeof step.artifact?.markdown === 'string' ? step.artifact.markdown : '', revision: step.revision ?? '' }
+}
 
 /** The chat's plan review gate.
  *
@@ -35,6 +44,15 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
   const [parked, setParked] = useState(false)
   const [comment, setComment] = useState('')
   const [editText, setEditText] = useState<string | null>(null)
+  // 🔴 AN EDIT REPLACES THE WHOLE DRAFT, so it names the draft it was made on: the step's markdown
+  // when Edit was clicked, with the revision the same read reported. A comment sent from another tab
+  // redrafts the plan while this editor is open, and saving here used to put the old draft — plus
+  // the edit — back over the new one without a word. Now that save is refused and offered back
+  // (`ui/StaleWriteNotice`), and the change is kept even when a new draft closes the editor.
+  const [editBase, setEditBase] = useState<(Revisioned<string> & { step: string }) | null>(null)
+  // The step the last edit was saved to: what a refused edit's recovery re-reads and writes, even
+  // after the gate has moved on to another step.
+  const editedStep = useRef('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
@@ -52,15 +70,39 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
   // A new draft replaces whatever was being written about the old one.
   useEffect(() => { setComment(''); setEditText(null); setErr('') }, [awaiting])
 
+  const guard = useStaleWriteGuard<string>({
+    read: async () => {
+      const stored = (await api.chatPlanSession(session)).session?.steps.find((s) => s.id === editedStep.current)
+      if (!stored) throw new Error('this plan step is no longer in the walkthrough')
+      return draftOf(stored)
+    },
+    write: (next, revision) => api.chatPlanEdit(session, editedStep.current, next, revision),
+    // Saving RETURNS TO REVIEW (see the Save button below), however the save landed.
+    onSaved: () => { setEditText(null); load() },
+    onDiscard: () => { setEditText(null); load() },
+  })
+
   if (!step) return null
   const open = awaiting === step.id
-  const markdown = typeof step.artifact?.markdown === 'string' ? step.artifact.markdown : ''
+  const markdown = draftOf(step).value
 
   async function run(fn: () => Promise<unknown>) {
     if (busy) return
     setBusy(true); setErr('')
     try { await fn() } catch (e) { setErr(String((e as Error)?.message || e)) } finally { setBusy(false); load() }
   }
+  // Not `run`: a refused edit keeps the editor and its text exactly as they are, and a re-read here
+  // could close the editor (a redraft in flight changes `awaiting`) while the notice says the change
+  // is kept. A landed one re-reads through `onSaved`.
+  async function saveEdits(text: string) {
+    if (busy || !editBase) return
+    setBusy(true); setErr('')
+    editedStep.current = editBase.step
+    try { await guard.save(editBase, text, rebaseText(editBase.value, text)) }
+    catch (e) { setErr(String((e as Error)?.message || e)) }
+    finally { setBusy(false) }
+  }
+  const blocked = guard.conflict !== null
 
   return (
     <div className="mb-1 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
@@ -82,8 +124,10 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
         </p>
       ) : editText !== null ? (
         <div className="flex flex-col gap-2">
-          <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={12}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void run(() => api.chatPlanEdit(session, step.id, editText)) } }}
+          {/* Read-only while a refused edit is held: what the notice reapplies is the text as it was
+              refused, so typing on would be dropped by the reapply. */}
+          <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={12} readOnly={blocked}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !blocked) { e.preventDefault(); void saveEdits(editText) } }}
             aria-label="Plan markdown"
             placeholder="Write the plan in markdown…"
             data-type="caption"
@@ -94,13 +138,12 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
                 just wrote", so the one path back to Approve looked like the path that
                 threw the edit away. The save persisted and the panel stayed
                 in edit mode. */}
-            <Button size="xs" onClick={() => void run(async () => {
-              await api.chatPlanEdit(session, step.id, editText)
-              setEditText(null)
-            })} disabled={busy} disabledReason={BUSY_REASON}>
+            <Button size="xs" onClick={() => void saveEdits(editText)} disabled={busy || blocked}
+              disabledReason={blocked ? HELD_CHANGE_REASON : BUSY_REASON}>
               <Check size={14} /> Save edits
             </Button>
-            <Button size="xs" variant="ghost" onClick={() => setEditText(null)} disabled={busy} disabledReason={BUSY_REASON}>
+            {/* Cancelling a refused edit drops the kept change, exactly as "Discard my change" does. */}
+            <Button size="xs" variant="ghost" onClick={() => { if (blocked) guard.discard(); else setEditText(null) }} disabled={busy} disabledReason={BUSY_REASON}>
               <X size={14} /> Cancel
             </Button>
           </div>
@@ -111,7 +154,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
             {/* Faintly visible rather than hover-only: a hover-gated action is
                 unreachable on touch (the PlanningWalkthrough edit affordance, same class). */}
             <Button size="xs" variant="ghost" className="absolute right-0 top-0 z-10 opacity-60 group-hover/plan:opacity-100"
-              onClick={() => setEditText(markdown)} ariaLabel="Edit this plan">
+              onClick={() => { setEditBase({ ...draftOf(step), step: step.id }); setEditText(markdown) }} ariaLabel="Edit this plan">
               <Pencil size={12} /> Edit
             </Button>
             <Markdown className="[&_p]:text-[0.8125rem]">{markdown}</Markdown>
@@ -151,6 +194,9 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
           </div>
         </>
       )}
+      {/* Outside the branches: a refused edit is kept until the user reapplies or drops it, including
+          after a new draft closed the editor — then reapplying puts it onto that new draft. */}
+      <StaleWriteNotice guard={guard} what="This plan" className="mt-s" />
       {err && <p role="alert" data-type="body-s" className="mt-2" style={{ color: 'var(--color-danger)' }}>{err}</p>}
     </div>
   )

@@ -40,7 +40,7 @@ from personalclaw.triggers.models import Trigger, parse_trigger
 from personalclaw.triggers.schedule_view import channel_of, is_silent
 from personalclaw.triggers.store import TriggerStore
 
-CHANNEL = "channel:C0123456789"
+CHANNEL = "channel:fakechat:C0123456789"
 
 
 class _State:
@@ -81,6 +81,31 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture
+def fakechat():
+    """A chat channel set up here. A schedule's route names the channel its results go to, and a
+    name that is no chat channel is refused, so a channel route needs one to exist."""
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Chat(ChannelTransportProvider):
+        name = property(lambda self: "fakechat")
+        display_name = property(lambda self: "FakeChat")
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message: object) -> bool:
+            return True
+
+    channel_transports.register_transport(_Chat())
+    yield "fakechat"
+    channel_transports.unregister_transport("fakechat")
+
+
 async def _create(state: _State, body: dict) -> dict:
     from personalclaw.dashboard.handlers import triggers as handlers
 
@@ -93,7 +118,7 @@ async def _create(state: _State, body: dict) -> dict:
 async def _update(state: _State, raw: str, body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
 
-    resp = await handlers._update_schedule(state, raw, body)
+    resp = handlers._update_schedule(state, raw, body)
     return resp.status, json.loads(resp.body.decode())
 
 
@@ -234,15 +259,15 @@ async def test_the_switch_round_trips_both_ways(home):
 
 
 @pytest.mark.asyncio
-async def test_a_channel_still_wins_over_silent_off(home):
+async def test_a_channel_still_wins_over_silent_off(home, fakechat):
     """The one input that always produced a usable value must keep working, and Silent ON must
     still override it — otherwise this fix would have traded the latch for a lost channel."""
     state = _State()
-    row = await _create(state, _body(silent=False, channel="C0123456789"))
+    row = await _create(state, _body(silent=False, channel="fakechat:C0123456789"))
     raw = row["raw_id"]
     trigger = _stored(home, raw)
     assert trigger.delivery == CHANNEL
-    assert channel_of(trigger) == "C0123456789"
+    assert channel_of(trigger) == "fakechat:C0123456789"
     assert not is_silent(trigger)
 
     status, payload = await _update(state, raw, {"silent": True})

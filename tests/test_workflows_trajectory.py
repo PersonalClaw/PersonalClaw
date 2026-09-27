@@ -313,10 +313,10 @@ async def test_a_rewind_produces_a_distinguishable_signature(_isolated_home) -> 
 async def test_the_run_projection_exposes_the_trajectory_signature(_isolated_home) -> None:
     """`introspect(run_id)` carries the run's signature and its steps — exposed on the run
     projection, per the change."""
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     run_id = await _drive(_pipeline_spec())
-    payload = service.introspect(run_id)
+    payload = run_cockpit.introspect(run_id)
 
     assert payload["ok"] is True
     traj = payload["trajectory"]
@@ -333,12 +333,12 @@ async def test_the_run_projection_exposes_the_trajectory_signature(_isolated_hom
 async def test_the_signature_is_queryable_per_template(_isolated_home) -> None:
     """`template_trajectory(name)` answers per template WITHOUT a run in hand — the distribution of
     signature classes across the template's runs, plus the (here empty) regression signal."""
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     await _drive(_pipeline_spec())
     await _drive(_pipeline_spec())
 
-    result = service.template_trajectory("traj-pipeline")
+    result = run_cockpit.template_trajectory("traj-pipeline")
     assert result["ok"] is True
     assert result["runs"] == 2
     # Both runs took the same path with the same inputs → one signature class, seen twice.

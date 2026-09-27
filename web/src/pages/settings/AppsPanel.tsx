@@ -9,8 +9,10 @@ import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { FieldError } from '../../ui/forms'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { AppIcon } from '../apps/appIcon'
 import { fvs } from '../../design/fontWeight'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** Settings > Apps — the home for non-provider app settings, mirroring how
  *  Settings > Providers hosts provider-app settings. Provider apps configure
@@ -155,14 +157,19 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
         <div className="flex flex-col gap-2"><Skeleton className="h-9 w-full" /><Skeleton className="h-9 w-2/3" /></div>
       ) : (
         <div className="flex flex-col gap-m pl-11">
-          <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+          <HeldChange guard={cfg.guard}>
+            <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+          </HeldChange>
           {/* The second consumer of `appConfigForm`'s save guard — same inert `text-negative`, same
               cost. See the sibling site in `pages/apps/AppsSection.tsx` for the full reasoning. */}
           {cfg.err && <FieldError>{cfg.err}</FieldError>}
+          <StaleWriteNotice guard={cfg.guard} what={`${app.displayName}'s settings`} present={cfg.present} />
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
-            <Button variant="primary" size="sm" loading={cfg.busy} disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
-              disabledReason={cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
+            <Button variant="primary" size="sm" loading={cfg.busy}
+              disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0 || cfg.guard.conflict !== null}
+              disabledReason={cfg.guard.conflict !== null ? HELD_CHANGE_REASON
+                : cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
                 : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>Save
             </Button>
           </div>

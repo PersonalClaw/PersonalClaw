@@ -26,7 +26,7 @@ const KINDS = {
 function source(over: Partial<WatchedSource> = {}): WatchedSource {
   return {
     id: 'src-art', name: 'Artifacts', provider: 'artifacts', kind: 'artifact',
-    spec: { uri: 'artifact://' }, budget: {},
+    spec: { uri: 'artifact://' }, budget: {}, revision: 'r-src-art',
     enrichment: 'raw', poll_interval_secs: 0, item_type: 'artifact', enabled: true,
     health_status: 'ok', last_error_summary: '', last_escalations: [], last_new_count: 0,
     last_poll_at: null, enrolled: false, event_driven: true,

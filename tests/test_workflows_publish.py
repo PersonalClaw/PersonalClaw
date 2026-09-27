@@ -361,8 +361,9 @@ def test_appending_to_an_empty_ledger_works():
 def test_a_malformed_declaration_FAILS_the_node():
     """The whole property: a declaration is a promise about output. Degrading to "no publish" would
     let a node whose author declared a deliverable report success while producing nothing."""
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": {"kind": "markdown"}}}
@@ -373,8 +374,9 @@ def test_a_malformed_declaration_FAILS_the_node():
 
 
 def test_a_node_with_no_publish_block_is_untouched():
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict({"kind": "stage", "id": "s", "config": {"prompt": "x"}})
     result = apply_publish(node, NodeResult(state=InstanceState.DONE, output="body"))
@@ -385,8 +387,9 @@ def test_a_node_with_no_publish_block_is_untouched():
 def test_a_FAILED_node_does_not_publish():
     """Publishing the output of a node that failed would store a deliverable the run does not stand
     behind — and the artifact would carry the run's provenance while contradicting its outcome."""
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
@@ -398,8 +401,9 @@ def test_a_FAILED_node_does_not_publish():
 def test_a_non_text_output_is_a_recorded_NOOP():
     """A node whose output is structured data the caller binds elsewhere has still done its job.
     Recording the no-op keeps the absence visible instead of looking like a lost publish."""
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
@@ -422,8 +426,9 @@ def test_the_publish_outcome_is_a_DECLARED_field_so_it_reaches_the_journal():
 def test_a_string_output_stays_reachable_at_its_original_binding_path():
     """Wrapping it in a dict would break every `{{nodes.x.output}}` downstream, so publishing a
     node's output would change what its consumers read."""
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
@@ -497,9 +502,10 @@ def test_publishing_records_the_run_on_the_artifacts_own_event(tmp_path, monkeyp
     # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     from personalclaw.artifacts import native, registry
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
     from personalclaw.workflows.publish import parse_lineage
+    from personalclaw.workflows.publish_seam import apply_publish
 
     provider = native.NativeArtifactProvider()
     monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)
@@ -631,8 +637,9 @@ def test_publish_copies_referenced_files_into_the_version_dir(tmp_path, monkeypa
     # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     from personalclaw.artifacts import native, registry
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     cwd = tmp_path / "ws"
     (cwd / "out").mkdir(parents=True)
@@ -687,8 +694,9 @@ def test_publish_refuses_to_copy_a_file_outside_the_run_cwd(tmp_path, monkeypatc
     # ~/.personalclaw/workflows/runs/<id>/publishes.jsonl until both were patched.
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     from personalclaw.artifacts import native, registry
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     (tmp_path / "secret.txt").write_bytes(b"a credential")
     cwd = tmp_path / "ws"
@@ -735,8 +743,9 @@ def test_publish_journals_the_outcome_for_the_outbox(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
     from personalclaw.artifacts import native, registry
     from personalclaw.workflows import filedrop, store
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.models import InstanceState, Node
+    from personalclaw.workflows.publish_seam import apply_publish
 
     provider = native.NativeArtifactProvider()
     monkeypatch.setattr(provider, "_root", home / "artifacts", raising=False)

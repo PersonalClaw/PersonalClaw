@@ -381,6 +381,7 @@ class TestTelemetryShapeIsHonest:
             events=1,
             tool_calls=0,
             model="m",
+            line="Turn complete: 1 events, 0 tool calls",
         )
         unmeasured = build_turn_telemetry(context_pct=None, **kw)
         measured_zero = build_turn_telemetry(context_pct=0.0, **kw)
@@ -401,6 +402,7 @@ class TestTelemetryShapeIsHonest:
             events=1,
             tool_calls=0,
             model="unknown-model",
+            line="Turn complete: 1 events, 0 tool calls, context 1%",
         )
         assert rec["cost_usd"] == 0.0
         assert rec["priced"] is False
@@ -419,6 +421,7 @@ class TestTelemetryShapeIsHonest:
                 events=0,
                 tool_calls=0,
                 model="",
+                line="",
             )
             is None
         )

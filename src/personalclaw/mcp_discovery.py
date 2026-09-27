@@ -52,12 +52,14 @@ _PROBE_TTL_SECS = 1800
 # suggestions* via :func:`discover_importable_servers` + the ``/api/mcp/apply`` endpoint,
 # which copies a chosen spec into ``~/.personalclaw/mcp.json``.
 #
-# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped (its
-# content is migrated into this file once, at startup, by handlers/mcp._migrate_legacy_mcp_json)
-# so there is a single read+write path the dashboard, the provider instances, agent.py, and the
+# UT3: ONE canonical MCP store. The former legacy ``settings/mcp.json`` source was dropped, so
+# there is a single read+write path the dashboard, the provider instances, agent.py, and the
 # native runtime all share. The "global" scope that file used to be is gone with it: a second
 # scope NAME left pointing at the one file is how Import added a server and removed it again in
-# the same request.
+# the same request. Nothing reads that file any more — not even a fold at startup, which used to
+# copy whatever it held into this store on every start, where the boot probe spawned it and the
+# next rebuild allowed its tools without asking. A server still in it is named by the Doctor
+# (`resilience.doctor`, `tools.legacy_mcp_settings`) for the owner to add, if they want it.
 #
 # A FUNCTION, not a module constant: a `Path.home()` value computed at import time is
 # frozen before `PERSONALCLAW_HOME` can matter, so an isolated dev home read the operator's

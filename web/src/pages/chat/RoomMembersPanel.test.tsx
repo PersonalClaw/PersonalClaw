@@ -46,9 +46,9 @@ function room(extra: Partial<RoomRecord> = {}): RoomRecord {
 }
 
 const AGENTS: SavedAgent[] = [
-  { name: 'analyst', provider: 'native', model: 'gemma4:12b' },
-  { name: 'skeptic', provider: 'acp:claude-code', model: '' },
-  { name: 'writer', provider: 'native', model: 'gpt-5' },
+  { name: 'analyst', provider: 'native', model: 'gemma4:12b', revision: 'r1' },
+  { name: 'skeptic', provider: 'acp:claude-code', model: '', revision: 'r1' },
+  { name: 'writer', provider: 'native', model: 'gpt-5', revision: 'r1' },
 ]
 
 function panel(detail: RoomDetail, onAdd = vi.fn(), onRemove = vi.fn()) {
@@ -280,7 +280,7 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
   // At 8/8 the picker still offered a ninth agent; "Add to the room" answered 400
   // `room_member_limit`, and the composer banner offered a Retry that could never succeed. The
   // ceiling is `room.max_members` — the number the add route enforces — so the panel can say no.
-  const FOUR: SavedAgent[] = [...AGENTS, { name: 'critic', provider: 'native', model: 'a' }]
+  const FOUR: SavedAgent[] = [...AGENTS, { name: 'critic', provider: 'native', model: 'a', revision: 'r1' }]
 
   function atCount(n: number, max: number) {
     const members = FOUR.slice(0, n).map((a) => member(a.name))

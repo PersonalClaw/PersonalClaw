@@ -198,9 +198,10 @@ def sel_spy(monkeypatch: pytest.MonkeyPatch) -> _SelSpy:
 def _bind_vision(monkeypatch: pytest.MonkeyPatch, reply: str) -> list[str]:
     """Bind a fake vision model to the ``image_modality`` seam. Returns the prompts it saw.
 
-    Patches the two ``provider_bridge`` entry points :mod:`browse.vision` imports lazily — the same
-    two functions the real path calls — so the test exercises everything from ``ground`` down
-    including the content-block shape, while resolving no real provider.
+    Patches the two entry points the real path calls — the platform's image reader, which says a
+    model reads images, and the ``provider_bridge`` resolver it resolves that model through — so
+    the test exercises everything from ``ground`` down including the content-block shape, while
+    resolving no real provider.
     """
     seen: list[str] = []
 
@@ -219,9 +220,24 @@ def _bind_vision(monkeypatch: pytest.MonkeyPatch, reply: str) -> list[str]:
 
     import personalclaw.providers.provider_bridge as bridge
 
-    monkeypatch.setattr(bridge, "can_resolve_use_case", lambda uc: uc == vision.VISION_USE_CASE)
+    _reader(monkeypatch, reads=True)
     monkeypatch.setattr(bridge, "resolve_provider_for_use_case", lambda uc, **_k: _Provider())
     return seen
+
+
+def _reader(monkeypatch: pytest.MonkeyPatch, *, reads: bool) -> None:
+    """Answer "does anything read images?" as the platform's image reader would: the model bound
+    to ``image_modality``, or nothing (``providers.image_input.image_reader``)."""
+    from unittest.mock import AsyncMock
+
+    from personalclaw.providers import image_input
+
+    answer = (
+        image_input.ImageReader(ref="Seer:seer-vl", bound=True)
+        if reads
+        else image_input.ImageReader(reason=image_input.NO_IMAGE_MODEL)
+    )
+    monkeypatch.setattr(image_input, "image_reader", AsyncMock(return_value=answer))
 
 
 async def _run(page: _Page, decide, *, vision_grounding: bool):
@@ -322,9 +338,7 @@ async def test_with_no_vision_model_bound_the_canvas_fixture_parks_with_a_typed_
 ) -> None:
     """Rail (b). The change's word is "never a silent no-op", so three things are asserted:
     it parks, the reason is the TYPED constant, and the detail is actionable."""
-    import personalclaw.providers.provider_bridge as bridge
-
-    monkeypatch.setattr(bridge, "can_resolve_use_case", lambda _uc: False)
+    _reader(monkeypatch, reads=False)
     page = _Page(CANVAS_PAGE, screenshot=_shot(tmp_path))
     result = await _run(page, _decider("CLICK_VISION the seat in row 4"), vision_grounding=True)
 
@@ -419,17 +433,19 @@ async def test_a_human_challenge_is_refused_before_any_model_is_resolved(
 ) -> None:
     """🔴 THE SOUL GUARDRAIL. A CAPTCHA is a canvas with no ref — this path's own fixture shape.
 
-    The ORDERING is the assertion. Both ``provider_bridge`` entry points are replaced with functions
-    that raise, so if the refusal came after resolution the run would carry the resolver's error
-    instead of the refusal. A guard that refuses only after sending the image has already sent it.
+    The ORDERING is the assertion. The image reader and the ``provider_bridge`` resolver are
+    replaced with functions that raise, so if the refusal came after resolution the run would carry
+    the resolver's error instead of the refusal. A guard that refuses only after sending the image
+    has already sent it.
     """
 
     def _explode(*_a: Any, **_k: Any):
         raise AssertionError("a model was resolved for a human-verification page")
 
     import personalclaw.providers.provider_bridge as bridge
+    from personalclaw.providers import image_input
 
-    monkeypatch.setattr(bridge, "can_resolve_use_case", _explode)
+    monkeypatch.setattr(image_input, "image_reader", _explode)
     monkeypatch.setattr(bridge, "resolve_provider_for_use_case", _explode)
 
     # The DESCRIPTION is deliberately innocent ("the checkbox"), so what refuses is the screen over
@@ -514,9 +530,7 @@ async def test_a_refused_located_click_is_audited_too(
 ) -> None:
     """The guardrail must be VISIBLE. Auditing only the successes would hide every refusal, which
     is the half of the trail an auditor actually needs."""
-    import personalclaw.providers.provider_bridge as bridge
-
-    monkeypatch.setattr(bridge, "can_resolve_use_case", lambda _uc: False)
+    _reader(monkeypatch, reads=False)
     page = _Page(CANVAS_PAGE, screenshot=_shot(tmp_path))
     await _run(page, _decider("CLICK_VISION the seat"), vision_grounding=True)
 
@@ -638,8 +652,9 @@ def test_the_only_resolution_seam_is_the_existing_image_modality_use_case() -> N
     """Rail (a), on the SOURCE — because the happy path cannot show what is absent.
 
     A bespoke ``httpx.post`` to ``localhost:11434`` would satisfy every behavioural test above. So
-    this asserts the shape: the module resolves through ``provider_bridge``, names the existing
-    capability, and contains no vendor identifier and no socket of its own.
+    this asserts the shape: the module resolves through the platform's image reader (which
+    resolves through ``provider_bridge``), names the existing capability, and contains no vendor
+    identifier and no socket of its own.
     """
     source = Path(vision.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -650,9 +665,9 @@ def test_the_only_resolution_seam_is_the_existing_image_modality_use_case() -> N
         if isinstance(node, ast.ImportFrom)
         for alias in node.names
     }
-    assert {"resolve_provider_for_use_case", "can_resolve_use_case"} <= imported, imported
+    assert {"image_reader", "resolve_image_reader"} <= imported, imported
     modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
-    assert "personalclaw.providers.provider_bridge" in modules, modules
+    assert "personalclaw.providers.image_input" in modules, modules
 
     assert vision.VISION_USE_CASE == "image_modality", vision.VISION_USE_CASE
 
@@ -1034,7 +1049,7 @@ async def test_a_real_pulled_vision_model_grounds_a_click_on_the_canvas_fixture(
     provider = _live_provider(model)
     import personalclaw.providers.provider_bridge as bridge
 
-    monkeypatch.setattr(bridge, "can_resolve_use_case", lambda uc: uc == vision.VISION_USE_CASE)
+    _reader(monkeypatch, reads=True)
     monkeypatch.setattr(bridge, "resolve_provider_for_use_case", lambda uc, **_k: provider)
 
     page = _Page(CANVAS_PAGE, screenshot=_target_png(tmp_path), viewport=(800.0, 600.0))

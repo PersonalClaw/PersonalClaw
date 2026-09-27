@@ -109,7 +109,12 @@ export function BundledFloorNotice() {
                   short, shaky answers and no tool use — it is there so a fresh install is not a dead
                   end.{' '}
                   <a href={MODELS_ROUTE} className="text-primary underline">
-                    Or connect a provider you already have
+                    {/* A provider can be connected with no model chosen for it (an instance saved
+                        without a Default Model, nothing bound): then nothing answers chat either,
+                        and what is left to do is to choose one of its models, not to connect one. */}
+                    {state.has_model_provider
+                      ? 'Or choose a model from a provider you’ve connected'
+                      : 'Or connect a provider you already have'}
                   </a>
                   .
                 </p>

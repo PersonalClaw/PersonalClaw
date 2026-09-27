@@ -74,8 +74,9 @@ def deploy_triggers(stage: str, home: Path | None = None) -> dict[str, list[str]
       fail the deploy (mirrors ``deploy_roster``'s ``missing`` list — a reported non-action, not a
       500).
 
-    🔴 THE SAFETY INVARIANT: a deployed trigger ALWAYS lands ``enabled=False``, regardless of the
-    staged bytes. The importer stages a pack's triggers disabled, but this does not TRUST that —
+    🔴 THE SAFETY INVARIANT: a deployed trigger ALWAYS lands ``enabled=False`` and with no
+    capability grant, regardless of the staged bytes, so switching one on asks the owner to allow
+    what it runs. The importer stages a pack's triggers disabled, but this does not TRUST that —
     it forces the flag — so a pack can never arm automation through its enable path. Landing a
     pack trigger enabled would be switching on work the user never chose.
 
@@ -110,6 +111,11 @@ def deploy_triggers(stage: str, home: Path | None = None) -> dict[str, list[str]
         # 🔴 Force disabled — never trust the staged `enabled`. This is the one line that keeps a
         # pack from arming automation through its own enable path.
         trigger.enabled = False
+        # 🔴 And no grant — never trust the staged `capabilities` either. A block that permits the
+        # action is what lets switching a trigger on skip its consent question
+        # (`triggers.grants`), and this one was written by the pack, not the owner. Measured before:
+        # a pack trigger carrying `{"providers": ["bash"]}` switched on with nothing asked.
+        trigger.capabilities = {}
         store.upsert(trigger)
         deployed.append(trigger.id)
 

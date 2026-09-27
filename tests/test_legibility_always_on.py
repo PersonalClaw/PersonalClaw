@@ -463,13 +463,17 @@ def test_new_skills_are_present_in_a_sessions_on_demand_index(isolated_home):
 
 
 class _FakeRequest:
-    """Minimal stand-in for the two attributes these handlers touch."""
+    """Minimal stand-in for the attributes these handlers touch — ``headers`` carries the
+    ``If-Match`` a replacing PUT names (``personalclaw/stale_write.py``)."""
 
     _MISSING = object()
 
-    def __init__(self, *, query: dict | None = None, body: object = _MISSING):
+    def __init__(
+        self, *, query: dict | None = None, body: object = _MISSING, headers: dict | None = None
+    ):
         self.query = query or {}
         self._body = body
+        self.headers = headers or {}
 
     async def json(self):
         if self._body is self._MISSING:
@@ -538,6 +542,7 @@ def test_doc_get_and_put_round_trip_over_http(isolated_home, store):
     status, payload = _call(
         api_always_on_doc_write,
         body={"id": item_id, "project_id": project.id, "body": edited},
+        headers={"If-Match": payload["revision"]},
     )
     assert status == 200 and payload["ok"] is True
     assert payload["item"]["body"] == edited

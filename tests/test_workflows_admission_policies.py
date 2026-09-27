@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw.loop.tick import Action
-from personalclaw.workflows import pool, store
+from personalclaw.workflows import pool, run_admission, store
 from personalclaw.workflows.admission import (
     RANK_CAPACITY,
     RANK_EXCLUSION,
@@ -526,8 +526,9 @@ async def test_a_leased_fanout_serializes_and_the_claim_survives_a_restart():
         await restarted._step()
         if restarted._inflight:
             # The launched node's completion is folded in by the tick loop's progress wait, and
-            # `_scope_settled` treats an in-flight node as not settled — driving `_step` alone would
-            # leave the item permanently "still working" and the lease permanently held.
+            # `run_admission._scope_settled` treats an in-flight node as not settled — driving
+            # `_step` alone would leave the item permanently "still working" and the lease
+            # permanently held.
             await restarted._await_progress()
         handed = pool.read_lease("endpoint")
         if handed is not None and handed.holder != record.holder:
@@ -594,10 +595,10 @@ async def test_a_spec_declaring_no_admission_keys_never_builds_an_admission_stat
     a state it has no use for. So the construction is made to THROW, and a plain run still passes.
     """
 
-    def _boom(self, ready):  # pragma: no cover - the point is that it is never called
+    def _boom(ctl, ready):  # pragma: no cover - the point is that it is never called
         raise AssertionError("a spec declaring no PP-12 keys must not gather admission state")
 
-    monkeypatch.setattr(RunController, "_admission_state", _boom)
+    monkeypatch.setattr(run_admission, "_admission_state", _boom)
     spec = {
         "name": "plain",
         "root": {

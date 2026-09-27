@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from personalclaw.app_cli import run_app_setup_steps
-from personalclaw.atomic_write import atomic_write
 from personalclaw.cli_chat import _ensure_default_agent_in_config
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -17,6 +16,7 @@ from personalclaw.config.loader import (  # noqa: F401 — re-exported for test 
     default_workspace_root,
     env_path,
 )
+from personalclaw.config.transactions import mutate_config
 from personalclaw.constants import DATA_WARNING
 from personalclaw.env import browser_available
 from personalclaw.orchestrator_skill import generate_orchestrator_skill
@@ -206,13 +206,15 @@ def _setup_noninteractive(
         print(f"  ⚠️  Unknown --mode {mode!r}. Valid values: docker, service, none")
 
     if provider:
-        cfg_file = config_path()
+
+        def _set_provider(data: dict) -> None:
+            agent = data.get("agent")
+            if not isinstance(agent, dict):
+                agent = data["agent"] = {}
+            agent["provider"] = provider
+
         try:
-            data: dict = {}
-            if cfg_file.exists():
-                data = json.loads(cfg_file.read_text(encoding="utf-8"))
-            data.setdefault("agent", {})["provider"] = provider
-            atomic_write(cfg_file, json.dumps(data, indent=2) + "\n")
+            mutate_config(_set_provider, path=config_path())
             print(f"  ✅ Provider set: {provider}")
         except Exception as exc:
             print(f"  ❌ Could not set provider: {exc}")
@@ -396,8 +398,13 @@ def _setup_timezone() -> None:
             print("  ⏭  Skipped after too many attempts.\n")
             return
 
-    data["timezone"] = tz_val
-    atomic_write(cfg_file, json.dumps(data, indent=2) + "\n")
+    # The zone alone, in the config transaction: the file was read before the prompt, and
+    # writing that copy back would put back whatever changed while the user was typing.
+    try:
+        mutate_config(lambda document: document.update(timezone=tz_val), path=cfg_file)
+    except Exception as exc:
+        print(f"  ❌ Could not save the timezone: {exc}\n")
+        return
     print(f"  ✅ Timezone saved: {tz_val}\n")
 
 
@@ -450,14 +457,15 @@ def _maybe_setup_dashboard_url() -> None:
         print("  ⏭  Skipped. Dashboard will bind to localhost only.\n")
         return
 
-    # Persist to config.json
-    try:
-        data: dict = {}
-        if cfg_file.exists():
-            data = json.loads(cfg_file.read_text(encoding="utf-8"))
-        dashboard = data.setdefault("dashboard", {})
+    def _set_url(data: dict) -> None:
+        dashboard = data.get("dashboard")
+        if not isinstance(dashboard, dict):
+            dashboard = data["dashboard"] = {}
         dashboard["url"] = answer
-        atomic_write(cfg_file, json.dumps(data, indent=2) + "\n")
+
+    # Persist to config.json, in the config transaction.
+    try:
+        mutate_config(_set_url, path=cfg_file)
         print(f"  ✅ Dashboard URL saved: {answer}")
         print("  Token auth will be required for all requests.\n")
     except Exception as e:

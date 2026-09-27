@@ -66,6 +66,31 @@ class _EmptyStore:
         return []
 
 
+@pytest.fixture
+def fakechat():
+    """A chat channel set up here. A schedule's route names the channel its results go to, and a
+    name that is no chat channel is refused, so a channel route needs one to exist."""
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Chat(ChannelTransportProvider):
+        name = property(lambda self: "fakechat")
+        display_name = property(lambda self: "FakeChat")
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message: object) -> bool:
+            return True
+
+    channel_transports.register_transport(_Chat())
+    yield "fakechat"
+    channel_transports.unregister_transport("fakechat")
+
+
 def _store(home):
     return TriggerStore(base_dir=home)
 
@@ -74,11 +99,11 @@ def _file_automation(home, name="Summarize notes", when="when a file in ~/notes 
     Tools.create(_store(home), name=name, when=when, message="go")
 
 
-def _req(method, path, state, *, body=None, match_info=None, query=None):
+def _req(method, path, state, *, body=None, match_info=None, query=None, headers=None):
     app = web.Application()
     app["state"] = state
     full = path + ("?" + query if query else "")
-    req = make_mocked_request(method, full, match_info=match_info or {}, app=app)
+    req = make_mocked_request(method, full, match_info=match_info or {}, app=app, headers=headers)
     req["user"] = "tester"
     if body is not None:
 
@@ -87,6 +112,14 @@ def _req(method, path, state, *, body=None, match_info=None, query=None):
 
         req.json = _json  # type: ignore[assignment]
     return req
+
+
+def _based_on_the_list(state, raw_id: str = "clock:nightly") -> dict[str, str]:
+    """The `If-Match` a whole-form save (one carrying `skip_dates` or `action`) names: the
+    revision the list read reports for the row (`personalclaw/stale_write.py`)."""
+    listed = _run(T.api_triggers(_req("GET", "/api/triggers", state, query="type=schedule")))
+    row = next(r for r in _body(listed)["triggers"] if r["raw_id"] == raw_id)
+    return {"If-Match": f'"{row["revision"]}"'}
 
 
 def _body(resp):
@@ -952,7 +985,9 @@ def test_the_schedule_list_is_read_from_the_store(home, state, monkeypatch):
                         "name": "Nightly",
                         "enabled": True,
                         "schedule": {"kind": "cron", "cron_expr": "0 9 * * *"},
-                        "action": {"provider": "bash", "config": {"command": "x"}},
+                        # Read-only, so the import carries it switched on and arms it; a job that
+                        # would run `bash` arrives off to wait for review (legacy_import).
+                        "action": {"provider": "notify", "config": {"title_template": "x"}},
                     }
                 ],
             }
@@ -1084,11 +1119,15 @@ def test_a_broken_clock_row_is_listed_with_its_error(home, state):
 
 
 def _create_schedule(state, **over):
+    # `confirm: true` is the owner's yes to the dialog a `bash` action is created behind: these
+    # tests are about where the row lands, and the question itself is
+    # `test_a_grant_is_for_the_action_the_owner_allowed`'s.
     body = {
         "trigger_type": "schedule",
         "name": "Nightly",
         "cron": "0 9 * * *",
         "action": {"provider": "bash", "config": {"command": "echo hi"}},
+        "confirm": True,
     }
     body.update(over)
     return _run(T.api_trigger_create(_req("POST", "/api/triggers", state, body=body)))
@@ -1127,11 +1166,11 @@ def test_the_spec_carries_every_schedule_field(home, state):
     assert spec["strict"] is True
 
 
-def test_channel_and_silent_become_DELIVERY(home, state):
+def test_channel_and_silent_become_DELIVERY(home, state, fakechat):
     """`LEGACY_FIELD_MAP`: `channel → delivery`, `silent → delivery == none`. Writing them into the
     action config (where they used to live) would make the projection render them empty."""
-    _create_schedule(state, channel="C0EXAMPLE02")
-    assert _store(home).get("clock:nightly").trigger.delivery == "channel:C0EXAMPLE02"
+    _create_schedule(state, channel="fakechat:C0EXAMPLE02")
+    assert _store(home).get("clock:nightly").trigger.delivery == "channel:fakechat:C0EXAMPLE02"
     _run(
         T.api_trigger_detail(
             _req("DELETE", "/api/triggers/x", state, match_info={"id": "schedule:clock:nightly"})
@@ -1359,6 +1398,7 @@ def test_skip_dates_can_be_CHANGED_not_only_preserved(home, state):
                 state,
                 body={"skip_dates": ["2027-12-25", "2028-01-01"]},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -1382,6 +1422,7 @@ def test_clearing_skip_dates_actually_clears_them(home, state):
                 state,
                 body={"skip_dates": [], "name": "Nightly"},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -1405,6 +1446,7 @@ def test_a_new_skip_date_RE_ARMS_the_trigger(home, state):
                 state,
                 body={"skip_dates": [skip_day]},
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )
@@ -2221,6 +2263,7 @@ def _put(state, body):
                 state,
                 body=body,
                 match_info={"id": "schedule:clock:nightly"},
+                headers=_based_on_the_list(state),
             )
         )
     )

@@ -109,7 +109,7 @@ def test_an_empty_session_ttl_falls_back_to_the_default(_isolated_home) -> None:
 
 
 def test_the_editable_allowlist_covers_the_intended_knobs() -> None:
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     for key in (
         "auth.login_enabled",
@@ -145,7 +145,7 @@ def test_no_credential_field_is_ever_patchable() -> None:
     Strictly stronger than the version it replaces: `{"security.api_password": {"type": "str"}}`
     fails on BOTH clauses, and a bool sneaking in unlisted fails on the second.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     forbidden = ("password", "credential", "hash", "totp_secret", "secret")
     worded = [k for k in _EDITABLE_CONFIG if any(word in k.lower() for word in forbidden)]
@@ -169,7 +169,7 @@ def test_every_auth_field_is_either_patchable_or_deliberately_not() -> None:
     """Catches a NEW auth field added without deciding whether it is runtime-editable."""
     from dataclasses import fields
 
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     known = {f.name for f in fields(AppConfig().auth)}
     editable = {k.split(".", 1)[1] for k in _EDITABLE_CONFIG if k.startswith("auth.")}

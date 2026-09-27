@@ -75,6 +75,13 @@ The loop surfaces do not care which home a loop has:
   A projected row carries **`run_id`**; that field, never the kind, is how a surface tells the two
   apart (`web/src/lib/loopKind.ts:loopRoute`, `lib/loopStatus.ts:loopActionSources`). The Loops
   list, Home (hero + Active Work) and Mission Control's Working lane all read this one listing.
+  The Working lane also reads `GET /api/workflows/runs?status=running`, because a run started
+  from Workflows, by a trigger or by a project is neither a chat session nor a loop. It leaves a
+  run that backs a loop to the loop's card, and a sub-run to the run that spawned it
+  (`lib/attentionLanes.ts:toLanes`). Both lists are re-read when a run starts, moves or ends: the
+  watchdog sends the listing hint `refresh` naming `workflow_runs` on every `workflow_run_update`
+  (`workflows/watchdog._raw_publish`), and Mission Control, Home and the Workflows list's Runs tab
+  re-read on it, so a card moves lanes or leaves without a reload.
 - **Status.** A run status is projected onto the nearest truthful loop status (`loop_view._STATUS`):
   `cancelled` → `stopped`; `escalated` → `complete` with a non-`done` stop reason, which renders
   "Ended early" (`cycle_budget` when the loop spent its iterations, `worker_failed` otherwise).
@@ -92,9 +99,10 @@ The loop surfaces do not care which home a loop has:
   cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
   not re-adopted after a restart. Resume clears the intent and wakes the controller.
 - **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
-  `continue` iteration rows (`_rehydrate_loop_progress`) and re-queues a dispatched stage whose
-  subagent this process does not know (`_requeue_orphaned_stages`) — without both, a run past its
-  first iteration failed "run deadlocked" after a restart.
+  `continue` iteration rows (`iteration_context.rehydrate_loop_progress`) and re-queues a
+  dispatched stage whose subagent this process does not know
+  (`stage_settlement.requeue_orphaned_stages`) — without both, a run past its first iteration
+  failed "run deadlocked" after a restart.
 - **Ending.** A run with a `loop_kind` announces its end as a loops-table loop does
   (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
   a "Loop needs a decision" inbox item when it escalates; a cancel says nothing.

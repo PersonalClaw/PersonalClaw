@@ -31,7 +31,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
-from personalclaw.dashboard.chat_runner import app_conversation_posture, run_chat
+from personalclaw.dashboard.chat_runner import TURN_STOPPED, app_conversation_posture, run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -506,8 +506,15 @@ async def _maybe_cancel_and_replace(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
         qid = session.queue_append(message)
+        # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
-            "chat_done", {"session": session.key, "superseded": True, "superseded_by": qid}
+            "chat_done",
+            {
+                "session": session.key,
+                "outcome": TURN_STOPPED,
+                "superseded": True,
+                "superseded_by": qid,
+            },
         )
         sel().log_tool_invocation(
             session_key=_history_key_for(session.key),
@@ -926,6 +933,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "title": session.title,
             "running": session.running,
             "stopping": session._stopping,
+            # How the latest turn that left the session idle ended — what that turn's
+            # `chat_done` carried — or null when none has. A tab that missed the frame settles
+            # from this and says the same thing the frame would have.
+            "last_turn_outcome": session._last_turn_outcome or None,
             "messages": prepared,
             "queue": [
                 {"id": q["id"], "content": _redact_for_display(q["content"])}
@@ -1173,6 +1184,11 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
 
     First press: soft cancel (cooperative). Second press (?force=true):
     hard kill. Inserts a stop_event message into the session transcript.
+
+    Answers ``{"ok": true, "stopped": <bool>}``: whether THIS press stopped a turn. ``false``
+    when nothing was running, when a stop was already under way, and when the runtime had no
+    turn in flight — a client must not announce a stop then; the turn's own ``chat_done`` says
+    how it ended.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -1194,7 +1210,9 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             session._stop_state = "idle"
             state.push_sessions_update()
 
-        await state.sessions.stop_turn(_history_key_for(name), force=True, on_hard=_on_hard_force)
+        forced = await state.sessions.stop_turn(
+            _history_key_for(name), force=True, on_hard=_on_hard_force
+        )
         sel().log_tool_invocation(
             session_key=_history_key_for(name),
             agent=getattr(session, "agent", "") or "personalclaw",
@@ -1204,13 +1222,13 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             outcome="hard",
             metadata={"session": name, "force": True},
         )
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, "stopped": forced in ("soft", "hard")})
 
     # Already stopping or not running — no-op
     if session._stop_state != "idle" or not session.running:
         if not session.running:
             logger.info("Stop: session %s not running, ignoring", name)
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, "stopped": False})
 
     # First press: soft stop
     session._stop_state = "soft_pending"
@@ -1269,7 +1287,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         outcome=outcome,
         metadata={"session": name, "force": False},
     )
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "stopped": outcome in ("soft", "hard")})
 
 
 async def api_chat_screen_state(request: web.Request) -> web.Response:
@@ -1282,13 +1300,14 @@ async def api_chat_screen_state(request: web.Request) -> web.Response:
     drift into its own explanation of a decision it doesn't make.
     """
     from personalclaw.dashboard import screen_context
+    from personalclaw.dashboard.chat_runner import session_image_input
 
     state: DashboardState = request.app["state"]
     name = str(request.query.get("session") or "")
     session = state._sessions.get(name)
     enabled = bool(AppConfig.load().dashboard.screen_share_enabled)
-    model_label = getattr(session, "model", "") or "" if session else ""
-    delivery, reason = screen_context.resolve_delivery(model_label)
+    verdict = await session_image_input(state, session)
+    delivery, reason = await screen_context.resolve_delivery(verdict.accepted)
     return web.json_response(
         {
             "enabled": enabled,
@@ -1296,6 +1315,35 @@ async def api_chat_screen_state(request: web.Request) -> web.Response:
             "reason": reason,
             "staged": bool(session and screen_context.pending(session.key)),
         }
+    )
+
+
+async def api_chat_image_input(request: web.Request) -> web.Response:
+    """GET /api/chat/image-input?session=<id> — whether an attached image reaches the model as one.
+
+    Returns ``{"accepted", "reason", "model"}``: ``accepted`` is whether the model the chat's
+    next turn is served by takes images as pixels (the platform's record,
+    ``providers.image_input``), and ``reason`` the sentence saying why not. The attachment chip
+    renders these; the turn decides from the same record, so the chip's promise and the turn's
+    delivery agree. What an image sent as text carries is the image's own extraction result
+    (``GET /api/attachment-extract``'s ``read``), which the chip reads per file. Optional
+    ``agent``/``model``/``runtime`` (the ACP runtime a picked agent runs on) answer for a
+    composer with no session.
+    """
+    from personalclaw.dashboard.chat_runner import session_image_input
+
+    state: DashboardState = request.app["state"]
+    name = str(request.query.get("session") or "")
+    session = state._sessions.get(name) if name else None
+    verdict = await session_image_input(
+        state,
+        session,
+        agent=str(request.query.get("agent") or ""),
+        model=str(request.query.get("model") or ""),
+        runtime=str(request.query.get("runtime") or ""),
+    )
+    return web.json_response(
+        {"accepted": verdict.accepted, "reason": verdict.reason, "model": verdict.model}
     )
 
 
@@ -1422,19 +1470,18 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     — which is the ephemerality guarantee working as designed, not a limitation.
 
     Once written, the frame is an ordinary upload: the uploads dir, the same
-    sanitized-name + random-prefix + 0600 treatment, and the same content extraction
-    every attachment gets. Sending it on to the knowledge library is then the user's
-    normal explicit ingest action; nothing here touches knowledge.db or memory.db.
+    sanitized-name + random-prefix + 0600 treatment, and read into text, like every
+    attached image, only when its text is asked for. Sending it on to the knowledge
+    library is then the user's normal explicit ingest action; nothing here touches
+    knowledge.db or memory.db.
 
     Refused in incognito/temporary sessions — "writes suppressed" is the whole
     contract of those modes, and a pinned screenshot is a write.
     """
-    import mimetypes as _mt
     import re
     import uuid as _uuid
 
     from personalclaw.dashboard import screen_context
-    from personalclaw.dashboard.attachment_extract import get_extractor
     from personalclaw.dashboard.handlers.files import _upload_dir
     from personalclaw.uploads.policy import check_upload
 
@@ -1503,10 +1550,8 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     dest = _upload_dir() / f"{_uuid.uuid4().hex}_{safe}"
     dest.write_bytes(raw)
     os.chmod(dest, 0o600)
-    try:
-        get_extractor().start(str(dest), frame.media_type or _mt.guess_type(str(dest))[0])
-    except Exception:
-        logger.debug("pinned-frame extract kickoff failed", exc_info=True)
+    # Not read ahead: a frame is an image, read only when its text is asked for
+    # (`AttachmentExtractor.start`).
 
     sel().log_api_access(
         caller="dashboard",

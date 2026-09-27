@@ -269,7 +269,9 @@ class TestAnAppCannotDefineOrFireAnAutomation:
         assert "has not declared whether an app may reach it" in text
 
 
-def _trigger_request(body: dict, *, match: dict | None = None, method: str = "POST") -> MagicMock:
+def _trigger_request(
+    body: dict, *, match: dict | None = None, method: str = "POST", base: str = ""
+) -> MagicMock:
     state = MagicMock()
     state._sessions = {}
     request = MagicMock()
@@ -278,7 +280,16 @@ def _trigger_request(body: dict, *, match: dict | None = None, method: str = "PO
     request.get = lambda key, default=None: {"user": "owner"}.get(key, default)
     request.json = AsyncMock(return_value=body)
     request.match_info = match or {}
+    request.headers = {"If-Match": f'"{base}"'} if base else {}
     return request
+
+
+def _listed_revision() -> str:
+    """The revision the list read reports for `clock:t` — what an edit carrying the action names,
+    since the action is replaced whole (`personalclaw/stale_write.py`)."""
+    from personalclaw.dashboard.handlers.triggers import _schedule_row_for, _trigger_store
+
+    return _schedule_row_for(MagicMock(), _trigger_store().get("clock:t"))["revision"]
 
 
 def _schedule(approval_mode: str = "", capability: str = "", **extra: Any) -> dict:
@@ -317,14 +328,18 @@ class TestTheOwnerConsentsToAnAutomationThatApprovesItself:
         ("posture", "field"), AUTOMATION_POSTURE_CASES, ids=["auto-approve", "write-grant"]
     )
     async def test_creating_one_needs_consent(self, posture, field) -> None:
+        """Asked with the rest of what creating an agent schedule needs the owner's yes for — the
+        grant its action needs comes first (`triggers.grants`) — in ONE question, so the posture's
+        own sentence is in it."""
+        from personalclaw.automation_posture import POSTURE_SPECS
         from personalclaw.dashboard.handlers.triggers import api_trigger_create
 
         resp = await api_trigger_create(_trigger_request(_schedule(**posture)))
         assert resp.status == 400
         error = json.loads(resp.body)["error"]
         assert error["code"] == "confirmation_required"
-        assert error["detail"]["field"] == field
-        assert error["detail"]["consent"].strip()
+        key = field.rsplit(".", 1)[1]
+        assert POSTURE_SPECS[key]["security"].consent in error["detail"]["consent"]
         assert _stored_trigger_config() is None, "nothing may be written"
 
         granted = await api_trigger_create(_trigger_request(_schedule(**posture, confirm=True)))
@@ -333,27 +348,39 @@ class TestTheOwnerConsentsToAnAutomationThatApprovesItself:
         assert stored is not None and all(stored[k] == v for k, v in posture.items())
 
     @pytest.mark.asyncio
-    async def test_an_ordinary_schedule_is_never_asked(self) -> None:
+    async def test_an_ordinary_schedule_is_never_asked_about_its_agent(self) -> None:
+        """Creating an agent schedule asks for the grant its action needs, and nothing about the
+        agent's posture when the schedule does not loosen it."""
+        from personalclaw.automation_posture import POSTURE_SPECS
         from personalclaw.dashboard.handlers.triggers import api_trigger_create
 
         resp = await api_trigger_create(_trigger_request(_schedule()))
-        assert resp.status == 200
+        consent = json.loads(resp.body)["error"]["detail"]["consent"]
+        for spec in POSTURE_SPECS.values():
+            assert spec["security"].consent not in consent
+        assert (await api_trigger_create(_trigger_request(_schedule(confirm=True)))).status == 200
 
     @pytest.mark.asyncio
     async def test_editing_one_to_approve_itself_needs_consent_and_back_does_not(self) -> None:
         from personalclaw.dashboard.handlers.triggers import api_trigger_create, api_trigger_detail
 
-        assert (await api_trigger_create(_trigger_request(_schedule()))).status == 200
+        # The owner's yes to the grant creating an agent schedule asks for.
+        assert (await api_trigger_create(_trigger_request(_schedule(confirm=True)))).status == 200
         loosen = {"action": _schedule("auto")["action"]}
         refused = await api_trigger_detail(
-            _trigger_request(loosen, match={"id": "schedule:clock:t"}, method="PUT")
+            _trigger_request(
+                loosen, match={"id": "schedule:clock:t"}, method="PUT", base=_listed_revision()
+            )
         )
         assert refused.status == 400
         assert _stored_trigger_config().get("approval_mode", "") == ""
 
         granted = await api_trigger_detail(
             _trigger_request(
-                {**loosen, "confirm": True}, match={"id": "schedule:clock:t"}, method="PUT"
+                {**loosen, "confirm": True},
+                match={"id": "schedule:clock:t"},
+                method="PUT",
+                base=_listed_revision(),
             )
         )
         assert granted.status == 200, granted.body
@@ -362,7 +389,9 @@ class TestTheOwnerConsentsToAnAutomationThatApprovesItself:
         # Handing it back never asks.
         tighten = {"action": _schedule()["action"]}
         back = await api_trigger_detail(
-            _trigger_request(tighten, match={"id": "schedule:clock:t"}, method="PUT")
+            _trigger_request(
+                tighten, match={"id": "schedule:clock:t"}, method="PUT", base=_listed_revision()
+            )
         )
         assert back.status == 200, back.body
         assert _stored_trigger_config().get("approval_mode", "") == ""
@@ -462,9 +491,12 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
 
     @pytest.mark.asyncio
     async def test_lifting_a_runs_cycle_cap_needs_consent(self, monkeypatch) -> None:
+        from personalclaw.stale_write import revision_of
         from personalclaw.workflows import handlers, service, store
+        from personalclaw.workflows.models import RunStatus
 
         run = MagicMock()
+        run.status = RunStatus.DRAFT  # the one phase whose overlay is editable
         run.policy_overrides = {}
         applied: list[dict] = []
         monkeypatch.setattr(store, "get", lambda run_id: run)
@@ -476,25 +508,28 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
         )
         match = {"run_id": "r1"}
 
+        def put(body: dict) -> _Req:
+            # Every write names the overlay's revision, as the editor does — so the only thing
+            # left between it and the store is the consent this test is about.
+            req = _Req(body, match)
+            req.headers["If-Match"] = revision_of(run.policy_overrides)
+            return req
+
         # 0 removes the cap the template declared (3): asked, and nothing is applied.
-        refused = await handlers.api_run_policy_overrides(_Req({"max_cycles": 0}, match))
+        refused = await handlers.api_run_policy_overrides(put({"max_cycles": 0}))
         assert refused.status == 400
         detail = json.loads(refused.body)["error"]["detail"]
         assert detail["field"] == "workflows.runs.r1.policy_overrides.max_cycles"
         assert not applied
 
         assert (
-            await handlers.api_run_policy_overrides(_Req({"max_cycles": 0, "confirm": True}, match))
+            await handlers.api_run_policy_overrides(put({"max_cycles": 0, "confirm": True}))
         ).status == 200
         assert applied[-1] == {"max_cycles": 0}, "the consent flag is not persisted as a knob"
 
         # A tighter cap, or a knob the engine does not act on, is never asked.
-        assert (
-            await handlers.api_run_policy_overrides(_Req({"max_cycles": 2}, match))
-        ).status == 200
-        assert (
-            await handlers.api_run_policy_overrides(_Req({"autopilot": True}, match))
-        ).status == 200
+        assert (await handlers.api_run_policy_overrides(put({"max_cycles": 2}))).status == 200
+        assert (await handlers.api_run_policy_overrides(put({"autopilot": True}))).status == 200
 
 
 # ── 3. The agent sync applies #3602's check ──────────────────────────────────────────

@@ -280,7 +280,7 @@ def _assert_foreign_excluded_from_counters(case: SharedStoreCase) -> None:
         case.belongs_to(foreign, owner) is False,
         clause,
         f"belongs_to(foreign_record, owner) MUST be False — a record authored by "
-        f"{case._foreign!r} is not the owner {owner!r}'s. This is the shipped "
+        f"{case._foreign!r} does not belong to the owner {owner!r}. This is the shipped "
         "Task.belongs_to / triggers.ownership predicate; do not re-derive it.",
     )
     _require(

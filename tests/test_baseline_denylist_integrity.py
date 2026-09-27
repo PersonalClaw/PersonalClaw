@@ -608,7 +608,7 @@ class TestSecurityPanelPayload:
         """Read-only is a property of the API surface, not just of the UI: the only
         writable field in this area is ``security.denied_commands`` (the user list),
         reachable through the config PATCH allowlist. Nothing addresses the baseline."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         writable = [k for k in _EDITABLE_CONFIG if "denied" in k or "baseline" in k]
         assert writable == ["security.denied_commands"]

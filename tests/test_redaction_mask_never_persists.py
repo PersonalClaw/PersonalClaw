@@ -46,11 +46,14 @@ def _mock_sel(monkeypatch):
     monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: MagicMock())
 
 
-def _req(name=None, body=None):
+def _req(name=None, body=None, revision=None):
     r = MagicMock()
     if name is not None:
         r.match_info = {"name": name}
     r.query = {}
+    # A save replaces the whole record, so it names the revision its read reported
+    # (`personalclaw/stale_write.py`); a read sends none.
+    r.headers = {"If-Match": revision} if revision is not None else {}
 
     async def _json():
         if body is None:
@@ -181,6 +184,7 @@ def test_prompt_round_trip_does_not_destroy_the_stored_secret():
                     "title": "New",
                     "content": got["content"],
                 },
+                revision=got["revision"],
             )
         )
     )
@@ -198,7 +202,13 @@ def test_snippet_round_trip_does_not_destroy_the_stored_secret():
     assert MASK in got["content"]
 
     resp = asyncio.run(
-        api_snippet_save(_req(name="zz-snip", body={"name": "zz-snip", "content": got["content"]}))
+        api_snippet_save(
+            _req(
+                name="zz-snip",
+                body={"name": "zz-snip", "content": got["content"]},
+                revision=got["revision"],
+            )
+        )
     )
     assert resp.status == 200
     assert prov.get_snippet("zz-snip").content == stored
@@ -208,6 +218,7 @@ def test_a_genuine_content_edit_is_still_persisted():
     # Vacuity guard at the endpoint: editing a prompt with no secret in it works as before.
     prov = _provider()
     _seed(prov, "zz-plain", "original body")
+    got = _payload(asyncio.run(api_prompt_detail(_req(name="zz-plain"))))
     asyncio.run(
         api_prompt_save(
             _req(
@@ -218,6 +229,7 @@ def test_a_genuine_content_edit_is_still_persisted():
                     "title": "T",
                     "content": "rewritten body",
                 },
+                revision=got["revision"],
             )
         )
     )
@@ -230,6 +242,7 @@ def test_an_unrecoverable_mask_is_refused_instead_of_persisting_the_mask(monkeyp
     prov = _provider()
     stored = f"key: {SECRET}\ntail"
     _seed(prov, "zz-conflict", stored)
+    got = _payload(asyncio.run(api_prompt_detail(_req(name="zz-conflict"))))
     monkeypatch.setattr(
         "personalclaw.dashboard.handlers.prompts.restore_masked_spans",
         lambda submitted, stored_content: None,
@@ -244,6 +257,7 @@ def test_an_unrecoverable_mask_is_refused_instead_of_persisting_the_mask(monkeyp
                     "title": "T",
                     "content": f"rewritten {MASK}",
                 },
+                revision=got["revision"],
             )
         )
     )

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { api, type AvailableModel, type DownloadJob } from '../../lib/api'
+import { api, ApiError, type AvailableModel, type DownloadJob } from '../../lib/api'
 import { LocalModelManager } from './LocalModelManager'
 
 // ── A failed cancel is the one this surface could not afford to swallow ────────────────────────────
@@ -35,7 +35,7 @@ const RUNNING: DownloadJob = {
   id: 'job-1', provider: 'ollama', model: 'llama3:8b', kind: 'weights', state: 'running',
   progress: 0.2, speed_bps: 1_000_000, eta_s: 120,
   total_bytes: 4_600_000_000, downloaded_bytes: 920_000_000,
-  error: '', reason: '',
+  error: '', reason: '', warning: '',
 }
 
 beforeEach(() => {
@@ -69,7 +69,7 @@ describe('a download cancel that fails says so, and keeps the row', () => {
 
   it('a REJECTED cancel leaves the progress row in place and tells the user', async () => {
     const cancelSpy = vi.spyOn(api, 'cancelModelDownload')
-      .mockRejectedValue(new Error('{"error":"job already finished"}'))
+      .mockRejectedValue(new ApiError('job already finished', 409))
     mount()
     await waitFor(() => expect(cancelButton()).toBeTruthy())
     fireEvent.click(cancelButton()!)
@@ -81,11 +81,16 @@ describe('a download cancel that fails says so, and keeps the row', () => {
     expect(cancelButton(), 'the cancel control is still offered').toBeTruthy()
   })
 
-  it('the reported message carries the server’s reason, not a generic string', () => {
-    // The panel unwraps a JSON error body the same way `download` does; a bare "Cancel failed" would
-    // hide which job the server refused and why.
-    const src = readSource()
-    expect(src).toMatch(/const p = JSON\.parse\(msg\); msg = p\.error \|\| msg/)
+  it('the reported message carries the server’s reason, not a generic string', async () => {
+    // A refusal reaches the row as the server's own sentence (`ApiError.message`, which `lib/errText`
+    // reads out of the envelope); a bare "Cancel failed" would hide which job the server refused and
+    // why. Driven, not read off the source: the panel used to re-parse `message` as JSON, which the
+    // client stopped handing it long ago.
+    vi.spyOn(api, 'cancelModelDownload').mockRejectedValue(new ApiError('job already finished', 409))
+    mount()
+    await waitFor(() => expect(cancelButton()).toBeTruthy())
+    fireEvent.click(cancelButton()!)
+    expect(await screen.findByText("Couldn't cancel this download: job already finished")).toBeTruthy()
   })
 
   it('a SUCCESSFUL cancel does clear the row', async () => {

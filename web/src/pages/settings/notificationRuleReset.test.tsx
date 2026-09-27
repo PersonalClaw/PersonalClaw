@@ -83,15 +83,20 @@ describe('the reset chip', () => {
 })
 
 describe('delivery targets tell the truth about themselves (#343)', () => {
-  it('marks Channel DM as not-yet-delivered', async () => {
-    // It was the one target with nothing behind it — `notification_rules.TARGETS`' own comment calls
-    // it "accepted and persisted but inert" — and the only one presented as a plain, live choice, so
-    // ticking it silently did nothing.
+  it('offers Channel DM as a live target, now that it delivers', async () => {
+    // It was the one target with nothing behind it, so it was dimmed and labelled "not delivered
+    // yet". `DashboardState.notify` sends it now: the label says where it goes, and it is not dimmed.
     mount([row()])
     fireEvent.click(screen.getByRole('button', { name: /delivery detail for Skill proposal/i }))
     const label = await screen.findByText(/Channel DM/)
-    expect(label.textContent).toMatch(/not delivered yet/i)
-    // Dimmed like `push`, which is the established way this surface says "saved, not live".
-    expect(label.className).toContain('text-on-surface-low')
+    expect(label.textContent).not.toMatch(/not delivered yet/i)
+    expect(label.textContent).toMatch(/first connected chat channel that knows you/i)
+    expect(label.className).not.toContain('text-on-surface-low')
+  })
+
+  it('still dims Push, which needs a registered device to land anywhere', async () => {
+    mount([row()])
+    fireEvent.click(screen.getByRole('button', { name: /delivery detail for Skill proposal/i }))
+    expect((await screen.findByText(/^Push/)).className).toContain('text-on-surface-low')
   })
 })

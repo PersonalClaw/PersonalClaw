@@ -16,7 +16,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
@@ -116,8 +116,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
   // `crons` whenever the trigger store changes, and every source re-reads on it.
   useChatSocket((m: WsMessage) => {
-    const kinds = m.type === 'refresh' ? m.data?.kinds : undefined
-    if (Array.isArray(kinds) && kinds.includes('crons')) {
+    if (refreshKinds(m).includes('crons')) {
       loadSchedules(); loadHooks(); loadStores(); loadReview()
     }
   })
@@ -338,6 +337,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
                               : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
                           {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
+                          {/* Brought over from an older version and off until the owner allows what
+                              it runs — what the Inbox's review item sends you here to find. Warn, not
+                              danger: nothing is broken, it is waiting for a decision. */}
+                          {t.needsReview && <span data-type="caption" className="shrink-0 text-warn">· waiting for your review</span>}
+                          {/* Its action is not allowed to run — Run now and every fire are refused
+                              until the owner allows it on its panel. An imported row already says
+                              so as "waiting for your review". */}
+                          {!t.needsReview && (t.needsGrant?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 text-warn">· not allowed to run</span>}
                           {/* The row's WARNING-severity issues, which reached no surface at all
                               before issue 531 — the store computed them on every load and the wire
                               projection dropped them. Rendered ONLY when there is no error: a row

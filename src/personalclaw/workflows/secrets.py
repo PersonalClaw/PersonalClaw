@@ -7,7 +7,7 @@ token leaked to all of those at once.
 
 So credentials are never IN a spec — a spec carries `{{secret:KEY}}`, resolved
 server-side at dispatch against the credential store (`bindings.py` owns the resolution;
-`controller._secret_resolver` is the injected seam). This module owns the three
+`node_bindings._secret_resolver` is the injected seam). This module owns the three
 surrounding disciplines:
 
 * **Presence, not value, on read.** `strip_secrets` replaces a secret-bearing field with

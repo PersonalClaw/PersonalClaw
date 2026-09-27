@@ -13,13 +13,21 @@ EMPTY — every cron lives only in `crons.json`. Two consequences that block the
 `crons.json`: boot armed `j-cron`, and the NEXT boot's migration blanked the arm — a plain `upsert`
 of the freshly converted row overwrote `next_fire_at`, `run_count` and the health fields with the
 empty values a conversion produces. So every boot re-armed the trigger, which re-phases a schedule
-(a 9am job armed at 03:00 becomes "next 9am from now") and loses the run history the UI reads. The
-store's own docstring claimed idempotency, and it held for config only.
+(a 9am job armed at 03:00 becomes "next 9am from now") and loses the run history the UI reads.
+
+The import now reads `crons.json` once per home and never over a row the store already has
+(`triggers/legacy_import.py`), so a later boot has nothing to re-migrate at all; the properties
+the idempotency fix protected are still pinned below as what a restart must not undo. Those tests
+use a READ-ONLY action on purpose: the import carries a read-only job's switch as it was, while a
+job that would run anything needing a grant arrives off to wait for the owner
+(`test_legacy_trigger_import.py`), and a test of arming run against an off row would pass by
+arming nothing.
 """
 
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -29,7 +37,10 @@ from personalclaw.triggers.store import TriggerStore
 
 NOW = 1_800_000_000.0  # 2027-01-15T08:00:00Z
 
-_ACTION = {
+_ACTION = {"provider": "notify", "config": {"title_template": "Nightly"}}
+
+#: An agent job, for the projection test: the fields a schedule row publishes for an agent.
+_AGENT_ACTION = {
     "provider": "invoke-agent",
     "config": {"task_template": "go", "agent": "coder", "model": "m", "approval_mode": "auto"},
 }
@@ -132,20 +143,6 @@ def test_a_re_migration_preserves_run_history(tmp_path):
     assert after.last_success_at == "2027-01-14T09:00:00Z"
 
 
-def test_a_re_migration_still_picks_up_a_CONFIG_change(tmp_path):
-    """The other direction — runtime state is carried, but CONFIG is refreshed from the legacy
-    file, which is what keeps `crons.json` authoritative for what the job IS this release.
-    Renaming it there and re-running boot must move the name; carrying everything would freeze
-    the config."""
-    _crons(tmp_path, _job("j-cron", name="Original"))
-    BM.migrate_and_arm(tmp_path, now=NOW)
-    assert TriggerStore(base_dir=tmp_path).get("j-cron").trigger.name == "Original"
-
-    _crons(tmp_path, _job("j-cron", name="Renamed"))
-    BM.migrate_and_arm(tmp_path, now=NOW + 10)
-    assert TriggerStore(base_dir=tmp_path).get("j-cron").trigger.name == "Renamed"
-
-
 def test_a_trigger_authored_directly_in_the_store_survives_a_migration(tmp_path):
     """The store's own promise: an import upserts by id rather than replacing the store."""
     from personalclaw.triggers.models import Trigger
@@ -184,12 +181,16 @@ def test_an_unreadable_crons_file_does_not_raise(tmp_path):
     assert "unreadable" in report["reason"]
 
 
-def test_the_legacy_file_is_left_on_disk(tmp_path):
-    """§6: "old file read-only one release" — `verify-migration` needs both sides to diff."""
+def test_the_legacy_file_is_renamed_never_deleted(tmp_path):
+    """Imported once, then renamed `crons.json.imported-<date>` with its bytes intact:
+    `verify-migration` diffs against that copy, and renaming it back gives an older build its
+    store."""
     _crons(tmp_path, _job("j-cron"))
     before = (tmp_path / "crons.json").read_text()
     BM.migrate_and_arm(tmp_path, now=NOW)
-    assert (tmp_path / "crons.json").read_text() == before
+    day = time.strftime("%Y-%m-%d", time.localtime(NOW))
+    assert not (tmp_path / "crons.json").exists()
+    assert (tmp_path / f"crons.json.imported-{day}").read_text() == before
 
 
 def test_verify_runs_at_boot_and_reports_paused_rows(tmp_path):
@@ -205,14 +206,31 @@ def test_verify_runs_at_boot_and_reports_paused_rows(tmp_path):
 # ── the schedule projection (the re-point precondition) ──
 
 
+def _converted_into_the_store(tmp_path, job):
+    """A converted cron written straight into the store and armed — the projection's input.
+
+    Not through the boot import: that switches an agent job off and drops its `approval_mode`
+    until the owner reviews it (`legacy_import.admit`), and this test is about what a schedule row
+    PUBLISHES for every field a converted row can carry, the agent's included."""
+    from personalclaw.triggers.migrate import convert_job
+    from personalclaw.triggers.models import parse_trigger
+
+    trigger, _issues = parse_trigger(convert_job(job).trigger)
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(trigger)
+    BM.arm_unarmed(store, now=NOW)
+    return store.get(job["id"]).trigger
+
+
 def test_the_projection_covers_every_field_the_api_publishes(tmp_path):
     """🔴 The re-point's real contract: a store-backed row must render in the SAME wire shape the API
     already publishes from a `ScheduleJob`, or the frontend silently loses fields. Compared
     field-for-field against the live serializer while building this."""
-    _crons(
+    trigger = _converted_into_the_store(
         tmp_path,
         _job(
             "j-cron",
+            action=_AGENT_ACTION,
             channel="C1",
             silent=False,
             timezone="America/New_York",
@@ -222,8 +240,6 @@ def test_the_projection_covers_every_field_the_api_publishes(tmp_path):
             last_error="boom",
         ),
     )
-    BM.migrate_and_arm(tmp_path, now=NOW)
-    trigger = TriggerStore(base_dir=tmp_path).get("j-cron").trigger
     row = SV.to_schedule_row(trigger, now=NOW, base_dir=tmp_path)
 
     assert row["kind"] == "schedule"
@@ -354,10 +370,9 @@ def test_the_gateway_boots_the_migration(tmp_path):
 
 # ── 🔴 #461: the idempotency defect's THIRD half — the off switch ─────────────
 #
-# `test_a_re_migration_preserves_run_history` above closed `run_count`/`last_run_id`/health.
-# `enabled` was left out of `RUNTIME_FIELDS`, so it kept the original defect's shape: a user
-# disabled a trigger, the next boot re-migrated, and `crons.json`'s stale `enabled: true` came
-# back — re-enabled AND re-armed, because `needs_arming` then selected it.
+# A user disabled a trigger, the next boot re-migrated, and `crons.json`'s stale `enabled: true`
+# came back — re-enabled AND re-armed, because `needs_arming` then selected it. Nothing
+# re-migrates any more (the file is imported once), and these pin what a restart must still not do.
 #
 # Whether an automation is switched on is a fact about what has HAPPENED to a trigger (a person
 # turned it off), not about what it IS. That is the same line the rest of this section draws.
@@ -376,8 +391,8 @@ def test_a_re_migration_PRESERVES_a_user_disable(tmp_path):
 
 
 def test_a_re_enabled_trigger_is_ALSO_preserved(tmp_path):
-    """The mirror, and not redundant: the carry is a boolean now, so a test that only pinned
-    `False` would pass against a rule that carried nothing at all."""
+    """The mirror, and not redundant: a test that only pinned `False` would pass against a restart
+    that switched everything off."""
     _crons(tmp_path, _job("j-off", enabled=False))
     BM.migrate_and_arm(tmp_path, now=NOW)
     store = TriggerStore(base_dir=tmp_path)
@@ -402,50 +417,9 @@ def test_a_preserved_disable_is_not_re_armed(tmp_path):
     assert SVC.due_ids(triggers, now=NOW + 86_400) == [], "a disabled trigger became due again"
 
 
-def test_False_is_carried_because_a_bool_is_never_ABSENT(tmp_path):
-    """🔴 The trap that makes this a two-line fix rather than a one-line one.
-
-    `_carry_runtime_state` skipped a field whose existing value was falsy, spelled
-    `value not in (None, "", 0)`. `False == 0` in Python, so `False in (None, "", 0)` is True:
-    adding `enabled` to `RUNTIME_FIELDS` and stopping there would have carried `enabled=True` and
-    silently dropped `enabled=False` — the one value that needed carrying.
-
-    Asserted at the unit rather than only through a migration, because the migration reads
-    `crons.json` and a future change to that reader could hide this again.
-    """
-    from personalclaw.triggers.models import Trigger
-    from personalclaw.triggers.store import RUNTIME_FIELDS, _carry_runtime_state
-
-    assert "enabled" in RUNTIME_FIELDS
-    assert False in (None, "", 0), "the premise: Python treats False as equal to 0"
-
-    def _t(**over):
-        base = dict(
-            id="j",
-            name="J",
-            kind="clock",
-            spec={"kind": "interval", "interval_secs": 60},
-            workflow={"provider": "notify", "config": {}},
-            capabilities={"providers": ["notify"]},
-        )
-        base.update(over)
-        return Trigger(**base)
-
-    incoming = _t(enabled=True)
-    _carry_runtime_state(_t(enabled=False), incoming)
-    assert incoming.enabled is False
-
-    # And the falsy-means-absent rule still holds for the counters, which is why the fix is
-    # `isinstance(value, bool) or …` and not "carry every falsy value".
-    incoming = _t(run_count=5)
-    _carry_runtime_state(_t(run_count=0), incoming)
-    assert incoming.run_count == 5, "a zero count must not overwrite a derived one"
-
-
-def test_a_re_migration_still_picks_up_a_legacy_ENABLED_change_for_a_NEW_row(tmp_path):
-    """Vacuity floor. `enabled` is carried only when the row is ALREADY in the store — a first
-    import must still take the legacy file's word for it, or `crons.json` stops being
-    authoritative for a job this home has never seen."""
+def test_a_first_import_keeps_a_legacy_job_that_was_off_OFF(tmp_path):
+    """Vacuity floor: the import takes the legacy file's word for a switch it carries, so a job
+    that was off in the older version is still off here."""
     _crons(tmp_path, _job("j-new", enabled=False))
     BM.migrate_and_arm(tmp_path, now=NOW)
     assert TriggerStore(base_dir=tmp_path).get("j-new").trigger.enabled is False

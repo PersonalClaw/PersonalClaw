@@ -341,8 +341,8 @@ def test_raising_the_threshold_holds_back_a_lesson_that_was_injected(vs, tmp_pat
 def test_the_threshold_round_trips_and_is_patchable(tmp_path, monkeypatch):
     """The write path: dataclass → load() → to_dict() → the PATCH allowlist."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AppConfig, config_path
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG["learning.min_lesson_confidence"]
     assert spec == {"type": "float", "min": 0.0, "max": 1.0}

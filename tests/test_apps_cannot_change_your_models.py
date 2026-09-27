@@ -317,6 +317,21 @@ class _Gateway:
         assert status < 300, f"{method} {path} as you → {status}: {text}"
         return json.loads(text)
 
+    async def bind(self, use_case: str, models: list[str]) -> Any:
+        """Your binding, the way the Models page saves it: the chain replaces the use case's whole
+        chain, so it names the revision of the chain it was read at (`If-Match`)."""
+        base = (await self.ok("GET", "/api/models/active"))["revisions"][use_case]
+        resp = await self.client.put(
+            f"/api/models/active/{use_case}",
+            json={"models": models},
+            headers={"Cookie": f"pc_token_{PORT}={self._owner}", "If-Match": f'"{base}"'},
+        )
+        text = await resp.text()
+        assert (
+            resp.status < 300
+        ), f"PUT /api/models/active/{use_case} as you → {resp.status}: {text}"
+        return json.loads(text)
+
     async def install(self, source: Path) -> None:
         """Your install: review, then install with the digest the review returned."""
         review = await self.ok("POST", "/api/apps/preview", {"source": str(source)})
@@ -378,7 +393,7 @@ async def _your_models(gw: _Gateway) -> None:
     yours = {"endpoint": YOUR_ENDPOINT, "api_key": YOUR_KEY}
     body = {"name": YOURS, "type": VENDOR, "model": YOUR_MODEL, "options": yours}
     await gw.ok("POST", "/api/model-providers", body)
-    await gw.ok("PUT", "/api/models/active/chat", {"models": [f"{YOURS}:{YOUR_MODEL}"]})
+    await gw.bind("chat", [f"{YOURS}:{YOUR_MODEL}"])
 
 
 def _stored_providers() -> list[str]:

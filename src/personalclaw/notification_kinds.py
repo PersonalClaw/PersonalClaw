@@ -247,6 +247,20 @@ _KINDS: tuple[NotificationKind, ...] = (
         SEV_ERROR,
         owner="personalclaw.triggers.delivery",
     ),
+    # The triggers a legacy import brought over and switched off (`triggers/legacy_import.py`).
+    # A decision: they stay off until the owner switches each on, so no verdict may hide the row,
+    # and only the owner closes it. WARNING, like `guardrails/autonomy_revocation`: automations the
+    # owner made in an older version have already stopped running, and only they can start them.
+    NotificationKind(
+        "cron",
+        "trigger_import",
+        "Triggers brought over for review",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.inbox",
+    ),
     # heartbeat — 5 sites in gateway.py
     NotificationKind(
         "heartbeat",
@@ -498,6 +512,19 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         owner="personalclaw.notification_rules",
     ),
+    # A tool call denied with no answer: an approval nobody answered in time, or one an unattended
+    # run could not ask about (`dashboard/auto_denials.py`). Its durable row is what the
+    # morning reads — the approval's own row closes when it ends. WARNING: work the user asked for
+    # did not happen. Not a decision: nothing is waiting on an answer any more.
+    NotificationKind(
+        "system",
+        "auto_denied",
+        "Denied without an answer",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        owner="personalclaw.dashboard.auto_denials",
+    ),
     # The monthly spend recap. `digest` by DEFAULT, unlike every other kind here: a
     # recap of a month that already closed is the least urgent thing the system emits, and
     # interrupting for it would teach a user to mute the channel that also carries a budget
@@ -725,6 +752,14 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # `task_due`, not the bare `due`: the wire string is what the digest groups by and the
     # SPA keys its label on, and a bare `due` would read as belonging to whatever next registers it.
     "task_due": ("tasks", "due"),
+    # The legacy-import review item. Its bare kind IS its wire string, and it still needs this row:
+    # `kind_for_legacy` resolves the wire value back through here, and without it the item's rule
+    # would be system/generic's — the registry's 🪤 one level down, exactly as `autonomy_revocation`
+    # above found.
+    "trigger_import": ("cron", "trigger_import"),
+    # The bare kind is unique, so it is its own wire string — and it needs this row for the
+    # same reason `autonomy_revocation` does: without one `kind_for_legacy` falls open to generic.
+    "auto_denied": ("system", "auto_denied"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -771,6 +806,8 @@ RESEARCH_FINDING = "research_finding"
 APPROVAL = "approval"
 #: A task's due date is coming (`tasks/due_notices.py`).
 TASK_DUE = "task_due"
+#: A tool call denied with no answer (`dashboard/auto_denials.py`).
+AUTO_DENIED = "auto_denied"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -796,6 +833,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     RESEARCH_FINDING,
     APPROVAL,
     TASK_DUE,
+    AUTO_DENIED,
     GENERIC,
 )
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { ProjectionRule } from '../../lib/api'
+import type { Revisioned } from '../../lib/staleWrite'
 
 // ── Adding a projection rule needs the stored rules first ──────────────────────────────────────
 //
@@ -13,16 +14,16 @@ import type { ProjectionRule } from '../../lib/api'
 // in for an empty one, and licensed a write.
 
 const STORED: ProjectionRule = { name: 'myapp', match_regex: '^\\[MYAPP\\]', strategy: 'log' }
-const setProjectionRules = vi.fn((_rules: ProjectionRule[]) => Promise.resolve({}))
+const setProjectionRules = vi.fn((_rules: ProjectionRule[], _base: string) => Promise.resolve({}))
 
-async function mount(read: () => Promise<ProjectionRule[]>) {
+async function mount(read: () => Promise<Revisioned<ProjectionRule[]>>) {
   vi.resetModules()
   sessionStorage.clear()
   setProjectionRules.mockClear()
   vi.doMock('../../lib/api', () => ({
     api: {
       projectionRules: read,
-      setProjectionRules: (rules: ProjectionRule[]) => setProjectionRules(rules),
+      setProjectionRules: (rules: ProjectionRule[], base: string) => setProjectionRules(rules, base),
       toolsSavings: () => Promise.resolve(null),
     },
   }))
@@ -51,11 +52,13 @@ describe('the add-rule form', () => {
 
   it('once the rules are read, adds to them rather than replacing them', async () => {
     // The control: the whole-list write is correct when the list it extends was read.
-    await mount(() => Promise.resolve([{ ...STORED }]))
+    await mount(() => Promise.resolve({ value: [{ ...STORED }], revision: 'r1' }))
     const field = await waitFor(() => { const f = addField(); expect(f).not.toBeNull(); return f as HTMLInputElement })
     fireEvent.change(field, { target: { value: '^\\[OTHER\\]' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }))
     await waitFor(() => expect(setProjectionRules).toHaveBeenCalledTimes(1))
     expect(setProjectionRules.mock.calls[0][0]).toEqual([STORED, { name: '', match_regex: '^\\[OTHER\\]', strategy: 'log' }])
+    // …over the revision the rules were read at, so a copy another tab has since changed is refused.
+    expect(setProjectionRules.mock.calls[0][1]).toBe('r1')
   })
 })

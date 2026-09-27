@@ -20,6 +20,7 @@ import pytest
 
 from personalclaw import agent_metadata
 from personalclaw.dashboard.handlers.agents import api_agent_metadata_delete, api_agent_metadata_put
+from personalclaw.stale_write import revision_of
 
 
 @pytest.fixture(autouse=True)
@@ -50,10 +51,14 @@ def _quiet_side_effects():
         yield
 
 
-def _req(name: str, body: dict) -> MagicMock:
+def _req(name: str, body: dict, *, over: str | None = None) -> MagicMock:
+    """A PUT from the editor. Replacing a stored note names the revision it was read at —
+    *over*, the note the editor painted (`personalclaw/stale_write.py`); a first note names none.
+    """
     r = MagicMock()
     r.match_info = {"name": name}
     r.get = lambda key, default=None: "tester" if key == "user" else default
+    r.headers = {} if over is None else {"If-Match": f'"{revision_of(over)}"'}
 
     async def _json():
         return body
@@ -72,7 +77,9 @@ def _body(resp) -> dict:
 
 def test_an_empty_put_clears_an_existing_note(home):
     agent_metadata.save("router-a", "use for deep reviews")
-    resp = _run(api_agent_metadata_put(_req("router-a", {"content": ""})))
+    resp = _run(
+        api_agent_metadata_put(_req("router-a", {"content": ""}, over="use for deep reviews"))
+    )
     assert resp.status == 200
     assert _body(resp)["ok"] is True
     # Canonical empty is "absent": the file is gone and load() reads "".
@@ -82,7 +89,7 @@ def test_an_empty_put_clears_an_existing_note(home):
 
 def test_a_whitespace_only_put_also_clears(home):
     agent_metadata.save("router-b", "note")
-    resp = _run(api_agent_metadata_put(_req("router-b", {"content": "   \n  "})))
+    resp = _run(api_agent_metadata_put(_req("router-b", {"content": "   \n  "}, over="note")))
     assert resp.status == 200
     assert agent_metadata.load("router-b") == ""
 

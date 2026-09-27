@@ -210,9 +210,9 @@ def test_a_run_with_no_document_reports_not_written_and_no_content(run_home):
     `content is None`, not `""`: an empty string is a document someone wrote nothing into, and the
     panel would render an empty page for it rather than saying why there is none.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    payload = service.run_deliverable(_run("goal-pursuit-open-ended"))
+    payload = run_cockpit.run_deliverable(_run("goal-pursuit-open-ended"))
     assert payload["ok"] is True
     report = payload["report"]
     assert report["name"] == "REPORT.md", "the name is known even when the file is not there"
@@ -229,14 +229,14 @@ def test_a_kind_that_produces_no_document_says_so_rather_than_reporting_not_writ
     form: one tells the user to check back, the other tells them nothing is coming and that is
     correct.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     for template in (
         loop_aliases.resolve_kind("goal", variant="verifiable"),
         loop_aliases.resolve_kind("code"),
         loop_aliases.resolve_kind("general"),
     ):
-        report = service.run_deliverable(_run(template))["report"]
+        report = run_cockpit.run_deliverable(_run(template))["report"]
         assert report["name"] is None, f"{template} should name no document"
         assert report["absent_reason"] == D.KIND_HAS_NO_DOCUMENT, template
 
@@ -247,9 +247,9 @@ def test_a_template_no_kind_resolves_to_is_unknown_rather_than_documentless(run_
     Reporting `kind_has_no_document` for them would be a claim about a template nothing here has
     read — and it is exactly the claim that would make a bespoke template's real document invisible.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    payload = service.run_deliverable(_run("morning-triage"))
+    payload = run_cockpit.run_deliverable(_run("morning-triage"))
     assert payload["report"]["absent_reason"] == D.TEMPLATE_UNKNOWN
     assert payload["derivation"]["declared_by"] is None, "nothing declared it, so nothing is named"
 
@@ -258,11 +258,11 @@ def test_a_run_with_no_directory_at_all_reports_no_root(run_home):
     """A run whose dir was swept reads as `no_root`, not as a worker that has not written."""
     import shutil
 
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     run_id = _run("goal-pursuit-open-ended")
     shutil.rmtree(store.run_dir(run_id))
-    payload = service.run_deliverable(run_id)
+    payload = run_cockpit.run_deliverable(run_id)
     assert payload["report"]["absent_reason"] == D.NO_ROOT
     assert all(root["exists"] is False for root in payload["roots"]), "the roots say so too"
 
@@ -301,12 +301,12 @@ def test_every_absent_reason_the_module_can_report_is_in_the_declared_vocabulary
 
 def test_a_written_document_is_served_with_its_size_and_where_it_was_found(run_home):
     """The happy path, end to end through the service."""
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     run_id = _run("design-project")
     body = "# Design\n\nTokens settled.\n"
     (store.run_dir(run_id) / "DESIGN.md").write_text(body)
-    report = service.run_deliverable(run_id)["report"]
+    report = run_cockpit.run_deliverable(run_id)["report"]
     assert report["present"] is True
     assert report["name"] == "DESIGN.md"
     assert report["content"] == body
@@ -322,11 +322,11 @@ def test_a_document_someone_wrote_nothing_into_is_present_with_an_empty_body(run
     reports `present: True` and `content: ""`. A read path that folded this into the absent branch
     would pass every absence test above and quietly lose the distinction.
     """
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     run_id = _run("goal-pursuit-open-ended")
     (store.run_dir(run_id) / "REPORT.md").write_text("")
-    report = service.run_deliverable(run_id)["report"]
+    report = run_cockpit.run_deliverable(run_id)["report"]
     assert report["present"] is True
     assert report["content"] == ""
     assert report["bytes"] == 0
@@ -334,11 +334,11 @@ def test_a_document_someone_wrote_nothing_into_is_present_with_an_empty_body(run
 
 def test_the_log_slot_is_served_beside_the_deliverable(run_home):
     """`report` + `log`, the same two slots `GET /api/loops/{id}/report` returns."""
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     run_id = _run("goal-pursuit-open-ended")
     (store.run_dir(run_id) / loop_store.LOG_NAME).write_text("cycle 1: started\n")
-    payload = service.run_deliverable(run_id)
+    payload = run_cockpit.run_deliverable(run_id)
     assert payload["log"]["present"] is True
     assert payload["log"]["name"] == loop_store.LOG_NAME
     assert payload["report"]["present"] is False, "the two slots are independent"
@@ -351,14 +351,14 @@ def test_the_workspace_wins_over_the_run_dir(run_home):
     one, and only an unbound loop writes into its own dir. A run-dir-first resolver would serve a
     stale copy for every isolated run — which on a reading surface is worse than serving nothing.
     """
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     workspace = run_home / "ws"
     workspace.mkdir()
     run_id = _run("goal-pursuit-open-ended", workspace=str(workspace))
     (store.run_dir(run_id) / "REPORT.md").write_text("the run dir copy")
     (workspace / "REPORT.md").write_text("the workspace copy")
-    report = service.run_deliverable(run_id)["report"]
+    report = run_cockpit.run_deliverable(run_id)["report"]
     assert report["found_in"] == D.ROOT_WORKSPACE
     assert report["content"] == "the workspace copy"
 
@@ -369,12 +369,12 @@ def test_a_credential_in_a_worker_authored_document_is_redacted(run_home):
     The loop side redacts its copy (`loop/files._redact_str`); the run side must too, or PP-16's
     retirement would move the same document onto a surface that leaks it.
     """
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     run_id = _run("goal-pursuit-open-ended")
     secret = "sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH"
     (store.run_dir(run_id) / "REPORT.md").write_text(f"the key is {secret} and it works\n")
-    content = service.run_deliverable(run_id)["report"]["content"]
+    content = run_cockpit.run_deliverable(run_id)["report"]["content"]
     assert secret not in content, "a credential reached the payload"
     assert "it works" in content, "vacuity floor: the whole document was dropped, not redacted"
 
@@ -489,26 +489,26 @@ def test_instructed_is_false_when_the_runs_own_spec_never_names_the_document(run
     So "not written yet" is usually the wrong sentence — nothing ever asked. The panel reads this
     field to say so, and a payload that omitted it would leave the FE guessing.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    payload = service.run_deliverable(_run("goal-pursuit-open-ended"))
+    payload = run_cockpit.run_deliverable(_run("goal-pursuit-open-ended"))
     assert payload["instructed"] is False
 
 
 def test_instructed_is_true_when_the_spec_does_name_it(run_home):
     """Both directions — a field that is always False proves nothing about the template."""
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     spec = {"root": {"kind": "action", "prompt": "Maintain REPORT.md as you go."}}
-    payload = service.run_deliverable(_run("goal-pursuit-open-ended", spec=spec))
+    payload = run_cockpit.run_deliverable(_run("goal-pursuit-open-ended", spec=spec))
     assert payload["instructed"] is True
 
 
 def test_instructed_is_null_when_there_is_no_name_to_look_for(run_home):
     """ "We did not check" and "we checked and it is not there" are different facts."""
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    payload = service.run_deliverable(_run(loop_aliases.resolve_kind("code")))
+    payload = run_cockpit.run_deliverable(_run(loop_aliases.resolve_kind("code")))
     assert payload["instructed"] is None
 
 
@@ -631,9 +631,9 @@ def test_the_payload_carries_no_money_field(run_home):
     loop-backed run's document. Absent, not zero: the field is not here, and this test is what keeps
     a later session from adding one without meeting the finding.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    payload = service.run_deliverable(_run("goal-pursuit-open-ended"))
+    payload = run_cockpit.run_deliverable(_run("goal-pursuit-open-ended"))
     flat = json.dumps(payload)
     for banned in ("cost_usd", "tokens", "spend", "price"):
         assert (
@@ -650,8 +650,8 @@ def test_the_payload_carries_no_roi_axis_either(run_home):
     which is the correct scope. This surface's correct scope is to carry neither: a document read is
     not where an unreachable score should first appear as a blank.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
-    flat = json.dumps(service.run_deliverable(_run("design-project")))
+    flat = json.dumps(run_cockpit.run_deliverable(_run("design-project")))
     for banned in ("marginal_value", "quality_score"):
         assert banned not in flat

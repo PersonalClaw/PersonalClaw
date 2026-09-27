@@ -583,7 +583,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     import json as _json
 
     from personalclaw.artifacts import registry
-    from personalclaw.security import redact
+
+    # The projection every artifact read shows and the store's `update` undoes, so a body the agent
+    # was shown and sends back through artifact_update keeps every hidden value.
+    from personalclaw.artifacts.models import redacted
     from personalclaw.sel import sel
 
     prov = registry.get_provider("native")
@@ -677,7 +680,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 _audit("not_found", args["slug"])
                 return tool_failure(f"Artifact not found: {args['slug']}")
             _audit("success", got.slug)
-            return redact(got.content or "")
+            return redacted(got.content)
 
         if name == "artifact_update":
             content, err = _read_artifact_content(args)
@@ -713,7 +716,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             rows = [
                 {
                     "slug": a.slug,
-                    "name": redact(a.name),
+                    "name": redacted(a.name),
                     "kind": a.kind,
                     "version": a.version,
                     "tags": a.tags,

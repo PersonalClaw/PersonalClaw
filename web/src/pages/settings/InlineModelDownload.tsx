@@ -66,11 +66,8 @@ export function InlineModelDownload({ model, onDownloaded }: {
     }
   }, [job])
 
-  const refusal = (e: unknown, fallback: string) => {
-    let msg = e instanceof Error ? e.message : String(e ?? '')
-    try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
-    return msg || fallback
-  }
+  // The route's sentence (`ApiError.message`), never a JSON body to unpack.
+  const refusal = (e: unknown, fallback: string) => (e instanceof Error ? e.message : String(e ?? '')) || fallback
   const begin = async () => {
     setStarting(true); setError('')
     asked.current = true

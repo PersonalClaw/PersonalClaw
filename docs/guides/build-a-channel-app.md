@@ -74,9 +74,10 @@ the authority where the two could disagree: it carries the machine-readable inve
 | `start_inbound(services)` | called by core *after* its services are up, with a `GatewayServices` handle — at boot, and whenever your channel is enabled, installed, updated or its settings are saved — at most once per instance, and only while `health()` is not `offline`. It runs as its own task: raising, or not returning within a minute, becomes your channel's status. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
 | `stop_inbound()` | stop EVERYTHING `start_inbound` started. Called when your instance is replaced (the replacement starts only after this returns), disabled or uninstalled, when `health()` turns `offline`, and at shutdown. Core drops the delivery handle registered under your channel's name itself | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
 | `receive()` | the optional pull-based inbound seam: an `AsyncIterator[ChannelMessage]`. The base implementation raises | **MAY** — no shipped channel uses it; they all drive their own loop from `start_inbound` | partly (clause 4 accepts a named handler instead) |
+| `validate_target(target)` | whether a schedule may send its results to `target`, a chat or channel id in your spelling (`channel:<name>:<target>`). Return `""` if you can deliver there, else ONE sentence the owner reads as is, saying what a valid id looks like. Core knows no platform's id shape, so this is the only check an id gets. The base accepts any non-empty id with no whitespace or control characters | **SHOULD** — override it when your ids have a shape | **no** — in no kit tuple |
 
-`connected`, `start_inbound`, `stop_inbound` and `receive` appear in **none** of the kit's
-three tuples. Their levels above are derived from the ABC's own contract (what core calls,
+`connected`, `start_inbound`, `stop_inbound`, `receive` and `validate_target` appear in **none** of
+the kit's three tuples. Their levels above are derived from the ABC's own contract (what core calls,
 and what the default does if you skip it) — treat them as doctrine, not as something the
 kit will catch for you.
 
@@ -198,13 +199,18 @@ What that one call gets you, and what you must not re-implement:
   owner attention item carrying Allow/Deny plus the `provider` + `sender_id` the buttons
   need. It is deduped: a second message from the same stranger does not re-alert. The
   canned reply is rate-limited to once per sender per 24h.
-- **Pairing.** The owner runs `personalclaw pair <provider>` (see
-  [the CLI reference](../reference/cli.md)) and hands over the 8-digit code out of band;
-  the sender types it into your channel and you call `redeem_pairing_code`. Single-use,
-  TTL-bound. Or the owner just hits **Allow** on the attention item.
+- **Pairing.** The owner mints the 8-digit code on Settings → Sender trust (**Pair someone**)
+  or with `personalclaw pair <provider>` (see [the CLI reference](../reference/cli.md)) and
+  hands it over out of band; the sender sends it to your bot in a DM and the gate redeems it,
+  so your transport only delivers `verdict.canned_reply`. Single-use, TTL-bound. Or the owner
+  just hits **Allow** on the attention item. The same page sets your channel's DM policy
+  (`pairing`, `owner_only`, or `open` after a consent prompt) for every channel alike.
 - **Groups.** Default `group="tracked_only"`: an untracked group is denied *silently*
-  (`reason == "untracked_channel"` — no owner spam), a tracked one is allowed. Use
-  core's `track()` / `untrack()` / `is_tracked_channel()`; a channel-local allowlist is a
+  (`reason == "untracked_channel"` — no owner spam), a tracked one is allowed. Core
+  remembers the untracked group, and Settings → Sender trust lists it with a **Track**
+  button. Put the group's title in `ChannelMessage.metadata["channel_name"]` (or pass
+  `channel_name=` to `guard_inbound`) so the owner sees a name rather than your vendor's id.
+  Use core's `track()` / `untrack()` / `is_tracked_channel()`; a channel-local allowlist is a
   second source of truth and will diverge.
 - **Fencing.** Non-owner content comes back as `verdict.fenced_text`, already wrapped by
   `fence_channel_content(text, provider, sender)`. **Use it.** Passing the raw text into a

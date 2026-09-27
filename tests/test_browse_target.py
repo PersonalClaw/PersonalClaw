@@ -530,7 +530,7 @@ class TestTheConnectorToggleHasAWritePath:
         provably NOT the `_EDITABLE_CONFIG` allowlist — a field missing from it leaves that file
         fully green while the Settings control silently 400s."""
         from personalclaw.config.edit_spec import security_control
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG["browse.user_browser_enabled"]
         # The validation shape, exactly; turning the connector ON lets the agent drive the
@@ -540,7 +540,7 @@ class TestTheConnectorToggleHasAWritePath:
 
     def test_the_allowlisted_value_coerces_the_way_the_toggle_sends_it(self):
         from personalclaw.config.edit_spec import coerce_edit_value
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG["browse.user_browser_enabled"]
         assert coerce_edit_value("browse.user_browser_enabled", True, spec) is True

@@ -24,8 +24,9 @@ from typing import Any
 
 import pytest
 
+from personalclaw.workflows import iteration_context
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import store
+from personalclaw.workflows import stage_settlement, store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
@@ -185,12 +186,12 @@ def test_the_loop_counter_is_rebuilt_from_the_continue_records() -> None:
     j.iteration("root", "project", iteration=1, outcome="continue")
     j.iteration("root", "project", iteration=2, outcome="dry_streak")
     c = RunController(run, spec, services=EngineServices(subagents=_Subagents("c")))
-    c._rehydrate_loop_progress()
+    iteration_context.rehydrate_loop_progress(c)
     assert c._iterations == {"root": 2}
 
     fresh, fresh_spec = _new_run()
     c2 = RunController(fresh, fresh_spec, services=EngineServices(subagents=_Subagents("d")))
-    c2._rehydrate_loop_progress()
+    iteration_context.rehydrate_loop_progress(c2)
     assert c2._iterations == {}
 
 
@@ -202,9 +203,9 @@ def test_a_stage_this_process_knows_is_not_requeued() -> None:
     c = RunController(run, spec, services=EngineServices(subagents=mgr))
     inst = c._instance("root.body@0.children[0]")
     inst.state, inst.subagent_id, inst.attempt = InstanceState.RUNNING, info.id, 1
-    assert c._requeue_orphaned_stages() == []
+    assert stage_settlement.requeue_orphaned_stages(c) == []
     assert inst.state is InstanceState.RUNNING and inst.subagent_id == info.id
 
     inst.subagent_id = "gone-with-the-last-process"
-    assert c._requeue_orphaned_stages() == ["root.body@0.children[0]"]
+    assert stage_settlement.requeue_orphaned_stages(c) == ["root.body@0.children[0]"]
     assert (inst.state, inst.subagent_id, inst.attempt) == (InstanceState.PENDING, "", 0)

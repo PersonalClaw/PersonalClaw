@@ -26,7 +26,7 @@ import json
 
 import pytest
 
-from personalclaw.workflows import store
+from personalclaw.workflows import iteration_context, store
 from personalclaw.workflows.context import (
     MAX_BUCKET_ITEMS,
     MAX_HANDOFF_FIELD,
@@ -422,5 +422,5 @@ class TestRehydration:
             "personalclaw.workflows.journal.ledger",
             lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")),
         )
-        controller._rehydrate_context()  # must not raise
+        iteration_context.rehydrate_context(controller)  # must not raise
         assert controller._handoffs == {}

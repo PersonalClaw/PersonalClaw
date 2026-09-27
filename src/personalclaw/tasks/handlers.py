@@ -3,8 +3,10 @@
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.stale_write import claimed_revision, stale_write_refusal
 from personalclaw.tasks import reconcile, registry
-from personalclaw.tasks.models import Task
+from personalclaw.tasks.models import Task, task_document, task_revision
+from personalclaw.tasks.provider import StaleTaskWrite
 
 # Every refusal these routes add answers with the ONE wire envelope (`json_error`), not the
 # flat `{"error": "<prose>"}` several of the handlers below still carry: a client that has
@@ -45,11 +47,13 @@ def _unknown_provider(exc: registry.UnknownTaskProvider) -> web.Response:
 
 
 def _with_block_reason(task: Task, task_map: dict[str, Task]) -> dict:
-    """Serialize a task + its derived ``block_reason`` (needs the sibling set) and
-    ``comment_count`` (stamped by the provider on read, for the comment badge)."""
+    """Serialize a task + its derived ``block_reason`` (needs the sibling set),
+    ``comment_count`` (stamped by the provider on read, for the comment badge) and the
+    ``revision`` a whole-form save of it must name (``models.task_revision``)."""
     d = task.to_dict()
     d["block_reason"] = reconcile.block_reason(task, task_map)
     d["comment_count"] = getattr(task, "_comment_count", 0)
+    d["revision"] = task_revision(task)
     return d
 
 
@@ -331,6 +335,7 @@ async def api_tasks_get(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     d = task.to_dict()
     d["comment_count"] = getattr(task, "_comment_count", 0)
+    d["revision"] = task_revision(task)
     return web.json_response(d)
 
 
@@ -475,11 +480,53 @@ async def api_tasks_create(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e), "cycle": e.cycle}, status=400)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    return web.json_response(task.to_dict(), status=201)
+    return web.json_response({**task.to_dict(), "revision": task_revision(task)}, status=201)
+
+
+#: The task fields a PUT replaces WHOLESALE: each is a list the caller built from the copy it read.
+#: A PUT carrying any of them — the task page's Save sends all of them — must name the revision
+#: that copy was read at; one that changes only scalars (a status from the board, a rename) names
+#: none, because one value written over another is the edit the caller made.
+_WHOLE_LIST_FIELDS: frozenset[str] = frozenset(
+    {
+        "labels",
+        "exit_criteria",
+        "action_plan",
+        "notes",
+        "research_notes",
+        "execution_notes",
+        "dependencies",
+        "depends_on",
+        "evidence",
+        "attempts",
+    }
+)
+
+
+def _stale_task(request: web.Request, exc: StaleTaskWrite) -> web.Response:
+    """The refusal for a whole-form save the store found stale — ``428`` when it named no base,
+    ``409`` when it named an old one — judged against the copy the store compared."""
+    refusal = stale_write_refusal(
+        request, task_document(exc.task), what=f"the task {exc.task.title!r}"
+    )
+    # The store raised because this request's base differs from that very copy's revision.
+    assert refusal is not None
+    return refusal
 
 
 async def api_tasks_update(request: web.Request) -> web.Response:
-    """PUT /api/tasks/{task_id}"""
+    """PUT /api/tasks/{task_id}
+
+    Two body forms:
+
+    * fields to set — a patch. A body naming any of ``_WHOLE_LIST_FIELDS`` is a whole-form save
+      and must carry ``If-Match``: the revision of the copy it was built from. The store compares
+      it with the task as stored at the moment of the write and refuses a stale one with
+      ``409 stale_write``, writing nothing (``NativeTaskProvider.update_task``).
+    * ``{tick: {list, index, text, done}}`` — ONE checklist item ticked or unticked, applied to
+      the list as stored when it lands (:func:`_tick`). No revision: it cannot undo anyone else's
+      change to the task.
+    """
     task_id = request.match_info["task_id"]
     try:
         body = await request.json()
@@ -490,7 +537,21 @@ async def api_tasks_update(request: web.Request) -> web.Response:
     dangling = _dangling_parent(body)
     if dangling:
         return json_error("invalid_request", message=dangling, status=400)
+    # The base rides `If-Match`, never the body: a body key of that name is not a task field, and
+    # left in it would collide with the store's keyword.
+    body.pop("base_revision", None)
+    base = claimed_revision(request) if not _WHOLE_LIST_FIELDS.isdisjoint(body) else None
     provider_name = body.pop("provider", None)
+    # Ahead of the engine-owned guard below, which a tick cannot trip: it writes one checklist,
+    # and neither checklist is an engine-owned field (`materialize.ENGINE_OWNED_FIELDS`).
+    if "tick" in body:
+        if set(body) != {"tick"}:
+            return json_error(
+                "invalid_request",
+                message="send 'tick' alone — it changes one checklist item, not other fields",
+                status=400,
+            )
+        return await _tick(task_id, body["tick"], provider_name=provider_name)
     # The single-writer contract on a workflow-managed task (#390). Before this the guard existed,
     # was unit-tested, and had no production caller: `PUT /api/tasks/{id} {"preview": "…"}` on a
     # `managed` task answered 200 and overwrote an engine projection, while `controller.py`'s own
@@ -508,7 +569,11 @@ async def api_tasks_update(request: web.Request) -> web.Response:
     # behaviour is the whole specification.
     try:
         _attach_project_general_list(body)
-        task = await registry.update_task(task_id, provider_name=provider_name, **body)
+        task = await registry.update_task(
+            task_id, provider_name=provider_name, base_revision=base, **body
+        )
+    except StaleTaskWrite as e:
+        return _stale_task(request, e)
     except registry.UnknownTaskProvider as e:
         return _unknown_provider(e)
     except reconcile.DependencyCycleError as e:
@@ -517,14 +582,125 @@ async def api_tasks_update(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=400)
     if not task:
         return web.json_response({"error": "not found"}, status=404)
-    # Return the full set of tasks whose status cascaded (the edited task plus any
-    # auto-block/unblock'd dependents) so the client can patch all of them, not
-    # just the one edited. block_reason is derived against the post-write set.
+    return web.json_response(_updated_payload(task))
+
+
+def _updated_payload(task: Task) -> dict:
+    """A write's answer: the edited task PLUS every task whose status cascaded (auto-block/
+    unblock'd dependents) so the client can patch all of them, not just the one edited.
+    block_reason is derived against the post-write set."""
     reconciled = getattr(task, "_reconciled", [task])
     task_map = {t.id: t for t in reconciled}
     payload = _with_block_reason(task, task_map)
     payload["reconciled"] = [_with_block_reason(t, task_map) for t in reconciled]
-    return web.json_response(payload)
+    return payload
+
+
+#: The two checklists a task carries, and the key naming an item's text in each.
+_CHECKLISTS: dict[str, str] = {"exit_criteria": "description", "action_plan": "content"}
+
+#: How many times a tick is re-applied onto a task that moved under it before giving up. A tick
+#: loses the race only to a write that landed between its read and its write — rare, and each
+#: retry reads the newer copy — so this bounds a pathological loop, not an expected one.
+_TICK_ATTEMPTS = 3
+
+
+def _ticked(item: dict, list_name: str, done: bool) -> dict:
+    """*item* with its done flag set, in the shape that list stores it in."""
+    if list_name == "action_plan":
+        return {**item, "completed": done}
+    # A criterion's state is `status` (`models.normalize_exit_criterion` reads it first); `met` is
+    # kept in step because the form's checklist reads that one.
+    return {**item, "status": "complete" if done else "incomplete", "met": done}
+
+
+def _find_item(items: list[dict], text_key: str, index: int, text: str) -> int | None:
+    """Where the item the caller ticked is in the list as stored NOW, or ``None``.
+
+    The caller names the item by its text and where it saw it. The position alone is not enough —
+    another writer may have inserted above it — and the text alone is ambiguous when two items
+    read the same, so the position wins when it still holds that text, and otherwise the text
+    decides when exactly one item carries it.
+    """
+    if 0 <= index < len(items) and items[index].get(text_key) == text:
+        return index
+    matches = [i for i, item in enumerate(items) if item.get(text_key) == text]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def _tick(task_id: str, tick: object, *, provider_name: str | None) -> web.Response:
+    """``PUT /api/tasks/{id} {tick: {list, index, text, done}}`` — tick ONE checklist item.
+
+    The task page's inline ticks used to PUT the whole ``exit_criteria``/``action_plan`` list
+    from its cached copy of the task, so ticking one criterion put back every other one as the
+    page last saw it — undoing a criterion the agent had ticked, or one another tab had added.
+    This is the per-item form: the tick is applied to the list as stored at the moment of the
+    write, so it cannot undo anyone else's change, and it needs no revision.
+
+    Applied as read → tick → compare-and-write against that read (``base_revision``), and
+    re-applied onto the newer copy when another write landed in between. An item that is no
+    longer there as the caller saw it — edited or removed elsewhere — is refused with
+    ``409 stale_write`` rather than ticking a different one.
+    """
+    if not isinstance(tick, dict):
+        return json_error("invalid_request", message="'tick' must be an object", status=400)
+    list_name = tick.get("list")
+    if list_name not in _CHECKLISTS:
+        return json_error(
+            "invalid_request", message="'list' must be 'exit_criteria' or 'action_plan'", status=400
+        )
+    index, text, done = tick.get("index"), tick.get("text"), tick.get("done")
+    if isinstance(index, bool) or not isinstance(index, int):
+        return json_error("invalid_request", message="'index' must be an integer", status=400)
+    if not isinstance(text, str):
+        return json_error("invalid_request", message="'text' must be a string", status=400)
+    if not isinstance(done, bool):
+        return json_error("invalid_request", message="'done' must be a boolean", status=400)
+    text_key = _CHECKLISTS[list_name]
+    what = "exit criterion" if list_name == "exit_criteria" else "step"
+    try:
+        for _attempt in range(_TICK_ATTEMPTS):
+            task = await registry.get_task(task_id, provider_name=provider_name)
+            if task is None:
+                return web.json_response({"error": "not found"}, status=404)
+            items = list(task.to_dict()[list_name])
+            at = _find_item(items, text_key, index, text)
+            if at is None:
+                return json_error(
+                    "stale_write",
+                    message=(
+                        f"The {what} {text!r} is no longer on the task as it was read — it was "
+                        "changed or removed since — so nothing was ticked. Reload the task and "
+                        "tick it again."
+                    ),
+                    status=409,
+                )
+            items[at] = _ticked(items[at], list_name, done)
+            try:
+                updated = await registry.update_task(
+                    task_id,
+                    provider_name=provider_name,
+                    base_revision=task_revision(task),
+                    **{list_name: items},
+                )
+            except StaleTaskWrite:
+                # Another write landed between this read and this write: tick the newer copy.
+                continue
+            if updated is None:
+                return web.json_response({"error": "not found"}, status=404)
+            return web.json_response(_updated_payload(updated))
+    except registry.UnknownTaskProvider as e:
+        return _unknown_provider(e)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return json_error(
+        "stale_write",
+        message=(
+            f"The task kept changing while the {what} {text!r} was being ticked, so nothing was "
+            "ticked. Reload the task and tick it again."
+        ),
+        status=409,
+    )
 
 
 async def api_tasks_delete(request: web.Request) -> web.Response:

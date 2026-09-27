@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 from aiohttp import web
 
-from personalclaw.artifacts import registry
+from personalclaw.artifacts import registry, source_files
 from personalclaw.artifacts.build import (
     ArtifactBuildError,
     BuildResult,
@@ -35,12 +36,15 @@ from personalclaw.artifacts.models import (
     MAX_BINARY_CONTENT_BYTES,
     MAX_CONTENT_BYTES,
     Artifact,
+    ArtifactStaleWrite,
     ArtifactVersionConflict,
     ext_for_mime,
     is_binary_kind,
     kind_for_mime,
+    redacted,
 )
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
+from personalclaw.file_view import read_head, whole_text
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     RequestValidationError,
@@ -48,8 +52,14 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import MaskConflict, is_sensitive_path, redact_credentials
 from personalclaw.sel import sel
+from personalclaw.stale_write import (
+    claimed_revision,
+    refusal_outcome,
+    revision_of,
+    stale_write_refusal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,21 +68,22 @@ logger = logging.getLogger(__name__)
 _UI_SESSION_KEY = "dashboard:ui"
 
 
-def _redact(text: str) -> str:
-    clean, _ = redact_exfiltration_urls(text or "")
-    clean, _ = redact_credentials(clean)
-    return clean
-
-
 def _serialize(art: Artifact, *, include_content: bool = False) -> dict[str, Any]:
-    """Serialize an artifact for the API, redacting every LLM-authored field."""
+    """Serialize an artifact for the API, redacting every LLM-authored field.
+
+    A content-bearing response carries ``content_revision``: the revision of the body in THIS
+    response, as redacted (`personalclaw/stale_write.py`). It is what a body save names in
+    ``If-Match`` — a page saves the whole body it edited, so it must say which body that was.
+    Metadata is not in it: a name, tag or collection edit elsewhere does not make a body stale.
+    """
     d = art.to_dict(persist=False)
-    d["name"] = _redact(d.get("name", ""))
-    d["description"] = _redact(d.get("description", ""))
-    d["collection"] = _redact(d.get("collection", ""))
-    d["tags"] = [_redact(t) for t in d.get("tags", [])]
+    d["name"] = redacted(d.get("name", ""))
+    d["description"] = redacted(d.get("description", ""))
+    d["collection"] = redacted(d.get("collection", ""))
+    d["tags"] = [redacted(t) for t in d.get("tags", [])]
     if include_content and d.get("content") is not None:
-        d["content"] = _redact(d["content"])
+        d["content"] = redacted(d["content"])
+        d["content_revision"] = revision_of(d["content"])
     else:
         d.pop("content", None)
         # live_dirty is content's computed-per-read twin (models.to_dict's own
@@ -119,6 +130,31 @@ def _project_for_source_path(source_path: str) -> str:
     return project.id if project else ""
 
 
+def _source_file_refusal(request: web.Request, source_path: str) -> web.Response | None:
+    """The refusal a file-backed save gets when its copy of the file is stale, else ``None``.
+
+    Saving an artifact that points at a file writes the body THROUGH to that file
+    (``native._try_write_source_path``), and the dashboard's three "Save as artifact" doors send
+    the file viewer's draft — a copy of the file as the explorer read it. So when *source_path*
+    is a file the save overwrites, the request names the revision that copy was read at (the
+    ``file-read`` ETag) and is checked exactly as ``POST /api/file-write`` checks it, against the
+    file as the explorer reads it now. A path no save writes through to — relative, missing,
+    sensitive, unreadable — replaces no file, so it needs no base.
+    """
+    try:
+        path = Path(source_path)
+        resolved = path.resolve() if path.is_absolute() else None
+    except (OSError, ValueError):
+        return None
+    if resolved is None or is_sensitive_path(str(resolved)) or not resolved.is_file():
+        return None
+    try:
+        head = read_head(str(resolved))
+    except OSError:
+        return None  # the write-through opens the same file, and fails the same way
+    return stale_write_refusal(request, whole_text(head), what=f"the file {source_path!r}")
+
+
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
     try:
         sel().log_api_access(
@@ -162,7 +198,15 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
 
 
 async def api_artifacts_create(request: web.Request) -> web.Response:
-    """POST /api/artifacts — create (or bump an existing file-backed artifact)."""
+    """POST /api/artifacts — create (or bump an existing file-backed artifact).
+
+    A save whose ``source_path`` names an existing file overwrites that file with ``content``, so
+    it names the revision of the copy it was built from in ``If-Match`` — the file-read ETag —
+    and a stale one is refused before anything is written (:func:`_source_file_refusal`).
+
+    A ``source_path`` outside the places an artifact may point (``source_files``) is refused
+    with the sentence saying where it may point: ``400`` for the owner, ``403`` for an app.
+    """
     state = request.app["state"]
     if _is_restricted_session(state, request):
         _audit(request, "artifact.create", "denied", "restricted_session")
@@ -189,19 +233,40 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     content = str(body.get("content", ""))
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
+    if source_path:
+        # FIRST, before anything opens the file: a refused pointer is never read, so neither its
+        # existence nor its content shows through the revision check below, and it cannot bump an
+        # artifact that already names it (one recorded before this check existed). The store
+        # refuses it as well.
+        try:
+            source_path = source_files.admit(source_path)
+        except ValueError as exc:
+            from personalclaw.apps.permissions import request_app
+
+            _audit(request, "artifact.create", "denied", "source_path outside the allowed places")
+            return web.json_response({"error": str(exc)}, status=403 if request_app() else 400)
+        # Checked with no await between it and the provider write below (create or bump), so
+        # nothing in this process lands on the file in between.
+        stale = _source_file_refusal(request, source_path)
+        if stale is not None:
+            _audit(request, "artifact.create", refusal_outcome(stale), f"source_path={source_path}")
+            return stale
 
     # Dedup by source_path: re-saving a file-backed artifact bumps the existing
     # one rather than creating a duplicate.
     if source_path:
         existing = prov.find_by_source_path(source_path)
         if existing is not None:
-            updated = prov.update(
-                existing.slug,
-                content=content,
-                snapshot=False,
-                actor="user",
-                session_id=session_id,
-            )
+            try:
+                updated = prov.update(
+                    existing.slug,
+                    content=content,
+                    snapshot=False,
+                    actor="user",
+                    session_id=session_id,
+                )
+            except MaskConflict as exc:
+                return web.json_response({"error": str(exc)}, status=409)
             _audit(request, "artifact.update", "ok", f"slug={existing.slug}")
             return web.json_response(
                 _serialize(updated, include_content=True) if updated else {}, status=200
@@ -251,6 +316,8 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             project_id=project_id,
             collection=str(body.get("collection", "")).strip(),
         )
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
     _audit(request, "artifact.create", "ok", f"slug={art.slug}")
@@ -280,7 +347,17 @@ async def api_artifact_detail(request: web.Request) -> web.Response:
 
 
 async def api_artifact_update(request: web.Request) -> web.Response:
-    """PATCH /api/artifacts/{slug} — save (silent) or snapshot; or metadata-only."""
+    """PATCH /api/artifacts/{slug} — save (silent) or snapshot; or metadata-only.
+
+    ``content`` replaces the WHOLE body, so it is written only over the body it was built from:
+    the request names that body's ``content_revision`` in ``If-Match``, compared under the
+    provider's lock (``update(expect_revision=…)``). None is ``428 revision_required``, a stale
+    one ``409 stale_write``, and nothing is written (`personalclaw/stale_write.py`).
+
+    Tags are edited one name at a time — ``add_tags`` / ``remove_tags``, applied to the tags stored
+    when the write lands — so they need no revision. There is no whole-list ``tags``: it replaced
+    the list with the page's copy of it, dropping any tag added elsewhere since.
+    """
     state = request.app["state"]
     if _is_restricted_session(state, request):
         _audit(request, "artifact.update", "denied", "restricted_session")
@@ -315,19 +392,47 @@ async def api_artifact_update(request: web.Request) -> web.Response:
             return web.json_response({"error": "not found"}, status=404)
         _audit(request, "artifact.update", "ok", f"slug={slug} reverted->{from_version}")
         return web.json_response(_serialize(art, include_content=True))
+    if "tags" in body:
+        return web.json_response(
+            {"error": "send add_tags / remove_tags — the names to add or remove — not tags"},
+            status=400,
+        )
+    tag_edits: dict[str, list[str]] = {}
+    for key in ("add_tags", "remove_tags"):
+        if key in body:
+            names = body[key]
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                return web.json_response(
+                    {"error": f"{key} must be a list of tag names"}, status=400
+                )
+            tag_edits[key] = names
+    content = body.get("content")
+    what = f"the body of the artifact {slug!r}"
     try:
         art = prov.update(
             slug,
-            content=body.get("content"),
+            content=content,
             snapshot=bool(body.get("snapshot", False)),
             event_type=body.get("event_type"),
             actor="user",
             session_id=_session_key(request),
             name=body.get("name"),
             description=body.get("description"),
-            tags=body.get("tags"),
             collection=body.get("collection"),
+            # "" when the request names no revision, which no body has — the refusal below then
+            # words it as the missing precondition (428), not a stale one.
+            expect_revision=claimed_revision(request) if content is not None else None,
+            add_tags=tag_edits.get("add_tags"),
+            remove_tags=tag_edits.get("remove_tags"),
         )
+    except ArtifactStaleWrite as stale:
+        # The provider found the claimed revision is not `stale.current`'s — the comparison this
+        # makes — so it is never None here.
+        refusal = cast(web.Response, stale_write_refusal(request, stale.current, what=what))
+        _audit(request, "artifact.update", refusal_outcome(refusal), f"slug={slug}")
+        return refusal
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:
         return web.json_response({"error": str(e)}, status=400)
     if art is None:
@@ -1144,7 +1249,7 @@ def _folder_store(prov: Any) -> ArtifactFolderStore:
 
 def _serialize_folder(folder: ArtifactFolder) -> dict[str, Any]:
     d = folder.to_dict()
-    d["name"] = _redact(d.get("name", ""))
+    d["name"] = redacted(d.get("name", ""))
     return d
 
 

@@ -20,7 +20,10 @@ import { modelIdOf } from '../../lib/modelRef'
 // print the same seconds two ways on two surfaces one click apart — the shape `lib/epoch.test.ts`
 // already rules for relative time. Reused, not re-derived.
 import { fmtInterval } from '../knowledge/sourceMeta'
-import { useQuery, invalidateSpecs, type CacheKeySpec } from '../../lib/data'
+import { useQuery, invalidateKeys, invalidateSpecs, type CacheKeySpec } from '../../lib/data'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useIdentity } from '../../app/identity'
 import { useAppearance } from '../../app/appearance'
 import { useMode } from '../../app/theme'
@@ -150,6 +153,15 @@ const useVoice = () => useQuery('settings:voice', async () => {
   ])
   return { active, stt, tts }
 }, { persist: true })
+/** What a speech switch saves through: the use case's WHOLE settings file, over the revision this
+ *  tile read it at. The Voice page, the Slack voice modal and the routing levers write the same
+ *  file, so a stale copy is refused and the one change re-applied on top of what is stored. */
+const useSpeechGuard = (useCase: 'stt' | 'tts') => useStaleWriteGuard<Record<string, unknown>>({
+  read: () => api.useCaseSettings(useCase),
+  write: (next, base) => api.saveUseCaseSettings(useCase, next, base),
+  onSaved: () => invalidateKeys('settings:voice'),
+  onDiscard: () => invalidateKeys('settings:voice'),
+})
 // 🔴 KEY POISONING, MEASURED ON THE JOURNEY. `#/settings/legibility` already refuses to show fabricated
 // values — but this tile shares its key, so opening `#/settings` first primed `cache:settings:legibility`
 // with `{}` and the panel read it as a success. Driven with `/api/config/personalclaw` at 500:
@@ -680,14 +692,18 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   {
     id: 'voice', group: 'AI & Models', label: 'Speech & Transcription', icon: AudioLines, size: 'sm',
     description: 'Speech-to-text, text-to-speech, and the vocabulary that biases all transcription.',
-    useSearchText() { const { data } = useVoice(); const stt = !!data?.stt?.enabled; const tts = !!data?.tts?.enabled; return `voice speech text stt tts streaming speaking speed transcription vocabulary lexicon corrections terms ${stt ? 'stt on' : 'stt off'} ${tts ? 'tts on' : 'tts off'}` },
+    useSearchText() { const { data } = useVoice(); const stt = !!data?.stt?.value.enabled; const tts = !!data?.tts?.value.enabled; return `voice speech text stt tts streaming speaking speed transcription vocabulary lexicon corrections terms ${stt ? 'stt on' : 'stt off'} ${tts ? 'tts on' : 'tts off'}` },
     render(query, go) {
       const { data, refresh, stale: isStalePaint, status, error } = useVoice()
+      const guards = { stt: useSpeechGuard('stt'), tts: useSpeechGuard('tts') }
       // Enabling needs a bound model (same gate as the subpage). Without one, the
       // toggle is disabled and the card nudges the user into Speech & Transcription → Models.
-      const toggle = (uc: 'stt' | 'tts', settings: Record<string, unknown>, next: boolean) => mutate(
-        () => api.saveUseCaseSettings(uc, { ...settings, enabled: next }).then(refresh), 'settings:voice',
-      )
+      // The switch renders the READ value, so a refused save leaves nothing to re-read: the
+      // notice below holds the change, and the guard re-reads once it lands or is dropped.
+      const toggle = (uc: 'stt' | 'tts', doc: Revisioned<Record<string, unknown>>, next: boolean) => mutate(async () => {
+        const mine = { ...doc.value, enabled: next }
+        await guards[uc].save(doc, mine, rebaseRecord(doc.value, mine))
+      })
       const sttBound = !!(data?.active?.['stt'] ?? [])[0]
       const ttsBound = !!(data?.active?.['tts'] ?? [])[0]
       return (
@@ -701,13 +717,23 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {data && <KVList rows={[
             { k: 'Speech-to-text', control: true, vText: sttBound ? undefined : 'No model bound',
               v: sttBound
-                ? <Switch on={!!data.stt?.enabled} label="Speech-to-text" onToggle={(v) => toggle('stt', data.stt ?? {}, v)} />
+                ? <Switch on={!!data.stt.value.enabled} label="Speech-to-text" onToggle={(v) => toggle('stt', data.stt, v)}
+                    disabled={guards.stt.conflict !== null} disabledReason={HELD_CHANGE_REASON} />
                 : <span className="text-on-surface-low">No model bound</span> },
             { k: 'Text-to-speech', control: true, vText: ttsBound ? undefined : 'No model bound',
               v: ttsBound
-                ? <Switch on={!!data.tts?.enabled} label="Text-to-speech" onToggle={(v) => toggle('tts', data.tts ?? {}, v)} />
+                ? <Switch on={!!data.tts.value.enabled} label="Text-to-speech" onToggle={(v) => toggle('tts', data.tts, v)}
+                    disabled={guards.tts.conflict !== null} disabledReason={HELD_CHANGE_REASON} />
                 : <span className="text-on-surface-low">No model bound</span> },
           ]} />}
+          {/* A refused save's notice sits in the card's click-through layer like the switches do:
+              pointer events back on, and a click on it kept from reaching the nav overlay. */}
+          {(guards.stt.conflict || guards.tts.conflict) && (
+            <div className="pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+              <StaleWriteNotice guard={guards.stt} what="Your speech-to-text settings" className="mt-s" />
+              <StaleWriteNotice guard={guards.tts} what="Your text-to-speech settings" className="mt-s" />
+            </div>
+          )}
         </BentoCard>
       )
     },
@@ -1282,12 +1308,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: r } = useProjectionRules()
       const { data: s } = useToolsSavings()
       const saved = s && s.saved_tokens_estimated > 0 ? `saved ${s.saved_tokens_estimated} tokens top ${s.top_compressor ?? ''}` : ''
-      return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
+      return `tool output projection rules trim shrink token juice tokenjuice savings saved tokens compressor regex marker strategy ${saved} ${(r?.value ?? []).map((x) => `${x.name} ${x.strategy}`).join(' ')}`
     },
     render(query, go) {
       const { data: rules, error: rulesErr, stale: rulesStale, status: rulesStatus, refresh: rulesRefresh } = useProjectionRules()
       const { data: savings } = useToolsSavings()
-      const list = rules ?? []
+      const list = rules?.value ?? []
       const savedTokens = savings?.saved_tokens_estimated ?? 0
       return (
         <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined} stale={rulesStale} failed={rulesStatus === 'error'} error={rulesErr} onRetry={rulesRefresh}>
@@ -1424,8 +1450,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   {
     id: 'updates', group: 'System', label: 'Updates', icon: DownloadCloud, size: 'sm',
-    description: 'Version, changelog, and update controls.',
-    useSearchText() { const { data: u } = useUpdates(); return `updates version changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
+    description: 'Version, licences, changelog, and update controls.',
+    useSearchText() { const { data: u } = useUpdates(); return `updates version licences licenses notices third-party open-source changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
     render(query, go) {
       const { data: u, refresh, stale: uStale, status: uStatus, error: uErr } = useUpdates()
       return (

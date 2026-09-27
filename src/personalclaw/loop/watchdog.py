@@ -690,9 +690,10 @@ class LoopWatchdog:
     def _capture_loop_end(self, loop_id: str) -> None:
         """Route a terminal loop through the LearningGate → loop-end learner (PP-5).
 
-        Mirrors the workflow controller's `_capture_run_end`: gated by the RUN_END cadence, and the
-        service is resolved best-effort. The positive-path + inversion producers run with no vector
-        store; similarity is inert without one. Fully guarded — never raises into `_complete`.
+        Mirrors the workflow controller's `run_finish.capture_run_end`: gated by the RUN_END
+        cadence, and the service is resolved best-effort. The positive-path + inversion producers
+        run with no vector store; similarity is inert without one. Fully guarded — never raises into
+        `_complete`.
         """
         try:
             from types import SimpleNamespace

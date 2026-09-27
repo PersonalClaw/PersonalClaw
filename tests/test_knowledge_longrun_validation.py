@@ -176,7 +176,8 @@ def test_the_seen_set_survives_a_restart():
     batch = [{"guid": f"g{n}"} for n in range(30)]
     seen.mark_all(batch)
 
-    # The journal round-trip, exactly as `_mark_seen` writes it and `_rehydrate_context` reads it.
+    # The journal round-trip, exactly as `loop_iteration._mark_seen` writes it and
+    # `iteration_context.rehydrate_context` reads it.
     revived = SeenSet.from_dict(json.loads(json.dumps(seen.to_dict())))
     assert revived.unseen(batch) == []
     assert len(revived) == 30

@@ -39,6 +39,12 @@ def describe(m: AppManifest) -> dict[str, Any]:
       the ``cron`` permission is declared but inert, and saying "it runs" would be false).
     * ``pythonDependencies`` — what ``pip install`` puts in ``<home>/app-python``, which the
       gateway loads into its own process (``apps/app_python.py``).
+    * ``sidecarDependencies`` — the requirement specifiers, verbatim, that **Install engine**
+      puts in the app's own Python environment, where its sidecar child runs them
+      (``local_models.sidecar``). Nothing installs them until the owner presses it.
+    * ``requires`` — what the app needs that PersonalClaw does not install, each
+      ``{name, why, how}`` (``manifest.Prerequisite``). Not something it gets or runs, and on
+      this list because consent is where the owner has to learn it.
     * ``hasUI`` / ``uiComponents`` — browser code loaded into the dashboard page.
     * ``hasBackend`` — a server process of its own, started on install and kept running
       while the app is enabled. ``backendSandbox`` names the tier it launches inside
@@ -74,6 +80,8 @@ def describe(m: AppManifest) -> dict[str, Any]:
         "permissions": perms,
         "crons": _crons(m),
         "pythonDependencies": _python_dependencies(m),
+        "sidecarDependencies": list(m.dependencies.sidecarDependencies),
+        "requires": [p.to_dict() for p in m.requires],
         "hasUI": bool(m.ui.pages),
         "uiComponents": m.ui.components,
         "hasBackend": bool(m.backend.entryPoint),
@@ -262,6 +270,17 @@ def _runs_as_you(d: dict[str, Any]) -> str:
             ("the Python package it installs", False)
             if n == 1
             else (f"the {n} Python packages it installs", True)
+        )
+    # A sidecar is a crash and dependency boundary, not a sandbox: its child runs as you too.
+    engine = d["sidecarDependencies"]
+    if engine:
+        parts.append(
+            ("the engine package it installs when you choose Install engine", False)
+            if len(engine) == 1
+            else (
+                f"the {len(engine)} engine packages it installs when you choose Install engine",
+                True,
+            )
         )
     if not parts:
         return ""

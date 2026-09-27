@@ -199,22 +199,35 @@ def load_and_persist_migrations() -> "AppConfig":
     Returns the loaded config either way, so the boot path parses the file once. When a
     migration did apply, the original is copied aside to ``config.json.bak`` first.
 
+    Inside the config transaction: the migration is applied to the file as it is at that
+    moment, as the change it is (``PendingConfigChanges``), and the backup is taken there too,
+    while every other writer waits. A setting another process wrote during boot is neither
+    reverted by the migration nor missing from the backup.
+
     Best-effort by design: a failed write-back degrades to "migrated in memory this run"
     and never blocks startup. Callers other than the gateway boot path should use
     ``AppConfig.load()``, which is a pure read.
     """
-    from personalclaw.config.loader import AppConfig
+    from personalclaw.config.loader import AppConfig, PendingConfigChanges
+    from personalclaw.config.transactions import mutate_config
 
     cfg, migrated = AppConfig.load_with_migration_state()
     if not migrated:
         return cfg
     path = config_path()
-    try:
-        if path.exists():
+    pending = PendingConfigChanges(cfg)
+
+    def persist(document: dict) -> None:
+        # The file is still the pre-migration one here: the transaction replaces it only after
+        # this returns, so the copy is of exactly what the migration is about to change.
+        if pending.apply(document) and path.exists():
             backup = path.with_suffix(".json.bak")
             shutil.copy2(path, backup)
             logger.info("Config migrated — backup saved to %s", backup)
-        cfg.save()
+
+    try:
+        mutate_config(persist)
+        pending.commit()
     except Exception as e:  # noqa: BLE001 — write-back is best-effort; never block startup.
         logger.warning("Config write-back failed: %s", e)
     return cfg

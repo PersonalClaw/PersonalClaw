@@ -29,7 +29,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import PromptCache
-from personalclaw.llm.registry import CredentialMissing
+from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 
 logger = logging.getLogger(__name__)
@@ -181,9 +181,6 @@ class OpenAIProvider(ModelProvider):
         # ordinal — it compares a report against the largest prompt this binding has
         # already had measured — see personalclaw.context_gauge.
         self._gauge = ContextGauge()
-        # One-shot image content part for the next turn. None on every ordinary
-        # turn, which is what keeps the untouched wire shape byte-identical.
-        self._pending_image: str = ""
 
     @property
     def sampling_temperature(self) -> float | None:
@@ -195,33 +192,10 @@ class OpenAIProvider(ModelProvider):
     async def start(self) -> None:
         """Idempotent — the AsyncOpenAI client is already constructed.
 
-        When no model was pinned (``self._model`` empty), resolve a default from
-        LIVE ``/v1/models`` discovery rather than a hardcoded id (de-hardcode
-        directive 2026-07-06): pick the first chat-capable model the endpoint
-        advertises. Leaves it empty if discovery yields nothing (the call then
-        errors clearly rather than sending a bogus baked id)."""
-        if not self._model:
-            try:
-                from personalclaw.llm.catalog import (
-                    infer_capabilities,
-                    openai_compatible_list_models,
-                )
-
-                cred = getattr(self._client, "api_key", "") or ""
-                models = await openai_compatible_list_models(self._base_url or "", cred)
-                chat = next(
-                    (
-                        m.id
-                        for m in models
-                        if "chat" in (m.capabilities or infer_capabilities(m.id))
-                    ),
-                    models[0].id if models else "",
-                )
-                if chat:
-                    self._model = chat
-                    logger.info("OpenAI: auto-selected default %r from /v1/models discovery", chat)
-            except Exception:
-                logger.debug("OpenAI default resolution via discovery failed", exc_info=True)
+        It never picks a model: a provider built for no model stays so, and each request refuses
+        rather than name none (:func:`~personalclaw.llm.registry.require_model`). It used to take
+        the first chat model the endpoint's ``/v1/models`` listed, so with nothing bound a Groq
+        instance saved without a Default Model answered on a model nobody chose."""
         logger.info(
             "OpenAI provider ready: model=%s base_url=%s",
             self._model or "<unresolved>",
@@ -236,53 +210,6 @@ class OpenAIProvider(ModelProvider):
             logger.warning("OpenAI client close raised", exc_info=True)
         self._history.clear()
 
-    # ── Image content parts ───────────────────────────────────────────
-
-    def stage_image_part(self, data_url: str) -> bool:
-        """Stage *data_url* onto the next turn's user message. See the base docstring.
-
-        True unconditionally for this provider: the OpenAI Chat Completions wire
-        format carries ``image_url`` parts, so delivery is a property of the
-        TRANSPORT and is always available here. Whether the bound *model* can read
-        the pixels is a separate question, decided by the caller against the model's
-        declared capabilities — this method deliberately does not second-guess it,
-        because a transport that quietly refused would be indistinguishable from one
-        that dropped the image.
-        """
-        if not data_url:
-            return False
-        self._pending_image = data_url
-        return True
-
-    def _with_pending_image(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Return *messages* with any staged image appended to the last user turn.
-
-        Returns the SAME list object when nothing is staged, so an ordinary turn's
-        request payload is byte-identical to what it was before this seam existed.
-        Consumes the stage (one-shot) and never mutates the caller's dicts.
-        """
-        data_url = self._pending_image
-        if not data_url:
-            return messages
-        self._pending_image = ""
-        idx = next(
-            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
-            -1,
-        )
-        if idx < 0:
-            return messages
-        out = list(messages)
-        original = out[idx]
-        content = original.get("content")
-        parts: list[dict[str, Any]]
-        if isinstance(content, list):
-            parts = list(content)
-        else:
-            parts = [{"type": "text", "text": str(content or "")}]
-        parts.append({"type": "image_url", "image_url": {"url": data_url}})
-        out[idx] = {**original, "content": parts}
-        return out
-
     # ── Streaming ─────────────────────────────────────────────────────
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
@@ -293,13 +220,14 @@ class OpenAIProvider(ModelProvider):
         single ``EVENT_TOOL_CALL`` is emitted per completed call once the
         next call begins or the stream finishes.
         """
+        model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         request_kwargs: dict[str, Any] = {
-            "model": self._model,
-            "messages": self._with_pending_image(self._history),
+            "model": model,
+            "messages": self._history,
             "stream": True,
             # Ask the endpoint to emit a final usage chunk so we can report
             # input/output token counts (drives the dashboard token tickers).
@@ -501,8 +429,8 @@ class OpenAIProvider(ModelProvider):
         completed call once the next call begins or the stream finishes.
         """
         request_kwargs: dict[str, Any] = {
-            "model": model or self._model,
-            "messages": self._with_pending_image(messages),
+            "model": require_model(model or self._model),
+            "messages": messages,
             "stream": True,
             # Ask for a final usage chunk (drives the token tickers); without
             # it streaming responses carry no usage and tokens read 0.
@@ -690,13 +618,13 @@ class OpenAIProvider(ModelProvider):
 
         The embedding model comes from the ``embedding_model`` key in
         ``extra_options`` (threaded from the embedding use-case binding); it has no
-        vendor default (empty ⇒ the call errors clearly rather than sending an
-        OpenAI-specific id to a non-OpenAI compatible endpoint).
+        vendor default (empty ⇒ the call is refused before it is sent, rather than naming
+        no model or an OpenAI-specific id to a non-OpenAI compatible endpoint).
         """
         if not inputs:
             return []
         resp = await self._client.embeddings.create(
-            model=self._embedding_model,
+            model=require_model(self._embedding_model),
             input=inputs,
         )
         data = getattr(resp, "data", []) or []

@@ -172,6 +172,13 @@ class AgentProvider(ABC):
         return False
 
     @property
+    def compacts_automatically(self) -> bool:
+        """Will this provider compact its own history on its own at the Settings threshold?
+        False by default. See :attr:`personalclaw.llm.base.ModelProvider.compacts_automatically`
+        — declared identically on both ABCs, like :attr:`compacts_in_process` above."""
+        return False
+
+    @property
     def keeps_cancelled_turns(self) -> bool:
         """Whether a turn stopped mid-way stays in this provider's OWN history. False by
         default. See :attr:`personalclaw.llm.base.ModelProvider.keeps_cancelled_turns` —
@@ -181,6 +188,17 @@ class AgentProvider(ABC):
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:
         async for ev in self.stream(command):
             yield ev
+
+    def stage_image_part(self, data_url: str) -> bool:
+        """Put *data_url* (``data:<media-type>;base64,…``) on the NEXT turn as an image part.
+
+        Returns True only when the image WILL ride that turn. False by default, and the
+        default is the safety property: a runtime that takes no image parts (an ACP CLI owns
+        its own wire) never has an image silently dropped, because the caller reads the False
+        and sends the image's extracted text instead. Whether the MODEL can read pixels is a
+        separate question the caller answers first (``providers.image_input``).
+        """
+        return False
 
     # ── permissions ──
     @abstractmethod

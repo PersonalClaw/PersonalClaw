@@ -25,6 +25,7 @@ different answers and only one of them should hide models from the user.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -102,6 +103,8 @@ class DiskPrecheck:
     ``ok`` is True both when the download comfortably fits AND when the filesystem could
     not be measured — an unmeasurable disk is not a reason to block a good download. The
     two cases are told apart by ``measured``, and the unmeasured one carries a warning.
+    ``reason`` and ``warning`` are sentences a user reads as they are; the route that refuses
+    a download names the refusal's code (``insufficient_disk_space``) beside the sentence.
     """
 
     ok: bool
@@ -212,11 +215,31 @@ def reset_gpu_probe_cache() -> None:
     _GPU_PROBED, _GPU_FACTS = False, {}
 
 
+def free_disk_bytes(target_dir: str | Path | None = None) -> int:
+    """Free bytes on the filesystem ``target_dir`` is on, or will be created on.
+
+    A folder that does not exist yet is measured at its nearest existing ancestor, because that
+    is the filesystem ``mkdir -p`` creates it on. A first download on a fresh home targets such
+    a folder (``models/bundled-chat/`` is made by the download that fills it), and measuring
+    the folder itself raised ``FileNotFoundError``, so exactly those downloads went unchecked.
+
+    The walk stops at the first path that exists as an entry, a link included: a link to a
+    drive that is not there raises here rather than quoting the disk the link sits on. Raises
+    ``OSError`` when the filesystem cannot be measured, and each caller says what that means
+    for it. The root filesystem is measured when ``target_dir`` is omitted.
+    """
+    path = Path(target_dir).absolute() if target_dir else Path("/")
+    while not os.path.lexists(path) and path != path.parent:
+        path = path.parent
+    return shutil.disk_usage(str(path)).free
+
+
 def host_capacity(target_dir: str | Path | None = None) -> HostCapacity:
     """Collect every host fact a fit answer needs — the ONE helper.
 
-    ``target_dir`` is the filesystem whose free space matters (a provider's cache root);
-    the root filesystem is measured when it is omitted.
+    ``target_dir`` is the folder whose filesystem's free space matters (a provider's cache
+    root, which need not exist yet — see :func:`free_disk_bytes`); the root filesystem is
+    measured when it is omitted.
     """
     mem = memory_pressure()
     total_mb = int(mem.get("total_mb") or 0)
@@ -225,7 +248,7 @@ def host_capacity(target_dir: str | Path | None = None) -> HostCapacity:
     gpu = _probe_gpu()
     free_bytes, disk_measured = 0, False
     try:
-        free_bytes = shutil.disk_usage(str(target_dir) if target_dir else "/").free
+        free_bytes = free_disk_bytes(target_dir)
         disk_measured = True
     except Exception:  # noqa: BLE001 — an unmeasurable disk is a state, not a failure
         logger.debug("free-space probe failed for %s", target_dir, exc_info=True)
@@ -290,23 +313,36 @@ def fit_verdict(
             "red",
             need,
             budget_bytes,
-            f"needs ~{_gb(need)} GB, this machine has ~{_gb(budget_bytes)} GB free for models",
+            f"needs ~{size_text(need)}, "
+            f"this machine has ~{size_text(budget_bytes)} free for models",
         )
     if need > budget_bytes * GREEN_HEADROOM:
         return FitAssessment(
             "yellow",
             need,
             budget_bytes,
-            f"fits, but uses most of the ~{_gb(budget_bytes)} GB available",
+            f"fits, but uses most of the ~{size_text(budget_bytes)} available",
         )
     return FitAssessment(
-        "green", need, budget_bytes, f"fits comfortably in ~{_gb(budget_bytes)} GB"
+        "green", need, budget_bytes, f"fits comfortably in ~{size_text(budget_bytes)}"
     )
 
 
-def _gb(value: int) -> str:
-    """Bytes → a one-decimal GB string for user-facing reasons."""
-    return f"{value / _BYTES_PER_GB:.1f}"
+def size_text(count: float) -> str:
+    """A model's size, or the memory or disk space it is weighed against, as the dashboard states
+    one: binary units labelled as binary (KiB, MiB, GiB), to one decimal.
+
+    The offer card says "138 MiB" and the Models page rows say MiB, because a catalog's ``size_mb``
+    is MiB (``size_mb × 1024 × 1024`` is the byte total a download is measured against). The
+    refusal under the card said "138.1 MB" and the fit chips "~4.2 GB": the same binary numbers,
+    labelled another way. One decimal keeps two close numbers apart — a refusal names what the
+    download needs and what is free, and "needs 138 MiB, 138 MiB free" would name neither."""
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024:
+            return f"{value:.0f} B" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TiB"
 
 
 def family_key(name: str) -> str:
@@ -351,13 +387,16 @@ def largest_that_fits(sizes: list[float], budget_bytes: int | None) -> float | N
 def disk_precheck(need_mb: float, target_dir: str | Path | None = None) -> DiskPrecheck:
     """Refuse a download that cannot land — but never on an unmeasurable filesystem.
 
-    A refusal names BOTH numbers (needed and free) so the message is actionable without a
-    second lookup. When the filesystem cannot be measured the check SKIPS with a warning:
-    blocking a good download because a probe failed is the worse error.
+    A refusal names BOTH numbers (needed and free) in the unit the offer states the size in
+    (:func:`size_text`), so the message is actionable without a second lookup. A ``target_dir``
+    that does not exist yet is measured where it will be created (:func:`free_disk_bytes`), so a
+    first download is checked like any other. When the filesystem cannot be measured the
+    check SKIPS with a warning, which the download's job carries while it runs: blocking a good
+    download because a probe failed is the worse error.
     """
     need = int(max(0.0, float(need_mb or 0)) * _BYTES_PER_MB)
     try:
-        free = shutil.disk_usage(str(target_dir) if target_dir else "/").free
+        free = free_disk_bytes(target_dir)
     except Exception:  # noqa: BLE001 — an unmeasurable disk skips the check, never blocks
         logger.debug("free-space precheck could not measure %s", target_dir, exc_info=True)
         return DiskPrecheck(
@@ -373,7 +412,10 @@ def disk_precheck(need_mb: float, target_dir: str | Path | None = None) -> DiskP
             measured=True,
             need_bytes=need,
             free_bytes=free,
-            reason=f"insufficient_disk_space: needs {_gb(need)} GB, {_gb(free)} GB free",
+            reason=(
+                f"Not enough free disk space for this download: it needs {size_text(need)}, "
+                f"and {size_text(free)} is free."
+            ),
         )
     return DiskPrecheck(ok=True, measured=True, need_bytes=need, free_bytes=free)
 

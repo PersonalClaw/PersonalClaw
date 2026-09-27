@@ -99,6 +99,33 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
     return f"{session_key}:{request_id}"
 
 
+def _who_asked(entry: dict[str, Any]) -> str:
+    """Who is waiting on an approval, as the Inbox says it — the chat's agent and the chat, a
+    subagent of a chat, or a background task. The one wording both of an approval's Inbox rows use
+    (the ask, and the note it leaves when nobody answered)."""
+    agent = str(entry.get("agent") or "")
+    title = str(entry.get("session_title") or "")
+    if agent:
+        # Only a chat-held approval names its agent; that is how the two origins are told apart.
+        return f"{agent} in “{title}”" if title else f"{agent} in a chat"
+    if entry.get("trigger"):
+        # Work a trigger started (its action's agent): the trigger is what the owner knows it by,
+        # and what the Inbox offers to run again.
+        from personalclaw.dashboard.auto_denials import trigger_asker
+
+        return trigger_asker(str(entry.get("trigger_name") or ""))
+    from personalclaw.workflows.ownership import parse_owned
+
+    step = parse_owned(str(entry.get("session") or ""))
+    if step is not None:
+        # A workflow step's agent asks under its run's key: the step is what the run page, and the
+        # Inbox's "Run this step again", call it.
+        return f"The “{step[1]}” step of a workflow run"
+    if entry.get("source") == "subagent":
+        return f"A subagent of “{title}”" if title else "A subagent"
+    return "A background task"
+
+
 def _approval_row_body(entry: dict[str, Any]) -> str:
     """What a pending approval's Inbox row says. Server-composed product copy: every clause true.
 
@@ -107,18 +134,10 @@ def _approval_row_body(entry: dict[str, Any]) -> str:
     carries — so the row can be judged from the Inbox rather than only opened.
     """
     tool = str(entry.get("tool") or "a tool")
-    agent = str(entry.get("agent") or "")
-    title = str(entry.get("session_title") or "")
-    if agent:
-        # Only a chat-held approval names its agent; that is how the two origins are told apart.
-        who = f"{agent} in “{title}”" if title else f"{agent} in a chat"
-    elif entry.get("source") == "subagent":
-        who = f"A subagent of “{title}”" if title else "A subagent"
-    else:
-        who = "A background task"
     risk = str(entry.get("risk") or "")
     lines = [
-        f"{who} is waiting for your decision on {tool}" + (f" (risk: {risk})." if risk else ".")
+        f"{_who_asked(entry)} is waiting for your decision on {tool}"
+        + (f" (risk: {risk})." if risk else ".")
     ]
     for detail in (entry.get("tool_purpose"), entry.get("tool_input")):
         text = " ".join(str(detail or "").split())
@@ -145,24 +164,28 @@ class DashboardApprovalState:
     enable_yolo: Callable[..., None]
     push_sessions_update: Callable[[], None]
 
-    _APPROVAL_TIMEOUT = 7200  # 2 hours — interactive default (a human is present)
-    # Unattended origins (cron / loop / heartbeat / scheduled) have no human to
-    # answer a prompt, so a long wait just hangs the run. They fail CLOSED to
-    # deny after a short window. Keyed by a substring of the approval `source`.
-    _UNATTENDED_APPROVAL_TIMEOUT = 300  # 5 minutes
-    _UNATTENDED_SOURCE_MARKERS = ("cron", "loop", "heartbeat", "schedule", "autonudge")
+    def approval_window_secs(self) -> float:
+        """How long an approval waits for an answer: ``agent.approval_timeout_minutes`` (F-33).
 
-    def _approval_timeout_for(self, source: str) -> float:
-        """Resolve the response window for an approval by its origin.
+        ONE window for every approval that waits — a chat's, a subagent's, an MCP server's
+        question (which its own call ceiling cuts shorter). There used to be a second, five-minute
+        window for "unattended" sources, keyed by a substring of ``source`` (``cron``, ``loop``,
+        ``heartbeat``, ``schedule``, ``autonudge``), and no caller ever passed one: every production
+        source is ``subagent`` or ``mcp:<server>``. It governed nothing, while reading as the rule
+        for night-time work. What an unattended run really does is decline at once, without an
+        approval at all (``chat_runner``'s fail-fast and the native runtime's own), because nobody
+        is there to ask — and ``dashboard/auto_denials.py`` now says so in the Inbox.
 
-        Unattended origins (no human at the keyboard) get a short window and fail
-        closed to deny on expiry, so an autonomous run can't hang for hours on a
-        prompt nobody will answer; interactive origins keep the long window.
+        Read per approval, so a change in Settings applies to the next one asked. An unreadable
+        config falls back to the default window rather than failing the approval.
         """
-        low = (source or "").lower()
-        if any(marker in low for marker in self._UNATTENDED_SOURCE_MARKERS):
-            return self._UNATTENDED_APPROVAL_TIMEOUT
-        return self._APPROVAL_TIMEOUT
+        from personalclaw.config.loader import APPROVAL_TIMEOUT_MINUTES_DEFAULT, AppConfig
+
+        try:
+            minutes = int(AppConfig.load().agent.approval_timeout_minutes)
+        except Exception:  # noqa: BLE001 - see the docstring
+            minutes = APPROVAL_TIMEOUT_MINUTES_DEFAULT
+        return float(max(1, minutes) * 60)
 
     async def request_approval(
         self,
@@ -173,12 +196,21 @@ class DashboardApprovalState:
         tool_input: object = "",
         tool_purpose: str = "",
         session: str = "",
+        trigger: str = "",
+        asked_on_channel: bool = False,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
-        The timeout is origin-aware (see :meth:`_approval_timeout_for`): unattended
-        sources deny fast, interactive sources wait longer. Timeout always fails
-        closed to deny.
+        ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
+        gateway's race for a background origin), so the ``channel_dm`` target must not ask a
+        second time.
+
+        ``trigger`` is the store id of the trigger whose run asked (its action's agent), or ``""``.
+        It names the asker on every surface, and it is what lets the note an unanswered one leaves
+        offer to run that trigger again (``auto_denials.note_expired``).
+
+        Waits :meth:`approval_window_secs`. Timeout always fails closed to deny, and leaves a
+        note in the Inbox saying so (:meth:`end_approval`).
 
         ``tool_input`` is ``object`` because that is what the approval path actually carries.
         It is ``AgentEvent.tool_input``, typed ``Any`` — the native loop puts a dict there and
@@ -218,6 +250,7 @@ class DashboardApprovalState:
             tool_input=display_input,
             tool_purpose=tool_purpose,
             session=session,
+            trigger=trigger,
             # #2821: the same command-screening verdict the chat card gets, from the same
             # owner, so the two surfaces that ask a human for permission cannot describe
             # one call differently.
@@ -230,7 +263,9 @@ class DashboardApprovalState:
             # `None` when this is not a shell call.
             is_read_only=read_only_command(tool, "", tool_input),
         )
-        timeout = self._approval_timeout_for(source)
+        if asked_on_channel:
+            self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
+        timeout = self.approval_window_secs()
         # How this approval ends if nobody answers it. The waiter is the one party that knows
         # WHY it stopped waiting, so it says so: its window closing is `expired`; anything else
         # that ends the wait first — the subagent or run that owns it being cancelled, which
@@ -260,7 +295,11 @@ class DashboardApprovalState:
             return False
         finally:
             self._approval_futures.pop(approval_id, None)
-            self.end_approval(approval_id, outcome="expired" if timed_out else "cancelled")
+            self.end_approval(
+                approval_id,
+                outcome="expired" if timed_out else "cancelled",
+                window_secs=timeout,
+            )
 
     async def hold_session_approval(
         self,
@@ -318,6 +357,7 @@ class DashboardApprovalState:
         agent: str = "",
         risk: str = "",
         grant_agent: str = "",
+        trigger: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -327,8 +367,11 @@ class DashboardApprovalState:
 
         Every LLM-sourced string is redacted here, once, for both origins. ``agent``/``risk``/
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
-        is "not known", never "none".
+        is "not known", never "none". ``trigger`` is known only to a trigger's run, and its name is
+        read once, here, so the ask and its note name it the same way.
         """
+        from personalclaw.triggers.store import trigger_name
+
         live = self._sessions.get(session) if session else None
         # A session's title defaults to its key until the chat is named; a key is not a title.
         title = live.title if live is not None and live.title and live.title != live.key else ""
@@ -347,6 +390,8 @@ class DashboardApprovalState:
             "risk": risk,
             "is_read_only": is_read_only,
             "grant_agent": grant_agent,
+            "trigger": trigger,
+            "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",
             "ts": time.time(),
         }
 
@@ -431,16 +476,31 @@ class DashboardApprovalState:
         one of :data:`APPROVAL_OUTCOMES` and required, so no path can end an approval without
         stating which of the four things happened; ``approved`` stays on the frame for the
         readers that only need to know whether the call runs.
+
+        An ANSWERED one also settles any "Denied, no answer" note for the same call asked in the
+        same place (``auto_denials.settle_retried``): that call is decided now, so the note has
+        nothing left to ask. Here, because this is where every door's answer arrives.
         """
         if outcome not in APPROVAL_OUTCOMES:
             raise ValueError(f"unknown approval outcome {outcome!r}")
         entry = self._pending_approvals.pop(approval_id, None) or {}
+        self.__dict__.get("_channel_asked", set()).discard(approval_id)
+        # A prompt still open on the owner's channel is closed with how it ended, so the message
+        # there says so instead of offering buttons that answer nothing.
+        pending = self.__dict__.get("_channel_prompts", {}).pop(approval_id, None)
+        future = getattr(pending, "future", None)
+        if future is not None and not future.done():
+            future.set_result("approved" if outcome == "approved" else "rejected")
         try:
             from personalclaw.inbox import resolve_attention_items
 
             resolve_attention_items(self, {"approval": approval_id})
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
+        if entry and outcome not in UNANSWERED_OUTCOMES:
+            from personalclaw.dashboard import auto_denials
+
+            auto_denials.settle_retried(self, entry, answer=outcome)
         try:
             self.broadcast_ws(
                 "approval_resolved",
@@ -455,12 +515,18 @@ class DashboardApprovalState:
         except Exception:
             self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
 
-    def end_approval(self, approval_id: str, *, outcome: str) -> None:
+    def end_approval(self, approval_id: str, *, outcome: str, window_secs: float = 0.0) -> None:
         """An approval its waiter stopped waiting for: ``expired`` or ``cancelled``.
 
         It failed closed, so the call does not run, and every surface says which of the two
         happened. A no-op once a decision has withdrawn it, which is what lets every waiter call
         this unconditionally on its way out.
+
+        An ``expired`` one leaves a note in the Inbox (``auto_denials.note_expired``), because the
+        approval's own row closes here: before, an approval nobody answered in time was gone from
+        every surface, with nothing saying the call had been denied. ``window_secs`` is how long
+        its waiter waited, which the note states. ``cancelled`` leaves none — the work that asked
+        was stopped, and the SEL row below records why.
         """
         if outcome not in UNANSWERED_OUTCOMES:
             raise ValueError(f"{outcome!r} is an answer, not a way to end without one")
@@ -470,6 +536,15 @@ class DashboardApprovalState:
         self.withdraw_approval(approval_id, outcome=outcome)
         if outcome == "cancelled":
             self._audit_cancelled(approval_id, self._why_cancelled(entry), entry=entry)
+        else:
+            from personalclaw.dashboard import auto_denials
+
+            auto_denials.note_expired(
+                self,
+                entry,
+                who=_who_asked(entry),
+                window_secs=window_secs or self.approval_window_secs(),
+            )
 
     def _why_cancelled(self, entry: dict[str, Any]) -> str:
         """The audit reason for an approval whose waiter was cancelled: the owner's own record
@@ -482,7 +557,7 @@ class DashboardApprovalState:
         return "the work that asked for it was stopped"
 
     def end_session_approval(
-        self, session: "_ChatSession", request_id: str, *, outcome: str
+        self, session: "_ChatSession", request_id: str, *, outcome: str, window_secs: float = 0.0
     ) -> None:
         """:meth:`end_approval` for a chat's approval — and the transcript row with it.
 
@@ -494,7 +569,7 @@ class DashboardApprovalState:
         approval_id = chat_approval_id(session.key, request_id)
         if approval_id in self._pending_approvals:
             _mark_permission_resolved(session.messages, request_id, outcome)
-        self.end_approval(approval_id, outcome=outcome)
+        self.end_approval(approval_id, outcome=outcome, window_secs=window_secs)
 
     def cancel_approval(self, approval_id: str, *, reason: str) -> bool:
         """End a pending approval whose owner has ended while its waiter still waits.
@@ -664,17 +739,118 @@ class DashboardApprovalState:
         NOT routed through :meth:`notify`: that would add a desktop toast beside the approval
         card the dashboard already renders — a behaviour change to every existing user, in
         exchange for nothing the phone needs.
+
+        The same rule's ``channel_dm`` target asks the owner on their chat channel
+        (:meth:`_ask_on_a_channel`), with Approve/Deny where the channel has them.
         """
         try:
             from personalclaw import notification_kinds, notification_rules, push
 
             registered = notification_kinds.kind_for_legacy(notification_kinds.APPROVAL)
             rule = notification_rules.resolve_rule(registered.source, registered.kind)
-            if rule.mode == "never" or "push" not in rule.targets:
+            if rule.mode == "never":
                 return
-            push.deliver_async("approval", approval_id)
+            if "push" in rule.targets:
+                push.deliver_async("approval", approval_id)
+            if "channel_dm" in rule.targets:
+                self._ask_on_a_channel(approval_id)
         except Exception:
             self._log.debug("approval push dispatch failed", exc_info=True)
+
+    def _ask_on_a_channel(self, approval_id: str) -> None:
+        """The ``channel_dm`` target of ``approval/requested``: ask the owner on their channel.
+
+        Skipped when the caller is already asking there (``asked_on_channel``). Runs as a task on
+        the gateway's loop, so the approval is listed everywhere else first and never waits on a
+        channel."""
+        entry = self._pending_approvals.get(approval_id)
+        if not entry or approval_id in self.__dict__.get("_channel_asked", set()):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._log.debug("approval %s: no loop here to ask on a channel from", approval_id)
+            return
+        task = loop.create_task(self._approval_on_a_channel(approval_id, dict(entry)))
+        tasks = getattr(self, "_background_tasks", None)
+        if isinstance(tasks, set):
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
+    async def _approval_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
+        """Ask on the first channel that can: Approve/Deny where it has them, else a link.
+
+        Channels are tried in name order, as ``channel_delivery.reach_owner`` tries them. The
+        first one with an owner id and a ``request_approval`` prompt asks, and a press there
+        answers this approval the way the dashboard's buttons do (:meth:`resolve_approval`). An
+        answer given anywhere else closes that prompt (:meth:`withdraw_approval`). A prompt that
+        runs out on the channel decides nothing: this approval keeps its own window. When no
+        channel can prompt, the owner gets a message with the link to answer it instead.
+
+        The channel is handed a short token, not the approval id: a chat's id carries its session
+        key, and a button's data has a size cap on some channels."""
+        import secrets
+        from types import SimpleNamespace
+
+        from personalclaw import channel_delivery
+        from personalclaw.config.credentials import owner_id_for
+
+        event = SimpleNamespace(
+            request_id=secrets.token_hex(6),
+            title=str(entry.get("tool") or ""),
+            tool_input=str(entry.get("tool_input") or ""),
+            tool_purpose=str(entry.get("tool_purpose") or ""),
+            risk_level=str(entry.get("risk") or ""),
+            tool_meta={},
+        )
+        prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
+        for provider in channel_delivery.registered_providers():
+            delivery = channel_delivery.delivery_for(provider)
+            ask = getattr(delivery, "request_approval", None)
+            if delivery is None or ask is None or not owner_id_for(provider):
+                continue
+            seen: dict[str, Any] = {}
+
+            def _on_prompted(pending: Any, _seen: dict[str, Any] = seen) -> None:
+                _seen["pending"] = pending
+                prompts[approval_id] = pending
+
+            try:
+                approved = await ask(
+                    event, source=str(entry.get("source") or "chat"), on_prompted=_on_prompted
+                )
+            except Exception:  # noqa: BLE001 - one channel failing hands over to the next
+                self._log.warning(
+                    "channel %s: asking for an approval failed", provider, exc_info=True
+                )
+                continue
+            finally:
+                if prompts.get(approval_id) is seen.get("pending"):
+                    prompts.pop(approval_id, None)
+            if approved is None and "pending" not in seen:
+                continue  # this channel could not prompt the owner; the next one may
+            future = getattr(seen.get("pending"), "future", None)
+            pressed = future is not None and future.done() and not future.cancelled()
+            if pressed and approval_id in self._pending_approvals:
+                self.resolve_approval(approval_id, bool(approved))
+            return
+        await self._approval_link_on_a_channel(approval_id, entry)
+
+    async def _approval_link_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
+        """Tell the owner on their channel that an approval is waiting, with where to answer it."""
+        from personalclaw.channel_delivery import reach_owner
+        from personalclaw.dashboard.channel_messages import dashboard_link
+
+        what = str(entry.get("tool") or "a tool call")
+        why = str(entry.get("tool_purpose") or "")
+        link = dashboard_link(f"#/companion?approval={approval_id}")
+        text = f"PersonalClaw is waiting for your approval: {what}" + (f", to {why}" if why else "")
+        text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
+        outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+        if not outcome.delivered and not outcome.no_channel:
+            self._log.warning(
+                "approval %s: no channel reached the owner: %s", approval_id, outcome.sentence()
+            )
 
     def resolve_approval(self, approval_id: str, approved: bool) -> bool:
         """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.

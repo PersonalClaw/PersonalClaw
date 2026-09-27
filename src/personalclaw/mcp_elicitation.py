@@ -24,9 +24,9 @@ construction (``mcp_client.McpServerConn._run``):
   only, and a request becomes an approval card.
 
 **Bounded by the window the answer can be delivered in.** ``mcp_client.call_tool`` abandons a
-tool call after ``_CALL_TIMEOUT_SECS``, while the approval boundary's interactive window is two
-hours (``DashboardState._APPROVAL_TIMEOUT``; ``mcp:<server>`` matches none of its unattended
-markers). Waiting the boundary's window behind the transport's would discard the user's answer
+tool call after ``_CALL_TIMEOUT_SECS``, while the approval boundary's window is the owner's
+setting, two hours by default (``DashboardState.approval_window_secs``). Waiting the boundary's
+window behind the transport's would discard the user's answer
 in silence — the call is already abandoned, the card is still up, and the click delivers
 nothing. So a granted question is bounded by :func:`approval_window_secs`, derived from the
 call ceiling rather than configured, and an unanswered one is withdrawn and answered ``cancel``

@@ -221,15 +221,27 @@ class ModelProvider(ABC):
         return False
 
     @property
+    def compacts_automatically(self) -> bool:
+        """Whether this provider will compact its own history ON ITS OWN once the context
+        crosses the Settings threshold (``session.autocompact_pct``).
+
+        False by default. The session manager restarts a session at that threshold only
+        when this is False: a provider that compacts itself would otherwise lose the history
+        it was about to compact to a restart at the same value. The native loop answers True
+        while its automatic pass still helps; an out-of-process agent answers False.
+        """
+        return False
+
+    @property
     def sampling_temperature(self) -> float | None:
         """The sampling temperature this instance puts on the request, or ``None`` if it sends none.
 
-        ``None`` by default, and — like :meth:`stage_image_part`'s ``False`` — the default is
-        the safety property: a provider that never declared where a temperature goes cannot be
-        credited with sampling at one. A caller that ASKED for a temperature (best-of-N's
-        ladder, threaded as the ``temperature`` build kwarg) reads this back through the
-        model-call record the guard keeps (:mod:`personalclaw.guardrails.calls`) and says so
-        when it differs, instead of presenting N answers at the provider default as a sweep.
+        ``None`` by default, and the default is the safety property: a provider that never
+        declared where a temperature goes cannot be credited with sampling at one. A caller
+        that ASKED for a temperature (best-of-N's ladder, threaded as the ``temperature``
+        build kwarg) reads this back through the model-call record the guard keeps
+        (:mod:`personalclaw.guardrails.calls`) and says so when it differs, instead of
+        presenting N answers at the provider default as a sweep.
 
         A statement about the REQUEST, not the model: an endpoint can still ignore the field,
         which no client can observe — a zero spread across a slate is then the visible sign.
@@ -289,22 +301,6 @@ class ModelProvider(ABC):
         """Refresh provider activity timestamp without I/O. Default no-op."""
         return None
 
-    def stage_image_part(self, data_url: str) -> bool:
-        """Attach *data_url* as an image content part on the NEXT user turn.
-
-        Returns True only if this provider will actually put the image on the wire.
-        The default is **False**, and that default is the safety property: a caller
-        (MULTIMODAL-IO §5.3's screen-context channel) uses the return value to decide
-        between handing the model pixels and degrading to a text description. A
-        provider that inherits this no-op therefore routes to the description path
-        instead of having its image silently dropped — "declared support" can never
-        stand in for "delivered".
-
-        One-shot by contract: the staged part rides exactly one turn and is cleared as
-        the request is built, so a later turn can't inherit an earlier image.
-        """
-        return False
-
     def set_workspace(self, path: Path) -> None:
         """Override the working directory used for subsequent provider activity.
 
@@ -351,15 +347,31 @@ class ModelProvider(ABC):
         thinking / reasoning map it to their request (Anthropic ``thinking`` budget,
         OpenAI ``reasoning_effort``); others ignore it. "" = model default.
 
+        A user message's ``content`` is either a string or a list of neutral parts:
+        ``{"type": "text", "text": ...}`` and ``{"type": "image_url", "image_url": {"url":
+        "data:<media-type>;base64,<payload>"}}``. Image parts reach a provider only when its
+        type's :class:`~personalclaw.llm.capabilities.ProviderCapability` declares
+        ``supports_vision`` (``providers.image_input``), and such a provider translates them
+        to its own wire (Anthropic ``image`` blocks, Ollama's ``images`` array, Bedrock
+        Converse ``image`` blocks; OpenAI's wire is the neutral shape itself).
+
         Default implementation: a convenience adapter over the simple-prompt
-        ``stream(str)`` API — it sends the last user message. Concrete completion
+        ``stream(str)`` API — it sends the last user message's text. Concrete completion
         adapters (openai / anthropic / ollama / vllm / bedrock) override this with
         real multi-message + tools support.
         """
         last_user = ""
         for m in reversed(messages):
             if m.get("role") == "user":
-                last_user = str(m.get("content", ""))
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    last_user = "\n".join(
+                        str(p.get("text", ""))
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                else:
+                    last_user = str(content)
                 break
         async for ev in self.stream(last_user):
             yield ev

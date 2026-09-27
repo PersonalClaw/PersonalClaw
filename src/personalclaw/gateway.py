@@ -515,13 +515,19 @@ class GatewayOrchestrator:
     # ------------------------------------------------------------------
 
     def _interactive_approval(
-        self, source: str, session_resolver: Callable[[str], str] | None = None
+        self,
+        source: str,
+        session_resolver: Callable[[str], str] | None = None,
+        trigger_resolver: Callable[[str], str] | None = None,
     ) -> ToolApprovalCallback:
         """Return an approval callback that races dashboard vs channel DM.
 
         Uses the same rich Block Kit message as the main-agent approval flow
         so users see full command text, security redactions, and Trust-session
         controls for background agents too.
+
+        ``trigger_resolver`` names the trigger whose run asked, from the approval id, so the
+        approval is listed under it and a note it leaves unanswered can run it again.
         """
 
         async def _approve(event: LLMEvent, parent_session_key: str = "") -> bool:
@@ -711,6 +717,10 @@ class GatewayOrchestrator:
                                     if session_resolver
                                     else resolved_session
                                 ),
+                                trigger=trigger_resolver(request_id) if trigger_resolver else "",
+                                # This channel is already asking: the `channel_dm` target
+                                # must not ask a second time.
+                                asked_on_channel=True,
                             )
                         )
 
@@ -765,6 +775,7 @@ class GatewayOrchestrator:
                     tool_input=event.tool_input,
                     tool_purpose=event.tool_purpose,
                     session=session_resolver(request_id) if session_resolver else resolved_session,
+                    trigger=trigger_resolver(request_id) if trigger_resolver else "",
                 )
             return True  # no UI → auto-approve
 
@@ -1191,6 +1202,24 @@ class GatewayOrchestrator:
             logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
             return
 
+        # 🔴 THE GRANT, at the dispatch every unattended fire shares (`triggers.grants`). A clock or
+        # event fire meets the frozen-capability fence in `service.admit_fire`; a file, web_watch or
+        # chained fire comes straight here, and nothing on this path read the capability block.
+        # Measured on `main`: an ungranted `bash` file trigger ran on the next change. Refused
+        # before anything else, and written to the Runs history like the denylist's refusal below,
+        # because a refusal only a log knows about is a silent drop.
+        from personalclaw.triggers import grants
+
+        missing = grants.missing(trigger)
+        if missing:
+            refusal = grants.refusal(trigger, missing)
+            logger.warning("trigger %s not run: %s", trigger.id, refusal)
+            await self._record_refused_fire(
+                trigger, status=Outcome.SKIPPED_GATE.value, error=refusal
+            )
+            self._push_trigger_refresh()
+            return
+
         # 🔴 THE INJECTION SCREEN, on the payload that actually carries untrusted text (§7/R4 rule a
         # — S134). `FireContext.payload_text` defaulted to "" and `service.tick` never set
         # it, so `evaluate`'s `if ctx.payload_text:` was permanently false — the
@@ -1272,6 +1301,7 @@ class GatewayOrchestrator:
             context=context,
             payload=payload,
             status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+            trigger_id=str(getattr(trigger, "id", "") or ""),
         )
 
         # 🔴 THE DENYLIST, at the seam that lost it. §1.2 says
@@ -1565,12 +1595,32 @@ class GatewayOrchestrator:
         self._surface_missed_review(report, interrupted)
 
     def _surface_held_boot_review(self) -> None:
-        """Send the boot's notice the passes held for the dashboard (`_record_boot_review`)."""
+        """Send what the boot passes found once the dashboard can deliver it.
+
+        The missed-run notice the passes held (`_record_boot_review`), and the review item for the
+        triggers a legacy import brought over and switched off (`legacy_import.announce`). The
+        import runs in `_init_cron`, long before the inbox service exists, so its item is raised
+        here — from the rows still waiting in the store, which is also what makes it survive a
+        crash between the import and this line.
+        """
         held = getattr(self, "_held_boot_review", None)
-        if held is None:
-            return
-        self._held_boot_review = None
-        self._surface_missed_review(*held)
+        if held is not None:
+            self._held_boot_review = None
+            self._surface_missed_review(*held)
+        try:
+            from personalclaw.triggers import legacy_import
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            legacy_import.announce(
+                getattr(self, "dashboard_state", None),
+                store=TriggerStore(base_dir=home),
+                home=home,
+            )
+        except Exception:  # noqa: BLE001 - the rows wait on the Triggers page either way
+            logger.warning(
+                "could not announce the triggers a legacy import brought over", exc_info=True
+            )
 
     def _surface_missed_review(
         self, report: dict[str, Any], interrupted: list[dict[str, Any]] | tuple = ()
@@ -2375,14 +2425,14 @@ class GatewayOrchestrator:
             # and NOTHING polled it — the clock tick skips it (no `next_fire_at`) and the file
             # poller only reads `file`.
             self._web_watch_task = asyncio.create_task(self._web_watch_poll_loop())
-            # Import `crons.json` into the unified trigger store and arm the imported clocks.
-            # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json`
-            # was empty on a real machine — every cron lived only in the legacy file, which blocks
-            # re-pointing `/api/triggers` at the store and leaves the tick nothing to fire.
-            # Idempotent and additive: `crons.json` stays on disk (the "read-only one release",
-            # which `verify-migration` needs to diff) and the legacy scheduler still runs from
-            # it, so a bad import is fixed by editing the legacy file and restarting rather than
-            # by restoring a deletion.
+            # Import the legacy automation files (`crons.json`, `event_triggers.json`) into the
+            # unified trigger store and arm the imported clocks. Measured:
+            # `migrate_from_crons` was called by NOTHING outside tests, so `triggers.json` was
+            # empty on a real machine.
+            # Each file is imported once per home and renamed `<name>.imported-<date>`, and nothing
+            # it brings over runs until the owner allows it (`triggers/legacy_import.py`); the
+            # review item for what it switched off is raised once the dashboard is up
+            # (`_surface_held_boot_review`).
             try:
                 from personalclaw.triggers.boot_migrate import migrate_and_arm
 
@@ -3826,13 +3876,13 @@ class GatewayOrchestrator:
             if parent_key and not parent_key.startswith(
                 # `workflow:<run>:<node>` is a RUN-OWNED session (`ownership.OWNED_PREFIX`), not a
                 # channel. Its completion is consumed by the run's own controller, which polls
-                # `SubagentManager.get` (`controller._reconcile_dispatched_stages`) — so the work
-                # here is not "deliver it somewhere else", it is "do not deliver it twice". Without
-                # this the key fell through to the branch below and a finished stage was treated as
-                # a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session for a
-                # session that never existed and burned a full model turn injecting the result into
-                # it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares the
-                # intended policy in its docstring — "completions belong in the run journal, not
+                # `SubagentManager.get` (`stage_settlement.reconcile_dispatched_stages`) — so the
+                # work here is not "deliver it somewhere else", it is "do not deliver it twice".
+                # Without this the key fell through to the branch below and a finished stage was
+                # treated as a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session
+                # for a session that never existed and burned a full model turn injecting the result
+                # into it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares
+                # the intended policy in its docstring — "completions belong in the run journal, not
                 # injected into whatever chat session happened to start the run" — and passes
                 # `silent=True` to say so; the only reader of `silent` is the notification tail
                 # below, which is where this now lands. The PREFIX (not `is_owned`) is the right
@@ -4116,8 +4166,16 @@ class GatewayOrchestrator:
             )
             return session
 
+        def _spawn_trigger_resolver(request_id: str) -> str:
+            """The trigger whose fire started the subagent an approval id names, or ""."""
+            agent_id = approval_subagent_id(request_id)
+            info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
+            return str(getattr(info, "trigger_id", "") or "") if info else ""
+
         _approve_subagent = self._interactive_approval(
-            "subagent", session_resolver=_spawn_session_resolver
+            "subagent",
+            session_resolver=_spawn_session_resolver,
+            trigger_resolver=_spawn_trigger_resolver,
         )
 
         async def _spawn_approve(
@@ -4131,6 +4189,37 @@ class GatewayOrchestrator:
                 return
             session_name = info.parent_session_key.removeprefix("dashboard:")
             base = {"id": info.id, "session": session_name}
+            if etype == "subagent_auto_denied":
+                # A call the subagent's runtime declined because nobody could approve it.
+                # Recorded against the PARENT, which is where a person can see it and act: the
+                # chat that spawned the helper, or the workflow step it ran for.
+                from personalclaw.dashboard import auto_denials
+
+                parent = self.dashboard_state.get_session(session_name) if session_name else None
+                title = getattr(parent, "title", "") if parent is not None else ""
+                # Started by a trigger's action: the note names that trigger, which is what the
+                # owner knows the work by (`auto_denials.note_unattended` words it).
+                trigger = str(getattr(info, "trigger_id", "") or "")
+                auto_denials.note_unattended(
+                    self.dashboard_state,
+                    session_key=session_name or f"subagent:{info.id}",
+                    tool=str(extra.get("tool") or ""),
+                    who=(
+                        ""
+                        if trigger
+                        else (
+                            f"A subagent of “{title}”"
+                            if title and title != session_name
+                            else (
+                                "A workflow step"
+                                if ownership.is_owned(session_name)
+                                else "A subagent"
+                            )
+                        )
+                    ),
+                    trigger=trigger,
+                )
+                return
             if etype == "subagent_injection_failed":
                 # Show error in UI + queue for LLM context on next turn.
                 session = self.dashboard_state.get_session(session_name)

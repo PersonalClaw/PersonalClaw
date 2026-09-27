@@ -76,8 +76,8 @@ UNKNOWN_SENDER_RENOTIFY_SECS = 24 * 3600
 
 #: The canned reply a DM-policy=pairing transport sends back to an unknown sender.
 CANNED_PAIRING_REPLY = (
-    "I don't recognize you yet. Ask my owner for an 8-digit pairing code "
-    "(they can run `personalclaw pair <provider>`), then send it here to start talking."
+    "I don't recognize you yet. Ask my owner for an 8-digit pairing code, "
+    "then send it here to start talking."
 )
 
 #: The canned reply for the message that WAS a valid pairing code. The sender is now
@@ -258,22 +258,76 @@ def is_tracked_channel(provider: str, channel_id: str) -> bool:
 
 
 def track(provider: str, channel_id: str, name: str = "") -> None:
-    """Start tracking a group/room on ``provider``. Idempotent."""
+    """Start tracking a group/room on ``provider``. Idempotent; emits ``channel_tracked``.
+
+    A tracked group is one whose messages reach the agent, so tracking is a grant and is
+    audited like one. The group leaves the seen-but-untracked list (:func:`note_untracked_channel`),
+    and a name it was seen with is kept when none is given."""
     store = _read_store()
     rec = _provider_record(store, provider)
+    raw_seen = rec.get("seen_channels")
+    seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
+    seen_as = seen.pop(channel_id, None) or {}
+    already = channel_id in (rec.get("tracked_channels") or {})
     rec.setdefault("tracked_channels", {})[channel_id] = {
-        "name": name,
+        "name": name or str(seen_as.get("name", "") or ""),
         "added_at": _iso(_now()),
     }
+    if seen_as:
+        rec["seen_channels"] = seen
     store[provider] = rec
     _write_store(store)
+    if not already:
+        _emit_sel("channel_tracked", "owner", provider, channel_id)
 
 
 def untrack(provider: str, channel_id: str) -> None:
-    """Stop tracking a group/room on ``provider``. Idempotent."""
+    """Stop tracking a group/room on ``provider``. Idempotent; emits ``channel_untracked``."""
     store = _read_store()
     rec = _provider_record(store, provider)
-    rec.get("tracked_channels", {}).pop(channel_id, None)
+    was = rec.get("tracked_channels", {}).pop(channel_id, None)
+    store[provider] = rec
+    _write_store(store)
+    if was is not None:
+        _emit_sel("channel_untracked", "owner", provider, channel_id)
+
+
+#: How many untracked groups a provider remembers, and how often one group's sighting is
+#: written again. A busy group the bot sits in sends every message through the gate, and each
+#: one would otherwise be a store write.
+SEEN_CHANNELS_MAX = 20
+SEEN_CHANNEL_REWRITE_SECS = 3600
+
+
+def note_untracked_channel(provider: str, channel_id: str, name: str = "") -> None:
+    """Remember that an untracked group on ``provider`` messaged the agent.
+
+    Its messages are refused silently (``untracked_channel``), which is right for a stranger's
+    room and leaves the owner nowhere to track one they do want: the group's id is the vendor's,
+    and nothing showed it. The Sender trust page lists these with a Track button. Bounded to the
+    :data:`SEEN_CHANNELS_MAX` most recent, and written at most once per
+    :data:`SEEN_CHANNEL_REWRITE_SECS` per group unless its name changed."""
+    if not channel_id:
+        return
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    if channel_id in (rec.get("tracked_channels") or {}):
+        return
+    raw_seen = rec.get("seen_channels")
+    seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
+    now = _now()
+    before = seen.get(channel_id) or {}
+    try:
+        recent = (now - datetime.fromisoformat(str(before.get("last_seen", "")))).total_seconds()
+    except ValueError:
+        recent = None
+    if recent is not None and recent < SEEN_CHANNEL_REWRITE_SECS and before.get("name") == name:
+        return
+    seen[channel_id] = {"name": name or str(before.get("name", "") or ""), "last_seen": _iso(now)}
+    if len(seen) > SEEN_CHANNELS_MAX:
+        newest = sorted(seen.items(), key=lambda kv: str(kv[1].get("last_seen", "")), reverse=True)
+        seen = dict(newest[:SEEN_CHANNELS_MAX])
+    rec["seen_channels"] = seen
     store[provider] = rec
     _write_store(store)
 
@@ -284,6 +338,35 @@ def untrack(provider: str, channel_id: str) -> None:
 def trust_policies(provider: str) -> dict[str, str]:
     """The ``{"dm": ..., "group": ...}`` policy for ``provider`` (defaults if unset)."""
     return dict(_provider_record(_read_store(), provider)["policies"])
+
+
+def set_trust_policies(
+    provider: str, *, dm: str | None = None, group: str | None = None
+) -> dict[str, str]:
+    """Set ``provider``'s DM and/or group policy, and return the policies now in force.
+
+    A value outside :data:`DM_POLICIES` / :data:`GROUP_POLICIES` raises ``ValueError`` and
+    changes nothing. Each change emits ``trust_policy_changed`` with the new value as its
+    outcome (``dm=open``, ``group=off``): who may talk to the agent is a security setting."""
+    if dm is not None and dm not in DM_POLICIES:
+        raise ValueError(f"dm policy must be one of {', '.join(DM_POLICIES)}")
+    if group is not None and group not in GROUP_POLICIES:
+        raise ValueError(f"group policy must be one of {', '.join(GROUP_POLICIES)}")
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    changed = [
+        (kind, value)
+        for kind, value in (("dm", dm), ("group", group))
+        if value is not None and rec["policies"].get(kind) != value
+    ]
+    if changed:
+        for kind, value in changed:
+            rec["policies"][kind] = value
+        store[provider] = rec
+        _write_store(store)
+        for kind, value in changed:
+            _emit_sel("trust_policy_changed", f"{kind}={value}", provider)
+    return dict(rec["policies"])
 
 
 # ── read projection (the owner-facing surface) ───────────────────────────────
@@ -309,12 +392,16 @@ def provider_trust(provider: str) -> dict[str, Any]:
     and when it expires, which is all a UI needs to say "a code is live". The per-sender
     renotify stamps (``rate``) are also withheld: they are a log of who tried to reach the
     owner, which is a different surface from "who is allowed" and would leak contact
-    attempts into a page about the allowlist.
+    attempts into a page about the allowlist. Untracked GROUPS that messaged the agent are
+    projected (``seen_channels``): a group's id is the one thing the owner needs to track it,
+    and nothing else shows it.
     """
     rec = _provider_record(_read_store(), provider)
     pairing = rec.get("pairing") or {}
     senders = rec.get("allowed_senders") or {}
     channels = rec.get("tracked_channels") or {}
+    raw_seen = rec.get("seen_channels")
+    seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
     return {
         "provider": provider,
         "policies": dict(rec["policies"]),
@@ -336,6 +423,18 @@ def provider_trust(provider: str) -> dict[str, Any]:
             }
             for cid, meta in sorted(channels.items())
             if isinstance(channels, dict)
+        ],
+        # Groups that messaged the agent while untracked, newest first: the page's Track button.
+        "seen_channels": [
+            {
+                "channel_id": cid,
+                "name": str((meta or {}).get("name", "") or ""),
+                "last_seen": str((meta or {}).get("last_seen", "") or ""),
+            }
+            for cid, meta in sorted(
+                seen.items(), key=lambda kv: str((kv[1] or {}).get("last_seen", "")), reverse=True
+            )
+            if cid not in channels
         ],
         "pairing_active": bool(pairing.get("code_hash")),
         "pairing_expires_at": str(pairing.get("expires_at", "") or ""),
@@ -370,6 +469,21 @@ def create_pairing_code(provider: str) -> str:
     return code
 
 
+def cancel_pairing_code(provider: str) -> bool:
+    """Cancel ``provider``'s outstanding sender pairing code. Returns whether there was one.
+
+    Emits ``pairing_code_cancelled``. After this the code is refused like any wrong code."""
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    if not (rec.get("pairing") or {}).get("code_hash"):
+        return False
+    rec["pairing"] = {}
+    store[provider] = rec
+    _write_store(store)
+    _emit_sel("pairing_code_cancelled", "owner", provider)
+    return True
+
+
 def _pairing_code_outstanding(provider: str) -> bool:
     """Whether ``provider`` has a pairing code on record at all (says nothing about it).
 
@@ -397,12 +511,15 @@ def _looks_like_a_pairing_code(text: str) -> bool:
     return len(text) == PAIRING_CODE_DIGITS and text.isascii() and text.isdigit()
 
 
-def redeem_pairing_code(provider: str, sender_id: str, code: str) -> bool:
+def redeem_pairing_code(provider: str, sender_id: str, code: str, name: str = "") -> bool:
     """Redeem ``code`` for ``sender_id`` on ``provider``.
 
     Within TTL and unused → the sender is allowed (``via="pairing"``, which emits
     ``sender_paired``) and the code is consumed. Expired / already-used / wrong code →
-    ``False`` and ``sender_denied``. The compare is constant-time over the hashes."""
+    ``False`` and ``sender_denied``. The compare is constant-time over the hashes.
+
+    ``name`` is the sender's display name, kept beside the id so the Sender trust page can
+    say who was let in; on most channels the id alone is a number."""
     store = _read_store()
     rec = _provider_record(store, provider)
     pairing = rec.get("pairing") or {}
@@ -433,7 +550,7 @@ def redeem_pairing_code(provider: str, sender_id: str, code: str) -> bool:
     rec["pairing"] = {}
     store[provider] = rec
     _write_store(store)
-    allow_sender(provider, sender_id, via="pairing")
+    allow_sender(provider, sender_id, name, via="pairing")
     return True
 
 
@@ -767,6 +884,22 @@ def report_inbound_verdict(
     return verdict
 
 
+def channel_display_name(provider: str) -> str:
+    """What the owner calls ``provider``: its registered transport's display name, else the key.
+
+    Core never names a vendor, and the key is the transport's own choice (``telegram``), so the
+    name a sentence shows comes from the channel that registered it."""
+    try:
+        from personalclaw.channel_transports import get_transport
+
+        transport = get_transport(provider)
+        name = str(getattr(transport, "display_name", "") or "") if transport else ""
+    except Exception:  # noqa: BLE001 - a name is presentation; the key still identifies it
+        logger.debug("display name for channel %s unavailable", provider, exc_info=True)
+        name = ""
+    return name or provider
+
+
 def note_unknown_sender(
     state: Any, provider: str, sender_id: str, sender_name: str = "", *, silent: bool = False
 ) -> bool:
@@ -806,11 +939,12 @@ def note_unknown_sender(
             from personalclaw import notification_kinds
 
             who = sender_name or sender_id
+            where = channel_display_name(provider)
             state.notify(
                 notification_kinds.WARNING,
-                f"Unknown {provider} sender wants to talk",
-                f"{who} messaged your agent on {provider} but isn't paired. "
-                "Allow them to converse, or deny.",
+                f"Someone you haven't paired messaged you on {where}",
+                f"{who} messaged your agent on {where} and isn't paired. "
+                "Allow them to talk to it, or deny.",
                 meta={
                     "event": "channel.unknown_sender",
                     "provider": provider,
@@ -850,6 +984,7 @@ def guard_inbound(
     channel_id: str = "",
     is_dm: bool = True,
     text: str = "",
+    channel_name: str = "",
 ) -> TrustVerdict:
     """THE trust gate a transport calls at the top of its inbound path.
 
@@ -884,7 +1019,8 @@ def guard_inbound(
     * **group/room**, policy ``off`` → denied (``group_policy_off``). Policy
       ``tracked_only`` → allowed only for a tracked channel; an untracked group is denied
       (``untracked_channel``) without any in-channel reply, so a stranger's room cannot spam
-      the owner.
+      the owner. It is remembered (:func:`note_untracked_channel`, with ``channel_name`` when
+      the transport knows it) so the owner can track it from the Sender trust page.
 
     Those two group denials used to share the single reason ``untracked_channel``, which was
     a lie for half of them: an operator reading it could not tell "you switched groups off"
@@ -937,7 +1073,7 @@ def guard_inbound(
                 policy == "pairing"
                 and _looks_like_a_pairing_code(candidate)
                 and _pairing_code_outstanding(provider)
-                and redeem_pairing_code(provider, sender_id, candidate)
+                and redeem_pairing_code(provider, sender_id, candidate, sender_name)
             ):
                 # Not a turn for the agent: the sender is trusted from their NEXT message on,
                 # and this one is spent on pairing. ``allowed=False`` keeps the code out of
@@ -985,6 +1121,7 @@ def guard_inbound(
     if gpolicy == "off":
         verdict = TrustVerdict(allowed=False, reason="group_policy_off")
     elif not is_tracked_channel(provider, channel_id):
+        note_untracked_channel(provider, channel_id, channel_name)
         verdict = TrustVerdict(allowed=False, reason="untracked_channel")
     else:
         # Tracked group: non-owner content is data — fence it before it enters a session.

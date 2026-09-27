@@ -34,10 +34,12 @@ the run touched.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,9 +50,9 @@ logger = logging.getLogger(__name__)
 EVENT_SUCCEEDED = "automation.run.succeeded"
 EVENT_FAILED = "automation.run.failed"
 
-#: Destinations that render structured blocks vs flattened text. `channel:slack` is prefix-matched
-#: because the channel id carries a workspace suffix in practice (`channel:slack:T0123`), and an
-#: exact match would silently fall back to rich blocks for every real Slack destination.
+#: Destinations that render structured blocks vs flattened text. Prefix-matched because a channel
+#: route names its channel and usually a chat on it (`channel:<name>:<target>`), so an exact match
+#: would silently fall back to rich blocks for every real channel destination.
 _FLAT_TEXT_PREFIXES = ("channel:",)
 
 #: Max body characters in a delivered notification. A run summary is model output; an unbounded one
@@ -164,16 +166,17 @@ class Delivery:
         return {"kind": self.kind, "title": self.title, "body": self.body, "meta": meta}
 
     def to_text(self) -> str:
-        """The flattened form for a text destination.
+        """The flattened form for a text destination: what a chat channel is sent.
 
-        The statusUrl is appended as a LINE rather than embedded in prose: a Slack consumer that
-        auto-links bare URLs makes it clickable, and a user scanning a wall of text finds a trailing
-        link faster than one buried mid-sentence.
+        A statusUrl is appended as a LINE rather than embedded in prose, so a chat app that
+        auto-links bare URLs makes it clickable and a user scanning text finds it at the end. Only
+        a real URL, though: a dashboard fragment (`#/workflows/runs/…`) opens nothing outside the
+        dashboard, so in a chat it's just noise under the result.
         """
         parts = [self.title]
         if self.body:
             parts.append(self.body)
-        if self.status_url:
+        if self.status_url and not self.status_url.startswith("#"):
             parts.append(self.status_url)
         return "\n".join(parts)
 
@@ -476,6 +479,149 @@ def is_valid_route(destination: Any) -> bool:
     )
 
 
+# ── channel routes: `channel:<name>` and `channel:<name>:<target>` ─────────────────────────────
+#
+# A route names the chat channel and, optionally, a chat on it. Without a target it means the
+# owner's direct messages on that channel. It used to be `channel:<id>`, an id with no channel,
+# which nothing could deliver (#959: an id means nothing without the channel that issued it) and
+# nothing did: `deliver` handed the note to `notify`, which never reads a destination.
+
+#: The meta key a note carries once its result went out on a channel, naming that channel. A
+#: notification rule that DMs the owner on a channel skips a note carrying it, so a result does not
+#: arrive there twice.
+SENT_TO_CHANNEL_KEY = "sent_to_channel"
+
+
+def parse_channel_route(destination: Any) -> tuple[str, str] | None:
+    """``(name, target)`` for a channel route, or None for any other route.
+
+    ``target`` is ``""`` for the owner's DM. It may itself hold a colon (it is the channel's id,
+    in the channel's own spelling), so only the first colon after the name splits.
+    """
+    value = str(destination or "").strip()
+    if not value.startswith(CHANNEL_ROUTE_PREFIX):
+        return None
+    name, _, target = value[len(CHANNEL_ROUTE_PREFIX) :].partition(":")
+    if not name.strip():
+        return None
+    return name.strip(), target.strip()
+
+
+def _chat_channel(name: str, transports: Mapping[str, Any] | None) -> Any:
+    """The chat channel called *name*: in *transports*, else among the registered ones."""
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport
+
+    if name == WEBUI_TRANSPORT:
+        return None
+    if transports is not None:
+        return transports.get(name)
+    return get_transport(name)
+
+
+def channel_route_problem(destination: Any, *, transports: Mapping[str, Any] | None = None) -> str:
+    """Why a channel route can't be delivered, in one sentence the owner reads. ``""`` if it can.
+
+    Any other route is not this function's to judge and answers ``""``. The channel must be one set
+    up here, and when the route names a target, the channel itself checks it
+    (``ChannelTransportProvider.validate_target``): core does not know what an id looks like on any
+    platform. *transports* is the channels to ask, by name; the gateway's registered channels when
+    omitted. A process without the gateway (the CLI) passes the channels it built.
+    """
+    route = parse_channel_route(destination)
+    if route is None:
+        return ""
+    name, target = route
+    transport = _chat_channel(name, transports)
+    if transport is None:
+        return f"{name} isn't one of the chat channels set up here."
+    if not target:
+        return ""
+    try:
+        return str(transport.validate_target(target) or "")
+    except Exception:  # noqa: BLE001 - a broken check refuses rather than letting any id through
+        logger.warning("channel %s: validate_target raised", name, exc_info=True)
+        return f"{transport.display_name} couldn't check that id."
+
+
+def _channel_name(name: str) -> str:
+    """The name a channel is shown under: its transport's display name, else its key."""
+    transport = _chat_channel(name, None)
+    return str(getattr(transport, "display_name", "") or name) if transport is not None else name
+
+
+async def _send_on_channel(name: str, target: str, text: str) -> str:
+    """Send *text* on channel *name*: to *target*, else to the owner's DM there.
+
+    Returns ``""`` once it went out, else the sentence the note carries instead. One channel, the
+    one the route names: a result the owner asked for on one channel does not go to another.
+    """
+    from personalclaw.channel_delivery import delivery_for
+    from personalclaw.config.credentials import owner_id_for
+
+    shown = _channel_name(name)
+    handle = delivery_for(name)
+    if handle is None:
+        return f"{shown} isn't connected, so this didn't go out there."
+    where = target
+    if not where:
+        owner = owner_id_for(name)
+        if not owner:
+            return f"{shown} doesn't know who you are yet, so this didn't go out there."
+        try:
+            where = str(await handle.open_dm(owner) or "")
+        except Exception:  # noqa: BLE001 - said on the note, logged for the detail
+            logger.warning("channel %s: opening the owner's DM failed", name, exc_info=True)
+            where = ""
+        if not where:
+            return f"{shown} couldn't open a conversation with you, so this didn't go out there."
+    try:
+        await handle.deliver_text(where, text)
+    except Exception:  # noqa: BLE001 - said on the note, logged for the detail
+        logger.warning("channel %s: sending a trigger result failed", name, exc_info=True)
+        return f"Sending it on {shown} failed, so it's only here. The gateway log has the error."
+    return ""
+
+
+async def _deliver_on_channel(state: Any, delivery: Delivery, name: str, target: str) -> None:
+    """Send the result on its channel, then record the note: marked as sent, or saying why not.
+
+    The note is recorded after the send so it can say what happened, once. Never raises.
+    """
+    kwargs = delivery.to_notify_kwargs()
+    try:
+        reason = await _send_on_channel(name, target, delivery.to_text())
+    except Exception:  # noqa: BLE001 - the note still goes out; the log has the rest
+        logger.warning("channel %s: delivering a trigger result failed", name, exc_info=True)
+        reason = f"Sending it on {_channel_name(name)} failed, so it's only here."
+    if reason:
+        kwargs["body"] = "\n\n".join(part for part in (kwargs["body"], reason) if part)
+    else:
+        kwargs["meta"][SENT_TO_CHANNEL_KEY] = name
+    try:
+        state.notify(**kwargs)
+    except Exception:  # noqa: BLE001 - the run already completed; a failed ping must not undo it
+        logger.debug("delivery %s could not be recorded", delivery.event_id, exc_info=True)
+
+
+#: Channel sends in flight. Held so a task is not collected before it finishes.
+_IN_FLIGHT: set[asyncio.Task[None]] = set()
+
+
+def _start_channel_delivery(state: Any, delivery: Delivery, name: str, target: str) -> None:
+    """Run :func:`_deliver_on_channel` without making the fire path wait on a chat platform."""
+    work = _deliver_on_channel(state, delivery, name, target)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running means no gateway, so no channel is connected in this process: the send
+        # finds that out at once and the note says so.
+        asyncio.run(work)
+        return
+    task = loop.create_task(work)
+    _IN_FLIGHT.add(task)
+    task.add_done_callback(_IN_FLIGHT.discard)
+
+
 def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
     """Whether this delivery has already gone out — the "does not double-ping" half.
 
@@ -497,6 +643,11 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     Adds the event id to `delivered_ids` when the caller supplies a mutable set, so a retry
     through the same set is suppressed without the caller having to remember to record it. Never
     raises: a notification failure must not fail the run that completed, which already happened.
+
+    A channel route (`channel:<name>[:<target>]`) is also SENT there, on that channel only, and
+    the note goes through `notify` once the send is done: marked `sent_to_channel`, or ending with
+    the sentence saying why it didn't go out. The send runs on the loop, so the fire path does not
+    wait on a chat platform; True means it was started.
     """
     if state is None:
         return False
@@ -509,6 +660,14 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     if is_duplicate(delivery, delivered_ids if isinstance(delivered_ids, (set, list)) else None):
         logger.debug("delivery %s already sent; not double-pinging", delivery.event_id)
         return False
+    route = parse_channel_route(delivery.destination)
+    if route is not None:
+        # Recorded as sent before the send starts, so a retry through the same set cannot send
+        # it on the channel a second time while the first is still going out.
+        if isinstance(delivered_ids, set):
+            delivered_ids.add(delivery.event_id)
+        _start_channel_delivery(state, delivery, *route)
+        return True
     try:
         state.notify(**delivery.to_notify_kwargs())
     except Exception:  # noqa: BLE001 - the run already completed; a failed ping must not undo it

@@ -28,6 +28,7 @@ vi.mock('../../lib/api', async (orig) => {
       startModelDownload: vi.fn(),
       cancelModelDownload: vi.fn(),
       setActiveModel: vi.fn(),
+      activeChain: vi.fn(),
       downloadStreamUrl: vi.fn((id: string) => `http://localhost/stream/${id}`),
     },
   }
@@ -37,6 +38,7 @@ const modelDownloads = vi.mocked(api.modelDownloads)
 const startModelDownload = vi.mocked(api.startModelDownload)
 const cancelModelDownload = vi.mocked(api.cancelModelDownload)
 const setActiveModel = vi.mocked(api.setActiveModel)
+const activeChain = vi.mocked(api.activeChain)
 
 const UNSET = { needs_model: true, has_model_provider: false, has_chat_binding: false }
 const OFFER = {
@@ -51,7 +53,7 @@ const OFFER = {
 const job = (state: DownloadJob['state'], extra: Partial<DownloadJob> = {}): DownloadJob => ({
   id: 'job-1', provider: OFFER.provider, model: OFFER.model, kind: 'weights', state,
   downloaded_bytes: 0, total_bytes: OFFER.bytes, progress: 0, speed_bps: 0, eta_s: 0,
-  error: '', reason: '', ...extra,
+  error: '', reason: '', warning: '', ...extra,
 })
 
 /** A stand-in for the browser's EventSource that a test can push frames through. */
@@ -73,6 +75,8 @@ beforeEach(() => {
   modelDownloads.mockReset().mockResolvedValue([])
   startModelDownload.mockReset()
   setActiveModel.mockReset().mockResolvedValue({ ok: true } as never)
+  // Nothing bound to chat, at the revision of that empty chain — which the bind names.
+  activeChain.mockReset().mockResolvedValue({ value: [], revision: 'rev-empty' })
   cancelModelDownload.mockReset().mockResolvedValue(undefined as never)
   FakeEventSource.all = []
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -137,7 +141,7 @@ describe('BundledModelOffer', () => {
     // Handed over only once the shared machine has offered it the chat binding — nothing else was
     // bound, so it is now the chat model, and the lane is told there was no refusal.
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1))
-    expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`])
+    expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`], 'rev-empty')
     expect(onReady).toHaveBeenCalledWith(OFFER, '')
     expect(stream.closed).toBe(true)
 

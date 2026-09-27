@@ -18,6 +18,7 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +55,12 @@ def _is_valid_mcp_name(name: str) -> bool:
 # dashboard wrote one file but the native loop read another, only reconciled
 # because discovery merged both. Now everything reads+writes the ONE file, via
 # config_dir() so PERSONALCLAW_HOME is honored (the old Path.home() hardcode
-# ignored it). A one-time migration folds any legacy settings/mcp.json content in.
+# ignored it). Nothing reads the legacy settings/mcp.json any more: a server still
+# in it is named by the Doctor (`tools.legacy_mcp_settings`) for the owner to add.
 def _canonical_mcp_json() -> Path:
     from personalclaw.config.loader import config_dir
 
     return config_dir() / "mcp.json"
-
-
-def _legacy_mcp_json() -> Path:
-    from personalclaw.config.loader import config_dir
-
-    return config_dir() / "settings" / "mcp.json"
 
 
 # The INSTALLED agent config, resolved the same deferred way and for the same reason as
@@ -81,37 +77,6 @@ def _installed_agent_json() -> Path:
     from personalclaw.agent import AGENT_FILENAME, agents_dir
 
     return agents_dir() / AGENT_FILENAME
-
-
-def _migrate_legacy_mcp_json() -> None:
-    """One-time fold of the legacy ``settings/mcp.json`` into the canonical file.
-
-    Any server present only in the legacy file is copied into the canonical one
-    (canonical wins on a name clash), then the legacy file is emptied so it can
-    never re-diverge. No-op when the legacy file is absent/empty."""
-    legacy = _legacy_mcp_json()
-    try:
-        if not legacy.is_file():
-            return
-        ldata = json.loads(legacy.read_text(encoding="utf-8"))
-        lservers = ldata.get("mcpServers") or {}
-        if not lservers:
-            return
-        canon = _canonical_mcp_json()
-        cdata = json.loads(canon.read_text(encoding="utf-8")) if canon.is_file() else {}
-        cservers = cdata.setdefault("mcpServers", {})
-        moved = 0
-        for name, spec in lservers.items():
-            if name not in cservers:  # canonical wins on clash
-                cservers[name] = spec
-                moved += 1
-        if moved:
-            _atomic_write(canon, cdata)
-            logger.info("mcp: migrated %d server(s) from legacy settings/mcp.json", moved)
-        # empty the legacy file so it can't re-diverge
-        _atomic_write(legacy, {"mcpServers": {}})
-    except Exception:
-        logger.debug("mcp: legacy migration skipped", exc_info=True)
 
 
 # There is no `_GLOBAL_MCP_JSON`. It was `_canonical_mcp_json()` frozen at import, kept after UT3
@@ -681,9 +646,9 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # 2. Sync to personalclaw.json tools/allowedTools (lock prevents lost updates vs agents.py)
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-        async with _get_config_lock():
+        async with _get_agent_file_lock():
             _sync_mcp_to_agent(name, enabled)
 
     return web.json_response({"ok": True, "name": name, "enabled": enabled, "applied": True})
@@ -815,9 +780,9 @@ async def api_mcp_toggle_all(request: web.Request) -> web.Response:
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # Batch sync: single read-modify-write of personalclaw.json
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-        async with _get_config_lock():
+        async with _get_agent_file_lock():
             _sync_mcp_to_agent_batch(toggled, enabled)
 
     return web.json_response({"ok": True, "enabled": enabled, "count": len(servers)})
@@ -858,6 +823,40 @@ def _definition_of(name: str) -> dict[str, Any] | None:
         return spec
     spec = _load_json_or_empty(_installed_agent_json()).get("mcpServers", {}).get(name)
     return spec if isinstance(spec, dict) else None
+
+
+def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
+    """*spec* as ``GET /api/mcp/servers/{name}`` hands it to the edit form — names, plain values
+    and, for a stored value, only whether one is saved.
+
+    Also the document a ``PUT`` compares its base against (`personalclaw/stale_write.py`), so the
+    revision the form reads and the one its save is checked against are taken from one shape —
+    the masked one, which is all the form ever sees.
+    """
+    from personalclaw.config.secret_refs import mcp_env_view, mcp_headers_view
+    from personalclaw.mcp_discovery import mcp_transport
+
+    reason = _not_editable_reason(name, spec)
+    if reason is not None:
+        return {"name": name, "editable": False, "reason": reason}
+    transport = mcp_transport(spec)
+    if transport != "stdio":
+        return {
+            "name": name,
+            "editable": True,
+            "transport": transport,
+            "url": str(spec.get("url") or ""),
+            "headers": mcp_headers_view(spec),
+        }
+    args = spec.get("args")
+    return {
+        "name": name,
+        "editable": True,
+        "transport": transport,
+        "command": spec.get("command", ""),
+        "args": [str(a) for a in args] if isinstance(args, list) else [],
+        "env": mcp_env_view(spec),
+    }
 
 
 def _has_saved_value(value: Any) -> bool:
@@ -999,6 +998,20 @@ def _remote_request(body: dict[str, Any]) -> dict[str, Any] | web.Response:
     return {"url": url.strip(), "headers": headers, "keepHeaders": keep}
 
 
+def _typed_and_kept(values: dict[str, Any], keep: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """The values a save typed, and the names it keeps: a value that is only the display mask is a
+    line left as the form showed it, so it keeps the saved value exactly as a ``keep`` name does.
+
+    The Tools form already turns such a line into ``keepEnv``/``keepHeaders`` (``mcpServerEnv.ts``);
+    doing it here as well is what holds for every other client of this route.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    typed = {n: v for n, v in values.items() if v != SECRET_MASK}
+    kept = list(keep) + [n for n, v in values.items() if v == SECRET_MASK and n not in keep]
+    return typed, kept
+
+
 def _stdio_definition(
     name: str, existing: dict[str, Any], requested: dict[str, Any]
 ) -> dict[str, Any] | web.Response:
@@ -1012,7 +1025,7 @@ def _stdio_definition(
 
     env = existing.get("env")
     current: dict[str, Any] = env if isinstance(env, dict) else {}
-    keep = requested["keepEnv"]
+    typed, keep = _typed_and_kept(requested["env"], requested["keepEnv"])
     unkept = [n for n in keep if not _has_saved_value(current.get(n))]
     if unkept:
         return json_error(
@@ -1034,7 +1047,7 @@ def _stdio_definition(
             except ForeignSecretReference as exc:
                 return json_error("secret_owned_elsewhere", message=str(exc), status=400)
         new_env[var] = value
-    new_env.update(requested["env"])  # a value typed now replaces a kept one
+    new_env.update(typed)  # a value typed now replaces a kept one
     definition: dict[str, Any] = {"command": requested["command"]}
     if requested["args"]:
         definition["args"] = requested["args"]
@@ -1053,7 +1066,7 @@ def _remote_definition(
     ``keepHeaders`` one's saved value. Every header value goes to the credential store."""
     saved = existing.get("headers")
     current: dict[str, Any] = saved if isinstance(saved, dict) else {}
-    keep = requested["keepHeaders"]
+    typed, keep = _typed_and_kept(requested["headers"], requested["keepHeaders"])
     unkept = [n for n in keep if not _has_saved_value(current.get(n))]
     if unkept:
         return json_error(
@@ -1063,7 +1076,7 @@ def _remote_definition(
             status=400,
         )
     headers: dict[str, Any] = {n: current[n] for n in keep}
-    headers.update(requested["headers"])  # a value typed now replaces a kept one
+    headers.update(typed)  # a value typed now replaces a kept one
     definition: dict[str, Any] = {"type": transport, "url": requested["url"]}
     if headers:
         definition["headers"] = headers
@@ -1078,9 +1091,15 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     hasValue}]`` — a plain variable's value, and for a stored one only whether a value is saved. A
     remote server's ``url`` and ``headers`` as ``[{name, hasValue}]``. A stored value never leaves
     the server. ``editable`` is false, with a ``reason``, for a server the form does not own
-    (PersonalClaw's own, an app's, one over a transport PersonalClaw has no client for).
+    (PersonalClaw's own, an app's, one over a transport PersonalClaw has no client for). Every
+    read carries the ``revision`` of exactly that view.
 
-    PUT adds or edits a server, the one write path for both. A stdio server's body::
+    PUT adds or edits a server, the one write path for both, told apart by whether the name is
+    configured when the write lands. ADDING one replaces nothing and needs no revision. EDITING
+    one replaces its definition with the form's copy, so the request names the revision the form
+    read in ``If-Match``: none is ``428 revision_required`` (the Add form reached a name that is
+    already taken), a stale one is ``409 stale_write``, and so is a revision for a server removed
+    since (`personalclaw/stale_write.py`). A stdio server's body::
 
         { "transport": "stdio", "command": "node", "args": ["server.js"],
           "env": {"KEY": "val"}, "plainEnv": ["LOG_LEVEL"], "keepEnv": ["API_KEY"] }
@@ -1098,7 +1117,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     stored value moved into the file. The definition is replaced whole, so switching a server's
     transport leaves nothing of the old one behind. Keys the form does not own (``disabled``,
     ``disabledTools``, ``autoApprove``, ``cwd``) are kept, and the agent config's copy is rebuilt
-    to match.
+    to match. The response carries the saved server's new ``revision``.
 
     DELETE removes the server from ``mcp.json`` and the agent config and deletes the values it
     owns in the credential store (``secret_refs.remove_mcp_servers``, the one delete).
@@ -1107,12 +1126,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         MCP_DEFINITION_KEYS,
         MCP_SIGN_IN,
         ForeignSecretReference,
-        mcp_env_view,
-        mcp_headers_view,
         remove_mcp_servers,
         store_mcp_spec,
     )
-    from personalclaw.mcp_discovery import MCP_TRANSPORTS, mcp_transport
+    from personalclaw.mcp_discovery import MCP_TRANSPORTS
     from personalclaw.mcp_oauth import covers
 
     name = request.match_info["name"]
@@ -1138,31 +1155,8 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             return json_error(
                 "not_found", message=f"No MCP server named '{name}' is configured.", status=404
             )
-        reason = _not_editable_reason(name, spec)
-        if reason is not None:
-            return web.json_response({"name": name, "editable": False, "reason": reason})
-        transport = mcp_transport(spec)
-        if transport != "stdio":
-            return web.json_response(
-                {
-                    "name": name,
-                    "editable": True,
-                    "transport": transport,
-                    "url": str(spec.get("url") or ""),
-                    "headers": mcp_headers_view(spec),
-                }
-            )
-        args = spec.get("args")
-        return web.json_response(
-            {
-                "name": name,
-                "editable": True,
-                "transport": transport,
-                "command": spec.get("command", ""),
-                "args": [str(a) for a in args] if isinstance(args, list) else [],
-                "env": mcp_env_view(spec),
-            }
-        )
+        view = _definition_view(name, spec)
+        return web.json_response({**view, "revision": revision_of(view)})
 
     if request.method == "DELETE":
         # An app-contributed MCP server (``{app}:{server}``) is OWNED by its app —
@@ -1187,10 +1181,10 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
                 )
         # Out of mcp.json AND the agent config, so the second write deletes its stored values.
         # Never Claude Code's own file: removing a server here is not removing it there.
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
         async with _get_mcp_lock():
-            async with _get_config_lock():
+            async with _get_agent_file_lock():
                 removed = bool(remove_mcp_servers([name]))
         sel().log_api_access(
             caller="dashboard",
@@ -1247,6 +1241,18 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         reason = _not_editable_reason(name, {"type": transport})
         if reason is not None:
             return json_error("mcp_server_not_editable", message=reason, status=409)
+        # 🔴 AN EDIT IS WRITTEN ONLY OVER THE COPY THE FORM READ. The edit form sends the whole
+        # definition as it was seeded when the form opened, so a change made since — the provider
+        # card's edit, another tab's — was replaced by that copy without a word. Taken the way the
+        # GET takes it, under this lock and with no `await` before the write. A name nobody has
+        # configured is an add, which replaces nothing; a revision for one is a form whose server
+        # was removed after it read it.
+        configured = _definition_of(name)
+        if configured is not None or claimed_revision(request):
+            current = _definition_view(name, configured) if configured is not None else None
+            stale = stale_write_refusal(request, current, what=f"the MCP server {name!r}")
+            if stale is not None:
+                return stale
 
         if transport == "stdio":
             definition = _stdio_definition(name, existing, requested)
@@ -1277,12 +1283,15 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             return json_error("invalid_headers", message=str(exc), status=400)
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
+        # Read back, so the revision handed out is the one the next GET of this server reports.
+        saved = _definition_of(name)
+        revision = revision_of(_definition_view(name, saved)) if saved is not None else ""
 
     # The agent config's copy: added if new (with its `@name` refs), then rebuilt from mcp.json,
     # so an edit reaches what `list_servers` lists and the Tools page probes.
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
-    async with _get_config_lock():
+    async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
 
@@ -1293,7 +1302,7 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         outcome="completed",
         resources=name,
     )
-    return web.json_response({"ok": True, "name": name}, status=200)
+    return web.json_response({"ok": True, "name": name, "revision": revision}, status=200)
 
 
 # ─── Signing in to a remote server (OAuth) ──────────────────────────────
@@ -1362,10 +1371,10 @@ async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
         )
 
     if request.method == "DELETE":
-        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+        from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
         async with _get_mcp_lock():
-            async with _get_config_lock():
+            async with _get_agent_file_lock():
                 removed = await asyncio.to_thread(remove_mcp_sign_in, name)
         _forget_connections(request, name)
         sel().log_api_access(
@@ -1511,7 +1520,7 @@ async def api_mcp_oauth_callback(request: web.Request) -> web.Response:
             status=500,
         )
     name = finished.server
-    from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+    from personalclaw.dashboard.handlers.agents import _get_agent_file_lock  # noqa: F811
 
     async with _get_mcp_lock():
         try:
@@ -1546,7 +1555,7 @@ async def api_mcp_oauth_callback(request: web.Request) -> web.Response:
         entry[MCP_SIGN_IN] = finished.block
         servers[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
-    async with _get_config_lock():
+    async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
     _forget_connections(request, name)
@@ -1636,9 +1645,9 @@ def _load_json_for_update(path: Path) -> dict[str, Any]:
 
 
 def _is_personalclaw_document(path: Path) -> bool:
-    """``mcp.json`` (and its legacy ``settings/`` twin) or the agent config — the files whose MCP
-    server secrets live in the credential store. Any other path is another tool's own file."""
-    return path in {_canonical_mcp_json(), _legacy_mcp_json(), _installed_agent_json()}
+    """``mcp.json`` or the agent config — the files whose MCP server secrets live in the credential
+    store. Any other path is another tool's own file."""
+    return path in {_canonical_mcp_json(), _installed_agent_json()}
 
 
 def _atomic_write(path: Path, data: dict) -> None:

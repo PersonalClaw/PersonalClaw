@@ -707,7 +707,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // read BEFORE `r.ok`, so the substitute feeds the error message, never a surface claim. These are
   // the sites #532's own comment warns against blanket-deleting, and they are why this map is a
   // budget rather than a target of zero.
-  'app/appSdk.tsx': 3,
+  // 3 → 2: `createAppApi`'s refusal is read by `lib/api.ts`'s `apiError` now, not a local
+  // `r.text().catch(() => '')`.
+  'app/appSdk.tsx': 2,
   'lib/api.ts': 5,
   'lib/errText.ts': 1,
 
@@ -719,18 +721,22 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'app/Onboarding.tsx': 0,
   'app/usePlatform.ts': 1,
   'lib/agents.ts': 1,
-  // The sixth is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content: "(couldn't
-  // load the full result: …)" })` puts the failure in the copy the user reads. The veto matches SETTER
-  // names (`setSearchErr`), and this records into a FIELD — so widen the veto and it starts exempting
-  // any `setX({ error })` that never renders; leave it, and one honest site sits here with a reason.
+  // One site in this count is the RECORDS veto's blind edge, not a swallow: `setResultBody({ content:
+  // "(couldn't load the full result: …)" })` puts the failure in the copy the user reads. The veto
+  // matches SETTER names (`setSearchErr`), and this records into a FIELD — so widen the veto and it
+  // starts exempting any `setX({ error })` that never renders; leave it, and one honest site sits
+  // here with a reason.
   // Two sites that WERE in this count are fixed. The autonudge read `setEnabled(false)` and the panel
   // then named an environment variable ("Disabled on this server (PERSONALCLAW_AUTONUDGE=0)") as the
   // cause of a failed read. The history hydration's `setLoadingHistory(false)` ended the skeleton
   // without recording why — and it was worse than the "benign cousin" this comment once called it:
   // measured, a link to a chat that does not exist rendered as a normal empty chat whose composer
   // took a message the server refused and did not save. It now records a 404 as "This chat doesn't
-  // exist" and anything else as a load failure with a retry.
-  'pages/ChatPage.tsx': 6,
+  // exist" and anything else as a load failure with a retry. A third, the attachment preview's
+  // read, moved with the attachment chips into `pages/chat/AttachmentChips.tsx` and now records the
+  // failure instead of reading as "no extractable text". A fourth, the chat list's content search,
+  // fell back to title matches in silence. It now says the search failed and offers a retry.
+  'pages/ChatPage.tsx': 4,
   'pages/agents/AgentDetail.tsx': 3,
   'pages/artifacts/ArtifactCard.tsx': 1,
   'pages/chat/OrganizeChip.tsx': 1,

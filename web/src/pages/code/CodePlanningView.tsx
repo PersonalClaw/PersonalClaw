@@ -21,7 +21,7 @@ function makeCfg(projectId: string): WalkthroughConfig {
       retry: (id) => api.uLoopPlanRetry(id),
       approve: (id, sid) => api.uLoopPlanApprove(id, sid),
       comment: (id, sid, text) => api.uLoopPlanComment(id, sid, text),
-      edit: (id, sid, md) => api.uLoopPlanEdit(id, sid, md),
+      edit: (id, sid, md, base) => api.uLoopPlanEdit(id, sid, md, base),
       isReady: (id) => api.uLoop(id).then((p) => p.status === 'review').catch(() => false),
     },
     copy: {

@@ -25,6 +25,18 @@ function activeSlash(value: string, caret: number): { query: string } | null {
   return { query: m[1] }
 }
 
+/** The image files a clipboard carries (`image/*` file items), in clipboard order. */
+export function pastedImages(data: DataTransfer | null | undefined): File[] {
+  if (!data) return []
+  const out: File[] = []
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue
+    const file = item.getAsFile()
+    if (file) out.push(file)
+  }
+  return out
+}
+
 export interface MarkdownInputHandle {
   focus: () => void
   /** Replace the current selection (or insert at caret) with `text`. */
@@ -49,6 +61,9 @@ interface Props {
   /** enable the "/"-command autocomplete menu (chat only). */
   slashCommands?: boolean
   onLargePaste?: (text: string) => boolean
+  /** notified with the images a paste carries (a screenshot copied to the clipboard); the host
+   *  attaches them exactly as it attaches a picked or dropped file. Absent → images are ignored. */
+  onPasteFiles?: (files: File[]) => void
   /** mobile viewport → Enter inserts a newline instead of sending (send is button-only). */
   mobile?: boolean
   /** the user's "Send on Enter" preference. `false` → Enter inserts a newline and sending is
@@ -63,10 +78,10 @@ interface Props {
  *  composer's <textarea> while preserving its behaviors — Enter to send (unless
  *  the reader turned "Send on Enter" off, or is on a phone), Shift+Enter newline,
  *  ⌘/Ctrl+Enter optimize, ↑/↓ prompt-history at the text boundaries, @-mention
- *  file picker, and large-paste interception. */
+ *  file picker, large-paste interception, and pasted images as attachments. */
 export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function MarkdownInput({
   value, onChange, onSend, canSend, placeholder, maxHeight, minHeight,
-  onFocusChange, onOptimize, history, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, mobile,
+  onFocusChange, onOptimize, history, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
   sendOnEnter,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -115,8 +130,8 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
   const reportMentionCursor = useCallback((index: number | null) => reportCursor('mention', index), [reportCursor])
   const reportSlashCursor = useCallback((index: number | null) => reportCursor('slash', index), [reportCursor])
   // Latest props for the (static) CM extensions to read without rebuilding.
-  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
-  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
+  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
+  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onPasteFiles, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
 
   const [mention, setMention] = useState<{ query: string; at: number } | null>(null)
   const [slash, setSlash] = useState<{ query: string } | null>(null)
@@ -215,9 +230,17 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
           updateListener,
           EditorView.domEventHandlers({
             paste: (e) => {
-              if (!cb.current.onLargePaste) return false
-              const text = e.clipboardData?.getData('text/plain')
-              if (text && cb.current.onLargePaste(text)) { e.preventDefault(); return true }
+              const text = e.clipboardData?.getData('text/plain') ?? ''
+              // A pasted screenshot carries only image data, so it becomes an attachment. A paste
+              // that carries text as well (cells copied from a spreadsheet put a picture of the
+              // cells beside their text) stays a text paste: the text is what was meant.
+              const images = text.trim() ? [] : pastedImages(e.clipboardData)
+              if (images.length && cb.current.onPasteFiles) {
+                e.preventDefault()
+                cb.current.onPasteFiles(images)
+                return true
+              }
+              if (text && cb.current.onLargePaste?.(text)) { e.preventDefault(); return true }
               return false
             },
           }),

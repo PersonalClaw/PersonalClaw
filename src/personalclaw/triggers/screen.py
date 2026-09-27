@@ -629,10 +629,11 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
     right set without asking the user to restate a choice they made by picking the action.
 
     Decision 7: "Every non-manual trigger carries a `capabilities` block frozen at save time …
-    write-capable actions require explicit opt-in." Authoring a trigger IS the opt-in — the user
-    chose that action — so this records the choice rather than asking twice. The badge on the
-    Automations row is what makes it visible afterwards, and `provider_is_read_only` is what decides
-    whether the row needs one.
+    write-capable actions require explicit opt-in." The opt-in is the owner's yes to the action,
+    asked where they author it (the create dialog, the editor, `cron add --yes`) or given by the
+    code that makes one of PersonalClaw's own triggers — so this records that yes rather than asking
+    twice. Authoring alone is not it: a trigger the chat makes waits for the owner's Allow
+    (`triggers.grants`). `provider_is_read_only` is what decides whether a row needs one.
 
     🔴 WHY THIS EXISTS (S116). Measured: NO writer set `capabilities` — not `tools.create`, not the
     app-cron reconciler, not the digest reconciler, not the CLI, not the API. And every one of them
@@ -644,10 +645,10 @@ def capabilities_for_action(trigger: Any) -> dict[str, Any]:
     matters the day someone edits that trigger's action to something write-capable and the stale
     block silently grants it.
 
-    Existing rows are never rewritten here. A trigger authored before this shipped keeps an empty
-    block and refuses on its next fire, which is visible and fixable — the direction that cannot
-    silently lose the property. `automation doctor` reports it (S116) and re-saving the trigger
-    freezes it correctly.
+    Existing rows are never rewritten here. A trigger whose block does not cover its action is
+    refused on every run, which is visible and fixable — the direction that cannot silently lose
+    the property. `automation doctor` reports it (S116), the Triggers page offers Allow, and the
+    owner's yes is the only thing that grants it (`triggers.grants`).
     """
     requested = requested_capabilities(trigger)
     providers = [p for p in requested.get("providers", []) if not provider_is_read_only(p)]
@@ -720,6 +721,44 @@ def capability_allows(
         key=key,
         reason=f"{value!r} is not in this trigger's frozen {key} allowlist",
     )
+
+
+def ungranted_providers(trigger: Any) -> list[str]:
+    """The write-capable providers `trigger`'s action runs that its frozen block does not permit.
+
+    The question the fence asks at fire time, asked before one: `[]` for a read-only action or a
+    row that holds its grant, otherwise what the owner would have to grant before it may run. Both
+    dispatches and every switch-on and edit ask it (`triggers.grants`).
+    """
+    frozen = getattr(trigger, "capabilities", None)
+    block = frozen if isinstance(frozen, dict) else {}
+    return [
+        provider
+        for provider in capabilities_for_action(trigger).get("providers", [])
+        if not capability_allows(block, key="providers", value=provider).allowed
+    ]
+
+
+def grant_action(trigger: Any) -> list[str]:
+    """Freeze the providers `trigger`'s action runs into its block. Returns what was granted.
+
+    This is the owner saying yes, so only a caller holding that yes may call it, through
+    `triggers.grants.give`: the Triggers page's switch, the create dialog and the editor, after
+    their consent question, and the CLI after `--yes`. Nothing that runs unattended grants — a
+    boot, a chat tool or an import writing this block would be authority nobody gave. A
+    `providers` value that is not a list is replaced rather than extended, because the fence
+    refuses a non-list and extending one would grant nothing.
+    """
+    granted = ungranted_providers(trigger)
+    if not granted:
+        return []
+    current = getattr(trigger, "capabilities", None)
+    block = dict(current) if isinstance(current, dict) else {}
+    held = block.get("providers")
+    providers = [p for p in held if isinstance(p, str)] if isinstance(held, (list, tuple)) else []
+    block["providers"] = [*providers, *(p for p in granted if p not in providers)]
+    trigger.capabilities = block
+    return granted
 
 
 def freeze_capabilities(capabilities: dict[str, Any] | None) -> dict[str, list[str]]:

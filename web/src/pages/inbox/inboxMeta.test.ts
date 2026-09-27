@@ -135,6 +135,17 @@ describe('refTarget', () => {
     expect(refLabel(stage)).toBe('Open the workflow run')
   })
 
+  it('sends the review item for triggers an upgrade brought over to the Triggers page', () => {
+    // `legacy_import.announce` lists the waiting triggers in `refs.triggers`; they are reviewed and
+    // switched on where they are listed. LAST in the chain, so an older ref still wins; an empty
+    // list is nowhere to go.
+    const review = { refs: { triggers: ['event:deploy-hook'], dedup_key: 'legacy_import:x' } }
+    expect(refTarget(review)).toBe('triggers')
+    expect(refLabel(review)).toBe('Go to Triggers')
+    expect(refTarget({ refs: { triggers: ['t'], session: 's1' } })).toBe('chat/s1')
+    expect(refTarget({ refs: { triggers: [] } })).toBe('')
+  })
+
   it('returns empty when there is nowhere to go', () => {
     // The row then renders no deep-link affordance at all, rather than a dead link.
     expect(refTarget({ refs: {} })).toBe('')

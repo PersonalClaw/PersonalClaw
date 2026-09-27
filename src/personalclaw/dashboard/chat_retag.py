@@ -10,8 +10,8 @@ couple of new ones when warranted, and dropping tags that no longer apply.
 Progress is pushed over the shared /api/ws socket (``retag_progress`` /
 ``retag_done`` events — the same broadcast idiom chat uses), so the board can
 show a live running state and refresh as sessions land. The job is idempotent
-(same content → same proposed set; the whole set is replaced per session) and
-cancellable (POST .../cancel).
+(same content → same proposed set, applied as the change it makes to the tags the
+model was shown — see :func:`_apply_tags`) and cancellable (POST .../cancel).
 
 LLM calls go through :func:`personalclaw.llm_helpers.one_shot_completion`
 (background/reasoning tier — NOT the chat model), one session per call, with a
@@ -233,21 +233,43 @@ def _resolve_tag_ids(state: DashboardState, names: list[str]) -> list[str]:
 
 
 def _apply_tags(state: DashboardState, cand: _Candidate, new_ids: list[str]) -> bool:
-    """Persist the new tag set on a session. Returns True when it changed."""
+    """Persist the model's tag change on a session. Returns True when it changed.
+
+    🔴 THE CHANGE, NOT THE SET. The model proposed a complete set for the tags it was SHOWN
+    (``cand.tags``, read when the run collected the session), and its reply can take a minute —
+    so writing that set back undid any tag set on the session meanwhile: a click in the chat
+    list, the auto-tagger. It is applied to the tags as stored now instead: the ones the model
+    dropped leave, the ones it added join, and every other tag stays.
+    """
     if sorted(new_ids) == sorted(cand.tags):
         return False
+    dropped = {t for t in cand.tags if t not in new_ids}
+    added = [t for t in new_ids if t not in cand.tags]
+
+    def rebased(current: list[str]) -> list[str]:
+        kept = [t for t in current if t not in dropped]
+        return kept + [t for t in added if t not in kept]
+
     if cand.in_memory:
         from personalclaw.dashboard.chat_persistence import save_session_to_history
 
         session = state._sessions.get(cand.key)
         if session is None:
             return False
-        session.tags = list(new_ids)
+        tags = rebased(list(session.tags))
+        if tags == session.tags:
+            return False
+        session.tags = tags
         save_session_to_history(state, session, force=True)
     else:
         if not state.conversation_log:
             return False
-        state.conversation_log.update_metadata(cand.history_key, {"tags": list(new_ids)})
+        meta = state.conversation_log.get_metadata(cand.history_key)
+        stored = [t for t in meta.get("tags", []) if isinstance(t, str)]
+        tags = rebased(stored)
+        if tags == stored:
+            return False
+        state.conversation_log.update_metadata(cand.history_key, {"tags": tags})
     return True
 
 

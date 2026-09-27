@@ -138,11 +138,15 @@ def _store(home) -> TriggerStore:
 
 
 def _schedule(provider: str, config: dict[str, Any]) -> dict[str, Any]:
+    # `confirm: true` is the owner's yes to the dialog a `run-workflow` action is created behind.
+    # An action that could not run is refused before that question is asked, so the refusals below
+    # are the same with or without it.
     return {
         "trigger_type": "schedule",
         "name": "Morning brief",
         "every": 3600,
         "action": {"provider": provider, "config": config},
+        "confirm": True,
     }
 
 
@@ -153,6 +157,8 @@ def _clock(tid: str, *, provider: str = "review-echo") -> Trigger:
         kind="clock",
         spec={"kind": "cron", "expr": "0 * * * *", "timezone": "UTC"},
         workflow={"inline": {"provider": provider, "config": {}}},
+        # Granted, as a created trigger is: Run now refuses an ungranted one (`triggers.grants`).
+        capabilities={"providers": [provider]},
     )
 
 
@@ -716,6 +722,8 @@ async def test_running_it_again_gives_a_command_the_time_its_scheduled_fire_gets
         kind="clock",
         spec={"kind": "interval", "interval_secs": 900},
         workflow={"inline": {"provider": "bash", "config": {"command": "sleep 90"}}},
+        # Granted, as a created trigger is: the dispatch refuses an ungranted one.
+        capabilities={"providers": ["bash"]},
     )
     _store(home).save_all([trigger])
     real = AP.get_action_provider

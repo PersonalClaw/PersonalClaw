@@ -3,16 +3,18 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 
 // ── An unread grant list is never written back ────────────────────────────────────────────────
 //
-// The per-server "may ask you questions" grant is stored as ONE allowlist, and the grant control
-// writes the whole list: it splices the clicked server in or out of what it read. That read used to
-// swallow its failure into `[]`, defended as the fail-closed answer because every grant then RENDERS
-// off. The write is where it broke: granting one server from that `[]` sent `[that one]`, so every
-// other server's grant was revoked — behind a confirmation reading "No other server is affected."
+// The per-server "may ask you questions" grant is stored as ONE allowlist. The grant control used to
+// write the whole list, splicing the clicked server in or out of what it read, and that read used to
+// swallow its failure into `[]`: granting one server from that `[]` sent `[that one]`, so every other
+// server's grant was revoked — behind a confirmation reading "No other server is affected." The
+// control now writes ONE server's grant, and still stays disabled while the grants are unread, since
+// which way to flip it is unknown.
 //
 // Same family as the onboarding defect (`app/identityReadFailure.test.tsx`): a failed read became
 // an empty state, and the empty state licensed a write.
 
-const setMcpElicitationServers = vi.fn()
+const grantMcpElicitation = vi.fn()
+const revokeMcpElicitation = vi.fn()
 const servers = [
   { name: 'alpha', status: 'connected', enabled: true, tools: ['alpha_search'] },
   { name: 'beta', status: 'connected', enabled: true, tools: ['beta_fetch'] },
@@ -37,7 +39,8 @@ function mockApi(grants: () => Promise<string[]>) {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: grants,
-      setMcpElicitationServers: (...a: unknown[]) => { setMcpElicitationServers(...a); return Promise.resolve({ ok: true }) },
+      grantMcpElicitation: (...a: unknown[]) => { grantMcpElicitation(...a); return Promise.resolve({ ok: true }) },
+      revokeMcpElicitation: (...a: unknown[]) => { revokeMcpElicitation(...a); return Promise.resolve({ ok: true }) },
     },
   }))
 }
@@ -53,7 +56,7 @@ const alphaGrant = () => screen.getByRole('button', { name: /alpha.*questions|qu
 /** Let a click's async chain (confirm → write) run to the end before asserting it wrote nothing. */
 const settle = () => act(() => new Promise((r) => setTimeout(r, 30)))
 
-beforeEach(() => { vi.resetModules(); sessionStorage.clear(); setMcpElicitationServers.mockClear() })
+beforeEach(() => { vi.resetModules(); sessionStorage.clear(); grantMcpElicitation.mockClear(); revokeMcpElicitation.mockClear() })
 
 describe('the elicitation grant', () => {
   it('a failed read of the grants disables them, and a click writes nothing', async () => {
@@ -67,14 +70,23 @@ describe('the elicitation grant', () => {
     expect(grant.getAttribute('title')).toMatch(/couldn't read which servers may ask you questions/)
     fireEvent.click(grant)
     await settle()
-    expect(setMcpElicitationServers, 'a whole-list write was built from an unread list').not.toHaveBeenCalled()
+    expect(grantMcpElicitation, 'a grant was written from an unread list').not.toHaveBeenCalled()
+    expect(revokeMcpElicitation).not.toHaveBeenCalled()
   })
 
-  it('a grant read successfully is extended, never replaced', async () => {
-    // The control: with the list read, granting alpha keeps beta's grant.
+  it('granting one server writes that one grant — never the list, so no other grant can be lost', async () => {
     mockApi(() => Promise.resolve(['beta']))
     await mount()
     fireEvent.click(screen.getByRole('button', { name: 'Let alpha ask you questions' }))
-    await waitFor(() => expect(setMcpElicitationServers).toHaveBeenCalledWith(['beta', 'alpha'], true))
+    await waitFor(() => expect(grantMcpElicitation).toHaveBeenCalledWith('alpha', true))
+    expect(revokeMcpElicitation).not.toHaveBeenCalled()
+  })
+
+  it('revoking one server writes that one revoke', async () => {
+    mockApi(() => Promise.resolve(['alpha', 'beta']))
+    await mount()
+    fireEvent.click(alphaGrant())
+    await waitFor(() => expect(revokeMcpElicitation).toHaveBeenCalledWith('alpha'))
+    expect(grantMcpElicitation).not.toHaveBeenCalled()
   })
 })

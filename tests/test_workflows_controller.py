@@ -25,7 +25,7 @@ import time
 import pytest
 
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import store
+from personalclaw.workflows import node_bindings, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
@@ -181,7 +181,7 @@ class TestArtifactOffload:
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
 
         # The writer: the offloaded node's id maps to an artifacts/ ref (not outputs/).
-        arts = c._node_artifacts()
+        arts = node_bindings.node_artifacts(c)
         assert arts is not None and "big" in arts
         assert arts["big"].startswith("artifacts/")
 
@@ -195,7 +195,7 @@ class TestArtifactOffload:
         run = _make_run(SEQ_SPEC)
         c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
         await c.run_to_completion(timeout=20)
-        assert c._node_artifacts() is None
+        assert node_bindings.node_artifacts(c) is None
 
 
 class TestResumeCache:
@@ -437,14 +437,14 @@ class TestPerNodeStallWindow:
 
     `design-project.refine` asks 600s, `general-project.project` 900s,
     `goal-pursuit-open-ended.work` 900s and `goal-pursuit-verifiable.work` 1200s. But
-    `_enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one silently
-    got the 300s default. That fails in the WRONG DIRECTION: `timeout_stall` is meant to catch a
-    SILENT node, not a slow one, and a node whose author measured it needing 20 minutes was
+    `liveness.enforce_stall_timeouts` consulted only `services.node_timeout_stall`, so every one
+    silently got the 300s default. That fails in the WRONG DIRECTION: `timeout_stall` is meant to
+    catch a SILENT node, not a slow one, and a node whose author measured it needing 20 minutes was
     cancelled at 5.
     """
 
     def _window(self, cfg: dict, *, run_default: int = 300) -> int:
-        from personalclaw.workflows.controller import RunController
+        from personalclaw.workflows import liveness
 
         class _Svc:
             node_timeout_stall = run_default
@@ -455,7 +455,6 @@ class TestPerNodeStallWindow:
             def __init__(self, root):
                 self.root = root
 
-        _Fake._node_stall_window = RunController._node_stall_window
         root = Node.from_dict(
             {
                 "kind": "sequence",
@@ -463,7 +462,7 @@ class TestPerNodeStallWindow:
                 "children": [{"kind": "stage", "id": "work", "config": cfg}],
             }
         )
-        return _Fake(root)._node_stall_window("root.children[0]")
+        return liveness._node_stall_window(_Fake(root), "root.children[0]")
 
     def test_a_node_can_RAISE_its_own_window(self) -> None:
         assert self._window({"timeout_stall_secs": 1200}) == 1200
@@ -481,7 +480,7 @@ class TestPerNodeStallWindow:
         assert self._window(cfg) == 300
 
     def test_an_unknown_path_falls_back_rather_than_raising(self) -> None:
-        from personalclaw.workflows.controller import RunController
+        from personalclaw.workflows import liveness
 
         class _Svc:
             node_timeout_stall = 300
@@ -492,9 +491,8 @@ class TestPerNodeStallWindow:
             def __init__(self, root):
                 self.root = root
 
-        _Fake._node_stall_window = RunController._node_stall_window
         root = Node.from_dict({"kind": "sequence", "id": "r", "children": []})
-        assert _Fake(root)._node_stall_window("root.children[9]") == 300
+        assert liveness._node_stall_window(_Fake(root), "root.children[9]") == 300
 
     def test_every_shipped_template_override_is_now_honoured(self) -> None:
         """The four real declarations, read from the bundled library rather than restated — a

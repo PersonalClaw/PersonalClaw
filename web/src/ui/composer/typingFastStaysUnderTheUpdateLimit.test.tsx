@@ -239,9 +239,9 @@ describe('typing fast into', () => {
     render(<CommandPalette commands={[
       { id: 'a', label: 'Chat', icon: Search, run: () => {} },
       { id: 'b', label: 'Settings', icon: Search, run: () => {} },
-    ]} />)
+    ]} navigate={() => {}} />)
     act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })) })
-    const input = await screen.findByRole('searchbox', { name: 'Search pages and actions' }) as HTMLInputElement
+    const input = await screen.findByRole('searchbox', { name: 'Search pages, actions and content' }) as HTMLInputElement
     const loops = await updateLoopsDuring(() => typeIntoInput(input, TEXT))
     expect(loops).toEqual([])
   })

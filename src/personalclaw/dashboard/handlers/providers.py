@@ -20,8 +20,13 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.atomic_write import atomic_write
 from personalclaw.config import secret_refs
+from personalclaw.config.loader import ConfigWriteError
+from personalclaw.config.transactions import mutate_config_async
+from personalclaw.dashboard.handlers._shared import (
+    RefusedInConfigTransaction,
+    config_write_refusal,
+)
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import RequestValidationError, require_string
 
@@ -914,11 +919,6 @@ async def api_provider_model_delete(request: web.Request) -> web.Response:
 
 async def api_provider_create(request: web.Request) -> web.Response:
     """POST /api/model-providers — add a new model provider to config."""
-    import json as _json
-
-    from personalclaw.config.loader import config_path
-    from personalclaw.dashboard.handlers.agents import _get_config_lock
-
     try:
         body = await request.json()
     except Exception:
@@ -964,39 +964,53 @@ async def api_provider_create(request: web.Request) -> web.Response:
             status=400,
         )
 
-    async with _get_config_lock():
-        path = config_path()
-        try:
-            data = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
+    # `None` is the client's explicit "leave this unset" (see api_provider_update's clear
+    # semantics) — on a first create there is nothing yet to clear, so a `None` here means only
+    # "store nothing for it", never a literal JSON `null` on disk.
+    options = {k: v for k, v in options.items() if v is not None} if options else {}
+    stored_secrets = False
 
-        providers = data.setdefault("providers", [])
-        if any(p.get("name") == name for p in providers):
-            return web.json_response({"error": f"Provider '{name}' already exists"}, status=409)
-
-        # `None` is the client's explicit "leave this unset" (see api_provider_update's
-        # clear semantics) — on a first create there is nothing yet to clear, so a `None`
-        # here means only "store nothing for it", never a literal JSON `null` on disk.
-        options = {k: v for k, v in options.items() if v is not None} if options else {}
+    def _create(data: dict) -> dict:
+        nonlocal stored_secrets
+        providers = data.get("providers")
+        if not isinstance(providers, list):
+            providers = data["providers"] = []
+        if any(isinstance(p, dict) and p.get("name") == name for p in providers):
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": f"Provider '{name}' already exists"}, status=409)
+            )
         # The key the user typed goes to the credential store; the document gets a
         # `{{secret:…}}` reference to it. Writing `options` verbatim is how the key landed in
         # config.json in plaintext — world-readable, and in every snapshot and export.
         try:
             stored = secret_refs.store_provider_options(name, ptype, options)
         except ValueError as exc:
-            return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+            ) from exc
+        stored_secrets = True
         entry: dict = {"name": name, "type": ptype, "model": model}
         if stored:
             entry["options"] = stored
         providers.append(entry)
+        return entry
 
-        try:
-            atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
-        except BaseException:
-            # Nothing references the secret stored above; do not leave it behind.
+    # In the config transaction: the duplicate check and the append are one step no other
+    # writer can come between, and an unreadable config.json is refused rather than read as
+    # `{}` — which wrote the new provider over every other provider and setting.
+    try:
+        entry = await mutate_config_async(_create)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except Exception as exc:
+        # The transaction failed, so nothing references the secret it stored: do not leave it
+        # behind. `Exception`, not `BaseException`: a cancelled request does not stop the
+        # write already running on its thread, and purging then would orphan the reference.
+        if stored_secrets:
             secret_refs.purge([secret_refs.provider_owner(name).prefix])
-            raise
+        if isinstance(exc, ConfigWriteError):
+            return config_write_refusal(exc)
+        raise
 
     # The entry is built from the record as STORED — a secret field a `{{secret:…}}` reference —
     # resolved against this provider's own credentials, exactly as the boot sync builds it.
@@ -1063,10 +1077,6 @@ def _refresh_media_registries() -> None:
 async def api_provider_update(request: web.Request) -> web.Response:
     """PUT /api/model-providers/{name} — update a provider's model, endpoint, or options."""
     import dataclasses as _dataclasses
-    import json as _json
-
-    from personalclaw.config.loader import config_path
-    from personalclaw.dashboard.handlers.agents import _get_config_lock
 
     name = request.match_info["name"]
     try:
@@ -1084,21 +1094,15 @@ async def api_provider_update(request: web.Request) -> web.Response:
 
     from personalclaw.apps.secret_fields import SECRET_MASK
 
-    async with _get_config_lock():
-        path = config_path()
-        try:
-            data = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
-
-        providers = data.get("providers", [])
+    def _update(data: dict) -> tuple[dict, dict | None]:
+        providers = data.get("providers")
         target = None
-        for p in providers:
-            if p.get("name") == name:
+        for p in providers if isinstance(providers, list) else []:
+            if isinstance(p, dict) and p.get("name") == name:
                 target = p
                 break
         if not target:
-            return web.json_response({"error": "not found"}, status=404)
+            raise RefusedInConfigTransaction(web.json_response({"error": "not found"}, status=404))
 
         if "model" in body:
             target["model"] = body["model"]
@@ -1134,7 +1138,9 @@ async def api_provider_update(request: web.Request) -> web.Response:
                     name, str(target.get("type") or ""), merged, previous
                 )
             except ValueError as exc:
-                return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+                raise RefusedInConfigTransaction(
+                    web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+                ) from exc
 
         # Resolved BEFORE the write: options already on disk that name another owner's
         # credential refuse the whole edit, rather than a saved change the registry then
@@ -1146,8 +1152,20 @@ async def api_provider_update(request: web.Request) -> web.Response:
                 else None
             )
         except secret_refs.ForeignSecretReference as exc:
-            return web.json_response({"error": relayed_failure_copy(exc)}, status=400)
-        atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": relayed_failure_copy(exc)}, status=400)
+            ) from exc
+        return target, logical_options
+
+    # In the config transaction: the edit is made to the record as it is at the write, and an
+    # unreadable config.json is refused rather than read as `{}`, which answered 404 for a
+    # provider the file holds.
+    try:
+        target, logical_options = await mutate_config_async(_update)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
 
     from personalclaw.llm.registry import get_default_registry
     from personalclaw.providers.connection import get_connection_board
@@ -1181,30 +1199,31 @@ async def api_provider_update(request: web.Request) -> web.Response:
 
 async def api_provider_delete(request: web.Request) -> web.Response:
     """DELETE /api/model-providers/{name} — remove a provider from config."""
-    import json as _json
-
-    from personalclaw.config.loader import config_path
-    from personalclaw.dashboard.handlers.agents import _get_config_lock
-
     name = request.match_info["name"]
 
-    async with _get_config_lock():
-        path = config_path()
-        try:
-            data = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
+    def _delete(data: dict) -> None:
+        providers = data.get("providers")
+        providers = providers if isinstance(providers, list) else []
+        kept = [p for p in providers if not (isinstance(p, dict) and p.get("name") == name)]
+        if len(kept) == len(providers):
+            raise RefusedInConfigTransaction(web.json_response({"error": "not found"}, status=404))
+        data["providers"] = kept
 
-        providers = data.get("providers", [])
-        before = len(providers)
-        data["providers"] = [p for p in providers if p.get("name") != name]
-        if len(data["providers"]) == before:
-            return web.json_response({"error": "not found"}, status=404)
-
-        atomic_write(path, _json.dumps(data, indent=2) + "\n", fsync=True)
-        # The key this instance owned goes with it. A reference it held to a Secrets-panel
-        # credential is not owned, so that credential stays for whatever else uses it.
+    def _purge() -> None:
+        # The key this instance owned goes with it — once nothing on disk refers to it, and
+        # before a create of the same name (waiting for the lock) stores a new one. A reference
+        # it held to a Secrets-panel credential is not owned, so that credential stays for
+        # whatever else uses it.
         secret_refs.purge([secret_refs.provider_owner(name).prefix])
+
+    # In the config transaction: an unreadable config.json is refused rather than read as `{}`
+    # and answered 404 for a provider the file holds.
+    try:
+        await mutate_config_async(_delete, on_written=_purge)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
 
     from personalclaw.llm.registry import get_default_registry
 

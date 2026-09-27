@@ -6,6 +6,7 @@
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope, errText } from './errText'
 import { withSecurityConsent } from './securityConsent'
+import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
@@ -45,8 +46,9 @@ export class ApiError extends Error {
 
 /** The `ApiError` a failed response should become. A body is a one-shot stream, so the
  *  sentence and the code have to come out of the SAME read — hence one builder every thrower
- *  below calls, rather than `errText` here and a second parse somewhere else. */
-async function apiError(r: Response): Promise<ApiError> {
+ *  below calls, rather than `errText` here and a second parse somewhere else. Exported for the
+ *  app SDK's client (`app/appSdk.tsx`), so an app page's failures are read by the same builder. */
+export async function apiError(r: Response): Promise<ApiError> {
   const { message, code, detail } = await errEnvelope(r)
   return new ApiError(message, r.status, code, detail)
 }
@@ -78,12 +80,14 @@ async function j<T>(r: Response): Promise<T> {
 }
 
 const get = <T>(p: string) => fetch(p, { headers: { ...SK } }).then(j<T>)
-const post = <T>(p: string, body?: unknown) =>
-  fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const put = <T>(p: string, body?: unknown) =>
-  fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const patch = <T>(p: string, body?: unknown) =>
-  fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+// `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
+// (`lib/staleWrite.ts`) — and nothing else rides it.
+const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
+  fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
+  fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
+const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
+  fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
@@ -112,7 +116,9 @@ export interface ThemeRecord extends ThemeSummary {
   dark: Record<string, string>
   light: Record<string, string>
 }
-export interface ThemeWrite {
+// A type, not an interface: "Update theme" re-applies a refused save field by field
+// (`rebaseRecord` in lib/staleWrite.ts), which takes a plain record.
+export type ThemeWrite = {
   name: string; emoji?: string
   dark: Record<string, string>
   light: Record<string, string>
@@ -631,13 +637,20 @@ export interface ChannelTrustSender {
   via: string
 }
 export interface ChannelTrustChannel { channel_id: string; name: string; added_at: string }
+/** An untracked group that messaged the agent (newest first). Its messages were refused; the
+ *  page offers Track for it. */
+export interface ChannelTrustSeenChannel { channel_id: string; name: string; last_seen: string }
 /** A provider's whole trust posture. NEVER carries the pairing code or its hash — only whether
- *  one is outstanding (`pairing_active`) and when it dies. */
+ *  one is outstanding (`pairing_active`) and when it dies. `display_name` is the channel's own
+ *  name for itself; `registered` is whether that channel is set up now. */
 export interface ChannelTrustProvider {
   provider: string
+  display_name: string
+  registered: boolean
   policies: { dm: string; group: string }
   allowed_senders: ChannelTrustSender[]
   tracked_channels: ChannelTrustChannel[]
+  seen_channels: ChannelTrustSeenChannel[]
   pairing_active: boolean
   pairing_expires_at: string
 }
@@ -647,7 +660,10 @@ export interface ChannelTrust {
   group_policies: string[]
   default_dm_policy: string
   default_group_policy: string
+  pairing_code_ttl_secs: number
 }
+/** A sender's pairing code, shown ONCE: the answer to minting it is the only place it exists. */
+export interface ChannelSenderPairing { code: string; expires_at: string; ttl_secs: number }
 // A background subagent (from /api/spawn) — spawned by a cron/loop/Slack/agent.
 export interface SpawnedAgent { id: string; task: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
 // A knowledge item scored for chat-context injection (from search-for-context),
@@ -841,6 +857,9 @@ export interface AppSummary {
   /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
    *  instances, which are added, edited, tested and removed in Settings → Providers. */
   configuredPerInstance?: boolean
+  /** A provider of it runs its engine in a child process with a Python environment of its own,
+   *  which Configure offers to install (Install engine). */
+  sidecar?: boolean
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -907,6 +926,11 @@ export interface AppDisclosure {
   permissions: AppPermissionsWire
   crons: AppCronSummary[]
   pythonDependencies: AppPythonDependency[]
+  /** The requirement specifiers, verbatim, that Install engine puts in the app's own Python
+   *  environment, where its sidecar child runs them. Nothing installs them before that. */
+  sidecarDependencies: string[]
+  /** What it needs on this machine that PersonalClaw does not install. */
+  requires: AppPrerequisite[]
   hasUI: boolean
   uiComponents: string
   /** Its own server process, started on install and kept running while it is enabled. */
@@ -947,6 +971,10 @@ export interface AppDisclosure {
  *  spec arrives `false`, which is the louder of the two disclosures and the same
  *  fail-closed direction the guard takes. */
 export interface AppPythonDependency { spec: string; coreOwned: boolean }
+/** Something an app needs on this machine that PersonalClaw does not install (a local server the
+ *  app sends its work to), what the app uses it for, and what the owner does to have it — the
+ *  manifest's `requires`. */
+export interface AppPrerequisite { name: string; why: string; how: string }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string
   icon: string; heroUrl?: string; author: string
@@ -977,6 +1005,10 @@ export interface AppCatalogEntry {
    *  declares none and for a registry pointer; `consentKnown` says which. Read only
    *  through `consentPythonDeps`, which owns that distinction. */
   pythonDependencies?: AppPythonDependency[]
+  /** What Install engine will put in the app's own Python environment — see `AppDisclosure`. */
+  sidecarDependencies?: string[]
+  /** What it needs that PersonalClaw does not install — see `AppDisclosure`. */
+  requires?: AppPrerequisite[]
   /** #492 — does this app ship browser code? Same two field names and meanings as
    *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
    *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the
@@ -1497,6 +1529,10 @@ export interface ScheduleJob {
   // attribution — see the same pair on `Trigger`. A schedule row is served by the same
   // store, so it carries the same verdict.
   author?: string; read_only?: boolean
+  // Brought over from an older version and not switched on by the owner yet — see `Trigger`.
+  needs_review?: boolean
+  // What it is not allowed to use — see `Trigger`.
+  needs_grant?: string[]
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
@@ -1514,7 +1550,10 @@ export interface ScheduleJob {
   state?: string | null
   run_count?: number
   agent?: string | null; model?: string | null
-  channel?: string | null; approval_mode?: string | null
+  // Where results go on a chat channel: `<name>` (your DMs there) or `<name>:<target>` (a chat on
+  // it), the delivery route without its `channel:` prefix. `channel_problem` is the server's
+  // sentence when that channel can't take them (not set up here, or an id it refuses), else ''.
+  channel?: string | null; channel_problem?: string; approval_mode?: string | null
   silent?: boolean; strict_schedule?: boolean; timezone?: string | null
   skip_dates?: string[]
   // Failure routing. `failure_delivery` is `Trigger.failure_delivery` verbatim — '' means
@@ -1539,6 +1578,10 @@ export interface ScheduleJob {
   // authored (the backend deliberately warns rather than refusing), which is why it is a separate
   // list and not folded into `broken`.
   warnings?: string[]
+  // The revision the edit form's save names (`lib/staleWrite.ts`): a digest of the automation as
+  // the form edits it, run state left out — so a save made after the agent or another tab changed
+  // it is refused rather than written over that change.
+  revision?: string
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
@@ -1589,7 +1632,12 @@ export interface TaskDependency { task_id?: string; depends_on_task_id?: string;
 export interface ExitCriterion { description: string; status?: 'incomplete' | 'complete'; comment?: string; met?: boolean }
 export interface ActionPlanItem { content?: string; description?: string; sequence?: number; completed?: boolean }
 export interface TaskNote { content: string; timestamp?: string; created_at?: string; phase?: 'research' | 'execution' | 'general' }
-export interface ProjectItem { id: string; name: string; is_builtin?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string }
+export interface ProjectItem {
+  id: string; name: string; is_builtin?: boolean; status?: 'active' | 'archived'; workspace_dir?: string; context_dir?: string; name_locked?: boolean; agent_instructions_template?: string; brief?: string; task_list_count?: number; created_at?: string; updated_at?: string
+  /** The revision of each field a write replaces as a whole document — the agent-instructions
+   *  text — taken from this same read (`lib/staleWrite.ts`). */
+  revisions?: { agent_instructions_template?: string }
+}
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
 /** How far a run-written knowledge item travels. CLOSED — the two
  *  values the backend can send; a view that renders these must handle both explicitly. */
@@ -1675,10 +1723,17 @@ export interface TaskItem {
   task_list_id?: string
   order?: number
   comment_count?: number
+  // The revision the task page's Save names (`lib/staleWrite.ts`), on every task read and write
+  // answer — the graph's rows carry none, and nothing saves from them.
+  revision?: string
   // present only on a PUT response: the full set of tasks whose status cascaded
   // (the edited task + auto-block/unblock'd dependents) so the client patches all.
   reconciled?: TaskItem[]
 }
+/** A task write that replaces no list — what `api.updateTask` sends. The lists (labels, criteria,
+ *  plan, notes, dependencies) are replaced whole by a write, so they go through `api.saveTask`,
+ *  which names the revision they were read at. */
+export type TaskScalarEdit = Partial<Pick<TaskItem, 'title' | 'description' | 'status' | 'priority' | 'assignee' | 'due' | 'task_list_id'>>
 // Server DAG snapshot (GET /api/tasks/graph) — adjacency + analysis (seam S3).
 export interface TaskGraphEdge { from: string; to: string; type: DependencyType }
 export interface DependencyAnalysis {
@@ -1862,6 +1917,10 @@ export interface WorkflowRunSummary {
   elapsed_seconds?: number; total_tokens?: number; error_message?: string
   attention?: Record<string, unknown> | null
   project_id?: string; mode?: string
+  /** The name the run was started under (a loop's name), `''` when it has none. */
+  title?: string
+  /** The run that spawned this one as a sub-workflow, `''` for a run nothing spawned. */
+  parent_run_id?: string
 }
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
@@ -1879,6 +1938,8 @@ export interface WorkflowRunDetailData {
   // success_criteria). `{}` means every knob follows the kind/template default. The
   // prelaunch policy editor renders and PUTs this; frozen once the run launches.
   policy_overrides?: Record<string, unknown>
+  /** The overlay's revision from this same read — what the editor's whole-overlay PUT names. */
+  revisions?: { policy_overrides?: string }
   /** The loop kind a run was started AS through `POST /api/loops`, `''` for a run started
    *  from a template. With `title`, what heads a loop's run page: the name the user gave the loop,
    *  not its template's (`general-project`). */
@@ -1893,8 +1954,12 @@ export interface WorkflowRunDetailData {
 // (approval|choice|text|form), so the inbox card and the run view share a component.
 export interface WorkflowContinuation {
   resume_token: string; node_id: string; instance_path: string
-  ask: { kind?: string; prompt?: string; choices?: string[]; fields?: Array<{ name: string; type?: string; label?: string; required?: boolean; choices?: string[] }> }
-  handoff: { scope?: string; status?: string; outstanding?: string[]; checks_run?: string[]; next_steps?: string[]; risks?: string[] }
+  /** `rerun`: the ask of a step that PARKED on the user (browse at a sign-in page) — approving
+   *  runs the step again rather than recording the answer as its output (`human_input.Ask`). */
+  ask: { kind?: string; prompt?: string; choices?: string[]; fields?: Array<{ name: string; type?: string; label?: string; required?: boolean; choices?: string[] }>; rerun?: boolean }
+  /** `attempted`: what the asking step already tried, one line each (a sign-in park's "opened
+   *  example.com — it has never been signed in on this machine"). Empty for a gate. */
+  handoff: { scope?: string; status?: string; outstanding?: string[]; checks_run?: string[]; next_steps?: string[]; risks?: string[]; attempted?: string[] }
   expires_at: number; expired: boolean
 }
 export interface WorkflowCascadePreview {
@@ -2361,6 +2426,9 @@ export interface PromptItem {
   // detail-only: the full variable set the fill-in UI renders (own ∪ snippets'),
   // and the snippet names this prompt includes.
   merged_variables?: PromptVariable[]; includes?: string[]
+  // detail-only: the revision of the fields the editor sends back, from this same read — what a
+  // save names (`lib/staleWrite.ts`).
+  revision?: string
 }
 // A reusable fragment included by prompts/snippets via {{> name}}.
 export interface PromptSnippet {
@@ -2368,6 +2436,8 @@ export interface PromptSnippet {
   variables?: PromptVariable[]; tags?: string[]; source?: string; updated_at?: number
   // detail-only: the prompts + other snippets that include this one ({{> name}}).
   used_by?: { prompts: string[]; snippets: string[] }
+  // detail-only: the revision a save names, as on `PromptItem`.
+  revision?: string
 }
 // `label`/`hint`/`category` come from the use-case vocabulary itself
 // (`providers/prompt_use_cases.py`), not from a table in the dashboard: the
@@ -2482,6 +2552,9 @@ export interface AlwaysOnItem {
   editable: boolean; read_only_reason: string; project_id: string; preview: string
   body?: string
 }
+/** The editor round-trip's item: the verbatim `body`, and the `revision` of exactly that body — what
+ *  a save replacing it names (`lib/staleWrite.ts`). */
+export interface AlwaysOnDocument extends AlwaysOnItem { body: string; revision: string }
 export interface AlwaysOnResponse {
   items: AlwaysOnItem[]; project_id: string
   counts: { total: number; always_skills: number; project_instructions: number }
@@ -2564,6 +2637,11 @@ export interface HookItem {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
   blocking?: boolean; enforcement?: HookEnforcement
+  // The revision the edit form's save names — see `Trigger.revision`.
+  revision?: string
+  // What it is not allowed to use — see `Trigger`. A lifecycle trigger's fires are refused until
+  // the owner allows it, like a store trigger's.
+  needs_grant?: string[]
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -2599,6 +2677,15 @@ export interface Trigger {
   // path uses — the page must not re-derive it from `author`, or the UI and the scheduler end up
   // with two opinions about who owns a trigger.
   author?: string; read_only?: boolean
+  // The row was brought over from an older version's automation file and is switched off until
+  // the owner switches it on, which asks them to allow what it runs (`triggers/legacy_import.py`).
+  // The server's verdict: `created_by` alone cannot say it, because an imported row that needs no
+  // permission (one that only notifies) arrives switched on and is not waiting for anything.
+  needs_review?: boolean
+  // The actions it runs that it is not allowed to, by display name (`["Bash Command"]`); `[]` when
+  // it may run. Run now and every fire are refused until the owner allows it — Allow on its panel,
+  // or switching it on, both of which ask first (`triggers/grants.py`).
+  needs_grant?: string[]
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -2610,6 +2697,9 @@ export interface Trigger {
   // lifecycle fields (kind=lifecycle)
   event?: string; matcher?: string; timeout?: number; last_run?: number; run_count?: number; used_by?: string[]
   blocking?: boolean; enforcement?: HookEnforcement
+  // schedule + lifecycle rows: the revision a whole-form save of the row names in `If-Match`
+  // (`lib/staleWrite.ts`) — a digest of what the edit form replaces, run state left out.
+  revision?: string
 }
 /** Project the shared ScheduleForm's flat draft body onto the unified Trigger
  *  wire shape: a single canonical `action` + the schedule mechanism fields. The
@@ -2660,6 +2750,8 @@ function _triggerToHook(t: Trigger): HookItem {
     // leaves them undefined so the detail view renders NO enforcement claim, rather than a
     // confident "enforcing" chip over a hook nothing binds.
     blocking: t.blocking, enforcement: t.enforcement,
+    revision: t.revision,
+    needs_grant: t.needs_grant,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -3546,6 +3638,10 @@ export interface KnowledgeItem {
   has_embedding?: boolean
   // populated by GET /items/{id}
   entities?: KnowledgeEntity[]; relations?: KnowledgeRelation[]
+  /** GET /items/{id} only: the revision of `content` in that read — what a body save names as its
+   *  base (`saveKnowledgeItem`). Of the body alone, so a title, flag or pipeline write elsewhere
+   *  never makes a body edit stale. */
+  content_revision?: string
   // populated by GET /items/{id}/related. `score` is the RANKING key (KL-13: a cosine
   // similarity edge above `knowledge.similarity_min_score`), and `chunk_index` /
   // `neighbour_chunk_index` are its provenance — oriented to the item asked about, so a
@@ -3555,6 +3651,12 @@ export interface KnowledgeItem {
   chunk_index?: number
   neighbour_chunk_index?: number
   shared_entities?: number
+}
+/** A knowledge-item PATCH that replaces nothing whole: scalar fields, flags, and tags one name at a
+ *  time. The body goes through `saveKnowledgeItem`; a whole-list `tags` does not exist, because it
+ *  replaced the list with the page's copy of it. */
+export type KnowledgeItemEdit = Record<string, unknown> & {
+  content?: never; tags?: never; add_tags?: string[]; remove_tags?: string[]
 }
 /** The ingestion node-graph shape for an item's type — nodes + edges + terminals. */
 /** Whether a SYNTHESIZED item (insight/report/overview) has been overtaken by its sources.
@@ -3635,6 +3737,14 @@ export interface KnowledgeIntent {
   id: string; goal?: string; enabled?: boolean
   enabled_for?: string[]; propose_skill?: boolean
   outcome_count?: number  // recorded outcomes (list badge)
+  /** The revision of the stored RECORD (never `outcome_count`), on every read of one — what an
+   *  edit, which replaces the whole record, names as its base (`saveKnowledgeIntent`). */
+  revision?: string
+}
+/** The intent record an edit writes back whole — every field, from the copy it was read at. A
+ *  `type`, not an `interface`, so it is a plain record `staleWrite.rebaseRecord` can merge. */
+export type KnowledgeIntentRecord = {
+  id: string; goal: string; enabled: boolean; enabled_for: string[]; propose_skill: boolean
 }
 // ── Watched sources ──
 /** What the user can DO about a source's last poll. The backend resolves this from the
@@ -3656,6 +3766,9 @@ export interface SourceRemediation {
 export interface WatchedSource {
   id: string; name: string; provider: string; kind: string
   spec: Record<string, unknown>; budget: Record<string, unknown>
+  /** The revision of `{spec, budget}` in this read — the two objects a settings save replaces
+   *  whole (`saveKnowledgeSourceSettings`). The poll's rollups are not in it. */
+  revision: string
   /** 'full' | 'raw' — 'raw' is the structural no-AI promise, and what the chip reads. */
   enrichment: string
   poll_interval_secs: number; item_type: string; enabled: boolean
@@ -4105,10 +4218,14 @@ export interface NotificationRulesDoc {
   digest: { schedule: string }
   targets: NotificationTarget[]
 }
+/** ONE entry into or out of a rule's list, applied by the gateway to the rule as stored when the
+ *  write lands — never the page's copy of the list, which another tab (or the phone turning push
+ *  on) may have changed since. */
+export type NotificationListEdit<T extends string> = { add: T } | { remove: T }
 export interface NotificationRulePatch {
   mode?: NotificationMode
-  targets?: NotificationTarget[]
-  conditions?: { keywords?: string[]; name_mention?: boolean }
+  targets?: NotificationListEdit<NotificationTarget>
+  conditions?: { keywords?: NotificationListEdit<string>; name_mention?: boolean }
   /** null clears the sound (back to a silent push). */
   sound?: NotificationSound | null
 }
@@ -4493,7 +4610,13 @@ export interface MemorySlotTrimProposal {
   drop_candidates: string[]
   message: string
 }
-export interface SecurityStats { denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number }
+export interface SecurityStats {
+  denied_commands: number; suspicious_patterns: number; tool_schemas: number; redaction_paths: number
+  /** Whether Max memory and Max processes contain an agent child on the GATEWAY's host, with the
+   *  sentence that says so when they don't (`sandbox.child_ceilings_note`: on macOS they never do).
+   *  Absent from a response cached before the field existed. */
+  child_ceilings?: { contained: boolean; note: string }
+}
 /** The packaged baseline's identity, as served by /api/security/denied-commands.
  *  `verified` is whether the file on disk still matches the fingerprint captured at
  *  import — it is an anti-drift check, NOT a claim that the baseline cannot be changed
@@ -4520,7 +4643,8 @@ export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[
  *  the skills folder other AI tools share, the machine-wide Hugging Face folder, a subscription
  *  provider's sign-in. Off until allowed; `paths` is where it is on this machine. */
 export interface OutsideHomePlace { id: string; label: string; paths: string[]; detail: string; allowed: boolean }
-/** `allowed` is the whole saved list, which can name a place no longer offered, so a write keeps it. */
+/** `allowed` is the whole saved list, which can name a place no longer offered — so a switch writes
+ *  its one place (`setOutsideHomePlace`), never this list. */
 export interface OutsideHomeState { places: OutsideHomePlace[]; allowed: string[] }
 /** Where this instance's credentials live, and whether the move is reversible.
  *
@@ -4724,6 +4848,10 @@ export interface PendingApproval {
   // `readOnlyCommandOf` rather than testing truthiness.
   is_read_only?: boolean | null
   grant_agent: string
+  /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
+  trigger?: string
+  /** That trigger's name, "" when it has none or is gone. */
+  trigger_name?: string
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has.
@@ -4797,7 +4925,9 @@ export interface SettingsProvider {
   // managed = a lifecycle app provider (installByDefault: install/uninstall is its
   // on/off). false = an always-on native built-in (mandatory, no toggle).
   managed?: boolean
-  provider?: { type?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean }
+  /** `execution: 'sidecar'` runs its engine in a child process with a Python environment of its
+   *  own, which the card offers to install (Install engine). */
+  provider?: { type?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean; execution?: string }
   tags?: string[]
 }
 // Agent runtime readiness — native + each acp:<cli>. `extension` keys it onto
@@ -4855,8 +4985,9 @@ export interface ProviderSchema { type?: string; properties?: Record<string, Pro
 // secret. Its config arrives MASKED (write-only over the API — apps/secret_fields.py), so the
 // editor blanks those inputs and says "saved — leave blank to keep" instead of offering a row
 // of bullets for editing. Per-instance, not per-response: a list carries N configs, so a
-// single top-level list could not say which instance a named field belongs to.
-export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[] }
+// single top-level list could not say which instance a named field belongs to. `revision` is of
+// that masked config — the document the editor saves whole (`updateProviderInstance`).
+export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[]; revision: string }
 /** One configured model-provider instance (`config.json` `providers[]` — the one store chat
  *  resolves). `options` are its settings with every secret MASKED; `secret_set` names the
  *  secret settings that hold a value (so the editor can say "saved — leave blank to keep"
@@ -5003,19 +5134,44 @@ export interface LocalModelSelftest {
 }
 // A local downloadable model (the uniform LocalModel shape from any local provider).
 export interface LocalModel { name: string; id: string; size_mb: number; size: number; description: string; downloaded: boolean; capabilities: string[]; gated: boolean; source: string }
+/** One step of an engine install. `started_at` is when it last started (epoch seconds, `0` never). */
+export interface SidecarInstallStep {
+  name: 'venv' | 'deps' | 'weights'
+  status: 'pending' | 'running' | 'done' | 'skipped' | 'error' | 'cancelled'
+  detail: string
+  started_at: number
+}
+/** `GET /api/models/sidecar/{app}/install/status` — an app's engine: what Install engine puts in its
+ *  own Python environment (`requirements`), whether it is there, and the install job, whose `id` is
+ *  what `cancelModelDownload` cancels. `remediation` is what to do about `error`. */
+export interface SidecarInstallStatus {
+  provider: string; installed: boolean; managed: boolean; install_dir: string
+  requirements: string[]
+  job: {
+    id: string
+    state: 'idle' | 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+    progress: number
+    steps: SidecarInstallStep[]
+    log_tail: string[]; error: string; reason: string; remediation: string
+    weights_progress: number
+  }
+}
 // A background local-model download job — the ONE canonical wire shape
 // (matches ModelDownloadJob.to_dict in dashboard/model_downloads.py, LMMV §4.1).
 // `progress` is 0.0–1.0 when `total_bytes` is known, else 0.0 (indeterminate);
 // `speed_bps`/`eta_s` are coarse poller derivations (0 = not cheaply knowable);
 // `reason` is a typed machine label on error/cancel ('cancelled'|'network'|
-// 'disk_full'|'gated'|'not_found'), '' otherwise.
+// 'disk_full'|'gated'|'not_found'), '' otherwise. `warning` is a sentence for the user that
+// stays with the job while it runs ("Free space could not be checked, …" when the free-space
+// check could not measure the disk), '' otherwise — every surface that draws a download's
+// progress shows it.
 export interface DownloadJob {
   id: string; provider: string; model: string
   kind: 'weights' | 'sidecar-install'
   state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
   progress: number; speed_bps: number; eta_s: number
   total_bytes: number; downloaded_bytes: number
-  error: string; reason: string
+  error: string; reason: string; warning: string
 }
 /** Is the server still working on this job? `queued` and `running` both mean YES.
  *
@@ -5064,6 +5220,27 @@ export interface ResidentProvider {
 export interface ResidencySnapshot {
   loaded: LoadedModel[]; providers: ResidentProvider[]; pressure: MemoryPressure
 }
+/** `GET /api/attachment-extract` — what extraction got from one uploaded attachment. */
+export interface AttachmentExtract {
+  name: string
+  /** What the model is handed for the file: its text, or — when nothing was read — a one-line
+   *  size-and-format descriptor. */
+  text: string
+  /** `text` was read from the file's content, rather than being only that descriptor. */
+  read: boolean
+  /** Why nothing was read, when that is known: `'no_image_model'` when the file needed an image
+   *  model and none is set up; `''` otherwise. */
+  unread: string
+}
+/** `GET /api/chat/image-input` — how an attached image reaches the model on a chat's next turn. */
+export interface ChatImageInput {
+  /** The model the next turn is served by takes images as pixels. */
+  accepted: boolean
+  /** Why not, as a sentence (`"gemma3:1b can't take images."`); `""` when accepted. */
+  reason: string
+  model: string
+}
+
 export interface DashboardConfig {
   restore_sessions: boolean; restore_window_minutes: number; merge_queued_messages: boolean
   // AI auto-tagging at title-generation time (default on; never touches
@@ -5202,6 +5379,10 @@ export interface OnboardingImportItem {
   secrets_skipped: number; redactions: number
   /** A skill's supply-chain scan, `null` for anything else. */
   scan: OnboardingImportSkillScan | null
+  /** True for a conversation the scan has only LOOKED into — read as far as its first prompt,
+   *  which names it — and not yet read in full: its `note` says so instead of counting its
+   *  messages, and `redactions` is not a count yet. The reading pass makes it final. */
+  provisional?: boolean
 }
 /** The supply-chain scan a skill's install will make, made when the tool was scanned, so the
  *  step shows it before anything is chosen. A `dangerous` verdict is `rejected` in the plan. A
@@ -5224,12 +5405,20 @@ export interface OnboardingImportSource {
   secrets_skipped: number; redactions: number
   notes: string[]
   not_imported: OnboardingImportNotImported[]
+  /** Of this tool's conversation files, how many the scan has read in full. Short of `of`, a
+   *  conversation count can still change and an unreadable one is not named yet. */
+  reading?: { read: number; of: number }
 }
+/** The background reading of the conversations a scan only looked into: files read in full so
+ *  far, of every conversation file the scan found. `running` false with `read < of` is a pass
+ *  that stopped (an import started): the next scan starts it again. */
+export interface OnboardingImportReading { running: boolean; read: number; of: number }
 /** `GET /api/onboarding/import` — every registered source (found or not) plus the
  *  closed category vocabulary, in the writers' declaration order. */
 export interface OnboardingImportScan {
   sources: OnboardingImportSource[]
   categories: string[]
+  reading?: OnboardingImportReading
 }
 /** What happened to ONE item at its destination. The four-value vocabulary is
  *  closed: `conflict` means something different was already there and was KEPT,
@@ -5249,9 +5438,33 @@ export interface OnboardingImportReport {
   results: OnboardingImportOutcome[]
   unselected: OnboardingImportItem[]
   missing: string[]
+  /** Picked items a stop left unreached: nothing was written for them, so importing again
+   *  brings them over. */
+  not_reached?: string[]
   secrets_skipped: number; redactions: number
   notes: string[]
 }
+/** One import, running or finished (`POST /api/onboarding/import` answers it `202`). It writes
+ *  the picks one at a time, every kind before conversations; `done` of `total` have landed or
+ *  been reported, `counts` tallies their outcomes and `current` names the one it is on.
+ *  `stopped` is a stop taking effect between two items (the report's `not_reached` lists the
+ *  rest); `failed` is a write that raised, `error` its sentence. `report` is present once
+ *  finished — on `GET …/job`, never on the stream's frames. */
+export interface OnboardingImportJob {
+  id: string
+  status: 'running' | 'done' | 'stopped' | 'failed'
+  phase: 'scanning' | 'importing' | 'finished'
+  stopping: boolean
+  total: number; done: number
+  counts: Record<string, number>
+  current: string
+  started_at: number; finished_at: number | null
+  error: string
+  report?: OnboardingImportReport | null
+}
+/** A frame of `GET /api/onboarding/import/stream`: the reading pass and the import job, as the
+ *  gateway has them now. `job` is null when this gateway has run none — after a restart too. */
+export interface OnboardingImportStatus { reading: OnboardingImportReading; job: OnboardingImportJob | null }
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -5267,6 +5480,9 @@ export interface SavedAgent {
    *  ("add it in Settings → Models"). The pin is kept; the agent answers on the chat model until
    *  it is changed, and each reply says so. `null` when the pin can run or there is none. */
   model_unavailable?: { why: string; fix: string } | null
+  /** The revision `GET /api/agents` reported for exactly this record — what the editor's save,
+   *  which sends the whole profile it painted, names as its base (`lib/staleWrite.ts`). */
+  revision: string
 }
 
 
@@ -5612,6 +5828,10 @@ export interface Loop {
   kind_config: Record<string, unknown>
   /** Code-kind detail only: host-local diagnostics, computed and never persisted. */
   command_runnability?: CodeCommandRunnability
+  /** The revision a spec write carrying the plan, a capability list or `kind_config` names in
+   *  `If-Match` (`saveULoopSpec`, `lib/staleWrite.ts`): a digest of the editable spec as this
+   *  REDACTED view shows it. Absent on a run-backed loop, which has no spec to save. */
+  revision?: string
 }
 // The normalized classify result the kind-aware /api/loops/classify returns — the
 // composer/Plan-Review consumes it + the create body can fold it back in (the whole
@@ -5677,6 +5897,9 @@ export interface PlanStep {
   status: PlanStepStatus
   artifact?: Record<string, unknown>
   comments?: { text: string; at: number }[]
+  /** The revision an edit of this step's markdown names (`lib/staleWrite.ts`) — a digest of the
+   *  draft as read, so an edit of a draft a redraft replaced is refused, not saved over it. */
+  revision?: string
 }
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]
@@ -5787,6 +6010,10 @@ export interface Artifact {
    *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
    *  letting the user type into an editor whose save always 400s. */
   readonly: boolean
+  /** Content-bearing responses only: the revision of `content` as this response carries it —
+   *  what a body save names as its base (`saveArtifactBody`). Not `version`: a plain save cuts
+   *  no version, so the version cannot tell a changed body from an unchanged one. */
+  content_revision?: string
 }
 
 // ── the document model the editor edits ──
@@ -6009,6 +6236,9 @@ export interface RoutingPolicyRow {
   pin: string
   candidates: Array<{ ref: string; local: boolean }>
   classes: Record<string, { order: string[]; basis: Record<string, unknown> }>
+  /** The revision of every class's order — recorded or not — which a reorder names, because it
+   *  replaces the class's whole order (`setRoutingOrder`, `lib/staleWrite.ts`). */
+  order_revisions: Record<string, string>
 }
 
 /** One pending routing PROPOSAL.
@@ -6302,9 +6532,16 @@ export const api = {
   // exactly like a looser config field (`securityConsent.ts`).
   createAgent: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean }>('/api/agents', c ? { ...body, confirm: true } : body)),
-  updateAgent: (name: string, body: Record<string, unknown>) =>
-    withSecurityConsent((c) => put<{ ok: boolean }>(`/api/agents/${encodeURIComponent(name)}`,
-      c ? { ...body, confirm: true } : body)),
+  // The editor saves the WHOLE profile it painted, so the save names the revision the list reported
+  // for it (`SavedAgent.revision`) — the consent resend too — and a stale copy is refused with
+  // `409 stale_write` instead of reverting a change made since (`lib/staleWrite.ts`).
+  updateAgent: (name: string, body: Record<string, unknown>, base: string) =>
+    withSecurityConsent((c) => put<{ ok: boolean; revision: string }>(`/api/agents/${encodeURIComponent(name)}`,
+      c ? { ...body, confirm: true } : body, basedOn(base))),
+  // One field alone — the reserved agents' model picker — is the edit the user made, so the gateway
+  // takes it with no base: there is no copy of anything else in it to go stale.
+  setAgentModel: (name: string, model: string) =>
+    put<{ ok: boolean; revision: string }>(`/api/agents/${encodeURIComponent(name)}`, { model }),
   deleteAgent: (name: string) => del(`/api/agents/${encodeURIComponent(name)}`),
   setDefaultAgent: (name: string) => put<{ ok: boolean; default_agent: string }>('/api/config/default-agent', { agent: name }),
   // Agent routing — suggestion-suppression endpoints. The suggestion
@@ -6344,16 +6581,19 @@ export const api = {
   // "no opinion yet" instead of blanking.
   routingPolicy: () =>
     get<{ enabled: boolean; use_cases: RoutingPolicyRow[] }>('/api/models/routing-policy'),
-  // Set ONE lever at a time (mode, pin, or a per-class order). Fields are applied only
-  // when present, so a client never reverts a control it didn't render. `order` requires
-  // `query_class` — an order is always per class.
+  // Set ONE single-valued lever at a time (mode or pin). Fields are applied only when present, so
+  // a client never reverts a control it didn't render.
   setRoutingPolicy: (body: {
     use_case: string
     mode?: 'off' | 'heuristic' | 'learned'
     pin?: string
-    query_class?: string
-    order?: string[]
   }) => put<{ ok: boolean; use_case: string; applied: string[] }>('/api/models/routing-policy', body),
+  // A class's order is written WHOLE, so it names the revision of the order it was built from
+  // (`order_revisions[queryClass]` from the same read); an order another tab or an accepted
+  // proposal changed since is refused with `409 stale_write` rather than put back.
+  setRoutingOrder: (useCase: string, queryClass: string, order: string[], base: string) =>
+    put<{ ok: boolean; use_case: string; applied: string[]; order_revision: string }>('/api/models/routing-policy',
+      { use_case: useCase, query_class: queryClass, order }, basedOn(base)),
   // The propose-don't-write review queue. `count` is the Routing tab's badge.
   // Fail-open server-side: an unreadable queue reads as empty rather than erroring.
   routingProposals: () =>
@@ -6377,6 +6617,35 @@ export const api = {
   patchConfig: (path: string, value: unknown, confirmed = false) =>
     withSecurityConsent((c) => patch<Record<string, any>>('/api/config/personalclaw',
       c ? { path, value, confirm: true } : { path, value }), confirmed),
+  // A field holding a whole DOCUMENT (a list or an object) is replaced wholesale by a value write,
+  // so the write names the revision the value was built from — `revisions[path]` in the same read
+  // (`configDocument`). A copy that went stale is refused with `409 stale_write`, never saved over
+  // what another tab or the gateway stored since (`lib/staleWrite.ts`).
+  patchConfigDocument: (path: string, value: unknown, base: string, confirmed = false) =>
+    withSecurityConsent((c) => patch<Record<string, any>>('/api/config/personalclaw',
+      c ? { path, value, confirm: true } : { path, value }, basedOn(base)), confirmed),
+  // One name into or out of a list of names, applied to what is stored when it lands — so it needs
+  // no revision: adding or removing one entry cannot undo a change made elsewhere to another.
+  patchConfigItem: (path: string, op: 'add' | 'remove', item: string, confirmed = false) =>
+    withSecurityConsent((c) => patch<Record<string, any>>('/api/config/personalclaw',
+      c ? { path, [op]: item, confirm: true } : { path, [op]: item }), confirmed),
+  // A list-of-names field saved as the EDITS from `prev` to `next` — each name removed, then each
+  // added, one write apiece — never as `next` itself, which is the page's copy and may be missing a
+  // name another tab added since. Resolves with the list as stored after the last write (`prev` when
+  // there was nothing to send).
+  saveListEdits: async (path: string, prev: string[], next: string[], confirmed = false): Promise<string[]> => {
+    let full: Record<string, any> | null = null
+    for (const item of prev.filter((x) => !next.includes(x))) full = await api.patchConfigItem(path, 'remove', item)
+    for (const item of next.filter((x) => !prev.includes(x))) full = await api.patchConfigItem(path, 'add', item, confirmed)
+    const stored = full && path.split('.').reduce<any>((node, k) => node?.[k], full)
+    return Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : prev
+  },
+  // The document at `path` with the revision the same read reported for it.
+  configDocument: <T>(path: string, fallback: T) =>
+    get<Record<string, any>>('/api/config/personalclaw').then((c): Revisioned<T> => ({
+      value: (path.split('.').reduce<any>((node, k) => node?.[k], c) ?? fallback) as T,
+      revision: String(c?.revisions?.[path] ?? ''),
+    })),
   // `agent.yolo` has a writer of its own because turning it ON carries the owner's consent: the
   // PATCH refuses `value: true` without `confirm: true` (400 `confirmation_required`). Call it only
   // through `pages/settings/agentYolo.ts`'s `setAgentYolo`, which asks first — `yoloOneWriter.test.ts`
@@ -6705,9 +6974,16 @@ export const api = {
   memoryFacetForget: (key: string) =>
     post<{ ok: boolean }>(`/api/memory/facets/${encodeURIComponent(key)}/forget`),
   memoryGraphRebuild: () => post<MemoryGraphRebuild>('/api/memory/graph/rebuild'),
-  // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}.
-  memoryDoc: (which: 'preferences' | 'projects' | 'history') => get<{ content: string }>(`/api/memory/${which}`).then((d) => d.content),
-  saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string) => put<{ ok: boolean }>(`/api/memory/${which}`, { content }),
+  // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}. The gateway
+  // writes these too (the consolidator, the agent's memory tool), so the read carries the revision
+  // and the PUT — a whole-file replace — names it (`lib/staleWrite.ts`). The save answers with what
+  // is STORED and its revision: the projects write adds its header to a body without one.
+  memoryDoc: (which: 'preferences' | 'projects' | 'history') =>
+    get<{ content: string; revision: string }>(`/api/memory/${which}`).then(
+      (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
+  saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string, base: string) =>
+    put<{ ok: boolean; content: string; revision: string }>(`/api/memory/${which}`, { content }, basedOn(base)).then(
+      (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
   // Legacy-markdown → vector-store migration + JSON import (maintenance flows).
   memoryMigrate: () => post<Record<string, number>>('/api/memory/migrate'),
   memoryImport: (data: unknown) => post<Record<string, number>>('/api/memory/import', data),
@@ -6736,9 +7012,16 @@ export const api = {
     get<KnowledgeContextResult>(`/api/knowledge/search-for-context?q=${encodeURIComponent(q)}&max_tokens=${maxTokens}`),
 
   // ── Agent advanced config (routing notes, per-agent MCP, lifecycle hooks) ──
-  /** Routing notes ("when to use this agent") — populate the orchestrator's generated delegation roster. */
-  agentMetadata: (name: string) => get<{ name: string; content: string }>(`/api/agent-metadata/${encodeURIComponent(name)}`).then((d) => d.content),
-  saveAgentMetadata: (name: string, content: string) => put<{ ok: boolean }>(`/api/agent-metadata/${encodeURIComponent(name)}`, { content }),
+  /** Routing notes ("when to use this agent") — populate the orchestrator's generated delegation roster.
+   *  Read with the revision of that note: the editor saves the whole note over it (`lib/staleWrite.ts`). */
+  agentMetadata: (name: string) =>
+    get<{ name: string; content: string; revision: string }>(`/api/agent-metadata/${encodeURIComponent(name)}`)
+      .then((d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
+  /** Answers with the note as stored afterwards — the orchestrator may re-seed a cleared one — and its
+   *  new revision, the base of the next save. */
+  saveAgentMetadata: (name: string, content: string, base: string) =>
+    put<{ ok: boolean; content: string; revision: string }>(`/api/agent-metadata/${encodeURIComponent(name)}`,
+      { content }, basedOn(base)),
   /** The MCP servers an agent gets (name + enabled). Omit agent for the default set. */
   mcpActive: (agent?: string) => get<McpActiveServer[]>(`/api/mcp/active${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`),
   /** Read-only view of the lifecycle hooks in effect (redacted commands). */
@@ -6773,12 +7056,24 @@ export const api = {
     del(`/api/channels/${encodeURIComponent(name)}/owner/pairing`),
 
   // ── Channel sender trust — who is allowed to talk to the agent, per channel ──
-  // The allowlist was writable from two places (a pairing code, the unknown-sender
-  // notification's Allow) and readable from none. This is the read half; granting stays with
-  // those two deliberate acts, so this surface revokes only.
+  // Granting stays a deliberate act: a sender is let in by the code they send (minted here) or
+  // by the owner's Allow on the unknown-sender notification, and a group is tracked from the
+  // list of groups that already messaged the agent.
   channelTrust: () => get<ChannelTrust>('/api/channels/trust'),
   revokeChannelSender: (provider: string, senderId: string) =>
     del(`/api/channels/trust/${encodeURIComponent(provider)}/senders/${encodeURIComponent(senderId)}`),
+  /** Opening DMs to anyone loosens a security setting: the server asks, and this confirms. */
+  setChannelTrustPolicies: (provider: string, policies: { dm?: string; group?: string }) =>
+    withSecurityConsent((c) => put<{ ok: boolean; policies: { dm: string; group: string } }>(
+      `/api/channels/trust/${encodeURIComponent(provider)}/policies`, c ? { ...policies, confirm: true } : policies)),
+  trackChannelGroup: (provider: string, channelId: string, name = '') =>
+    post<{ ok: boolean }>(`/api/channels/trust/${encodeURIComponent(provider)}/channels`, { channel_id: channelId, name }),
+  untrackChannelGroup: (provider: string, channelId: string) =>
+    del(`/api/channels/trust/${encodeURIComponent(provider)}/channels/${encodeURIComponent(channelId)}`),
+  startSenderPairing: (provider: string) =>
+    post<ChannelSenderPairing>(`/api/channels/trust/${encodeURIComponent(provider)}/pairing`, {}),
+  cancelSenderPairing: (provider: string) =>
+    del(`/api/channels/trust/${encodeURIComponent(provider)}/pairing`),
 
   // ── Tasks bulk ops (validate-all-then-apply create/update/delete) ──
   tasksBulk: (op: 'create' | 'update' | 'delete', items: Array<Record<string, unknown>>) =>
@@ -6819,10 +7114,12 @@ export const api = {
   alwaysOn: (projectId = '') =>
     get<AlwaysOnResponse>(`/api/legibility/always-on${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   alwaysOnDoc: (id: string, projectId = '') =>
-    get<AlwaysOnItem>(`/api/legibility/always-on/doc?id=${encodeURIComponent(id)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
-  /** A refused or failed write REJECTS — the server never answers a discarded edit with ok:true. */
-  saveAlwaysOnDoc: (id: string, projectId: string, body: string) =>
-    put<{ ok: boolean; item: AlwaysOnItem }>('/api/legibility/always-on/doc', { id, project_id: projectId, body }),
+    get<AlwaysOnDocument>(`/api/legibility/always-on/doc?id=${encodeURIComponent(id)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`),
+  /** A refused or failed write REJECTS — the server never answers a discarded edit with ok:true.
+   *  It replaces the whole body, so it names the revision of the copy it was built from; the answer
+   *  carries what is stored now (the gateway trims and caps it) and that body's revision. */
+  saveAlwaysOnDoc: (id: string, projectId: string, body: string, base: string) =>
+    put<{ ok: boolean; item: AlwaysOnDocument }>('/api/legibility/always-on/doc', { id, project_id: projectId, body }, basedOn(base)),
 
   // ── Desktop integration (OS-gated; server runs the subprocess) ──
   /** Reveal a path in Finder (action 'reveal') or open with the default app ('open'). */
@@ -6839,9 +7136,12 @@ export const api = {
 
   // ── Custom themes (server-persisted, shareable color identities) ──
   themes: () => get<{ themes: ThemeSummary[] }>('/api/themes').then((d) => d.themes),
-  theme: (slug: string) => get<ThemeRecord>(`/api/themes/${encodeURIComponent(slug)}`),
-  createTheme: (body: ThemeWrite) => post<{ ok: boolean; slug: string; theme: ThemeRecord }>('/api/themes', body),
-  updateTheme: (slug: string, body: ThemeWrite) => put<{ ok: boolean; theme: ThemeRecord }>(`/api/themes/${encodeURIComponent(slug)}`, body),
+  // A theme is one document — "Update theme" rewrites all of it — so the read carries the revision the
+  // same response reported for it, and the update names it (`lib/staleWrite.ts`).
+  theme: (slug: string) => get<ThemeRecord & { revision: string }>(`/api/themes/${encodeURIComponent(slug)}`),
+  createTheme: (body: ThemeWrite) => post<{ ok: boolean; slug: string; theme: ThemeRecord; revision: string }>('/api/themes', body),
+  updateTheme: (slug: string, body: ThemeWrite, base: string) =>
+    put<{ ok: boolean; theme: ThemeRecord; revision: string }>(`/api/themes/${encodeURIComponent(slug)}`, body, basedOn(base)),
   deleteTheme: (slug: string) => del(`/api/themes/${encodeURIComponent(slug)}`),
   agentProviders: () => get<{ agent_providers: AgentProvider[] }>('/api/agent-providers').then((d) => d.agent_providers),
   agentProviderAgents: (id: string, refresh = false) =>
@@ -6857,9 +7157,12 @@ export const api = {
   // `_secret_set` names the sensitive fields that already hold a stored secret. The GET
   // masks those values (they are write-only), so the form needs this list to tell "saved"
   // from "empty" — without it a masked field is indistinguishable from an unset one.
-  providerConfig: (name: string) => get<{ config: Record<string, unknown>; _secret_set?: string[] }>(`/api/providers/${encodeURIComponent(name)}/config`),
-  saveProviderConfig: (name: string, config: Record<string, unknown>) =>
-    patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
+  // `revision` is of that masked config: the form saves every field it shows, so its PATCH names
+  // the revision it was built from, and a config saved elsewhere since (Apps → Configure writes the
+  // same file) is refused with `409 stale_write` rather than overwritten.
+  providerConfig: (name: string) => get<{ config: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/providers/${encodeURIComponent(name)}/config`),
+  saveProviderConfig: (name: string, config: Record<string, unknown>, base: string) =>
+    patch<{ config: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/providers/${encodeURIComponent(name)}/config`, config, basedOn(base)),
   // Measure again whether a provider can run here (answers 202 at once: the check runs in the
   // gateway's availability child, and the card reads `checking` until the answer lands).
   // (A provider has no on/off of its own: its switch is its app's `enableApp` / `disableApp`.)
@@ -6880,8 +7183,10 @@ export const api = {
   providerInstances: (name: string) => get<{ instances: ProviderInstance[] }>(`/api/providers/${encodeURIComponent(name)}/instances`).then((d) => d.instances),
   createProviderInstance: (name: string, body: { display_name: string; config: Record<string, unknown> }) =>
     post<{ instance: ProviderInstance }>(`/api/providers/${encodeURIComponent(name)}/instances`, body),
-  updateProviderInstance: (name: string, id: string, body: { display_name?: string; config?: Record<string, unknown>; enabled?: boolean }) =>
-    put<{ instance: ProviderInstance }>(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`, body),
+  // The editor saves the instance's WHOLE config, over the revision of the one it read
+  // (`ProviderInstance.revision`); a config another tab saved since is refused, not overwritten.
+  updateProviderInstance: (name: string, id: string, config: Record<string, unknown>, base: string) =>
+    put<{ instance: ProviderInstance }>(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`, { config }, basedOn(base)),
   deleteProviderInstance: (name: string, id: string) => del(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}`),
   testProviderInstance: (name: string, id: string) => post<ProviderTestResult>(`/api/providers/${encodeURIComponent(name)}/instances/${encodeURIComponent(id)}/test`),
   // model BACKENDS (config-file instances): list + full CRUD + connectivity test.
@@ -6915,6 +7220,13 @@ export const api = {
     }))
   }),
   modelsActive: () => get<{ use_cases: Record<string, string[]> }>('/api/models/active').then((d) => d.use_cases),
+  // The same read for a surface that WRITES a chain: each use case's chain with the revision the
+  // gateway reported for exactly that chain, which `setActiveModel` names (`lib/staleWrite.ts`).
+  activeChains: () => get<{ use_cases: Record<string, string[]>; revisions: Record<string, string> }>('/api/models/active')
+    .then((d): Record<string, Revisioned<string[]>> => Object.fromEntries(Object.entries(d.use_cases).map(
+      ([uc, chain]) => [uc, { value: chain, revision: String(d.revisions?.[uc] ?? '') }]))),
+  activeChain: (useCase: string) => api.activeChains().then(
+    (c): Revisioned<string[]> => c[useCase] ?? { value: [], revision: '' }),
   // ── Search entity (Settings → Search): registered providers + use-case bindings ──
   searchProviders: () => get<{ providers: SearchProviderInfo[] }>('/api/search/providers').then((d) => d.providers),
   searchActive: () => get<{ use_cases: Record<string, string[]> }>('/api/search/active').then((d) => d.use_cases),
@@ -6966,15 +7278,7 @@ export const api = {
       '/api/models/unload', { provider }),
   // The resumable sidecar install (LMMV §3.2) for a provider declaring execution: sidecar.
   sidecarInstallStatus: (provider: string) =>
-    get<{
-      provider: string; installed: boolean; managed: boolean; install_dir: string
-      job: {
-        state: string; progress: number
-        steps: { name: string; status: string; detail: string }[]
-        log_tail: string[]; error: string; reason: string; remediation: string
-        weights_progress: number
-      }
-    }>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
+    get<SidecarInstallStatus>(`/api/models/sidecar/${encodeURIComponent(provider)}/install/status`),
   startSidecarInstall: (provider: string) =>
     post<DownloadJob>(`/api/models/sidecar/${encodeURIComponent(provider)}/install`),
   deleteSidecarInstall: (provider: string) =>
@@ -7001,6 +7305,19 @@ export const api = {
   /** Pin a frame — the ONLY path that puts one on disk, as an ordinary attachment. */
   pinScreenFrame: (session: string, frame_b64: string) =>
     post<{ ok: boolean; path: string; name: string }>('/api/chat/screen-frame/pin', { session, frame_b64 }),
+  /** How an attached image reaches the model on this chat's next turn: as an image
+   *  (`accepted`), or as its text, with the server-composed `reason`. What that text is comes
+   *  from the image's own extraction (`attachmentExtract`'s `read` and `unread`). Asked with the composer's
+   *  agent/model (and the ACP `runtime` the pick runs on, if any) before a session exists; a
+   *  session answers for itself. */
+  chatImageInput: (session: string, sel: { agent?: string; model?: string; runtime?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (session) q.set('session', session)
+    if (sel.agent) q.set('agent', sel.agent)
+    if (sel.model) q.set('model', sel.model)
+    if (sel.runtime) q.set('runtime', sel.runtime)
+    return get<ChatImageInput>(`/api/chat/image-input?${q.toString()}`)
+  },
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
@@ -7011,12 +7328,20 @@ export const api = {
   /** What other local agent tools on this machine hold. Read-only in both
    *  directions — it writes neither their config nor our home. */
   onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
-  /** Import the picked items. The server RE-SCANS and keeps only the fingerprints its own
-   *  scan found: ids travel, never items, so a caller can never name a directory to copy in.
-   *  `accepted` carries, for each picked skill whose scan has warnings, the `consent` its scan
-   *  showed: the warnings the user accepted, which its install checks against what it installs. */
+  /** Start importing the picked items: the job, which runs on in the gateway. The server
+   *  RE-SCANS and keeps only the fingerprints its own scan found: ids travel, never items, so a
+   *  caller can never name a directory to copy in. `accepted` carries, for each picked skill
+   *  whose scan has warnings, the `consent` its scan showed: the warnings the user accepted,
+   *  which its install checks against what it installs. */
   runOnboardingImport: (body: { fingerprints: string[]; accepted?: Record<string, string> }) =>
-    post<OnboardingImportReport>('/api/onboarding/import', body),
+    post<OnboardingImportJob>('/api/onboarding/import', body),
+  /** The running or last import, with its report once finished — `null` when this gateway has
+   *  run none (a first visit, or after a restart). */
+  onboardingImportJob: () => get<{ job: OnboardingImportJob | null }>('/api/onboarding/import/job').then((r) => r.job),
+  /** Stop the running import after the item it is on. */
+  stopOnboardingImport: () => del('/api/onboarding/import/job'),
+  /** Bare URL for EventSource — `status` frames (`OnboardingImportStatus`) twice a second. */
+  onboardingImportStreamUrl: () => '/api/onboarding/import/stream',
   /** The model step's VERIFICATION — build what chat would build, and report the verdict.
    *  Always 200: a refusal is a body, not a throw, because the three envelope lines are
    *  the product here and an exception would flatten them into one string. */
@@ -7032,7 +7357,11 @@ export const api = {
   bindLocalModel: (endpoint: string) =>
     post<LocalModelBindResult>('/api/onboarding/local-model/bind', { endpoint }),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
-  setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
+  // Replaces the use case's WHOLE chain, so it names the revision of the chain it was built from
+  // (`activeChains`); a chain another tab, onboarding or a provider's removal changed since is
+  // refused with `409 stale_write` rather than overwritten.
+  setActiveModel: (useCase: string, models: string[], base: string) =>
+    put<{ ok?: boolean; revision?: string }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }, basedOn(base)),
   // Re-index all knowledge + memory embeddings after the embedding model changed.
   // 409 {code:'model_not_ready'} if the new model can't produce vectors.
   startEmbeddingReindex: () => post<ReindexJob>('/api/models/embedding/reindex'),
@@ -7085,7 +7414,11 @@ export const api = {
   createChatTag: (name: string, color?: string) => post<ChatTag>('/api/chat/tags', { name, color: color || '' }),
   updateChatTag: (id: string, body: Partial<ChatTag>) => patch<ChatTag>(`/api/chat/tags/${encodeURIComponent(id)}`, body),
   deleteChatTag: (id: string) => del(`/api/chat/tags/${encodeURIComponent(id)}`),
-  setSessionTags: (session: string, tags: string[]) => put(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, { tags }),
+  // Tags in and out, applied to the session's tags as stored when the write lands — never this page's
+  // copy of the list, which another tab or the gateway (auto-tag, re-tag, bulk tag) may have changed
+  // since. Answers with the tags as stored after.
+  editSessionTags: (session: string, edit: { add?: string[]; remove?: string[] }) =>
+    put<{ ok: boolean; tags: string[] }>(`/api/chat/sessions/${encodeURIComponent(session)}/tags`, edit),
   // Suggested organization (SM T2.1). The GET only READS — a suggestion never applies
   // itself; organizeAccept is the sole path that writes folder/tags from a proposal.
   organizeSuggestion: (session: string, opts: { llm?: boolean } = {}) =>
@@ -7105,7 +7438,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | null; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -7183,9 +7516,12 @@ export const api = {
     post<{ ok: boolean; session: PlanSession; parked: boolean }>(
       `/api/chat/sessions/${encodeURIComponent(session)}/plan/activate`,
     ),
-  chatPlanEdit: (session: string, stepId: string, markdown: string) =>
+  // The markdown replaces the step's whole body, so the edit names the draft it was made on
+  // (`PlanStep.revision`): an edit of a draft a redraft has since replaced is refused with
+  // `409 stale_write` instead of putting the old draft back.
+  chatPlanEdit: (session: string, stepId: string, markdown: string, base: string) =>
     post<{ ok: boolean; session: PlanSession }>(
-      `/api/chat/sessions/${encodeURIComponent(session)}/plan/edit`, { step_id: stepId, markdown }),
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/edit`, { step_id: stepId, markdown }, basedOn(base)),
   chatPlanComment: (session: string, stepId: string, text: string) =>
     post<{ ok: boolean; session: PlanSession }>(
       `/api/chat/sessions/${encodeURIComponent(session)}/plan/comment`, { step_id: stepId, text }),
@@ -7240,7 +7576,10 @@ export const api = {
   },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
-  stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
+  // `stopped`: whether THIS press stopped a turn. False when nothing was running, a stop was
+  // already under way, or the runtime had no turn in flight — the turn's own `chat_done` says how
+  // it ended then.
+  stopChat: (session: string, force = false) => post<{ ok: boolean; stopped: boolean }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
   approve: (session: string, action: string, request_id?: string) =>
     post(`/api/chat/sessions/${session}/approve`, { action, request_id }),
 
@@ -7362,7 +7701,14 @@ export const api = {
   grillTree: (id: string) => post<GrillTreeResult>(`/api/loops/${encodeURIComponent(id)}/grill-tree`, {}),
   validateULoop: (body: Record<string, unknown>) => post<LoopValidation>('/api/loops/validate', body),
   createULoop: (body: Record<string, unknown>) => post<Loop>('/api/loops', body),
-  updateULoop: (id: string, body: Record<string, unknown>) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
+  // A rename or a workspace re-bind: the one value it names, so no revision. A write carrying the
+  // plan, a capability list or `kind_config` replaces those from the caller's copy — `saveULoopSpec`.
+  updateULoop: (id: string, body: { name?: string; workspace_dir?: string }) => put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body),
+  // A spec write built from the loop this page read — Plan Review's launch, the design cockpit's
+  // token overrides — so it names that read's revision (`Loop.revision`). The planner's finalize or
+  // another tab may have written the spec since; that copy is refused with `409 stale_write`.
+  saveULoopSpec: (id: string, body: Record<string, unknown>, base: string) =>
+    put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body, basedOn(base)),
   uLoopAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop') =>
     fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
   uLoopNudge: (id: string, text: string, taskId?: string) => post(`/api/loops/${encodeURIComponent(id)}/nudge`, taskId ? { text, task_id: taskId } : { text }),
@@ -7376,7 +7722,8 @@ export const api = {
   uLoopPlanRetry: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/retry`, {}),
   uLoopPlanApprove: (id: string, stepId: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/approve`, { step_id: stepId }),
   uLoopPlanComment: (id: string, stepId: string, text: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/comment`, { step_id: stepId, text }),
-  uLoopPlanEdit: (id: string, stepId: string, markdown: string) => post<{ ok: boolean; session: PlanSession }>(`/api/loops/${encodeURIComponent(id)}/plan/edit`, { step_id: stepId, markdown }),
+  // Names the draft it was made on (`PlanStep.revision`), like `chatPlanEdit`.
+  uLoopPlanEdit: (id: string, stepId: string, markdown: string, base: string) => post<{ ok: boolean; session: PlanSession }>(`/api/loops/${encodeURIComponent(id)}/plan/edit`, { step_id: stepId, markdown }, basedOn(base)),
 
   // Design kind — the comprehensive default token set + its schema (global), and a
   // design loop's RESOLVED token tree + CSS-variable block for the live canvas.
@@ -7487,14 +7834,22 @@ export const api = {
   createSchedule: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
       { trigger_type: 'schedule', ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
-  updateSchedule: (id: string, body: Record<string, unknown>) =>
+  // The edit form saves the WHOLE automation (skip dates and the action replaced wholesale) from the
+  // copy it read, so the save names that copy's revision — on the consented resend too, which is the
+  // same write. A copy that went stale is refused with `409 stale_write` (`lib/staleWrite.ts`).
+  updateSchedule: (id: string, body: Record<string, unknown>, base: string) =>
     withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
       `/api/triggers/schedule:${encodeURIComponent(id)}`,
-      { ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
+      { ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) }, basedOn(base))),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
-  enableSchedule: (id: string, enabled: boolean) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`, { enabled }),
+  // Switching a trigger ON can grant what its action runs — a trigger brought over from an older
+  // version has been allowed nothing — so the gateway may ask first (`confirmation_required`), and
+  // the owner is asked in its words before the switch is resent with consent.
+  enableSchedule: (id: string, enabled: boolean) =>
+    withSecurityConsent((c) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
   // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
   // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
@@ -7524,7 +7879,19 @@ export const api = {
   task: (id: string, provider?: string) => get<TaskItem>(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskGraph: (provider?: string) => get<TaskGraphData>(`/api/tasks/graph${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   createTask: (body: Record<string, unknown>) => post<TaskItem>('/api/tasks', body),
-  updateTask: (id: string, body: Record<string, unknown>) => put<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`, body),
+  // Scalars only — a status from the board, a rename. One value written over another is the edit
+  // itself, so it names no revision; a write that carries a LIST is a whole-form save (`saveTask`).
+  updateTask: (id: string, body: TaskScalarEdit) => put<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`, body),
+  // The task page's Save: every field, the lists whole, built from the copy the page read — so it
+  // names that copy's revision (`TaskItem.revision`), and a copy the agent or another tab changed
+  // since is refused with `409 stale_write` instead of putting the old lists back.
+  saveTask: (id: string, body: Record<string, unknown>, base: string) =>
+    put<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`, body, basedOn(base)),
+  // ONE checklist item ticked or unticked, applied to the list as stored when it lands — named by
+  // its text and where the page saw it, so another writer's insert above it cannot redirect the
+  // tick. Needs no revision: it cannot undo a change made elsewhere.
+  tickTaskItem: (id: string, list: 'exit_criteria' | 'action_plan', index: number, text: string, done: boolean) =>
+    put<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`, { tick: { list, index, text, done } }),
   deleteTask: (id: string, provider?: string) => del(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskComments: (id: string, provider?: string) => get<{ comments: TaskComment[] }>(`/api/tasks/${encodeURIComponent(id)}/comments${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`).then((d) => d.comments),
   addTaskComment: (id: string, body: string, provider?: string) => post<TaskComment>(`/api/tasks/${encodeURIComponent(id)}/comments`, { body, provider }),
@@ -7551,6 +7918,11 @@ export const api = {
     post<{ released: boolean; claim: WorkClaim | null; reason: string }>(`/api/projects/${encodeURIComponent(id)}/work/release`, { target_id, holder }),
   createProject: (body: { name: string; brief?: string; agent_instructions_template?: string; workspace_dir?: string; name_locked?: boolean }) => post<ProjectItem>('/api/projects', body),
   updateProject: (id: string, body: Record<string, unknown>) => put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, body),
+  // The agent-instructions text is ONE document a save replaces whole, and accepting a learning
+  // proposal appends to it — so it is written over the revision of the copy it was built from
+  // (`revisions.agent_instructions_template` on the same read), never through `updateProject`.
+  setProjectInstructions: (id: string, template: string, base: string) =>
+    put<ProjectItem>(`/api/projects/${encodeURIComponent(id)}`, { agent_instructions_template: template }, basedOn(base)),
   deleteProject: (id: string, force = false) => del(`/api/projects/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
   // The user's default project — where the dashboard's create forms (a new task, a new loop)
   // start. An account preference in `entity_settings/projects.json`, so it follows the user to
@@ -7575,7 +7947,9 @@ export const api = {
   prompts: (kind?: PromptKind) => get<PromptItem[]>(`/api/prompts${kind ? `?kind=${kind}` : ''}`),
   prompt: (name: string) => get<PromptItem>(`/api/prompts/${encodeURIComponent(name)}`),
   createPrompt: (body: Record<string, unknown>) => post<{ ok: boolean; name: string; prompt: PromptItem }>('/api/prompts', body),
-  savePrompt: (name: string, body: Record<string, unknown>) => put<{ ok: boolean; prompt: PromptItem }>(`/api/prompts/${encodeURIComponent(name)}`, body),
+  // Every field is rebuilt from the copy the editor read, so the save names that read's `revision`.
+  savePrompt: (name: string, body: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; prompt: PromptItem; revision: string }>(`/api/prompts/${encodeURIComponent(name)}`, body, basedOn(base)),
   deletePrompt: (name: string) => del(`/api/prompts/${encodeURIComponent(name)}`),
   renderPrompt: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompts/${encodeURIComponent(name)}/render`, { variables }),
   // Runnable "campaign template" (#17): render with values + create+start a loop.
@@ -7590,7 +7964,8 @@ export const api = {
   snippets: () => get<PromptSnippet[]>('/api/prompt-snippets'),
   snippet: (name: string) => get<PromptSnippet>(`/api/prompt-snippets/${encodeURIComponent(name)}`),
   createSnippet: (body: Record<string, unknown>) => post<{ ok: boolean; name: string; snippet: PromptSnippet }>('/api/prompt-snippets', body),
-  saveSnippet: (name: string, body: Record<string, unknown>) => put<{ ok: boolean; snippet: PromptSnippet }>(`/api/prompt-snippets/${encodeURIComponent(name)}`, body),
+  saveSnippet: (name: string, body: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; snippet: PromptSnippet; revision: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}`, body, basedOn(base)),
   // carries the backend message (e.g. the 409 "included by N items" usage guard) so
   // the UI can explain why a delete was refused — not the generic del() "delete failed".
   deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
@@ -7602,9 +7977,17 @@ export const api = {
   // skills
   skills: () => get<SkillItem[]>('/api/skills'),
   skillFiles: (name: string, path?: string) => get<{ name: string; files?: SkillFile[]; path?: string; content?: string }>(`/api/skills/${encodeURIComponent(name)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),
-  skillContent: (name: string) => get<{ content?: string }>(`/api/skills/${encodeURIComponent(name)}`).then((d) => d.content ?? ''),
+  // The SKILL.md a session loads — accepted refinements included — with the revision the same read
+  // reported for it. The editor saves over that revision; `skillContent` is the read-only view.
+  skillDocument: (name: string) =>
+    get<{ content?: string; revision: string }>(`/api/skills/${encodeURIComponent(name)}`).then(
+      (d): Revisioned<string> => ({ value: d.content ?? '', revision: d.revision })),
+  skillContent: (name: string) => api.skillDocument(name).then((d) => d.value),
   createSkill: (name: string, content: string) => post<{ ok: boolean }>('/api/skills', { name, content }),
-  updateSkill: (name: string, content: string) => put<{ ok: boolean }>(`/api/skills/${encodeURIComponent(name)}`, { content }),
+  // Replaces the whole SKILL.md, which the gateway also rewrites (curator, refinements, app and pack
+  // updates) — so it names the revision of the copy it was built from.
+  updateSkill: (name: string, content: string, base: string) =>
+    put<{ ok: boolean; revision: string }>(`/api/skills/${encodeURIComponent(name)}`, { content }, basedOn(base)),
   deleteSkill: (name: string) => del(`/api/skills/${encodeURIComponent(name)}`),
   verifySkill: (name: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify`),
   // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
@@ -7791,10 +8174,19 @@ export const api = {
   // settings; every header value is kept there too. `keepEnv` / `keepHeaders` name values whose saved
   // value stays as it is: the edit form sends a secret it only showed masked this way, so the value
   // never comes to the browser and back.
-  saveMcpServer: (name: string, body: McpServerSave) =>
-    put<{ ok?: boolean; name: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
-  // What the edit form reads: names, plain values, and for a stored value only whether one is saved.
-  mcpServerDefinition: (name: string) => get<McpServerDefinition>(`/api/mcp/servers/${encodeURIComponent(name)}`),
+  //
+  // ADDING a name nobody has configured replaces nothing, so it names no base; the gateway answers a
+  // name that is already taken with `428 revision_required`.
+  addMcpServer: (name: string, body: McpServerSave) =>
+    put<{ ok?: boolean; name: string; revision: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body),
+  // EDITING one replaces its definition with the form's copy, so the save names the revision of the
+  // definition the form was seeded from, and a stale one is refused with `409 stale_write`.
+  saveMcpServer: (name: string, body: McpServerSave, base: string) =>
+    put<{ ok?: boolean; name: string; revision: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`, body, basedOn(base)),
+  // What the edit form reads: names, plain values, and for a stored value only whether one is saved —
+  // with the revision of exactly that view.
+  mcpServerDefinition: (name: string) =>
+    get<McpServerDefinition & { revision: string }>(`/api/mcp/servers/${encodeURIComponent(name)}`),
   // Removes the server from mcp.json AND the agent config, and deletes the values it owns in the
   // credential store. Never another tool's config.
   removeMcpServer: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}`),
@@ -7829,11 +8221,14 @@ export const api = {
 
   // voice — STT/TTS resolve through the use-case BINDING (same as chat/embedding):
   // the active model is /api/models/active; provider-agnostic behavior
-  // (enabled/language/speed) lives in per-use-case settings.
+  // (enabled/language/speed) lives in per-use-case settings. The file is saved WHOLE — and the
+  // routing levers and channel apps write it too — so the read carries its revision and the save
+  // names it; a file changed since is refused with `409 stale_write` rather than overwritten.
   useCaseSettings: (useCase: string) =>
-    get<{ use_case: string; settings: Record<string, unknown> }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`).then((d) => d.settings),
-  saveUseCaseSettings: (useCase: string, settings: Record<string, unknown>) =>
-    put<{ ok: boolean; settings: Record<string, unknown> }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`, settings),
+    get<{ use_case: string; settings: Record<string, unknown>; revision: string }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`)
+      .then((d): Revisioned<Record<string, unknown>> => ({ value: d.settings, revision: d.revision })),
+  saveUseCaseSettings: (useCase: string, settings: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; settings: Record<string, unknown>; revision: string }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`, settings, basedOn(base)),
 
   // terminal (PTY)
   createTerminal: (cwd?: string, sandbox?: string) => post<{ session_id: string; shell?: string; cwd?: string; sandbox?: string }>('/api/terminal/sessions', { ...(cwd ? { cwd } : {}), ...(sandbox ? { sandbox } : {}) }),
@@ -7861,15 +8256,21 @@ export const api = {
       action: { provider: body.provider, config: body.provider_config ?? {} },
       ...(c ? { confirm: true } : {}),
     })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
-  updateHook: (id: string, body: Record<string, unknown>) =>
+  // The edit form saves the whole trigger (`provider_config` replaced as one object) from the copy it
+  // read, so the save — and its consented resend — names that copy's revision (`HookItem.revision`).
+  updateHook: (id: string, body: Record<string, unknown>, base: string) =>
     withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, {
       ...('provider' in body || 'provider_config' in body
         ? { ...body, action: { provider: body.provider, config: body.provider_config ?? {} } }
         : body),
       ...(c ? { confirm: true } : {}),
-    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+    }, basedOn(base))).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
-  toggleHook: (id: string) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`, {}),
+  // Asks first when switching ON grants what the action runs — see `enableSchedule`. Allow on a hook
+  // that is on is the switch sent on again.
+  toggleHook: (id: string, enabled: boolean) =>
+    withSecurityConsent((c) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
 
   // store triggers — the unified TriggerStore kinds with no legacy backend
@@ -7877,8 +8278,10 @@ export const api = {
   // here so the Automations page can list/pause/run/delete them. The raw_id is
   // itself <kind>:<slug>, so the namespaced route is `store:<raw_id>`.
   storeTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=store').then((d) => d.triggers),
+  // Asks first when switching ON grants what the action runs — see `enableSchedule`.
   toggleStoreTrigger: (rawId: string, enabled: boolean) =>
-    post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`, { enabled }),
+    withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
+      c ? { enabled, confirm: true } : { enabled })),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),
   runStoreTrigger: (rawId: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/store:${encodeURIComponent(rawId)}/run`, dryRun ? { dry_run: true } : {}),
@@ -7976,9 +8379,13 @@ export const api = {
   knowledgeItemGraph: (id: string) => get<KnowledgeIngestGraph>(`/api/knowledge/items/${encodeURIComponent(id)}/graph`),
   // intent-driven ingestion (Tier 3): natural-language intents + by-value outcomes.
   knowledgeIntents: () => get<{ intents: KnowledgeIntent[] }>('/api/knowledge/intents'),
-  // New intents omit id (the backend derives the slug from the goal); edits send it.
-  upsertKnowledgeIntent: (body: Omit<KnowledgeIntent, 'id'> & { id?: string }) =>
+  // A new intent omits the id (the backend derives the slug from the goal) and needs no base.
+  createKnowledgeIntent: (body: Omit<KnowledgeIntentRecord, 'id'>) =>
     post<{ intents: KnowledgeIntent[]; id: string }>('/api/knowledge/intents', body),
+  // An edit sends the id and replaces the WHOLE record, so it names the `revision` of the copy it
+  // was built from; a record changed or deleted since is refused with `409 stale_write`.
+  saveKnowledgeIntent: (record: KnowledgeIntentRecord, base: string) =>
+    post<{ intents: KnowledgeIntent[]; id: string }>('/api/knowledge/intents', record, basedOn(base)),
   deleteKnowledgeIntent: (id: string) => del(`/api/knowledge/intents/${encodeURIComponent(id)}`),
   // Everything an intent has gathered (outcomes link back to source items by id).
   knowledgeIntentOutcomes: (id: string) =>
@@ -7993,7 +8400,15 @@ export const api = {
   knowledgeItemIntents: (id: string) =>
     get<{ outcomes: IntentOutcome[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/intents`),
   createKnowledgeItem: (body: Record<string, unknown>) => post<KnowledgeItem>('/api/knowledge/items', body),
-  updateKnowledgeItem: (id: string, body: Record<string, unknown>) => patch<{ ok: boolean }>(`/api/knowledge/items/${encodeURIComponent(id)}`, body),
+  // Scalars, flags, and tags one name at a time (`add_tags`/`remove_tags`, applied to the tags
+  // stored when it lands). Nothing here replaces a whole document, so it names no base.
+  updateKnowledgeItem: (id: string, body: KnowledgeItemEdit) =>
+    patch<{ ok: boolean; content_revision: string }>(`/api/knowledge/items/${encodeURIComponent(id)}`, body),
+  // An edit carrying the BODY, which is replaced whole: it names the `content_revision` of the copy
+  // it was built from, and a body rewritten since (the agent, the pipeline, a rename's relink,
+  // another tab) is refused with `409 stale_write`. Answers with the body's new revision.
+  saveKnowledgeItem: (id: string, body: Record<string, unknown> & { content: string; tags?: never }, base: string) =>
+    patch<{ ok: boolean; content_revision: string }>(`/api/knowledge/items/${encodeURIComponent(id)}`, body, basedOn(base)),
   deleteKnowledgeItem: (id: string) => del(`/api/knowledge/items/${encodeURIComponent(id)}`),
   knowledgeProviders: () => get<{ providers: Array<{ name: string; display_name: string; always_on: boolean; kind: string }> }>('/api/knowledge/providers').then((d) => d.providers),
   // ── Watched sources ──
@@ -8005,12 +8420,16 @@ export const api = {
     name: string; provider: string; spec: Record<string, unknown>
     enrichment?: string; poll_interval_secs?: number; budget?: Record<string, unknown>
   }) => post<{ source: WatchedSource }>('/api/knowledge/sources', body),
-  // The remediation + lifecycle path: `budget.allow_render` for a JS shell, `spec.url` for a
-  // wrong URL, `enabled` to stop a source polling. Partial — an absent key is untouched.
+  // The lifecycle path: `enabled` to stop a source polling, a rename, a cadence. Partial — an absent
+  // key is untouched — and scalar, so it names no base.
   updateKnowledgeSource: (id: string, body: {
     name?: string; enabled?: boolean; enrichment?: string; poll_interval_secs?: number
-    spec?: Record<string, unknown>; budget?: Record<string, unknown>
   }) => patch<{ source: WatchedSource }>(`/api/knowledge/sources/${encodeURIComponent(id)}`, body),
+  // The remediation path: `budget.allow_render` for a JS shell, `spec.url` for a wrong URL. Both
+  // objects are written WHOLE, so the save names the `revision` of the copy they were built from;
+  // settings changed since are refused with `409 stale_write`.
+  saveKnowledgeSourceSettings: (id: string, settings: { spec: Record<string, unknown>; budget: Record<string, unknown> }, base: string) =>
+    patch<{ source: WatchedSource }>(`/api/knowledge/sources/${encodeURIComponent(id)}`, settings, basedOn(base)),
   // The dry run. Persists nothing but DOES spend the request budget — it is a real fetch
   // at somebody else's server. Only the web kind has one (`SourceKind.previewable`).
   previewKnowledgeSource: (body: { provider: string; spec: Record<string, unknown>; budget?: Record<string, unknown> }) =>
@@ -8301,7 +8720,9 @@ export const api = {
   // Merges: only the keys named in the body change. Rejects an unknown kind/mode/target
   // rather than persisting something the read path would silently ignore.
   // A rule value of `null` CLEARS the stored rule so the row inherits the registry default again
-  // (#285). Every other value is a partial merge over what is stored — one control per PUT.
+  // (#285). Every other value is a partial merge over what is stored — one control per PUT — and a
+  // rule's two lists change one entry per PUT (`NotificationListEdit`), so no save here carries a
+  // copy of the rules and none needs a revision.
   saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch | null>; digest?: { schedule?: string } }) =>
     put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
   // ── The triage digest ──
@@ -8353,8 +8774,10 @@ export const api = {
   deleteSemantic: (key: string) => del(`/api/memory/semantic/${encodeURIComponent(key)}`),
   memoryEpisodic: (opts: { offset?: number; limit?: number; tags?: string } = {}) =>
     get<{ entries: EpisodicEntry[] }>(`/api/memory/episodic?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}${opts.tags ? `&tags=${encodeURIComponent(opts.tags)}` : ''}`).then((d) => d.entries),
+  // The search answers `{results, ranking}` (the list answers `{entries}`); reading `entries` here
+  // made every search look empty.
   searchEpisodic: (q: string, tags?: string) =>
-    get<{ entries: EpisodicEntry[] }>(`/api/memory/episodic/search?q=${encodeURIComponent(q)}${tags ? `&tags=${encodeURIComponent(tags)}` : ''}`).then((d) => d.entries),
+    get<{ results: EpisodicEntry[] }>(`/api/memory/episodic/search?q=${encodeURIComponent(q)}${tags ? `&tags=${encodeURIComponent(tags)}` : ''}`).then((d) => d.results),
   deleteEpisodic: (id: string) => del(`/api/memory/episodic/${encodeURIComponent(id)}`),
   memoryEvents: (opts: { offset?: number; limit?: number } = {}) =>
     get<{ events: MemoryEvent[] }>(`/api/memory/events?limit=${opts.limit ?? 50}&offset=${opts.offset ?? 0}`).then((d) => d.events),
@@ -8365,15 +8788,22 @@ export const api = {
   consolidateMemory: (key: string) => post<{ ok?: boolean; key?: string; error?: string }>('/api/memory/consolidate', { key }),
   securityStats: () => get<SecurityStats>('/api/security/stats'),
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
-  // Removing a pattern loosens the denylist, so it goes through the consent step with every other
-  // security write (`patchConfig`).
-  setUserDeniedCommands: (patterns: string[]) => api.patchConfig('security.denied_commands', patterns),
-  securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  // One pattern in or out, applied to the stored list when it lands — never the page's whole copy
+  // of the list, which another tab may have changed since. Removing a pattern loosens the denylist,
+  // so it goes through the consent step with every other security write.
+  addDeniedCommand: (pattern: string) => api.patchConfigItem('security.denied_commands', 'add', pattern),
+  removeDeniedCommand: (pattern: string) => api.patchConfigItem('security.denied_commands', 'remove', pattern),
+  // The overrides are ONE document (all three keys are saved together), so the read carries the
+  // revision the write names.
+  securityEgress: () => get<EgressPolicyConfig & { revision: string }>('/api/security/egress').then(
+    ({ revision, ...value }): Revisioned<EgressPolicyConfig> => ({ value, revision })),
   outsideHome: () => get<OutsideHomeState>('/api/security/outside-home'),
-  // The whole list of allowed places. Adding one is a loosening the gateway asks about unless
-  // `confirmed` says the panel already asked; removing one never asks.
-  setOutsideHome: (ids: string[], confirmed = false) =>
-    api.patchConfig('security.outside_home', ids, confirmed),
+  // One place in or out of the allowed list, applied to what is stored when it lands — never the
+  // page's copy of the whole list, which another tab may have changed since. Adding one is a
+  // loosening the gateway asks about unless `confirmed` says the panel already asked; removing one
+  // never asks.
+  setOutsideHomePlace: (id: string, allowed: boolean, confirmed = false) =>
+    api.patchConfigItem('security.outside_home', allowed ? 'add' : 'remove', id, confirmed),
   // The credential store. Both writes send `confirm: true`: the flag is the
   // protocol-level record that the user was shown the snapshot step, and the backend
   // refuses without it independently, so this client cannot skip the consent.
@@ -8385,18 +8815,22 @@ export const api = {
   // Turning the keychain OFF sends new credentials to .env — the gateway asks for consent.
   setCredentialKeychain: (on: boolean) => api.patchConfig('security.credential_keychain', on),
   // Which MCP servers may interrupt a tool call to ask the user a question
-  // (`elicitation/create`). The grant is per SERVER, so the wire value is the whole
-  // allowlist and the caller adds/removes one name: a boolean here would be the global
+  // (`elicitation/create`). The grant is per SERVER: a boolean here would be the global
   // "MCP can interrupt me" switch the security shape forbids. Read via the config blob
   // rather than a bespoke GET — it is one plain field, and inventing an endpoint for it
   // would put the grant behind two doors that could disagree.
   mcpElicitationServers: () =>
     get<Record<string, any>>('/api/config/personalclaw').then(
       (c) => (c?.security?.mcp_elicitation_servers ?? []) as string[]),
-  // A new name on the list is a new grant. `confirmed` is the Tools page's own "Let … ask you
-  // questions?" dialog, so the owner is not asked a second time.
-  setMcpElicitationServers: (names: string[], confirmed = false) =>
-    api.patchConfig('security.mcp_elicitation_servers', names, confirmed),
+  // ONE server's grant, in or out, applied to the stored allowlist when it lands. This used to send
+  // the page's whole copy of the list with one name spliced in, so a tab opened before another tab
+  // granted a server revoked that grant the moment it touched any other server.
+  // `confirmed` is the Tools page's own "Let … ask you questions?" dialog, so the owner is not asked
+  // a second time; a revoke needs no consent.
+  grantMcpElicitation: (server: string, confirmed = false) =>
+    api.patchConfigItem('security.mcp_elicitation_servers', 'add', server, confirmed),
+  revokeMcpElicitation: (server: string) =>
+    api.patchConfigItem('security.mcp_elicitation_servers', 'remove', server),
   // The secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",
@@ -8422,13 +8856,14 @@ export const api = {
   desktopState: () => get<DesktopStateWire>('/api/desktop/state'),
   // Allowing a host or private addresses, or dropping a denied host, widens the guard. `confirmed`
   // is the panel's own "Allow egress to all private networks?" dialog.
-  setSecurityEgress: (cfg: EgressPolicyConfig, confirmed = false) =>
-    api.patchConfig('security.egress', cfg, confirmed),
+  setSecurityEgress: (cfg: EgressPolicyConfig, base: string, confirmed = false) =>
+    api.patchConfigDocument('security.egress', cfg, base, confirmed),
   // Tool-output projection rules (TokenJuice OP6). Read from the whole-config GET
-  // (tools.projection_rules); written via the config PATCH allowlist.
-  projectionRules: () => get<Record<string, any>>('/api/config/personalclaw').then(
-    (c) => ((c?.tools?.projection_rules ?? []) as ProjectionRule[])),
-  setProjectionRules: (rules: ProjectionRule[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'tools.projection_rules', value: rules }),
+  // (tools.projection_rules) with the revision of that list; written whole via the config PATCH,
+  // over that revision.
+  projectionRules: () => api.configDocument<ProjectionRule[]>('tools.projection_rules', []),
+  setProjectionRules: (rules: ProjectionRule[], base: string) =>
+    api.patchConfigDocument('tools.projection_rules', rules, base),
   // TokenJuice savings (counterfactual) summary — estimated tokens saved by output
   // projection this month, top compressor, per-compressor breakdown.
   toolsSavings: () => get<ToolsSavings>('/api/tools/savings'),
@@ -8451,8 +8886,11 @@ export const api = {
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used
-  // by the chat attachment-chip preview. Awaits the upload-time extraction.
-  attachmentExtract: (path: string) => get<{ name: string; text: string }>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
+  // by the chat attachment-chip preview. Awaits the extraction started at upload, or starts it
+  // (an image is read only when this asks).
+  /** What extraction got from an uploaded attachment. `read` is false when `text` is only the
+   *  file's size and format — nothing could read its content. */
+  attachmentExtract: (path: string) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),
   uploadFiles: async (
     files: File[],
     onProgress?: (fileIndex: number, p: { loaded: number; total: number; pct: number }) => void,
@@ -8488,9 +8926,19 @@ export const api = {
     if (!r.ok) throw await apiError(r)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
     // X-Binary: the server detected non-text content (NUL bytes) — don't treat the
     // empty body as an editable file; the viewer shows a binary placeholder.
-    return { content: await r.text(), truncated: r.headers.get('X-Truncated') === 'true', binary: r.headers.get('X-Binary') === 'true' }
+    // ETag: the revision of exactly this text — a save names it as its base (`fileWrite`). Absent
+    // on a truncated or binary read, which is no copy of the file.
+    const etag = r.headers.get('ETag')
+    return {
+      content: await r.text(), truncated: r.headers.get('X-Truncated') === 'true', binary: r.headers.get('X-Binary') === 'true',
+      revision: etag ? etag.replace(/^W\//, '').replace(/"/g, '') : null,
+    }
   }),
-  fileWrite: (path: string, content: string) => post<{ ok: boolean }>('/api/file-write', { path, content }),
+  // The body replaces the WHOLE file, so it names the revision of the copy it was built from; a
+  // file changed since (the agent, another tab) is refused with `409 stale_write`
+  // (`lib/staleWrite.ts`). Answers with the revision the file now reads at.
+  fileWrite: (path: string, content: string, base: string) =>
+    post<{ ok: boolean; revision: string | null }>('/api/file-write', { path, content }, basedOn(base)),
   fileCreate: (parent: string, name: string, kind: 'file' | 'dir', content?: string) =>
     post<{ ok: boolean; path: string; is_dir: boolean }>('/api/file-create', { path: parent, name, kind, content }),
   fileMove: (src: string, dest: string) => post<{ ok: boolean; path: string }>('/api/file-move', { src, dest }),
@@ -8576,8 +9024,10 @@ export const api = {
     get<{ defs: WorkflowSurfacingRow[]; total: number; findings: WorkflowSurfacingFinding[] }>(
       '/api/workflows/surfacing',
     ),
+  /** One definition, and the `revision` of exactly the definition handed out — what a save over it
+   *  names (`saveWorkflowDef`'s `base`). */
   workflowDef: (name: string) =>
-    get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
+    get<{ definition: WorkflowDef; provider: string; revision: string }>(`/api/workflows/${encodeURIComponent(name)}`),
   /** Validate a definition and, unless `save: false` (the engine's dry run), save it — a new version.
    *
    *  The body is the WHOLE editable definition, not a subset: every field a definition has
@@ -8585,12 +9035,17 @@ export const api = {
    *  writes a definition without it. `based_on` names what the edit started from — another
    *  definition for a copy, and `based_on_version` one recorded version for a restore — because
    *  the read this edit started from hid some values (`_has_<key>` flags) and the server restores
-   *  them from THAT. A refused save is a 422 whose `detail` carries the same `issues`. */
-  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; based_on?: string; based_on_version?: number; save?: boolean; [field: string]: unknown }) =>
+   *  them from THAT. A refused save is a 422 whose `detail` carries the same `issues`.
+   *
+   *  Saving over a definition of yours replaces it, so the save names the revision of the copy it
+   *  was built from (`base`, the consent resend too): a stale one is refused with `409 stale_write`
+   *  instead of undoing a change saved since, and none is `428 revision_required`
+   *  (`lib/staleWrite.ts`). A new name — a copy — and a dry run replace nothing and send none. */
+  saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; based_on?: string; based_on_version?: number; save?: boolean; [field: string]: unknown }, base?: string) =>
     // A step whose agent approves its own tool calls (or holds the write grant) is asked for
     // when a save loosens it; a dry run (`save: false`) writes nothing and is never asked.
-    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; lint?: { findings?: Array<{ code: string; message: string; path?: string; severity?: string }> }; levels?: string[][] }>('/api/workflows',
-      c ? { ...body, confirm: true } : body)),
+    withSecurityConsent((c) => post<{ saved: boolean; definition?: WorkflowDef; revision?: string; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; lint?: { findings?: Array<{ code: string; message: string; path?: string; severity?: string }> }; levels?: string[][] }>('/api/workflows',
+      c ? { ...body, confirm: true } : body, base ? basedOn(base) : undefined)),
   // Publish/unpublish one template as an A2A skill. Its own route, not a
   // field on `saveWorkflowDef`: one bool must not re-validate and re-save the whole definition.
   publishWorkflowToA2A: (name: string, published: boolean) =>
@@ -8636,10 +9091,12 @@ export const api = {
    *  semantics — the body IS the overlay, so `{}` clears every override. Prelaunch only:
    *  a launched run answers 409 `run_not_prelaunch` (the engine's own saves would silently
    *  revert a live edit), and an unknown knob is a 400 `unknown_policy_key` naming the
-   *  offending keys and the overridable set. */
-  setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>) =>
-    withSecurityConsent((c) => put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
-      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, c ? { ...overrides, confirm: true } : overrides)),
+   *  offending keys and the overridable set. Because it replaces the whole overlay it names the
+   *  revision of the copy it was built from (`revisions.policy_overrides` on the run read) — the
+   *  consent resend too — and answers with the new one. */
+  setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>, base: string) =>
+    withSecurityConsent((c) => put<{ run_id: string; status: string; policy_overrides: Record<string, unknown>; revisions: { policy_overrides: string } }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, c ? { ...overrides, confirm: true } : overrides, basedOn(base))),
   /** Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny binds to.
    *  Separate from `resumeWorkflowRun` because the verb vocabulary is the point: an unknown verb is
    *  REFUSED server-side rather than treated as a reject, so a typo cannot silently decline work the
@@ -8790,9 +9247,31 @@ export const api = {
   // probes that shouldn't spam the console with expected not-founds.
   artifactExists: (slug: string) =>
     get<{ exists: boolean }>(`/api/artifacts/${encodeURIComponent(slug)}?probe=1`).then((d) => d.exists),
-  createArtifact: (body: { name: string; content: string; kind?: string; source?: string; source_path?: string; description?: string; tags?: string[]; slug?: string; project_id?: string }) =>
+  // A create replaces nothing, so it names no base. A save that points at a FILE is not one — it
+  // writes its body through to the file (`saveFileAsArtifact`).
+  createArtifact: (body: { name: string; content: string; kind?: string; source?: string; description?: string; tags?: string[]; slug?: string; project_id?: string }) =>
     post<Artifact>('/api/artifacts', body),
-  updateArtifact: (slug: string, body: Record<string, unknown>) => patch<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`, body),
+  // "Save as artifact" from the file viewer. The body is the viewer's draft of the file, and the
+  // gateway writes it through to that file — so it names the revision of the copy the draft was
+  // built from (the `fileRead` ETag), and a file changed since is refused with `409 stale_write`.
+  saveFileAsArtifact: (body: { name: string; content: string; kind: string; source_path: string }, base: string) =>
+    post<Artifact>('/api/artifacts', { ...body, source: 'manual' }, basedOn(base)),
+  // Metadata (name, description, collection) or a server-side revert. The body and the tags have
+  // writers of their own below, because each needs something a metadata edit does not.
+  updateArtifact: (slug: string, body: { name?: string; description?: string; collection?: string } | { event_type: 'reverted'; from_version: number }) =>
+    patch<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`, body),
+  // The body is replaced WHOLE, so a save names the `content_revision` of the copy it was built
+  // from; one the artifact no longer has — the agent's update, a write to its source file,
+  // another tab — is `409 stale_write`, and nothing is written. A snapshot is the same save
+  // cutting a new version.
+  saveArtifactBody: (slug: string, content: string, base: string) =>
+    patch<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`, { content, snapshot: false, event_type: 'edited' }, basedOn(base)),
+  snapshotArtifactBody: (slug: string, content: string, base: string) =>
+    patch<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`, { content, snapshot: true, event_type: 'iterated' }, basedOn(base)),
+  // Tags one name at a time, applied to the tags stored when the write lands — never the page's
+  // copy of the list, which would be missing any tag added elsewhere since.
+  editArtifactTags: (slug: string, edit: { add?: string[]; remove?: string[] }) =>
+    patch<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}`, { add_tags: edit.add ?? [], remove_tags: edit.remove ?? [] }),
   deleteArtifact: (slug: string) => del(`/api/artifacts/${encodeURIComponent(slug)}`),
   // Re-run image generation for a deleted/missing inline image AT THE SAME SLUG
   // (recovers the original prompt from the session's tool history) so the chat
@@ -8930,10 +9409,13 @@ export const api = {
   removeApp: (name: string) => del(`/api/apps/${encodeURIComponent(name)}?remove=1`),
   appUninstallPreview: (name: string) =>
     get<{ name: string; dependencies: AppDepClassification[]; data?: AppDataFacts }>(`/api/apps/${encodeURIComponent(name)}/uninstall-preview`),
+  // The save REPLACES the app's settings file, so it names the revision of the (masked) config it
+  // was built from; one saved elsewhere since — Settings → Providers writes the same file, and so
+  // does the app itself — is refused with `409 stale_write` rather than overwritten.
   appConfig: (name: string) =>
-    get<{ name: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[] }>(`/api/apps/${encodeURIComponent(name)}/config`),
-  saveAppConfig: (name: string, config: Record<string, unknown>) =>
-    put<{ ok: boolean; config: Record<string, unknown> }>(`/api/apps/${encodeURIComponent(name)}/config`, config),
+    get<{ name: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/config`),
+  saveAppConfig: (name: string, config: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/config`, config, basedOn(base)),
   // Store catalog: available-to-install apps (bundled-not-installed + git sources).
   // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
   // = the subset that cannot be removed (bundled into every read), so the UI hides a remove

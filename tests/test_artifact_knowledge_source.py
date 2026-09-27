@@ -175,11 +175,11 @@ async def test_mirror_is_searchable_but_absent_from_the_items_list(store, artifa
 
 
 class _NoEmbedder:
-    """A present-but-unavailable embedder, seeded so ``_get_embedder`` takes its fast path.
+    """A present-but-unavailable embedder, standing in for ``get_knowledge_embedder()``.
 
-    Without it the handler builds one from config on demand, which is a model load inside a
-    unit test. The retriever then runs FTS + graph only — which is exactly the path this file
-    is asserting about, so nothing is being papered over.
+    Without it the handler builds one from the binding on demand, which can be a model load
+    inside a unit test. The retriever then runs FTS + graph only — which is exactly the path
+    this file is asserting about, so nothing is being papered over.
     """
 
     @staticmethod
@@ -215,9 +215,12 @@ async def _list(handler, store, query: dict) -> dict:
     class _Req:
         def __init__(self) -> None:
             self.query = query
-            self.app = {"state": _State(), "knowledge_embedder": _NoEmbedder()}
+            self.app = {"state": _State()}
 
-    resp = await handler(_Req())
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("personalclaw.knowledge.get_knowledge_embedder", return_value=_NoEmbedder()):
+        resp = await handler(_Req())
     return _json.loads(resp.body.decode())
 
 
@@ -512,6 +515,6 @@ def test_the_field_is_patchable_without_a_restart():
     """It is in the PATCH allowlist, so the toggle in Settings → Sources saves. A field the
     frontend renders but the write path rejects is a control that reports success and moves
     nothing."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["knowledge.auto_ingest_artifacts"] == {"type": "bool"}

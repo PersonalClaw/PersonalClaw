@@ -43,11 +43,12 @@ WEB_SRC = REPO / "web/src"
 #:   ``patchCap(path)``, i.e. ``api.patchConfig`` with a path held in a VARIABLE (built from the
 #:   server's surface list). Neither of #2801's two instruments — an exact dotted literal, or a
 #:   ``patchConfig(`section.${…}`)`` template — can see that shape.
-#: * ``security`` — all four are written by dedicated ``api.set*`` helpers that raw-``patch`` the
-#:   config endpoint (``setUserDeniedCommands``, ``setSecurityEgress``, ``setCredentialKeychain``,
-#:   ``setMcpElicitationServers``). #2801's own caveat anticipated exactly this ("a section could be
-#:   written by a dedicated route rather than ``patchConfig``") and checked two candidates; these
-#:   four were not among them.
+#: * ``security`` — all four are written by dedicated ``api`` helpers over the config endpoint
+#:   (``addDeniedCommand``/``removeDeniedCommand`` and ``grantMcpElicitation``/
+#:   ``revokeMcpElicitation`` edit one entry through ``patchConfigItem``; ``setSecurityEgress`` and
+#:   ``setCredentialKeychain`` write their value). #2801's own caveat anticipated exactly this ("a
+#:   section could be written by a dedicated route rather than ``patchConfig``") and checked two
+#:   candidates; these four were not among them.
 IN_SCOPE_SECTIONS = (
     "workflows",
     "external_access",
@@ -87,6 +88,7 @@ PLUMBING = (
     "src/personalclaw/config/learning.py",
     "src/personalclaw/config/external_access.py",
     "src/personalclaw/config/coercion.py",
+    "src/personalclaw/config/editable.py",
     "src/personalclaw/dashboard/handlers/core.py",
 )
 
@@ -109,7 +111,7 @@ def _frontend_sources() -> dict[str, str]:
 
 
 def _allowlist() -> dict[str, dict]:
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     return _EDITABLE_CONFIG
 

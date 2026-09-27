@@ -708,7 +708,7 @@ function AppInner() {
           </motion.div>
         </ErrorBoundary>
       </main>
-      <CommandPalette commands={commands} />
+      <CommandPalette commands={commands} navigate={navigate} />
       {/* The replayable product tour — shell-level because its stops
           are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
           it walks between them. Renders NOTHING until the onboarding done screen or the

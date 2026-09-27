@@ -42,7 +42,7 @@ async function mountList(intents: KnowledgeIntent[]) {
       api: {
         ...(real.api as object),
         knowledgeIntents: () => Promise.resolve({ intents }),
-        upsertKnowledgeIntent: vi.fn(() => Promise.resolve({ intents: [], id: intents[0]?.id })),
+        saveKnowledgeIntent: vi.fn(() => Promise.resolve({ intents: [], id: intents[0]?.id })),
       },
     }
   })

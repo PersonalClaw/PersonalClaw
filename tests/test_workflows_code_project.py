@@ -469,7 +469,8 @@ def _success_when_spec(output: dict) -> dict:
 
     `transform` rather than `stage` because a stage parks in RUNNING waiting on a subagent;
     the predicate under test is evaluated by the controller at the same seam either way
-    (`_execute` → `_check_success_when`), and this way the run reaches a terminal state.
+    (`_execute` → `step_dispatch._check_success_when`), and this way the run reaches a terminal
+    state.
     """
     return {
         "name": "repro-predicate",

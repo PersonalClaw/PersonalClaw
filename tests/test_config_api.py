@@ -371,7 +371,13 @@ class TestAgentCrudProperties:
                     if update_ms:
                         body["memory_store"] = new_ms
 
-                    resp = await client.put("/api/agents/test-agent", json=body)
+                    # Several fields at once is a record write: it names the revision the list
+                    # reported for the agent, as the editor does (`personalclaw/stale_write.py`).
+                    listed = (await (await client.get("/api/agents")).json())["agents"]
+                    base = next(a for a in listed if a["name"] == "test-agent")["revision"]
+                    resp = await client.put(
+                        "/api/agents/test-agent", json=body, headers={"If-Match": f'"{base}"'}
+                    )
                     assert resp.status == 200
 
                     resp = await client.get("/api/agents")

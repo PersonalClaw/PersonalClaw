@@ -3,11 +3,20 @@ import { MessageSquarePlus, Send, Gavel } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
 import { QuietButton } from '../../ui/QuietButton'
-import { api, type WorkflowNodeState } from '../../lib/api'
+import { api, type ProjectItem, type WorkflowNodeState } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { promptForm } from '../../ui/dialog'
+import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { nodeLabel } from './workflowMeta'
 import { canSteerComment, judgeComment, steerTextFromComment } from './steeringMeta'
+
+/** A project's standing guidance as the dialog edits it, with the revision the same read reported. */
+const guidanceOf = (p: ProjectItem): Revisioned<string> => ({
+  value: p.agent_instructions_template ?? '',
+  revision: p.revisions?.agent_instructions_template ?? '',
+})
 
 /** Mid-run steering + judge-comment triage for a live workflow run (LOOPS-EVOLUTION R14 /
  *  criterion 8).
@@ -79,6 +88,17 @@ export function SteeringPanel({
   // is steerable.
   const flagged = nodes.filter((n) => canSteerComment(n, true))
 
+  // 🔴 THE GUIDANCE IS SAVED OVER THE COPY THE DIALOG OPENED WITH. Accepting a learning proposal
+  // appends an instruction to this same text, and the dialog saved the whole text it was seeded
+  // with — so an instruction accepted while the dialog was open was erased by its Save. A stale copy
+  // is refused now; the answer is kept by the notice below, which re-applies it onto what is stored.
+  const guidance = useStaleWriteGuard<string>({
+    read: () => api.project(projectId ?? '').then(guidanceOf),
+    write: (next, revision) => api.setProjectInstructions(projectId ?? '', next, revision),
+    onSaved: () => notify('Judge guidance saved for this project.'),
+  })
+  const saveGuidance = guidance.save
+
   const setJudgeGuidance = useCallback(async () => {
     if (!projectId) return
     // The project's own agent-instructions template IS the standing guidance that reaches
@@ -90,9 +110,9 @@ export function SteeringPanel({
     // Save PUT that blank over it — one click, no typing, wiping the instructions every run under
     // the project carries. The field can only be seeded with what is stored, so without a read there
     // is nothing honest to edit.
-    let current: string
+    let current: Revisioned<string>
     try {
-      current = (await api.project(projectId)).agent_instructions_template ?? ''
+      current = guidanceOf(await api.project(projectId))
     } catch (e) {
       const why = e instanceof Error && e.message ? e.message : 'the request failed'
       notify(`Couldn't read this project's guidance, so nothing was opened or changed: ${why}`, 'error')
@@ -105,19 +125,20 @@ export function SteeringPanel({
         name: 'guidance',
         label: 'Guidance',
         type: 'textarea',
-        initial: current,
+        initial: current.value,
         placeholder: 'e.g. Prefer primary sources; reject a summary that cites none.',
       }],
       confirmLabel: 'Save guidance',
     })
     if (answers === null) return
+    const mine = answers.guidance ?? ''
     try {
-      await api.updateProject(projectId, { agent_instructions_template: answers.guidance ?? '' })
-      notify('Judge guidance saved for this project.')
+      // `false` is a refusal the notice under the button now holds, with the answer kept.
+      await saveGuidance(current, mine, rebaseText(current.value, mine))
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not save the guidance.', 'error')
     }
-  }, [projectId])
+  }, [projectId, saveGuidance])
 
   return (
     <div className="flex flex-col gap-l">
@@ -175,9 +196,14 @@ export function SteeringPanel({
       {projectId && (
         <div className="flex flex-col gap-s">
           <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Project</div>
-          <QuietButton onClick={setJudgeGuidance} title="Standing guidance for every run under this project — reaches the worker and the judge">
+          <QuietButton onClick={setJudgeGuidance} disabled={guidance.conflict !== null}
+            disabledReason={guidance.conflict !== null ? HELD_CHANGE_REASON : undefined}
+            title="Standing guidance for every run under this project — reaches the worker and the judge">
             <Gavel size={12} /> Judge guidance…
           </QuietButton>
+          {/* A save the gateway refused because the guidance changed meanwhile: the dialog has
+              closed, so the answer the user gave waits here until they reapply or discard it. */}
+          <StaleWriteNotice guard={guidance} what="This project's judge guidance" />
         </div>
       )}
     </div>

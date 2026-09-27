@@ -142,6 +142,25 @@ chat, channel thread, loop worker, webhook, subagent).
    sessions (`SessionManager.mark_agent_stale`): a turn already running finishes
    as it started, and each session's next turn rebuilds its runtime from the
    agent as it now reads.
+   **A turn falls back down its chain** (`agents/native/failover.py`). When the
+   model a chat turn runs on fails with a provider error or a timeout before
+   anything of the turn was shown, and its one retry fails too, the native loop
+   moves the turn's inner model to the next model in the same order (the chat's
+   pick, the agent's pin, then the chain), once each, skipping one that cannot be
+   built, cannot use the turn's tools or cannot take its images. The one that
+   answers says so before its reply, as an `EVENT_MODEL_SUBSTITUTION` the chat
+   runner turns into the same `model_substitution` line and reply meta ("Ran on
+   Y instead of X: it failed before it replied (…).") and a room writes as a
+   note in the member's slot. The turn's terminal `EVENT_COMPLETE` names the
+   model that answered (`served_model_ref`), and the chat records and prices the
+   turn by that model's id: its `usage/turns.jsonl` row, its "Turn complete"
+   line and `meta.turn_telemetry` (every ledger write does,
+   `usage_ledger.answered_model`). The next turn starts on X again. When every
+   model fails, the error names each one and why (`NoModelAnswered`, in a
+   room's words on a room). Only a caller that shows the line asks for this
+   (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
+   `stream_and_collect(on_substitution=…)`): a loop or a background stream keeps
+   the failure rather than another model's reply presented as the chosen one's.
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
    the finished turn is saved by rewriting the session JSONL from the buffer.
    Every exit from a turn, an error included, first settles the answer
@@ -208,8 +227,9 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   `user`/`assistant`/`tool`/`error` after a restart, and `approval` once it is decided
   (`_persistable` writes a resolved `permission` row and holds back a pending one).
 - **Per-turn telemetry** (cost, tokens, cache split, duration, context %, event and
-  tool-call counts, model) is stamped by `chat_runner` onto the turn's LAST assistant
-  message as `meta.turn_telemetry`, *before* `save_session_to_history` — that function
+  tool-call counts, the model that answered) is stamped by `chat_runner` onto the
+  turn's LAST assistant message as `meta.turn_telemetry`, *before*
+  `save_session_to_history` — that function
   rewrites the transcript file from the buffer, so a later stamp would be in-memory
   only. It rides the same `meta` seam as `memory_citations` / `skills_used`: no new file
   and no new channel. Absent = the turn reported nothing; `priced: false` means the

@@ -26,6 +26,9 @@ def _mock_provider_factory():
         m.start = AsyncMock()
         m.shutdown = AsyncMock()
         m.context_usage_pct = lambda: 0.0
+        # An out-of-process agent: it does not compact its own history, so the manager
+        # restarts it at the threshold. An AsyncMock attribute would read truthy.
+        m.compacts_automatically = False
         return m
 
     return factory

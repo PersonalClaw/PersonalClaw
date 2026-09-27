@@ -33,6 +33,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
+from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
     format_tool_result,
@@ -51,6 +52,7 @@ from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
 from personalclaw.guardrails.failure import (
     FailureMode,
     GuardError,
+    NoModelAnswered,
     correction_note,
     is_retryable,
 )
@@ -68,6 +70,7 @@ from personalclaw.guardrails.loop_breaker import (
 from personalclaw.llm.events import (
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
+    EVENT_MODEL_SUBSTITUTION,
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
@@ -75,6 +78,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     STOP_MAX_TOKENS,
     TOOL_META_APPROVAL_WAIVED,
+    TOOL_META_AUTO_DENIED,
     AgentEvent,
     is_length_stop,
 )
@@ -92,8 +96,10 @@ from personalclaw.tool_providers.portable_schema import (
 from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
+    from personalclaw.agents.native.failover import ModelFailover
     from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.llm.base import ModelProvider, ModelSubstitution
+    from personalclaw.providers.provider_bridge import ResolutionBasis
     from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
@@ -308,10 +314,34 @@ class NativeAgentRuntime(AgentProvider):
         # place of a model someone chose — the agent's pin or the chat's own pick could not run —
         # so the chat and a room can say which model answered instead of the one that was chosen.
         self.model_substitution: ModelSubstitution | None = None
+        # The models a turn may fall back to when its model fails before any output — set by the
+        # builder for an interactive runtime (``agents/native/failover.py``). Used only on a turn
+        # whose caller called :meth:`announce_failover`, since a caller that does not show
+        # EVENT_MODEL_SUBSTITUTION would present the fallback's reply as the chosen model's.
+        self.failover: ModelFailover | None = None
+        # What the builder resolved this runtime's model from (the Settings → Models chains it
+        # read, and the provider entry it serves from). ``SessionManager`` rebuilds a cached
+        # runtime whose basis no longer holds, so a rebind or an instance edit reaches the next
+        # turn of every open session instead of waiting for an idle hour or a restart.
+        self.resolved_from: ResolutionBasis | None = None
+        self._failover_announced = False
+        # Per turn: the models still to try, the (ref, why) of each one that failed, and the
+        # sentence the fallback that answers says before its reply.
+        self._failover_queue: list[str] = []
+        self._turn_failures: list[tuple[str, str]] = []
+        self._pending_substitution = ""
         self._extra_deny = list(extra_deny_patterns or [])
 
         # Conversation history — owned by the loop (complete() is stateless).
         self._messages: list[dict] = []
+        # Images staged for the NEXT turn (`stage_image_part`), and the ones riding the turn
+        # in flight with the user message they belong to. Pixels never enter `_messages`:
+        # they are laid onto each inference's REQUEST copy (`_request_messages`), so every
+        # model call of the turn sees them, compaction and the char backstop never count
+        # base64, and a later turn is never handed an earlier turn's image.
+        self._staged_images: list[str] = []
+        self._turn_images: list[str] = []
+        self._turn_message: dict | None = None
         # Discovered tool surface, populated by start().
         self._tool_defs: list[Any] = []
         self._tool_schema: list[dict] = []
@@ -789,8 +819,12 @@ class NativeAgentRuntime(AgentProvider):
         attempt: int,
         started_ms: float,
         passed: bool,
+        fallback: bool = False,
     ) -> None:
         """Record one loop-level inference attempt in the guard's audit shape.
+
+        ``fallback`` marks an attempt on a model the turn fell back to: strategy ``fallback``, and
+        ``degraded`` (a fallback ref served it), which is what the guard's own rows say for it.
 
         Only exceptional attempts are recorded — every failed attempt, plus the
         outcome of a retry — so the audit trail gains the retry story (#252's
@@ -810,7 +844,8 @@ class NativeAgentRuntime(AgentProvider):
                     failure_mode=mode.value,
                     latency_ms=max(0.0, now_ms() - started_ms),
                     passed=passed,
-                    strategy="retry" if attempt > 1 else "direct",
+                    strategy="fallback" if fallback else ("retry" if attempt > 1 else "direct"),
+                    degraded=fallback and passed,
                 )
             )
         except Exception:
@@ -869,7 +904,9 @@ class NativeAgentRuntime(AgentProvider):
         # the previous turn and requeues what it finds, so replaying it here would deliver
         # a second copy of a steer the user can already see in the queue strip.
         self._steer_pending.clear()
+        self._turn_images, self._staged_images = self._staged_images, []
         self._messages.append({"role": "user", "content": message})
+        self._turn_message = self._messages[-1]
 
         tools_kwarg, turn_note = self._prepare_turn_tools(message)
         if turn_note:
@@ -905,6 +942,14 @@ class NativeAgentRuntime(AgentProvider):
         # turn scope, not per-inference: two separate transients in one turn mean
         # the provider is genuinely unhealthy, and the second failure surfaces.
         inference_retried = False
+        # The model this turn starts on, put back when it ends: a turn that fell back must not
+        # leave the next one answering on the fallback with nothing saying so.
+        home = (self._model, self._definition.model)
+        announced = self._failover_announced and self.failover is not None
+        self._failover_queue = list(self.failover.candidates) if announced and self.failover else []
+        self._turn_failures = []
+        self._pending_substitution = ""
+        fallbacks = 0  # how many models this turn fell back to
 
         # end_turn() in a finally, not at each return: a stop arriving in the window
         # between a turn ending and the next beginning must answer "no_turn", and an
@@ -928,6 +973,7 @@ class NativeAgentRuntime(AgentProvider):
                         context_usage_pct=self._last_context_pct,
                         event_count=agg_events,
                         tool_call_count=agg_tool_calls,
+                        served_model_ref=self.served_model_ref,
                     )
                     return
                 turns += 1
@@ -958,9 +1004,7 @@ class NativeAgentRuntime(AgentProvider):
                     enabled=self._prompt_cache_enabled(),
                 )
                 logger.debug("native: prompt-cache mode %s", getattr(mode, "value", mode))
-                msgs = mark_cacheable_prefix(
-                    self._messages, mode, generation=self._cache_generation
-                )
+                msgs = self._request_messages(mode)
                 # #2287/#252: the native loop's ONE correction-retry. A transient
                 # inference failure (provider 5xx, dropped connection, timeout)
                 # that arrives BEFORE anything user-visible streamed is retried
@@ -990,6 +1034,12 @@ class NativeAgentRuntime(AgentProvider):
                         ):
                             if self._cancelled:
                                 break
+                            if self._pending_substitution:
+                                # A fallback is answering: said before anything it streams.
+                                yield AgentEvent(
+                                    kind=EVENT_MODEL_SUBSTITUTION, text=self._pending_substitution
+                                )
+                                self._pending_substitution = ""
                             agg_events += 1
                             if ev.kind == EVENT_TEXT_CHUNK:
                                 assistant_text += ev.text
@@ -1051,9 +1101,7 @@ class NativeAgentRuntime(AgentProvider):
                                 # deliberately NOT appended here (see its trap note —
                                 # that list is the automatic trigger's own bookkeeping,
                                 # and polluting it latches threshold compaction off).
-                                msgs = mark_cacheable_prefix(
-                                    self._messages, mode, generation=self._cache_generation
-                                )
+                                msgs = self._request_messages(mode)
                                 assistant_text = ""
                                 usage = None
                                 continue
@@ -1077,9 +1125,10 @@ class NativeAgentRuntime(AgentProvider):
                         )
                         self._audit_inference_attempt(
                             fmode,
-                            attempt=2 if inference_retried else 1,
+                            attempt=1 + int(inference_retried) + fallbacks,
                             started_ms=attempt_started,
                             passed=False,
+                            fallback=fallbacks > 0,
                         )
                         # A provider refusing one of THIS request's tool definitions: the
                         # identical request fails identically, so there is no retry, and the
@@ -1100,7 +1149,30 @@ class NativeAgentRuntime(AgentProvider):
                                 can_turn_off=not any(tool_prefs.is_locked(n) for n in rejected),
                             ) from exc
                         if not can_retry:
-                            raise
+                            # The turn's retry is spent: the next model of its chain may answer
+                            # instead, while nothing of the turn has been shown, for a failure
+                            # another model could get past.
+                            if not (
+                                fmode in FAILOVER_MODES
+                                and not overflow
+                                and turns == 1
+                                and not visible_streamed
+                                and not tool_calls
+                                and not self._cancelled
+                                and await self._fail_over(exc, tools=tools_kwarg)
+                            ):
+                                raise
+                            fallbacks += 1
+                            # The fallback's own cache mode, and the history without the
+                            # correction note the failed model's retry was given.
+                            mode = effective_cache_mode(
+                                getattr(self._model, "prompt_cache", PromptCache.NONE),
+                                enabled=self._prompt_cache_enabled(),
+                            )
+                            msgs = self._request_messages(mode)
+                            assistant_text = ""
+                            usage = None
+                            continue
                         inference_retried = True
                         # `%r`, not `%s`: httpx.ReadError and every timeout stringify to "",
                         # which logged "retrying once: " with nothing after it.
@@ -1121,12 +1193,13 @@ class NativeAgentRuntime(AgentProvider):
                         assistant_text = ""
                         usage = None
                         continue
-                    if inference_retried:
+                    if inference_retried or fallbacks:
                         self._audit_inference_attempt(
                             FailureMode.NONE,
-                            attempt=2,
+                            attempt=1 + int(inference_retried) + fallbacks,
                             started_ms=attempt_started,
                             passed=True,
+                            fallback=fallbacks > 0,
                         )
                     break
 
@@ -1179,6 +1252,8 @@ class NativeAgentRuntime(AgentProvider):
                         context_usage_pct=self._last_context_pct,
                         event_count=agg_events,
                         tool_call_count=agg_tool_calls,
+                        # Read before the `finally` below puts the turn's own model back.
+                        served_model_ref=self.served_model_ref,
                     )
                     return
 
@@ -1220,8 +1295,17 @@ class NativeAgentRuntime(AgentProvider):
                 context_usage_pct=self._last_context_pct,
                 event_count=agg_events,
                 tool_call_count=agg_tool_calls,
+                served_model_ref=self.served_model_ref,
             )
         finally:
+            # A fallback answered THIS turn only: the next one starts on the model it was chosen
+            # for, and asks again whether it may fall back.
+            self._model, self._definition.model = home
+            self._failover_announced = False
+            self._failover_queue = []
+            self._pending_substitution = ""
+            self._turn_images = []
+            self._turn_message = None
             self._cancel.end_turn()
 
     def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
@@ -1642,6 +1726,8 @@ class NativeAgentRuntime(AgentProvider):
                     tool_name,
                 )
                 meta.update(_FAILED)
+                # Said to whoever consumes this stream, which can reach the Inbox.
+                meta[TOOL_META_AUTO_DENIED] = True
             else:
                 request_id = call.tool_call_id or tool_name
                 # Register the pending Future BEFORE surfacing the request, so an
@@ -1961,9 +2047,9 @@ class NativeAgentRuntime(AgentProvider):
         return True
 
     # ── message shaping (OpenAI wire format; Anthropic provider re-maps) ──
-    # Compact the native loop's history when context crosses this fraction of
-    # the model's window (provider-reported context_usage_pct).
-    _COMPACT_THRESHOLD_PCT = 70.0
+    # The loop compacts its history when context crosses the Settings threshold,
+    # `context_compaction.autocompact_pct()` — see `_maybe_compact`.
+    #
     # The CONSERVATIVE ratio, not the nominal one: this is a compaction TRIGGER, so it has
     # to over-estimate token usage and err toward compacting slightly early — cheap —
     # rather than overflowing the window, which kills the turn. See
@@ -2063,14 +2149,16 @@ class NativeAgentRuntime(AgentProvider):
     def _maybe_compact(self) -> None:
         """Run structured compaction on ``self._messages`` if over the threshold.
 
-        Trigger = provider-reported context usage ≥ threshold, with a char-based
-        estimate as the trigger when the provider reports no usage at all (the
-        local-model path). Anti-thrashing skips it when the last two passes each
-        reclaimed <10%. Uses the no-LLM path (tool-output pruning pre-pass +
-        structured digest) — cheap, safe, and synchronous; an LLM-summarized
-        middle can layer on later. Records the save fraction for the
-        anti-thrashing guard.
+        Trigger = provider-reported context usage ≥ the Settings threshold
+        (``session.autocompact_pct``), with a char-based estimate as the trigger when
+        the provider reports no usage at all (the local-model path). Anti-thrashing
+        skips it when the last two passes each reclaimed <10%. Uses the no-LLM path
+        (tool-output pruning pre-pass + structured digest) — cheap, safe, and
+        synchronous; an LLM-summarized middle can layer on later. Records the save
+        fraction for the anti-thrashing guard.
         """
+        from personalclaw import context_compaction as cc
+
         measured_pct = self._last_context_pct
         if measured_pct is None:
             # No-usage backstop: estimate purely for the trigger decision. The
@@ -2078,10 +2166,8 @@ class NativeAgentRuntime(AgentProvider):
             measured_pct = self._estimated_context_pct()
         # Unmeasured context cannot cross a threshold — an unknown gauge must not
         # trigger compaction any more than it may print a percentage.
-        if measured_pct is None or measured_pct < self._COMPACT_THRESHOLD_PCT:
+        if measured_pct is None or measured_pct < cc.autocompact_pct():
             return
-        from personalclaw import context_compaction as cc
-
         if not cc.should_compact(self._compaction_saves):
             return
         before, after = self._compact_now(measured_pct)
@@ -2150,6 +2236,21 @@ class NativeAgentRuntime(AgentProvider):
         genuinely execute.
         """
         return True
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """True while :meth:`_maybe_compact` will still compact this runtime's history on its
+        own once the context crosses the Settings threshold.
+
+        False once the last two automatic passes each reclaimed under a tenth
+        (``context_compaction.should_compact``): compacting again would not help, so the
+        session manager restarts the session at that threshold instead. While it is True the
+        manager leaves the session alone, because a restart at the same threshold would
+        always come first and throw away the history this loop is about to compact.
+        """
+        from personalclaw import context_compaction as cc
+
+        return cc.should_compact(self._compaction_saves)
 
     @property
     def keeps_cancelled_turns(self) -> bool:
@@ -2248,18 +2349,98 @@ class NativeAgentRuntime(AgentProvider):
         return True
 
     def stage_image_part(self, data_url: str) -> bool:
-        """Forward an image content part to the INNER model provider (MI-4).
+        """Put *data_url* on the NEXT turn as a neutral image part (MI-4). See the ABC.
 
-        The runtime owns the ReAct loop, not the wire format, so the image has to be
-        placed by whoever knows the provider's shape. Delegating means the honest
-        False propagates too: a runtime whose inner provider can't carry an image
-        reports that upward, and the screen-context channel degrades to a text
-        description instead of silently dropping pixels into a request.
+        The loop owns the turn, so it owns the image too: the part is laid onto the turn's
+        user message in EVERY inference request of that turn (`_request_messages`), including
+        the calls after a tool result — an image staged on the inner provider rode only the
+        first. Translating the neutral part to a wire is the inner provider's job, and the
+        caller has already asked the platform's record whether that provider's type carries
+        images and whether the model reads them (``providers.image_input``).
         """
-        stage = getattr(self._model, "stage_image_part", None)
-        if not callable(stage):
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
             return False
-        return bool(stage(data_url))
+        self._staged_images.append(data_url)
+        return True
+
+    def _request_messages(self, mode: PromptCache) -> list[dict]:
+        """The message list one inference sends: the cache hint, then the turn's images.
+
+        Never mutates ``_messages``. The images go onto the turn's own user message, found by
+        identity (``mark_cacheable_prefix`` keeps positions), so a steer or a volatile note
+        appended later in the turn never takes them. A turn message compaction folded away
+        takes its images with it — there is nothing left for them to belong to.
+        """
+        msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
+        if not self._turn_images or self._turn_message is None:
+            return msgs
+        idx = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+        if idx < 0:
+            return msgs
+        out = list(msgs)
+        target = out[idx]
+        text = target.get("content")
+        parts: list[dict] = [{"type": "text", "text": str(text or "")}]
+        parts.extend({"type": "image_url", "image_url": {"url": u}} for u in self._turn_images)
+        out[idx] = {**target, "content": parts}
+        return out
+
+    def announce_failover(self) -> None:
+        """Let the next turn fall back down its model chain, for a caller that shows it.
+
+        Called right before :meth:`stream` by a caller that shows ``EVENT_MODEL_SUBSTITUTION``
+        (the chat runner: a live line, and the reply's meta). That turn may then move to the next
+        model of its chain (:attr:`failover`) when its model fails before any output. Lasts one
+        turn. A caller that never calls this keeps a turn that fails, failing, rather than a
+        reply from another model presented as the chosen one's.
+        """
+        self._failover_announced = True
+
+    async def _fail_over(self, exc: BaseException, *, tools: list | None) -> bool:
+        """Move this turn to the next model of its chain that can take it; True when one was found.
+
+        Called once the turn's model has failed before any output and its retry is spent. A model
+        that cannot be built now, cannot use the tools this turn offers, or does not take images
+        on a turn carrying some (the platform's record, as the turn's own model was asked) is
+        passed over. False when there is nothing to try, and then the failure stands as it is.
+        Raises :class:`NoModelAnswered` when models were tried in its place and failed too,
+        because then no single provider's error says what happened.
+        """
+        failover = self.failover
+        if failover is None or (not self._failover_queue and not self._turn_failures):
+            return False
+        self._turn_failures.append(
+            (self.served_model_ref or failover.requested, failover.describe(exc))
+        )
+        while self._failover_queue:
+            ref = self._failover_queue.pop(0)
+            try:
+                provider, model_id = failover.build(ref)
+            except Exception as build_exc:  # noqa: BLE001 — a fallback that cannot build is passed
+                logger.warning(
+                    "native: fallback %s cannot be built, passed over: %r", ref, build_exc
+                )
+                continue
+            if tools and not getattr(provider, "supports_tools", False):
+                logger.info("native: fallback %s cannot use tools, passed over", ref)
+                continue
+            if self._turn_images and not await failover.takes_images(ref):
+                logger.info("native: fallback %s does not take images, passed over", ref)
+                continue
+            logger.warning(
+                "native: %s failed before any output (%r) — falling back to %s",
+                self._turn_failures[-1][0],
+                exc,
+                ref,
+            )
+            self._model = provider
+            self._definition.model = model_id
+            served = self.served_model_ref or ref
+            self._pending_substitution = failover.substitution(served, self._turn_failures).notice()
+            return True
+        if len(self._turn_failures) > 1:
+            raise NoModelAnswered(self._turn_failures) from exc
+        return False
 
     def drain_tool_outcomes(self) -> list[tuple[str, str]]:
         """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.

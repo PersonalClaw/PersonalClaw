@@ -9,8 +9,12 @@ import { CapRow, CapabilityPeekModal } from '../../ui/CapabilityPicker'
 import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { LoadError } from '../../ui/ListScaffold'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { unavailableWhen } from '../../ui/unavailable'
 import { spring } from '../../design/motion'
-import { api, type GoalLoop, type GoalType, type SkillItem, type SkillSearchResult, type GrillPhase, type GrillPhaseStep, type WorkflowDefStub } from '../../lib/api'
+import { api, type GoalLoop, type GoalType, type Loop, type SkillItem, type SkillSearchResult, type GrillPhase, type GrillPhaseStep, type WorkflowDefStub } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import type { LoopDraft } from './loopDraft'
 import { loopToGoalLoop } from './goalAdapter'
 import { useRunStream } from './useRunStream'
@@ -42,16 +46,168 @@ function stopBehavior(loop: GoalLoop, goalType: GoalType): string {
   return `I'll stop when new cycles stop adding value — ${dial[loop.granularity] ?? 'when returns drop'} (${loop.granularity}).`
 }
 
-// The clarifying-question walk is modeled as the QuestionSlider's `SliderQuestion` (typed kinds,
-// phase ribbon, recommendation, required flag) — one model, two sources (no dual path): flat
-// classify clarifications → id `g<n>`, no phase, freeform; grill's guided-decomposition tree
-// (#16) → id `p<phase>s<step>`, phase-tagged so the stepper shows "Phase N of M · <title>". The
-// answers fold into kind_config.phase_answers at launch (grouped by phase for guided runs).
+/** What the launch writes, as one record: the spine fields it sets and the `kind_config` keys it owns. */
+type LaunchSpec = Record<string, unknown>
+
+const HELD_REASON = HELD_CHANGE_REASON
 
 // One phase of the role-phased execution plan (IT-6). Capabilities are per-phase.
 interface PlanPhase {
   role: string; agent_name: string; target: string; min_cycles: number
   phase_exit: string; skill_ids: string[]; workflow_ids: string[]
+}
+
+/** The role-phased execution plan a `kind_config` carries, in the shape this screen edits. */
+function phasesOf(kindConfig: Record<string, unknown> | undefined): PlanPhase[] {
+  return ((kindConfig?.execution_plan as Record<string, unknown>[] | undefined) ?? []).map((p) => ({
+    role: String(p.role ?? ''), agent_name: String(p.agent_name ?? ''),
+    target: String(p.target ?? ''), min_cycles: Number(p.min_cycles ?? 1) || 1,
+    phase_exit: String(p.phase_exit ?? ''),
+    skill_ids: Array.isArray(p.skill_ids) ? p.skill_ids.map(String) : [],
+    workflow_ids: Array.isArray(p.workflow_ids) ? p.workflow_ids.map(String) : [],
+  }))
+}
+
+/** Everything on this screen that a launch writes. */
+interface LaunchFields {
+  title: string
+  subGoals: string[]
+  goalType: GoalType
+  verifyCommand: string
+  skillIds: Set<string>
+  workflowIds: Set<string>
+  phases: PlanPhase[]
+  grillPhases: GrillPhase[] | null
+  answers: Record<string, string>
+}
+
+/** The loop as stored, as this screen's fields: what the screen is painted with — on arrival, and
+ *  again when a refused launch is dropped — and what the launch's base is derived from.
+ *
+ *  🔴 THE CAPABILITY PICKS ARE THE LOOP'S. They used to start from the draft's classification, but
+ *  this screen is reached from the STORED loop (`LoopsSection.draftFromLoop`), whose draft carries no
+ *  suggestions — so the picks started empty, the step's "the planner pre-selected what looks relevant"
+ *  pointed at nothing, and every launch wrote `skill_ids: []` over the ones the composer had threaded
+ *  onto the loop at create. */
+function fieldsOf(raw: Loop): LaunchFields {
+  const l = loopToGoalLoop(raw)
+  const kc = raw.kind_config ?? {}
+  const grill = kc.grill_phases as GrillPhase[] | null | undefined
+  return {
+    title: l.name || '',
+    subGoals: l.sub_goals ?? [],
+    goalType: l.goal_type,
+    verifyCommand: l.verify_command ?? '',
+    skillIds: new Set(raw.skill_ids ?? []), workflowIds: new Set(raw.workflow_ids ?? []),
+    phases: phasesOf(kc),
+    // kind_config round-trips whole, so a RESUMED review-status loop rehydrates its guided phases
+    // (+ prior phase_answers) without a re-fetch.
+    grillPhases: grill && grill.length ? grill : null,
+    answers: (kc.phase_answers as Record<string, string> | null | undefined) ?? {},
+  }
+}
+
+/** The clarifying-question walk — ONE model, two sources (no dual path), typed as the QuestionSlider's
+ *  `SliderQuestion` (typed kinds, phase ribbon, recommendation, required flag) so the deep-rigor Round
+ *  renders as a one-at-a-time stepper:
+ *   - guided decomposition (#16): grill's memory-checked phases, each step tagged with its phase
+ *     title/index (id `p<phase>s<step>`) so the stepper shows "Phase N of M · <title>". A phase step
+ *     may carry the typed grill fields (kind/choices/recommended/required) — mapped straight through
+ *     so a `choice`/`slider`/`boundary` question renders its typed control with no shim; absent fields
+ *     default to a required freeform text question (the tree shape's prior behavior).
+ *   - otherwise the flat clarifications from classify (id `g<n>`, no phase) — freeform, skippable.
+ *  The answers fold into the goal text and kind_config.phase_answers at launch (grouped by phase for
+ *  guided runs). */
+function questionsOf(grillPhases: GrillPhase[] | null, clarifications: string[]): SliderQuestion[] {
+  if (grillPhases && grillPhases.length) {
+    const out: SliderQuestion[] = []
+    grillPhases.forEach((ph, pi) => {
+      ph.steps.forEach((st: GrillPhaseStep, si) => {
+        out.push({
+          id: `p${pi}s${si}`, prompt: st.prompt,
+          kind: st.kind ?? 'text',
+          choices: st.choices,
+          recommended: st.recommended,
+          required: st.required ?? (st.kind !== 'boundary'),
+          min: st.min, max: st.max, step: st.step,
+          phase: ph.title || `Phase ${pi + 1}`, phaseIndex: pi, phaseCount: grillPhases.length,
+        })
+      })
+    })
+    return out
+  }
+  // Flat clarifications carry no typed metadata — freeform + skippable (Skip advances the walk).
+  return clarifications.map((q, i) => ({ id: `g${i}`, prompt: q, kind: 'text' as const, required: false }))
+}
+
+/** The questions answered, in walk order, with each answer as a launch folds and records it. */
+function answeredOf(questions: SliderQuestion[], answers: Record<string, string>) {
+  return questions.map((q) => ({ q, a: (answers[q.id] || '').trim() })).filter((x) => x.a)
+}
+
+/** What a Launch writes, from the screen's fields. THE ONE DERIVATION: a launch writes `launchSpec` of
+ *  what is on screen, and names as its base `launchSpec` of what it read (`launchSpecOf`) — so a field
+ *  the user leaves alone is the same on both sides, and in a refusal it is nobody's change.
+ *
+ *  🔴 THE BASE USED TO BE THE STORED LOOP AS IT CAME, while the launch derived its write — the plan
+ *  from the sub-goals, a non-verifiable goal's check as `null`, an empty phase plan as `null`. So fields
+ *  nobody touched read as the user's change, and a write elsewhere to any of them made the refusal
+ *  "can't be re-applied on its own". Measured in the two-tab drive: a title-only launch over a re-plan
+ *  offered no Reapply, and its review listed `verify_command "" → null` and `plan [] → [measure the
+ *  p95]` as "Your change".
+ *
+ *  `task` is the one field passed in rather than derived. A launch folds the answered questions into
+ *  the goal text, and the fold is not idempotent — folding a brief that already carries it appends the
+ *  answers again — so the base's brief is the brief as stored, and a fold is a change to it. */
+function launchSpec(f: LaunchFields, name: string, task: string): LaunchSpec {
+  const hasGrill = Boolean(f.grillPhases && f.grillPhases.length)
+  return {
+    name: f.title.trim() || name,
+    task,
+    // The sub-goal list is the unified `plan` (rows keyed by title).
+    plan: f.subGoals.map((s) => ({ title: s })),
+    // Capabilities the user confirmed → injected actively each cycle. Flat ids = the always-on
+    // baseline; per-phase ids ride in kind_config.execution_plan.
+    skill_ids: [...f.skillIds], workflow_ids: [...f.workflowIds],
+    // Unified update: spine fields at top level, goal-specific in kind_config
+    // (goal_type/sub_goals/granularity/verify_command/execution_plan). Flat goal
+    // fields would be dropped by update_spec, so they MUST go through kind_config.
+    //
+    // `kind_config` is a PATCH the server merges over the stored config (#411). These six
+    // keys are the ones THIS screen authors; every key belonging to a field it never renders
+    // — a research loop's subtopics / output template + manner / primary deliverable /
+    // breadth-depth budget, the granularity dial — survives untouched instead of being wiped
+    // by a goal-shaped screen that never knew about it.
+    //
+    // They cannot be preserved by spreading `loop.kind_config` in here, which is the obvious
+    // shape: the loop this screen holds is the REDACTED view (`get_redacted` runs kind_config
+    // through `_redact_value`), so echoing it back would persist redaction placeholders over
+    // the user's own text. Only the server has the real config to merge against.
+    //
+    // The flip side of merge semantics: omission now means "keep", so an owned key this screen
+    // holds no value for is sent EXPLICITLY as `null`, which is what clears it. That matters
+    // most for verify_command — `instrument.py` resolves it as the reproduce anchor without
+    // re-reading goal_type, so a goal switched away from `verifiable` has to be able to drop
+    // the command it no longer runs on.
+    kind_config: {
+      goal_type: f.goalType,
+      sub_goals: f.subGoals,
+      execution_plan: f.phases.length ? f.phases : null,
+      verify_command: f.goalType === 'verifiable' ? f.verifyCommand.trim() : null,
+      // Guided decomposition (#16): persist the memory-checked phases + the structured answers
+      // so a resumed/inspected loop keeps the guided-decomposition record.
+      grill_phases: hasGrill ? f.grillPhases : null,
+      phase_answers: hasGrill
+        ? Object.fromEntries(answeredOf(questionsOf(f.grillPhases, []), f.answers).map((x) => [x.q.id, x.a]))
+        : null,
+    },
+  }
+}
+
+/** The loop as read, in the launch write's own shape, with the revision the same read reported — the
+ *  base a launch names, and what a refused launch is re-applied onto. */
+function launchSpecOf(raw: Loop): Revisioned<LaunchSpec> {
+  return { value: launchSpec(fieldsOf(raw), raw.name, raw.task), revision: raw.revision ?? '' }
 }
 
 export function LoopPlanReview({ draft, onLaunched, onBack }: {
@@ -65,16 +221,22 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // failed. Said, with a Retry and the way back.
   const [loadErr, setLoadErr] = useState<unknown>(null)
   const [attempt, setAttempt] = useState(0)
-  const [title, setTitle] = useState(draft.classification.title || '')
+  // Everything a launch writes is painted from the loop as stored (`paint`, `fieldsOf`) before the
+  // screen renders anything but "Analyzing the plan…", so these start empty.
+  const [title, setTitle] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [subGoals, setSubGoals] = useState<string[]>([])
   const [goalType, setGoalType] = useState<GoalType>('open_ended')
   const [verifyCommand, setVerifyCommand] = useState('')
-  const [answers, setAnswers] = useState<Record<string, string>>(() =>
-    (((draft.classification.kind_config as Record<string, unknown> | undefined)?.phase_answers as Record<string, string> | undefined)) ?? {})
+  const [answers, setAnswers] = useState<Record<string, string>>({})
   const [step, setStep] = useState(0)   // 0 = overview; 1 = capabilities; [plan]; questions; launch
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
+  // 🔴 LAUNCH WRITES THE SPEC FROM THE COPY THIS SCREEN READ — the plan, the capability lists, the
+  // name and its `kind_config` keys — so a write that landed since (another tab's rename or launch,
+  // a re-plan) used to be put back without a word. `base` is that read in the launch's own shape,
+  // with its revision; a stale launch is refused, nothing starts, and the notice offers it back.
+  const [base, setBase] = useState<Revisioned<LaunchSpec> | null>(null)
 
   // ── live plan-review stream. The planner's progressive spec + the
   // shared-understanding confirmation + a mid-plan autonomy demotion arrive on the per-loop SSE
@@ -95,10 +257,8 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // intake behind intake_rigor='thorough'. When phases load they REPLACE the flat
   // clarify walk (same WalkQuestion model, phase-tagged). Auto-fetched for a thorough
   // classification; also user-triggerable from the overview. `null` = not fetched.
-  // Seed from kind_config.grill_phases so a RESUMED review-status loop rehydrates its
-  // phases (+ prior phase_answers) without a re-fetch (kind_config round-trips whole).
-  const seededPhases = ((draft.classification.kind_config as Record<string, unknown> | undefined)?.grill_phases as GrillPhase[] | undefined) ?? null
-  const [grillPhases, setGrillPhases] = useState<GrillPhase[] | null>(seededPhases && seededPhases.length ? seededPhases : null)
+  // Painted from the stored kind_config.grill_phases (`fieldsOf`).
+  const [grillPhases, setGrillPhases] = useState<GrillPhase[] | null>(null)
   const [grillMemoryHits, setGrillMemoryHits] = useState(0)
   const [grillLoading, setGrillLoading] = useState(false)
   const [grillError, setGrillError] = useState<string | null>(null)
@@ -121,43 +281,44 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
   // fact. `isThorough` only surfaces a soft "recommended" nudge on the affordance.
 
   // ── capabilities (IT-4): installed skills/workflows the loop loads each cycle,
-  // pre-checked from the planner's suggestions; plus marketplace skills to install.
+  // pre-checked with the picks stored on the loop — the planner's suggestions, threaded
+  // onto it at create (`fieldsOf`); plus marketplace skills to install.
   const [installedSkills, setInstalledSkills] = useState<SkillItem[]>([])
   const installedWorkflows: WorkflowDefStub[] = []  // filled by the def store
-  const [skillIds, setSkillIds] = useState<Set<string>>(new Set(draft.classification.suggested_skill_ids ?? []))
-  const [workflowIds, setWorkflowIds] = useState<Set<string>>(new Set(draft.classification.suggested_workflow_ids ?? []))
+  const [skillIds, setSkillIds] = useState<Set<string>>(new Set())
+  const [workflowIds, setWorkflowIds] = useState<Set<string>>(new Set())
   const [installing, setInstalling] = useState<Record<string, boolean>>({})
   const [installed, setInstalled] = useState<Set<string>>(new Set())
   const marketplaceSuggestions = draft.classification.marketplace_suggestions ?? []
 
   // ── execution plan (IT-6): the planner's role-phased plan, each phase carrying
   // its own capabilities (loaded only during that phase). Editable; persisted on
-  // launch. Present only when the planner emitted phases.
-  const [phases, setPhases] = useState<PlanPhase[]>(
-    // Unified shape: the role-phased execution_plan lives in kind_config (goal-specific),
-    // not at the classification top level.
-    (((draft.classification.kind_config as Record<string, unknown> | undefined)?.execution_plan as Record<string, unknown>[] | undefined) ?? []).map((p) => ({
-      role: String(p.role ?? ''), agent_name: String(p.agent_name ?? ''),
-      target: String(p.target ?? ''), min_cycles: Number(p.min_cycles ?? 1) || 1,
-      phase_exit: String(p.phase_exit ?? ''),
-      skill_ids: Array.isArray(p.skill_ids) ? p.skill_ids.map(String) : [],
-      workflow_ids: Array.isArray(p.workflow_ids) ? p.workflow_ids.map(String) : [],
-    })),
-  )
+  // launch. Present only when the planner emitted phases. Unified shape: it lives in
+  // kind_config (goal-specific), painted from there (`fieldsOf`).
+  const [phases, setPhases] = useState<PlanPhase[]>([])
   const hasPlan = phases.length > 0
   // Saved agent definitions — for the per-phase agent dropdown (replaces the
   // freeform text box); the planner's suggested agent_name is pre-selected.
   const [agentNames, setAgentNames] = useState<string[]>([])
+
+  // The loop as stored, painted: EVERYTHING the launch writes seeded from it, with the launch's base
+  // derived from the same read — so a Launch the user changed nothing on writes the loop as it was
+  // read. On arrival, and again when the user drops a refused launch, so what the launch step then
+  // shows (and a Launch then writes) is the stored spec, not half of the dropped change.
+  function paint(raw: Loop) {
+    const f = fieldsOf(raw)
+    setLoop(loopToGoalLoop(raw)); setBase(launchSpecOf(raw))
+    setTitle(f.title); setSubGoals(f.subGoals); setGoalType(f.goalType); setVerifyCommand(f.verifyCommand)
+    setSkillIds(f.skillIds); setWorkflowIds(f.workflowIds); setPhases(f.phases)
+    setGrillPhases(f.grillPhases); setAnswers(f.answers)
+  }
 
   useEffect(() => {
     let alive = true
     setLoadErr(null)
     api.uLoop(draft.loopId).then((raw) => {
       if (!alive) return
-      const l = loopToGoalLoop(raw)
-      setLoop(l); setSubGoals(l.sub_goals ?? []); setGoalType(l.goal_type)
-      setVerifyCommand(l.verify_command ?? '')
-      if (!title) setTitle(l.name || '')
+      paint(raw)
     }).catch((e) => { if (alive) setLoadErr(e) })
     api.savedAgents().then((list) => { if (alive) setAgentNames(list.map((a) => a.name)) }).catch(() => {})
     // Installed capabilities for the picker (best-effort).
@@ -168,37 +329,11 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     return () => { alive = false }
   }, [draft.loopId, attempt])  // eslint-disable-line
 
-  // The clarifying-question walk — ONE model, two sources (no dual path), now typed as the
-  // QuestionSlider's SliderQuestion so the deep-rigor Round renders as a one-at-a-time stepper:
-  //  - guided decomposition (#16): grill's memory-checked phases, each step tagged with its phase
-  //    title/index so the stepper shows "Phase N of M". A phase step may carry the typed grill
-  //    fields (kind/choices/recommended/required) — mapped straight through so a `choice`/`slider`/
-  //    `boundary` question renders its typed control with no shim; absent fields default to a
-  //    required freeform text question (the tree shape's prior behavior).
-  //  - otherwise the flat clarifications from classify (id `g<n>`, no phase) — freeform, skippable.
-  const questions = useMemo<SliderQuestion[]>(() => {
-    if (grillPhases && grillPhases.length) {
-      const out: SliderQuestion[] = []
-      grillPhases.forEach((ph, pi) => {
-        ph.steps.forEach((st: GrillPhaseStep, si) => {
-          out.push({
-            id: `p${pi}s${si}`, prompt: st.prompt,
-            kind: st.kind ?? 'text',
-            choices: st.choices,
-            recommended: st.recommended,
-            required: st.required ?? (st.kind !== 'boundary'),
-            min: st.min, max: st.max, step: st.step,
-            phase: ph.title || `Phase ${pi + 1}`, phaseIndex: pi, phaseCount: grillPhases.length,
-          })
-        })
-      })
-      return out
-    }
-    // Flat clarifications carry no typed metadata — freeform + skippable (Skip advances the walk).
-    return (draft.classification.clarifying_questions ?? []).map((q, i) => ({
-      id: `g${i}`, prompt: q, kind: 'text' as const, required: false,
-    }))
-  }, [grillPhases, draft.classification.clarifying_questions])
+  // The clarifying-question walk (`questionsOf`).
+  const questions = useMemo(
+    () => questionsOf(grillPhases, draft.classification.clarifying_questions ?? []),
+    [grillPhases, draft.classification.clarifying_questions],
+  )
 
   // Steps: 0 overview · 1 capabilities · [plan, if the planner emitted one] · [questions, if any] ·
   // launch. The clarifying questions collapse into ONE step — the QuestionSlider stepper walks
@@ -243,8 +378,35 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
     setStep((s) => Math.min(totalSteps - 1, s + 1))
   }
 
+  // Starting is what Launch is FOR, so it follows the spec write however that write landed — on the
+  // first try, or re-applied from the notice after another write got there first. Never after a
+  // refusal: the loop would run on a spec the user did not review.
+  async function start() {
+    setLaunching(true); setLaunchError(null)
+    try {
+      // start re-runs pre-flight validation server-side; surface a rejection
+      // (e.g. the worker agent no longer resolves) instead of silently resetting.
+      await api.uLoopAction(draft.loopId, 'start')
+      onLaunched(draft.loopId)
+    } catch (e) {
+      setLaunchError((e as Error).message || 'Could not launch the loop')
+      setLaunching(false)
+    }
+  }
+  const guard = useStaleWriteGuard<LaunchSpec>({
+    read: async () => launchSpecOf(await api.uLoop(draft.loopId)),
+    write: (next, revision) => api.saveULoopSpec(draft.loopId, next, revision),
+    onSaved: () => { void start() },
+    onDiscard: () => {
+      setLaunchError(null)
+      api.uLoop(draft.loopId).then(paint)
+        .catch((e) => setLaunchError(`Couldn't read the loop as it is stored: ${(e as Error).message || 'unknown error'}`))
+    },
+  })
+  const held = guard.conflict !== null
+
   async function launch() {
-    if (launching || !loop) return
+    if (launching || !loop || !base) return
     setLaunching(true); setLaunchError(null)
     try {
       // Fold the answered clarifications into the goal task so the worker's brief
@@ -252,7 +414,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
       // durable spec is the task text + kind_config). Mirrors CodeCreatePage.
       // Guided decomposition (#16) groups the fold BY PHASE for a richer scoped brief;
       // the flat walk stays a single "Clarifications:" block (identical to before).
-      const answered = questions.map((q) => ({ q, a: (answers[q.id] || '').trim() })).filter((x) => x.a)
+      const answered = answeredOf(questions, answers)
       let taskText = loop.goal
       if (grillPhases && grillPhases.length && answered.length) {
         const byPhase = grillPhases.map((ph, pi) => {
@@ -263,54 +425,17 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
       } else if (answered.length) {
         taskText = `${loop.goal}\n\nClarifications:\n${answered.map((x) => `- ${x.q.prompt} → ${x.a}`).join('\n')}`
       }
-      // Structured phase answers persisted alongside the phases so a resumed/inspected
-      // loop keeps the guided-decomposition record.
-      const phaseAnswers = grillPhases ? Object.fromEntries(answered.map((x) => [x.q.id, x.a])) : undefined
-      const hasGrill = Boolean(grillPhases && grillPhases.length)
-      // Unified update: spine fields at top level, goal-specific in kind_config
-      // (goal_type/sub_goals/granularity/verify_command/execution_plan). Flat goal
-      // fields would be dropped by update_spec, so they MUST go through kind_config.
-      await api.updateULoop(draft.loopId, {
-        name: title.trim() || loop.name,
-        task: taskText,
-        // The sub-goal list is the unified `plan` (rows keyed by title).
-        plan: subGoals.map((s) => ({ title: s })),
-        // Capabilities the user confirmed → injected actively each cycle. Flat ids =
-        // the always-on baseline; per-phase ids ride in kind_config.execution_plan.
-        skill_ids: [...skillIds], workflow_ids: [...workflowIds],
-        // `kind_config` is a PATCH the server merges over the stored config (#411). These six
-        // keys are the ones THIS screen authors; every key belonging to a field it never renders
-        // — a research loop's subtopics / output template + manner / primary deliverable /
-        // breadth-depth budget, the granularity dial — survives untouched instead of being wiped
-        // by a goal-shaped screen that never knew about it.
-        //
-        // They cannot be preserved by spreading `loop.kind_config` in here, which is the obvious
-        // shape: the loop this screen holds is the REDACTED view (`get_redacted` runs kind_config
-        // through `_redact_value`), so echoing it back would persist redaction placeholders over
-        // the user's own text. Only the server has the real config to merge against.
-        //
-        // The flip side of merge semantics: omission now means "keep", so an owned key this screen
-        // holds no value for is sent EXPLICITLY as `null`, which is what clears it. That matters
-        // most for verify_command — `instrument.py` resolves it as the reproduce anchor without
-        // re-reading goal_type, so a goal switched away from `verifiable` has to be able to drop
-        // the command it no longer runs on.
-        kind_config: {
-          goal_type: goalType,
-          sub_goals: subGoals,
-          execution_plan: hasPlan ? phases : null,
-          verify_command: goalType === 'verifiable' ? verifyCommand.trim() : null,
-          // Guided decomposition (#16): persist the memory-checked phases + the
-          // structured answers so the record survives resume/inspect.
-          grill_phases: hasGrill ? grillPhases : null,
-          phase_answers: hasGrill ? (phaseAnswers ?? null) : null,
-        },
-      }).catch(() => {})
-      // start re-runs pre-flight validation server-side; surface a rejection
-      // (e.g. the worker agent no longer resolves) instead of silently resetting.
-      await api.uLoopAction(draft.loopId, 'start')
-      onLaunched(draft.loopId)
+      const mine = launchSpec(
+        { title, subGoals, goalType, verifyCommand, skillIds, workflowIds, phases, grillPhases, answers },
+        loop.name, taskText,
+      )
+      // 🔴 NO LONGER `.catch(() => {})`. A spec write that failed was swallowed and the loop started
+      // anyway — on the spec as stored, not the one on this screen — so everything the user reviewed
+      // here could be dropped by the one click that cannot be undone. A failed write now says so and
+      // starts nothing; a stale one is held by the notice (`start` runs once it lands).
+      if (!(await guard.save(base, mine, rebaseRecord(base.value, mine)))) setLaunching(false)
     } catch (e) {
-      setLaunchError((e as Error).message || 'Could not launch the loop')
+      setLaunchError(`Couldn't save the plan, so the loop was not launched: ${(e as Error).message || 'unknown error'}`)
       setLaunching(false)
     }
   }
@@ -331,13 +456,17 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
       left={
         <div className="flex items-center gap-s min-w-0">
           <IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} />
-          {editingTitle ? (
+          {/* The title is the one field a user can still reach while a refused launch is held (the walk
+              stays on its last step), and Reload and reapply puts back the title as it was at Launch —
+              so a rename made now would be left out of what it launches. Off, with the reason, until
+              the change is settled; a soft-off keeps the tab stop the way Back and Launch below do. */}
+          {editingTitle && !held ? (
             <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
               data-type="body-m" className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
-            <button type="button" onClick={() => setEditingTitle(true)} title="Edit title"
-              data-type="title-m" className="truncate text-on-surface hover:text-on-surface-var" style={fvs(500)}>
+            <button type="button" onClick={() => setEditingTitle(true)} {...unavailableWhen(held, HELD_REASON, { title: 'Edit title' })}
+              data-type="title-m" className="truncate text-on-surface hover:text-on-surface-var aria-disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:hover:text-on-surface" style={fvs(500)}>
               {title || 'Untitled loop'}
             </button>
           )}
@@ -354,44 +483,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
           <AnimatePresence mode="wait">
             <motion.div key={step} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={spring.spatialFast}>
-              {onOverview ? (
-                <OverviewStep
-                  loop={loop} goalType={goalType} setGoalType={setGoalType} rigor={draft.rigor}
-                  subGoals={subGoals} setSubGoals={setSubGoals}
-                  verifyCommand={verifyCommand} setVerifyCommand={setVerifyCommand}
-                  strategyId={loop.strategy_id} multiAgent={draft.classification.execution === 'multi_agent'}
-                  unclassified={draft.classification.classified === false}
-                  guided={{ phases: grillPhases, memoryHits: grillMemoryHits, loading: grillLoading,
-                            error: grillError, isThorough, run: runGuidedDecomposition,
-                            clear: () => { setGrillPhases(null); setGrillError(null) } }}
-                />
-              ) : onCapabilities ? (
-                <CapabilitiesStep
-                  skills={installedSkills} workflows={installedWorkflows}
-                  skillIds={skillIds} workflowIds={workflowIds}
-                  onToggleSkill={(id) => toggleId(skillIds, setSkillIds, id)}
-                  onToggleWorkflow={(id) => toggleId(workflowIds, setWorkflowIds, id)}
-                  suggestedSkillIds={draft.classification.suggested_skill_ids ?? []}
-                  suggestedWorkflowIds={draft.classification.suggested_workflow_ids ?? []}
-                  marketplace={marketplaceSuggestions} installed={installed} installing={installing}
-                  onInstall={installMarketplaceSkill}
-                />
-              ) : onPlan ? (
-                <PlanStep phases={phases} setPhases={setPhases}
-                  skills={installedSkills} workflows={installedWorkflows}
-                  agentNames={agentNames} />
-              ) : onQuestions ? (
-                // The deep-rigor Round as a QuestionSlider stepper: typed kinds, one-at-a-time,
-                // gated forward nav, a per-question custom-answer escape hatch, one Submit that
-                // folds the answers back into the walk and advances to launch.
-                <QuestionSlider
-                  questions={questions}
-                  seed={answers}
-                  onExit={() => setStep((s) => s - 1)}
-                  submitLabel="Save answers"
-                  onSubmit={(record) => { setAnswers((a) => ({ ...a, ...record })); next() }}
-                />
-              ) : onLaunch ? (
+              {onLaunch ? (
                 <LaunchStep loop={loop} title={title} goalType={goalType} subGoals={subGoals}
                   verifyCommand={verifyCommand}
                   skillIds={[...skillIds]} workflowIds={[...workflowIds]}
@@ -399,7 +491,53 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
                   phases={phases}
                   planReview={streamingPlan ? <PlanStreamReview buffer={review.buffer} complete={review.complete} names={review.names} goal={loop.goal} /> : null}
                   answered={questions.filter((q) => (answers[q.id] ?? '').trim()).length} totalQ={questions.length} />
-              ) : null}
+              ) : (
+                // The steps that edit what a Launch writes — the sub-goals, the goal type and its
+                // check, the capabilities, the phase plan, the answers — off while a refused launch is
+                // held. The walk cannot reach them then (the footer's Back is held too), so this is the
+                // guarantee rather than the path: nothing edited after a refusal can be left out of what
+                // Reload and reapply launches. The launch summary edits nothing, so it stays readable.
+                <HeldChange guard={guard}>
+                  {onOverview ? (
+                    <OverviewStep
+                      loop={loop} goalType={goalType} setGoalType={setGoalType} rigor={draft.rigor}
+                      subGoals={subGoals} setSubGoals={setSubGoals}
+                      verifyCommand={verifyCommand} setVerifyCommand={setVerifyCommand}
+                      strategyId={loop.strategy_id} multiAgent={draft.classification.execution === 'multi_agent'}
+                      unclassified={draft.classification.classified === false}
+                      guided={{ phases: grillPhases, memoryHits: grillMemoryHits, loading: grillLoading,
+                                error: grillError, isThorough, run: runGuidedDecomposition,
+                                clear: () => { setGrillPhases(null); setGrillError(null) } }}
+                    />
+                  ) : onCapabilities ? (
+                    <CapabilitiesStep
+                      skills={installedSkills} workflows={installedWorkflows}
+                      skillIds={skillIds} workflowIds={workflowIds}
+                      onToggleSkill={(id) => toggleId(skillIds, setSkillIds, id)}
+                      onToggleWorkflow={(id) => toggleId(workflowIds, setWorkflowIds, id)}
+                      suggestedSkillIds={draft.classification.suggested_skill_ids ?? []}
+                      suggestedWorkflowIds={draft.classification.suggested_workflow_ids ?? []}
+                      marketplace={marketplaceSuggestions} installed={installed} installing={installing}
+                      onInstall={installMarketplaceSkill}
+                    />
+                  ) : onPlan ? (
+                    <PlanStep phases={phases} setPhases={setPhases}
+                      skills={installedSkills} workflows={installedWorkflows}
+                      agentNames={agentNames} />
+                  ) : onQuestions ? (
+                    // The deep-rigor Round as a QuestionSlider stepper: typed kinds, one-at-a-time,
+                    // gated forward nav, a per-question custom-answer escape hatch, one Submit that
+                    // folds the answers back into the walk and advances to launch.
+                    <QuestionSlider
+                      questions={questions}
+                      seed={answers}
+                      onExit={() => setStep((s) => s - 1)}
+                      submitLabel="Save answers"
+                      onSubmit={(record) => { setAnswers((a) => ({ ...a, ...record })); next() }}
+                    />
+                  ) : null}
+                </HeldChange>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -436,19 +574,31 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
         </div>
       )}
 
+      {/* A launch refused because the loop changed since this screen read it. Reapplying saves the
+          change onto what is stored and then launches — Launch is what the user pressed. */}
+      {held && (
+        <div className="shrink-0 px-l pb-xs" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+          <StaleWriteNotice guard={guard} what="This loop" />
+        </div>
+      )}
+
       {/* Footer nav — Back/Next, Launch on the final step. HIDDEN on the questions step: the
           QuestionSlider owns the whole walk's navigation there (its Back exits to the prior step,
-          its Submit advances), so a competing outer bar would double the controls. */}
+          its Submit advances), so a competing outer bar would double the controls. While a refused
+          launch is held, the walk stays here: an edit made on another step would not be part of
+          what the notice reapplies. */}
       {!onQuestions && (
         <div className="shrink-0 border-t border-outline-variant/30 px-l py-m flex items-center justify-between" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
-          <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}>
+          <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}
+            disabled={held} disabledReason={HELD_REASON}>
             <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}
           </Button>
           {onLaunch ? (
             // `launching` is owned by this button — nothing else reads it — and the label ternary was
             // a hand-rolled `loadingLabel`. The verb is kept rather than faded: launching a loop is
             // the last confirmation in a multi-step review, so "still going" has to stay legible.
-            <Button onClick={launch} loading={launching} loadingLabel="Launching…"><Play size={16} /> Launch</Button>
+            <Button onClick={launch} loading={launching} loadingLabel="Launching…"
+              disabled={held} disabledReason={HELD_REASON}><Play size={16} /> Launch</Button>
           ) : (
             <Button size="sm" onClick={() => setStep((s) => s + 1)}>
               {onOverview ? 'Capabilities'

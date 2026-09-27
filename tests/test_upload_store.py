@@ -1,6 +1,8 @@
 """Tests for the resumable upload store (personalclaw.uploads.store)."""
 
 import os
+import shutil
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -93,6 +95,30 @@ class TestInitValidation:
         store = UploadStore(tmp_path)
         with pytest.raises(UploadError):
             store.init(filename="a.mp4", size=0, mime="video/mp4", target="attachment")
+
+    def test_a_removed_root_is_measured_where_it_will_be_recreated(self, tmp_path, monkeypatch):
+        """The gateway builds the store once and caches it, and only then is its root made.
+
+        A root removed after that (the uploads folder deleted under a running gateway) was
+        measured as it stood, missing: the failed probe read as 0 bytes free, and every upload
+        was refused with "(0 MB free)" until a restart, although ``init`` recreates the folder
+        a few lines later.
+        """
+        real = shutil.disk_usage
+
+        def _disk_usage(path):
+            real(path)  # a missing path raises here, exactly as in production
+            return SimpleNamespace(total=100 * _GB, used=50 * _GB, free=50 * _GB)
+
+        root = tmp_path / "uploads" / ".parts"
+        store = UploadStore(root)
+        shutil.rmtree(tmp_path / "uploads")
+        monkeypatch.setattr(shutil, "disk_usage", _disk_usage)
+
+        sess = store.init(filename="a.mp4", size=20 * _MB, mime="video/mp4", target="attachment")
+
+        assert sess.append_mode is False
+        assert (root / sess.id / "meta.json").is_file()
 
 
 class TestPartErrors:

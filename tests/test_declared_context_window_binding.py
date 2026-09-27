@@ -362,7 +362,7 @@ async def test_an_unlisted_binding_reports_NOTHING_until_the_window_is_declared(
 
 
 async def test_the_declaration_ALONE_makes_the_live_gauge_read_and_cross_the_gate(
-    fake_openai_module,
+    fake_openai_module, tmp_path, monkeypatch
 ):
     """Half two, and the assertion #2364 lacked: the override changes the LIVE value.
 
@@ -370,10 +370,14 @@ async def test_the_declaration_ALONE_makes_the_live_gauge_read_and_cross_the_gat
     inert-control half above proves the number came from the declaration and not from a
     fallback, and the threshold assertion proves the consequence rather than the
     arithmetic: it is the compaction gate, not the percentage, that the operator cares
-    about.
+    about. The gate is the Settings threshold, set here to 80% the way Settings sets it;
+    undeclared, the gauge reads nothing and crosses no threshold at all.
     """
-    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.context_compaction import autocompact_pct
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    (tmp_path / "config.json").write_text('{"session": {"autocompact_pct": 80}}')
 
     pct = await _unlisted_measured_pct({"context_window": "32768"}, _MEASURED_PROMPT_TOKENS)
     assert pct == pytest.approx(_MEASURED_PROMPT_TOKENS / _SERVED_WINDOW * 100)
-    assert pct is not None and pct >= NativeAgentRuntime._COMPACT_THRESHOLD_PCT
+    assert pct is not None and pct >= autocompact_pct() == 80.0

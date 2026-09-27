@@ -67,7 +67,9 @@ describe('a refused host says why', () => {
     // duplicate, which is indistinguishable from a successful add.
     expect(src, 'the duplicate branch must not clear the draft').not.toMatch(/hosts\.includes\(h\)\) \{ setDraft\(''\)/)
     expect(src, 'a refusal sets the message and returns').toMatch(/if \(why\) \{ setRefused\(why\); return \}/)
-    expect(src, 'a successful add clears both').toMatch(/setRefused\(''\); onChange\(\[\.\.\.hosts, h\]\); setDraft\(''\)/)
+    // …and only a STORED add empties the box: a save refused because the list changed in another
+    // tab keeps the typed host, which the stale-write notice promises is kept.
+    expect(src, 'a successful add clears both').toMatch(/setRefused\(''\)\s+if \(await onChange\(\[\.\.\.hosts, h\]\)\) setDraft\(''\)/)
     expect(src, 'and editing the text dismisses the stale refusal').toMatch(/if \(refused\) setRefused\(''\)/)
   })
 

@@ -6,6 +6,7 @@ import { TextLink } from '../../ui/TextLink'
 import { Checkbox } from '../../ui/forms'
 import { SearchField } from '../../ui/SearchField'
 import { MoreRow } from '../../ui/MoreRow'
+import { Meter } from '../../ui/Meter'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { listItemEnter, stagger } from '../../design/motion'
@@ -13,11 +14,15 @@ import { StepActions } from './StepActions'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import {
   api,
+  hasApiCode,
   type OnboardingImportItem,
   type OnboardingImportItemState,
+  type OnboardingImportJob,
+  type OnboardingImportReading,
   type OnboardingImportReport,
   type OnboardingImportScan,
   type OnboardingImportSource,
+  type OnboardingImportStatus,
 } from '../../lib/api'
 
 /** The onboarding step that brings another local agent tool's setup over.
@@ -57,7 +62,17 @@ import {
  *  already here and offers nothing twice. The step needs no resume point of its own.
  *
  *  **Skipping is free too.** Nothing here is required to continue, and a machine with
- *  no other agent tool gets one honest line instead of a dead step. */
+ *  no other agent tool gets one honest line instead of a dead step.
+ *
+ *  **A months-long history is the normal case, not an edge.** Thousands of transcripts —
+ *  12,005 files and 5.3 GB in the history this was measured on — took 41 s to read before the
+ *  step could show anything, and the import ran as one request with no progress. So the scan
+ *  lists each conversation from the start of its file and says, in one line, that it is still
+ *  reading the rest (`ReadingLine`); when the gateway's reading pass finishes, the step fetches
+ *  the listing again, and every count is final. The import is a JOB: it runs in the gateway,
+ *  this step watches it over the import stream (`ImportProgress`), a stop takes effect between
+ *  two items, and a gateway restart part-way is said as such — nothing it wrote is half
+ *  written, so scanning again shows what is already here. */
 
 /** The closed category vocabulary, in human words. The server sends the raw values
  *  (it owns the enum), so an unmapped one renders as its own name rather than
@@ -110,7 +125,11 @@ export function labelOfCategory(category: string): string {
   return CATEGORY_LABEL[category] ?? category.replace(/_/g, ' ')
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+/** A count as a person reads it: a months-long history is five-digit counts, and "12161" is
+ *  harder to read than "12,161". */
+const num = (n: number) => n.toLocaleString()
+
+const plural = (n: number, one: string, many: string) => `${num(n)} ${n === 1 ? one : many}`
 
 /** Whether an item begins ticked: every `new` one, bar what the other tool does not use and a
  *  skill whose security scan has warnings. */
@@ -144,9 +163,9 @@ function asSentence(detail: string): string {
 function settledOf(items: OnboardingImportItem[]): string {
   const n = (state: OnboardingImportItemState) => items.filter((i) => i.state === state).length
   const parts: string[] = []
-  if (n('existing')) parts.push(`${n('existing')} already here`)
+  if (n('existing')) parts.push(`${num(n('existing'))} already here`)
   if (n('conflict')) parts.push(plural(n('conflict'), 'conflict', 'conflicts'))
-  if (n('rejected')) parts.push(`${n('rejected')} can't be imported`)
+  if (n('rejected')) parts.push(`${num(n('rejected'))} can't be imported`)
   return parts.join(' · ')
 }
 
@@ -158,13 +177,31 @@ export function summaryOfReport(report: OnboardingImportReport): string {
   const outcome = (o: string) => report.results.filter((r) => r.outcome === o).length
   const left = (s: OnboardingImportItemState) => report.unselected.filter((u) => u.state === s).length
   const parts: string[] = []
-  if (outcome('imported')) parts.push(`${outcome('imported')} imported`)
-  if (left('new')) parts.push(`${left('new')} left out`)
-  if (outcome('existing') + left('existing')) parts.push(`${outcome('existing') + left('existing')} already here`)
-  if (outcome('conflict') + left('conflict')) parts.push(`${outcome('conflict') + left('conflict')} to review`)
-  if (outcome('rejected') + left('rejected')) parts.push(`${outcome('rejected') + left('rejected')} refused`)
-  if (report.missing.length) parts.push(`${report.missing.length} no longer found`)
+  if (outcome('imported')) parts.push(`${num(outcome('imported'))} imported`)
+  if (left('new')) parts.push(`${num(left('new'))} left out`)
+  if (outcome('existing') + left('existing')) parts.push(`${num(outcome('existing') + left('existing'))} already here`)
+  if (outcome('conflict') + left('conflict')) parts.push(`${num(outcome('conflict') + left('conflict'))} to review`)
+  if (outcome('rejected') + left('rejected')) parts.push(`${num(outcome('rejected') + left('rejected'))} refused`)
+  if (report.missing.length) parts.push(`${num(report.missing.length)} no longer found`)
+  if (report.not_reached?.length) parts.push(`${num(report.not_reached.length)} left when you stopped`)
   return parts.length ? parts.join(' · ') : 'Nothing to import'
+}
+
+/** Every fingerprint the scan lists for a detected tool. */
+const fingerprintsOf = (scan: OnboardingImportScan | null) =>
+  new Set((scan?.sources ?? []).filter((s) => s.detected).flatMap((s) => s.items.map((i) => i.fingerprint)))
+
+/** The picks after the listing is fetched again: what the user chose stays chosen, and an item
+ *  the last listing did not have — a conversation the reading pass found — starts the way every
+ *  item starts. Picks of items that are gone fall away with them. */
+function repick(picked: ReadonlySet<string>, before: ReadonlySet<string>, scan: OnboardingImportScan): Set<string> {
+  const next = new Set<string>()
+  for (const source of scan.sources.filter((s) => s.detected)) {
+    for (const item of source.items) {
+      if (picked.has(item.fingerprint) || (!before.has(item.fingerprint) && startsTicked(item))) next.add(item.fingerprint)
+    }
+  }
+  return next
 }
 
 /** One tool's items of one category — the unit a row stands for. */
@@ -199,15 +236,26 @@ export function ImportStep({ onDone, onSkip }: {
   const [scanError, setScanError] = useState<unknown>(null)
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
-  const [busy, setBusy] = useState(false)
+  /** The POST that starts an import, in flight. */
+  const [starting, setStarting] = useState(false)
+  /** The running import this step is watching, as the stream last reported it. */
+  const [job, setJob] = useState<OnboardingImportJob | null>(null)
+  /** The import the step was watching is gone from the gateway: it restarted part-way. */
+  const [interrupted, setInterrupted] = useState(false)
   const [report, setReport] = useState<OnboardingImportReport | null>(null)
   const [failure, setFailure] = useState('')
+  /** The reading pass as the stream reports it — fresher than the listing's own `reading`. */
+  const [reading, setReading] = useState<OnboardingImportReading | null>(null)
+  const scanRef = useRef<OnboardingImportScan | null>(null)
+  scanRef.current = scan
 
   const load = useCallback(() => {
     setScan(null)
     setScanError(null)
+    setInterrupted(false)
     api.onboardingImportScan().then((s) => {
       setScan(s)
+      setReading(s.reading ?? null)
       // Everything that CAN come over starts ticked: the user came here to bring their
       // setup over, and un-ticking is a smaller act than hunting for what to tick. The one
       // exception is an item the other tool itself does not use (`preselected: false` — a
@@ -217,8 +265,69 @@ export function ImportStep({ onDone, onSkip }: {
         .flatMap((x) => x.items.filter(startsTicked).map((i) => i.fingerprint))))
       setOpen(new Set())
     }).catch(setScanError)
+    // A reload while an import runs comes back to it, not to a listing that ignores it.
+    api.onboardingImportJob().then((j) => { if (j?.status === 'running') setJob(j) }).catch(() => { /* the listing still stands */ })
   }, [])
   useEffect(load, [load])
+
+  /** The listing fetched again once the reading pass has finished: the same screen, with every
+   *  count final. What the user chose and opened stays as it was. */
+  const refresh = useCallback(() => {
+    api.onboardingImportScan().then((s) => {
+      const before = fingerprintsOf(scanRef.current)
+      setPicked((prev) => repick(prev, before, s))
+      setScan(s)
+      setReading(s.reading ?? null)
+    }).catch(() => { /* keep the listing on screen; it says it is still reading */ })
+  }, [])
+
+  /** A job has ended: its report, or its failure, replaces the progress. */
+  const settle = useCallback((ended: OnboardingImportJob) => {
+    setJob(null)
+    if (ended.status === 'failed') {
+      setFailure(ended.error || 'The import could not be completed.')
+      return
+    }
+    if (ended.report) {
+      setReport(ended.report)
+      return
+    }
+    api.onboardingImportJob()
+      .then((j) => (j?.report ? setReport(j.report) : setFailure(j?.error || 'The import could not be completed.')))
+      .catch((e) => setFailure((e as Error)?.message || 'The import finished, but its report could not be read.'))
+  }, [])
+
+  // One stream for everything this step waits on in the gateway: the reading pass and the
+  // import. Open while either runs; a frame naming no job, or another one, while this step
+  // watches one means the gateway restarted under it.
+  const readingRuns = Boolean(reading?.running)
+  const watching = job !== null && job.status === 'running'
+  const watchedId = job?.id ?? ''
+  useEffect(() => {
+    if (!readingRuns && !watching) return
+    let es: EventSource
+    try { es = new EventSource(api.onboardingImportStreamUrl()) } catch { return }
+    let readingWas = readingRuns
+    es.addEventListener('status', (e) => {
+      let frame: OnboardingImportStatus
+      try { frame = JSON.parse((e as MessageEvent).data) as OnboardingImportStatus } catch { return }
+      setReading(frame.reading)
+      if (readingWas && !frame.reading.running) refresh()
+      readingWas = frame.reading.running
+      if (!watchedId) return
+      if (!frame.job || frame.job.id !== watchedId) {
+        setJob(null)
+        setInterrupted(true)
+        return
+      }
+      if (frame.job.status === 'running') setJob(frame.job)
+      else settle(frame.job)
+    })
+    // A dropped stream is not a failed import: EventSource reconnects on its own, and the
+    // first frame after a gateway restart says the job is gone.
+    es.onerror = () => { /* transient — EventSource retries */ }
+    return () => es.close()
+  }, [readingRuns, watching, watchedId, refresh, settle])
 
   const detected = useMemo(() => (scan?.sources ?? []).filter((s) => s.detected), [scan])
   const groups = useMemo(() => (scan ? groupsOf(scan) : []), [scan])
@@ -249,7 +358,7 @@ export function ImportStep({ onDone, onSkip }: {
   }, [])
 
   const run = useCallback(async () => {
-    setBusy(true)
+    setStarting(true)
     setFailure('')
     try {
       // Each picked skill with warnings carries the consent its scan showed: what the user
@@ -257,32 +366,82 @@ export function ImportStep({ onDone, onSkip }: {
       const accepted = Object.fromEntries(
         chosen.filter(needsAcceptance).map((i) => [i.fingerprint, i.scan?.consent ?? '']),
       )
-      setReport(await api.runOnboardingImport({
+      const started = await api.runOnboardingImport({
         fingerprints: chosen.map((i) => i.fingerprint),
         ...(Object.keys(accepted).length ? { accepted } : {}),
-      }))
+      })
+      if (started.status === 'running') setJob(started)
+      else settle(started)
     } catch (e) {
+      if (hasApiCode(e, 'import_running')) {
+        // Another tab started one: watch that one rather than start a second.
+        api.onboardingImportJob().then((j) => { if (j) (j.status === 'running' ? setJob(j) : settle(j)) }).catch(() => {})
+        return
+      }
       // The gateway's own sentence, verbatim. `errText` already decided what a user
       // should read; paraphrasing it here would hide which write failed.
       setFailure((e as Error)?.message || 'The import could not be completed.')
     } finally {
-      setBusy(false)
+      setStarting(false)
     }
-  }, [chosen])
+  }, [chosen, settle])
+
+  /** Asked to stop: the stream shows `stopping` until the item it is on has landed, then the
+   *  report. A stop that fails leaves the import running, and the progress still says so. */
+  const [stopFailure, setStopFailure] = useState('')
+  const stop = useCallback(() => {
+    setStopFailure('')
+    api.stopOnboardingImport()
+      .then(() => setJob((j) => (j ? { ...j, stopping: true } : j)))
+      .catch((e) => setStopFailure((e as Error)?.message || 'The import could not be stopped.'))
+  }, [])
 
   /** What assistive tech is told, out of a polite live region. Every phase this step
    *  passes through is silent otherwise: the scan resolves, the import finishes and
    *  the counts appear with no focus move and no visible text a screen reader would
-   *  reach on its own. */
+   *  reach on its own. The import's own progress is announced by its bar, not here —
+   *  a live region re-read twice a second would drown out everything else. */
   const announcement = report
     ? `Import finished: ${summaryOfReport(report)}.`
-    : busy
+    : starting || job
       ? 'Importing your setup…'
       : scan === null
         ? ''  // the loading region below carries this phase
         : detected.length === 0
           ? 'No other agent tools were found on this machine.'
           : `Found ${detected.map((s) => s.display_name).join(' and ')}.`
+
+  if (job) {
+    return (
+      <div className="flex flex-col gap-l">
+        <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+        <ImportProgress job={job} />
+        {stopFailure && <InlineError icon multiline>{stopFailure}</InlineError>}
+        {/* The one action an import has is to stop it: a stand-in primary rendered as a blank
+            spinner, which is what the drive showed, and it promised nothing. */}
+        <StepActions
+          secondary={{
+            label: job.stopping ? 'Stopping…' : 'Stop importing', onClick: stop,
+            disabled: job.stopping, disabledReason: 'Stopping after the item it is on',
+          }} />
+      </div>
+    )
+  }
+  if (interrupted) {
+    // No live-region line here: the error below is an alert, and it says this already.
+    return (
+      <div className="flex flex-col gap-l">
+        <div className="flex flex-col gap-s">
+          <InlineError icon multiline>The import stopped when PersonalClaw restarted.</InlineError>
+          <p data-type="caption" className="text-on-surface-var">
+            Everything that landed before it stopped is kept, and nothing is half written.
+            Scan again to see what is already here and bring over the rest.
+          </p>
+        </div>
+        <StepActions primary={{ label: 'Scan again', onClick: load }} secondary={{ label: 'Skip this', onClick: onSkip }} />
+      </div>
+    )
+  }
 
   // 🔴 A FAILED SCAN MUST NOT REMOVE THE WAY PAST AN OPTIONAL STEP. This early return replaced the
   // whole step body, including the `onSkip` link that lives in the normal return below — so with the
@@ -302,10 +461,15 @@ export function ImportStep({ onDone, onSkip }: {
     )
   }
   if (scan === null) {
+    // Said, not just spun: on a months-long history this takes a few seconds, and a bare
+    // spinner reads as a step that is stuck.
     return (
-      <div role="status" aria-busy="true" className="flex items-center py-s">
+      <div role="status" aria-busy="true" className="flex items-center gap-s py-s">
         <LoadingStatus what="detected tools" />
         <Loader2 size={18} className="animate-spin text-on-surface-low" aria-hidden="true" />
+        <span data-type="body-s" className="text-on-surface-var" aria-hidden="true">
+          Looking for other agent tools on this machine…
+        </span>
       </div>
     )
   }
@@ -338,6 +502,9 @@ export function ImportStep({ onDone, onSkip }: {
                   : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, and nothing in ${one ? 'it' : 'them'} is changed. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
               </p>
 
+              <ReadingLine reading={reading ?? scan.reading ?? null} />
+
+
               <motion.div className="flex flex-col gap-s" initial="initial" animate="animate"
                 variants={{ animate: { transition: stagger(0.05) } }}>
                 {detected.map((source) => (
@@ -365,13 +532,72 @@ export function ImportStep({ onDone, onSkip }: {
                     label: failure
                       ? 'Try again'
                       : chosen.length ? `Import ${plural(chosen.length, 'item', 'items')}` : 'Import selected',
-                    onClick: run, loading: busy,
+                    onClick: run, loading: starting,
                     disabled: chosen.length === 0, disabledReason: 'Pick at least one thing to bring over',
                   }}
                 secondary={{ label: 'Skip this', onClick: onSkip }} />
 
             </>
           )}
+    </div>
+  )
+}
+
+/** While conversations are still being read in full: how far that has got, and what it means for
+ *  the listing. Nothing waits for it — an import reads each conversation as it brings it over —
+ *  but until it finishes a conversation's message count is not known and a count can still move,
+ *  so the listing says that rather than letting a provisional number pass as a final one.
+ *  `data-import-scan="reading"` marks it for the scale drive, which times the listing's arrival
+ *  at final. Gone once every file is read. */
+function ReadingLine({ reading }: { reading: OnboardingImportReading | null }) {
+  if (!reading || reading.of === 0 || reading.read >= reading.of) return null
+  const figure = `${num(reading.read)} of ${num(reading.of)}`
+  return (
+    <div data-import-scan="reading" className="flex flex-col gap-xs rounded-md bg-surface-container px-m py-s">
+      <p data-type="body-s" className="text-on-surface">
+        {reading.running
+          ? `Still reading your conversations in full: ${figure}.`
+          : `Read ${figure} of your conversations in full.`}
+      </p>
+      <Meter label="Conversations read in full" pct={(reading.read / reading.of) * 100} size="thin" />
+      <p data-type="caption" className="text-on-surface-low">
+        You can import now: each conversation is read as it comes over. Until this finishes, a
+        conversation shows no message count, and the counts here can still change.
+      </p>
+    </div>
+  )
+}
+
+/** The import, as it runs: how many of the picks have landed or been reported, what each came
+ *  to so far, and the one it is on. It runs in the gateway, one item at a time, so a stop takes
+ *  effect after the item it is on, and whatever landed stays. `data-import-progress` marks it for
+ *  the scale drive, which samples it. */
+function ImportProgress({ job }: { job: OnboardingImportJob }) {
+  const n = (outcome: string) => job.counts[outcome] ?? 0
+  const tally = [
+    n('imported') && `${num(n('imported'))} imported`,
+    n('existing') && `${num(n('existing'))} already here`,
+    n('conflict') && `${num(n('conflict'))} to review`,
+    n('rejected') && `${num(n('rejected'))} refused`,
+  ].filter(Boolean).join(' · ')
+  const preparing = job.phase === 'scanning'
+  return (
+    <div data-import-progress className="flex flex-col gap-s rounded-lg bg-surface-high p-m">
+      <p data-type="title-s" className="text-on-surface tabular-nums">
+        {preparing
+          ? 'Getting ready to import…'
+          : `Importing ${num(job.done)} of ${num(job.total)}`}
+      </p>
+      <Meter label="Items imported" pct={job.total ? (job.done / job.total) * 100 : 0}
+        detail={tally || undefined} />
+      {job.current && !job.stopping && (
+        <p data-type="caption" className="break-words text-on-surface-var">Now: {job.current}</p>
+      )}
+      <p data-type="caption" className="text-on-surface-low">
+        {job.stopping
+          ? 'Stopping after the item it is on. Everything that has landed is kept.'
+          : 'Your setup comes over first, then your conversations. Stop at any point: everything that has landed is kept, and importing again brings over the rest.'}
+      </p>
     </div>
   )
 }
@@ -422,7 +648,7 @@ function SourceCard({ source, groups, picked, onPick, open, onToggle }: {
             {/* A reassurance on the FIRST screen a new user sees, about credentials being left
                 behind. Both nouns take the same count — the sentence is one disjunction over one
                 number — so "1 credential value or file" and "3 credential values or files". */}
-            {source.secrets_skipped} credential value{source.secrets_skipped === 1 ? '' : 's'} or file{source.secrets_skipped === 1 ? '' : 's'} will not be imported.
+            {num(source.secrets_skipped)} credential value{source.secrets_skipped === 1 ? '' : 's'} or file{source.secrets_skipped === 1 ? '' : 's'} will not be imported.
           </p>
         )}
       </div>
@@ -450,7 +676,7 @@ function NotImportedList({ source }: { source: OnboardingImportSource }) {
         {entries.map((entry) => (
           <li key={entry.what} data-type="caption" className="text-on-surface-var">
             <span className="text-on-surface">{entry.what}</span>
-            <span className="text-on-surface-low tabular-nums"> · {entry.count}</span>
+            <span className="text-on-surface-low tabular-nums"> · {num(entry.count)}</span>
             <span className="text-on-surface-low"> — {entry.why}</span>
           </li>
         ))}
@@ -484,7 +710,7 @@ function GroupRow({ group, picked, onPick, open, onToggle }: {
   const pending = group.items.filter(needsAcceptance)
   const chosen = choosable.filter((i) => picked.has(i.fingerprint)).length
   const all = choosable.length > 0 && chosen === choosable.length
-  const count = all ? `${choosable.length}` : `${chosen} of ${choosable.length}`
+  const count = all ? num(choosable.length) : `${num(chosen)} of ${num(choosable.length)}`
   const settled = settledOf(group.items)
   const verb = choosable.length + pending.length > 0 ? 'Choose' : 'Show'
   return (
@@ -578,7 +804,7 @@ function ItemList({ id, group, label, picked, onPick }: {
           <ResultAnnouncement count={matching.length} noun="items" active={needle !== ''} />
           {needle && (
             <p data-type="caption" className="text-on-surface-low">
-              {matching.length} of {group.items.length} match
+              {num(matching.length)} of {num(group.items.length)} match
             </p>
           )}
         </>
@@ -596,7 +822,7 @@ function ItemList({ id, group, label, picked, onPick }: {
         <div>
           <TextLink size="sm" ink="emphasis"
             onClick={() => { focusRow.current = visible.length; setLimit((n) => n + PAGE) }}>
-            Show {Math.min(PAGE, remaining)} more ({remaining} not shown)
+            Show {Math.min(PAGE, remaining)} more ({num(remaining)} not shown)
           </TextLink>
         </div>
       )}
@@ -728,6 +954,7 @@ function Report({ report, scan, onContinue }: {
   const leftOut = report.unselected.filter((u) => u.state === 'new')
   const scanned = new Map(scan.sources.flatMap((s) => s.items.map((i) => [i.fingerprint, i] as const)))
   const gone = report.missing.map((fp) => scanned.get(fp)?.title ?? fp)
+  const unreached = (report.not_reached ?? []).map((fp) => scanned.get(fp))
   /** A row by the name the list showed it under — its title and where it was found — rather than
    *  its key, which for a scoped server or a project file is the importer's own bookkeeping. */
   const named = (r: ReportRow) => {
@@ -757,6 +984,24 @@ function Report({ report, scan, onContinue }: {
           </p>
         </section>
       )}
+      {unreached.length > 0 && (
+        <section role="group" aria-label="Not reached, because you stopped" className="flex flex-col gap-s">
+          <span data-type="label-s" className="text-on-surface">Not reached, because you stopped</span>
+          <p data-type="caption" className="text-on-surface-var">
+            The import stopped before {plural(unreached.length, 'item', 'items')} you picked, so
+            nothing was written for {unreached.length === 1 ? 'it' : 'them'}. Importing again
+            brings {unreached.length === 1 ? 'it' : 'them'} over.
+          </p>
+          <ul className="flex flex-col gap-xs">
+            {unreached.slice(0, 8).map((item, index) => (
+              <li key={item?.fingerprint ?? index} data-type="caption" className="text-on-surface-var">
+                {item ? `${labelOfCategory(item.category)} · ${[item.title, item.origin].filter(Boolean).join(' · ')}` : 'An item the scan no longer lists'}
+              </li>
+            ))}
+          </ul>
+          <MoreRow total={unreached.length} shown={8} />
+        </section>
+      )}
       {leftOut.length > 0 && (
         <section role="group" aria-label="Left out, as you chose" className="flex flex-col gap-s">
           <span data-type="label-s" className="text-on-surface">Left out, as you chose</span>
@@ -776,7 +1021,7 @@ function Report({ report, scan, onContinue }: {
           <ul className="flex flex-wrap gap-x-m gap-y-xs">
             {landed.map(([category, n]) => (
               <li key={category} data-type="caption" className="text-on-surface-var">
-                {labelOfCategory(category)} · {n}
+                {labelOfCategory(category)} · {num(n)}
               </li>
             ))}
           </ul>

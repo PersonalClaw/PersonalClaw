@@ -55,6 +55,7 @@ from personalclaw.config.secret_refs import ForeignSecretReference
 from personalclaw.http_errors import json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,18 @@ def register_instance_routes(app: web.Application) -> None:
     app.router.add_put("/api/models/use-cases/{use_case}/settings", handle_set_use_case_settings)
 
 
+def _revisioned(wire: dict) -> dict:
+    """*wire* — an instance as :func:`mask_instance` hands it out — with the ``revision`` of its
+    masked ``config`` beside it.
+
+    The config is ONE document — the instance editor sends all of it back — so each read of an
+    instance carries the revision its update must name (`personalclaw/stale_write.py`). It takes
+    the MASKED record, never the instance, so every route still masks at the point it answers
+    and a revision never encodes a secret its reader was not shown.
+    """
+    return {**wire, "revision": revision_of(wire.get("config") or {})}
+
+
 def _model_instances_elsewhere(ext: object) -> web.Response | None:
     """400 for a MODEL app: its instances live in ``config.json`` ``providers[]``, not here."""
     if getattr(getattr(ext, "provider_config", None), "type", "") != "model":
@@ -164,13 +177,13 @@ async def handle_list_instances(request: web.Request) -> web.Response:
     # (~/.personalclaw/mcp.json), not the generic instance store.
     if name == _mcp.MCP_TOOLS_EXTENSION:
         return web.json_response(
-            {"instances": [mask_instance(i, schema) for i in _mcp.list_instances()]}
+            {"instances": [_revisioned(mask_instance(i, schema)) for i in _mcp.list_instances()]}
         )
 
     instances = list_instances(name)
     return web.json_response(
         {
-            "instances": [mask_instance(inst, schema) for inst in instances],
+            "instances": [_revisioned(mask_instance(inst, schema)) for inst in instances],
         }
     )
 
@@ -236,7 +249,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         except ValueError as exc:
             return json_error("bad_request", message=str(exc), status=400)
         _rebuild_agent_config_safe()
-        return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
+        return web.json_response({"instance": _revisioned(mask_instance(inst, schema))}, status=201)
 
     try:
         inst = create_instance(name, display_name=display_name, config=config)
@@ -245,7 +258,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
     except ValueError as exc:  # a value no credential can hold (a NUL character)
         return _unstorable_secret(exc)
     await _refresh_multi_instance_provider_safe(name)
-    return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
+    return web.json_response({"instance": _revisioned(mask_instance(inst, schema))}, status=201)
 
 
 def _unstorable_secret(exc: ValueError) -> web.Response:
@@ -291,11 +304,11 @@ async def handle_get_instance(request: web.Request) -> web.Response:
         inst = _mcp.get_instance(instance_id)
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
-        return web.json_response({"instance": mask_instance(inst, schema)})
+        return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
     inst = get_instance(name, instance_id)
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    return web.json_response({"instance": mask_instance(inst, schema)})
+    return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 
 
 async def handle_update_instance(request: web.Request) -> web.Response:
@@ -339,7 +352,9 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         # a worse bug than the leak. Runs BEFORE validation so the restored real value is what
         # gets validated — a sentinel has no reason to satisfy a pattern or a minLength.
         existing = _mcp.get_instance(instance_id) if is_mcp else get_instance(name, instance_id)
-        config = preserve_unchanged_secrets(config, existing.config if existing else {}, schema)
+        if existing is None:
+            return json_error("not_found", message="No instance exists with that id.", status=404)
+        config = preserve_unchanged_secrets(config, existing.config, schema)
         errors = ProviderSettings.validate(config, schema)
         if errors:
             return json_error(
@@ -348,13 +363,24 @@ async def handle_update_instance(request: web.Request) -> web.Response:
                 status=422,
                 error_extra={"details": errors},
             )
+        # 🔴 A CONFIG IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The editor sends back the
+        # whole config it seeded from its read, so a card opened before another tab saved this
+        # instance replaced that save with its own copy. Compared in the masked form the reads
+        # hand out (`_revisioned`), with no `await` from here to the write below.
+        stale = stale_write_refusal(
+            request,
+            mask_instance(existing, schema)["config"],
+            what=f"the settings of instance {instance_id!r}",
+        )
+        if stale is not None:
+            return stale
 
     if is_mcp:
         inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
         _rebuild_agent_config_safe()
-        return web.json_response({"instance": mask_instance(inst, schema)})
+        return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 
     try:
         inst = update_instance(
@@ -371,7 +397,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
     await _refresh_multi_instance_provider_safe(name)
-    return web.json_response({"instance": mask_instance(inst, schema)})
+    return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 
 
 async def handle_delete_instance(request: web.Request) -> web.Response:
@@ -504,7 +530,12 @@ async def handle_test_instance(request: web.Request) -> web.Response:
 
 
 async def handle_get_use_case_settings(request: web.Request) -> web.Response:
-    """GET /api/models/use-cases/{use_case}/settings"""
+    """GET /api/models/use-cases/{use_case}/settings
+
+    The settings are ONE document — the PUT below replaces the file — so the read carries the
+    ``revision`` that write must name (`personalclaw/stale_write.py`), taken from the very
+    settings beside it.
+    """
     from personalclaw.providers.use_cases import VALID_USE_CASES, load_use_case_settings
 
     use_case = request.match_info["use_case"]
@@ -512,12 +543,21 @@ async def handle_get_use_case_settings(request: web.Request) -> web.Response:
         return json_error("bad_request", message="That is not a recognized use case.", status=400)
 
     settings = load_use_case_settings(use_case)
-    return web.json_response({"use_case": use_case, "settings": settings})
+    return web.json_response(
+        {"use_case": use_case, "settings": settings, "revision": revision_of(settings)}
+    )
 
 
 async def handle_set_use_case_settings(request: web.Request) -> web.Response:
-    """PUT /api/models/use-cases/{use_case}/settings"""
-    from personalclaw.providers.use_cases import VALID_USE_CASES, save_use_case_settings
+    """PUT /api/models/use-cases/{use_case}/settings
+
+    Replaces the whole file with the body, over the revision named in ``If-Match``.
+    """
+    from personalclaw.providers.use_cases import (
+        VALID_USE_CASES,
+        load_use_case_settings,
+        save_use_case_settings,
+    )
 
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -533,5 +573,18 @@ async def handle_set_use_case_settings(request: web.Request) -> web.Response:
             "invalid_body", message="The request body must be a JSON object.", status=400
         )
 
+    # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE BODY WAS BUILT FROM. Settings → Voice sends
+    # `{...settings, <the one it changed>}` from the copy it read, and this same file is written
+    # by the routing levers (`routing.policy.set_mode`/`set_pin`) and by channel apps through the
+    # SDK (`sdk.channel.save_use_case_settings`, the Slack voice modal) — so a page opened before
+    # either wrote replaced their value with its own stale one. No `await` from here to the save.
+    stale = stale_write_refusal(
+        request, load_use_case_settings(use_case), what=f"the {use_case} settings"
+    )
+    if stale is not None:
+        return stale
     save_use_case_settings(use_case, body)
-    return web.json_response({"ok": True, "use_case": use_case, "settings": body})
+    saved = load_use_case_settings(use_case)
+    return web.json_response(
+        {"ok": True, "use_case": use_case, "settings": saved, "revision": revision_of(saved)}
+    )

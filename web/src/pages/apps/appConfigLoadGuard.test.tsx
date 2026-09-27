@@ -22,7 +22,7 @@ import { join } from 'node:path'
 // The guard lives in the HOOK, not in the two call sites: every consumer inherits it, and a third
 // one cannot forget it.
 
-const config = { schema: { properties: { room: { type: 'string' } } }, config: { room: 'general' }, _secret_set: [] }
+const config = { schema: { properties: { room: { type: 'string' } } }, config: { room: 'general' }, _secret_set: [], revision: 'rev-1' }
 
 function mockApi(over: Record<string, unknown>) {
   vi.doMock('../../lib/api', async (orig) => ({
@@ -89,7 +89,7 @@ describe('a failed app-config read is reported, not hidden behind "Loading…"',
   })
 
   it('still saves normally once the config has loaded', async () => {
-    const saveAppConfig = vi.fn((_name: string, _cfg: Record<string, unknown>) => Promise.resolve({ ok: true }))
+    const saveAppConfig = vi.fn((_name: string, _cfg: Record<string, unknown>, _base: string) => Promise.resolve({ ok: true }))
     mockApi({ saveAppConfig })
     await mountProbe()
     await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'))
@@ -97,6 +97,7 @@ describe('a failed app-config read is reported, not hidden behind "Loading…"',
     fireEvent.click(screen.getByRole('button', { name: 'save' }))
     await waitFor(() => expect(saveAppConfig).toHaveBeenCalledTimes(1))
     expect(saveAppConfig.mock.calls[0][1], 'the loaded values, not an empty object').toEqual({ room: 'general' })
+    expect(saveAppConfig.mock.calls[0][2], 'over the revision they were read at').toBe('rev-1')
   })
 })
 

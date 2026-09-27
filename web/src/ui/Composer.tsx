@@ -60,7 +60,7 @@ export function Composer({
     sentTimer.current = window.setTimeout(() => setJustSent(false), 620)
   }
   useEffect(() => () => window.clearTimeout(sentTimer.current), [])
-  // Drag-and-drop file attach — mirrors the "+" button (both call onAttach).
+  // Drag-and-drop file attach — mirrors the "+" button and a pasted image (all call onAttach).
   // depth counter so child dragenter/leave events don't flicker the overlay.
   const dragDepth = useRef(0)
   const canAttach = controls.attach && !!onAttach
@@ -352,6 +352,7 @@ export function Composer({
             onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} mentionProject={mentionProject}
             slashCommands={!!controls.slash}
             onLargePaste={onLargePaste}
+            onPasteFiles={canAttach ? onAttach : undefined}
             mobile={isMobile}
             sendOnEnter={sendOnEnter}
           />

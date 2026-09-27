@@ -304,12 +304,38 @@ def _stored_order(home, use_case: str, query_class: str):
     return ((entry.get("classes") or {}).get(query_class) or {}).get("order")
 
 
+async def _cell_revision(c: TestClient, use_case: str, query_class: str) -> str | None:
+    """The revision the Routing tab reads for one class's order, or ``None`` for a use case the
+    table has no row for."""
+    rows = (await (await c.get("/api/models/routing-policy")).json())["use_cases"]
+    row = next((r for r in rows if r["use_case"] == use_case), None)
+    return row["order_revisions"].get(query_class) if row else None
+
+
 async def _put(body: dict):
-    """PUT the policy route once and return ``(status, json_body)``."""
+    """PUT the policy route once and return ``(status, json_body)``.
+
+    A body carrying an ``order`` is sent the way the Routing tab sends one — over the revision of
+    the class's order it read (`personalclaw/stale_write.py`) — because an order replaces the
+    whole cell. The levers that are single values carry none, as the tab's do not.
+    """
     c = await _client()
     try:
-        resp = await c.put("/api/models/routing-policy", json=body)
+        headers = {}
+        if "order" in body and body.get("query_class"):
+            base = await _cell_revision(c, str(body.get("use_case")), str(body["query_class"]))
+            if base is not None:
+                headers["If-Match"] = f'"{base}"'
+        resp = await c.put("/api/models/routing-policy", json=body, headers=headers)
         return resp.status, await resp.json()
+    finally:
+        await c.close()
+
+
+async def _current_cell_revision(use_case: str, query_class: str) -> str | None:
+    c = await _client()
+    try:
+        return await _cell_revision(c, use_case, query_class)
     finally:
         await c.close()
 
@@ -339,7 +365,13 @@ class TestRoutingPolicyWrite:
         status, body = await _put({"use_case": _UC, "query_class": _QC, "order": sent})
 
         assert status == 200
-        assert body == {"ok": True, "use_case": _UC, "applied": ["order"]}
+        # The cell's NEW revision rides along, so a tab that stays open reorders over this one.
+        assert body == {
+            "ok": True,
+            "use_case": _UC,
+            "applied": ["order"],
+            "order_revision": await _current_cell_revision(_UC, _QC),
+        }
         assert _stored_order(policy_home, _UC, _QC) == sent
 
     @pytest.mark.asyncio

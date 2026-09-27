@@ -11,6 +11,8 @@ boundary — a `..`-shaped id must delete nothing.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from personalclaw.workflows import store
@@ -222,26 +224,35 @@ class TestOrphanReaping:
 
 class TestStickyCancel:
     async def test_a_cancel_with_no_controller_is_honoured(self) -> None:
-        """A cancel issued while the gateway was down must not be lost."""
+        """A cancel issued while the gateway was down must not be lost — and it lands through a
+        controller's terminal writer, so it closes what the run still holds (its waits, tokens,
+        Inbox rows, approvals, leases). The watchdog writing the row itself closed none of them."""
         run = _run()
         store.request_cancel(run.id)
         wd = WorkflowWatchdog(None, EngineServices())
         await wd._poll_once()
+        controller = wd.controller(run.id)
+        assert controller is not None, "the cancel was not handed to a controller"
+        await asyncio.wait_for(controller._terminal.wait(), timeout=5)
         assert store.get(run.id).status == RunStatus.CANCELLED
         assert not store.cancel_requested(run.id)  # intent consumed
         await wd.stop()
 
     async def test_a_live_controller_cancels_itself(self) -> None:
         """Two writers on one run is the failure mode; the controller owns its own
-        terminal write."""
+        terminal write. The watchdog WAKES it, because a controller whose loop has exited — a
+        run parked at a gate, a paused one — has no next step to read the intent on."""
         run = _run()
         wd = WorkflowWatchdog(None, EngineServices())
         mine = RunController(run, SPEC, services=EngineServices())
         wd.register(mine)
         store.request_cancel(run.id)
         await wd._poll_once()
-        # The watchdog deferred rather than writing the status itself.
+        # The watchdog deferred rather than writing the status itself…
         assert store.cancel_requested(run.id)
+        # …and the controller it woke wrote it.
+        await asyncio.wait_for(mine._terminal.wait(), timeout=5)
+        assert store.get(run.id).status == RunStatus.CANCELLED
         await wd.stop()
 
 
@@ -366,29 +377,62 @@ class TestPublisher:
         assert await controller.run_to_completion(timeout=20) == RunStatus.COMPLETE
         await wd.stop()
 
-    async def test_a_run_update_also_signals_the_ws(self) -> None:
-        """WS envelopes are refetch SIGNALS, not payloads (the DashboardLive convention)."""
-        signals: list[dict] = []
+    async def test_a_run_update_tells_every_open_page_to_reread_the_runs(self, monkeypatch) -> None:
+        """A run starting or ending reaches the dashboard socket as the run list's refresh hint.
 
-        class _State:
-            def workflow_sse(self):
-                class R:
-                    def publish(self, *a):
-                        pass
+        Asserted at the SOCKET, through the real dashboard translator, because the fake this
+        replaces could not see the defect. The signal was handed to `_broadcast` as
+        `{"type": "workflow_run_update", "run_id": …}`, and `_broadcast` reads `_type`, so it went
+        out as a `notification` frame: the bell, the Notifications page and Home re-read their
+        notifications on every run update, and no page read it as a run changing. Mission
+        Control's Working lane kept a finished run's card until a reload (#3698's "left undone").
+        """
+        import json
 
-                return R()
+        from personalclaw.dashboard.state import DashboardState
 
-            def _broadcast(self, msg):
-                signals.append(msg)
+        class _Socket:
+            closed = False
+
+            def __init__(self) -> None:
+                self.frames: list[dict] = []
+
+            def send_str(self, msg: str):
+                self.frames.append(json.loads(msg))
+
+                async def _sent():
+                    return None
+
+                return _sent()
+
+        class _Registry:
+            def publish(self, *a):
+                pass
+
+        owner = _Socket()
+        state = DashboardState.__new__(DashboardState)
+        state._ws_clients = [owner]
+        state._ws_app = {}
+        state._notification_log = []
+        state._sessions = {}
+        state._pending_approvals = {}
+        state.conversation_log = None
+        state.workflow_sse = lambda: _Registry()  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            DashboardState, "_schedule_ws_send", lambda self, coro: (coro.close(), True)[1]
+        )
 
         run = _run()
-        wd = WorkflowWatchdog(_State(), EngineServices())
+        wd = WorkflowWatchdog(state, EngineServices())
         controller = await wd.launch(run, SPEC)
         await controller.run_to_completion(timeout=20)
-        assert signals
-        assert all(s["type"] == "workflow_run_update" for s in signals)
-        assert all(set(s) == {"type", "run_id"} for s in signals), "payload, not a signal"
         await wd.stop()
+
+        assert owner.frames, "a run started and finished and no open page was told"
+        assert [f["type"] for f in owner.frames if f["type"] == "notification"] == []
+        assert all(
+            f == {"type": "refresh", "data": {"kinds": ["workflow_runs"]}} for f in owner.frames
+        )
 
 
 class TestLoopHubAdoption:

@@ -165,7 +165,7 @@ says what that means.
   names a security setting fails to install (`apps/manifest.py::_config_permission_errors`).
   `/api/apps/{name}/config` reaches only the calling app's own settings, and the file
   explorer hides the PersonalClaw home from an app token
-  (`dashboard/handlers/files.py::_dashboard_roots`), since `config.json` and `mcp.json`
+  (`file_roots.py::dashboard_roots`), since `config.json` and `mcp.json`
   live there. It refuses an app like every other app refusal, `403` with a Security Event
   Log row naming the app and the path (`files.py::_app_path_refusal`).
 - **A provider is its app's.** A provider's settings say where it connects and which of its
@@ -188,12 +188,15 @@ says what that means.
   (`ROUTE_AUTHZ` `OwnerOnly` rows; both are `SECURITY_ROUTE_FAMILIES` and
   `READ_DECLARED_FAMILIES`), and so is the onboarding wizard's one-click bind
   (`OWNER_ONLY_API_PATHS["/api/onboarding/local-model/bind"]`), which adds a model provider
-  and moves your chats onto it.
+  and moves your chats onto it. The rest of the first-run setup (`/api/onboarding`) is a
+  family of its own, owner-only the same way, reads included: its status read and model
+  check name your chat binding, its local-model probe and LAN sweep have the gateway look
+  for model servers on your machine and network, and its state is your setup's progress.
 - **A new route fails closed.** Every write route under a family that decides what runs
   as you, whether it asks first, or who may reach you (`SECURITY_ROUTE_FAMILIES`), and every
-  read under your conversation families, your notification log, your providers and your
-  models (`READ_DECLARED_FAMILIES`), is either owner-only or declared `AppMay` with its
-  reason. An undeclared one is refused to every app token at runtime
+  read under your conversation families, your notification log, your providers, your models
+  and your first-run setup (`READ_DECLARED_FAMILIES`), is either owner-only or declared
+  `AppMay` with its reason. An undeclared one is refused to every app token at runtime
   (`undeclared_security_route`), and `tests/test_security_posture_rail.py` fails the build on
   it.
 - **An automation that approves itself asks you first.** The owner's own write that makes
@@ -286,6 +289,16 @@ Data leaving the running system:
   append-only events (caller, operation, outcome).
 - **Redacted archive reads** (`security.py`: `redact_credentials`,
   `redact_exfiltration_urls`).
+- **A masked value is never saved back over the real one.** Every read that hands text to an
+  editor masks it with `redact_for_display`: a file in Files, an artifact, a loop before launch, a
+  schedule, an inbox draft, a prompt or snippet, a memory fact, and what the agent's `artifact_get`
+  and `knowledge_get` return. Each of those saves restores every marker it gets back from the
+  stored value (`keep_masked_spans`, `keep_masked_values`), so a marker left where it was keeps the
+  value it stood for and the plaintext never crosses the wire. A save whose markers can no longer be
+  placed is refused (`409`) rather than stored. A marker that is already part of the stored text,
+  like a `CLAUDE.md` imported redacted, stays text. A structured secret shown as `••••••••` works
+  the same way: an app, provider or MCP save that sends the mask back keeps the stored value, and
+  the credential store refuses the mask as a value (`secret_refs._move_into_store`).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.
 - **Secret settings held by reference** (`config/secret_refs.py`): a provider key, every
@@ -356,6 +369,15 @@ Data leaving the running system:
   `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
+- **A file-backed artifact points only where those surfaces reach** (`artifacts/source_files.py`).
+  Its `source_path` is a live pointer: every read of the artifact reads the file, and every save,
+  snapshot and revert writes it. So the pointer must pass the file explorer's own check
+  (`file_roots.admit`: symlinks and `..` resolved, no credential or secret file) against the
+  explorer's roots, or, for the owner, a loop's own folder, where an unbound loop keeps the
+  deliverable its completion graduates. Anything else is refused when it is set (`400`, or `403`
+  for an app), before the file is opened, so the answer says nothing about what the file holds.
+  Every read and write checks it again, so a pointer recorded earlier, or one whose file was later
+  swapped for a symlink out, touches nothing.
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 
@@ -370,7 +392,7 @@ deliberate, disclosed gap — see [limitations.md](limitations.md)). A row may c
 |---|---|---|---|
 | **ASI01** Agent goal / instruction manipulation | Untrusted-content fencing, approval modes, and data-not-instructions framing on recalled memory; an app token cannot write your agents, skills, prompts or routing notes, or post into your chats, rooms or inbox answers | `security.py::fence_untrusted`; `dashboard/handlers/memory.py` (recall framing); `apps/permissions.py` (`ROUTE_AUTHZ`, `OWNER_ONLY_API_PATHS["/api/onboarding/import"]`, `OWNER_ONLY_API_PATHS["/api/send-message"]`) | enforced |
 | **ASI02** Tool misuse | Command deny/suspicious patterns, task-mode gating, OS child sandbox | `security.py` (`BUILTIN_DENIED_COMMAND_PATTERNS`, `SUSPICIOUS_BASH_PATTERNS`); `task_modes.py`; `sandbox.py` | enforced |
-| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app, your model providers and model bindings the owner's | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
+| **ASI03** Identity & privilege abuse | App-scoped tokens, reverse-proxy credential stripping, permission middleware (holds even in `none` mode), an owner-only registry plus per-route declarations that refuse an undeclared write, settings scoped to the fields a manifest declares, conversations held to the app that started them (reads and socket frames included) and run under its own `agent` grant, notifications held to the app that raised them, each provider held to its own app, your model providers, model bindings and first-run setup the owner's | `dashboard/handlers/apps.py::api_app_proxy`; `dashboard/token_auth.py`; `dashboard/server.py` (`_dev_user_middleware`, `app_permission_middleware`, `_ownership_denial`); `apps/permissions.py` (`OWNER_ONLY_API_PATHS`, `ROUTE_AUTHZ`, `undeclared_security_route`, `app_conversation_auto_approves`); `dashboard/ws_state.py` (`frame_subject`, `_own_notifications`); `dashboard/state.py::notification_reaches` | enforced |
 | **ASI04** Supply-chain & dependency risk | Quarantine → scan → consent → install; `dangerous` verdict terminal; scanned-tree == installed-tree (tooling left out of both, nothing skipped in what remains, an unreadable file disclosed); staging never follows a link out of the bundle; a registry listing names a public `https://` repo, checked again at every connection its fetch makes | `apps/app_manager.py::install`; `apps/staging.py`; `supply_chain.py` (`SkillScanner`, `Verdict`, `never_installed`); `apps/catalog.py::listing_repo_refusal`; `net/git.py::run_git_guarded` | enforced |
 | **ASI05** Unauthorized code execution | Command screening + OS sandbox + credential-env denylist; an app token cannot define an MCP server or an automation, and the owner confirms an automation step that approves its own tool calls | `security.py`; `sandbox.py`; `apps/permissions.py` (`OWNER_ONLY_API_PATHS["/api/mcp"]`, `ROUTE_AUTHZ`); `automation_posture.py` | enforced *(an installed app's own code runs as you: documented limitation, [limitations.md](limitations.md) §7)* |
 | **ASI06** Memory & context poisoning | Fenced recall, propose-only (never live-write) learning, temporary/incognito session modes; an app writes memory, lessons included, only with its `memory` grant | `dashboard/handlers/memory.py`; `after_turn_review.py` (propose-only queue); `session_restrictions.py`; `apps/permissions.py::MEMORY_API_PATHS` | enforced |

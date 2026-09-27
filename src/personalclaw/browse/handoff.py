@@ -524,11 +524,13 @@ def request_login(
     slug = site_slug(url)
     safe_url = screen_url(url)
     blocker = _REASON_BLOCKER.get(reason, "needs you to sign in")
+    # Where to sign in is the browser the step DRIVES — the one it resumes in. Nothing opens a
+    # window for the person: `chrome_launch_args` is handed back, never executed (see its
+    # docstring), so a sentence saying a window "is open" sent them looking for one.
     sentence = (
-        f"Browse needs you to sign in to {slug}. A browser window is open on that site's own "
-        "saved profile — authenticate there (password, 2FA, whatever it asks), then answer this "
-        "item and the run continues with the session you created. PersonalClaw never sees what "
-        "you type."
+        f"Browse needs you to sign in to {slug}, in the browser this step drives: authenticate "
+        "there (password, 2FA, whatever it asks), then answer this item and the run continues "
+        "with the session you created. PersonalClaw never sees what you type."
     )
     item = build_item(
         run_id=run_id,

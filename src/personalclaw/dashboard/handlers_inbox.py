@@ -22,6 +22,7 @@ from personalclaw.inbox import (
     validate_updatable_fields,
 )
 from personalclaw.request_validation import json_object_body, string_field
+from personalclaw.security import MaskConflict, keep_masked_spans
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
@@ -516,6 +517,13 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     except InboxFieldTypeError as exc:
         logger.info("inbox update refused for %s: %s", item_id, exc)
         return json_error("invalid_field_type", message=str(exc), status=400)
+    # The draft editor is seeded from `redact_item`, so a saved draft carries our marker wherever
+    # the stored draft holds a credential. Restored before anything below mutates the row.
+    if isinstance(updates.get("draft"), str):
+        try:
+            updates["draft"] = keep_masked_spans(updates["draft"], item.draft or "")
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
 
     # 4. Mutate.
     status_before = item.status
@@ -722,6 +730,12 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         )
 
     if item.source == "native":
+        # The reply is recorded as the draft, restored from the stored one like a saved draft is
+        # (`api_inbox_update`), while the session gets the text exactly as the user saw it.
+        try:
+            recorded = keep_masked_spans(text, item.draft or "")
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
         # Route the reply back to the posting agent's session when it's a live
         # dashboard chat session; otherwise just capture it.
         delivered = False
@@ -733,7 +747,7 @@ async def api_inbox_send(request: web.Request) -> web.Response:
             session.enqueue_or_run_prompt(text, run_chat, state)
             delivered = True
         status_before = item.status
-        inbox.update(item_id, draft=text)
+        inbox.update(item_id, draft=recorded)
         set_item_status(state, inbox, [item], ItemStatus.HANDLED)
         _record_signal(state, item, "reply")  # replying = a positive engagement signal
         _announce_unless_moved(state, item, status_before)

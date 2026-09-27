@@ -41,11 +41,17 @@ MIN_QUERY_CHARS = 2
 # archivable through the index — the transcript is still the record.
 _MAX_SESSION_CHARS = 200_000
 
+#: 🔑 A session's FTS row has the ROWID of its ``indexed`` row. ``session_key`` is an UNINDEXED
+#: column of an FTS5 table, so finding a session's row by its key reads EVERY row: replacing one
+#: session's entry cost 1.6 ms at 1,000 indexed sessions and 17 ms at 6,000 (measured), and an
+#: import of a months-long history — thousands of conversations, each indexed as it lands — spent
+#: half its time there. By rowid it is one lookup, whatever the index holds.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed (
     session_key TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT '',
     mtime REAL NOT NULL DEFAULT 0,
+    size INTEGER NOT NULL DEFAULT -1,
     chars INTEGER NOT NULL DEFAULT 0,
     indexed_at REAL NOT NULL DEFAULT 0
 );
@@ -57,6 +63,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
     tokenize='porter unicode61'
 );
 """
+
+#: ``PRAGMA user_version`` of an index whose FTS rows share their ``indexed`` rows' rowids, and
+#: whose ``indexed`` rows record each transcript's size. An index built before (version 0) paired
+#: them by key alone and kept no size, so its rowids say nothing: it is dropped and rebuilt from
+#: the transcripts, which is how this disposable index is repaired.
+_SCHEMA_VERSION = 1
 
 _db: sqlite3.Connection | None = None
 _db_path_cache: str = ""
@@ -105,6 +117,11 @@ def _connect() -> "sqlite3.Connection | None":
             conn.execute("PRAGMA busy_timeout=10000")
         except sqlite3.DatabaseError:
             logger.debug("session_search: pragma setup skipped", exc_info=True)
+        if int(conn.execute("PRAGMA user_version").fetchone()[0]) < _SCHEMA_VERSION:
+            # Rebuilt by the next `reindex_all`, which finds every session unindexed.
+            conn.executescript("DROP TABLE IF EXISTS sessions_fts; DROP TABLE IF EXISTS indexed;")
+            conn.executescript(_SCHEMA)
+            conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.executescript(_SCHEMA)
     except sqlite3.OperationalError:
         # FTS5 presence was already settled by the probe above; a failure here is an
@@ -162,6 +179,7 @@ def index_session(
     *,
     memory_mode: str = "",
     mtime: float = 0.0,
+    size: int = -1,
 ) -> bool:
     """Replace one session's index entry. Returns whether it was indexed.
 
@@ -174,7 +192,8 @@ def index_session(
     `time.time()` here made the incremental check compare an index time against a file
     mtime — always newer, so a transcript appended within the same coarse mtime tick was
     skipped forever. Caught by CI, where the filesystem has second-granularity mtimes;
-    macOS's finer timestamps hid it.
+    macOS's finer timestamps hid it. ``size`` is the source file's byte size, which a pass
+    compares with the file's (``-1``, unknown, never matches one).
     """
     key = (session_key or "").strip()
     if not key:
@@ -189,26 +208,33 @@ def index_session(
     text = (body or "")[:_MAX_SESSION_CHARS]
     try:
         conn.execute("BEGIN")
-        conn.execute("DELETE FROM sessions_fts WHERE session_key = ?", (key,))
+        # The bookkeeping row first: an upsert keeps an existing row's rowid, and a new row's is
+        # the one its FTS row takes (see `_SCHEMA`).
         conn.execute(
-            "INSERT INTO sessions_fts (session_key, title, body) VALUES (?, ?, ?)",
-            (key, title or "", text),
-        )
-        conn.execute(
-            "INSERT INTO indexed (session_key, title, mtime, chars, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_key) DO UPDATE SET "
-            "title=?, mtime=?, chars=?, indexed_at=?",
+            "INSERT INTO indexed (session_key, title, mtime, size, chars, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(session_key) DO UPDATE SET "
+            "title=?, mtime=?, size=?, chars=?, indexed_at=?",
             (
                 key,
                 title or "",
                 float(mtime or 0.0),
+                int(size),
                 len(text),
                 time.time(),
                 title or "",
                 float(mtime or 0.0),
+                int(size),
                 len(text),
                 time.time(),
             ),
+        )
+        rowid = conn.execute("SELECT rowid FROM indexed WHERE session_key = ?", (key,)).fetchone()[
+            0
+        ]
+        conn.execute("DELETE FROM sessions_fts WHERE rowid = ?", (rowid,))
+        conn.execute(
+            "INSERT INTO sessions_fts (rowid, session_key, title, body) VALUES (?, ?, ?, ?)",
+            (rowid, key, title or "", text),
         )
         conn.execute("COMMIT")
         return True
@@ -255,7 +281,9 @@ def forget_session(session_key: str) -> None:
     """Remove a session from the index (deleted, or newly restricted).
 
     Both tables are dropped in one transaction so a failure cannot leave a
-    searchable FTS row whose bookkeeping row is gone (or vice versa).
+    searchable FTS row whose bookkeeping row is gone (or vice versa). A session with a
+    bookkeeping row loses its FTS row by that row's rowid; one without — an FTS row
+    left by drift, or a key never indexed — is looked for by key, which reads the table.
     """
     key = (session_key or "").strip()
     if not key:
@@ -265,7 +293,11 @@ def forget_session(session_key: str) -> None:
         return
     try:
         conn.execute("BEGIN")
-        conn.execute("DELETE FROM sessions_fts WHERE session_key = ?", (key,))
+        row = conn.execute("SELECT rowid FROM indexed WHERE session_key = ?", (key,)).fetchone()
+        if row is not None:
+            conn.execute("DELETE FROM sessions_fts WHERE rowid = ?", (row[0],))
+        else:
+            conn.execute("DELETE FROM sessions_fts WHERE session_key = ?", (key,))
         conn.execute("DELETE FROM indexed WHERE session_key = ?", (key,))
         conn.execute("COMMIT")
     except Exception:  # noqa: BLE001
@@ -322,11 +354,17 @@ def _conversation_log():
 
 
 def reindex_session(session_key: str, log=None) -> bool:
-    """Read one session's transcript and refresh its index entry."""
+    """Read one session's transcript and refresh its index entry.
+
+    The file's time and size are taken BEFORE it is read, so a write landing during the read
+    leaves an entry older than its file, which the next pass reads again — never one that
+    records the new file's stamp over the old text.
+    """
     log = log or _conversation_log()
     key = (session_key or "").strip()
     if not key:
         return False
+    mtime, size = _source_stamp(log, key)
     try:
         meta = log.get_metadata(key) or {}
     except Exception:  # noqa: BLE001
@@ -342,42 +380,28 @@ def reindex_session(session_key: str, log=None) -> bool:
         return False
     body = "\n".join(str(m.get("content", "") or "") for m in messages if m.get("role") != "system")
     title = str(meta.get("title", "") or "")
-    return index_session(key, title, body, memory_mode=mode, mtime=_source_mtime(log, key))
+    return index_session(key, title, body, memory_mode=mode, mtime=mtime, size=size)
 
 
-def _still_same_size(log, key: str, indexed_chars: int) -> bool:
-    """Whether the transcript's indexed body length still matches what's on disk.
+def _source_stamp(log, key: str) -> tuple[float, int]:
+    """The transcript file's ``(mtime, size)``, or ``(0.0, -1)`` when it can't be read.
 
-    Compares the INDEXED BODY length against a freshly-derived one. That is stricter
-    than a file-size check (the file carries metadata and JSON framing the body does
-    not), and it is what makes a same-tick append visible. Unknown ⇒ False, so an
-    unreadable session is re-indexed rather than silently skipped.
+    That is the safe direction: it reads as "older than anything, and of a size no file has",
+    so the next pass re-indexes rather than skipping a session whose freshness is unknown.
     """
     try:
-        messages = log.read_messages(key) or []
+        stat = log._path(key).stat()
     except Exception:  # noqa: BLE001
-        return False
-    body = "\n".join(str(m.get("content", "") or "") for m in messages if m.get("role") != "system")
-    return len(body[:_MAX_SESSION_CHARS]) == int(indexed_chars or 0)
-
-
-def _source_mtime(log, key: str) -> float:
-    """The transcript file's mtime, or 0.0 when it can't be read.
-
-    0.0 is the safe direction: it reads as "older than anything", so the next pass
-    re-indexes rather than skipping a session whose freshness is unknown.
-    """
-    try:
-        return float(log._path(key).stat().st_mtime)
-    except Exception:  # noqa: BLE001
-        return 0.0
+        return 0.0, -1
+    return float(stat.st_mtime), int(stat.st_size)
 
 
 def reindex_all(log=None, *, limit: int | None = None, force: bool = False) -> int:
     """Index every session that needs it. Returns how many were (re)indexed.
 
-    Incremental by mtime so the heartbeat can call this repeatedly for pennies, and
-    it prunes sessions that have been deleted or turned restricted since last time.
+    Incremental by each file's time and size, so the heartbeat can call this repeatedly for
+    pennies — a pass reads only the transcripts that changed — and it prunes sessions that
+    have been deleted or turned restricted since last time.
     """
     log = log or _conversation_log()
     conn = _connect()
@@ -391,8 +415,8 @@ def reindex_all(log=None, *, limit: int | None = None, force: bool = False) -> i
 
     try:
         known = {
-            row["session_key"]: (row["mtime"], row["chars"])
-            for row in conn.execute("SELECT session_key, mtime, chars FROM indexed").fetchall()
+            row["session_key"]: (row["mtime"], row["size"])
+            for row in conn.execute("SELECT session_key, mtime, size FROM indexed").fetchall()
         }
     except Exception:  # noqa: BLE001
         known = {}
@@ -409,13 +433,18 @@ def reindex_all(log=None, *, limit: int | None = None, force: bool = False) -> i
             continue
         live.add(key)
         modified = float(entry.get("modified", 0) or 0)
-        # Skip only when the file has NOT advanced past what we indexed. mtime alone
-        # is not enough: on a coarse-granularity filesystem an append can land inside
-        # the same tick, leaving the timestamps equal while the content grew — which is
-        # why the file's byte size is part of the comparison.
+        # Skip only when the file has NOT changed since it was indexed. mtime alone is not
+        # enough: on a coarse-granularity filesystem an append can land inside the same tick,
+        # leaving the timestamps equal while the file grew — which is why its size is part of
+        # the comparison. The size is the file's, from one stat: comparing the indexed text's
+        # length instead re-read every transcript on every pass, which for 12,005 imported
+        # conversations was 7.4 s and 883 MB every five minutes (measured).
         if not force and key in known:
-            indexed_mtime, indexed_chars = known[key]
-            if float(indexed_mtime or 0) >= modified and _still_same_size(log, key, indexed_chars):
+            indexed_mtime, indexed_size = known[key]
+            if (
+                float(indexed_mtime or 0) >= modified
+                and int(indexed_size) == _source_stamp(log, key)[1]
+            ):
                 continue
         if reindex_session(key, log=log):
             indexed += 1

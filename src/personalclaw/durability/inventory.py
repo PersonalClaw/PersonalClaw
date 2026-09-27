@@ -362,7 +362,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="crons.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
-        help="scheduled jobs (legacy; read-only, absorbed by triggers.json)",
+        help="scheduled jobs (legacy; imported into triggers.json once per home at boot)",
     ),
     # 🔴 The script-cron store, and it was never declared here. `schedule_script.py` requires
     # every zero-token script job to live under `crons/` ("no escape"), and `triggers.json` —
@@ -405,9 +405,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="event_triggers.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
-        # Nothing writes it any more: an older home's (or snapshot's) copy is absorbed into
-        # `triggers.json` at the next boot and renamed `.migrated`.
-        help="legacy data-event triggers, absorbed into triggers.json at boot",
+        # Nothing writes it any more: an older home's copy is imported into `triggers.json` at
+        # the next boot, once per home, and renamed `.imported-<date>`
+        # (`triggers/legacy_import.py`).
+        help="legacy data-event triggers, imported into triggers.json once per home at boot",
     ),
     StateEntry(
         id="autonudge",
@@ -415,7 +416,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="autonudge.json",
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_LWW,
-        help="auto-nudge state",
+        help="legacy auto-nudge loops, imported into triggers.json once per home at start",
     ),
     StateEntry(
         id="cron_history",
@@ -1237,20 +1238,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="bring-your-own agent runner definitions, one JSON per runner id",
     ),
-    # The LEGACY MCP store (`settings/mcp.json`). UT3 made `mcp.json` canonical and
-    # folds this file in on first boot, then empties it — so on a migrated home this is
-    # a husk. Declared rather than ignored for the one window where it still holds the
-    # only copy: a user who upgrades and runs `personalclaw snapshot` BEFORE starting a
-    # gateway has not had the migration run yet, and ignoring the path would drop their
-    # MCP servers out of exactly the backup the release notes told them to take. An
-    # entry for a usually-empty path is harmless; this manifest says so at the top.
+    # The LEGACY MCP store (`settings/mcp.json`). UT3 made `mcp.json` canonical; every
+    # release since folded this file in at start and emptied it, so on a home that has run
+    # one it is a husk, and nothing reads it now (a server still in it is named by the
+    # Doctor, `tools.legacy_mcp_settings`). Declared rather than ignored because a husk costs
+    # nothing and a file that still holds servers holds the only copy of them.
     StateEntry(
         id="legacy_mcp_settings",
         kind=KIND_TREE,
         path="settings",
         domain=DOMAIN_CONFIG,
         merge=MERGE_REPLACE_ONLY,
-        help="legacy settings/mcp.json (folded into mcp.json on first boot)",
+        help="legacy settings/mcp.json (no longer read; the Doctor names a server left in it)",
     ),
     StateEntry(
         id="sources",
@@ -1731,10 +1730,11 @@ IGNORED: tuple[str, ...] = (
     "trigger-watch",
     "trigger-web-watch",
     "trigger-view",
-    # A store migrated in place is renamed `<name>.migrated` (`triggers/nudge.py` does this to
-    # `autonudge.json` once its loops are rows in `triggers.json` plus `trigger-idle/` sidecars,
-    # both declared). What remains is a pre-migration copy of state that now lives elsewhere —
-    # the same category as `*.bak`.
+    # A legacy automation file is renamed `<name>.imported-<date>` once its rows are in
+    # `triggers.json` (`triggers/legacy_import.py`: `crons.json`, `event_triggers.json`,
+    # `autonudge.json`); `<name>.migrated` is the name an earlier build gave the same copy. What
+    # remains is a pre-import copy of state that now lives elsewhere — the same category as `*.bak`.
+    "*.imported-*",
     "*.migrated",
 )
 

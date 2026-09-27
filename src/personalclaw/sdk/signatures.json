@@ -55,7 +55,9 @@
     {"annotation": "str", "kind": "positional_or_keyword", "name": "event"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "context"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "payload"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"},
+    {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
    ],
    "returns": "None"
   },
@@ -510,7 +512,7 @@
  },
  "personalclaw.sdk.channel.BACKGROUND_KEY": {"kind": "value", "type": "str", "value": "'_bg'"},
  "personalclaw.sdk.channel.CANCELLED_STOP_REASONS": {"kind": "value", "type": "tuple", "value": "('cancelled', 'stopped_by_user')"},
- "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code (they can run `personalclaw pair <provider>`), then send it here to start talking.\""},
+ "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code, then send it here to start talking.\""},
  "personalclaw.sdk.channel.CRED_OWNER_ID": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_OWNER_ID'"},
  "personalclaw.sdk.channel.CRED_SLACK_APP_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_APP_TOKEN'"},
  "personalclaw.sdk.channel.CRED_SLACK_BOT_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_BOT_TOKEN'"},
@@ -886,6 +888,13 @@
     "kind": "async method",
     "params": [],
     "returns": "dict[str, Any]"
+   },
+   "validate_target": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "target"}
+    ],
+    "returns": "str"
    }
   }
  },
@@ -1269,7 +1278,8 @@
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "duration_ms"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "event_count"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "tool_call_count"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tool_meta"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tool_meta"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "served_model_ref"}
    ],
    "returns": "None"
   },
@@ -1966,6 +1976,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",
@@ -2021,13 +2032,6 @@
     "kind": "async method",
     "params": [],
     "returns": "None"
-   },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
    },
    "start": {
     "kind": "async method",
@@ -3112,7 +3116,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "parent_run"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "queued"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cancelled"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
    ],
    "returns": "None"
   },
@@ -3209,7 +3214,8 @@
      {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dry_run"},
      {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "parent_run"},
      {"annotation": "str", "default": "'none'", "kind": "positional_or_keyword", "name": "sandbox"},
-     {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"}
+     {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"}
     ],
     "returns": "SubagentInfo | None"
    },
@@ -3394,7 +3400,8 @@
    "migrate_from_crons": {
     "kind": "method",
     "params": [
-     {"annotation": "Path | str | None", "default": "None", "kind": "positional_or_keyword", "name": "crons_path"}
+     {"annotation": "Path | str | None", "default": "None", "kind": "positional_or_keyword", "name": "crons_path"},
+     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "now"}
     ],
     "returns": "dict[str, Any]"
    },
@@ -3639,7 +3646,8 @@
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "sender_name"},
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_id"},
    {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "is_dm"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "text"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "text"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_name"}
   ],
   "returns": "TrustVerdict"
  },
@@ -3780,7 +3788,8 @@
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
-   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"}
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "code"},
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"}
   ],
   "returns": "bool"
  },
@@ -5134,7 +5143,8 @@
     {"annotation": "QualityDeclaration | None", "default": "None", "kind": "positional_or_keyword", "name": "quality"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "uiCapabilities"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tags"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"},
+    {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"}
    ],
    "returns": "None"
   },
@@ -5383,7 +5393,8 @@
     {"annotation": "str", "default": "'gateway'", "kind": "positional_or_keyword", "name": "managedBy"},
     {"annotation": "MarketplaceDependencies", "default": "<factory>", "kind": "positional_or_keyword", "name": "marketplace"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "commands"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pythonDependencies"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pythonDependencies"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sidecarDependencies"}
    ],
    "returns": "None"
   },
@@ -5400,6 +5411,13 @@
     "kind": "method",
     "params": [],
     "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [
+     {"annotation": "list[ProviderConfig]", "kind": "positional_or_keyword", "name": "providers"}
+    ],
+    "returns": "list[str]"
    }
   }
  },
@@ -5553,6 +5571,37 @@
     "kind": "method",
     "params": [],
     "returns": "dict[str, Any]"
+   }
+  }
+ },
+ "personalclaw.sdk.manifest.Prerequisite": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "name"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "why"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "how"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "from_dict": {
+    "kind": "classmethod",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
+    ],
+    "returns": "Prerequisite"
+   },
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
    }
   }
  },
@@ -6101,6 +6150,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",
@@ -6156,13 +6206,6 @@
     "kind": "async method",
     "params": [],
     "returns": "None"
-   },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
    },
    "start": {
     "kind": "async method",
@@ -6466,6 +6509,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",
@@ -6528,13 +6572,6 @@
     "kind": "async method",
     "params": [],
     "returns": "None"
-   },
-   "stage_image_part": {
-    "kind": "method",
-    "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "data_url"}
-    ],
-    "returns": "bool"
    },
    "start": {
     "kind": "async method",
@@ -6622,7 +6659,10 @@
    ],
    "returns": "None"
   },
-  "kind": "dataclass"
+  "kind": "dataclass",
+  "members": {
+   "own_model": {"kind": "property", "returns": "str", "settable": false}
+  }
  },
  "personalclaw.sdk.model.ProviderRegistry": {
   "bases": ["object"],
@@ -6833,6 +6873,14 @@
   ],
   "returns": "int | None"
  },
+ "personalclaw.sdk.model.own_model": {
+  "kind": "function",
+  "params": [
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "model"},
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "options"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.model.per_call_temperature": {
   "kind": "function",
   "params": [
@@ -6870,6 +6918,13 @@
    {"annotation": "Callable[[list[dict[str, Any]]], list[Any]]", "kind": "positional_or_keyword", "name": "scanner"}
   ],
   "returns": "None"
+ },
+ "personalclaw.sdk.model.require_model": {
+  "kind": "function",
+  "params": [
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "model"}
+  ],
+  "returns": "str"
  },
  "personalclaw.sdk.net.CONNECTOR": {"kind": "value", "type": "EgressPolicy", "value": "EgressPolicy(name='connector', allow_schemes=('http', 'https'), allow_private=False, loopback_only=False, allow_hosts=(), deny_hosts=(), allow_only=False, max_redirects=5, max_bytes=10000000, timeout_s=20.0, pin_resolved_ip=True, on_violation='deny')"},
  "personalclaw.sdk.net.EgressBlocked": {

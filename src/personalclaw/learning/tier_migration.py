@@ -18,8 +18,8 @@ now, so the producer is finally buildable **without touching a core contract**:
   all. The spec is the exact structure that produced the trajectories below.
 
 * **Cross-run variance is a pure ledger PROJECTION.** ``introspection.trajectory_signature``
-  already collapses a run into its decision-path hash and ``service.introspect`` already aggregates
-  the sibling distribution. This reads the same ``(signature, failed)`` history
+  already collapses a run into its decision-path hash and ``run_cockpit.introspect`` already
+  aggregates the sibling distribution. This reads the same ``(signature, failed)`` history
   ``introspection.trajectory_regression`` consumes — the machinery the earlier BLOCKED notes said
   did not exist yet.
 

@@ -272,7 +272,7 @@ def test_every_kind_codex_keeps_is_an_item_or_named_as_not_imported(noor: Path) 
         "skills": 1,
         "agents": 2,
         "prompts": 2,
-        "conversations": 3,
+        "conversations": 4,
         "denied_commands": 1,
     }
     assert [entry.to_dict() for entry in result.not_imported] == [
@@ -290,7 +290,7 @@ def test_every_kind_codex_keeps_is_an_item_or_named_as_not_imported(noor: Path) 
         },
         {
             "what": "Prompt history",
-            "count": 5,
+            "count": 6,
             "why": "PersonalClaw keeps no separate list of past prompts. The prompts in your "
             "conversations come over with them.",
         },
@@ -542,22 +542,29 @@ def test_a_codex_session_is_a_conversation_with_its_tool_calls_by_name(noor: Pat
         "Locust load test for DHL webhook",
         "Review async fetcher diff",
         "Verify eta_confidence backfill SQL",
+        "Why feedsmith fetch takes 14 seconds",
     ]
+    from personalclaw.onboarding_import.sources.codex import read_for_import
+
     review = conversations[_REVIEW]
-    messages = review.payload["messages"]
+    # The scan names the conversation and counts it; the import reads the messages themselves.
+    assert review.payload == {"listed_as": "Review async fetcher diff"}
+    read, _redactions = read_for_import(review)
+    messages = read["messages"]
     assert [m["role"] for m in messages] == ["user", "tool", "tool", "assistant"]
     assert messages[1]["content"] == "exec_command: git diff main...feat/async-fetch --stat"
     assert messages[0]["content"].startswith("Review the diff on feat/async-fetch against main.")
+    assert read["title"] == review.title == "Review async fetcher diff"
     assert review.origin == "Project · ~/src/feedsmith"
     assert review.target == "019f89e2-360a-74b5-a65d-4df5c169496e"
-    assert (review.payload["created_at"], review.payload["updated_at"]) == (
+    assert (read["created_at"], read["updated_at"]) == (
         "2026-07-22T12:52:11.402Z",
         "2026-07-22T12:52:41.634Z",
     )
     assert review.note == "2 messages. Tool calls come over by name; their output does not."
-    locust = [m["content"] for m in conversations[_LOCUST].payload["messages"]]
+    locust = [m["content"] for m in read_for_import(conversations[_LOCUST])[0]["messages"]]
     assert "apply_patch: Add File: loadtest/locustfile.py" in locust
-    body = json.dumps([c.payload for c in conversations.values()])
+    body = json.dumps([read_for_import(c)[0] for c in conversations.values()])
     for absent in (
         "Chunk ID",
         "Process exited with code",
@@ -624,21 +631,263 @@ def test_a_session_without_typed_prompt_events_reads_its_model_input(tmp_path: P
     assert conversation["title"] == "Why is CI red?"
 
 
-def test_archived_and_compressed_sessions_are_counted(noor: Path) -> None:
-    sessions = noor / ".codex" / "sessions" / "2026" / "06" / "30"
-    sessions.mkdir(parents=True)
-    (
-        sessions / "rollout-2026-06-30T09-00-00-01a00000-0000-7000-8000-000000000002.jsonl.zst"
-    ).write_bytes(b"\x28\xb5\x2f\xfd")
-    archived = noor / ".codex" / "archived_sessions"
-    archived.mkdir()
-    (
-        archived / "rollout-2026-06-01T09-00-00-01a00000-0000-7000-8000-000000000003.jsonl"
-    ).write_text("{}\n", encoding="utf-8")
+def test_a_session_line_nested_past_the_recursion_limit_does_not_end_the_scan(
+    noor: Path,
+) -> None:
+    """``json`` raises ``RecursionError``, not ``ValueError``, for a line nested deeper than the
+    interpreter recurses. It is one unreadable line, and the scan reads on past it."""
+    path = noor / ".codex" / _REVIEW
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("[" * 100_000 + "]" * 100_000 + "\n")
+
+    conversations = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)
+    assert conversations[_REVIEW].title == "Review async fetcher diff"
+    assert len(conversations) == 4
+
+
+# ── compressed sessions (``.jsonl.zst``) ──────────────────────────────────────
+
+#: Noor's oldest Codex session, which Codex compressed a week later (its rollout compression was
+#: on for a while in July). The fixture home holds it only as ``.jsonl.zst``, as Codex leaves it.
+_FETCH_TIMING = (
+    "sessions/2026/07/10/rollout-2026-07-10T21-37-14-019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6.jsonl"
+)
+_COMPRESSED = _FETCH_TIMING + ".zst"
+_COMPRESSED_NAME = Path(_COMPRESSED).name
+_FETCH_TITLE = "Why feedsmith fetch takes 14 seconds"
+#: The session as Codex wrote it before it compressed it: the fixture's plain twin, kept outside
+#: the home so the home holds the session once, as Codex's own does.
+_PLAIN_TWIN = Path(__file__).parent / "fixtures" / "codex_rollouts" / Path(_FETCH_TIMING).name
+
+
+def _zstd(data: bytes) -> bytes:
+    """``data`` compressed as Codex compresses a session: one zstd frame at level 3, its size in
+    the header, no checksum."""
+    import zstandard
+
+    return zstandard.ZstdCompressor(level=3, write_checksum=False).compress(data)
+
+
+def test_the_compressed_fixture_is_a_real_zstd_frame_of_its_plain_twin() -> None:
+    """The fixture is made the way Codex makes one — zstd level 3, the decompressed size in the
+    frame header, no checksum — and decompresses to its plain twin byte for byte."""
+    import zstandard
+
+    data = (FIXTURE / ".codex" / _COMPRESSED).read_bytes()
+    twin = _PLAIN_TWIN.read_bytes()
+    frame = zstandard.get_frame_parameters(data)
+    assert data[:4] == b"\x28\xb5\x2f\xfd", "zstd's frame magic"
+    assert (frame.content_size, frame.has_checksum) == (len(twin), False)
+    assert zstandard.ZstdDecompressor().decompress(data) == twin
+
+
+def test_a_compressed_session_is_the_same_conversation_as_its_plain_twin(noor: Path) -> None:
+    """Scanned compressed, and scanned again with the plain twin in its place: one item, the same
+    in every field, keyed by the plain name either way."""
+    from personalclaw.onboarding_import.sources.codex import read_for_import
+
+    first = scan_source("codex")
+    assert [entry.what for entry in first.not_imported] == [
+        "Command rules that ask first",
+        "Codex settings",
+        "Prompt history",
+    ], "nothing about the compressed session is left behind"
+    compressed = _items(first, ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
+    compressed_read = read_for_import(compressed)
+    (noor / ".codex" / _COMPRESSED).unlink()
+    shutil.copyfile(_PLAIN_TWIN, noor / ".codex" / _FETCH_TIMING)
+    plain = _items(scan_source("codex"), ImportCategory.CONVERSATIONS)[_FETCH_TIMING]
+
+    assert compressed.fingerprint == plain.fingerprint
+    assert (compressed.title, compressed.target, compressed.origin, compressed.note) == (
+        plain.title,
+        plain.target,
+        plain.origin,
+        plain.note,
+    )
+    assert compressed_read == read_for_import(plain)
+    assert compressed.title == _FETCH_TITLE
+    assert compressed.target == "019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6"
+    assert compressed.origin == "Project · ~/src/feedsmith"
+    conversation, _redactions = compressed_read
+    messages = conversation["messages"]
+    assert [m["role"] for m in messages] == ["user", "tool", "tool", "tool", "assistant"]
+    assert messages[0]["content"].startswith("feedsmith fetch takes about 14 seconds")
+    assert messages[1]["content"] == (
+        "exec_command: time uv run feedsmith fetch --opml ~/Notes/Garden/feeds.opml "
+        "--db /tmp/fs-timing.db"
+    )
+    assert messages[-1]["content"].startswith("It's one slow feed that starts late")
+    assert (conversation["created_at"], conversation["updated_at"]) == (
+        "2026-07-11T01:37:14.226Z",
+        "2026-07-11T01:38:43.130Z",
+    )
+    for absent in ("Chunk ID", "hnrss.org/frontpage", "gAAAAAB", "Timing each feed"):
+        assert absent not in json.dumps(conversation), absent
+
+
+def test_a_compressed_session_comes_over_into_chat_history(noor: Path) -> None:
+    from personalclaw.history import ConversationLog
+
+    report = run_import([scan_source("codex")])
+    outcomes = {r.key: r.outcome for r in report.results}
+    assert outcomes[_FETCH_TIMING] is WriteOutcome.IMPORTED
+
+    log = ConversationLog()
+    key = "dashboard_codex-019f4ed2-51f2-73c2-9a41-5e0b7d2f81c6"
+    assert {s["key"]: s for s in log.list_sessions()}[key]["title"] == _FETCH_TITLE
+    assert [m["cls"] for m in log.read_messages(key)] == [
+        "msg msg-u",
+        "msg msg-tool",
+        "msg msg-tool",
+        "msg msg-tool",
+        "msg msg-a",
+    ]
+
+
+def test_a_session_codex_compresses_after_an_import_is_already_here(noor: Path) -> None:
+    """Codex compresses a session a week after its last change. The one an earlier import
+    brought over is the same item afterwards, not a second copy or a conflict to review."""
+    run_import([scan_source("codex")])
+    plain = noor / ".codex" / _REVIEW
+    plain.with_name(plain.name + ".zst").write_bytes(_zstd(plain.read_bytes()))
+    plain.unlink()
+
+    again = run_import([scan_source("codex")])
+    assert {r.key: r.outcome for r in again.results}[_REVIEW] is WriteOutcome.EXISTING
+
+
+def test_a_session_codex_is_compressing_is_one_session(noor: Path) -> None:
+    """Mid-compression Codex has both files and reads the plain one, and the ``.tmp`` it writes
+    beside them is not a session — in ``sessions/`` and ``archived_sessions/`` alike."""
+    plain = noor / ".codex" / _REVIEW
+    plain.with_name(plain.name + ".zst").write_bytes(b"not zstd: the plain file is the one read")
+    plain.with_name(plain.name + ".zst.compress.1.0.tmp").write_bytes(b"half a frame")
+    archived = noor / ".codex" / "archived_sessions" / "2026" / "06" / "01"
+    archived.mkdir(parents=True)
+    name = "rollout-2026-06-01T09-00-00-01a00000-0000-7000-8000-000000000003.jsonl"
+    (archived / name).write_text("{}\n", encoding="utf-8")
+    (archived / (name + ".zst")).write_bytes(_zstd(b"{}\n"))
+    (archived / (name + ".zst.compress.1.0.tmp")).write_bytes(b"half a frame")
+
     result = scan_source("codex")
-    left = {n.what: n.count for n in result.not_imported}
-    assert (left["Compressed conversations"], left["Archived conversations"]) == (1, 1)
-    assert len(result.by_category(ImportCategory.CONVERSATIONS)) == 3
+    conversations = _items(result, ImportCategory.CONVERSATIONS)
+    assert conversations[_REVIEW].title == "Review async fetcher diff"
+    assert len(conversations) == 4
+    rows = {entry.what: entry.count for entry in result.not_imported}
+    assert rows["Archived conversations"] == 1
+    assert "Unreadable conversations" not in rows
+
+
+@pytest.mark.parametrize(
+    ("damage", "reason"),
+    [
+        pytest.param(
+            lambda data: data[: len(data) // 2],
+            "is cut off before the end of its compressed data",
+            id="cut-off",
+        ),
+        pytest.param(
+            lambda data: b"", "is cut off before the end of its compressed data", id="empty"
+        ),
+        pytest.param(
+            lambda data: b"not zstd",
+            "does not decompress: its data is damaged, or is not zstd",
+            id="not-zstd",
+        ),
+        pytest.param(
+            lambda data: data + b"\x00" * 16,
+            "does not decompress: its data is damaged, or is not zstd",
+            id="bytes-after-the-frame",
+        ),
+    ],
+)
+def test_a_damaged_compressed_session_is_named_and_the_rest_come_over(
+    noor: Path, damage, reason: str
+) -> None:
+    path = noor / ".codex" / _COMPRESSED
+    path.write_bytes(damage(path.read_bytes()))
+
+    result = scan_source("codex")
+    conversations = _items(result, ImportCategory.CONVERSATIONS)
+    assert _FETCH_TIMING not in conversations
+    assert len(conversations) == 3, "the other sessions still come over"
+    assert [
+        entry.to_dict() for entry in result.not_imported if entry.what.startswith("Unreadable")
+    ] == [
+        {
+            "what": "Unreadable conversations",
+            "count": 1,
+            "why": f"“{_FETCH_TITLE}” ({_COMPRESSED_NAME}) {reason}.",
+        }
+    ]
+    outcomes = {r.key: r.outcome for r in run_import([result]).results}
+    assert (outcomes[_REVIEW], outcomes[_LOCUST]) == (WriteOutcome.IMPORTED, WriteOutcome.IMPORTED)
+    assert _FETCH_TIMING not in outcomes
+
+
+def test_a_session_past_the_size_limit_is_named_as_too_large_compressed_or_not(
+    noor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One limit on what a session holds, whether Codex has compressed it yet or not, so its fate
+    does not change the week Codex compresses it."""
+    from personalclaw.onboarding_import.sources import codex
+
+    monkeypatch.setattr(codex, "MAX_SESSION_BYTES", 1_000_000, raising=False)
+    output = {
+        "timestamp": "2026-07-11T01:37:40.000Z",
+        "type": "response_item",
+        "payload": {"type": "function_call_output", "call_id": "c", "output": "x" * 1_100_000},
+    }
+    big = _PLAIN_TWIN.read_bytes() + (json.dumps(output) + "\n").encode()
+    (noor / ".codex" / _COMPRESSED).write_bytes(_zstd(big))
+    plain = noor / ".codex" / _REVIEW
+    plain.write_bytes(plain.read_bytes() + (json.dumps(output) + "\n").encode())
+
+    result = scan_source("codex")
+    conversations = _items(result, ImportCategory.CONVERSATIONS)
+    assert _FETCH_TIMING not in conversations and _REVIEW not in conversations
+    assert len(conversations) == 2
+    limit = "the most this import reads for one conversation"
+    [row] = [entry for entry in result.not_imported if entry.what == "Unreadable conversations"]
+    assert (row.count, row.why) == (
+        2,
+        f"“{_FETCH_TITLE}” ({_COMPRESSED_NAME}) decompresses to more than 1 MB, {limit}. "
+        f"“Review async fetcher diff” ({Path(_REVIEW).name}) is larger than 1 MB, {limit}.",
+    )
+
+
+def test_a_compressed_session_is_decompressed_as_it_is_read_never_whole(
+    noor: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file under 100 KB that decompresses to 2 GiB is refused at the limit, holding at most a
+    step of the decoder's output at a time (32 MiB at worst) — never the whole session."""
+    import tracemalloc
+
+    import zstandard
+
+    from personalclaw.onboarding_import.sources import codex
+
+    monkeypatch.setattr(codex, "MAX_SESSION_BYTES", 1_000_000)
+    zeros = bytes(1 << 20)
+    path = noor / ".codex" / _COMPRESSED
+    with (
+        path.open("wb") as handle,
+        zstandard.ZstdCompressor(level=3).stream_writer(handle) as writer,
+    ):
+        for _ in range(2048):
+            writer.write(zeros)
+    assert path.stat().st_size < 100_000
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(codex.SessionUnreadable) as refused:
+            codex.read_rollout(path, {})
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert "decompresses to more than 1 MB" in refused.value.reason
+    assert peak < 256 * 1024 * 1024, f"{peak / 2**20:.0f} MiB held to refuse a 2 GiB session"
 
 
 # ── the import, end to end ────────────────────────────────────────────────────

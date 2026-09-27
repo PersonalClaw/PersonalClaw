@@ -919,8 +919,8 @@ def diagnose(
             action = str((inline or wf).get("provider") or "").strip()
             granted = caps.get("providers") or []
             # 🔴 An action nothing can DISPATCH (#779). Reported instead of `unfenced_write_action`,
-            # never alongside it: that finding's fix is "re-save to freeze the grant", which for an
-            # unknown provider freezes a name that still resolves to nothing. This check is also why
+            # never alongside it: that finding's fix is "allow it", which for an unknown provider
+            # grants a name that still resolves to nothing. This check is also why
             # the fence finding could not catch this case on its own — `capabilities_for_action`
             # freezes the unregistered name INTO `granted`, so `action not in granted` was False and
             # the row read healthy. The create path refuses this shape as of #779; the population
@@ -947,9 +947,9 @@ def diagnose(
                         trigger_id=tid,
                         code="unfenced_write_action",
                         detail=f"runs the write-capable action {action!r} with no capability "
-                        f"grant, so the frozen-capability fence refuses it",
-                        fix="re-save the automation to freeze its capability set, or switch it "
-                        "to a read-only action",
+                        f"grant, so every run of it is refused",
+                        fix="allow it on the Triggers page (open it and choose Allow, or switch it "
+                        "on), which asks you first, or point it at a read-only action",
                     )
                 )
 
@@ -1081,7 +1081,7 @@ def parse_default_window(value: str | None) -> QuietWindow | None:
 
     Anything else raises `ValueError` saying what is wrong and naming the form that works. This is
     the ONE reading of the setting: the Settings write refuses with it
-    (`dashboard/handlers/core.py::_quiet_window_sanitizer`) and the scheduler applies with it
+    (`config/editable.py::_quiet_window_sanitizer`) and the scheduler applies with it
     (:func:`default_quiet_window`). When the write only checked "a string of at most 64
     characters", `10pm-7am` saved with a 200 and then read as no window at all, so the field showed
     quiet hours that held nothing.

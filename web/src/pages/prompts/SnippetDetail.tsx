@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { Pencil, Trash2, Check, X, Play, Loader2, Lock } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -9,8 +9,14 @@ import { Field, FieldError } from '../../ui/forms'
 import { confirmDelete } from '../../ui/dialog'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptSnippet, type PromptVariable } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { isReadOnly, sourceTone, sourceLabel, promptVars, seedRenderValues, detectIncludes } from './promptMeta'
 import { SnippetForm, toSnippetDraft, snippetDraftToPayload, type SnippetDraft } from './SnippetForm'
+
+/** A snippet as its editor sends it — the one shape a stale save's re-apply merges in. */
+const snippetDocument = (s: PromptSnippet) => snippetDraftToPayload(toSnippetDraft(s))
 
 /** Snippet inspector: view ↔ in-panel edit, plus a "Try it" render panel. Bundled/
  *  marketplace snippets are read-only (edit/delete hidden). Mirrors PromptDetail. */
@@ -34,20 +40,46 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
   // spinner, so a failed `GET /api/snippets/{name}` spun forever over a snippet the user had just
   // picked out of the list. `error` bound, error branch first (#3394's (B) subclass).
   const { data: fetched, error: hydrateErr, refresh: refetch } = useQuery<PromptSnippet | undefined>(`snippet:${snippet.name}`, () => (snippet.content == null ? api.snippet(snippet.name) : Promise.resolve(undefined)), { persist: true })
-  const full = snippet.content != null ? snippet : fetched
+  const upstream = snippet.content != null ? snippet : fetched
 
   // Seeded DURING RENDER, not in an effect — `PromptDetail` records why: an effect seeds after the
-  // edit form's first commit, whose Save would send the list row's empty body.
-  const [seededFrom, setSeededFrom] = useState<PromptSnippet | undefined>(full)
-  if (full && full !== seededFrom) { setSeededFrom(full); setDraft(toSnippetDraft(full)) }
-
-  async function save() {
-    if (!draft.name.trim()) { setErr('Name is required'); return }
-    setSaving(true); setErr('')
+  // edit form's first commit, whose Save would send the list row's empty body. `seededFrom` is the
+  // record the draft came from — the base its save names — and both it and `seen` start unseeded,
+  // for the reasons `PromptDetail` gives.
+  const [seededFrom, setSeededFrom] = useState<PromptSnippet | undefined>(undefined)
+  const [seen, setSeen] = useState<PromptSnippet | undefined>(undefined)
+  const seed = (s: PromptSnippet) => { setSeededFrom(s); setDraft(toSnippetDraft(s)) }
+  const reread = useRef<PromptSnippet | null>(null)
+  // 🔴 THE WHOLE SNIPPET IS SAVED OVER THE COPY IT WAS BUILT FROM — `PromptDetail`'s rule, for the
+  // same reason: every field is rebuilt from the draft, so a stale copy used to replace a newer save.
+  const guard = useStaleWriteGuard<Record<string, unknown>>({
+    read: () => api.snippet(snippet.name).then((s) => {
+      reread.current = s
+      return { value: snippetDocument(s), revision: s.revision ?? '' }
+    }),
+    write: (next, revision) => api.saveSnippet(snippet.name, next, revision),
     // invalidateKeys alone is not enough: this component stays mounted after Save
     // (same list-row key), so the hydration hook never re-runs and the view keeps
     // showing the PRE-save record. Explicitly refetch after invalidating.
-    try { const r = await api.saveSnippet(snippet.name, snippetDraftToPayload(draft)); invalidateKeys(`snippet:${snippet.name}`); refetch(); onSaved(r.snippet?.name ?? snippet.name); setEditing(false) }
+    onSaved: () => { invalidateKeys(`snippet:${snippet.name}`); refetch(); onSaved(snippet.name); setEditing(false) },
+    onDiscard: () => {
+      invalidateKeys(`snippet:${snippet.name}`); refetch()
+      if (reread.current) seed(reread.current)
+    },
+  })
+  if (upstream !== seen) {
+    setSeen(upstream)
+    if (upstream && guard.conflict === null) seed(upstream)
+  }
+  const full = seededFrom ?? upstream
+
+  async function save() {
+    if (!draft.name.trim()) { setErr('Name is required'); return }
+    if (!seededFrom) return
+    setSaving(true); setErr('')
+    const base = { value: snippetDocument(seededFrom), revision: seededFrom.revision ?? '' }
+    const mine = snippetDraftToPayload(draft)
+    try { await guard.save(base, mine, rebaseRecord(base.value, mine)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -73,11 +105,15 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
         <div className="flex items-center gap-s">
           <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
         </div>
-        <SnippetForm draft={draft} onChange={setDraft} nameLocked />
+        {/* Locked while a refused save waits for the user's choice, as in `PromptDetail`. */}
+        <fieldset disabled={guard.conflict !== null} title={guard.conflict !== null ? HELD_CHANGE_REASON : undefined} className="contents">
+          <SnippetForm draft={draft} onChange={setDraft} nameLocked />
+        </fieldset>
+        <StaleWriteNotice guard={guard} what="This snippet" />
         <FormFooter error={err}>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toSnippetDraft(full)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim()}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.name.trim() || guard.conflict !== null}
+            disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : !draft.name.trim() ? 'Enter a name first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )

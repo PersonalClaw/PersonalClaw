@@ -11,10 +11,24 @@ import type { CommentTarget } from './commentTarget'
 import { type ContentType, isEditable, isCommentable } from './contentTypes'
 import type { IterationTarget } from '../widget/useArtifactIteration'
 import { copyText } from '../../app/clipboard'
+import type { Revisioned } from '../../lib/staleWrite'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 
-export interface ContentSurfaceHandle { save: () => void }
+export interface ContentSurfaceHandle {
+  save: () => void
+  /** Replace the draft with *text* — what the host stored on the user's behalf (their change
+   *  re-applied on top of a newer copy, `ui/StaleWriteNotice`) or what it restored (a discarded
+   *  change). Otherwise the editor would go on holding the pre-reapply draft as unsaved. */
+  replaceDraft: (text: string) => void
+}
+
+/** One unsaved draft in a host's cache: what the user typed, and the revisioned copy it was built
+ *  from — the base its save names (`lib/staleWrite.ts`). The base has to survive the unmount with
+ *  the draft: a remounted editor that took the fresh read as its base would save a stale draft over
+ *  whatever landed while its tab was away. */
+export interface DraftEntry { draft: string; base: Revisioned<string> }
 
 /** A host-supplied edit-mode action beside Save — e.g. an artifact's "Snapshot"
  *  (save as a new immutable version). Receives the live draft; the surface keeps
@@ -54,10 +68,19 @@ interface ContentSurfaceProps {
   /** Initial view. Defaults to 'preview' when previewable, else 'edit'. */
   initialView?: 'preview' | 'edit' | 'split'
   /** Host-owned per-id draft cache so an unsaved edit survives unmount
-   *  (multi-tab hosts mount only the active tab). `warned` carries the
-   *  concurrent-edit flag so a remount can re-raise it (the watch that sets it
-   *  doesn't run while unmounted). */
-  draftStore?: Map<string, { draft: string; base: string; warned?: boolean }>
+   *  (multi-tab hosts mount only the active tab). Mirrored while dirty as
+   *  `{ draft, base: draftBase }`. */
+  draftStore?: Map<string, DraftEntry>
+  /** The revisioned copy the current draft was built from, stored beside it. Only the host knows
+   *  it: once a live refresh moves `content` under an unsaved edit, `content` is NEWER than the
+   *  copy the draft started from, and that older copy is the one its save must name. */
+  draftBase?: Revisioned<string>
+  /** A save of this draft was refused because the document changed elsewhere, and the host is
+   *  offering the recovery (`ui/StaleWriteNotice`). The draft is held exactly as it is — not
+   *  editable, not revertable, not savable — so the change the notice re-applies is the one on
+   *  screen, and typing more cannot be lost to a re-apply of the older draft. Still dirty: the
+   *  host cache keeps it. */
+  locked?: boolean
   /** The content was truncated (large file head only) → read-only, no save. */
   truncated?: boolean
   /** Extra edit-mode persist actions beside Save (e.g. artifact "Snapshot"). */
@@ -75,9 +98,6 @@ interface ContentSurfaceProps {
    *  from `onSave` about a document save, and its own version/event summary stayed on the
    *  pre-save number until a reload. Omit it and a custom editor saves exactly as before. */
   onDocumentSaved?: (version: number) => void
-  /** A gate run before persisting (return false to abort) — the file host uses it
-   *  for the "file changed on disk, overwrite anyway?" confirm. */
-  confirmSave?: () => boolean | Promise<boolean>
   /** Monaco language override. The registry's `edit.language` is a static default;
    *  a file host that knows the real per-extension language (via monacoLang) passes
    *  it here so a `.py`/`.go`/`.rs` opens with correct highlighting. */
@@ -106,8 +126,8 @@ interface ContentSurfaceProps {
  *  Edit and preview are composed siblings under one shell + shared state, NOT a
  *  forced single abstraction (Monaco and an iframe share nothing internally). */
 export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfaceProps>(function ContentSurface(
-  { type, content, title, docId, path, readOnly, onSave, commentTarget, compact = false, initialView, draftStore, truncated, actions,
-    onDirtyChange, onDraftChange, onDocumentSaved, confirmSave, language, headerLeft, headerExtras, banner, iterate }, ref,
+  { type, content, title, docId, path, readOnly, onSave, commentTarget, compact = false, initialView, draftStore, draftBase, locked = false, truncated, actions,
+    onDirtyChange, onDraftChange, onDocumentSaved, language, headerLeft, headerExtras, banner, iterate }, ref,
 ) {
   const { mode } = useMode()
   const previewScrollRef = useRef<HTMLDivElement | null>(null)
@@ -173,21 +193,20 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
   // Mirror the unsaved draft into the host cache so it survives unmount; clear when clean.
   useEffect(() => {
     if (!draftStore) return
-    if (dirty) draftStore.set(docId, { draft, base: content })
-    else draftStore.delete(docId)
-  }, [draftStore, docId, draft, content, dirty])
+    if (!dirty) draftStore.delete(docId)
+    else if (draftBase) draftStore.set(docId, { draft, base: draftBase })
+  }, [draftStore, docId, draft, dirty, draftBase])
 
   const save = async () => {
-    if (!dirty || saving || !onSave) return
-    if (confirmSave && !(await confirmSave())) return
+    if (!dirty || saving || !onSave || locked) return
     setSaving(true)
     try { await onSave(draft) }
     finally { setSaving(false) }
   }
-  useImperativeHandle(ref, () => ({ save }))
+  useImperativeHandle(ref, () => ({ save, replaceDraft: setDraft }))
 
   const runAction = async (action: ContentAction) => {
-    if (saving) return
+    if (saving || locked) return
     setSaving(true)
     try { await action.run(draft) }
     finally { setSaving(false) }
@@ -249,7 +268,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
             // (IEditorOptions.ariaLabel); naming it from the document makes the announcement
             // specific. `title` is required here, so no fallback branch is needed.
             ariaLabel: `${title} — editor`,
-            readOnly: !draftEditable, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
+            readOnly: !draftEditable || locked, fontSize: 13, minimap: { enabled: view !== 'split' }, scrollBeyondLastLine: false, wordWrap: wrap ? 'on' : 'off', lineNumbers: 'on', automaticLayout: true, padding: { top: 10, bottom: 10 }, tabSize: 2, renderWhitespace: 'selection' }} />
       </Suspense>
     )
   }
@@ -340,7 +359,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
             )}
             {draftEditable && (
               <>
-                <button onClick={() => setDraft(content)} disabled={!dirty} type="button"
+                <button onClick={() => setDraft(content)} disabled={!dirty || locked} type="button"
                   className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface disabled:opacity-40" title="Revert unsaved changes"><RotateCcw size={13} /></button>
                 {/* aria-busy: these are raw <button>s, not the Button primitive, so they do not
                     inherit its loading→aria-busy wiring. The spinner below is the only
@@ -350,16 +369,17 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                     state the user can fix, so it keeps the tab stop and says so; Button does the
                     same thing via `disabledReason`. Both dimming selectors, because
                     `disabled:opacity-40` cannot match an `aria-disabled` element. */}
-                <button onClick={dirty ? save : undefined} disabled={saving} type="button"
-                  aria-busy={saving || undefined} aria-disabled={(!dirty && !saving) || undefined}
+                <button onClick={dirty && !locked ? save : undefined} disabled={saving} type="button"
+                  aria-busy={saving || undefined} aria-disabled={((!dirty || locked) && !saving) || undefined}
                   data-type="caption"
                   className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40 aria-disabled:opacity-40"
                   style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}
-                  title={dirty ? 'Save (⌘S)' : 'Save (⌘S) — no changes to save'}>
+                  title={locked ? `Save (⌘S) — ${HELD_CHANGE_REASON}`
+                    : dirty ? 'Save (⌘S)' : 'Save (⌘S) — no changes to save'}>
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {!compact && 'Save'}
                 </button>
                 {actions?.map((a) => (
-                  <button key={a.label} onClick={() => runAction(a)} disabled={saving} type="button" aria-busy={saving || undefined}
+                  <button key={a.label} onClick={() => runAction(a)} disabled={saving || locked} type="button" aria-busy={saving || undefined}
                     data-type="caption"
                     className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40"
                     style={a.primary ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { color: 'var(--color-on-surface-low)' }}

@@ -44,26 +44,40 @@ def _seed(home, raw_id="abc123", *, agent="", approval_mode=""):
             enabled=True,
             spec={"kind": "interval", "interval_secs": 300},
             workflow={"inline": {"provider": "invoke-agent", "config": config}},
+            # Granted, as `tools.create` freezes it — an edit that keeps a granted action asks
+            # nothing (`triggers.grants`), which is what these tests drive.
+            capabilities={"providers": ["invoke-agent"]},
         )
     )
 
 
-def _make_request(body: dict, raw_id: str = "abc123") -> MagicMock:
+def _make_request(body: dict, raw_id: str = "abc123", *, base: str = "") -> MagicMock:
     mock_state = MagicMock()
     mock_state._sessions = {}
     request = MagicMock()
     request.app = {"state": mock_state}
     request.method = "PUT"
+    # What aiohttp hands a handler for the signed-in owner: the security audit reads the caller.
+    request.get = lambda key, default=None: {"user": "owner"}.get(key, default)
     request.match_info = {"id": f"schedule:{raw_id}"}
+    request.headers = {"If-Match": f'"{base}"'} if base else {}
     request.json = AsyncMock(return_value=body)
     return request
 
 
+def _listed_revision(home, raw_id: str = "abc123") -> str:
+    """The revision the list read reports for the row — what a save carrying the action names
+    (`personalclaw/stale_write.py`): the action is replaced whole."""
+    return T._schedule_row_for(MagicMock(), TriggerStore(base_dir=home).get(raw_id))["revision"]
+
+
 def _agent_action(agent: str, task: str = "m", approval_mode: str = "") -> dict:
+    """A save that points the schedule at another agent — a change to what its action runs, so the
+    editor asks the owner first (`triggers.grants`) and resends it with their yes, as here."""
     config = {"task_template": task, "agent": agent}
     if approval_mode:
         config["approval_mode"] = approval_mode
-    return {"action": {"provider": "invoke-agent", "config": config}}
+    return {"action": {"provider": "invoke-agent", "config": config}, "confirm": True}
 
 
 def _stored_config(home, raw_id="abc123") -> dict:
@@ -77,14 +91,18 @@ class TestScheduleTriggerUpdateAgent:
     @pytest.mark.asyncio
     async def test_the_agent_is_persisted_inside_the_canonical_action(self, home):
         _seed(home)
-        resp = await api_trigger_detail(_make_request(_agent_action("bxt-brain-leader")))
+        resp = await api_trigger_detail(
+            _make_request(_agent_action("bxt-brain-leader"), base=_listed_revision(home))
+        )
         assert resp.status == 200
         assert _stored_config(home)["agent"] == "bxt-brain-leader"
 
     @pytest.mark.asyncio
     async def test_the_provider_is_preserved(self, home):
         _seed(home)
-        resp = await api_trigger_detail(_make_request(_agent_action("worker")))
+        resp = await api_trigger_detail(
+            _make_request(_agent_action("worker"), base=_listed_revision(home))
+        )
         assert resp.status == 200
         inline = (TriggerStore(base_dir=home).get("abc123").trigger.workflow or {})["inline"]
         assert inline["provider"] == "invoke-agent"
@@ -96,7 +114,7 @@ class TestScheduleTriggerUpdateAgent:
         # fields that ride along with it.
         body = {"name": "renamed", "confirm": True}
         body.update(_agent_action("bxt-brain-leader", approval_mode="auto"))
-        resp = await api_trigger_detail(_make_request(body))
+        resp = await api_trigger_detail(_make_request(body, base=_listed_revision(home)))
         assert resp.status == 200
 
         assert TriggerStore(base_dir=home).get("abc123").trigger.name == "renamed"

@@ -142,6 +142,16 @@ async def _create(client, **config) -> tuple[str, str]:
     return json.loads(raw)["instance"]["id"], raw
 
 
+async def _save(client, instance_id: str, config: dict):
+    """Save *config* the way the instance editor does: over the revision of the instance it read
+    (`personalclaw/stale_write.py`) — a save naming none is refused before anything is written."""
+    painted = await (await client.get(f"{_BASE}/{instance_id}")).json()
+    revision = painted["instance"]["revision"]
+    return await client.put(
+        f"{_BASE}/{instance_id}", json={"config": config}, headers={"If-Match": f'"{revision}"'}
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_does_not_echo_the_key_it_was_just_given(tmp_path):
     async with _client(tmp_path) as client:
@@ -228,10 +238,7 @@ async def test_an_unregistered_provider_is_refused_even_when_the_instance_exists
 async def test_update_does_not_echo_the_key(tmp_path):
     async with _client(tmp_path) as client:
         instance_id, _ = await _create(client, api_key=_SECRET)
-        r = await client.put(
-            f"{_BASE}/{instance_id}",
-            json={"config": {"api_key": _SECRET, "default_model": "gpt-4o-mini"}},
-        )
+        r = await _save(client, instance_id, {"api_key": _SECRET, "default_model": "gpt-4o-mini"})
         raw = await r.text()
         assert r.status == 200, raw
         assert _SECRET not in raw, "PUT echoed the key it had just been given"
@@ -248,9 +255,8 @@ async def test_saving_the_mask_back_does_not_erase_the_stored_key(tmp_path):
     """
     async with _client(tmp_path) as client:
         instance_id, _ = await _create(client, api_key=_SECRET, default_model="gpt-4o")
-        r = await client.put(
-            f"{_BASE}/{instance_id}",
-            json={"config": {"api_key": SECRET_MASK, "default_model": "gpt-4o-mini"}},
+        r = await _save(
+            client, instance_id, {"api_key": SECRET_MASK, "default_model": "gpt-4o-mini"}
         )
         assert r.status == 200, await r.text()
         stored = _stored(tmp_path, instance_id)
@@ -263,10 +269,7 @@ async def test_saving_a_blank_secret_over_a_stored_one_keeps_it(tmp_path):
     """The second shape the editor produces: the input is blanked, so a save sends "".","""
     async with _client(tmp_path) as client:
         instance_id, _ = await _create(client, api_key=_SECRET, default_model="gpt-4o")
-        r = await client.put(
-            f"{_BASE}/{instance_id}",
-            json={"config": {"api_key": "", "default_model": "gpt-5"}},
-        )
+        r = await _save(client, instance_id, {"api_key": "", "default_model": "gpt-5"})
         assert r.status == 200, await r.text()
         stored = _stored(tmp_path, instance_id)
         assert stored["api_key"] == _SECRET
@@ -278,9 +281,7 @@ async def test_a_real_rotated_key_still_overwrites(tmp_path):
     """Masking must not make a credential unchangeable."""
     async with _client(tmp_path) as client:
         instance_id, _ = await _create(client, api_key=_SECRET)
-        r = await client.put(
-            f"{_BASE}/{instance_id}", json={"config": {"api_key": "sk-ROTATED-fixture"}}
-        )
+        r = await _save(client, instance_id, {"api_key": "sk-ROTATED-fixture"})
         assert r.status == 200, await r.text()
         assert _stored(tmp_path, instance_id)["api_key"] == "sk-ROTATED-fixture"
 
@@ -348,7 +349,7 @@ async def test_an_instance_naming_another_owners_key_is_refused(tmp_path, monkey
         instance_id, _ = await _create(client, api_key=_SECRET, default_model="gpt-4o")
         record = tmp_path / "extensions" / "fake-tools" / "instances" / f"{instance_id}.json"
         before = record.read_text(encoding="utf-8")
-        updated = await client.put(f"{_BASE}/{instance_id}", json={"config": foreign})
+        updated = await _save(client, instance_id, foreign)
         raw = await updated.text()
         assert updated.status == 400, raw
         assert json.loads(raw)["error"]["code"] == "secret_owned_elsewhere"
@@ -946,10 +947,14 @@ def test_the_census_counts_a_leak_and_clears_a_masked_route():
     )
 
 
-#: The line the plant swaps out — a REAL masked emit in the shipped instance list route.
+#: The line the plant swaps out — a REAL masked emit in the shipped instance list route. Each
+#: record also carries its revision (`_revisioned`), which is attached AFTER the mask, so the plant
+#: keeps that wrapper and reverts only the mask inside it.
 _INSTANCE_ROUTES = SRC / "providers" / "instance_routes.py"
-_MASKED_LINE = '            "instances": [mask_instance(inst, schema) for inst in instances],'
-_PLANTED_LINE = '            "instances": [inst.to_dict() for inst in instances],'
+_MASKED_LINE = (
+    '            "instances": [_revisioned(mask_instance(inst, schema)) for inst in instances],'
+)
+_PLANTED_LINE = '            "instances": [_revisioned(inst.to_dict()) for inst in instances],'
 
 
 def test_reverting_the_mask_in_instance_routes_is_counted():

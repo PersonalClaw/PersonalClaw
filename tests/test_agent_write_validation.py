@@ -123,10 +123,22 @@ async def _create(body) -> Any:
     return await api_personalclaw_agents_create(_request(body))
 
 
-async def _update(name, body) -> Any:
+async def _update(name, body, *, base: str | None = None) -> Any:
     from personalclaw.dashboard.handlers.agents import api_personalclaw_agent_update
 
-    return await api_personalclaw_agent_update(_request(body, method="PUT", match={"name": name}))
+    req = _request(body, method="PUT", match={"name": name})
+    if base is not None:
+        req.headers = {"If-Match": f'"{base}"'}
+    return await api_personalclaw_agent_update(req)
+
+
+async def _revision(name) -> str:
+    """The revision `GET /api/agents` reports for *name* — what a save of several fields (the
+    editor's whole record) must name as its base (`personalclaw/stale_write.py`)."""
+    from personalclaw.dashboard.handlers.agents import api_personalclaw_agents
+
+    listed = _body(await api_personalclaw_agents(_request(None, method="GET")))["agents"]
+    return next(a for a in listed if a["name"] == name)["revision"]
 
 
 # ── the spec table is the dataclass, not a hand-copy of it ────────────────────
@@ -364,8 +376,10 @@ class TestUnavailableNames:
 
         src = inspect.getsource(A.api_personalclaw_agents_create)
         call = "_unavailable_agent_name(name)"
-        assert call in src
-        assert src.index(call) < src.index("cfg.save()"), "the name check must precede the write"
+        # The write is the profile going into the config the transaction then saves.
+        write = "cfg.agents[name] = AgentProfile("
+        assert call in src and write in src
+        assert src.index(call) < src.index(write), "the name check must precede the write"
 
     @pytest.mark.asyncio
     async def test_an_ordinary_name_in_the_same_namespace_is_still_allowed(self, home):
@@ -522,7 +536,9 @@ class TestLegitimateWritesStillWork:
     async def test_an_update_applies_every_field_and_reports_them(self, home):
         assert (await _create({"name": "zz-real"})).status == 200
         body = {k: v for k, v in _FULL_BODY.items() if k != "name"}
-        resp = await _update("zz-real", {**body, "confirm": True})  # see the create test
+        resp = await _update(
+            "zz-real", {**body, "confirm": True}, base=await _revision("zz-real")
+        )  # `confirm`: see the create test
         assert resp.status == 200, _error_text(resp)
 
         from personalclaw.config.loader import AppConfig
@@ -538,7 +554,9 @@ class TestLegitimateWritesStillWork:
         assert (
             await _create({"name": "zz-real", "skills": ["s"], "description": "d"})
         ).status == 200
-        resp = await _update("zz-real", {"skills": [], "description": ""})
+        resp = await _update(
+            "zz-real", {"skills": [], "description": ""}, base=await _revision("zz-real")
+        )
         assert resp.status == 200, _error_text(resp)
 
         from personalclaw.config.loader import AppConfig

@@ -201,9 +201,11 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // instead of requiring fake interpolation merely to satisfy this source scan. `ToggleRow` is a
     // typed forwarding boundary; its callers supply the required title/body, and the dedicated
     // confirmWeakeningToggles suite verifies the two consumers introduced with that boundary.
+    // (The file viewer was the third: its one dialog was "File changed on disk — overwrite?", which
+    // left when the gateway began refusing a stale save instead (`lib/staleWrite.ts`). With no
+    // dialog it needs no exemption, so it is back in the census like any other file.)
     const SINGLE_SUBJECT_SURFACES = [
       'pages/code/CodeCockpitPage.tsx',      // one project per cockpit
-      'pages/files/browse/FileViewer.tsx',   // one open file
       'pages/workflows/WorkflowRunDetail.tsx',  // one run
     ]
     const anonymous: string[] = []
@@ -250,8 +252,7 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     // The vacuity floor for the exemption above: if one of these grows a second anonymous danger
     // dialog, its "the subject is the page" reason no longer covers both.
     const counts: Record<string, number> = {}
-    for (const rel of ['pages/code/CodeCockpitPage.tsx', 'pages/files/browse/FileViewer.tsx',
-      'pages/workflows/WorkflowRunDetail.tsx']) {
+    for (const rel of ['pages/code/CodeCockpitPage.tsx', 'pages/workflows/WorkflowRunDetail.tsx']) {
       const src = strip(readFileSync(join(SRC, rel), 'utf8'))
       let n = 0
       for (const m of src.matchAll(/confirm\(\s*\{/g)) {
@@ -265,7 +266,6 @@ describe('no destructive dialog names its subject NOWHERE', () => {
     }
     expect(counts).toEqual({
       'pages/code/CodeCockpitPage.tsx': 1,
-      'pages/files/browse/FileViewer.tsx': 1,
       'pages/workflows/WorkflowRunDetail.tsx': 1,
     })
   })

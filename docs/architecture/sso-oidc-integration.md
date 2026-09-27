@@ -55,7 +55,7 @@ It is also **not selectable**. `SELECTABLE_MODES` contains only `none` and `loca
 (`modes.py:46-49`); `oauth2` and `api_key` are in `UNSELECTABLE_MODES` (`modes.py:57`);
 `AuthConfig.from_env()` returns `classify_auth_mode_request().effective`, which for `oauth2`
 is `LOCAL_TOKEN` plus a warning (`modes.py:160-176`, `:136-139`). The only three runtime
-construction sites are all `from_env()`: `dashboard/server.py:411`, `dashboard/server.py:2368`,
+construction sites are all `from_env()`: `dashboard/server.py:592`, `dashboard/api_server.py:66`,
 `dashboard/origin.py:275`. So the missing half is **selection, not verification.**
 
 But selection alone would be the wrong fix, because of *what* the OAUTH2 branch does. It
@@ -248,7 +248,7 @@ The round-trip contract, wired the same five ways the existing `auth.*` fields a
    `config/loader.py:4110-4119`. An omission here is a silently dropped setting.
 3. **`to_dict()`** — `"auth": asdict(self.auth)` at `config/loader.py:4306`; no per-field work.
 4. **Write path** — new rows in the `_EDITABLE_CONFIG` PATCH allowlist beside
-   `"auth.login_enabled"` at `dashboard/handlers/core.py:1112-1116`. That allowlist is the only
+   `"auth.login_enabled"` in `config/editable.py`. That allowlist is the only
    typed, bounded, SEL-audited config mutator (`config/edit_spec.py:3-27`); anything else is one
    of the four dialects that module exists to have removed.
 5. **Frontend control** — `web/src/pages/settings/AccountPanel.tsx`, in the same

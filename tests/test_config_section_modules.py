@@ -184,9 +184,9 @@ def test_field_still_reaches_all_five_points_from_its_new_home():
     its PATCH allowlist entry stayed in the two files they were already in. If a decomposition
     can break a config field, this is the shape it breaks.
     """
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.learning import LearningConfig
     from personalclaw.config.loader import AppConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     # (1) declared, with metadata, in the SIBLING module
     assert LearningConfig.__module__ == "personalclaw.config.learning"

@@ -21,7 +21,7 @@ import pytest
 from personalclaw.guardrails.calls import ABANDONED, DONE, ModelCall, open_call
 from personalclaw.ledger.reader import run_totals
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import service, store
+from personalclaw.workflows import run_cockpit, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
@@ -113,7 +113,7 @@ async def test_a_retried_attempt_records_its_usage_and_the_run_is_charged_for_bo
     assert totals["cost_usd"] == pytest.approx(0.17)
     # The run row, which a token budget reads, is charged for the attempt that failed too.
     assert store.get(c.run.id).total_tokens == 170
-    assert service.introspect(c.run.id)["stats"]["tokens"] == 170
+    assert run_cockpit.introspect(c.run.id)["stats"]["tokens"] == 170
 
 
 async def test_a_step_that_called_no_model_records_a_measured_zero_not_an_unknown():
@@ -156,6 +156,6 @@ async def test_a_completed_step_that_left_a_call_behind_records_what_was_reporte
     (done,) = J.ledger(c.run.id, kinds={J.STEP_COMPLETED})
     assert (done["tokens"], done["model_calls_open"]) == (35, 1), done
 
-    stats = service.introspect(c.run.id)["stats"]
+    stats = run_cockpit.introspect(c.run.id)["stats"]
     assert stats["calls_cut_off"] == 1
     assert stats["tokens_recorded"] is False, "35 is what was reported, not what was spent"

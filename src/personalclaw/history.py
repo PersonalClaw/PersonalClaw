@@ -238,9 +238,17 @@ def import_conversation(
     if path.exists():
         raise FileExistsError(f"a transcript for session {key!r} already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps({"_type": "metadata", **metadata})]
-    lines += [json.dumps(message) for message in messages]
-    atomic_write(path, "\n".join(lines) + "\n")
+    lines = [json.dumps(message) for message in messages]
+    # The count the chat list shows, with the bytes of the lines it counts, as the dashboard's
+    # save records them (`ConversationLog._message_count`): without them, listing a history of
+    # imported chats read every line of every one.
+    head = {
+        "_type": "metadata",
+        **metadata,
+        "message_count": len(lines),
+        "message_bytes": sum(len(line.encode("utf-8")) + 1 for line in lines),
+    }
+    atomic_write(path, "\n".join([json.dumps(head), *lines]) + "\n")
     if modified is not None:
         os.utime(path, (modified, modified))
     return path

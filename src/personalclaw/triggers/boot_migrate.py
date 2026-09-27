@@ -16,17 +16,22 @@ both act
 So the migration runs at boot, and then the newly-imported rows are ARMED — an imported cron
 with an empty `next_fire_at` is inert, which is the exact defect S96 measured.
 
-**Boot-safe by construction.** The migration upserts by id (idempotent, preserves rows authored
-directly in `triggers.json`), leaves `crons.json` untouched on disk (the "old file read-only one
-release", which `verify-migration` needs to diff), and never raises into boot: a broken or missing
-legacy file reports a reason and leaves the store as it was. A gateway that failed to start because
-a cron file had a typo would be a far worse outcome than one that starts and reports the problem.
+**Boot-safe by construction.** The import writes only rows the store does not already have
+(idempotent, preserves rows authored directly in `triggers.json`), runs once per home and renames
+the legacy file `crons.json.imported-<date>` rather than deleting it (`verify-migration` diffs
+against that copy), and never raises into boot: a broken or missing legacy file reports a reason
+and leaves the store as it was. A gateway that failed to start because a cron file had a typo would
+be a far worse outcome than one that starts and reports the problem.
 
-**It does NOT retire the legacy service.** Both still read their own store this release, which is
-deliberate: the migration is additive, so a bad import can be corrected by fixing `crons.json` and
-restarting rather than by restoring a deleted file. `verify-migration` is the check that says
-whether the import is trustworthy, and it is run here so the answer is in the log at the moment it
-matters.
+**It grants nothing.** The legacy files record no consent for what their rows run, so every row an
+import writes goes through `legacy_import.admit`, and a row that would run anything needing a grant
+arrives switched off until the owner switches it on (`triggers/legacy_import.py`, which says why).
+Nor does anything else here: this pass used to finish with a capability backfill that granted every
+ungranted row whatever it ran, on every start, so an edit that re-pointed an action at `bash` was
+allowed `bash` one restart later without anyone being asked. A restart grants nothing now; only the
+owner does, on the Triggers page (`triggers/grants.py`).
+`verify-migration` is the check that says whether the import is trustworthy, and it is run
+here so the answer is in the log at the moment it matters.
 """
 
 from __future__ import annotations
@@ -73,10 +78,14 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
 
     # Before the cron import, and independent of it: a home can hold a legacy `event_triggers.json`
     # with no `crons.json`, and a cron import that fails must not strand the user's event triggers.
-    events_absorbed = absorb_event_triggers(store)
+    events_absorbed = absorb_event_triggers(store, now=now)
+    # Here with the other two, not at the nudge service's start: the gateway raises the one review
+    # item right after the dashboard comes up, from the rows waiting then, and the service starts
+    # after that — an import there left its loops out of the item the owner is sent to.
+    nudges_absorbed = _absorb_nudges(root, now=now)
 
     try:
-        report = store.migrate_from_crons()
+        report = store.migrate_from_crons(now=now)
     except Exception:  # noqa: BLE001 - a bad legacy file must not stop the gateway
         logger.warning("cron migration failed; leaving the trigger store as-is", exc_info=True)
         return {
@@ -85,11 +94,10 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
             "converted": 0,
             "armed": [],
             "events_absorbed": events_absorbed,
+            "nudges_absorbed": nudges_absorbed,
         }
 
     armed = arm_unarmed(store, now=now)
-    # Before the first tick, so no pre-S116 row meets the fence unfrozen (see the docstring below).
-    frozen = backfill_capabilities(store)
 
     out: dict[str, Any] = {
         "ok": bool(report.get("lossless", False)) and not report.get("reason"),
@@ -99,58 +107,81 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
         "lossless": bool(report.get("lossless", False)),
         "reason": str(report.get("reason", "") or ""),
         "armed": armed,
-        "frozen": frozen,
         "events_absorbed": events_absorbed,
+        "nudges_absorbed": nudges_absorbed,
     }
     _log_report(out)
     return out
 
 
-#: The retired data-event store, and what it becomes once absorbed.
+def _absorb_nudges(root: Path | str, *, now: float = 0.0) -> int:
+    """Import a legacy `autonudge.json` (`triggers.nudge.import_legacy`). Never raises."""
+    try:
+        from personalclaw.triggers.nudge import import_legacy
+
+        return import_legacy(Path(root), now=now)
+    except Exception:  # noqa: BLE001 - a bad legacy file must not stop the gateway
+        logger.warning("auto-nudge import failed; leaving autonudge.json as-is", exc_info=True)
+        return 0
+
+
+#: The retired data-event store.
 LEGACY_EVENT_FILE = "event_triggers.json"
 
 
-def absorb_event_triggers(store: Any) -> int:
-    """Absorb a legacy `event_triggers.json` into the trigger store, ONCE. Returns rows absorbed.
+def absorb_event_triggers(store: Any, *, now: float = 0.0) -> int:
+    """Import a legacy `event_triggers.json` into the trigger store, once per home. Returns rows.
 
     🔴 WHY THIS EXISTS. That file was a second trigger store with its own engine, and the one place
     the Triggers page's Data-event form wrote to. Its engine ran an action and recorded nothing,
     and nothing else in the substrate — the tick, the run ledger, the doctor, the chat's
     `automation_*` tools — could see its rows. Event triggers live in `triggers.json` now, so a
-    home that made them before must keep them: same id (namespaced `event:<id>`, the store's
+    home that made them before keeps them: same id (namespaced `event:<id>`, the store's
     `kind:slug` form), pattern, the one matcher the pattern reads, action, budget, debounce, fire
     count and last-fired stamp, park state. `LEGACY_FIELD_MAP["EventTrigger"]` is the map.
 
-    The WF2AUT-11 autonudge precedent, step for step: absorbed at boot, the legacy file renamed
-    `.migrated` rather than deleted (nothing is lost: renaming it back gives an older build its
-    store again; the durability audit ignores `*.migrated`), and idempotent — a row already in the
-    store is left as it is, so an interrupted absorb finishes on the next boot without clobbering a
-    row that has since fired. A row the entity refuses (a required matcher that was empty, so it
-    could never have fired) is still written, and loads disabled, carrying its error: visible as
-    broken on the page rather than silently absent (the `migrate_from_crons` rule, S110).
+    What it does NOT keep is anything the owner never allowed: the file records no consent, and it
+    can reach a home by a snapshot restore or a copy. Each row goes through
+    `legacy_import.admit` — written `created_by: import` with no capability block, and switched off
+    to wait for review when it would run anything that needs a grant — and the file is then
+    renamed `event_triggers.json.imported-<date>`. A home that has such a copy has imported, so a
+    file found again is left in place, unread, for the Doctor to name. A row already in the store
+    is left as it is, so an import interrupted midway finishes on the next boot and writes nothing
+    twice. A row the entity refuses (a required matcher that was empty, so it could never have
+    fired) is still written, and loads disabled, carrying its error: visible as broken on the page
+    rather than silently absent (the `migrate_from_crons` rule, S110).
 
     Never raises: an unreadable legacy file is left in place and logged, and boot continues.
     """
     import json
 
     from personalclaw.event_triggers import DEFAULT_DEBOUNCE_SECS, PATTERN_MATCHER, event_spec
-    from personalclaw.triggers import screen
+    from personalclaw.triggers import legacy_import
     from personalclaw.triggers.models import Trigger, TriggerState
     from personalclaw.triggers.service import to_iso
 
-    legacy = Path(store.base_dir) / LEGACY_EVENT_FILE
+    home = Path(store.base_dir)
+    legacy = home / LEGACY_EVENT_FILE
     if not legacy.exists():
+        return 0
+    if legacy_import.already_imported(home, LEGACY_EVENT_FILE):
+        logger.warning(
+            "%s is back after this home imported it; it is not read again (the Doctor says what "
+            "to do with it)",
+            legacy,
+        )
         return 0
     try:
         raw = json.loads(legacy.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        logger.warning("%s is unreadable; leaving it in place, nothing absorbed", legacy)
+        logger.warning("%s is unreadable; leaving it in place, nothing imported", legacy)
         return 0
     rows = (
         raw if isinstance(raw, list) else (raw.get("triggers", []) if isinstance(raw, dict) else [])
     )
 
     absorbed = 0
+    waiting = 0
     existing = {row.trigger.id for row in store.load()}
     for item in rows:
         if not isinstance(item, dict) or not str(item.get("id") or "").strip():
@@ -177,7 +208,7 @@ def absorb_event_triggers(store: Any) -> int:
                 name=legacy_id,
                 kind="event",
                 enabled=bool(item.get("enabled", True)),
-                created_by="user",
+                created_by=legacy_import.IMPORTED_BY,
                 spec=event_spec(pattern, str(item.get(field) or "") if field else ""),
                 gates=gates,
                 workflow={
@@ -194,21 +225,23 @@ def absorb_event_triggers(store: Any) -> int:
                 last_error_summary=str(item.get("park_reason") or ""),
                 park_retry_after=float(item.get("park_retry_after", 0.0) or 0.0),
             )
-            # Frozen at the moment of absorption, to exactly the action the row already runs — the
-            # `backfill_capabilities` grandfather, never a widening.
-            trigger.capabilities = screen.capabilities_for_action(trigger)
+            if legacy_import.admit(trigger):
+                waiting += 1
             store.upsert(trigger)
+            # Seen from here on: a file listing one id twice imports it once, the first time.
+            existing.add(trigger_id)
             absorbed += 1
         except Exception:  # noqa: BLE001 - one malformed row must not strand the rest
             logger.warning("skipping a malformed legacy event trigger: %r", item, exc_info=True)
-    try:
-        legacy.rename(legacy.with_suffix(".json.migrated"))
-    except OSError:
-        logger.warning("could not rename the absorbed %s", legacy, exc_info=True)
+    retired = legacy_import.retire(legacy, now=now)
+    legacy_import.audit_import(
+        LEGACY_EVENT_FILE, imported=absorbed, waiting=waiting, retired=retired
+    )
     logger.info(
-        "absorbed %d legacy event trigger(s) from %s into triggers.json",
+        "imported %d legacy event trigger(s) from %s into triggers.json; %d wait for review",
         absorbed,
         LEGACY_EVENT_FILE,
+        waiting,
     )
     return absorbed
 
@@ -238,43 +271,6 @@ def arm_unarmed(store: Any, *, now: float = 0.0) -> list[str]:
     return armed
 
 
-def backfill_capabilities(store: Any) -> list[str]:
-    """Freeze a capability block onto every row authored before the fence was wired (S116).
-
-    🔴 WHY THIS EXISTS. The frozen-capability fence (decision 7) denies a write-capable action whose
-    `capabilities` block does not name its provider. Every writer now freezes that block at save
-    time — but no writer EVER did before S116, and the fence's input (`FireContext.requested`) was
-    never populated, so the gate had never run on a real fire. Wiring it without this backfill would
-    have refused every automation already on disk: measured across `tools.create`, the app-cron
-    reconciler, the digest reconciler, the CLI and the API, not one set `capabilities`, and each
-    creates a write-capable action (`invoke-agent`, `run-prompt`, `notification-digest`).
-
-    So the population that predates the freeze is granted exactly what its CURRENT action already
-    does — no more. This is a faithful grandfather, not a widening: the block names the provider the
-    row is already configured to run, so re-pointing that action at something else still requires a
-    fresh opt-in.
-
-    Idempotent and narrow, modelled on `arm_unarmed`: a row that already carries a block is left
-    alone (never widened), a read-only action gets no block (decision 7's default covers it, and
-    writing one would imply an opt-in the user never made), and a broken row is skipped because
-    granting capabilities to something that does not parse is how a fence becomes decorative.
-    """
-    from personalclaw.triggers import screen
-
-    frozen: list[str] = []
-    for row in store.load():
-        trigger = row.trigger
-        if not getattr(row, "ok", True) or trigger.capabilities:
-            continue
-        granted = screen.capabilities_for_action(trigger)
-        if not granted:
-            continue
-        trigger.capabilities = granted
-        store.upsert(trigger)
-        frozen.append(trigger.id)
-    return frozen
-
-
 def verify_report(base_dir: Path | str | None = None) -> dict[str, Any]:
     """S91's `verify-migration` diff, as data, so boot can log whether the import is trustworthy.
 
@@ -300,16 +296,6 @@ def _log_report(report: dict[str, Any]) -> None:
     A migration that imported nothing (no `crons.json`, or every row already present) logs at DEBUG:
     an INFO line on every boot saying "converted 0" trains people to ignore the line that matters.
     """
-    frozen = report.get("frozen") or []
-    if frozen:
-        # INFO, not DEBUG, and logged even when there was no `crons.json` to migrate: this granted
-        # write capabilities to existing automations, which is a security-relevant state change the
-        # owner of the machine should be able to find in the log afterwards.
-        logger.info(
-            "trigger capability backfill: froze %d automation(s) to their current action (%s)",
-            len(frozen),
-            ", ".join(frozen[:5]) + ("…" if len(frozen) > 5 else ""),
-        )
     if report.get("reason") == "no crons.json":
         logger.debug("no crons.json to migrate")
         return

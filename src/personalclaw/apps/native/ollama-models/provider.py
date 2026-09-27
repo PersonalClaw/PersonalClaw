@@ -27,6 +27,7 @@ with two relevant endpoints:
 The endpoint is overridable via ``ProviderEntry.options.endpoint``.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -70,8 +71,10 @@ from personalclaw.sdk.model import (  # noqa: F401
     infer_capabilities,
     make_think_splitter,
     output_cap,
+    own_model,
     per_call_temperature,
     prompt_text_chars,
+    require_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -419,7 +422,10 @@ class OllamaProvider(ModelProvider):
         self._endpoint = endpoint.rstrip("/")
         self._timeout = timeout
         self._extra_options: dict[str, object] = dict(extra_options or {})
-        self._embedding_model = str(self._extra_options.pop("embedding_model", model))
+        # The embedding binding (a build kwarg) or the instance's own Embedding Model option.
+        # Never the chat model: that is a model nobody chose to embed with, and the option's own
+        # help says an empty one means "embed with sentence-transformers instead".
+        self._embedding_model = str(self._extra_options.pop("embedding_model", "") or "")
         # Native structured output: resolved ONCE here and held apart from
         # ``_extra_options`` so the generic passthrough can never put an unnormalized
         # constraint on the wire. ``None`` means "no constraint" — the request goes out
@@ -543,21 +549,9 @@ class OllamaProvider(ModelProvider):
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Start the provider; auto-detect model from Ollama if not specified."""
-        if not self._model or self._model == "*":
-            try:
-                resp = await self._client.get("/api/tags")
-                resp.raise_for_status()
-                models = resp.json().get("models", [])
-                if models:
-                    self._model = models[0]["name"]
-                    if not self._embedding_model:
-                        self._embedding_model = self._model
-                    logger.info("Ollama auto-detected model: %s", self._model)
-                else:
-                    logger.warning("Ollama has no models available at %s", self._endpoint)
-            except Exception:
-                logger.warning("Failed to auto-detect Ollama model", exc_info=True)
+        """Start the provider. It never picks a model: one built for none refuses each request
+        (``require_model``) instead of taking the first model ``/api/tags`` lists, which served
+        an unbound background call on a model nobody chose."""
         logger.info("Ollama provider ready: model=%s endpoint=%s", self._model, self._endpoint)
 
     async def shutdown(self) -> None:
@@ -579,12 +573,13 @@ class OllamaProvider(ModelProvider):
         ``{"done": true, ...}`` chunk produces an :data:`EVENT_COMPLETE`
         event populated with ``prompt_eval_count`` / ``eval_count``.
         """
+        model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         body: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "messages": self._history,
             "stream": True,
         }
@@ -690,7 +685,7 @@ class OllamaProvider(ModelProvider):
         ollama_messages = _to_ollama_messages(messages)
 
         body: dict[str, Any] = {
-            "model": model or self._model,
+            "model": require_model(model or self._model),
             "messages": ollama_messages,
             "stream": True,
         }
@@ -803,14 +798,15 @@ class OllamaProvider(ModelProvider):
     async def embed(self, inputs: list[str]) -> list[list[float]]:
         """Return embedding vectors for ``inputs`` via ``POST /api/embed``.
 
-        The model defaults to the chat model and can be overridden via
-        the ``embedding_model`` key in ``extra_options``.
+        The model is the embedding binding, else the instance's own Embedding Model option
+        (``embedding_model`` in ``extra_options``); with neither, the call is refused before it
+        is sent.
         """
         if not inputs:
             return []
         response = await self._client.post(
             "/api/embed",
-            json={"model": self._embedding_model, "input": inputs},
+            json={"model": require_model(self._embedding_model), "input": inputs},
         )
         response.raise_for_status()
         payload = response.json()
@@ -1019,11 +1015,12 @@ def _factory(
     timeout = _timeout_or_default(_explicit if _explicit is not None else _declared)
 
     # A ``model`` kwarg (threaded by ``registry.build(name, model=…)``) overrides the
-    # entry's pinned model — a per-use-case caller (e.g. one_shot_completion's
-    # reasoning axis) must be able to pin the active model, or it would silently use
-    # the entry default.
+    # entry's own model — a per-use-case caller (e.g. one_shot_completion's reasoning axis)
+    # must be able to pin the active model, or it would silently use the entry's. The entry's
+    # own is core's one answer (``ProviderEntry.own_model``: its model, else the Default Model
+    # the Add-instance form saves); reading ``entry.model`` alone dropped that Default Model.
     _model_override = kwargs.get("model")
-    model = str(_model_override) if _model_override else entry.model
+    model = str(_model_override) if _model_override else entry.own_model
 
     # The embedding use-case binding arrives as a build kwarg — the embedder
     # constructs its provider WITH the bound model (embed() takes no per-call model).
@@ -1089,7 +1086,7 @@ def create_provider(config: dict | None = None) -> "OllamaProvider":
 
     Used by the bundled ``ollama-models`` model extension. Chat and embedding
     both run through this single provider — embedding uses the ``embedding_model``
-    option, chat uses ``default_model``.
+    option, chat the instance's own model (``own_model``: its Default Model).
     """
     cfg = dict(config or {})
     endpoint = str(cfg.get("endpoint") or _DEFAULT_ENDPOINT)
@@ -1105,7 +1102,7 @@ def create_provider(config: dict | None = None) -> "OllamaProvider":
     if cfg.get("context_window") is not None:
         extra["context_window"] = cfg["context_window"]
     return OllamaProvider(
-        model=str(cfg.get("default_model") or ""),
+        model=own_model(cfg.get("model"), cfg),
         endpoint=endpoint,
         timeout=timeout,
         extra_options=extra,
@@ -1189,8 +1186,14 @@ class OllamaCatalog(ModelManager):
 
     # ── Discovery ──────────────────────────────────────────────────────
     async def list_models(self) -> list[ModelInfo]:
-        """List locally-installed models via ``GET /api/tags``. Raises when it cannot."""
+        """List locally-installed models via ``GET /api/tags``. Raises when it cannot.
+
+        A chat model's ``image_modality`` tag follows what Ollama itself reports for it
+        (:meth:`_served_capabilities`), not only what its name suggests.
+        """
         data = await self._tags()
+        names = [str(m.get("name", "")) for m in data.get("models", []) if m.get("name")]
+        served = await self._served_capabilities(names)
 
         out: list[ModelInfo] = []
         for m in data.get("models", []):
@@ -1204,7 +1207,9 @@ class OllamaCatalog(ModelManager):
                 ModelInfo(
                     id=name,
                     name=name,
-                    capabilities=infer_capabilities(name, families),
+                    capabilities=_with_served_vision(
+                        infer_capabilities(name, families), served.get(name)
+                    ),
                     size=size or None,
                     extra={
                         k: v
@@ -1220,6 +1225,39 @@ class OllamaCatalog(ModelManager):
                 )
             )
         return out
+
+    async def _served_capabilities(self, names: list[str]) -> dict[str, list[str]]:
+        """Ollama's OWN capability list for each installed model (``POST /api/show``), by name.
+
+        The vendor's record of what a model serves: ``vision`` is on ``gemma4:12b`` and
+        ``qwen2.5vl:7b``, whose names carry no marker the id classifier knows, so without this
+        the platform recorded both as text-only and a chat on them was never shown an image.
+        Asked concurrently, and fail-soft per model: a model whose show call fails is left out
+        of the map and keeps the tags its id implies.
+        """
+        import aiohttp
+
+        async def _one(session: Any, name: str) -> tuple[str, list[str] | None]:
+            try:
+                async with session.post(
+                    f"{self._endpoint}/api/show",
+                    json={"name": name},
+                    timeout=aiohttp.ClientTimeout(total=_SHOW_TIMEOUT),
+                ) as r:
+                    if r.status != 200:
+                        return name, None
+                    data = await r.json()
+            except Exception:  # noqa: BLE001 — one model's show must not fail the listing
+                logger.debug("Ollama /api/show failed for %s", name, exc_info=True)
+                return name, None
+            caps = data.get("capabilities") if isinstance(data, dict) else None
+            return name, [str(c) for c in caps] if isinstance(caps, list) else None
+
+        if not names:
+            return {}
+        async with aiohttp.ClientSession() as session:
+            pairs = await asyncio.gather(*(_one(session, n) for n in names))
+        return {name: caps for name, caps in pairs if caps is not None}
 
     async def test_connection(self) -> ConnectionResult:
         """Probe reachability via ``/api/tags`` (a cheap local call)."""
@@ -1413,6 +1451,20 @@ class OllamaCatalog(ModelManager):
             if v
         }
         return ModelInfo(id=model, name=model, capabilities=[], extra=extra)
+
+
+def _with_served_vision(inferred: list[str], served: list[str] | None) -> list[str]:
+    """``inferred`` tags with ``image_modality`` set by what Ollama reports the model serves.
+
+    Only a CHAT model's image tag moves: a media model's single tag is left alone. With no
+    report (``None``, or an empty list from an older Ollama) the id's inference stands.
+    """
+    if not served or "chat" not in inferred:
+        return inferred
+    tags = [t for t in inferred if t != "image_modality"]
+    if "vision" in served:
+        tags.append("image_modality")
+    return tags
 
 
 def _humanize_bytes(n: int) -> str:

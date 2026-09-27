@@ -155,6 +155,13 @@ async def _eventually(condition, timeout: float = 3.0) -> bool:
     return True
 
 
+async def _save(client: TestClient, method: str, path: str, values: dict):
+    """Save settings the way Configure does: read the form, then save over that read's revision
+    (a settings save replaces the file, so it names the copy it replaces)."""
+    revision = (await (await client.get(path)).json())["revision"]
+    return await client.request(method, path, json=values, headers={"If-Match": f'"{revision}"'})
+
+
 def _built(name: str) -> list:
     return sys.modules[f"_pclaw_app_{name.replace('-', '_')}__provider"].BUILT
 
@@ -169,7 +176,7 @@ async def test_saving_a_channel_setting_rebuilds_its_transport_and_moves_its_inb
         await channel_transports.bind_inbound(services)  # what the gateway does at boot
         assert await _eventually(lambda: old.inbound == [("start", services)])
 
-        resp = await client.put("/api/apps/probe-channel/config", json={"token": "xoxb-saved"})
+        resp = await _save(client, "PUT", "/api/apps/probe-channel/config", {"token": "xoxb-saved"})
         assert resp.status == 200, await resp.text()
 
         new = channel_transports.get_transport("probe")
@@ -188,7 +195,7 @@ async def test_saving_any_apps_setting_rebuilds_its_provider(tmp_path):
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=True)
         before = registry.get("probe-tasks").provider_instance
-        resp = await client.put("/api/apps/probe-tasks/config", json={"token": "sk-saved"})
+        resp = await _save(client, "PUT", "/api/apps/probe-tasks/config", {"token": "sk-saved"})
         assert resp.status == 200, await resp.text()
         after = registry.get("probe-tasks").provider_instance
         assert after is not before and after.config["token"] == "sk-saved"
@@ -199,7 +206,7 @@ async def test_a_disabled_app_is_saved_but_not_rebuilt(tmp_path):
     manifest = _install(tmp_path, "probe-off", "task", "create_tasks")
     async with _gateway(tmp_path) as (client, registry):
         registry.register(manifest, enabled=False)
-        resp = await client.put("/api/apps/probe-off/config", json={"token": "x"})
+        resp = await _save(client, "PUT", "/api/apps/probe-off/config", {"token": "x"})
         assert resp.status == 200
         assert registry.get("probe-off").provider_instance is None
 
@@ -213,7 +220,7 @@ async def test_the_providers_route_moves_a_channels_inbound_too(tmp_path):
         old = channel_transports.get_transport("probe")
         await channel_transports.bind_inbound("svc")
         assert await _eventually(lambda: old.inbound == [("start", "svc")])
-        resp = await client.patch("/api/providers/probe-patch/config", json={"token": "n"})
+        resp = await _save(client, "PATCH", "/api/providers/probe-patch/config", {"token": "n"})
         assert resp.status == 200, await resp.text()
         new = channel_transports.get_transport("probe")
         assert old.inbound[-1] == ("stop", None)
@@ -230,7 +237,7 @@ async def test_settings_that_build_no_transport_stop_the_old_receiver(tmp_path):
         old = channel_transports.get_transport("probe")
         await channel_transports.bind_inbound("svc")
         assert await _eventually(lambda: old.inbound == [("start", "svc")])
-        resp = await client.put("/api/apps/probe-bad/config", json={"token": "unbuildable"})
+        resp = await _save(client, "PUT", "/api/apps/probe-bad/config", {"token": "unbuildable"})
         assert resp.status == 200, await resp.text()
         assert "builds no transport" in registry.get("probe-bad").error
         assert channel_transports.get_transport("probe") is None

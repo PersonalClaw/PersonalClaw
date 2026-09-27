@@ -13,11 +13,13 @@
 import esbuild from 'esbuild'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 /**
  * @param {string} webDir absolute path to the web/ package root
- * @returns {Promise<{ version: string, path: string, assetCount: number }>}
+ * @returns {Promise<{ version: string, path: string, assetCount: number, inputs: string[] }>}
+ *   `inputs` are the absolute paths of the source files with code in sw.js, from esbuild's
+ *   metafile, for the third-party notices (scripts/thirdPartyNotices.mjs).
  */
 export async function buildServiceWorker(webDir) {
   const distDir = join(webDir, 'dist')
@@ -31,7 +33,7 @@ export async function buildServiceWorker(webDir) {
   const version = createHash('sha256').update(assets.join('\n')).digest('hex').slice(0, 12)
 
   const outfile = join(distDir, 'sw.js')
-  await esbuild.build({
+  const { metafile } = await esbuild.build({
     entryPoints: [join(webDir, 'src', 'sw.ts')],
     outfile,
     bundle: true,
@@ -40,7 +42,14 @@ export async function buildServiceWorker(webDir) {
     minify: true,
     // The worker's only compile-time input. Declared in src/sw.ts.
     define: { __SW_CACHE_VERSION__: JSON.stringify(version) },
+    // Which files have code in sw.js. Metafile paths are relative to absWorkingDir.
+    metafile: true,
+    absWorkingDir: webDir,
   })
+  const output = Object.values(metafile.outputs).find((o) => o.entryPoint)
+  const inputs = Object.entries(output?.inputs ?? {})
+    .filter(([, input]) => input.bytesInOutput > 0)
+    .map(([path]) => resolve(webDir, path))
 
-  return { version, path: outfile, assetCount: assets.length }
+  return { version, path: outfile, assetCount: assets.length, inputs }
 }

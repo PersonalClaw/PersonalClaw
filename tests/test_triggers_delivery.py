@@ -288,18 +288,28 @@ def test_channel_destinations_want_flat_text(destination, flat):
     assert D.wants_flat_text(destination) is flat
 
 
-def test_the_flat_text_ends_with_the_status_url():
-    """Appended as a LINE, not embedded in prose: a Slack consumer auto-links a bare URL, and a user
+def test_the_flat_text_ends_with_a_real_status_url():
+    """Appended as a LINE, not embedded in prose: a chat app auto-links a bare URL, and a user
     scanning text finds a trailing link faster than one buried mid-sentence."""
-    text = _ok().to_text()
-    assert text.splitlines()[-1] == "#/workflows/runs/r1"
+    note = _ok()
+    note.status_url = "https://claw.example/#/workflows/runs/r1"
+    text = note.to_text()
+    assert text.splitlines()[-1] == "https://claw.example/#/workflows/runs/r1"
     assert text.splitlines()[0] == "Nightly digest finished"
+
+
+def test_the_flat_text_leaves_out_a_dashboard_fragment():
+    """The flat text is what a chat channel is sent, and `#/workflows/runs/r1` opens nothing there.
+    The note keeps it: `to_notify_kwargs` still carries `statusUrl` for the dashboard."""
+    note = _ok()
+    assert note.status_url == "#/workflows/runs/r1"
+    assert note.to_text() == "Nightly digest finished\nwrote 3 items"
+    assert note.to_notify_kwargs()["meta"]["statusUrl"] == "#/workflows/runs/r1"
 
 
 def test_the_flat_text_survives_an_empty_body():
     text = _ok(summary="").to_text()
-    assert "Nightly digest finished" in text
-    assert text.splitlines()[-1] == "#/workflows/runs/r1"
+    assert text == "Nightly digest finished"
 
 
 # ── redaction before any surface ──

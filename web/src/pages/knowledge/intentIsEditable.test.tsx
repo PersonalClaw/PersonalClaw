@@ -39,14 +39,15 @@ const EXISTING: KnowledgeIntent = {
 
 let upsert: ReturnType<typeof vi.fn>
 
-/** Mock the api module and hand back the freshly-imported page module. */
+/** Mock the api module and hand back the freshly-imported page module. The two intent writes — a
+ *  create and an edit — share ONE spy, so `body()` is the record whichever the save chose. */
 async function withApi(extra: Record<string, unknown>) {
   upsert = vi.fn(() => Promise.resolve({ intents: [], id: EXISTING.id }))
   vi.doMock('../../lib/api', async (orig) => {
     const real = await orig<Record<string, unknown>>()
     return {
       ...real,
-      api: { ...(real.api as object), upsertKnowledgeIntent: upsert, ...extra },
+      api: { ...(real.api as object), createKnowledgeIntent: upsert, saveKnowledgeIntent: upsert, ...extra },
     }
   })
   return await import('./KnowledgeListPage')
@@ -266,9 +267,15 @@ describe('the page can actually reach the editor', () => {
 
   it('routes every intent write through the single writer', () => {
     // Two call sites hand-assembling a whole-record upsert body is how `enabled: true` got
-    // hard-coded in the first place.
-    expect(src.match(/api\.upsertKnowledgeIntent\(/g) ?? [], 'only `writeIntent` may call the upsert')
-      .toHaveLength(1)
-    expect(src).toMatch(/function writeIntent\(/)
+    // hard-coded in the first place. The upsert is two api calls now — a create names no base, an
+    // edit names the revision it replaces — and each may be spelled exactly once, inside the writer.
+    for (const call of [/api\.createKnowledgeIntent\(/g, /api\.saveKnowledgeIntent\(/g]) {
+      expect(src.match(call) ?? [], `only \`writeIntent\` may call ${call.source}`).toHaveLength(1)
+    }
+    const at = src.indexOf('function writeIntent(')
+    expect(at, 'the single writer must exist').toBeGreaterThan(-1)
+    const writer = src.slice(at, src.indexOf('\n}\n', at))
+    expect(writer).toMatch(/api\.createKnowledgeIntent\(/)
+    expect(writer).toMatch(/api\.saveKnowledgeIntent\(/)
   })
 })

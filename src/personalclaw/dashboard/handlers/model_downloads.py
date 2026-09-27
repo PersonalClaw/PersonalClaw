@@ -17,6 +17,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
@@ -49,28 +50,29 @@ async def api_model_download_start(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON body"}, status=400)
+        return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        return json_error("invalid_body", status=400)
 
     provider = str(body.get("provider", ""))
     model = str(body.get("model", ""))
 
     # Free space BEFORE the fetch: a download that cannot land should be refused in the
-    # request, not after the user waits for gigabytes. The refusal names both numbers.
+    # request, not after the user waits for gigabytes. The refusal names both numbers, and the
+    # code rides beside the sentence rather than in front of it: the onboarding card and the chat
+    # notice print the message as it is.
     precheck = await _download_precheck(_registry(request), provider, model)
     if precheck is not None and not precheck.ok:
-        return web.json_response({"error": precheck.reason}, status=400)
+        return json_error("insufficient_disk_space", message=precheck.reason, status=400)
 
-    job, error = _registry(request).start(provider, model)
+    # An unmeasurable filesystem is not a reason to block a good download, but the download is
+    # never presented as verified to fit: the warning is on the JOB, so its stream and a
+    # reload's list carry it to every surface that shows the download's progress.
+    warning = precheck.warning if precheck is not None else ""
+    job, error = _registry(request).start(provider, model, warning=warning)
     if error is not None:
-        return web.json_response({"error": error}, status=400)
-    payload = job.to_dict()
-    if precheck is not None and precheck.warning:
-        # An unmeasurable filesystem is not a reason to block a good download — but the
-        # user is told the download was never verified to fit rather than assuming it was.
-        payload["warning"] = precheck.warning
-    return web.json_response(payload, status=202)
+        return json_error("invalid_request", message=error, status=400)
+    return web.json_response(job.to_dict(), status=202)
 
 
 async def _download_precheck(reg, provider_name: str, model: str):
@@ -283,9 +285,11 @@ async def api_sidecar_install_start(request: web.Request) -> web.Response:
 async def api_sidecar_install_status(request: web.Request) -> web.Response:
     """GET /api/models/sidecar/{provider}/install/status — the rich install poll shape.
 
-    ``{provider, installed, managed, install_dir, job: {state, steps, log_tail, error,
-    remediation, weights_progress}}``. ``remediation`` is deliberately separate from
-    ``error``: the error says what broke, the remediation says what the user should DO,
+    ``{provider, installed, managed, install_dir, requirements, job: {id, state, steps,
+    log_tail, error, remediation, weights_progress}}``. ``requirements`` are what the install
+    puts in the environment (the manifest's ``sidecarDependencies``), and ``job.id`` is what
+    ``DELETE /api/models/downloads/{id}`` cancels. ``remediation`` is deliberately separate
+    from ``error``: the error says what broke, the remediation says what the user should DO,
     which is the difference between a dead end and a next step.
     """
     provider = request.match_info["provider"]
@@ -298,6 +302,7 @@ async def api_sidecar_install_status(request: web.Request) -> web.Response:
     status = install.status()
     job = registry.install_job(provider)
     status["job"] = {
+        "id": job.id if job is not None else "",
         "state": job.state if job is not None else "idle",
         "progress": job.progress if job is not None else 0.0,
         "steps": status.pop("steps"),

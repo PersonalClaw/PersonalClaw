@@ -140,8 +140,21 @@ def _mr_app(monkeypatch, tmp_path, *, providers):
     monkeypatch.setattr(loader, "config_path", lambda: cfg)
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     app = web.Application()
+    app.router.add_get("/api/models/active", mr.api_models_active)
     app.router.add_put("/api/models/active/{use_case}", mr.api_models_active_set)
     return app
+
+
+async def _set(c: TestClient, use_case: str, models: list[str]):
+    """Bind *models* the way the Models panel does: over the revision of the chain it read — the
+    PUT replaces the whole chain, so it names the copy it replaces (`personalclaw/stale_write.py`).
+    """
+    revision = (await (await c.get("/api/models/active")).json())["revisions"][use_case]
+    return await c.put(
+        f"/api/models/active/{use_case}",
+        json={"models": models},
+        headers={"If-Match": f'"{revision}"'},
+    )
 
 
 @pytest.mark.asyncio
@@ -150,7 +163,7 @@ async def test_set_rejects_unknown_provider_ref(monkeypatch, tmp_path):
         monkeypatch, tmp_path, providers=[{"name": "OpenAI", "type": "openai_compatible"}]
     )
     async with TestClient(TestServer(app)) as c:
-        resp = await c.put("/api/models/active/chat", json={"models": ["NoProvider:no-model"]})
+        resp = await _set(c, "chat", ["NoProvider:no-model"])
         assert resp.status == 400
         assert "Unknown provider" in (await resp.json())["error"]
         # And nothing was persisted for the use-case.
@@ -168,7 +181,7 @@ async def test_set_accepts_known_provider_ref(monkeypatch, tmp_path):
     async with TestClient(TestServer(app)) as c:
         # A known config provider + an arbitrary (not-yet-enumerated) model id → accepted
         # (we validate the PREFIX, not the model catalog).
-        resp = await c.put("/api/models/active/chat", json={"models": ["OpenAI:gpt-anything-99"]})
+        resp = await _set(c, "chat", ["OpenAI:gpt-anything-99"])
         assert resp.status == 200
         assert (await resp.json())["models"] == ["OpenAI:gpt-anything-99"]
 
@@ -178,11 +191,8 @@ async def test_set_allows_bare_id_and_bundled(monkeypatch, tmp_path):
     app = _mr_app(monkeypatch, tmp_path, providers=[])
     async with TestClient(TestServer(app)) as c:
         # A bundled provider (sentence-transformers) is always known.
-        r1 = await c.put(
-            "/api/models/active/embedding",
-            json={"models": ["sentence-transformers:all-MiniLM-L6-v2"]},
-        )
+        r1 = await _set(c, "embedding", ["sentence-transformers:all-MiniLM-L6-v2"])
         assert r1.status == 200
         # A bare id (no provider prefix) is left alone (some use-cases store bare ids).
-        r2 = await c.put("/api/models/active/chat", json={"models": ["just-a-bare-id"]})
+        r2 = await _set(c, "chat", ["just-a-bare-id"])
         assert r2.status == 200

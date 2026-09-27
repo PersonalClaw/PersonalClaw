@@ -1,4 +1,4 @@
-import { api, type KnowledgeItem, type KnowledgeStats } from '../../lib/api'
+import { api, type KnowledgeItem, type KnowledgeItemEdit, type KnowledgeStats } from '../../lib/api'
 
 /**
  * Knowledge data layer — a thin pass-through to the real backend. Typed items
@@ -39,8 +39,10 @@ export async function createKnowledge(input: {
   })
 }
 
-export async function updateKnowledge(id: string, fields: Partial<KnowledgeItem>): Promise<void> {
-  await api.updateKnowledgeItem(id, fields as Record<string, unknown>)
+/** An edit that replaces nothing whole — scalars, flags, tags one name at a time. A BODY edit
+ *  names the revision it was built from and goes through `api.saveKnowledgeItem` instead. */
+export async function updateKnowledge(id: string, fields: KnowledgeItemEdit): Promise<void> {
+  await api.updateKnowledgeItem(id, fields)
 }
 
 export async function deleteKnowledge(id: string): Promise<void> {

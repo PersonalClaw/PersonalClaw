@@ -116,12 +116,12 @@ class TestTouchedItemsFeed:
     """
 
     def test_a_run_that_touched_nothing_has_an_empty_feed(self) -> None:
-        from personalclaw.workflows import service
+        from personalclaw.workflows import run_cockpit
 
-        assert service.touched_items("no-such-run") == []
+        assert run_cockpit.touched_items("no-such-run") == []
 
     def test_published_artifacts_and_dropped_files_are_UNIONED(self) -> None:
-        from personalclaw.workflows import service, store
+        from personalclaw.workflows import run_cockpit, store
 
         store.append_jsonl(
             "r-touch",
@@ -148,7 +148,7 @@ class TestTouchedItemsFeed:
                 "accepted_at": "2026-08-11T03:00:00+00:00",
             },
         )
-        rows = service.touched_items("r-touch")
+        rows = run_cockpit.touched_items("r-touch")
         assert {r["kind"] for r in rows} == {"artifact", "file"}
         # Newest-first: a feed is read from the top, and the latest touch is what a watching user
         # is waiting for.
@@ -157,18 +157,18 @@ class TestTouchedItemsFeed:
     def test_the_publish_VERB_is_preserved(self) -> None:
         """A converged republish is not a new version. Collapsing them would make an unchanged
         artifact look freshly written."""
-        from personalclaw.workflows import service, store
+        from personalclaw.workflows import run_cockpit, store
 
         store.append_jsonl(
             "r-verb",
             "publishes.jsonl",
             {"ts": "2026-08-11T02:00:00+00:00", "slug": "s", "artifact": "A", "action": "noop"},
         )
-        [row] = service.touched_items("r-verb")
+        [row] = run_cockpit.touched_items("r-verb")
         assert row["action"] == "noop"
 
     def test_a_row_with_no_timestamp_sorts_last_rather_than_crashing(self) -> None:
-        from personalclaw.workflows import service, store
+        from personalclaw.workflows import run_cockpit, store
 
         for rec in (
             {"ts": "", "slug": "undated", "artifact": "U", "action": "create"},
@@ -180,7 +180,7 @@ class TestTouchedItemsFeed:
             },
         ):
             store.append_jsonl("r-sort", "publishes.jsonl", rec)
-        rows = service.touched_items("r-sort")
+        rows = run_cockpit.touched_items("r-sort")
         assert [r["ref"] for r in rows] == ["dated", "undated"]
 
     def test_the_feed_rides_the_introspect_payload(self) -> None:
@@ -188,6 +188,6 @@ class TestTouchedItemsFeed:
         reader needs both together — so it is not a separate fetch."""
         import inspect
 
-        from personalclaw.workflows import service
+        from personalclaw.workflows import run_cockpit
 
-        assert "touched=touched_items(run_id)" in inspect.getsource(service.introspect)
+        assert "touched=touched_items(run_id)" in inspect.getsource(run_cockpit.introspect)

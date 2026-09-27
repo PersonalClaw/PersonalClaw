@@ -38,7 +38,7 @@ from typing import Any
 import pytest
 
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import service, store
+from personalclaw.workflows import run_cockpit, service, store
 from personalclaw.workflows.models import InstanceState, RunStatus
 
 pytestmark = pytest.mark.anyio
@@ -460,7 +460,7 @@ async def test_a_completed_run_reports_what_its_model_calls_used(monkeypatch, tm
         # A local model: measured, and free — not "no model recorded".
         assert rows["sample"]["cost_usd"] == 0.0
 
-        stats = service.introspect(run_id)["stats"]
+        stats = run_cockpit.introspect(run_id)["stats"]
         assert stats["tokens_recorded"] is True
         assert stats["tokens"] == calls * (PROMPT_TOKENS + EVAL_TOKENS)
         assert stats["models"] == [MODEL]
@@ -477,7 +477,7 @@ async def test_a_provider_that_reports_no_usage_is_not_read_as_zero(monkeypatch,
         rows = {r["node_id"]: r for r in J.ledger(run_id, kinds={J.STEP_COMPLETED})}
         assert rows["sample"]["tokens"] is None, rows["sample"]
         assert rows["sample"]["model"] == MODEL
-        stats = service.introspect(run_id)["stats"]
+        stats = run_cockpit.introspect(run_id)["stats"]
         assert stats["tokens_recorded"] is False
         # The transform made no model call, so ITS zero is a measurement and stays one.
         assert rows["select"]["tokens"] == 0
@@ -503,7 +503,7 @@ async def test_a_cancel_counts_the_generations_it_cut_off_and_keeps_one_duration
         assert await _terminal(supervisor, run_id) is RunStatus.CANCELLED
 
         run = store.get(run_id)
-        body = service.introspect(run_id)
+        body = run_cockpit.introspect(run_id)
         stats = body["stats"]
         # ONE duration for the run: the number the run page's header renders.
         assert run.elapsed_seconds > 0
@@ -572,7 +572,7 @@ async def test_a_model_that_sends_nothing_is_still_stopped_and_its_calls_are_cou
         # Neither call finished, so neither provider reported usage: unknown, never zero.
         assert (row["tokens"], row["cost_usd"]) == (None, None)
 
-        stats = service.introspect(run_id)["stats"]
+        stats = run_cockpit.introspect(run_id)["stats"]
         assert stats["calls_cut_off"] == 2
         assert stats["models"] == [MODEL]
         assert stats["tokens_recorded"] is False and stats["priced"] is False
@@ -599,7 +599,7 @@ async def test_a_step_that_failed_after_its_calls_answered_records_what_they_use
         assert (row["model"], row["provider"], row["cost_usd"]) == (MODEL, ENTRY, 0.0)
         assert row["model_calls_open"] == 0
 
-        stats = service.introspect(run_id)["stats"]
+        stats = run_cockpit.introspect(run_id)["stats"]
         assert (stats["tokens"], stats["tokens_recorded"]) == (spent, True)
         assert stats["models"] == [MODEL]
         # The run row is charged the same number, so the header and Introspect agree, and a token

@@ -509,7 +509,7 @@ def test_the_config_fields_round_trip():
 
 
 def test_the_config_fields_are_patchable():
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert "workflows.default_quiet_windows" in _EDITABLE_CONFIG
     assert "workflows.duty_gate_default" in _EDITABLE_CONFIG

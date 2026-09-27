@@ -141,7 +141,11 @@ output is not searched. It never reformats your messages to highlight them — c
 a reply still streaming in, stay exactly as they were.
 
 This searches the conversation you are in. To search *across* conversations, use **Search chats**
-in the sessions list, which looks at titles and everything said in every session.
+in the sessions list, which looks at titles and everything said in every session, or press `⌘K`
+(`Ctrl+K`) anywhere. Past two characters the palette also searches inside your chats, memory,
+knowledge and tasks, grouped under those headings below the pages and actions. A chat opens with
+this find bar already holding what you typed. A source that could not be searched says so in the
+palette instead of showing nothing.
 
 On a phone-width screen the bar spans the column instead of sitting as a pill in the corner, so
 it shrinks with the page rather than hanging off the edge of a narrow one.
@@ -191,7 +195,10 @@ asked the machine not to show you.
 **Where:** the **+** menu in the composer → **Capture screen area**.
 
 Snip a region of your screen and it arrives as an ordinary attachment on your next message —
-same chip, same removal, same text extraction as a file you dragged in.
+same chip and same removal as a file you dragged in, and it reaches the model the way any
+attached image does (below). A screenshot already on your clipboard needs no menu: paste it
+into the composer (⌘V / Ctrl+V) and it attaches the same way. A paste that carries text as
+well — cells copied from a spreadsheet bring a picture of themselves along — pastes the text.
 
 There are two ways it can happen, and PersonalClaw picks for you:
 
@@ -201,6 +208,23 @@ There are two ways it can happen, and PersonalClaw picks for you:
   frame** and stops the capture immediately — nothing keeps recording — and then you drag a
   crop box on that frozen frame. `Esc` cancels and attaches nothing. If the macOS path fails
   (no display server, permission refused), this is the fallback.
+
+### How an attached image reaches the model
+
+When the model answering the chat takes images, it is shown the image itself. Whether it does
+is read from what the platform records: the provider's declaration that its connection carries
+images (Anthropic, Bedrock, OpenAI-compatible and Ollama connections do) *and* the model's own
+image-understanding capability as Settings → Models lists it. An image larger than 1568 px on
+its long edge is scaled down first.
+
+When it does not — a text-only model, or an agent CLI such as Claude Code, which runs its own
+connection — the image goes as text: what OCR and your image-understanding model read from it.
+That model is the one chosen for **Image · Modality** in Settings → Models; with none chosen,
+your chat model reads images itself when it takes them. The chip says **as text** before you send, with the
+reason ("gemma3:1b can't take images.") and what the model will get instead. If nothing is set
+up to read an image, it gets only the image's size and format, and the chip says **No image
+model is set up** with a link to Settings → Models. After sending, the chip on your message
+keeps saying **sent as text**, and its preview shows exactly the text that was sent.
 
 ### When the menu entry is not there
 

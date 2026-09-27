@@ -13,6 +13,7 @@ API-boundary as-a-user drive that proves every backend behavior the UI depends o
 
 from __future__ import annotations
 
+import asyncio
 import wave
 
 import pytest
@@ -279,16 +280,51 @@ def test_duplex_behaviors():
 
 
 def test_screen_share_vision_and_non_vision(monkeypatch):
-    monkeypatch.setattr(
-        "personalclaw.llm.catalog.infer_capabilities",
-        lambda label: ["image_modality"] if "vision" in label else [],
+    from personalclaw.llm import registry as llm_registry
+    from personalclaw.llm.capabilities import Capability, ProviderCapability
+    from personalclaw.llm.catalog import ModelInfo
+    from personalclaw.providers import image_input
+
+    class _Catalog:
+        def __init__(self, options=None, *, model=""):
+            pass
+
+        async def list_models(self):
+            return [
+                ModelInfo(
+                    id="ollama-vision:7b",
+                    name="ollama-vision:7b",
+                    capabilities=["chat", "image_modality"],
+                ),
+                ModelInfo(id="plain-text-model", name="plain-text-model", capabilities=["chat"]),
+            ]
+
+    reg = llm_registry.ProviderRegistry()
+    reg.register_type(
+        ProviderCapability(
+            type="vision-wire",
+            capabilities=frozenset({Capability.CHAT, Capability.VISION}),
+            supports_streaming=True,
+            supports_tools=True,
+            supports_embeddings=False,
+            supports_vision=True,
+            max_context_tokens=0,
+        ),
+        lambda **kw: None,
     )
+    reg.register_catalog("vision-wire", _Catalog)
+    reg.register_entry(llm_registry.ProviderEntry(name="Local", type="vision-wire", model=""))
+    monkeypatch.setattr(llm_registry, "get_default_registry", lambda: reg)
+    image_input.clear_cache()
+
+    def route(ref: str):
+        return asyncio.run(sc.resolve_delivery(asyncio.run(image_input.image_input(ref)).accepted))
+
     # vision model → the frame is delivered NATIVELY as an image part
-    assert sc.model_reads_images("ollama-vision:7b") is True
-    assert sc.resolve_delivery("ollama-vision:7b") == (sc.DELIVERY_NATIVE, "")
+    assert route("Local:ollama-vision:7b") == (sc.DELIVERY_NATIVE, "")
     # non-vision model → never native (described if a vision use-case resolves, else none)
-    assert sc.model_reads_images("plain-text-model") is False
-    mode, reason = sc.resolve_delivery("plain-text-model")
+    mode, _reason = route("Local:plain-text-model")
     assert mode in (sc.DELIVERY_DESCRIBED, sc.DELIVERY_NONE)
     # 'auto' is conservatively non-vision — the toggle can only under-promise
-    assert sc.resolve_delivery("auto")[0] != sc.DELIVERY_NATIVE
+    assert route("Local:auto")[0] != sc.DELIVERY_NATIVE
+    image_input.clear_cache()

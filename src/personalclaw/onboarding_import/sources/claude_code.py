@@ -41,18 +41,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
+from personalclaw.onboarding_import.floors import one_walk, read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
 from personalclaw.onboarding_import.sources.common import (
+    GIVE_WAY_LINES,
+    LOOK_BYTES,
+    READINGS,
     RULES_THAT_ALLOW,
     RULES_THAT_ASK,
     TITLE_CHARS,
+    UNDECIDED,
+    UNPARSABLE,
     McpServer,
+    Reading,
+    Transcript,
+    Undecided,
     conversation_note,
     denied_command_item,
     display_path,
+    file_signature,
+    give_way,
+    is_final,
     markdown_files,
     mcp_item,
+    message_count,
     not_imported_rows,
     on_this_machine,
     one_line,
@@ -143,7 +155,7 @@ def _read_json_document(path: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, *UNPARSABLE):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -368,7 +380,9 @@ def _project_server_note(reason: str, unresolved: list[str]) -> str:
 # ── the scan ──────────────────────────────────────────────────────────────────
 
 
-def scan(root: Path | str | None = None) -> ScanResult:
+def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
+    """What Claude Code holds. To ``look`` is to read each conversation not read before only as far
+    as its first prompt (:func:`_scan_conversations`); otherwise every one is read in full."""
     explicit = Path(root).expanduser() if root is not None else None
     base = explicit if explicit is not None else resolve_root()
     result = ScanResult(
@@ -377,21 +391,22 @@ def scan(root: Path | str | None = None) -> ScanResult:
     if not result.present:
         return result
 
-    config = _read_json_document(global_config_path(explicit))
-    known = projects(config)
-    seen_files: set[Path] = set()
-    _scan_instructions(base, known, seen_files, result)
-    _scan_memories(base, known, result)
-    _scan_mcp(base, explicit, result)
-    scan_skills(NAME, [(base / _SKILLS_DIR, "")], result)
-    _scan_agents(base, result)
-    _scan_commands(base, result)
-    _scan_conversations(base, known, result)
-    _scan_settings(base, result)
-    history = prompt_history(base / _HISTORY_FILE)
-    if history is not None:
-        result.not_imported.append(history)
-    _count_withheld_files(base, result)
+    with one_walk():
+        config = _read_json_document(global_config_path(explicit))
+        known = projects(config)
+        seen_files: set[Path] = set()
+        _scan_instructions(base, known, seen_files, result)
+        _scan_memories(base, known, result)
+        _scan_mcp(base, explicit, result)
+        scan_skills(NAME, [(base / _SKILLS_DIR, "")], result)
+        _scan_agents(base, result)
+        _scan_commands(base, result)
+        _scan_conversations(base, known, result, look=look)
+        _scan_settings(base, result)
+        history = prompt_history(base / _HISTORY_FILE)
+        if history is not None:
+            result.not_imported.append(history)
+        _count_withheld_files(base, result)
     result.note_withheld()
     return result
 
@@ -705,6 +720,137 @@ def _tool_line(block: dict[str, Any]) -> str:
     return name
 
 
+class _Lines:
+    """A Claude Code transcript, line by line: the ONE reading of its lines, whether it is read in
+    full (:func:`read_conversation`) or only as far as its first prompt (:func:`_reading`)."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+        self.redactions = 0
+        self.summary = ""
+        self.cwd = ""
+        #: The first prompt, once a line has held one.
+        self.prompt = ""
+
+    def feed(self, raw: str) -> None:
+        try:
+            line = json.loads(raw)
+        except UNPARSABLE:
+            return
+        if not isinstance(line, dict):
+            return
+        kind = line.get("type")
+        if kind == "summary" and isinstance(line.get("summary"), str):
+            self.summary = line["summary"]
+            return
+        if kind not in ("user", "assistant"):
+            return
+        if line.get("isSidechain") or line.get("isMeta") or line.get("isCompactSummary"):
+            return
+        self.cwd = self.cwd or str(line.get("cwd") or "")
+        ts = str(line.get("timestamp") or "")
+        held = line.get("message")
+        message: dict[str, Any] = held if isinstance(held, dict) else {}
+        content = message.get("content")
+        if kind == "user":
+            text = _user_text(content)
+            if not text.strip():
+                return
+            cleaned, n = safe_text(text)
+            self.redactions += n
+            self.messages.append({"role": "user", "content": cleaned, "ts": ts})
+            self.prompt = self.prompt or cleaned
+            return
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and str(block.get("text") or "").strip():
+                cleaned, n = safe_text(str(block["text"]))
+                self.redactions += n
+                last = self.messages[-1] if self.messages else None
+                if last is not None and last["role"] == "assistant":
+                    # One reply per stretch of text: Claude Code writes a line per block.
+                    last["content"] = f"{last['content']}\n\n{cleaned}"
+                    last["ts"] = ts or last["ts"]
+                else:
+                    self.messages.append({"role": "assistant", "content": cleaned, "ts": ts})
+            elif block.get("type") == "tool_use":
+                cleaned, n = safe_text(_tool_line(block))
+                self.redactions += n
+                self.messages.append({"role": "tool", "content": cleaned, "ts": ts})
+
+    def title(self) -> str:
+        return safe_text(one_line(self.summary or self.prompt, TITLE_CHARS))[0]
+
+    def conversation(self) -> dict[str, Any] | None:
+        """The whole file's conversation, or ``None`` when no line held a prompt."""
+        if not self.prompt:
+            return None
+        stamps = [m["ts"] for m in self.messages if m["ts"]]
+        return {
+            "messages": self.messages,
+            "title": self.title(),
+            "created_at": stamps[0] if stamps else "",
+            "updated_at": stamps[-1] if stamps else "",
+            "cwd": self.cwd,
+        }
+
+    def transcript(self, path: Path, *, whole: bool) -> Transcript:
+        return Transcript(
+            title=self.title(),
+            session=path.stem,
+            cwd=self.cwd,
+            messages=message_count(self.messages) if whole else None,
+            redactions=self.redactions if whole else None,
+        )
+
+
+def _read_lines(path: Path, *, look: bool) -> _Lines | Undecided | None:
+    """``path``'s lines, read in full — or, to ``look``, only until the first prompt, and never
+    past :data:`LOOK_BYTES`: :data:`UNDECIDED` when none was reached by then. ``None`` when the
+    file cannot be opened."""
+    lines = _Lines()
+    try:
+        handle = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with handle:
+        read = 0
+        for count, raw in enumerate(handle):
+            if not count % GIVE_WAY_LINES:
+                give_way()
+            lines.feed(raw)
+            if look:
+                if lines.prompt:
+                    return lines
+                read += len(raw)
+                if read >= LOOK_BYTES:
+                    return UNDECIDED
+    return lines
+
+
+def _reading(path: Path, *, look: bool) -> Reading:
+    """What ``path`` holds, as the step lists it: remembered while the file is unchanged, else
+    read — in full, or to ``look``, only as far as its first prompt."""
+    signature = file_signature(path)
+    if signature is None:
+        return None
+    found, reading = READINGS.recall(path, signature, whole=not look)
+    if found:
+        return reading
+    lines = _read_lines(path, look=look)
+    if lines is None or lines is UNDECIDED:
+        reading = lines
+    elif lines.prompt:
+        # A look that reached the end of the file before its first prompt read the whole file.
+        reading = lines.transcript(path, whole=not look)
+    else:
+        reading = None
+    READINGS.keep(path, signature, reading)
+    return reading
+
+
 def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     """One Claude Code transcript as a PersonalClaw conversation: ``(conversation, redactions)``.
 
@@ -714,106 +860,66 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     or printed credential sits — and neither are a subagent's own turns, Claude Code's notices,
     or the summary it writes after compacting (the conversation it summarises is imported
     whole). Every text passes floor 2. ``None`` for a file with no prompt in it.
+
+    Read whole, so what the step says of the file becomes final too.
     """
     if refuses(path):
         return None
-    messages: list[dict[str, Any]] = []
-    redactions = 0
-    summary = ""
-    cwd = ""
-    try:
-        handle = path.open(encoding="utf-8", errors="replace")
-    except OSError:
+    signature = file_signature(path)
+    lines = _read_lines(path, look=False)
+    if not isinstance(lines, _Lines):
         return None
-    with handle:
-        for raw in handle:
-            try:
-                line = json.loads(raw)
-            except ValueError:
-                continue
-            if not isinstance(line, dict):
-                continue
-            kind = line.get("type")
-            if kind == "summary" and isinstance(line.get("summary"), str):
-                summary = line["summary"]
-                continue
-            if kind not in ("user", "assistant"):
-                continue
-            if line.get("isSidechain") or line.get("isMeta") or line.get("isCompactSummary"):
-                continue
-            cwd = cwd or str(line.get("cwd") or "")
-            ts = str(line.get("timestamp") or "")
-            held = line.get("message")
-            message: dict[str, Any] = held if isinstance(held, dict) else {}
-            content = message.get("content")
-            if kind == "user":
-                text = _user_text(content)
-                if not text.strip():
-                    continue
-                cleaned, n = safe_text(text)
-                redactions += n
-                messages.append({"role": "user", "content": cleaned, "ts": ts})
-                continue
-            blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
-            for block in blocks:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "text" and str(block.get("text") or "").strip():
-                    cleaned, n = safe_text(str(block["text"]))
-                    redactions += n
-                    last = messages[-1] if messages else None
-                    if last is not None and last["role"] == "assistant":
-                        # One reply per stretch of text: Claude Code writes a line per block.
-                        last["content"] = f"{last['content']}\n\n{cleaned}"
-                        last["ts"] = ts or last["ts"]
-                    else:
-                        messages.append({"role": "assistant", "content": cleaned, "ts": ts})
-                elif block.get("type") == "tool_use":
-                    cleaned, n = safe_text(_tool_line(block))
-                    redactions += n
-                    messages.append({"role": "tool", "content": cleaned, "ts": ts})
-    prompts = [m for m in messages if m["role"] == "user"]
-    if not prompts:
-        return None
-    title = one_line(summary or prompts[0]["content"], TITLE_CHARS)
-    stamps = [m["ts"] for m in messages if m["ts"]]
-    conversation = {
-        "messages": messages,
-        "title": safe_text(title)[0],
-        "created_at": stamps[0] if stamps else "",
-        "updated_at": stamps[-1] if stamps else "",
-        "cwd": cwd,
-    }
-    return conversation, redactions
+    conversation = lines.conversation()
+    if signature is not None:
+        READINGS.keep(path, signature, lines.transcript(path, whole=True) if conversation else None)
+    return (conversation, lines.redactions) if conversation is not None else None
 
 
-def _scan_conversations(base: Path, known: list[Project], result: ScanResult) -> None:
+def read_for_import(item: ImportItem) -> tuple[dict[str, Any], int] | None:
+    """The conversation ``item`` names, read in full now: :func:`read_conversation` of its file."""
+    return read_conversation(Path(item.path))
+
+
+def read_in_full(path: Path) -> None:
+    """Read one conversation file in full, so what the step says of it is final."""
+    if not refuses(path):
+        _reading(path, look=False)
+
+
+def _scan_conversations(
+    base: Path, known: list[Project], result: ScanResult, *, look: bool
+) -> None:
     """Every session transcript, ``projects/<cwd>/<session id>.jsonl`` — a conversation each.
 
     A subagent's own transcript (``agent-*.jsonl``) is part of the conversation that started it,
-    not a conversation of its own.
+    not a conversation of its own. To ``look`` is to read each file not read before only as far as
+    its first prompt: a provisional item, read in full later (:attr:`ScanResult.unread`).
     """
     for project_dir in _project_dirs(base):
         origin = f"Project · {_project_label(project_dir.name, known)}"
         for path in sorted(project_dir.glob("*.jsonl")):
-            if not path.is_file() or path.name.startswith("agent-"):
+            if not path.is_file() or path.name.startswith("agent-") or refuses(path):
                 continue
-            read = read_conversation(path)
-            if read is None:
+            result.conversation_files += 1
+            reading = _reading(path, look=look)
+            if not is_final(reading):
+                result.unread.append(path)
+            if not isinstance(reading, Transcript):
                 continue
-            conversation, redactions = read
+            redactions = reading.redactions or 0
             result.redactions += redactions
             result.items.append(
                 ImportItem(
                     source=NAME,
                     category=ImportCategory.CONVERSATIONS,
                     key=f"{_PROJECTS_DIR}/{project_dir.name}/{path.name}",
-                    title=conversation["title"],
-                    name=path.stem,
-                    payload=conversation,
+                    title=reading.title,
+                    name=reading.session,
+                    path=str(path),
                     origin=origin,
-                    note=conversation_note(conversation["messages"]),
+                    note=conversation_note(reading.messages),
                     redactions=redactions,
+                    provisional=not reading.whole,
                 )
             )
 

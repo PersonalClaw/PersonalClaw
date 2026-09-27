@@ -45,6 +45,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.chat_utils import _history_key_for, apply_task_mode
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
@@ -53,6 +54,7 @@ from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
+from personalclaw.stale_write import stale_write_refusal
 
 
 def config_dir() -> Path:
@@ -252,9 +254,13 @@ def _resume_prompt(markdown: str) -> str:
 
 
 def _resolve(request: web.Request) -> tuple[DashboardState, _ChatSession] | web.Response:
+    """The chat the request names — in memory, or loaded from its history the way the transcript
+    read loads it (`resolve_session`). A chat that is only on disk (one brought over from another
+    tool, one a restart did not restore) is still a chat: the page's plan gate reads it at once,
+    before its own transcript read has loaded it, and a bare in-memory lookup answered that read
+    404 for every such chat. A key that names no chat is still 404."""
     state: DashboardState = request.app["state"]
-    name = request.match_info["session"]
-    chat = state._sessions.get(name)
+    chat = resolve_session(state, request.match_info["session"])
     if chat is None:
         return json_error("session_not_found", message="No such chat session", status=404)
     return state, chat
@@ -273,7 +279,8 @@ async def api_chat_plan_session(request: web.Request) -> web.Response:
     sess, binding = read(chat.key)
     return web.json_response(
         {
-            "session": sess.to_dict() if sess else None,
+            # Each step carries the revision an edit of its markdown names (`PS.wire`).
+            "session": PS.wire(sess) if sess else None,
             "binding": binding,
             "awaiting_step_id": awaiting_review(chat.key),
             "task_mode": getattr(chat, "_task_mode", "agent") or "agent",
@@ -321,7 +328,7 @@ async def api_chat_plan_activate(request: web.Request) -> web.Response:
         logger.warning("SEL audit failed for chat plan activation", exc_info=True)
     state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "session": sess.to_dict(), "binding": binding, "parked": was_running}
+        {"ok": True, "session": PS.wire(sess), "binding": binding, "parked": was_running}
     )
 
 
@@ -330,6 +337,10 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
 
     The user finalizes the artifact's markdown body themselves. Routes through
     ``PS.edit_artifact``; the step stays awaiting review (the user still approves).
+
+    The markdown replaces the step's whole body, so the request names the revision of the draft
+    it edited in ``If-Match`` (``PS.step_revision``, from the plan-session read): a redraft that
+    landed meanwhile is refused with ``409 stale_write`` instead of being overwritten.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
@@ -346,12 +357,25 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
         return json_error(
             "plan_session_missing", message="This chat has no plan session", status=404
         )
+    # 🔴 AN EDIT IS SAVED ONLY OVER THE DRAFT IT WAS MADE ON. Commenting sends the step back for a
+    # redraft, and the redraft returns to awaiting review — the only thing this route used to
+    # check — so an editor opened on the previous draft (another tab, a second window) replaced
+    # the new plan with the old one plus the edit. Read, compared and written with nothing awaited
+    # in between, so the turn-end redraft cannot land in the gap.
+    # A step that is not at the review gate is refused below whatever the edit names.
+    step = next((s for s in sess.steps if s.id == step_id), None)
+    if step is not None and step.status == StepStatus.AWAITING_REVIEW.value:
+        stale = stale_write_refusal(
+            request, PS.step_markdown(step), what=f"the plan step {step.title!r}"
+        )
+        if stale is not None:
+            return stale
     if not PS.edit_artifact(sess, step_id, str(body["markdown"])):
         return json_error(
             "step_not_awaiting_review", message="That step is not awaiting review", status=409
         )
     write(sess, binding)
-    return web.json_response({"ok": True, "session": sess.to_dict()})
+    return web.json_response({"ok": True, "session": PS.wire(sess)})
 
 
 async def api_chat_plan_comment(request: web.Request) -> web.Response:
@@ -382,7 +406,7 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
         )
     write(sess, binding)
     _dispatch(state, chat, f"Revise the plan with this feedback:\n\n{text}")
-    return web.json_response({"ok": True, "session": sess.to_dict()})
+    return web.json_response({"ok": True, "session": PS.wire(sess)})
 
 
 async def api_chat_plan_approve(request: web.Request) -> web.Response:
@@ -438,7 +462,7 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "ok": True,
-            "session": sess.to_dict(),
+            "session": PS.wire(sess),
             "complete": complete,
             "resumed": resumed,
             "task_mode": restored or (getattr(chat, "_task_mode", "agent") or "agent"),

@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, ShieldX, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -20,12 +20,19 @@ const KINDS: Record<string, KindMeta> = {
   // removal — scheduled-job failures arrived as `error` and were indistinguishable from any other
   // system error — so the trigger substrate now emits this pair for a CLOCK trigger that breaks.
   cron_failed: { label: 'Scheduled job failed', icon: XCircle, tone: 'var(--color-danger)' },
+  // cron/trigger_import — the triggers an upgrade brought over from an older version and left
+  // switched off until the owner reviews them. Warn tone: they have stopped, and only the owner
+  // can start them again.
+  trigger_import: { label: 'Triggers brought over for review', icon: ShieldQuestion, tone: 'var(--color-warn)' },
   hook: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   fired: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },
   subagent: { label: 'Subagent update', icon: Bot, tone: 'var(--color-primary)' },
   message: { label: 'Agent message', icon: MessageSquare, tone: 'var(--color-on-surface-low)' },
   agent_request: { label: 'Agent request', icon: ShieldQuestion, tone: 'var(--color-warn)' },
+  // system/auto_denied: a call denied with no answer — an approval nobody answered in time,
+  // or one an unattended run could not ask about. Warn: work the user asked for did not happen.
+  auto_denied: { label: 'Denied without an answer', icon: ShieldX, tone: 'var(--color-warn)' },
   // agent/room_paused. Its bare kind IS its wire string — no legacy flat
   // name existed — so one row covers both. Info tone, not warn: the room reached the round
   // budget the user configured, so nothing failed and nothing is at risk, and it resumes on

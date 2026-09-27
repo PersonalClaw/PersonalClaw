@@ -57,7 +57,6 @@ from personalclaw.dashboard.handlers.agents import (  # noqa: E402, F401
     _THEME_CSS_VARS_SET,
     _auto_install_agent,
     _find_agent_config,
-    _get_config_lock,
     _installed_agent_config,
     _sanitize_css_value,
     _slugify_theme_name,
@@ -120,6 +119,8 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     index,
     manifest_webmanifest,
     service_worker,
+    third_party_notices,
+    third_party_notices_npm,
 )
 from personalclaw.dashboard.handlers.decisions import (  # noqa: E402, F401
     api_decision_journal,

@@ -1,4 +1,4 @@
-import type { McpEnvEntry, McpValuePresence } from '../../lib/api'
+import type { McpEnvEntry, McpServerDefinition, McpServerSave, McpTransport, McpValuePresence } from '../../lib/api'
 
 /** The Add-tool-server form's two environment fields, as the body `PUT /api/mcp/servers/{name}`
  *  takes. Both become the server's environment; the backend keeps every value in the credential
@@ -102,6 +102,32 @@ export function buildMcpHeaderEdit(text: string): { headers?: Record<string, str
     headers: Object.keys(typed).length ? typed : undefined,
     keepHeaders: keep.length ? keep : undefined,
   }
+}
+
+/** The edit form's fields as the text the user sees and types. It is also the unit a refused save is
+ *  re-applied in (`rebaseRecord` in lib/staleWrite.ts) — field by field, and line by line inside the
+ *  environment and headers — so it is a type, the plain record that takes. */
+export type McpServerForm = {
+  transport: McpTransport
+  command: string; args: string; env: string; plainEnv: string
+  url: string; headers: string
+}
+
+/** The form seeded from an editable definition (`GET /api/mcp/servers/{name}`): a stored value as the
+ *  mask, never a value. */
+export function definitionForm(def: Extract<McpServerDefinition, { editable: true }>): McpServerForm {
+  if (def.transport === 'stdio') {
+    const fields = envFormFields(def.env)
+    return { transport: 'stdio', command: def.command, args: formatArgs(def.args), env: fields.secretText, plainEnv: fields.plainText, url: '', headers: '' }
+  }
+  return { transport: def.transport, command: '', args: '', env: '', plainEnv: '', url: def.url, headers: headerFormText(def.headers) }
+}
+
+/** The edit form as the body `PUT /api/mcp/servers/{name}` takes (`buildMcpEdit`, `buildMcpHeaderEdit`). */
+export function formSave(form: McpServerForm): McpServerSave {
+  if (form.transport !== 'stdio') return { transport: form.transport, url: form.url.trim(), ...buildMcpHeaderEdit(form.headers) }
+  const argv = parseArgs(form.args)
+  return { transport: 'stdio', command: form.command.trim(), args: argv.length ? argv : undefined, ...buildMcpEdit(form.env, form.plainEnv) }
 }
 
 /** Arguments as one line: space-separated, and an argument holding a space or a quote double-quoted

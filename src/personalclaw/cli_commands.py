@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
@@ -25,7 +26,6 @@ from personalclaw.security import (
     scan_memory,
 )
 from personalclaw.sel import sel
-from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 from personalclaw.vector_memory import VectorMemoryStore
 
 
@@ -309,6 +309,68 @@ def _automation(args: argparse.Namespace) -> None:
     print("Usage: personalclaw automation verify-migration [--json]")
 
 
+def _cron_channel_problem(channel: str | None) -> str:
+    """Why ``--channel`` can't be delivered to, or ``""``: the check the schedule API makes.
+
+    ``--channel`` is a chat channel's name (the owner's DM there) or ``<name>:<id>``. This process
+    is not the gateway, so no channel is registered in it: the installed channels are built to be
+    asked, exactly as the gateway would build them.
+    """
+    if not channel:
+        return ""
+    from personalclaw.providers.loader import build_channel_transports
+    from personalclaw.triggers import delivery as _delivery
+
+    transports = {t.name: t for t in build_channel_transports()}
+    return _delivery.channel_route_problem(
+        f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}", transports=transports
+    )
+
+
+def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
+    """What saving *candidate* needs the owner's yes for, in the sentences the Triggers page's
+    dialog shows: a grant for what its action runs (`triggers.grants.question`, *before* being the
+    row as stored or None for a new one), and a posture that loosens whether its agent asks
+    (`automation_posture`) over the *stored* action config."""
+    from personalclaw.automation_posture import unconsented_step_loosening
+    from personalclaw.triggers import grants
+
+    sentences: list[str] = []
+    grant = grants.question(candidate, before=before)
+    if grant is not None:
+        sentences.append(grant[1])
+    inline = (candidate.workflow or {}).get("inline") or {}
+    raw = inline.get("config")
+    config: dict = raw if isinstance(raw, dict) else {}
+    loosened = unconsented_step_loosening("action", current=stored, new=config, body={})
+    if loosened is not None:
+        sentences.append(loosened[1])
+    return sentences
+
+
+def _cron_refuse(questions: list[str], *, operation: str, resources: str, nothing: str) -> None:
+    """Say what a `cron` write would need the owner's yes for, change nothing, and exit 1.
+
+    The CLI's form of the Triggers page's consent dialog: the same sentences, and ``--yes`` for the
+    Allow. The CLI's other confirmations work the same way (``skills install`` refuses a warning
+    and says "re-run with --force"): the command says what it needs and changes nothing, never
+    doing the write quietly.
+    """
+    print("This needs your yes:")
+    for sentence in questions:
+        print(f"  {sentence}")
+    print(f"{nothing} Re-run with --yes to allow it.")
+    sel().log_api_access(
+        caller="cli",
+        operation=operation,
+        outcome="denied",
+        source="cli",
+        resources=resources,
+        error="needs --yes",
+    )
+    sys.exit(1)
+
+
 def _cron(args: argparse.Namespace) -> None:
     """Dispatch cron subcommands: list, add, update, remove, pause, resume, trigger.
 
@@ -355,12 +417,10 @@ def _cron(args: argparse.Namespace) -> None:
         cron_expr = getattr(args, "cron_expr", None)
         channel = (getattr(args, "channel", None) or "").strip() or None
         approval_mode = getattr(args, "approval_mode", "") or ""
-        if channel:
-            if len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel):
-                print(
-                    f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
-                )
-                return
+        problem = _cron_channel_problem(channel)
+        if problem:
+            print(f"Error: {problem}")
+            return
         if cron_expr:
             spec = {"kind": "cron", "expr": cron_expr}
         elif every:
@@ -380,6 +440,21 @@ def _cron(args: argparse.Namespace) -> None:
                 },
             }
         }
+        from personalclaw.triggers.models import Trigger
+
+        # The questions the Triggers page's create dialog asks, asked here the CLI's way: an agent
+        # job needs the owner's yes to run unattended, and `--approval-mode auto` needs it again.
+        yes = bool(getattr(args, "yes", False))
+        questions = _cron_questions(
+            Trigger(id="", name=args.name, kind="clock", workflow=workflow), before=None, stored={}
+        )
+        if questions and not yes:
+            _cron_refuse(
+                questions,
+                operation="cron.add",
+                resources=f"name={args.name}",
+                nothing="Nothing was created.",
+            )
         result = _tools.create(
             store,
             name=args.name,
@@ -390,6 +465,7 @@ def _cron(args: argparse.Namespace) -> None:
             # ASSISTANT creates unprompted. A human typing the command is the user acting directly,
             # and capping their own CLI at the agent limit would be a rule aimed at the wrong party.
             created_by="user",
+            owner_consented=yes,
         )
         if not result.ok:
             print(result.text)
@@ -403,6 +479,16 @@ def _cron(args: argparse.Namespace) -> None:
             )
             return
         trigger_id = str((result.data.get("trigger") or {}).get("id") or "")
+        granted = ((result.data.get("trigger") or {}).get("capabilities") or {}).get("providers")
+        if granted:
+            # The grant decision is written to the security audit, as the Triggers page writes it.
+            sel().log_api_access(
+                caller="cli",
+                operation="trigger.grant",
+                outcome="success",
+                source="cli",
+                resources=f"trigger:{trigger_id}: {', '.join(granted)}",
+            )
         if channel:
             # Delivery is not a `create` parameter, so it is a follow-up patch through the same
             # allowlist. Done after the create rather than by building the row here, so the CLI
@@ -428,10 +514,9 @@ def _cron(args: argparse.Namespace) -> None:
                 val = val.strip() or None
                 if val is None:
                     continue
-                if len(val) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(val):
-                    print(
-                        f"Error: invalid channel ID format (expected {CHANNEL_ID_RE.pattern.strip('^$')})"  # noqa: E501
-                    )
+                problem = _cron_channel_problem(val)
+                if problem:
+                    print(f"Error: {problem}")
                     return
                 patch["delivery"] = f"channel:{val}"
             elif field == "name":
@@ -491,7 +576,40 @@ def _cron(args: argparse.Namespace) -> None:
             action_wf["inline"] = inline
             patch["workflow"] = action_wf
 
-        result = _tools.update(store, trigger_id=args.job_id, patch=patch)
+        # The questions the Triggers page's editor asks about the same change: what the action
+        # runs (a new message is a new instruction for an agent that runs unattended) and whether
+        # its agent stops asking. Asked only of a change that carries the action, as the editor
+        # asks only of a save that does.
+        yes = bool(getattr(args, "yes", False))
+        if "workflow" in patch:
+            import copy
+
+            candidate = copy.deepcopy(existing.trigger)
+            candidate.workflow = patch["workflow"]
+            stored_inline = (existing.trigger.workflow or {}).get("inline") or {}
+            stored_cfg = stored_inline.get("config")
+            questions = _cron_questions(
+                candidate,
+                before=existing.trigger,
+                stored=stored_cfg if isinstance(stored_cfg, dict) else {},
+            )
+            if questions and not yes:
+                _cron_refuse(
+                    questions,
+                    operation="cron.update",
+                    resources=f"job_id={args.job_id} fields={','.join(sorted(patch))}",
+                    nothing="Nothing was changed.",
+                )
+
+        result = _tools.update(store, trigger_id=args.job_id, patch=patch, owner_consented=yes)
+        if result.ok and result.data.get("granted"):
+            sel().log_api_access(
+                caller="cli",
+                operation="trigger.grant",
+                outcome="success",
+                source="cli",
+                resources=f"trigger:{args.job_id}: {', '.join(result.data['granted'])}",
+            )
         if result.ok and spec_update:
             # 🔴 RE-ARM AFTER A CADENCE CHANGE. `--cron "30 7 * * *"` reported
             # success and the list showed 07:30, but `next_fire_at` still held the OLD 09:00 — so

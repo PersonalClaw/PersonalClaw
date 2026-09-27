@@ -206,6 +206,12 @@ class TestNativeProvider:
 
 
 class TestLivePointer:
+    @pytest.fixture(autouse=True)
+    def _tmp_is_the_workspace(self, tmp_path, monkeypatch) -> None:
+        """A live pointer may name only a file in the places an artifact may point
+        (``artifacts/source_files.py``); these files sit in the workspace."""
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
+
     def test_file_backed_reads_live_disk(self, provider, tmp_path) -> None:
         f = tmp_path / "doc.md"
         f.write_text("# original")
@@ -247,24 +253,24 @@ class TestLivePointer:
         found = provider.find_by_source_path(str(f))
         assert found is not None and found.slug == a.slug
 
-    def test_sensitive_source_path_refused_on_read(self, provider, tmp_path) -> None:
-        a = provider.create(
-            name="Creds",
-            content="placeholder",
-            source_path=str(Path.home() / ".aws" / "credentials"),
-        )
-        g = provider.get(a.slug)
-        # Live read refused → falls back to current.html placeholder, never the real file.
-        assert g.content == "placeholder"
+    @pytest.mark.parametrize("where", [(".aws", "credentials"), (".ssh", "id_rsa")])
+    def test_a_credential_location_is_refused_as_a_source(self, provider, where) -> None:
+        # Refused when the pointer is set, so nothing is ever read from or written to it.
+        with pytest.raises(ValueError, match="can't be an artifact's source"):
+            provider.create(
+                name="Creds", content="placeholder", source_path=str(Path.home().joinpath(*where))
+            )
+        assert provider.list() == []
 
-    def test_sensitive_source_path_refused_on_write(self, provider, tmp_path) -> None:
-        sensitive = str(Path.home() / ".ssh" / "id_rsa")
-        a = provider.create(name="Key", content="placeholder", source_path=sensitive)
-        # update must not write to the sensitive path (it returns, degraded).
-        provider.update(a.slug, content="malicious", snapshot=False)
-        # The sensitive file is untouched (we can't assert its content, but the
-        # write path returns False; assert current.html still updated locally).
-        assert provider.get(a.slug, version=1).content == "placeholder"
+    @pytest.mark.parametrize("name", [".env", "deploy.pem", "signing.key", "api.secret"])
+    def test_a_secret_file_in_the_workspace_is_refused_as_a_source(
+        self, provider, tmp_path, name
+    ) -> None:
+        f = tmp_path / name
+        f.write_text("TOKEN=real")
+        with pytest.raises(ValueError, match="can't be an artifact's source"):
+            provider.create(name="Creds", content="placeholder", source_path=str(f))
+        assert f.read_text() == "TOKEN=real"
 
 
 # ── record_impression ──
@@ -433,14 +439,21 @@ async def test_rest_restricted_session_403(patched_native) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rest_dedup_by_source_path(patched_native, tmp_path) -> None:
+async def test_rest_dedup_by_source_path(patched_native, tmp_path, monkeypatch) -> None:
+    from personalclaw.stale_write import revision_of
+
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
     f = tmp_path / "shared.md"
     f.write_text("orig")
+    # A file-backed save overwrites the file, so it names the revision of the copy it was built
+    # from — the file-read ETag of "orig", which the first save writes back unchanged.
+    based_on = {"If-Match": f'"{revision_of("orig")}"'}
     client = await _client(patched_native)
     try:
         r1 = await client.post(
             "/api/artifacts",
             json={"name": "Doc", "content": "orig", "kind": "markdown", "source_path": str(f)},
+            headers=based_on,
         )
         assert r1.status == 201
         slug1 = (await r1.json())["slug"]
@@ -448,6 +461,7 @@ async def test_rest_dedup_by_source_path(patched_native, tmp_path) -> None:
         r2 = await client.post(
             "/api/artifacts",
             json={"name": "Doc", "content": "updated", "kind": "markdown", "source_path": str(f)},
+            headers=based_on,
         )
         assert r2.status == 200
         assert (await r2.json())["slug"] == slug1

@@ -26,10 +26,14 @@ controls here are not optional:
   fired in this chain, so a repeat is named as a cycle — the difference between a user fixing their
   config and a user believing the depth limit is too low.
 
-**Fired through the SAME dispatch as every other kind**, so a chained action executes identically
-to a clock one and passes every gate in `firepath` — including the kill switch and the
-capability fence. A chain with its own dispatch path would be a second place for those
-controls to be forgotten, which is precisely how the `web_watch` gap happened.
+**Fired through the SAME dispatch as every other kind** (`gateway._fire_store_trigger`), so a
+chained action executes identically to a clock one and meets that dispatch's checks: the grant its
+action needs (`triggers.grants`), the injection screen, the guardrails denylist, the rung ladder
+and the day's spend budget. It does not walk `firepath`'s gates the way a clock tick does; this
+paragraph used to say it did, and in particular that the capability fence held a chained
+fire, which nothing on the dispatch read until the grant check moved into it. A chain with its own
+dispatch path would be a second place for those controls to be forgotten, which is precisely how
+the `web_watch` gap happened.
 
 **What this does NOT own:** the source run's outcome classification (the executor's), and matching
 on run OUTCOME (`only_on: failed`) — `SPEC_KEYS` declares only `{source_trigger, source_def}`, and

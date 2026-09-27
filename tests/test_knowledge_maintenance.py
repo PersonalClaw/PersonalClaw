@@ -596,8 +596,8 @@ def test_gaps_never_writes(home, ctx):
     ],
 )
 def test_each_new_knob_completes_the_four_point_wiring(field_name):
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AppConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     cfg = AppConfig()
     assert hasattr(cfg.knowledge, field_name)

@@ -64,7 +64,14 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
     producer: { kind: 'workflow-gate' as const, runId, token: continuation.resume_token },
   }
 
-  const hasContext = !!(handoff.checks_run?.length || handoff.outstanding?.length || handoff.risks?.length)
+  // A step that PARKED on the user (browse stopped at a sign-in page) asks with `rerun`: approving
+  // runs that step again once they have lifted what stopped it, rather than recording a "yes" as
+  // its output. So the buttons say what they do, and "Don't ask again" is not offered — nothing can
+  // sign in on the user's behalf the next time it stops, and the engine does not keep that answer.
+  const rerun = ask.rerun === true
+  const hasContext = !!(
+    handoff.attempted?.length || handoff.checks_run?.length || handoff.outstanding?.length || handoff.risks?.length
+  )
 
   return (
     <div className="flex flex-col gap-m rounded-xl border border-outline-variant p-l">
@@ -83,6 +90,9 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
           reading the whole journal. */}
       {hasContext && (
         <div data-type="caption" className="flex flex-col gap-xs text-on-surface-low">
+          {/* What the asking step already tried — the reason it is asking. First, because it is
+              the line that explains the question above it. */}
+          {handoff.attempted?.map((line) => <span key={line}>Tried: {line}</span>)}
           {!!handoff.checks_run?.length && <span>Already done: {handoff.checks_run.length} step{handoff.checks_run.length === 1 ? '' : 's'}</span>}
           {!!handoff.outstanding?.length && <span>Still to do: {handoff.outstanding.length} step{handoff.outstanding.length === 1 ? '' : 's'}</span>}
           {handoff.risks?.map((r) => <span key={r} className="text-warning">Risk: {r}</span>)}
@@ -139,20 +149,26 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
         </div>
       )}
 
-      <label data-type="caption" className="inline-flex items-center gap-s text-on-surface-low">
-        <Checkbox checked={alwaysAllow} onChange={setAlwaysAllow} ariaLabel="Don't ask again for this step in this run" />
-        Don&apos;t ask again for this step in this run
-      </label>
+      {rerun ? (
+        <p data-type="caption" className="text-on-surface-low">
+          Approve runs this step again. Deny ends it as failed.
+        </p>
+      ) : (
+        <label data-type="caption" className="inline-flex items-center gap-s text-on-surface-low">
+          <Checkbox checked={alwaysAllow} onChange={setAlwaysAllow} ariaLabel="Don't ask again for this step in this run" />
+          Don&apos;t ask again for this step in this run
+        </label>
+      )}
 
       <div className="flex items-center gap-s">
         {kind === 'approval' ? (
           <>
-            <Button onClick={() => onAnswer(continuation, true, alwaysAllow)} disabled={busy} disabledReason={BUSY_REASON}>
+            <Button onClick={() => onAnswer(continuation, true, rerun ? false : alwaysAllow)} disabled={busy} disabledReason={BUSY_REASON}>
               <Check size={14} /> Approve
             </Button>
             {/* Deny is quiet, not destructive-styled: rejecting a gate is a normal answer,
                 and dressing it in red implies the run broke. */}
-            <QuietButton onClick={() => onAnswer(continuation, false, alwaysAllow)} title="Deny this step">
+            <QuietButton onClick={() => onAnswer(continuation, false, rerun ? false : alwaysAllow)} title="Deny this step">
               <X size={13} /> Deny
             </QuietButton>
           </>

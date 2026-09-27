@@ -327,7 +327,7 @@ class TestStageEffectLifecycle:
             )
             return NodeResult(state=InstanceState.DONE, output={"id": "stage-1"})
 
-        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        monkeypatch.setattr("personalclaw.workflows.step_dispatch.dispatch", fake_dispatch)
         c = RunController(run, spec, services=EngineServices())
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         assert seen == [[EffectStatus.ATTEMPTED]]
@@ -347,7 +347,7 @@ class TestStageEffectLifecycle:
             dispatched.append(node.id)
             return NodeResult(state=InstanceState.DONE)
 
-        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        monkeypatch.setattr("personalclaw.workflows.step_dispatch.dispatch", fake_dispatch)
         c = RunController(run, spec, services=EngineServices())
         assert await c.run_to_completion(timeout=20) == RunStatus.FAILED
         assert dispatched == []
@@ -376,7 +376,7 @@ class TestStageEffectLifecycle:
                 )
             return NodeResult(state=InstanceState.DONE, output={"id": "stage-2"})
 
-        monkeypatch.setattr("personalclaw.workflows.controller.dispatch", fake_dispatch)
+        monkeypatch.setattr("personalclaw.workflows.step_dispatch.dispatch", fake_dispatch)
         c = RunController(run, spec, services=EngineServices())
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         statuses = [record.effect_status for record in effect_history(run.id)["root.children[0]"]]

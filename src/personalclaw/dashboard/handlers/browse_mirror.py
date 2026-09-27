@@ -19,9 +19,10 @@ read (:func:`~personalclaw.browse.grant.pending_grants`) and two resolvers
 is no second copy of "what is waiting" to drift. They are deliberately NOT folded into
 ``GET /api/approvals`` / ``POST /api/approvals/{id}/{action}``: that pair reads
 ``DashboardState._pending_approvals``, the native-session TOOL-approval dict, whose rows are keyed
-by tool + tool_input and whose timeout is origin-aware — routing a browse grant through it would
-let ``_approval_timeout_for`` silently redefine the 300s ceiling this control declares, and would
-put a browse grant's site scope into a row shape that has nowhere to keep it.
+by tool + tool_input and whose wait is the owner's configurable approval window — routing a
+browse grant through it would let ``approval_window_secs`` silently redefine the 300s ceiling this
+control declares, and would put a browse grant's site scope into a row shape that has nowhere to
+keep it.
 """
 
 from __future__ import annotations

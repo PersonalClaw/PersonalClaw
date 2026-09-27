@@ -26,6 +26,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.providers.availability import AVAILABLE, Availability, get_availability_board
 from personalclaw.providers.registry import get_provider_registry
 from personalclaw.providers.settings import ProviderSettings, load_stored
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,9 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                     # describes its instances — those are edited on the instance cards.
                     "hasConfigSchema": not ext.provider_config.multiInstance
                     and bool((ext.provider_config.settingsSchema or {}).get("properties")),
+                    # `sidecar` runs its engine in a child process with its own Python
+                    # environment, which the card offers to install (Install engine).
+                    "execution": ext.provider_config.execution,
                 },
                 "tags": ext.manifest.tags,
             }
@@ -203,7 +207,16 @@ async def handle_get_config(request: web.Request) -> web.Response:
     # nothing here ever reads a credential — including one the file names that belongs to
     # another owner, which ``load`` would refuse.
     config, secret_set = mask_secrets(load_stored(name), ext.provider_config.settingsSchema)
-    return web.json_response({"name": name, "config": config, "_secret_set": secret_set})
+    # The form saves every field it shows, so the config is ONE document and carries the
+    # revision its PATCH must name (`personalclaw/stale_write.py`) — of this masked form.
+    return web.json_response(
+        {
+            "name": name,
+            "config": config,
+            "_secret_set": secret_set,
+            "revision": revision_of(config),
+        }
+    )
 
 
 async def handle_patch_config(request: web.Request) -> web.Response:
@@ -225,14 +238,24 @@ async def handle_patch_config(request: web.Request) -> web.Response:
         return web.json_response({"error": "Body must be a JSON object"}, status=400)
 
     schema = ext.provider_config.settingsSchema
+    stored = load_stored(name)
     # The other half of masking on GET: the form PATCHes back whatever GET gave it, so a
     # sensitive field arriving as the mask (or empty over a stored value) means "keep it".
     # Without this, masking the GET would erase a working token the first time the operator
     # saved an unrelated field on the same form.
-    body = preserve_unchanged_secrets(body, load_stored(name), schema)
+    body = preserve_unchanged_secrets(body, stored, schema)
     errors = ProviderSettings.validate(body, schema)
     if errors:
         return web.json_response({"error": "Validation failed", "details": errors}, status=422)
+    # 🔴 THE CONFIG IS WRITTEN ONLY OVER THE COPY THE FORM WAS BUILT FROM. The top-level keys
+    # merge, but the form sends every key it read, so a form opened before the same file was
+    # saved elsewhere — Apps → Configure, another tab, the app itself — put its stale values back
+    # over that save. Compared in the masked form the GET hands out; no `await` before the write.
+    stale = stale_write_refusal(
+        request, mask_secrets(stored, schema)[0], what=f"the settings of {name!r}"
+    )
+    if stale is not None:
+        return stale
 
     try:
         ProviderSettings.update(name, body)
@@ -245,9 +268,17 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     # Mask on the way out too: echoing the freshly-saved token back would undo the GET fix
     # for the one response most likely to be read from a log or a devtools panel. What was
     # saved is read back as stored, so a credential-named field the schema did not declare
-    # is masked as a reference, not echoed as the value typed.
+    # is masked as a reference, not echoed as the value typed. The revision is of this same
+    # read, so a form that stays open saves its next edit over exactly what it now shows.
     masked, secret_set = mask_secrets(load_stored(name), schema)
-    return web.json_response({"name": name, "config": masked, "_secret_set": secret_set})
+    return web.json_response(
+        {
+            "name": name,
+            "config": masked,
+            "_secret_set": secret_set,
+            "revision": revision_of(masked),
+        }
+    )
 
 
 async def apply_saved_settings(name: str) -> None:

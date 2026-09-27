@@ -183,8 +183,8 @@ def test_the_kill_switch_this_rail_describes_is_really_wired() -> None:
     A docs rail whose subject was deleted keeps passing while the prose becomes fiction. This
     reads the config surface directly, so the claim and the mechanism are checked together.
     """
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AppConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     assert AppConfig().updates.check_enabled is True, "the documented default is ON"
     assert (

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Maximize2, Minimize2, ExternalLink, Download, Bookmark, Pin, Sliders } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { api } from '../../lib/api'
+import { isStaleWrite } from '../../lib/staleWrite'
 import { notify } from '../../app/appSdk'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
 import { effectiveWidgetSlug } from './widgetSlug'
@@ -121,14 +122,24 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   // Saving an EDITMODE tweak cuts a new artifact VERSION, so it needs the widget to
   // BE an artifact: an unsaved widget is saved first (its stable effectiveWidgetSlug),
   // exactly as pinning does, and thereafter each save snapshots.
+  //
+  // 🔴 A TWEAK IS A WHOLE NEW BODY built from THIS widget's source — the chat message's copy, not a
+  // read of the artifact. So it snapshots only over an artifact whose body still IS that source,
+  // named by the revision of the same read (`lib/staleWrite.ts`): an edit made to the artifact
+  // since — on the Artifacts page, or by the agent — is refused rather than written over. The
+  // rail keeps the tweak and says why (`useArtifactIteration`'s error line).
   const persistVersion = useCallback(async (next: string) => {
     if (!liveSlugRef.current.saved) {
       await api.createArtifact({ name: title, content: next, kind: 'widget', source: 'chat', slug: effSlug })
       setSaved(true)
       return
     }
-    await api.updateArtifact(effSlug, { content: next, snapshot: true, event_type: 'iterated' })
-  }, [effSlug, title])
+    const moved = new Error('the saved artifact changed since this widget was shown, and saving would undo that change')
+    const current = await api.artifact(effSlug)
+    if ((current.content ?? '') !== html || !current.content_revision) throw moved
+    try { await api.snapshotArtifactBody(effSlug, next, current.content_revision) }
+    catch (e) { throw isStaleWrite(e) ? moved : e }
+  }, [effSlug, title, html])
   const [railOpen, setRailOpen] = useState(false)
   const iteration = useArtifactIteration(iframeRef, {
     source: html,

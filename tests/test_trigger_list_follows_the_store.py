@@ -77,16 +77,14 @@ def test_a_chat_made_event_or_manual_automation_is_listed_and_counted(home):
     ):
         made = Tools.create(store, name=f"my {kind}", kind=kind, spec=spec, message="go")
         assert made.ok, made.text
-        assert "visible on the Automations page" in made.text
+        assert "on the Triggers page" in made.text
 
     state = _state()
     listed = {row["raw_id"] for row in _listed(state)}
     assert {
         "event:my-event",
         "manual:my-manual",
-    } <= listed, (
-        "the tool said the automation is visible on the Automations page; the page did not list it"
-    )
+    } <= listed, "the tool said the automation is on the Triggers page; the page did not list it"
     assert unified_trigger_count(state) == len(listed) == 3
 
 

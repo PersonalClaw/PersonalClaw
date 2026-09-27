@@ -207,7 +207,7 @@ class WorkflowWatchdog:
         return publish
 
     def _raw_publish(self, key: str, event: str, payload: Any) -> None:
-        """The coalescer's sink: the actual SSE write plus the WS refetch signal."""
+        """The coalescer's sink: the run's own SSE write, plus the run list's refresh hint."""
         state = self._state
         if state is None:
             return
@@ -219,14 +219,18 @@ class WorkflowWatchdog:
             logger.debug("workflow sse publish failed", exc_info=True)
         self._publish_to_equivalent_loop_hub(state, key, event, payload)
         try:
-            broadcast = getattr(state, "_broadcast", None)
-            if callable(broadcast) and event == "workflow_run_update":
-                # WS envelopes are refetch SIGNALS, not payloads (the DashboardLive
-                # convention) — the client refetches on receipt.
-                run_id = key.split(":", 1)[1] if ":" in key else key
-                broadcast({"type": "workflow_run_update", "run_id": run_id})
+            refresh = getattr(state, "push_refresh", None)
+            if callable(refresh) and event == "workflow_run_update":
+                # A run started, moved or ended, so every open page that LISTS runs re-reads them:
+                # Mission Control's Working lane, the Workflows list, Home's work. The gateway's
+                # refresh hint is the listing signal those pages already route on the one socket;
+                # a run's own page follows it on the SSE above. This was a hand-built
+                # `{"type": "workflow_run_update"}` note, but `_broadcast` reads `_type`, so it went
+                # out as a `notification` frame that nothing read as a run changing, and a
+                # finished run kept its Working card until a reload.
+                refresh("workflow_runs")
         except Exception:
-            logger.debug("workflow ws broadcast failed", exc_info=True)
+            logger.debug("workflow run-list refresh hint failed", exc_info=True)
 
     def _publish_to_equivalent_loop_hub(
         self, state: Any, key: str, event: str, payload: Any
@@ -555,17 +559,37 @@ class WorkflowWatchdog:
         return True
 
     async def _honor_cancel(self, run: WorkflowRun) -> None:
-        """Honour a sticky cancel. A controller cancels itself on its next step; a run
-        with none is finalized here — a cancel issued while the gateway was down must not
-        be lost."""
+        """Honour a sticky cancel, through the controller's terminal writer — a cancel issued
+        while the gateway was down must not be lost, and must close what any ending closes.
+
+        A registered controller cancels itself on its next step, but only a LIVE tick loop has a
+        next step. A run parked on a question, or paused, has none, and a cancel written without
+        waking it — `run-workflow`'s `on_overlap: cancel_then_start` writes the prior run's intent
+        and moves on — was left here for a loop that did not exist: the prior run waited at its
+        gate forever. So it is woken; `wake` is a no-op for a loop that is running.
+
+        A run with NO controller (the gateway restarted) gets one: its tick loop honours the
+        intent before `_prepare` and ends the run through `_finish`, which closes the waits,
+        tokens, Inbox rows, approvals and leases the run still holds. Writing CANCELLED onto the
+        row here, as this used to, closed none of them — a gate kept reading `waiting` with a
+        live token on a run that was over. Only a run whose spec cannot be read is still written
+        directly, since no controller can be built for it.
+        """
         controller = self._controllers.get(run.id)
         if controller is not None:
-            return  # its own tick loop will see the intent and write the terminal status
+            controller.wake()
+            return
+        spec = store.read_spec(run.id)
+        if spec is not None:
+            logger.info("workflow watchdog cancelling run %s (no live controller)", run.id)
+            with contextlib.suppress(Exception):
+                await self.launch(run, spec)
+            return
         run.status = RunStatus.CANCELLED
         run.completed_at = run.completed_at or _now()
         store.save(run)
         store.clear_cancel(run.id)
-        logger.info("workflow watchdog cancelled run %s (no live controller)", run.id)
+        logger.info("workflow watchdog cancelled run %s (no readable spec)", run.id)
 
     async def _fail(self, run: WorkflowRun, reason: str) -> None:
         run.status = RunStatus.FAILED

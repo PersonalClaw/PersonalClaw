@@ -238,7 +238,7 @@ def test_batch_size_and_retry_budget_round_trip_through_config(tmp_path, monkeyp
     d = cfg.to_dict()["knowledge"]
     assert "embed_batch_size" in d and "embed_retry_budget" in d
 
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     for key in ("knowledge.embed_batch_size", "knowledge.embed_retry_budget"):
         assert _EDITABLE_CONFIG.get(key, {}).get("type") == "int", f"{key} is not PATCH-writable"

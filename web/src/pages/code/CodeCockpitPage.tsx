@@ -40,7 +40,8 @@ import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { FileTree } from '../files/browse/FileTree'
-import { FileViewer, type FileViewerHandle } from '../files/browse/FileViewer'
+import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
+import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { useFileTabs } from '../files/browse/useFileTabs'
 import { useDirCache, useGitStatus } from '../files/filesData'
 import { TerminalView } from '../terminal/TerminalView'
@@ -2623,7 +2624,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
   // switch unmounts the editor and would drop an in-progress edit (the dirty dot would
   // even lie — switching back showed clean disk content). The viewer mirrors its draft
   // here on edit + re-seeds from it on mount, so a dirty tab's content survives switches.
-  const draftStore = useRef(new Map<string, { draft: string; base: string; warned: boolean }>()).current
+  const draftStore = useRef(new Map<string, DraftEntry>()).current
   // Collapsed side panels surface as pull-out tabs on THIS editor bar (no persistent
   // vertical rail in the body). Each CollapsiblePanel broadcasts its collapsed state;
   // we track {panelKey → {side,label}} for the currently-collapsed ones + render a
@@ -2660,7 +2661,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
   // button). Was a no-op here (dead button) — the Files page wires this via a naming
   // modal; the cockpit has no Artifacts tab, so create directly with the file's
   // basename + a kind inferred from its extension, and report via ne:code-toast.
-  const saveFileAsArtifact = useCallback((entry: FsEntry, content: string) => {
+  const saveFileAsArtifact = useCallback((entry: FsEntry, save: SaveAsArtifact) => {
     const base = entry.name || entry.path.split('/').pop() || 'file'
     const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
     // Map to an ALLOWED artifact kind (widget/html/react/markdown/svg/json/text).
@@ -2671,8 +2672,11 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
     // live widget to execute).
     const kind = ext === 'md' ? 'markdown' : ext === 'json' ? 'json'
       : ext === 'svg' ? 'svg' : 'text'
-    api.createArtifact({ name: base, content, source: 'manual', source_path: entry.path, kind })
-      .then(() => window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'ok', text: `Saved “${base}” as an artifact.` } })))
+    // Through the viewer's own save: the draft goes over the copy it was built from, and a file
+    // changed since is refused into the viewer's notice. The toast rides the create itself, so it
+    // also reports the artifact a re-applied create makes from that notice.
+    save((content, revision) => api.saveFileAsArtifact({ name: base, content, source_path: entry.path, kind }, revision)
+      .then(() => { window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'ok', text: `Saved “${base}” as an artifact.` } })) }))
       .catch((e) => window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'error', text: `Couldn't save artifact: ${(e as Error).message || 'unknown error'}` } })))
   }, [])
   // Defensively drop any restored tab that isn't under this workspace (e.g. a

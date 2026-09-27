@@ -85,6 +85,8 @@ from personalclaw.llm.registry import (  # noqa: F401
     ProviderRegistry,
     ProviderResolutionError,
     get_default_registry,
+    own_model,
+    require_model,
 )
 from personalclaw.llm.stream_tags import (  # noqa: F401
     KIND_OUTSIDE,
@@ -153,6 +155,11 @@ __all__ = [
     "ProviderEntry",
     "ProviderResolutionError",
     "CredentialMissing",
+    # The one answer to "which model does an instance serve when nothing names one"
+    # (`ProviderEntry.own_model` is the same answer for an entry), and the check a wire client
+    # makes before it sends: a request never names no model, and a client never picks one.
+    "own_model",
+    "require_model",
     # #3511: the RETURN types of the two published accessors above.
     # `get_default_registry() -> ProviderRegistry` is the pool a model app registers into, and
     # every typed thing it hands back (`ModelCatalog`, `ProviderEntry`, `ProviderCapability`)

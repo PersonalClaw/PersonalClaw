@@ -94,6 +94,26 @@ LIFECYCLE_SPEC = {
 }
 
 
+#: The same chain, closed by a gate that waits indefinitely: once the chain has run, the run is
+#: LIVE and parked, which is where a user rewinds it. A finished run is one attempt and refuses an
+#: edit — a retry is a fork — so the chain alone leaves nothing to rewind.
+LIFECYCLE_GATED_SPEC = {
+    "name": "lifecycle-gated",
+    "root": {
+        "kind": "sequence",
+        "id": "main",
+        "children": [
+            *LIFECYCLE_SPEC["root"]["children"],
+            {
+                "kind": "gate",
+                "id": "hold",
+                "config": {"kind": "approval", "prompt": "ship it?", "timeout_secs": 0},
+            },
+        ],
+    },
+}
+
+
 def _controller(run: WorkflowRun, spec: dict, **kw) -> RunController:
     return RunController(run, spec, services=EngineServices(**kw))
 
@@ -128,15 +148,35 @@ async def _applied(run_id: str, from_version: int, *, timeout: float = 5.0) -> N
     raise AssertionError(f"the queued batch never applied (version stuck at {from_version})")
 
 
-async def _drain(controller: RunController, run_id: str) -> None:
-    """Re-run a settled controller so its drain point applies a queued mutation.
+async def _parked(controller: RunController, *, timeout: float = 30.0) -> None:
+    """Wait for a run to park on its gate: status `needs_input` and the tick loop exited."""
+    await asyncio.wait_for(controller._terminal.wait(), timeout=timeout)
+    assert controller.run.status == RunStatus.NEEDS_INPUT, controller.run.status
 
-    A mutation is queued and applied between scheduling steps — but a COMPLETED controller's loop
-    has already exited, so there is no next step until it is driven again. This is what a user's
-    "resume" does, and doing it explicitly is more honest than polling for a state the engine may
-    have already moved through.
-    """
-    await controller.run_to_completion(timeout=30)
+
+async def _completions_reach(run_id: str, path: str, count: int, *, timeout: float = 10.0) -> None:
+    """Wait until `path` has completed `count` times — a rewound step re-running is the proof a
+    queued rewind was applied, not merely accepted."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        done = sum(
+            1
+            for e in ledger(run_id)
+            if e.get("kind") == "step_completed" and e.get("instance_path") == path
+        )
+        if done >= count:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"{path} never completed {count} times — the rewind stayed queued")
+
+
+def _answer_the_gate(run_id: str, sup: WorkflowWatchdog) -> None:
+    from personalclaw.workflows.human_input import list_continuations
+
+    pending = list_continuations(run_id)
+    assert len(pending) == 1, pending
+    answered = service.resume_run(run_id, supervisor=sup, token=pending[0].token, answer=True)
+    assert answered.get("ok"), answered
 
 
 async def _fresh_run(spec: dict = LIFECYCLE_SPEC) -> WorkflowRun:
@@ -162,8 +202,8 @@ class TestFullLifecycle:
         real supervisor: a rewind that left a stale cache key, or a fork taken after a rewind, would
         pass every unit test and fail here.
         """
-        run, sup, controller = await _launched(LIFECYCLE_SPEC)
-        assert await controller.run_to_completion(timeout=30) == RunStatus.COMPLETE
+        run, sup, controller = await _launched(LIFECYCLE_GATED_SPEC)
+        await _parked(controller)
         assert store.read_output(run.id, "root.children[2]") == "reporting produced from gathered"
 
         # ── rewind: the PREVIEW is the contract. It names what will re-run before anything does,
@@ -178,13 +218,16 @@ class TestFullLifecycle:
         # invalidate.
         assert "gather" not in rerun, f"the cascade reached upstream: {rerun}"
 
-        # ── drain and re-run: the rewound node executes AGAIN, the untouched one does not.
-        # Measured by execution COUNT per node, not by `step_cached`: a rewind bumps the node's
-        # epoch, and the epoch is part of the cache key — so the rewound region correctly MISSES
-        # the cache rather than hitting it. (An earlier version of this test asserted a
-        # `step_cached` event and was wrong about which mechanism it was observing: the cache
-        # serves a RESUME, and invalidation is what serves a rewind.)
-        await _drain(controller, run.id)
+        # ── the parked run applies it at once: the rewound node executes AGAIN, the untouched one
+        # does not, and the run waits on its gate again. Measured by execution COUNT per node, not
+        # by `step_cached`: a rewind bumps the node's epoch, and the epoch is part of the cache key
+        # — so the rewound region correctly MISSES the cache rather than hitting it. (An earlier
+        # version of this test asserted a `step_cached` event and was wrong about which mechanism
+        # it was observing: the cache serves a RESUME, and invalidation is what serves a rewind.)
+        await _completions_reach(run.id, "root.children[2]", 2)
+        await _parked(controller)
+        _answer_the_gate(run.id, sup)
+        await asyncio.wait_for(controller._terminal.wait(), timeout=30)
         assert store.get(run.id).status == RunStatus.COMPLETE
         completions = Counter(
             e["instance_path"] for e in ledger(run.id) if e.get("kind") == "step_completed"
@@ -208,18 +251,31 @@ class TestFullLifecycle:
 
     async def test_a_rewound_run_reaches_the_SAME_terminal_state(self) -> None:
         """Rewind idempotence: rewinding and re-running a deterministic spec must land in the same
-        place. If it does not, the cache keys are wrong and a resume cannot be trusted."""
-        run, sup, first = await _launched(LIFECYCLE_SPEC)
-        assert await first.run_to_completion(timeout=30) == RunStatus.COMPLETE
+        place. If it does not, the cache keys are wrong and a resume cannot be trusted.
+
+        🪤 This used to pass having rewound NOTHING. It queued the rewind on a finished run's
+        controller, forgot that controller and relaunched the run from disk; the queue lived in the
+        forgotten object, so the "rewound" run completed on its untouched outputs and matched by
+        construction. The re-run count below is what makes it measure a rewind."""
+        run, sup, first = await _launched(LIFECYCLE_GATED_SPEC)
+        await _parked(first)
         original = store.read_output(run.id, "root.children[2]")
 
         rewound = service.rewind_run(
             run.id, "produce", supervisor=sup, force=True, confirm_cascade=True
         )
         assert rewound.get("ok"), rewound
+        await _completions_reach(run.id, "root.children[2]", 2)
+        await _parked(first)
+        assert store.read_output(run.id, "root.children[2]") == original
+
+        # …and across a restart: the rewound, parked run is rebuilt from disk and finishes the same.
         sup.forget(run.id)
         second = await sup.launch(store.get(run.id), store.read_spec(run.id))
-        assert await second.run_to_completion(timeout=30) == RunStatus.COMPLETE
+        await _parked(second)
+        _answer_the_gate(run.id, sup)
+        await asyncio.wait_for(second._terminal.wait(), timeout=30)
+        assert store.get(run.id).status == RunStatus.COMPLETE
         assert store.read_output(run.id, "root.children[2]") == original
 
 
@@ -268,9 +324,12 @@ class TestConcurrentMutations:
         """The frozen-region invariant, reached the way a user reaches it: the node already produced
         an output that is downstream, and silently changing the spec that produced it would make the
         run's own history a lie. The fix is to rewind first, which is what the lifecycle test does.
+
+        On a LIVE run, parked with `produce` done, so the frozen-node rule is what refuses it: a
+        finished run refuses every edit before any node is looked at.
         """
-        run, sup, controller = await _launched(LIFECYCLE_SPEC)
-        assert await controller.run_to_completion(timeout=30) == RunStatus.COMPLETE
+        run, sup, controller = await _launched(LIFECYCLE_GATED_SPEC)
+        await _parked(controller)
         result = service.edit_run(
             run.id,
             [{"op": "update_node", "node_id": "produce", "fields": {"expr": "too late"}}],
@@ -278,7 +337,7 @@ class TestConcurrentMutations:
         )
         assert result.get("ok") is False
         codes = [i.get("code") for i in (result.get("issues") or [])]
-        assert "WF_MUT_FROZEN_NODE" in codes or result.get("code") == "WF_RUN_NOT_LIVE"
+        assert codes == ["WF_MUT_FROZEN_NODE"], result
 
 
 class TestCrashRecovery:

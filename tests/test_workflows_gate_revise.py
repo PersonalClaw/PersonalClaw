@@ -15,7 +15,7 @@ The load-bearing claims, each one a test below:
   deciding, so a refusal must leave them able to answer.
 * **a revise is not an approval.** Nothing is marked approved, the gate is not resolved,
   and `gate_stats` must not count it as a said-no.
-* **what runs IS what was recorded.** The revision goes through `_commit_mutation`, the
+* **what runs IS what was recorded.** The revision goes through `mid_flight.commit_mutation`, the
   single writer of `spec.json` + `spec_history/`, so the spec the engine executes and the
   spec on disk are one document rather than two that agree by convention.
 * **the comment reaches the PROMPT.** An annotation the worker never reads would leave the
@@ -34,7 +34,8 @@ from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import introspection
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import revision, store
-from personalclaw.workflows.controller import EngineServices, RunController, _parse_revise
+from personalclaw.workflows.controller import EngineServices, RunController
+from personalclaw.workflows.gate_answers import parse_revise
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
@@ -93,8 +94,8 @@ def _revise(step_ref: str, comment: str) -> dict:
 class TestGrammar:
     def test_the_nested_and_flat_spellings_both_parse(self) -> None:
         """`answer` is untyped by contract, so both shapes a caller reaches for are read."""
-        assert _parse_revise({"revise": {"step_ref": "a", "comment": "b"}}) == ("a", "b")
-        assert _parse_revise({"revise": True, "step_ref": "a", "comment": "b"}) == ("a", "b")
+        assert parse_revise({"revise": {"step_ref": "a", "comment": "b"}}) == ("a", "b")
+        assert parse_revise({"revise": True, "step_ref": "a", "comment": "b"}) == ("a", "b")
 
     @pytest.mark.parametrize(
         "answer", [True, False, "some prose about revising the plan", {"approved": True}, None]
@@ -102,12 +103,12 @@ class TestGrammar:
     def test_an_ordinary_answer_is_not_a_revise(self, answer) -> None:
         """Recognised structurally, by the key. Sniffing for the WORD would hijack a text
         gate's legitimate prose."""
-        assert _parse_revise(answer) is None
+        assert parse_revise(answer) is None
 
     def test_a_falsy_flag_is_not_a_revise(self) -> None:
         """`{"revise": false}` against an approval gate is a clumsy rejection; the approval
         path's own validator is the right thing to answer it."""
-        assert _parse_revise({"revise": False}) is None
+        assert parse_revise({"revise": False}) is None
 
 
 class TestStepRefResolution:
@@ -256,7 +257,7 @@ class TestARejectedReviseKeepsTheToken:
 
 class TestWhatRunsMatchesWhatWasRecorded:
     """The substantive correctness clause. The revision is written ONCE, by
-    `_commit_mutation`, so the executing spec and the persisted one cannot diverge."""
+    `mid_flight.commit_mutation`, so the executing spec and the persisted one cannot diverge."""
 
     async def test_the_spec_on_disk_equals_the_spec_the_engine_runs(self) -> None:
         c, token = await _blocked()

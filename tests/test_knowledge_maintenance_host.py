@@ -306,7 +306,7 @@ def test_max_staleness_round_trips_through_config(home, monkeypatch):
     assert cfg.knowledge.maintenance_max_staleness_secs == 900
     assert "maintenance_max_staleness_secs" in cfg.to_dict()["knowledge"]
 
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG.get("knowledge.maintenance_max_staleness_secs")
     assert spec and spec["type"] == "int", "the field is not PATCH-writable"

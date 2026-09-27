@@ -304,7 +304,8 @@ class _FakeProvider:
 
 
 def _publish(run_id: str, monkeypatch) -> Any:
-    from personalclaw.workflows.engine import NodeResult, apply_publish
+    from personalclaw.workflows.engine import NodeResult
+    from personalclaw.workflows.publish_seam import apply_publish
 
     monkeypatch.setattr(
         "personalclaw.artifacts.registry.get_provider", lambda *a, **k: _FakeProvider()

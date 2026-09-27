@@ -439,9 +439,9 @@ def test_disk_precheck_refuses_with_a_typed_reason_naming_both_numbers(monkeypat
     assert result.measured is True
     assert result.need_bytes == int(10240 * _MB)
     assert result.free_bytes == 1 * _GB
-    assert result.reason.startswith("insufficient_disk_space")
-    assert "10.0" in result.reason  # the need, in GB
-    assert "1.0" in result.reason  # the free space, in GB
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 10.0 GiB, and 1.0 GiB is free."
+    )
     assert result.warning == ""
 
 
@@ -492,6 +492,131 @@ def test_disk_precheck_of_an_unknown_size_is_allowed_rather_than_refused(monkeyp
     assert result.ok is True
     assert result.measured is True
     assert result.need_bytes == 0
+
+
+def test_a_refusal_below_a_gigabyte_still_names_two_different_numbers(monkeypatch, tmp_path):
+    """The first download a fresh home makes is 138 MB, so the refusal must read at that scale.
+
+    Both numbers were rounded to a tenth of a GB, which turned 138 MB against 100 MB free into
+    "needs 0.1 GB, 0.1 GB free": a refusal that contradicts itself.
+    """
+    monkeypatch.setattr(shutil, "disk_usage", lambda _p: _usage(100 * _MB))
+
+    result = fit.disk_precheck(138.0, tmp_path)
+
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 138.0 MiB, and 100.0 MiB is free."
+    )
+
+
+# ── A download folder that does not exist yet: every first download on a fresh home ──
+
+
+def _free_after_the_real_probe(free_bytes: int, probed: list[str] | None = None):
+    """A ``shutil.disk_usage`` that reports ``free_bytes``, but only after the real call ran.
+
+    The real call goes first so the fake keeps the one behaviour these tests are about: a path
+    that does not exist raises ``FileNotFoundError``, exactly as in production. A fake that
+    answered for any path would hide the defect, because the defect IS what the real call does
+    with a folder nothing has created yet.
+    """
+    real = shutil.disk_usage
+
+    def _disk_usage(path):
+        real(path)
+        if probed is not None:
+            probed.append(str(path))
+        return _usage(free_bytes)
+
+    return _disk_usage
+
+
+def test_a_first_download_on_a_fresh_home_is_refused_when_it_cannot_land(monkeypatch, tmp_path):
+    """A folder that does not exist yet is measured where it will be created.
+
+    ``$PERSONALCLAW_HOME/models/bundled-chat/`` is made by the download itself, so the check
+    runs before anything created it. Measuring the folder raised ``FileNotFoundError``, which
+    read as "the filesystem could not be measured": the one download every fresh home makes
+    skipped the check and started a 138 MB transfer on a disk with 1 MB free.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "models" / "bundled-chat"
+    probed: list[str] = []
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(1 * _MB, probed))
+
+    result = fit.disk_precheck(138.0, target)
+
+    assert result.measured is True
+    assert result.ok is False
+    assert result.free_bytes == 1 * _MB
+    assert result.reason == (
+        "Not enough free disk space for this download: it needs 138.0 MiB, and 1.0 MiB is free."
+    )
+    assert result.warning == ""
+    assert probed == [str(home)]
+    assert not target.exists(), "the check must not create the folder it measures"
+
+
+@pytest.mark.parametrize(
+    ("existing", "missing"),
+    [
+        ("home", "models/bundled-chat"),
+        ("home/models", "bundled-chat"),
+        ("home/models/bundled-chat", ""),
+    ],
+)
+def test_the_walk_stops_at_the_first_ancestor_that_exists(monkeypatch, tmp_path, existing, missing):
+    """The NEAREST existing ancestor, never a higher one.
+
+    ``models/`` can sit on a different disk from the home (a mount, or a link to a bigger
+    drive), and that disk is where the folder will be created, so the walk must not climb
+    past the first ancestor that is there.
+    """
+    there = tmp_path / existing
+    there.mkdir(parents=True)
+    probed: list[str] = []
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(500 * _GB, probed))
+
+    result = fit.disk_precheck(138.0, there / missing if missing else there)
+
+    assert (result.ok, result.measured, result.warning) == (True, True, "")
+    assert probed == [str(there)]
+
+
+def test_a_dangling_link_on_the_path_is_unmeasurable_not_measured_elsewhere(monkeypatch, tmp_path):
+    """A link to a drive that is not there is not the home's disk.
+
+    The walk stops at the first path that exists as an ENTRY, link or not. So a ``models`` link
+    to an unplugged drive is reported as what it is, unmeasurable with the warning, instead of
+    the walk stepping past it and quoting the free space of the disk the link sits on.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "models").symlink_to(tmp_path / "unplugged-drive" / "models")
+    probed: list[str] = []
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(500 * _GB, probed))
+
+    result = fit.disk_precheck(138.0, home / "models" / "bundled-chat")
+
+    assert result.measured is False
+    assert result.ok is True
+    assert result.warning != ""
+    assert probed == []
+
+
+def test_host_capacity_measures_a_folder_that_does_not_exist_yet(monkeypatch, tmp_path):
+    """The capacity read and the pre-download check measure a target the same one way."""
+    monkeypatch.setattr(
+        fit, "memory_pressure", lambda *a, **k: {"total_mb": 16384, "source": "vm_stat"}
+    )
+    monkeypatch.setattr(fit, "_probe_gpu", lambda: {"unified": True, "vram_bytes": 0})
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(7 * _GB))
+
+    host = fit.host_capacity(tmp_path / "home" / "models" / "bundled-chat")
+
+    assert host.disk_measured is True
+    assert host.free_disk_bytes == 7 * _GB
 
 
 # ── assess(): the seam callers actually use ─────────────────────────────────────

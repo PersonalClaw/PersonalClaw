@@ -48,9 +48,10 @@ fields are held at their most restrictive value until the file is repaired or re
 
 Every other field falls back to its default. Two consequences worth knowing:
 
-- **Your file is not overwritten.** The substitution is in memory only, and a config write refuses
-  outright rather than clobbering a document whose contents it cannot preserve — so the original
-  bytes stay on disk and stay recoverable. Fix the JSON, or move the file aside to start from
+- **Your file is not overwritten.** The substitution is in memory only, and every config write
+  refuses outright rather than clobbering a document whose contents it cannot preserve — so the
+  original bytes stay on disk and stay recoverable. Fix the JSON (`personalclaw config edit` opens
+  the file as it is, and the fixed copy replaces it), or move the file aside to start from
   defaults.
 - **Ceilings are not substituted.** `guardrails.budgets.max_tokens_per_run` /
   `max_tokens_per_day` / `max_dollars_per_day` and `sandbox.max_pids` / `max_rss_mb` all treat `0`
@@ -61,6 +62,15 @@ Every other field falls back to its default. Two consequences worth knowing:
 `personalclaw doctor` reports an unreadable `config.json` as an issue and names the fields it
 substituted.
 
+### When two things write it at once
+
+The dashboard, the CLI and `personalclaw setup` can write `config.json` at the same moment, from
+different processes. Each takes a lock beside the file (`config.json.lock`) for as long as it reads
+and writes, so the writes happen one at a time and none is lost: two changes to different settings
+both land, and two changes to the same setting land in the order they were made. A save writes only
+the settings it changed. A writer that waits more than five seconds for another gives up and says
+so, and writes nothing — the dashboard answers `503`, and trying again works.
+
 ---
 
 ## Agent runtime (`agent.*`)
@@ -70,6 +80,7 @@ substituted.
 | `agent.approval_mode` | enum: `auto`, `interactive`, `trust_reads` | `auto` | Settings → Agent defaults | Tool approval mode. `trust_reads` auto-approves read-only tools and asks for everything else. |
 | `agent.provider` | string | `native` | backend-only (restart) | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` overrides this. File-only by design — switching it mid-flight would strand live sessions. |
 | `agent.yolo` | boolean | `false` | Settings → Agent defaults | Skip every tool-approval confirmation. Only use inside a sandbox or for trusted automation. Settings asks before turning it on, and `PATCH /api/config/personalclaw` refuses `true` without `"confirm": true` (`400 confirmation_required`); turning it off never needs consent. A security setting: no app can write it (see *Programmatic surfaces*). |
+| `agent.approval_timeout_minutes` | integer (1–10080) | `120` | Settings → Agent defaults | How long a tool approval waits for an answer before it is denied — the Inbox then says what was denied (`system/auto_denied`). A subagent's or workflow step's approval also ends with that work's own time limit, and an MCP server's question with its call ceiling. Unattended runs never wait: they decline at once. |
 | `agent.acp_concurrent_sessions` | boolean | `false` | Settings → Agent defaults | Run multiple ACP chat sessions on ONE backend process (multiplexing) instead of one process per session — for backends that support session interleaving. |
 | `agent.bot_name` | string (≤50 chars) | `""` | Settings → Account | Custom name the assistant identifies as. Letters and combining marks from any script, digits, spaces, apostrophes, `-`, `.` and `_`. A save carrying any other character (braces, markdown, symbols, control or invisible characters) is refused with a 400 naming it; `load()` strips the same characters from a hand-edited file. Empty = default. |
 | `agent.orchestrator_skill` | boolean | `false` | Settings → Agent defaults | Enable agent delegation — generates and loads the orchestrator skill with the agent roster. |

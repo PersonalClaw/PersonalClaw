@@ -42,6 +42,7 @@ const researcher = (unavailable = true): SavedAgent =>
     name: 'researcher', provider: 'native', model: PIN, description: '', system_prompt: '',
     skills: [], tools: [], triggers: [],
     model_unavailable: unavailable ? { why: WHY, fix: FIX } : null,
+    revision: 'r1',
   }) as SavedAgent
 
 function mount(agent: SavedAgent) {

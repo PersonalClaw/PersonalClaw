@@ -9,6 +9,10 @@ import { confirmDelete } from '../../ui/dialog'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
+import type { ThemeWrite } from '../../lib/api'
+import { HELD_CHANGE_REASON, rebaseRecord } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useMode, DEFAULT_PREFERENCE, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
 import { usePersonality } from '../../app/personality'
@@ -24,7 +28,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *   3. LAYOUT & SHAPE — content width + corner roundness.
  *  A scheme encapsulates ONLY colors; backdrop/motion/layout live outside it. */
 export function DesignPanel() {
-  const { activeScheme, allSchemes, saveCustomScheme, updateCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
+  const { activeScheme, allSchemes, saveCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
   // Scheme picks and "reset everything" go through the IDENTITY layer, not straight to
   // the appearance store: a personality is a whole identity (title, favicon, wordmark,
   // density, dials), so changing the palette out from under it — or resetting
@@ -147,7 +151,9 @@ export function DesignPanel() {
           {activeScheme === 'custom:unsaved' && !editingColors && (
             <p data-type="body-s" className="mt-1.5 text-on-surface-low">You've edited colors — open this to save them as a shareable theme.</p>
           )}
-          {editingColors && <ColorEditor onSave={saveCustomScheme} onUpdate={updateCustomScheme} activeTheme={activeSaved} />}
+          {/* Keyed by the saved theme: a refused update belongs to the theme it was made over, so
+              picking another theme starts the editor fresh rather than showing that refusal under it. */}
+          {editingColors && <ColorEditor key={activeSaved?.id ?? ''} onSave={saveCustomScheme} activeTheme={activeSaved} />}
         </div>
       </Section>
 
@@ -304,15 +310,27 @@ const THEME_EMOJI_CHOICES = ['🎨', '🌊', '🌇', '🌿', '🔥', '🌙', '�
 /** Color-only editor (the scheme's tokens), with save-as-new + update-in-place
  *  (both server-persisted). `activeTheme` is the currently-active SAVED theme, if
  *  any — its presence enables overwriting it in place with the current colors. */
-function ColorEditor({ onSave, onUpdate, activeTheme }: {
+function ColorEditor({ onSave, activeTheme }: {
   onSave: (label: string, emoji?: string) => Promise<string>
-  onUpdate: (id: string, label: string, emoji?: string) => Promise<void>
   activeTheme?: Scheme
 }) {
+  const { currentColors, themeBase, readCustomScheme, updateCustomScheme, revertCustomScheme } = useAppearance()
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('🎨')
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  // 🔴 "UPDATE THEME" REWRITES THE WHOLE SAVED THEME, so it is written only over the copy these colors
+  // were built from (`themeBase`). A theme renamed or recolored since — in another tab, or synced from
+  // another device — was replaced by this browser's copy without a word. A stale update is refused,
+  // and the color edits made here are offered back on top of what is stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<ThemeWrite>({
+    read: () => readCustomScheme(activeTheme?.id ?? ''),
+    write: (next, revision) => updateCustomScheme(activeTheme?.id ?? '', next, revision),
+    // Dropping the change puts the colors back as the theme is stored now.
+    onDiscard: () => {
+      if (activeTheme) revertCustomScheme(activeTheme.id).catch((e) => setErr(e instanceof Error ? e.message : 'Failed to read the theme'))
+    },
+  })
   const save = async () => {
     if (!name.trim() || busy) return
     setBusy('save'); setErr('')
@@ -322,8 +340,13 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
   }
   const update = async () => {
     if (!activeTheme || busy) return
+    const base = themeBase(activeTheme.id)
+    if (!base) { setErr('This saved theme hasn’t been read yet, so it can’t be updated safely — reload the page and try again.'); return }
+    // The theme as its colors came, with this browser's colors now: only the colors are this edit, so
+    // a rename made elsewhere survives a re-applied save.
+    const mine: ThemeWrite = { ...base.value, ...currentColors() }
     setBusy('update'); setErr('')
-    try { await onUpdate(activeTheme.id, activeTheme.label, activeTheme.emoji) }
+    try { await guard.save(base, mine, rebaseRecord(base.value, mine)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Failed to update theme') }
     finally { setBusy('') }
   }
@@ -336,8 +359,10 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
             <p className="text-on-surface-var text-[0.8125rem]">
               Editing the saved theme <strong className="text-on-surface">{activeTheme.emoji && !activeTheme.emoji.startsWith('icon:') ? `${activeTheme.emoji} ` : ''}{activeTheme.label}</strong> — save your changes back to it.
             </p>
-            <Button size="sm" variant="ghost" onClick={update} disabled={!!busy} disabledReason={BUSY_REASON}><Save size={15} /> {busy === 'update' ? 'Updating…' : 'Update theme'}</Button>
+            <Button size="sm" variant="ghost" onClick={update} disabled={!!busy || guard.conflict !== null}
+              disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : BUSY_REASON}><Save size={15} /> {busy === 'update' ? 'Updating…' : 'Update theme'}</Button>
           </div>
+          <StaleWriteNotice guard={guard} what={`The theme “${activeTheme.label}”`} className="mt-m" />
         </Surface>
       )}
       <Surface tone="container" radius="lg" className="px-l py-m">
@@ -357,18 +382,22 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
         </Field>
         {err && <FieldError className="mt-s">{err}</FieldError>}
       </Surface>
-      {COLOR_GROUPS.map((group) => {
-        const tokens = TOKENS.filter((t) => t.group === group)
-        if (!tokens.length) return null
-        return (
-          <Surface key={group} tone="container" radius="lg" className="px-l py-m">
-            <Eyebrow as="h3" className="mb-1">{group}</Eyebrow>
-            <div className="divide-y divide-outline-variant/30">
-              {tokens.map((t) => <ColorControl key={t.varName} token={t as ColorToken} />)}
-            </div>
-          </Surface>
-        )
-      })}
+      {/* The colors a refused update was built from stay as they were until it is settled: a color
+          changed now would be left out of the change Reload and reapply puts back. */}
+      <HeldChange guard={guard}>
+        {COLOR_GROUPS.map((group) => {
+          const tokens = TOKENS.filter((t) => t.group === group)
+          if (!tokens.length) return null
+          return (
+            <Surface key={group} tone="container" radius="lg" className="px-l py-m">
+              <Eyebrow as="h3" className="mb-1">{group}</Eyebrow>
+              <div className="divide-y divide-outline-variant/30">
+                {tokens.map((t) => <ColorControl key={t.varName} token={t as ColorToken} />)}
+              </div>
+            </Surface>
+          )
+        })}
+      </HeldChange>
     </div>
   )
 }

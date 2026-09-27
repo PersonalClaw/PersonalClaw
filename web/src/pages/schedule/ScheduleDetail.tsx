@@ -13,11 +13,23 @@ import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type Trig
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
+import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
 } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
+import { useQuery } from '../../lib/data'
+import { channelLabel } from './notifyChannel'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
+import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+
+/** A schedule as the editor starts from it: the form's draft of it, with the revision the same
+ *  read reported — the base the save names. */
+function baseOf(job: ScheduleJob): Revisioned<ScheduleDraft> {
+  return { value: toDraft(job), revision: job.revision ?? '' }
+}
 
 /** Schedule inspector for the SidePanel: view ↔ in-panel edit (same pattern as
  *  WorkflowDetail), the schedule + execution summary, last result/error, and a
@@ -36,7 +48,20 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
 }) {
   // Edit mode is owned by the URL (?edit=1), threaded in fully controlled.
   const setEditing = onEditingChange
-  const [draft, setDraft] = useState<ScheduleDraft>(() => toDraft(job))
+  // 🔴 THE FORM SAVES THE WHOLE AUTOMATION, OVER THE COPY ITS DRAFT WAS SEEDED FROM. Every field it
+  // shows is sent, the untouched ones as they were read — so a change made since (the agent's
+  // `automation_update`, another tab adding a skip date) was put back by the next save here without
+  // a word. `base` is that copy with the revision the same read reported, seeded together with the
+  // draft and never refreshed under it; a stale save is refused and offered back
+  // (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<ScheduleDraft>>(() => baseOf(job))
+  const [draft, setDraft] = useState<ScheduleDraft>(() => base.value)
+  // Display names for the chip below. A failed read leaves the channel's key on the chip, which is
+  // still true, and says the names couldn't be read. The key without Settings → Providers' catch,
+  // same as the Notify channel picker.
+  const { data: channels, error: channelsError, refresh: refreshChannels } = useQuery(
+    'settings:channels-owners', () => api.channels(), { persist: true },
+  )
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -68,8 +93,24 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // action that can call a model. Unknown (catalog still loading, an app provider it does not
   // list) keeps the floor — the same direction the backend's table takes.
   const draftInvokesModel = providers.find((p) => p.name === draftProvider(draft, provider))?.invokes_model !== false
+  const guard = useStaleWriteGuard<ScheduleDraft>({
+    read: async () => {
+      const stored = (await api.schedules()).jobs.find((j) => j.id === job.id)
+      if (!stored) throw new Error(`the trigger “${job.name}” no longer exists`)
+      return baseOf(stored)
+    },
+    write: (next, revision) => api.updateSchedule(job.id, draftToPayload(next), revision),
+    onSaved: () => { onSaved(); setEditing(false) },
+    // Dropping the change leaves the panel on what is stored: the list re-reads, and the next Edit
+    // seeds from it.
+    onDiscard: () => { onChanged(); setEditing(false); setErr('') },
+  })
 
-  useEffect(() => { setDraft(toDraft(job)) }, [job.id])
+  // Seeded from the job as the panel shows it when the editor opens (or another job is picked), and
+  // by Cancel — never while the editor stays open, where the list's 10s poll must not replace what
+  // is typed.
+  const reseed = () => { const b = baseOf(job); setBase(b); setDraft(b.value) }
+  useEffect(() => { reseed() }, [job.id, editing])
 
   // While a run we triggered is in flight, actively poll (the parent list's own
   // poll is every 10s — too slow for responsive feedback). Detect completion
@@ -107,7 +148,8 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     if (!draft.name.trim()) { setErr('Name is required'); return }
     if (scheduleReason) { setErr(scheduleReason); return }
     setSaving(true); setErr('')
-    try { await api.updateSchedule(job.id, draftToPayload(draft)); onSaved(); setEditing(false) }
+    // A refusal keeps the draft and the editor open, with the notice below offering the way back.
+    try { await guard.save(base, draft, rebaseRecord(base.value, draft)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -169,6 +211,14 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     catch (e) { setErr(e instanceof Error ? e.message : (job.enabled ? 'Disable failed' : 'Enable failed')) }
     finally { setBusy(false) }
   }
+  // Allow on a schedule that is already on: the switch sent ON again, which is where the gateway
+  // asks for the grant its action needs (`needs_grant`) — so it asks first, like switching on does.
+  async function allow() {
+    setBusy(true); setErr('')
+    try { await api.enableSchedule(job.id, true); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Allow failed') }
+    finally { setBusy(false) }
+  }
   async function openChat() {
     setBusy(true); setNote('')
     try { const r = await api.scheduleToChat(job.id); if (r?.session) setNote(`Opened as chat session "${r.session}" — find it in Chat.`) }
@@ -178,12 +228,16 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
+        <HeldChange guard={guard}>
+          <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
+        </HeldChange>
+        <StaleWriteNotice guard={guard} what="This trigger" />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(job)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
+          {/* Cancelling a refused save drops the kept change, exactly as "Discard my change" does. */}
+          <Button variant="ghost" size="sm" onClick={() => { if (guard.conflict) guard.discard(); else { reseed(); setEditing(false); setErr('') } }}><X size={15} /> Cancel</Button>
           <Button size="sm" onClick={save} loading={saving}
-            disabled={saving || !draft.name.trim() || !!scheduleReason}
-            disabledReason={!draft.name.trim() ? 'Enter a name first' : scheduleReason ?? undefined}><Check size={15} /> Save</Button>
+            disabled={saving || !draft.name.trim() || !!scheduleReason || guard.conflict !== null}
+            disabledReason={guard.conflict ? HELD_CHANGE_REASON : !draft.name.trim() ? 'Enter a name first' : scheduleReason ?? undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )
@@ -270,6 +324,14 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           </div>
         </div>
       )}
+      {/* A schedule brought over from an older version waits, switched off, for the owner to allow
+          what it runs — the sections below are what they are deciding about. */}
+      {job.needs_review && <ReviewNote />}
+      {/* Not allowed to run what its action uses — Run now and every fire are refused until the
+          owner allows it. The sections below are what they are allowing. */}
+      {!job.needs_review && (job.needs_grant ?? []).length > 0 && (
+        <GrantNote labels={job.needs_grant ?? []} enabled={job.enabled} busy={busy} onAllow={allow} />
+      )}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}
       {provider === 'run-prompt' ? (
@@ -313,12 +375,24 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {(job.timezone || job.channel || job.silent || job.strict_schedule || (job.skip_dates?.length ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5 text-[0.75rem]">
           {job.timezone && <Chip>{job.timezone}</Chip>}
-          {job.channel && <Chip>↳ {job.channel}</Chip>}
+          {job.channel && <Chip>↳ {channelLabel(job.channel, channels)}</Chip>}
           {job.silent && <Chip>silent</Chip>}
           {job.strict_schedule && <Chip>strict</Chip>}
           {(job.skip_dates?.length ?? 0) > 0 && <Chip>{job.skip_dates!.length} skip date{job.skip_dates!.length > 1 ? 's' : ''}</Chip>}
         </div>
       )}
+      {job.channel && channelsError && !channels ? (
+        <InlineLoadError what="your chat channels" error={channelsError} onRetry={refreshChannels} />
+      ) : null}
+      {/* The server's sentence for a channel its results can't reach: one that isn't set up here
+          (a route saved before routes named their channel reads as a channel called `C0123`), or
+          an id the channel refuses. Said, so the chip above is not read as a working route. */}
+      {job.channel && job.channel_problem ? (
+        <p role="status" data-type="caption" className="text-warn">
+          <AlertTriangle size={12} className="mr-1 inline-block align-[-1px]" aria-hidden="true" />
+          {job.channel_problem} Results reach the dashboard only.
+        </p>
+      ) : null}
 
       {/* last outcome */}
       <Section label="Last run">

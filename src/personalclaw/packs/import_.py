@@ -849,7 +849,7 @@ def _editable_config_keys(raw: bytes | None) -> list[str]:
     """The subset of a pack's ``config_subset.json`` keys that are user-editable (§3.1).
 
     A pack cannot edit config fields the user couldn't edit through the UI: only keys in the
-    dashboard's ``_EDITABLE_CONFIG`` PATCH allowlist are staged as proposals; the rest are
+    ``_EDITABLE_CONFIG`` allowlist (``config/editable.py``) are staged as proposals; the rest are
     dropped. Returns the accepted keys (for the plan preview + the staged proposals file)."""
     if not raw:
         return []
@@ -860,7 +860,7 @@ def _editable_config_keys(raw: bytes | None) -> list[str]:
     if not isinstance(proposed, dict):
         return []
     try:
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
     except Exception:  # noqa: BLE001 — no allowlist reachable ⇒ stage nothing (fail closed)
         return []
     return sorted(k for k in proposed if k in _EDITABLE_CONFIG)

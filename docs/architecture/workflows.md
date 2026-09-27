@@ -43,7 +43,20 @@ while not terminal:
 | `tick.py` | `frontier()` — a PURE function from (spec, states) to what may run |
 | `admission.py` | the ordered `AdmissionPolicy` list `frontier()` composes tightest-wins, plus the ready projection (`rank_key` comparator + `ready`/`next_ready`) the task pool used to keep privately |
 | `container_env.py` | container workspace backends — the workspace-manifest model, docker/nerdctl/Apple-container CLI drivers, `detect_backend()` |
-| `controller.py` | the conductor: one per run, the only writer of run state |
+| `controller.py` | the conductor: one per run, the only writer of run state — the tick loop, launch, the settle (`_apply`) and the terminal write (`_finish`). Its other responsibilities are the modules below, each a set of functions over the controller reached only through it (its tick loop and `resume`), so they are that one writer split by what it decides, never a second writer |
+| `run_admission.py` | PP-12 admission for each tick's ready set: the lease, bake-floor and metric-gate policies that need a clock and the disk, which the pure `frontier()` cannot apply |
+| `stage_settlement.py` | settling `stage` nodes, whose work runs in a spawned subagent the controller polls rather than awaits: the one out-of-band predicate, the settle, re-queueing after a restart, stopping on cancel and pause |
+| `step_dispatch.py` | running one node's dispatcher under its knobs: the retry correction and carried context on a copy of the node, the write-scope snapshot, `timeout_total` as a real kill, `success_when` |
+| `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver |
+| `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt |
+| `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
+| `loop_convergence.py` | what a tripped loop does next: one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
+| `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, and closing an ended run's waits |
+| `mid_flight.py` | applying queued mid-flight mutations at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
+| `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
+| `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded |
+| `run_start.py` | what a run binds before its first node: the declared workspace, the project context dir as the memory cwd, a restricted origin's memory posture |
+| `run_finish.py` | the guarded consequences of the terminal write: run-end learning capture, the project overview line, the `on_overlap: queue` drain |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `engine_support.py` | the preparation every dispatcher in `engine.py` shares, lifted out so that file stays inside its size band (#3253): config resolution that SKIPS the keys holding a condition (`conditions` parses those; interpolating `{{a}} && {{b}}` would report a broken binding for a well-formed expression), the three-field journalled-prompt envelope that never persists a BLOCKED call's body, the `model_tier` → use-case → concrete `Provider:model_id` chain read from the live active selection (so a `cross_model` judge is validated against the model it will actually run on, and an unbound axis fails closed as an empty family), and the `judge_samples` count clamped at `MAX_JUDGE_SAMPLES` because each sample is a full reasoning-tier completion. Holds no dispatch logic of its own |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
@@ -57,7 +70,7 @@ while not terminal:
 | `checkpoints.py` | fork, revert, prune |
 | `human_input.py` | typed asks and durable resume tokens |
 | `gate_policy.py` | risk-scoped auto-approval |
-| `attention.py` | a waiting gate → a durable inbox row + one notification |
+| `attention.py` | a step waiting on a human → a durable inbox row + one notification |
 | `context.py` | handoffs, carryover buckets, decision records |
 | `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it |
 | `macros.py` | template macros, expanded at definition time |
@@ -66,7 +79,7 @@ while not terminal:
 | `projection.py` | the schema-validated run snapshot |
 | `resilience.py` | retries, circuit breaker, budgets |
 | `step_usage.py` | what one attempt at a step used, as every row that ends it records it: `measured()` reads the node's `guardrails.calls` log once for `step_completed`, `step_failed` and `step_cancelled` (tokens and cost as the providers reported them, the model and provider, a floor beside `model_calls_open` when calls were cut off, and `model_substituted` when a fallback served in place of the model asked for) and says what the run row's token budget is charged. `NOTHING_SENT` for an attempt refused before it dispatched |
-| `liveness.py` | what keeps a working node's stall clock running: a nested run's heartbeat (`wait_with_progress`) and the latest event the node's model calls received (`last_heard`) |
+| `liveness.py` | the stall clock: what keeps a working node's clock running — a nested run's heartbeat (`wait_with_progress`) and the latest event the node's model calls received (`last_heard`) — and the per-node window past which a silent node is stopped (`enforce_stall_timeouts`) |
 | `failure_taxonomy.py` | the ONE place that decides whether a failed step's retry can help (only `TRANSIENT`/`NETWORK` are retryable), which is also whether the run page offers Retry. Classified at the cause, typed errors first: `classify_exception()` reads an HTTP status, a transport error's type, the guard's `CircuitOpenError`/`ModelCallTimeout`/`BudgetExceededError` and the provider bridge's WHAT/WHY/FIX before any substring rule; `classify_action_result()` takes a failed action's own `failure_class`, `retry_after` and `agent_error.fix`, and never assumes a silent failure is retryable; `binding_failure()` files a binding by who can fix it; `with_breaker_window()` records the providers a retryable failure called and, while one's breaker is open, when a retry can run (`Failure.retry_at`). A permanent failure's remediation says what to change and where. Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
 | `error_codes.py` | `WF_ERROR_CODES` — the registry for the `WF_UPPER_SNAKE` service-result vocabulary (#3499), and the place to look a code up. One derived one-line meaning per code, grouped by the module that raises it so the derivation can be re-checked. Every meaning is read off the raise site — the guard that fires plus the message it emits — never off the name: a plausible-sounding guess reads as authoritative, and an author would act on a contract the engine never implemented. A row is the *stable contract* a caller may branch on, while the per-instance message stays the concrete detail (which node, which key, which run) — which is why, unlike `http_errors.HTTP_ERROR_CODES`, this registry is not also a default message. Carries no severity, because `validator.py`'s `_add` takes one per call and the emitters decide it. Its rail runs BOTH directions — every raised code has a row, and every row is still raised, the half that stops a registry rotting into codes that no longer exist — and EXCLUDES this module from the scan, since its own keys are string literals in core and counting them would make the second direction true by construction |
 | `preflight.py` | run-start checks — credentials, binaries, models, providers |
@@ -75,7 +88,7 @@ while not terminal:
 | `judge_pretier.py` | the free rule tier that runs BEFORE any judge model call, plus the deterministic `fallback_check` |
 | `judge_actors.py` | the actor-transition invariant (a worker may never reach `done`; a `self_judge` gate's PASS is redirected to review), judge isolation, and the blinded role-filtered evidence a judge is allowed to read |
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
-| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them. **Live, not inert:** `RunController._supervisor_policy` (`workflows/controller.py:3543`, called at `:3722`) parses a loop node's `supervisor:` block and `tick_config` turns it into the `TickConfig` that `loop.tick.evaluate` (`loop/tick.py:306`) reads, so the thresholds a template declares here are the thresholds the engine applies. `HAS_ZERO_PRODUCTION_CALLERS` is `False` (`supervisor_policy.py:73`) and a rail asserts that marker against reality in both directions, so it cannot quietly disagree with the code |
+| `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them. **Live, not inert:** `loop_convergence._supervisor_policy` (`workflows/loop_convergence.py:31`, called at `:215`) parses a loop node's `supervisor:` block and `tick_config` turns it into the `TickConfig` that `loop.tick.evaluate` (`loop/tick.py:306`) reads, so the thresholds a template declares here are the thresholds the engine applies. `HAS_ZERO_PRODUCTION_CALLERS` is `False` (`supervisor_policy.py:73`) and a rail asserts that marker against reality in both directions, so it cannot quietly disagree with the code |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
 | `review_service.py` | the run-scoped binding for `personalclaw.review_triage`: the live `git diff` a run's findings are anchored against, the `review_finding` ledger read, the re-anchor-on-submit TOCTOU check, dispatch of the ACCEPTED subset through `service.steer_run`, and rejections written as `judge_divergence` calibration rows |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
@@ -98,6 +111,7 @@ while not terminal:
 | `containers.py` | the Work board projection (state grouping, claim leases, per-section `/work` isolation), the substrate-checked boot sweep, and the project context block + wayfinder ledger contract |
 | `leases.py` | the flock-backed claim files behind `containers.claim`/`release`: `single_flight`-guarded read-modify-write over a per-target lease file whose `expires_at` outlives the process, so a claim stays truthful across a gateway kill |
 | `publish.py` | the `publish:` declaration, material-change version gating, typed lineage (flattened to scalar event metadata), evidence bundles, the terminal handoff report and the append-only results ledger |
+| `publish_seam.py` | where `publish.py`'s decision is carried out, called from `engine.dispatch` beside the artifact gate: the artifact registry write, the media copies a published body references (read only from under the run's own cwd, sensitive paths refused), the run's `publishes.jsonl` the outbox lists, and the consumption outcome question the dormancy sweep grades. A malformed declaration fails the node; a registry failure is reported on the result instead |
 | `filedrop.py` | the per-run file drop (spec-declared, approval-gated multipart ingestion into the run's `immutable` `dropped/` zone, fenced on read) and the outbox — the run's published-artifact listing projected from the publish journal rather than a second registry |
 | `pinned.py` | the pinned-artifact set a user curates for the composable home (`entity_settings/pinned_artifacts.json`), owning its own entity file the way `channel_trust` does. Stores only slugs — name, kind and version are re-read from the artifact on every load, so a rename or a new version cannot leave a stale pin |
 | `project_archive.py` | the archive I/O around `project_export`'s planner: an allowlist walk into `plan_export`, a manifest ZIP, and extraction into a per-call temp dir reaped in `finally`. Writes only plan-ACCEPTED entries so the archive and its manifest cannot disagree, reuses `project_export.safe_member` rather than adding a second path check, and offers optional AES-GCM via the `oauth2` extra's `cryptography` |
@@ -109,6 +123,7 @@ while not terminal:
 | `worktrees.py` | code-kind run worktrees on the proven `loop/worktree.py` machinery: preserve-in, marker-guarded setup, resume safety, teardown-before-deletion, the per-run branch, the machinery-free review diff, and the two reintegration verbs |
 | `provisioning.py` | the PERFORMER for `workspace.py`'s plan and `worktrees.py`'s decisions: create → preserve → setup at run start (`controller._prepare`), setup/teardown steps as no-shell ceiling-wrapped subprocesses, the PID-liveness lock OUTSIDE the workspace, the run-record stamp (`worktree_path`, `preserved_workspace_path`), teardown-before-deletion for both deletion paths, and the cockpit's diff + reintegration offer |
 | `introspection.py` | the nine-question checklist, RunStats as a pure journal projection, verification debt, said-no gate statistics with a sample-gated fake-check badge, per-template p50/p95 cards, and the Proof section |
+| `run_cockpit.py` | the run cockpit's reads, each a projection over what the run already wrote: `introspect` (the nine questions, its template card read across the template's recent runs), `ledger_rails` (findings and verdicts), `run_deliverable`, `template_trajectory` and `touched_items`. `introspection.py` holds the arithmetic and this module holds the reads; each returns the same service-result dict as `service.py` |
 | `project_export.py` | project export/import: the allowlisted portable set, per-entity sha256 in a versioned manifest, secrets as presence flags only, import refusals (unsafe member, digest/size mismatch, unknown schema) and `imported-N` collision slots |
 | `materialize.py` | tasks as a projection of run state: the exhaustive state→status table, `blocked_kind` derivation, fingerprint dedup, fan-out caps with a parent counter, the managed/produced/standalone split and the engine-owned-field write rejection |
 | `verified_done.py` | engine-owned criterion execution over the `loop/gates` tristate, pass-state gating, the three-actor transition matrix, the weighted acceptance schema, cascade-fail over the binding graph, the stuck-work sweep and idempotent timing |
@@ -320,9 +335,17 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
 `run_from`, `fork`, …), and four things guard it:
 
 1. **A live controller is required.** Editing a run nobody drives would write
-   state with no one to apply it.
+   state with no one to apply it. A finished run is refused
+   (`WF_RUN_ALREADY_TERMINAL`): it is one attempt and is never re-entered, so a
+   retry is a fork.
 2. **Batches are queued, applied at the drain point.** `edit_run` returns
-   `queued: true`; nothing has changed yet.
+   `queued: true`; nothing has changed yet. A run parked on a question has no
+   tick loop (it ended `needs_input`, and only an answer wakes it), so queueing a
+   batch wakes the loop and the batch applies at the next tick — a rewind
+   confirmed at a gate re-runs its closure while the gate waits, and the run parks
+   on the same question again. A rewind whose closure includes the waiting gate
+   withdraws that question: its token is dropped and its Inbox row closes, and the
+   gate asks afresh. A PAUSED run is not woken; its edit applies when it resumes.
 3. **The frozen-region invariant.** A COMPLETED node cannot be edited — its
    output is already downstream, and changing the spec that produced it would
    make the run's own history a lie. The user's order is *rewind, then edit*.
@@ -333,7 +356,13 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
 A rewind whose cascade would re-run completed work reports
 `needs_confirmation` and applies nothing until confirmed. The cascade is
 computed over the **binding-dependency graph**, not the container tree, so
-editing a node invalidates what actually reads it.
+editing a node invalidates what actually reads it. Resetting a node whose
+attempt has settled gives that attempt's no-double-execution claim back
+(`mid_flight._apply_reentry`): a stage that settled DONE keeps its claim, and
+its confirmed re-run is the same instance, so it used to meet its own lease, read
+DEGRADED ("not executing twice") and run nothing for the claim's 900s TTL. A
+node whose subagent is still RUNNING keeps its claim, so the re-dispatch is
+refused as the second execution it would be.
 
 A finished run is one attempt and cannot be re-entered, so a retry is a
 **fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED
@@ -356,6 +385,34 @@ step called is open, a retry is refused without a call, so the failure carries
 every read (`Failure.providers` names them), and the page reads the run again before
 it forks, because a breaker can open after the step failed: every call to that
 provider counts toward it.
+
+## Waiting on a person
+
+Two kinds of step wait on a person, and both are asked the same way. A `gate`
+asks (`approval` or `event`). An `action` stops for one: its provider returns
+`outcome: "needs_input"` (browse at a sign-in page, a spent step or model
+budget), or its output carries a question under `needs_input`
+(`gate_policy.clarification_from_output`). Either way the step goes `WAITING`,
+and once nothing else can run, `gate_answers.ensure_continuation` mints the
+resume token, the confirmation's pending half and one Inbox row (deduped per
+run, path and epoch), and the run parks `needs_input`. A parked action also keeps
+its output on the step and states why it stopped. When its provider composed a
+needs-input card (browse's sign-in handoff: the question and what it tried),
+that card's wording is what the run page and the Inbox show.
+
+Answering a gate records the answer as its output. Answering a parked action does
+not: approving runs the step again (`Ask.rerun`), with the answer on the one
+dispatch it starts (`ActionContext.answer`), because what the person did was lift
+what stopped it; denying ends it as declined. The gate policy's auto-approve and a
+remembered "always allow" apply to gates only — no policy can sign in for a user.
+
+A run that ends closes whatever it was still asking, whichever way it ended:
+`gate_answers.close_waits` cancels each waiting step and drops its token, and
+`_finish` closes the run's Inbox rows and cancels its approvals (#3620). A cancel
+always reaches that writer. The supervisor wakes a parked controller to apply a
+cancel written without waking it (`on_overlap: cancel_then_start` does that to
+the prior run), and after a restart it launches a controller to apply one rather
+than writing the row itself.
 
 ## Timeouts: two knobs that mean different things
 
@@ -479,6 +536,19 @@ WHOLE editable definition back — `runtime_hints`, `defaults`, `on_overlap` and
 `workspace` included, which `author_def` and the native store now carry rather
 than dropping — and places every returned issue by its `path`, the same `walk()`
 path the engine keys instances by.
+
+Because the save replaces the whole definition, a save over one of yours names
+the `revision` its read reported, in `If-Match` (the contract every
+whole-document write has, `personalclaw/stale_write.py`). When another tab, the
+agent's `workflow_author`, the A2A publish toggle or an accepted refiner
+proposal saved the definition after the editor read it — or another tab deleted
+it — the save is refused with `409 stale_write` before anything is written or
+any consent is asked, and the editor keeps the edit: **Reload and reapply**
+merges it into what is stored field by field. A restore is not merged into a
+newer version — it is saved over one only from **Review the difference**. A
+copy under a new name and a Check replace nothing and name no revision; a copy
+whose name was taken after the editor's check is refused (`428`) rather than
+saved over the workflow that took it.
 
 The read is stripped, so the definition the editor holds has
 `_has_<key>` flags where values were. `author_def` re-injects them before it

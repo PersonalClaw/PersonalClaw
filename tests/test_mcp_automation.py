@@ -130,7 +130,10 @@ def test_pause_resume_delete_through_dispatch(home):
         {"name": "Notes", "when": "when a file in ~/notes changes", "message": "go"},
     )
     assert "Paused" in A._call_tool("automation_pause", {"id": "file:notes"})
-    assert "Resumed" in A._call_tool("automation_resume", {"id": "file:notes"})
+    # Not the chat's to switch back on: what the chat makes is not allowed to run until the owner
+    # allows it (`triggers.grants`), and the refusal says who can.
+    resumed = A._call_tool("automation_resume", {"id": "file:notes"})
+    assert "not allowed" in resumed and "owner" in resumed
     assert "confirm" in A._call_tool("automation_delete", {"id": "file:notes"})
     assert "Deleted" in A._call_tool("automation_delete", {"id": "file:notes", "confirm": True})
 

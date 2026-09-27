@@ -608,7 +608,11 @@ def test_for_app_ignores_an_in_process_provider(tmp_path, monkeypatch):
                     "implementation": "provider:make",
                     "execution": "sidecar",
                 },
-                "dependencies": {"pythonDependencies": ["sentence-transformers>=3"]},
+                # The child's engine is its own list; `pythonDependencies` go into the gateway.
+                "dependencies": {
+                    "pythonDependencies": ["huggingface-hub>=0.23"],
+                    "sidecarDependencies": ["sentence-transformers>=3"],
+                },
             }
         ),
         encoding="utf-8",

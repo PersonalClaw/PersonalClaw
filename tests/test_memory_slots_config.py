@@ -79,7 +79,7 @@ def test_the_editable_allowlist_bounds_match_the_clamp():
     Two different numbers would mean the UI offers a value the renderer silently rejects (or
     refuses one it would have honoured) — the split-brain that makes a knob untrustworthy.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG["memory.slot_size_cap"]
     assert spec["type"] == "int"

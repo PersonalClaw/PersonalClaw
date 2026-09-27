@@ -390,8 +390,8 @@ def test_ordinal_bounds_need_a_digest_size():
 def test_every_proactive_field_is_patchable_or_deliberately_not():
     from dataclasses import fields
 
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.learning import ProactiveConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     # The generic round-trip test covers dataclass/_meta + load() + to_dict(); it
     # stays green if the PATCH entry is dropped, so assert the write path here.

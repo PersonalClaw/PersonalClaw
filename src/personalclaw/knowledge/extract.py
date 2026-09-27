@@ -18,18 +18,48 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+#: ``Extracted.unread`` when reading the file needed an image model and none is set up: nothing
+#: is bound to image understanding and the chat model takes no images. A stable value — the
+#: attachment chip and the sent turn's preview branch on it to say so and link Settings → Models.
+UNREAD_NO_IMAGE_MODEL = "no_image_model"
 
-async def extract_file_content(file_path: str, mime: str | None = None) -> str:
-    """Run the knowledge EXTRACTION graph for *file_path* and return the
-    consolidated extracted text. Never raises — returns "" if extraction yields
-    nothing (caller decides how to surface that). Pure extraction: no store, no
-    insights/entities/embeddings/tags/title.
+
+@dataclass(frozen=True)
+class Extracted:
+    """What extraction got from a file.
+
+    ``text`` is what a consumer may show or send. ``read`` says what that text IS: True when it
+    was read from the file's content (its text, OCR, a vision description, a transcript), False
+    when it is only the structural descriptor ("Image: x.png (800×600, PNG) — no extractable text
+    content") or nothing at all. A surface that tells a user what a model will be given reads
+    ``read``, so "the text read from the image" is never said of a descriptor.
+
+    ``unread`` says why nothing was read, when that is known: :data:`UNREAD_NO_IMAGE_MODEL`, or
+    ``""`` — the reading ran and found nothing, or the file needed no model.
+    """
+
+    text: str
+    read: bool
+    unread: str = ""
+
+
+async def extract_file(file_path: str, mime: str | None = None, *, name: str = "") -> Extracted:
+    """Run the knowledge EXTRACTION graph for *file_path* and return what it got.
+
+    ``name`` is what the text calls the file when it can only describe it (its size and format),
+    for a caller that stores a file under a name of its own: a chat upload is saved as
+    ``<uuid-hex>_<name>``, and that stored name reached the sent turn's preview and the model.
+    Defaults to the file's own name.
+
+    Never raises — an empty, unread result if extraction yields nothing (caller decides how to
+    surface that). Pure extraction: no store, no insights/entities/embeddings/tags/title.
     """
     if not file_path or not os.path.isfile(file_path):
-        return ""
+        return Extracted("", False)
 
     from personalclaw.knowledge import media
     from personalclaw.knowledge.pipeline import (
@@ -49,7 +79,7 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         graph = graph_for(item_type)
     except Exception:
         logger.warning("extract: graph build failed for type=%s", item_type, exc_info=True)
-        return ""
+        return Extracted("", False)
 
     ctx = NodeContext(
         item_id=f"attachment:{os.path.basename(file_path)}",
@@ -62,7 +92,7 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         result = await PipelineExecutor(graph).run(ctx)
     except Exception:
         logger.warning("extract: graph run failed for %s", file_path, exc_info=True)
-        return ""
+        return Extracted("", False)
 
     # Consolidated text = the 'consolidate' node's merged bundle when present,
     # else the first pooled text. (Mirrors runner.ingest_item's consolidation.)
@@ -73,19 +103,27 @@ async def extract_file_content(file_path: str, mime: str | None = None) -> str:
         text = pooled[0].text if pooled else ""
     text = text.strip()
     if text:
-        return text
+        return Extracted(text, True)
 
-    # No extractable text (e.g. an image with no OCR/vision model configured, or a
-    # text-free media file). Fall back to a structural descriptor from the exif/
-    # media metadata so the agent at least knows WHAT was attached (format, size,
-    # dimensions, duration) rather than a content-less blank — mirrors the
-    # graceful-degradation in runner._structural_descriptor.
-    return _structural_descriptor(file_path, item_type, result)
+    # No extractable text (e.g. an image nothing is set up to read, or a text-free media
+    # file). Fall back to a structural descriptor from the exif/media metadata so the agent
+    # at least knows WHAT was attached (format, size, dimensions, duration) rather than a
+    # content-less blank — mirrors the graceful-degradation in runner._structural_descriptor.
+    # An image skipped for want of an image model was never looked at, so the descriptor says
+    # that instead of claiming it holds no text.
+    from personalclaw.providers.image_input import NO_IMAGE_MODEL
+
+    unread = UNREAD_NO_IMAGE_MODEL if NO_IMAGE_MODEL in result.unserved.values() else ""
+    descriptor = _structural_descriptor(
+        file_path, item_type, result, unread, name or os.path.basename(file_path)
+    )
+    return Extracted(descriptor, False, unread)
 
 
-def _structural_descriptor(file_path: str, item_type: str, result) -> str:
+def _structural_descriptor(file_path: str, item_type: str, result, unread: str, name: str) -> str:
     """A one-line 'Image: foo.png (800×600, PNG)' style descriptor from the
-    non-pooled structural metadata, when no text was extracted."""
+    non-pooled structural metadata, when no text was extracted. ``name`` is what it calls
+    the file."""
     meta: dict = {}
     for out in result.outputs.values():
         if out.metadata:
@@ -107,6 +145,9 @@ def _structural_descriptor(file_path: str, item_type: str, result) -> str:
     if not bits:
         return ""
     label = (item_type or "file").capitalize()
-    return (
-        f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — no extractable text content."
+    tail = (
+        "not read: no image model is set up."
+        if unread == UNREAD_NO_IMAGE_MODEL
+        else "no extractable text content."
     )
+    return f"{label}: {name} ({', '.join(bits)}) — {tail}"

@@ -28,7 +28,8 @@ vi.mock('../../lib/api', async (orig) => {
     sendChat: h.sendChat,
     voiceSynthesize: h.voiceSynthesize,
     stopChat: h.stopChat,
-    useCaseSettings: (uc: string) => Promise.resolve(uc === 'tts' ? h.tts : {}),
+    // The settings read carries the revision a save names (`lib/staleWrite.ts`).
+    useCaseSettings: (uc: string) => Promise.resolve({ value: uc === 'tts' ? h.tts : {}, revision: 'r1' }),
     personalclawConfig: () => Promise.resolve({ voice: {} }),
     chatSessions: () => Promise.resolve([]),
     agents: () => Promise.resolve({ agents: [] }),

@@ -379,7 +379,29 @@ def declared_provider_type_fields(ptype: str) -> set[str]:
 _UNSTORABLE_CHAR = "\x00"
 
 
-def _unstorable_message(name: str) -> str:
+def _is_display_mask(value: Any) -> bool:
+    """Whether *value* is the mask a stored value is shown as (``secret_fields.SECRET_MASK``).
+
+    A form round-trips what it was shown, so the mask can arrive where a value belongs. It is never
+    a credential: storing it would replace the real value with eight bullets.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    return isinstance(value, str) and value.strip() == SECRET_MASK
+
+
+def _unstorable_reason(value: Any) -> str:
+    if _is_display_mask(value):
+        return "it is how PersonalClaw shows a saved value, not a value it can save"
+    return "it contains a NUL character, which no credential can hold"
+
+
+def _unstorable_message(name: str, value: Any = "") -> str:
+    if _is_display_mask(value):
+        return (
+            f"{name}: {value.strip()} is how PersonalClaw shows a saved value, not a value it can "
+            "save. Type the value to store."
+        )
     return f"{name}: the value contains a NUL character, which no credential can hold"
 
 
@@ -425,8 +447,10 @@ def store(
     would otherwise record a pointer to nothing fails instead (:class:`OSError`).
 
     Raises :class:`ValueError` for a value no credential can hold: one with a NUL character,
-    which no environment variable or keychain entry carries. A multi-line value (a PEM key, a
-    service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
+    which no environment variable or keychain entry carries, or the display mask
+    (``SECRET_MASK``) with nothing in ``previous`` to keep. A mask over a stored value keeps that
+    value's reference, so a form saved as it was shown changes nothing. A multi-line value (a PEM
+    key, a service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
     Surrounding whitespace is dropped — it is never part of a key or a token, and a pasted value
     often carries a trailing newline.
     """
@@ -449,6 +473,14 @@ def _move_into_store(
             continue
         value = value.strip()
         if not value:
+            continue
+        if _is_display_mask(value):
+            # A field left as it was shown keeps what it already references. With nothing stored
+            # there is nothing to keep, and the mask itself is never stored as the value.
+            kept = (previous or {}).get(name)
+            if ref_key(kept) is None:
+                raise ValueError(_unstorable_message(name, value))
+            out[name] = kept
             continue
         if _UNSTORABLE_CHAR in value:
             raise ValueError(_unstorable_message(name))
@@ -650,7 +682,11 @@ def plain_env_names(spec: Mapping[str, Any]) -> set[str]:
 
 
 def _unstorable(value: Any) -> bool:
-    return isinstance(value, str) and ref_key(value) is None and _UNSTORABLE_CHAR in value
+    return (
+        isinstance(value, str)
+        and ref_key(value) is None
+        and (_UNSTORABLE_CHAR in value or _is_display_mask(value))
+    )
 
 
 def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:
@@ -674,7 +710,7 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
                 continue
             for name, value in values.items():
                 if _unstorable(value):
-                    raise ValueError(_unstorable_message(name))
+                    raise ValueError(_unstorable_message(name, value))
             _refuse_foreign(
                 values, _mcp_owner(server, part), operation="secrets.store", advise=True
             )
@@ -689,11 +725,11 @@ def store_mcp_spec(server: str, spec: Mapping[str, Any], *, strict: bool) -> dic
         for name in [n for n, v in movable.items() if _unstorable(v)]:
             inline[name] = movable.pop(name)
             logger.warning(
-                "MCP server %r: %s %s holds a NUL character, which no credential can hold; "
-                "it stays in the file",
+                "MCP server %r: %s %s cannot be stored (%s); it stays in the file",
                 server,
                 part,
                 name,
+                _unstorable_reason(inline[name]),
             )
         for name in [n for n, v in movable.items() if (k := ref_key(v)) and not owner.holds(k)]:
             inline[name] = movable.pop(name)
@@ -931,12 +967,13 @@ def store_config_secrets(
 ) -> dict[str, Any]:
     """The STORED form of a whole ``config.json`` document, updated in place and returned.
 
-    For every writer that can put a secret into the file: ``AppConfig.save()`` (which every API
-    handler that saves the config, and the boot-time config migration, go through) and the CLI's
-    ``config set`` / ``--file`` / ``unset``. The secret-bearing sections (``hooks``) and every
-    ``providers[]`` record's ``options``: ``config get --reveal`` prints both with their values, so
-    the documented ``--reveal`` → edit → ``config set --file`` loop hands them back in plaintext. A
-    value typed into the file by hand is moved at the next boot (:func:`migrate_plaintext_secrets`).
+    Called by the config transaction (``config.transactions``) on every write of the file, so
+    ``AppConfig.save()``, the API handlers, the boot-time migration and the CLI's ``config set``
+    / ``--file`` / ``unset`` / ``edit`` all store what they carry. The secret-bearing sections
+    (``hooks``) and every ``providers[]`` record's ``options``: ``config get --reveal`` prints
+    both with their values, so the documented ``--reveal`` → edit → ``config set --file`` loop
+    hands them back in plaintext. A value typed into the file by hand is moved at the next boot
+    (:func:`migrate_plaintext_secrets`).
     ``previous`` is the document on disk before the write, so a secret this write drops —
     ``config unset hooks.webhook_token`` — is deleted from the store. A whole-document writer, so
     it judges no reference: one naming another owner's key must not make every config save fail,
@@ -1050,14 +1087,37 @@ def _point_at(values: Mapping[str, Any], fields: Iterable[str], owner: SecretOwn
     return moved
 
 
-def _move_config_document(path: Path, *, point_only: bool) -> bool:
-    """``providers[].options`` and the secret-bearing sections (``hooks``) of one config
-    document. ``point_only`` (``config.json.bak``) replaces a plaintext secret with a reference
-    to the LIVE record's key without storing the backup's value — a backup can hold an older
-    key, and storing it would overwrite a rotation."""
+def _point_config_backup(path: Path) -> bool:
+    """``config.json.bak``: each plaintext secret replaced by a reference to the LIVE record's key,
+    without storing the backup's value — a backup can hold an older key, and storing it would
+    overwrite a rotation."""
     doc = _read_json(path)
-    if not isinstance(doc, dict):
+    if not isinstance(doc, dict) or not _move_config_secrets(doc, point_only=True):
         return False
+    _write_json(path, doc)
+    return True
+
+
+def _move_live_config(path: Path) -> bool:
+    """:func:`_move_config_secrets` for the live ``config.json``, inside the config transaction.
+
+    The gateway moves these at boot, and a CLI in another terminal can be writing the file at the
+    same moment: outside the transaction, whichever wrote second put the other's change back. A
+    file that cannot be read is left alone — the loader reports it, and nothing here can move a
+    secret out of a document it cannot parse."""
+    from personalclaw.config.loader import ConfigPreserveError
+    from personalclaw.config.transactions import mutate_config
+
+    try:
+        return mutate_config(lambda doc: _move_config_secrets(doc, point_only=False), path=path)
+    except ConfigPreserveError:
+        return False
+
+
+def _move_config_secrets(doc: dict[str, Any], *, point_only: bool) -> bool:
+    """Move ``providers[].options`` and the secret-bearing sections (``hooks``) of one config
+    document into the store, in place — or, ``point_only``, only point them at the key the live
+    record keeps them under (:func:`_point_config_backup`). ``True`` when anything changed."""
     changed = False
     for section, declared in _CONFIG_SECRET_FIELDS.items():
         values = doc.get(section)
@@ -1092,8 +1152,6 @@ def _move_config_document(path: Path, *, point_only: bool) -> bool:
         if moved != options:
             record["options"] = moved
             changed = True
-    if changed:
-        _write_json(path, doc)
     return changed
 
 
@@ -1210,8 +1268,8 @@ def migrate_plaintext_secrets() -> list[str]:
     home = config_dir()
     mcp_json, agent_config = mcp_documents()
     steps: list[tuple[Path, Any]] = [
-        (home / "config.json", lambda p: _move_config_document(p, point_only=False)),
-        (home / "config.json.bak", lambda p: _move_config_document(p, point_only=True)),
+        (home / "config.json", _move_live_config),
+        (home / "config.json.bak", _point_config_backup),
         # `mcp.json` first: the agent config's copies point at the keys it stores.
         (mcp_json, lambda p: _move_mcp_document(p, live=None)),
         (agent_config, lambda p: _move_mcp_document(p, live=mcp_json)),

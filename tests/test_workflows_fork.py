@@ -25,6 +25,7 @@ import json
 import pytest
 
 from personalclaw.workflows import checkpoints as CP
+from personalclaw.workflows import mid_flight
 from personalclaw.workflows import mutations as M
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -115,6 +116,16 @@ async def _completed(spec: dict = CHAIN):
     return c
 
 
+async def _live_done(spec: dict = CHAIN):
+    """The controller of a LIVE run whose steps have all completed, between ticks — what an edit
+    through the mutation queue needs. A finished run refuses one (it is one attempt; a retry is a
+    fork), so `_completed` stays the fixture for the checkpoint forks below, which read finished
+    runs."""
+    c = await _completed(spec)
+    c.run.status = RunStatus.RUNNING
+    return c
+
+
 # ── property: the cascade IS the binding closure ─────────────────────────────
 
 
@@ -158,16 +169,18 @@ class TestCascadeEqualsBindingClosure:
 class TestRewindIdempotence:
     async def test_rewinding_twice_equals_rewinding_once(self) -> None:
         """A retried mutation must not double-archive or lose an output."""
-        c = await _completed()
-        c.submit_mutation([{"op": "rewind", "node_id": "b"}], confirm=True)
-        c._drain_mutations()
+        c = await _live_done()
+        assert c.submit_mutation([{"op": "rewind", "node_id": "b"}], confirm=True)["ok"]
+        mid_flight.drain_mutations(c)
+        # Not vacuous: the first rewind reset the node, so "twice" has something to repeat.
+        assert c.instances["root.children[1]"].state == InstanceState.PENDING
         first = {p: (i.state, i.epoch, i.output_ref) for p, i in c.instances.items()}
         attic_after_first = len(
             list((store.run_dir(c.run.id) / "outputs" / "attic").rglob("*.json"))
         )
 
         c.submit_mutation([{"op": "rewind", "node_id": "b"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         second = {p: (i.state, i.epoch, i.output_ref) for p, i in c.instances.items()}
         attic_after_second = len(
             list((store.run_dir(c.run.id) / "outputs" / "attic").rglob("*.json"))
@@ -178,12 +191,13 @@ class TestRewindIdempotence:
         assert attic_after_second == attic_after_first
 
     async def test_a_rewound_node_holds_no_stale_output_reference(self) -> None:
-        c = await _completed()
-        c.submit_mutation([{"op": "rewind", "node_id": "a"}], confirm=True)
-        c._drain_mutations()
-        for path, inst in c.instances.items():
-            if inst.state == InstanceState.PENDING:
-                assert inst.output_ref == "", path
+        c = await _live_done()
+        assert c.submit_mutation([{"op": "rewind", "node_id": "a"}], confirm=True)["ok"]
+        mid_flight.drain_mutations(c)
+        pending = [p for p, i in c.instances.items() if i.state == InstanceState.PENDING]
+        assert pending, "the rewind reset nothing, so this loop would check nothing"
+        for path in pending:
+            assert c.instances[path].output_ref == "", path
 
 
 # ── property: no frozen mutation, acyclicity preserved ───────────────────────
@@ -532,11 +546,11 @@ class TestForkRetriesWhatDidNotFinish:
 
 class TestForkThroughTheMutationQueue:
     async def test_the_fork_op_branches_a_child_and_leaves_this_run_alone(self) -> None:
-        c = await _completed()
+        c = await _live_done()
         before = {p: i.state for p, i in store.read_state(c.run.id).items()}
         body = c.submit_mutation([{"op": "fork", "note": "stricter judge"}], confirm=True)
         assert body["ok"]
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         children, _total = store.list_runs()
         forks = [r for r in children if r.parent_run_id == c.run.id]
         assert len(forks) == 1
@@ -546,9 +560,9 @@ class TestForkThroughTheMutationQueue:
 
     async def test_a_forked_child_starts_in_draft(self) -> None:
         """A fork exists to be edited before it runs; auto-starting would race that edit."""
-        c = await _completed()
+        c = await _live_done()
         c.submit_mutation([{"op": "fork"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         runs, _total = store.list_runs()
         child = [r for r in runs if r.parent_run_id == c.run.id][0]
         assert child.status == RunStatus.DRAFT
@@ -556,9 +570,9 @@ class TestForkThroughTheMutationQueue:
     async def test_the_fork_is_journaled_as_a_child_attach(self) -> None:
         from personalclaw.workflows.journal import CHILD_RUN_ATTACH, ledger
 
-        c = await _completed()
+        c = await _live_done()
         c.submit_mutation([{"op": "fork"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         attaches = [e for e in ledger(c.run.id) if e.get("kind") == CHILD_RUN_ATTACH]
         assert len(attaches) == 1 and attaches[0]["parent_run_id"] == c.run.id
 
@@ -566,9 +580,9 @@ class TestForkThroughTheMutationQueue:
         """A bad checkpoint id must not take the controller's tick loop down."""
         from personalclaw.workflows.journal import MUTATION_REJECTED, ledger
 
-        c = await _completed()
+        c = await _live_done()
         c.submit_mutation([{"op": "fork", "checkpoint_id": "999"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         rejects = [e for e in ledger(c.run.id) if e.get("kind") == MUTATION_REJECTED]
         assert rejects and rejects[0]["issues"][0]["code"] == "WF_MUT_UNKNOWN_CHECKPOINT"
 

@@ -249,7 +249,7 @@ def AppConfig_to_dict():
 
 def test_sandbox_keys_in_editable_config_allowlist():
     """The PATCH write path accepts each sandbox key (the fourth of the four points)."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     for key in ("sandbox.nofile", "sandbox.max_pids", "sandbox.max_rss_mb"):
         assert key in _EDITABLE_CONFIG, f"{key} missing from _EDITABLE_CONFIG"

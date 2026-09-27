@@ -20,10 +20,10 @@ import json
 
 import pytest
 
-from personalclaw.workflows import controller as controller_mod
+from personalclaw.workflows import gate_answers
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import judge_calibration as jc
-from personalclaw.workflows import store
+from personalclaw.workflows import loop_iteration, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
@@ -170,7 +170,7 @@ class TestJudgeVerdictLedger:
         c = RunController(run, self._judge_spec(), services=EngineServices(completion=_noop()))
         # The judge already passed this node earlier in the run's history.
         c.journal.write(J.JUDGE_VERDICT, instance_path="s/acc", node_id="acc", verdict="PASS")
-        c._emit_judge_divergence("s/acc", "acc", human_approved=False)
+        gate_answers.emit_judge_divergence(c, "s/acc", "acc", human_approved=False)
         div = [r for r in J.ledger(run.id) if r["kind"] == J.JUDGE_DIVERGENCE]
         assert len(div) == 1
         assert div[0]["direction"] == "false_pass"
@@ -181,7 +181,7 @@ class TestJudgeVerdictLedger:
         run = _make_run(self._judge_spec())
         c = RunController(run, self._judge_spec(), services=EngineServices(completion=_noop()))
         c.journal.write(J.JUDGE_VERDICT, instance_path="s/acc", node_id="acc", verdict="PASS")
-        c._emit_judge_divergence("s/acc", "acc", human_approved=True)  # human agrees
+        gate_answers.emit_judge_divergence(c, "s/acc", "acc", human_approved=True)  # human agrees
         assert not [r for r in J.ledger(run.id) if r["kind"] == J.JUDGE_DIVERGENCE]
 
 
@@ -344,9 +344,9 @@ def _iteration_outcomes(run_id: str) -> list[str]:
 class TestProgressFieldDecidesDryness:
     """Driven through a real controller, not a unit call on the predicate.
 
-    Before this, `_is_dry` read the whole last output — the judge's non-empty dict — so a
-    cycle reporting `new_findings_count: 0` counted as progress and the loop always ran to
-    its cap, paying for a model call per iteration to learn nothing.
+    Before this, `loop_iteration._is_dry` read the whole last output — the judge's non-empty dict —
+    so a cycle reporting `new_findings_count: 0` counted as progress and the loop always ran to its
+    cap, paying for a model call per iteration to learn nothing.
     """
 
     async def test_two_zero_progress_iterations_end_the_loop(self) -> None:
@@ -399,26 +399,26 @@ class TestProgressReadingTable:
     @pytest.mark.parametrize(
         "value,expected",
         [
-            (None, controller_mod._DRY),
-            (False, controller_mod._DRY),
-            (True, controller_mod._PROGRESS),
-            (0, controller_mod._DRY),
-            (0.0, controller_mod._DRY),
-            (7, controller_mod._PROGRESS),
-            (-1, controller_mod._PROGRESS),
-            ("", controller_mod._DRY),
-            ("   \n", controller_mod._DRY),
-            ("two new files", controller_mod._PROGRESS),
-            (b"", controller_mod._DRY),
-            (b"x", controller_mod._PROGRESS),
-            ([], controller_mod._DRY),
-            ([1], controller_mod._PROGRESS),
-            ((), controller_mod._DRY),
-            (set(), controller_mod._DRY),
-            ({}, controller_mod._DRY),
-            ({"a": 1}, controller_mod._PROGRESS),
-            (object(), controller_mod._UNREADABLE),
+            (None, loop_iteration._DRY),
+            (False, loop_iteration._DRY),
+            (True, loop_iteration._PROGRESS),
+            (0, loop_iteration._DRY),
+            (0.0, loop_iteration._DRY),
+            (7, loop_iteration._PROGRESS),
+            (-1, loop_iteration._PROGRESS),
+            ("", loop_iteration._DRY),
+            ("   \n", loop_iteration._DRY),
+            ("two new files", loop_iteration._PROGRESS),
+            (b"", loop_iteration._DRY),
+            (b"x", loop_iteration._PROGRESS),
+            ([], loop_iteration._DRY),
+            ([1], loop_iteration._PROGRESS),
+            ((), loop_iteration._DRY),
+            (set(), loop_iteration._DRY),
+            ({}, loop_iteration._DRY),
+            ({"a": 1}, loop_iteration._PROGRESS),
+            (object(), loop_iteration._UNREADABLE),
         ],
     )
     def test_each_type_has_a_stated_reading(self, value, expected) -> None:
-        assert controller_mod._progress_reading(value) == expected
+        assert loop_iteration._progress_reading(value) == expected

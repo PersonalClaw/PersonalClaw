@@ -1,0 +1,156 @@
+"""A "Denied, no answer" note is handled once the call it names is asked again and answered.
+
+#3698 leaves one Inbox note per approval nobody answered in time, and offers "Ask it to try again"
+for one asked in a chat. The retry worked, the chat asked again, and the note stayed open after the
+answer — still reading as a call that needed you.
+
+When it resolves comes from the Inbox's own contract (`inbox.resolve_attention_items`): a row
+raised for a standing request closes, as HANDLED, when the request stops standing. The note's
+request is "this call was denied because nobody answered". That stops standing when the same call
+is asked again, where it was asked before, and someone answers it, whichever way. Sending the retry
+message does not do it, because nothing has been decided yet, and the call may never be asked
+again. The note moves through the Inbox's one status transition (`inbox.set_item_status`), which
+also tells every open surface and reads its notification in the bell. The answer is written on the
+row (`refs.retry`), the way a proposal's result is (`proposals_contract._record`), so the note says
+how it ended.
+
+A note stays open for anything that is not that call: a different call of the same tool, the same
+call in another chat, or a retry that nobody answers either.
+
+Driven through the real chat runner and the real decision path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import MagicMock
+
+import pytest
+from test_dashboard_approval import _make_session, _set_stream
+from test_pending_approval_every_surface import world  # noqa: F401 - a fixture, used by name
+from test_pending_approval_every_surface import CHAT, _bash_request, _finish, _turn, _until
+
+from personalclaw.dashboard.chat import run_chat
+from personalclaw.inbox import OPEN_STATUSES
+
+
+@pytest.fixture(autouse=True)
+def _measured_context(world):  # noqa: F811 - the imported fixture, by name
+    """The harness client is an AsyncMock, whose context read is a coroutine the turn's closing
+    line cannot round; a plain "unmeasured" keeps the turn from ending in an error."""
+    world.client.context_usage_pct = MagicMock(return_value=None)
+
+
+def _notes(store) -> list:
+    return [i for i in store.items.values() if i.refs.get("auto_denied")]
+
+
+async def _ask(w, session, request_id: str, command: str, *, window: float, monkeypatch):
+    """One chat turn that asks for `command` and waits `window` for an answer."""
+    monkeypatch.setattr(w.state, "approval_window_secs", lambda: window)
+    _set_stream(w.client, _turn(_bash_request(request_id, command)))
+    task = asyncio.create_task(run_chat(w.state, session, "clean up the scratch dir"))
+    await _until(lambda: request_id in session._approval_futures, f"{request_id} was never asked")
+    return task
+
+
+async def _expired_note(w, monkeypatch, command: str = "rm -rf /tmp/scratch"):
+    task = await _ask(w, w.session, "req-1", command, window=0.05, monkeypatch=monkeypatch)
+    await asyncio.wait_for(task, timeout=5)
+    (note,) = _notes(w.store)
+    assert note.status in OPEN_STATUSES and note.refs["auto_denied"] == "expired"
+    return note
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "recorded"), [("approved", "approved"), ("rejected", "rejected")]
+)
+async def test_asked_again_and_answered_the_note_is_handled_with_the_answer(
+    world, monkeypatch, answer, recorded  # noqa: F811
+):
+    note = await _expired_note(world, monkeypatch)
+    task = await _ask(
+        world, world.session, "req-2", "rm -rf /tmp/scratch", window=60, monkeypatch=monkeypatch
+    )
+    try:
+        # Asked again, not yet answered: the call is still undecided, so the note still stands.
+        assert world.store.items[note.id].status in OPEN_STATUSES
+        world.state.decide_session_approval(world.session, "req-2", answer)
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await _finish(task)
+
+    row = world.store.items[note.id]
+    assert row.status == "handled"
+    assert row.refs["retry"] == recorded
+    # Every open surface was told, so the Inbox and Mission Control move it without a reload.
+    moved = [d for kind, d in world.frames if kind == "inbox_item_updated" and d["id"] == note.id]
+    assert moved and moved[-1]["status"] == "handled"
+
+
+@pytest.mark.asyncio
+async def test_answered_from_anywhere_else_it_is_handled_the_same_way(
+    world, monkeypatch  # noqa: F811
+):
+    """Home, the phone and Mission Control answer through `resolve_approval`, the registry id."""
+    note = await _expired_note(world, monkeypatch)
+    task = await _ask(
+        world, world.session, "req-2", "rm -rf /tmp/scratch", window=60, monkeypatch=monkeypatch
+    )
+    try:
+        (approval_id,) = list(world.state._pending_approvals)
+        assert world.state.resolve_approval(approval_id, True) is True
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await _finish(task)
+    assert world.store.items[note.id].status == "handled"
+    assert world.store.items[note.id].refs["retry"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_different_call_of_the_same_tool_leaves_the_note_open(
+    world, monkeypatch  # noqa: F811
+):
+    note = await _expired_note(world, monkeypatch)
+    task = await _ask(
+        world, world.session, "req-2", "ls /tmp/scratch", window=60, monkeypatch=monkeypatch
+    )
+    try:
+        world.state.decide_session_approval(world.session, "req-2", "approved")
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await _finish(task)
+    assert world.store.items[note.id].status in OPEN_STATUSES
+    assert "retry" not in world.store.items[note.id].refs
+
+
+@pytest.mark.asyncio
+async def test_the_same_call_answered_in_another_chat_leaves_it_open(
+    world, monkeypatch  # noqa: F811
+):
+    note = await _expired_note(world, monkeypatch)
+    other = _make_session("chat-b")
+    world.state._sessions[other.key] = other
+    task = await _ask(
+        world, other, "req-2", "rm -rf /tmp/scratch", window=60, monkeypatch=monkeypatch
+    )
+    try:
+        world.state.decide_session_approval(other, "req-2", "approved")
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await _finish(task)
+    assert world.store.items[note.id].status in OPEN_STATUSES
+
+
+@pytest.mark.asyncio
+async def test_a_retry_nobody_answers_either_leaves_it_open(world, monkeypatch):  # noqa: F811
+    """Nothing was decided, so nothing is handled: the second expiry leaves its own note beside."""
+    note = await _expired_note(world, monkeypatch)
+    task = await _ask(
+        world, world.session, "req-2", "rm -rf /tmp/scratch", window=0.05, monkeypatch=monkeypatch
+    )
+    await asyncio.wait_for(task, timeout=5)
+    assert world.store.items[note.id].status in OPEN_STATUSES
+    assert len([n for n in _notes(world.store) if n.status in OPEN_STATUSES]) == 2
+    assert note.refs.get("session") == CHAT

@@ -786,7 +786,7 @@ class TestConfig:
         assert meta.get("help")
 
     def test_it_is_in_the_patch_allowlist(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert _EDITABLE_CONFIG["durability.time_travel"] == {"type": "bool"}
 

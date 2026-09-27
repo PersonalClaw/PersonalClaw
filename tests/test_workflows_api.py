@@ -160,11 +160,26 @@ class TestOneEngineTwoSurfaces:
     def test_the_handlers_delegate_to_the_service_module(self) -> None:
         """The whole design: two implementations kept in sync by hand is the bug class
         this avoids."""
+        import ast
         import inspect
 
         source = inspect.getsource(H)
-        assert "from personalclaw.workflows import service" in source
-        for call in ("service.list_defs", "service.start_run", "service.status", "service.audit"):
+        imported = {
+            alias.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.ImportFrom) and node.module == "personalclaw.workflows"
+            for alias in node.names
+        }
+        # `run_cockpit` is the service layer's read half: the cockpit's projections, returning the
+        # same service-result dicts.
+        assert {"service", "run_cockpit"} <= imported, imported
+        for call in (
+            "service.list_defs",
+            "service.start_run",
+            "service.status",
+            "service.audit",
+            "run_cockpit.introspect",
+        ):
             assert call in source, call
 
     def test_routes_register_and_order_runs_before_the_def_wildcard(self) -> None:
@@ -323,7 +338,7 @@ class TestDefRoutes:
         that check exists for specs a model generated."""
         import inspect
 
-        assert 'provenance="user"' in inspect.getsource(H.api_def_save)
+        assert 'provenance="user"' in inspect.getsource(H._save_def)
 
 
 # ── runs ─────────────────────────────────────────────────────────────────────
@@ -995,9 +1010,9 @@ class TestIntrospectRoute:
         scrubber is what keeps the two from drifting."""
         import inspect
 
-        from personalclaw.workflows import service as S
+        from personalclaw.workflows import run_cockpit
 
-        source = inspect.getsource(S.introspection_timeline)
+        source = inspect.getsource(run_cockpit.introspection_timeline)
         assert "journal_mod.redact" in source
 
     async def test_the_route_is_a_GET_it_mutates_nothing(self) -> None:
@@ -1030,11 +1045,18 @@ class TestPolicyOverridesRoute:
     """
 
     def _put(self, run_id: str, body: dict):
+        """The PUT the editor sends: over the revision the run status reported for the overlay
+        (the stale-write contract, `personalclaw/stale_write.py`). A run with no status to read
+        sends none."""
+        from personalclaw.workflows import service
+
+        base = (service.status(run_id).get("revisions") or {}).get("policy_overrides")
         req = _req(
             "PUT",
             f"/api/workflows/runs/{run_id}/policy-overrides",
             state=_State(None),
             body=body,
+            headers={"If-Match": f'"{base}"'} if base else None,
         )
         req.match_info["run_id"] = run_id  # type: ignore[index]
         return H.api_run_policy_overrides(req)
@@ -1157,9 +1179,13 @@ class TestPolicyOverridesRoute:
     async def test_the_status_read_carries_the_overlay_for_the_editor(self) -> None:
         """The FE editor renders current values from the run-detail read — an overlay it
         cannot see is one it can only clobber."""
+        from personalclaw.stale_write import revision_of
+
         run = store.create(WorkflowRun(id="", workflow_name="w"))
         await self._put(run.id, {"success_criteria": "done means merged"})
         req = _req("GET", f"/api/workflows/runs/{run.id}")
         req.match_info["run_id"] = run.id  # type: ignore[index]
         body = _body(await H.api_run_status(req))
         assert body["policy_overrides"] == {"success_criteria": "done means merged"}
+        # And the revision its next write names, taken from the very overlay beside it.
+        assert body["revisions"]["policy_overrides"] == revision_of(body["policy_overrides"])

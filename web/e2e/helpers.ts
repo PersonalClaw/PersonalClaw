@@ -656,7 +656,7 @@ export async function expectRouteScreenshot(
  *  writes flywheel state on two independent paths —
  *    · `src/personalclaw/context.py:211` records an allocation sample for EVERY ambient render, so
  *      `utilization.mean` stops being null ("no ambient render recorded yet" → "52% used"); and
- *    · `src/personalclaw/workflows/controller.py:4530` calls `run_end.capture()` at run end, so
+ *    · `src/personalclaw/workflows/run_finish.py:91` calls `run_end.capture()` at run end, so
  *      `capture.passes` stops being 0 ("1 of 1 pass clean").
  *  `#/learning` reads both back through `GET /api/learning/health` (`HealthPanel.tsx`), so its
  *  golden renders "not measured yet — nothing has run" before any turn and live numbers after one.

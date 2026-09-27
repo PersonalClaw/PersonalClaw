@@ -15,7 +15,7 @@ import type { AvailableModel, DownloadJob, ProviderModels } from '../../lib/api'
 // find the choice in effect when the download lands — with nothing to choose again.
 
 const modelsAvailable = vi.fn()
-const modelsActive = vi.fn()
+const activeChains = vi.fn()
 const setActiveModel = vi.fn()
 const startModelDownload = vi.fn()
 const cancelModelDownload = vi.fn()
@@ -27,8 +27,9 @@ vi.mock('../../lib/api', async (orig) => {
     ...actual,
     api: {
       modelsAvailable: () => modelsAvailable(),
-      modelsActive: () => modelsActive(),
-      setActiveModel: (u: string, m: string[]) => setActiveModel(u, m),
+      activeChains: () => activeChains(),
+      activeChain: (u: string) => activeChains().then((c: Record<string, { value: string[]; revision: string }>) => c[u] ?? { value: [], revision: '' }),
+      setActiveModel: (u: string, m: string[], base: string) => setActiveModel(u, m, base),
       startModelDownload: (p: string, m: string) => startModelDownload(p, m),
       cancelModelDownload: (id: string) => cancelModelDownload(id),
       modelDownloads: () => modelDownloads(),
@@ -51,6 +52,8 @@ import { ModelsPanel } from './ModelsPanel'
 import { resetDataStore } from '../../lib/data'
 
 const REF = 'bundled-chat:SmolLM2-135M-Instruct-Q8_0'
+/** `GET /api/models/active` as the panel reads it: each chain with the revision of exactly that chain. */
+const chains = (chat: string[]) => ({ chat: { value: chat, revision: `rev:${chat.join(',')}` } })
 /** The bundled model as `/api/models/available` lists it: a file id, a name, a size in MiB, a licence. */
 const SMOL = (downloaded: boolean): AvailableModel => ({
   id: 'SmolLM2-135M-Instruct-Q8_0', name: 'SmolLM2-135M-Instruct-Q8_0', display_name: 'SmolLM2-135M-Instruct',
@@ -62,7 +65,7 @@ const catalog = (downloaded: boolean): ProviderModels[] => [
 ]
 const job = (state: DownloadJob['state'], extra: Partial<DownloadJob> = {}): DownloadJob => ({
   id: 'job-9', provider: 'bundled-chat', model: 'SmolLM2-135M-Instruct-Q8_0', kind: 'weights', state,
-  progress: 0, speed_bps: 0, eta_s: 0, total_bytes: 144_811_072, downloaded_bytes: 0, error: '', reason: '',
+  progress: 0, speed_bps: 0, eta_s: 0, total_bytes: 144_811_072, downloaded_bytes: 0, error: '', reason: '', warning: '',
   ...extra,
 })
 
@@ -82,8 +85,8 @@ beforeEach(() => {
   }
   let bound: string[] = []
   modelsAvailable.mockReset().mockResolvedValue(catalog(false))
-  modelsActive.mockReset().mockImplementation(() => Promise.resolve({ chat: bound }))
-  setActiveModel.mockReset().mockImplementation((_u: string, m: string[]) => { bound = m; return Promise.resolve({ ok: true }) })
+  activeChains.mockReset().mockImplementation(() => Promise.resolve(chains(bound)))
+  setActiveModel.mockReset().mockImplementation((_u: string, m: string[]) => { bound = m; return Promise.resolve({ ok: true, revision: chains(m).chat.revision }) })
   startModelDownload.mockReset().mockResolvedValue(job('queued'))
   cancelModelDownload.mockReset().mockResolvedValue(undefined)
   modelDownloads.mockReset().mockResolvedValue([])
@@ -100,7 +103,8 @@ describe('a chosen model that is not on this machine offers its download right t
   it('choosing it states what the download costs and offers it — by the model’s name, not its file', async () => {
     await openChat()
     fireEvent.click(await screen.findByRole('button', { name: /SmolLM2-135M-Instruct/ }))
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF]))
+    // Written over the chain the panel painted — empty, at its revision.
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [REF], 'rev:'))
     const offer = await screen.findByTestId('inline-model-download')
     expect(offer.textContent).toContain('SmolLM2-135M-Instruct is not on this machine yet — 138 MiB · Apache-2.0.')
     expect(within(offer).getByRole('button', { name: /Download 138 MiB/ })).toBeTruthy()
@@ -143,7 +147,7 @@ describe('a chosen model that is not on this machine offers its download right t
   it('a reload re-attaches to a download already running', async () => {
     // Bound before the reload, still downloading: the row finds the job instead of offering it again.
     setActiveModel.mockClear()
-    modelsActive.mockResolvedValue({ chat: [REF] })
+    activeChains.mockResolvedValue(chains([REF]))
     modelDownloads.mockResolvedValue([job('running', { downloaded_bytes: 72_405_536, progress: 0.5 })])
     await openChat()
     expect(await screen.findByText(/Downloading SmolLM2-135M-Instruct — 69 MiB of 138 MiB/)).toBeTruthy()
@@ -156,7 +160,7 @@ describe('a chosen model that is not on this machine offers its download right t
     // same Download runs the provider's own pull — no size is known before it starts, and none is
     // invented.
     modelsAvailable.mockResolvedValue([{ name: 'ollama', type: 'ollama', local: true, searchable: true, models: [] }])
-    modelsActive.mockResolvedValue({ chat: ['ollama:llama3:8b'] })
+    activeChains.mockResolvedValue(chains(['ollama:llama3:8b']))
     startModelDownload.mockResolvedValue({ ...job('queued'), provider: 'ollama', model: 'llama3:8b', total_bytes: 0 })
     await openChat()
     const offer = await screen.findByTestId('inline-model-download')
@@ -168,7 +172,7 @@ describe('a chosen model that is not on this machine offers its download right t
   it('a hosted model is never offered a download it cannot have', async () => {
     // The control: only a provider the local-model registry lists can fetch a model.
     modelsAvailable.mockResolvedValue([{ name: 'openai', type: 'openai', models: [] }])
-    modelsActive.mockResolvedValue({ chat: ['openai:gpt-9-missing'] })
+    activeChains.mockResolvedValue(chains(['openai:gpt-9-missing']))
     await openChat()
     // Listed twice — the chain editor and its row — and offered a download in neither.
     expect((await screen.findAllByText('gpt-9-missing')).length).toBeGreaterThan(0)

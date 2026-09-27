@@ -97,7 +97,7 @@ dashboard uses, so a scripted turn is gated exactly like an interactive one.
 | Flag | Effect |
 |---|---|
 | `-p, --prompt TEXT` | **Required.** The prompt for this turn. An empty or whitespace-only value is refused (exit 2). |
-| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes. |
+| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes; the final `chat_done` carries `outcome` (`complete`, `stopped` or `error`). |
 | `--agent NAME` | Agent to run the turn as (default: the configured default agent). |
 | `--model NAME` | Model override for this turn. |
 | `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
@@ -106,8 +106,10 @@ dashboard uses, so a scripted turn is gated exactly like an interactive one.
 | `--timeout SECS` | Ceiling on the turn (default 600). |
 | `--port PORT` | Gateway port (default: resolved like every other client command). |
 
-Exit code is `0` when the turn succeeded, `1` on a failed turn or transport error, and
-`2` on a refused invocation (blank prompt, or a read-only run on an ACP agent).
+Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
+it finished, or the transport failed, and `2` on a refused invocation (blank prompt, or a
+read-only run on an ACP agent). The code follows how the gateway says the turn ended, not the
+error rows along the way: a transient failure the gateway retried and then finished exits `0`.
 
 ### Safety posture
 
@@ -226,8 +228,8 @@ Manage scheduled jobs.
 | Subcommand | What it does |
 |---|---|
 | `cron list` | List cron jobs. |
-| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel ID] [--approval-mode auto]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally post results to a channel; `--approval-mode auto` auto-approves the job's tools. |
-| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel ID] [--approval-mode auto\|default]` | Update a job (`default` resets approval mode). |
+| `cron add NAME MESSAGE [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto] [--yes]` | Add a job — interval (`--every`) or cron expression (`--cron "0 9 * * MON-FRI"`); optionally send results on a chat channel: `--channel telegram` for your DMs there, `--channel telegram:-100123` for a chat. The channel checks the id; `--approval-mode auto` auto-approves the job's tools. A job runs an agent with its tools while you are away, so the command asks what the Triggers page's create dialog asks: without `--yes` it prints the question and creates nothing (exit 1). |
+| `cron update JOB_ID [--name] [--message] [--every SECS] [--cron EXPR] [--channel NAME[:ID]] [--approval-mode auto\|default] [--yes]` | Update a job (`default` resets approval mode). A new `--message` changes what the job's agent is told to do, and `--approval-mode auto` lets it approve its own tool calls, so each asks what the Triggers page's editor asks: without `--yes` the command prints the question and changes nothing (exit 1). |
 | `cron remove JOB_ID` | Remove a job. |
 | `cron pause JOB_ID` / `cron resume JOB_ID` | Pause / resume a job. |
 | `cron trigger JOB_ID` | Fire a job immediately. |
@@ -308,7 +310,7 @@ Get or set configuration values (see the [configuration reference](configuration
 | `config set KEY VALUE` | Set one value (validated through the loader), merged into the existing `config.json` so keys the loader does not model — `providers`, `use_cases`, `slack`, `meta` — are preserved. Refuses (exit 1) if the existing file cannot be read or parsed, rather than overwriting content it could not see. |
 | `config set --file FILE` | Apply a whole JSON document to `config.json` — the write side of the `config get --reveal > f.json` round-trip. A top-level block that is in `config.json` but missing from `FILE` **refuses the write (exit 1)** and is named, because this path preserves blocks it is not shown rather than deleting them, so omission cannot mean removal: use `config unset` to remove one. A field arriving as the `••••••••` placeholder means "keep what is on disk"; a placeholder that cannot be matched to a stored value refuses the write (exit 1) rather than overwriting the credential with bullets. |
 | `config unset KEY` | Remove a dot-separated key or a whole top-level block from `config.json` — the only way to delete one. A modelled key returns to its default; an unmodeled block (`providers`, `slack`, …) is gone. Refuses (exit 1) if `KEY` is not in the file, so a typo cannot report success, and if the existing file cannot be read. |
-| `config edit` | Open `config.json` in `$EDITOR`. |
+| `config edit` | Open a copy of `config.json` in `$EDITOR`. When the editor exits 0 and leaves a JSON object, what you changed is written back, and a setting another process changed while the editor was open is kept unless you changed the same key. An editor that fails, or leaves anything that is not a JSON object, changes nothing (exit 1). A `config.json` that cannot be read opens as it is, and the fixed copy replaces it. |
 
 ## `personalclaw skills`
 

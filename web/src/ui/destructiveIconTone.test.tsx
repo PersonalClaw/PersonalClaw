@@ -139,12 +139,17 @@ describe('🔴 the composer controls were ALREADY tinted, and that decision stan
   // on my classification would have REMOVED a tint the product deliberately has — a visual regression
   // imposed by taste over a consistent existing decision. They adopt the prop instead, which preserves
   // their appearance byte-for-byte and removes the duplicate.
-  const ALREADY_TINTED = [
-    'Cancel upload', 'Remove file', 'Remove knowledge reference', 'Cancel queued message', 'Remove paste',
+  // `Remove file` moved with the composer's attachment chips into their own module.
+  const ALREADY_TINTED: [string, string][] = [
+    ['Cancel upload', 'pages/ChatPage.tsx'],
+    ['Remove file', 'pages/chat/AttachmentChips.tsx'],
+    ['Remove knowledge reference', 'pages/ChatPage.tsx'],
+    ['Cancel queued message', 'pages/ChatPage.tsx'],
+    ['Remove paste', 'pages/ChatPage.tsx'],
   ]
-  for (const label of ALREADY_TINTED) {
+  for (const [label, rel] of ALREADY_TINTED) {
     it(`ChatPage — "${label}" keeps its danger tint, now via the prop`, () => {
-      const tags = [...codeOf('pages/ChatPage.tsx').matchAll(/<IconButton[\s\S]{0,420}?\/>/g)].map((m) => m[0])
+      const tags = [...codeOf(rel).matchAll(/<IconButton[\s\S]{0,420}?\/>/g)].map((m) => m[0])
       const tag = tags.find((t) => t.includes(label))
       expect(tag, `found the IconButton for ${label}`).toBeTruthy()
       expect(tag!, 'appearance preserved through the prop').toMatch(/tone="danger"/)

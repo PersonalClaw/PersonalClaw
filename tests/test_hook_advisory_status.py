@@ -69,6 +69,10 @@ def _store(tmp_path, event: str = HOOK_EVENT_PRE_TOOL_USE) -> tuple[ScriptHookSt
             provider="bash",
             provider_config={"command": "exit 2"},
             enabled=True,
+            # The owner's yes (`triggers.grants`): these tests are about what a fire that RUNS
+            # records. An ungranted hook's refusal on the gating seam is
+            # `test_a_grant_is_for_the_action_the_owner_allowed`'s.
+            capabilities={"providers": ["bash"]},
         ).to_dict()
     )
     return store, hook

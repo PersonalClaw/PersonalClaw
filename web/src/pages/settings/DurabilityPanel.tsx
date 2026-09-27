@@ -618,8 +618,8 @@ function ScheduleSection({ cfg, setCfg, status }: {
         </div>
         <p data-type="caption" className="pb-3 text-on-surface-low">
           To restore, use the archive list below. A full <em>replace</em> restore stays a
-          command-line action — <code>personalclaw restore --replace</code> — because it has to
-          overwrite live state while the gateway is stopped.
+          command-line action, because it has to overwrite live state while the gateway is
+          stopped: <code>personalclaw restore &lt;archive&gt; --mode replace</code>.
         </p>
       </RowGroup>
     </Section>
@@ -761,8 +761,9 @@ function ArchiveSection({ snaps, onChanged }: {
         )}
         <p data-type="caption" className="mt-3 text-on-surface-low">
           Stored in <code>{snaps.directory}</code>. A full <em>replace</em> restore is a
-          command-line action — <code>personalclaw restore --replace</code> — because it has
-          to overwrite live state while the gateway is stopped.
+          command-line action, because it has to overwrite live state while the gateway is
+          stopped: stop it, then run{' '}
+          <code>personalclaw restore {snaps.directory}/&lt;archive&gt; --mode replace</code>.
         </p>
       </div>
     </Section>

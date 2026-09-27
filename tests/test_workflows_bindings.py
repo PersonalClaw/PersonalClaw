@@ -178,14 +178,14 @@ class TestFirstIterationLast:
     the run reports success, which is worse than the failure it replaced.
 
     **The signal widened from `iter_index == 0` to `iter_index is not None` in #3524**, and the
-    reason is that the seam it was guarding against got built. `RunController._context_for` now
-    computes `last` for every node it dispatches (`_last_output`), so inside a loop body "no
-    `last`" is a MEASUREMENT — either this is the first iteration, or the previous one produced
-    no output at all — and both are honest `| default(...)` cases. Before that, `iter_index` 1+
-    with no `last` meant "the engine never wired this", which is why it had to raise: six bundled
-    templates spent iterations 2..N failing on `unresolved reference at 'last'` while their guard
-    sat there unused. `test_last_outside_any_loop_still_raises` is what keeps the rescue from
-    degenerating into absence-keyed, and it is load-bearing rather than incidental.
+    reason is that the seam it was guarding against got built. `node_bindings.context_for` now
+    computes `last` for every node it dispatches (`node_bindings._last_output`), so inside a loop
+    body "no `last`" is a MEASUREMENT — either this is the first iteration, or the previous one
+    produced no output at all — and both are honest `| default(...)` cases. Before that,
+    `iter_index` 1+ with no `last` meant "the engine never wired this", which is why it had to
+    raise: six bundled templates spent iterations 2..N failing on `unresolved reference at 'last'`
+    while their guard sat there unused. `test_last_outside_any_loop_still_raises` is what keeps the
+    rescue from degenerating into absence-keyed, and it is load-bearing rather than incidental.
     """
 
     def test_a_first_iteration_last_resolves_to_its_default(self) -> None:
@@ -204,7 +204,7 @@ class TestFirstIterationLast:
 
         This test used to assert the OPPOSITE — that iteration 1 with no `last` raises — on the
         ground that an absent `last` there was "a real gap" the run must report. It was: nothing
-        supplied one. Now `RunController._context_for` supplies it for every dispatched node, so
+        supplied one. Now `node_bindings.context_for` supplies it for every dispatched node, so
         `has_last` False inside a loop body no longer means "unwired", it means the engine looked
         and the previous iteration produced nothing. Rendering the author's own documented default
         for that is honest; raising made six bundled templates unable to reach iteration 2.
@@ -327,12 +327,13 @@ class TestPriorCycleFieldMiss:
         merely inconvenient.
 
         This test read `BindingContext(iter_index=5)` — a later iteration with no `last` — because
-        pre-#3524 that meant *nothing supplied one*, a wiring gap. `RunController._context_for` now
-        computes `last` for every node it dispatches (`_last_output`), so inside a loop body
-        `has_last` False is a MEASUREMENT: either this is the first iteration or the previous one
-        produced nothing. `_first_cycle_miss` therefore rescues that cell before `_walk_path` ever
-        runs, and asserting a raise there would be pinning a state the engine can no longer
-        produce — under the old rule six bundled templates could not reach iteration 2 at all.
+        pre-#3524 that meant *nothing supplied one*, a wiring gap. `node_bindings.context_for` now
+        computes `last` for every node it dispatches (`node_bindings._last_output`), so inside a
+        loop body `has_last` False is a MEASUREMENT: either this is the first iteration or the
+        previous one produced nothing. `_first_cycle_miss` therefore rescues that cell before
+        `_walk_path` ever runs, and asserting a raise there would be pinning a state the engine can
+        no longer produce — under the old rule six bundled templates could not reach iteration 2 at
+        all.
 
         **Enumerated rather than reasoned about.** Over `iter_index` x `has_item` x `has_last` for
         `{{last.output.summary | default("x")}}`, the raise-at-the-ROOT outcome survives in exactly

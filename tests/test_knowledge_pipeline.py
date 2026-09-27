@@ -554,7 +554,7 @@ def test_runner_synthesizes_descriptor_for_textless_image(store, tmp_path):
 
     for node_type in ("ocr", "vision"):
         assert (
-            resolve_runnable(node_type, "vision-llm") is None
+            _run(resolve_runnable(node_type, "vision-llm")) is None
         ), f"a {node_type} backend is runnable here, so this is not the no-model case"
     _run(ingest_item(store, iid))
     item = store.get_item(iid)
@@ -1189,12 +1189,14 @@ def test_runner_records_skip_reason_on_partial(store, tmp_path, monkeypatch):
     # provider and the skip path never runs.
     import personalclaw.knowledge.pipeline.executor as _ex
 
-    _orig_can = _ex.can_resolve_use_case
+    _orig_unserved = _ex.unserved_reason
+
     # OCR + vision now resolve DIRECTLY to image_modality (no dedicated ingestion
     # use-case), so make image_modality "no model" to force the optional-step skip.
-    monkeypatch.setattr(
-        _ex, "can_resolve_use_case", lambda uc: False if uc == "image_modality" else _orig_can(uc)
-    )
+    async def _unserved(uc):
+        return "No image model is set up." if uc == "image_modality" else await _orig_unserved(uc)
+
+    monkeypatch.setattr(_ex, "unserved_reason", _unserved)
     img = tmp_path / "px.png"
     Image.new("RGB", (4, 4), "white").save(img)
     iid = store.create_typed_item(item_type="image", title="px.png")

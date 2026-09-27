@@ -160,7 +160,7 @@ def test_an_agent_created_trigger_is_announced_in_the_result(store):
     """Agent-created triggers are "announced to the user on creation … visible, not silent"."""
     text = T.create(store, name="Notes", when="when a file in ~/notes changes", message="go").text
     assert "I created this for you" in text
-    assert "Automations page" in text
+    assert "Triggers page" in text
 
 
 def test_the_announcement_explains_the_routing_choice(store):
@@ -316,10 +316,20 @@ def test_updating_an_unknown_id_is_an_error(store):
 
 
 # ── pause / resume ──
+#
+# `owner_consented=True` below is the owner's yes to what the automation runs: resuming or
+# running one the chat made, which is not allowed to run until the owner allows it, is refused
+# (`test_a_grant_is_for_the_action_the_owner_allowed`). These are about the switch and the run.
 
 
 def test_pause_then_resume_round_trips(store):
-    T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
     assert T.set_paused(store, trigger_id="file:notes", paused=True).ok
     assert store.get("file:notes").trigger.enabled is False
     assert T.set_paused(store, trigger_id="file:notes", paused=False).ok
@@ -422,7 +432,13 @@ def test_a_dry_run_executes_NOTHING(store):
 
 
 def test_a_real_run_calls_the_injected_runner(store):
-    T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
     seen = []
 
     def runner(payload):
@@ -436,7 +452,13 @@ def test_a_real_run_calls_the_injected_runner(store):
 def test_a_run_with_no_runner_REFUSES_rather_than_faking_success(store):
     """🔴 "Launched" with nothing behind it is the fire-and-forget lie the executor was written
     to keep out of this codebase."""
-    T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
     result = T.run(store, trigger_id="file:notes")
     assert not result.ok
     assert "nothing was executed" in result.text
@@ -445,7 +467,13 @@ def test_a_run_with_no_runner_REFUSES_rather_than_faking_success(store):
 def test_a_PAUSED_automation_can_still_be_run_by_hand(store):
     """Pausing means "stop firing on your own". Refusing a hand-driven run would remove the main
     way a user tests an automation before re-enabling it."""
-    T.create(store, name="Notes", when="when a file in ~/notes changes", message="go")
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
     T.set_paused(store, trigger_id="file:notes", paused=True)
     result = T.run(store, trigger_id="file:notes", runner=lambda p: {"status": "ok"})
     assert result.ok

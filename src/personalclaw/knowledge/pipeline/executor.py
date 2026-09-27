@@ -21,10 +21,10 @@ from dataclasses import dataclass, field
 
 from personalclaw.knowledge.pipeline.graph import PipelineGraph
 from personalclaw.knowledge.pipeline.registry import (
-    can_resolve_use_case,
     get_node,
     node_available,
     resolve_runnable,
+    unserved_reason,
 )
 from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput, PoolRow
 
@@ -47,6 +47,11 @@ class ExecutionResult:
     #: calling that "partially ingested" would tell the user something was missing from a
     #: document that was read completely.
     not_taken: list[str] = field(default_factory=list)
+    #: The model-backed nodes among ``skipped`` that no model serves, each with the sentence
+    #: saying why (``providers.image_input.NO_IMAGE_MODEL`` for an image nothing can read). A
+    #: consumer telling a user what became of the item reads this: "nothing read the image" and
+    #: "no image model is set up" call for different words.
+    unserved: dict[str, str] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -123,6 +128,7 @@ class PipelineExecutor:
         """Drop a node set's recorded outputs/phases so a re-run can re-resolve them."""
         for nt in nodes:
             result.outputs.pop(nt, None)
+            result.unserved.pop(nt, None)
             for lst in (result.ran, result.failed, result.skipped, result.not_taken):
                 while nt in lst:
                     lst.remove(nt)
@@ -239,20 +245,20 @@ class PipelineExecutor:
             result.skipped.append(node_type)
             self._notify(node_type, "skipped")
             return
-        # Model-backed node with no active model → graceful skip (item goes partial).
-        if not can_resolve_use_case(use_case):
+        # Model-backed node no model serves → graceful skip (item goes partial).
+        unserved = await unserved_reason(use_case)
+        if unserved:
             # …unless ANOTHER registered backend for this node type can run. One node type may
             # have alternative implementations (`ocr` is model-backed by default and
             # engine-backed when an OCR app is installed), and skipping a step whose work IS
             # available just because the DEFAULT route needs a model the user never bound is
             # the graceful-skip path overreaching. A user-PINNED backend is authoritative and
             # never substituted; only the graph's default is reconsidered.
-            alt = None if pinned else resolve_runnable(node_type, backend)
+            alt = None if pinned else await resolve_runnable(node_type, backend)
             if alt is None:
-                logger.info(
-                    "skipping node %s — use-case %s has no active model", node_type, use_case
-                )
+                logger.info("skipping node %s — %s", node_type, unserved)
                 result.skipped.append(node_type)
+                result.unserved[node_type] = unserved
                 self._notify(node_type, "skipped")
                 return
             node, backend = alt
@@ -268,7 +274,7 @@ class PipelineExecutor:
         elif not node_available(node):
             # The use-case resolves but the backend's own dependency does not (an engine app
             # was disabled mid-session). Same substitution, same graceful skip if none runs.
-            alt = None if pinned else resolve_runnable(node_type, backend)
+            alt = None if pinned else await resolve_runnable(node_type, backend)
             if alt is None:
                 logger.info("skipping node %s — backend %r is unavailable", node_type, backend)
                 result.skipped.append(node_type)

@@ -504,7 +504,7 @@ def test_the_gate_has_a_write_path_and_the_patch_allowlist_declares_it() -> None
     success and change nothing. So the write path gets its own rail.
     """
     from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value, security_control
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     key = "security.credential_keychain"
     spec = _EDITABLE_CONFIG.get(key)

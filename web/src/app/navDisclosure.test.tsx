@@ -279,7 +279,7 @@ describe('a hidden surface is hidden from the RAIL, never from the app', () => {
     await waitFor(() => expect(railLinks()).not.toContain('Tools'))
 
     await user.keyboard('{Meta>}k{/Meta}')
-    const search = await screen.findByLabelText('Search pages and actions')
+    const search = await screen.findByLabelText('Search pages, actions and content')
     await user.type(search, 'Tools')
     // Present in the palette even though the rail has no row for it — the always-open door.
     const hit = await screen.findByRole('option', { name: /^Tools/ })

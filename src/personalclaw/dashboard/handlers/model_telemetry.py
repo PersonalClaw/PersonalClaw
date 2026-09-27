@@ -15,6 +15,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.stale_write import revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,15 @@ async def api_routing_policy(request: web.Request) -> web.Response:
     so the user can always see WHY the table says what it says. Read-only; the writes are the PUT
     below. Fail-open: an unreadable table renders as "no opinion yet", never a 500 that blanks the
     tab, because routing being unreadable is not the same as routing being broken.
+
+    A class's order is replaced whole by a reorder, so each row carries ``order_revisions`` — the
+    revision of every class's cell, recorded or not — which that write must name
+    (`personalclaw/stale_write.py`). Mode and pin are single values and need none.
     """
     try:
         from personalclaw.providers.use_cases import active_model_refs
-        from personalclaw.routing.policy import is_local_ref, master_enabled, table_for
+        from personalclaw.routing.classifier import QUERY_CLASSES
+        from personalclaw.routing.policy import is_local_ref, master_enabled, order_cell, table_for
 
         rows = []
         for use_case in _ROUTED_USE_CASES:
@@ -77,6 +83,14 @@ async def api_routing_policy(request: web.Request) -> web.Response:
             table["candidates"] = [
                 {"ref": ref, "local": is_local_ref(ref)} for ref in active_model_refs(use_case)
             ]
+            # Every class the tab can select, not only the recorded ones: the first reorder of a
+            # class replaces "nothing recorded", and that is a copy that can go stale too. A
+            # recorded class's revision is taken from the very cell beside it in this response.
+            cells = table["classes"]
+            table["order_revisions"] = {
+                cls: revision_of(cells[cls] if cls in cells else order_cell(use_case, cls))
+                for cls in dict.fromkeys([*QUERY_CLASSES, *cells])
+            }
             rows.append(table)
         return web.json_response({"enabled": master_enabled(), "use_cases": rows})
     except Exception:  # noqa: BLE001 — an inspection view must never 500
@@ -94,6 +108,9 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
 
     ``order`` requires ``query_class``: an order is always recorded per class, because "which model
     first" has no single answer across kinds of work — that is the whole premise of the table.
+    It replaces the class's whole order, so it also requires the cell's revision in ``If-Match``
+    (``order_revisions[query_class]`` from the GET); a cell that changed since — another tab's
+    reorder, an accepted proposal — is refused with ``409 stale_write`` before any lever applies.
 
     **Every lever is validated before any lever is applied.** Interleaving the two (validate mode,
     write mode, validate order, reject) made a 400 that had already moved the store: a body
@@ -104,7 +121,7 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
     goes out.
     """
     from personalclaw.providers.use_cases import VALID_USE_CASES
-    from personalclaw.routing.policy import MODES, set_mode, set_order, set_pin
+    from personalclaw.routing.policy import MODES, order_cell, set_mode, set_order, set_pin
 
     try:
         body = await request.json()
@@ -145,6 +162,18 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
         return json_error(
             "bad_request", message="nothing to change: send mode, pin, and/or order", status=400
         )
+    if order is not None:
+        # 🔴 AN ORDER IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The tab's reorder swaps two
+        # entries of the order it painted, so after another tab's reorder — or an accepted routing
+        # proposal — it put its own stale order back over that change. Refused here, while nothing
+        # has been applied yet, and with no `await` between this check and the write below.
+        stale = stale_write_refusal(
+            request,
+            order_cell(use_case, query_class),
+            what=f"the {use_case} routing order for {query_class} requests",
+        )
+        if stale is not None:
+            return stale
 
     # ── apply ───────────────────────────────────────────────────────────────────
     applied: list[str] = []
@@ -166,7 +195,11 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
             {"error": {"code": "internal", "message": "could not save the routing policy"}},
             status=500,
         )
-    return web.json_response({"ok": True, "use_case": use_case, "applied": applied})
+    body_out: dict[str, object] = {"ok": True, "use_case": use_case, "applied": applied}
+    if order is not None:
+        # The cell's new revision, so a tab that stays open reorders again over this one.
+        body_out["order_revision"] = revision_of(order_cell(use_case, query_class))
+    return web.json_response(body_out)
 
 
 async def api_routing_proposals(request: web.Request) -> web.Response:

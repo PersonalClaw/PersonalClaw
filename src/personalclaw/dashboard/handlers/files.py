@@ -24,17 +24,25 @@ from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.file_roots import MAX_NAME_BYTES
+from personalclaw.file_roots import admit as _admit_path
+from personalclaw.file_roots import dashboard_roots as _dashboard_roots
+from personalclaw.file_roots import is_system_root as _is_system_root
+from personalclaw.file_roots import screenshot_dir as _screenshot_dir
+from personalclaw.file_view import file_as_read, read_head, whole_text
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import require_string
 from personalclaw.security import (
+    MaskConflict,
     is_sensitive_path,
     is_system_path,
+    keep_masked_spans,
     redact_credentials,
     redact_exfiltration_urls,
-    system_subtrees,
 )
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.validation import (
     FILE_READ_SCHEMA,
     ValidationError,
@@ -47,26 +55,6 @@ logger = logging.getLogger(__name__)
 # preview download). Bounded so a huge file can't OOM the server on a read —
 # distinct from UPLOAD limits, which are per-filetype via personalclaw.uploads.
 _MAX_INLINE_READ_BYTES = 50 * 1024 * 1024
-
-# System roots that the directory-picking / search surfaces refuse to browse,
-# search, OR create under — picking a workspace/project folder is for the user's
-# own code, never system internals. is_sensitive_path() only covers ~/credential
-# dirs, so this is the complementary system-root guard.
-#
-# The subtree list is read through personalclaw.security.system_subtrees() (the single source
-# of truth shared with the Code workspace validation, including its carve-out for the running
-# account's own home) so the surfaces can't drift. NOTE: this is a SUBTREE-only check (no
-# mount/temp PARENT blocking, unlike security.is_system_path) — the directory BROWSER +
-# @-search must be able to navigate INTO /Volumes, /var, /tmp to reach a real workspace beneath
-# them. create-dir/workspace-bind use the stricter full is_system_path (parents blocked) since
-# you never create/bind AT a bare parent.
-
-
-def _is_system_root(path: str) -> bool:
-    """True iff *path* is the filesystem root or sits under a protected system root
-    (an already realpath'd absolute path is expected)."""
-    return path == "/" or any(path == r or path.startswith(r + os.sep) for r in system_subtrees())
-
 
 #: What each directory-picker refusal says: the reason ``sel()`` records → the stable ``reason`` a
 #: client branches on, and what the location IS, in words. One table, so the refusal browse-dirs
@@ -798,19 +786,6 @@ async def api_upload(request: web.Request) -> web.Response:
     return web.json_response({"paths": paths})
 
 
-def _screenshot_dir() -> Path:
-    """Where a captured screenshot lands, resolved AT CALL TIME (CRE-8).
-
-    This was a module-level ``_SCREENSHOT_DIR`` bound at import, and that is the whole
-    defect: a constant is already a value, so no test fixture can redirect it and a
-    ``$PERSONALCLAW_HOME`` set after first import is ignored for the life of the process.
-    MEASURED in CI, which is where the difference shows: with no ``~/.personalclaw`` to
-    begin with, the capture handler created the developer's real home just by resolving
-    this path — the suite's real-home rail caught it as `dir-entries-changed screenshots`.
-    """
-    return config_loader.config_dir() / "screenshots"
-
-
 def _upload_dir() -> Path:
     """Where an upload lands, resolved AT CALL TIME (CRE-8).
 
@@ -981,8 +956,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
     # Kick off content extraction NOW (while the user is still typing the query),
     # so an attachment's text is ready — or nearly so — by the time the turn runs.
     # The chat runner awaits these per-file before answering (knowledge extraction
-    # graph only: text read / ASR / OCR / ffmpeg — no enrichment). See
-    # dashboard.attachment_extract + knowledge.extract.
+    # graph only: text read / ASR / OCR / ffmpeg — no enrichment). An image is not
+    # read until its text is asked for. See dashboard.attachment_extract + knowledge.extract.
     try:
         from personalclaw.dashboard.attachment_extract import get_extractor
 
@@ -999,8 +974,15 @@ async def api_upload_file(request: web.Request) -> web.Response:
 async def api_attachment_extract(request: web.Request) -> web.Response:
     """GET /api/attachment-extract?path=... — the extracted text content for an
     uploaded attachment, so the chat UI can preview what the agent saw. Awaits
-    the extraction kicked off at upload (or runs it now). Restricted to the
-    uploads dir to prevent reading arbitrary files through this surface."""
+    the extraction kicked off at upload, or runs it now (an image is only ever read
+    when this, or its turn, asks). Restricted to the
+    uploads dir to prevent reading arbitrary files through this surface.
+
+    ``read`` says whether the text was read from the file's content, or is only its
+    structural descriptor (size and format) — the attachment chip's sentence depends on it.
+    ``unread`` says why nothing was read when that is known: ``"no_image_model"`` when the
+    file needed an image model and none is set up (``knowledge.extract.UNREAD_NO_IMAGE_MODEL``),
+    else ``""``."""
     import mimetypes as _mt
 
     caller = request.get("user", "dashboard")
@@ -1022,14 +1004,16 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
     from personalclaw.dashboard.attachment_extract import display_name, get_extractor
 
-    text = await get_extractor().get(path, _mt.guess_type(path)[0])
+    got = await get_extractor().get(path, _mt.guess_type(path)[0])
     _sel().log_api_access(
         caller=caller,
         operation="attachment_extract",
         outcome="allowed",
-        resources=f"name={display_name(path)} chars={len(text)}",
+        resources=f"name={display_name(path)} chars={len(got.text)}",
     )
-    return web.json_response({"name": display_name(path), "text": text})
+    return web.json_response(
+        {"name": display_name(path), "text": got.text, "read": got.read, "unread": got.unread}
+    )
 
 
 async def api_screenshot(request: web.Request) -> web.Response:
@@ -1064,139 +1048,9 @@ async def api_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": "screenshot timed out"}, status=504)
     if not dest.exists():
         return web.json_response({"path": ""})  # user cancelled
-    # Same head start an upload gets: begin extracting (OCR for a screenshot) while the
-    # user is still typing, so the turn does not wait on it. The runner awaits it per
-    # file before answering either way.
-    try:
-        from personalclaw.dashboard.attachment_extract import get_extractor
-
-        get_extractor().start(str(dest), "image/png")
-    except Exception:
-        logger.debug("screenshot extraction kickoff failed", exc_info=True)
+    # Not read ahead: a screenshot is an image, read only when its text is asked for
+    # (`AttachmentExtractor.start`).
     return web.json_response({"path": str(dest)})
-
-
-def _dashboard_roots() -> list[tuple[str, str]]:
-    """Return the labeled root directories the dashboard is allowed to surface.
-
-    Each entry is ``(label, realpath)``. These are the boundaries the file
-    explorer browses and the allowlist :func:`_validate_dashboard_path`
-    enforces: the workspace, the outbox, uploads, and the folders loops and
-    projects work in. Roots that fail to resolve (e.g. not configured) are
-    skipped. The order is user-facing-first (workspace) so the explorer can
-    default to it.
-
-    🔴 THE HOME ITSELF IS NEVER A ROOT. ``config.json``, ``mcp.json``, the automations, the
-    agent files and every app's install are plain files under PERSONALCLAW_HOME, so editing one
-    in Files could turn YOLO on or define an MCP command past every refusal the config PATCH,
-    the MCP routes and the automation routes make, and reading one could show the MCP servers'
-    credentials. Only folders inside it that hold work are roots (the workspace, outbox,
-    uploads, screenshots, a project's context, a greenfield code loop's folder). For a request
-    the gateway scoped to an app (``permissions.request_app``), a root that CONTAINS the home,
-    such as a loop or project workspace bound to ``~``, is left out as well. The realpath checks
-    in :func:`_validate_dashboard_path` refuse a symlink or ``..`` back out of a root.
-    """
-    roots = _all_dashboard_roots()
-    from personalclaw.apps.permissions import request_app
-
-    if not request_app():
-        return roots
-    from personalclaw.config.loader import config_dir
-
-    home = os.path.realpath(str(config_dir()))
-    return [(label, r) for label, r in roots if not (home == r or home.startswith(r + os.sep))]
-
-
-def _all_dashboard_roots() -> list[tuple[str, str]]:
-    """Every root :func:`_dashboard_roots` may surface, before the app-scoped filter."""
-    from personalclaw.config.loader import config_dir, outbox_dir
-
-    candidates: list[tuple[str, str]] = []
-
-    def _add(label: str, path_factory) -> None:
-        try:
-            candidates.append((label, os.path.realpath(str(path_factory()))))
-        except Exception:
-            pass
-
-    # Default workspace root used by chat sessions and ACP agents — the
-    # primary place users create/consume files, so list it first.
-    try:
-        from personalclaw.config.loader import workspace_root
-
-        _add("Workspace", workspace_root)
-    except Exception:
-        pass
-    _add("Outbox", outbox_dir)
-    # Uploads must follow the ACTIVE home (config_dir()), NOT a hardcoded ~/.personalclaw: a
-    # gateway on a custom PERSONALCLAW_HOME (every dev instance) would otherwise browse AND edit
-    # the developer's REAL home via the write allowlist (#294). config_dir() re-reads
-    # PERSONALCLAW_HOME live, and the factory is deferred so the home is resolved per request.
-    _add("Uploads", lambda: os.path.join(config_dir(), "uploads"))
-    # Where a native screen capture lands, so its chat chip's Open can show it.
-    _add("Screenshots", _screenshot_dir)
-
-    # Loop workspaces — a Loop (typically a code kind, but any kind may) can bind an
-    # arbitrary (brownfield) directory anywhere on disk; its cockpit (file tree +
-    # editor) must be allowed to browse + edit it. Surface each existing loop's
-    # workspace_dir as a root so the allowlist admits it. Best-effort: never let a
-    # loop-store hiccup break the file explorer for the normal roots.
-    # A user-bound workspace (loop OR project) may point anywhere — but a bound
-    # workspace that IS (or sits under) a protected system root must NEVER become a
-    # browsable root, or /etc, /usr, / etc. would leak via a workspace binding. The
-    # allowlist check in _validate_dashboard_path does not re-apply the system-root
-    # guard, so we enforce it HERE at root derivation (the single admission point).
-    def _add_workspace_root(label: str, wsd: str) -> None:
-        real = os.path.realpath(os.path.expanduser(wsd))
-        if _is_system_root(real):
-            logger.warning("dashboard: refusing system-root workspace %r as a browsable root", real)
-            return
-        candidates.append((label, real))
-
-    try:
-        from personalclaw.loop import files as _loop_files
-        from personalclaw.loop import store as _loop_store
-
-        for _lp in _loop_store.list_all():
-            wsd = (_lp.workspace_dir or "").strip()
-            if not wsd and _lp.kind == "code":
-                # A greenfield code loop works in its own folder in the home (`effective_dir`),
-                # and its cockpit says so with a link here.
-                own = _loop_files.loop_dir(_lp.id)
-                wsd = str(own) if own is not None else ""
-            if wsd:
-                _add_workspace_root(f"Loop: {_lp.name[:24]}", wsd)
-    except Exception:
-        pass
-
-    # Project workspaces — a Project (projects-native-entity) is a first-class work
-    # unit that MAY bind an arbitrary codebase dir on disk. Its detail view surfaces
-    # that workspace as a "view contents" peek + "Open in Files", so the allowlist
-    # must admit each bound Project.workspace_dir (exactly like a Loop's, above) —
-    # otherwise a project workspace not coincidentally shared by a Loop 400s. Best-
-    # effort: a project-store hiccup must never break the explorer for normal roots.
-    try:
-        from personalclaw.projects import _store as _project_store
-
-        store = _project_store()
-        for _pj in store.list_projects():
-            wsd = (_pj.workspace_dir or "").strip()
-            if wsd:
-                _add_workspace_root(f"Project: {_pj.name[:24]}", wsd)
-            # Its context folder, in the home: the notes its loops and chats share, which the
-            # project page opens here.
-            _add(f"Context: {_pj.name[:24]}", lambda pid=_pj.id: store.context_dir(pid))
-    except Exception:
-        pass
-
-    # De-dupe by realpath while preserving order + first label.
-    seen: set[str] = set()
-    roots: list[tuple[str, str]] = []
-    for label, rp in candidates:
-        if rp and rp not in seen:
-            seen.add(rp)
-            roots.append((label, rp))
-    return roots
 
 
 def _is_dashboard_root(path: str) -> bool:
@@ -1213,12 +1067,6 @@ def _is_dashboard_root(path: str) -> bool:
     """
 
     return any(path == rp for _label, rp in _dashboard_roots())
-
-
-#: The per-component byte limit essentially every filesystem enforces (ext4, APFS, NTFS).
-#: BYTES, not characters: an emoji costs four, so a 90-character name can exceed it while
-#: looking short. `len(name)` would have passed exactly the inputs the OS refuses.
-MAX_NAME_BYTES = 255
 
 
 def _path_rejection(exc: "ValidationError") -> str:
@@ -1248,116 +1096,18 @@ _CONTROL_CHARS = frozenset(chr(c) for c in list(range(0x20)) + [0x7F])
 
 
 def _validate_dashboard_path(raw: str, allowed_roots: tuple[str, ...] | None = None) -> str | None:
-    """Validate a file path for dashboard file I/O.
+    """The explorer's check: :func:`personalclaw.file_roots.admit` against the dashboard roots.
 
-    Two-layer check:
-      1. Reject sensitive credential paths via ``personalclaw.hooks.validate_file_path``
-         (e.g. ``~/.ssh``, ``~/.aws``).
-      2. Restrict to an allowlist of root directories the dashboard is meant
-         to surface (:func:`_dashboard_roots`), never the home itself. This
-         constrains the path-traversal surface so a request like
-         ``GET /api/file-read?path=/etc/passwd`` is rejected.
-
-    Returns the canonical path or ``None`` if rejected.
+    *allowed_roots* narrows it to a caller's own set (content search passes the roots it already
+    resolved). Returns the canonical path, or ``None`` when the path is not one the dashboard may
+    touch.
     """
-
-    from personalclaw.hooks import validate_file_path  # noqa: F811
-
-    canonical = validate_file_path(raw)
-    if canonical is None:
-        return None
-
     roots = (
         allowed_roots
         if allowed_roots is not None
         else tuple(rp for _label, rp in _dashboard_roots())
     )
-
-    inside_allowlist = False
-    for root in roots:
-        if not root:
-            continue
-        if canonical == root or canonical.startswith(root + os.sep):
-            inside_allowlist = True
-            break
-    if not inside_allowlist:
-        return None
-
-    # Even within allowed roots, block known-sensitive filenames (e.g. HMAC
-    # keys, telemetry salt, app secrets) to prevent credential disclosure
-    # via /api/file-read. Extensionless names must be listed here explicitly —
-    # ``blocked_suffixes`` below cannot reach them.
-    #
-    # Two layers, because the host filesystem is often case-INSENSITIVE
-    # (macOS/APFS, Windows/NTFS) while these comparisons used to be
-    # case-SENSITIVE — so ``<home>/.LOCAL_SECRET`` sailed past the blocklist yet
-    # resolved to the real ``.local_secret`` bytes (issue #690).
-    #   Layer 1 — spelling: ``casefold()`` both sides so EVERY case variant of a
-    #     blocked basename or suffix is refused, on any filesystem.
-    #   Layer 2 — identity: on a case-insensitive (or hard-link-capable) volume
-    #     the robust defence is file identity, not spelling. If the target
-    #     resolves to the same inode as a blocked-name file in the same
-    #     directory, refuse it whatever name reached it — this closes hard-link
-    #     and short-name (8.3) aliases layer 1 cannot see. Bounded to the fixed
-    #     blocked basenames (a handful of ``stat()``s), so it stays cheap even
-    #     when file-list calls this per directory entry, and it is SKIPPED for a
-    #     not-yet-existing target so create/write/move/upload of a fresh file is
-    #     never rejected.
-    # `OWN_SECRET_BASENAMES` is the SHARED definition (security.py), so this area and the
-    # bash/terminal guards cannot disagree about what is secret. They did: every name here
-    # was refused by `/api/file-read` and unknown to `is_sensitive_path`, which the terminal
-    # cwd guard and the bash read hook both consult (#643).
-    #
-    # 🔴 DERIVED, NOT RE-LISTED (#354). Both halves come from `security.py`:
-    #   `OWN_SECRET_BASENAMES`       — ours by NAME, wherever the file sits.
-    #   `HOME_SECRET_FILE_BASENAMES` — ours by LOCATION (`.env`, `session_key`,
-    #                                  `sessions.json`), applied here as a name rule because
-    #                                  this tier is already scoped to the browsable roots.
-    # Those three used to be spelled out here as literals, and that re-listing IS the mechanism
-    # of the bug: `session_key` was documented as the session SIGNING KEY in `session_store.py`
-    # and named a secret in `security.py`, and this list still did not have it — a hand-copied
-    # list only ever knows what someone remembered to copy. The set is unchanged today; what
-    # changes is that the NEXT name added to the one declaration is refused here without anyone
-    # having to notice. `test_secret_file_blocklist_rail.py` asserts exactly that by adding a
-    # synthetic name to the declaration and requiring this function to refuse it.
-    #
-    # The secret DIRECTORIES (`auth/`, `credentials/`, `governance/`) are deliberately NOT
-    # folded in: a subtree is not a basename, and they are already refused one layer up by
-    # `validate_file_path` → `is_sensitive_path`, which resolves them against the ACTIVE
-    # `PERSONALCLAW_HOME`. Naming them here too would refuse a user's own `credentials/`
-    # folder inside a workspace, which is an ordinary directory name.
-    from personalclaw.security import HOME_SECRET_FILE_BASENAMES, OWN_SECRET_BASENAMES
-
-    blocked_basenames = set(OWN_SECRET_BASENAMES) | set(HOME_SECRET_FILE_BASENAMES)
-    # An over-long final component reaches the OS as `ENAMETOOLONG` and surfaced as a 500 from
-    # `file-move` (over-long dest) and `create-dir`, which take a whole PATH rather than a name
-    # and so never met the name rules (#652). Bounded here, at the one place every path-taking
-    # endpoint already funnels through, rather than in each handler.
-    if len(os.path.basename(canonical).encode("utf-8")) > MAX_NAME_BYTES:
-        return None
-    blocked_suffixes = (".key", ".pem", ".secret")
-    base_cf = os.path.basename(canonical).casefold()
-    if base_cf in {name.casefold() for name in blocked_basenames}:
-        return None
-    if any(base_cf.endswith(suffix.casefold()) for suffix in blocked_suffixes):
-        return None
-
-    # Layer 2 — identity. A missing target (create/write/move/upload validate
-    # paths that need not exist yet) has no inode to compare, so fall through to
-    # the layer-1 result rather than rejecting a legitimate new file.
-    try:
-        target_st = os.stat(canonical)
-    except OSError:
-        return canonical
-    parent = os.path.dirname(canonical)
-    for blocked in blocked_basenames:
-        try:
-            cand_st = os.stat(os.path.join(parent, blocked))
-        except OSError:
-            continue
-        if cand_st.st_ino == target_st.st_ino and cand_st.st_dev == target_st.st_dev:
-            return None
-    return canonical
+    return _admit_path(raw, roots)
 
 
 def _resolve_relative_path(raw_path: str) -> str:
@@ -1409,6 +1159,11 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     a chat file-mention that opens the side panel can also live-watch the file.
     Without identical resolution the panel would fetch content fine but the
     watch would 400 and clobber it.
+
+    Each frame is ``{content, mtime, revision}``: the content exactly as ``file-read`` would
+    serve it now (:func:`file_as_read`), and the revision that read would report — ``null`` when
+    it would be truncated or binary. A page that takes a frame as its new copy of the file needs
+    that revision to save over it.
     """
 
     raw_path = request.query.get("path", "")
@@ -1449,14 +1204,9 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     await resp.prepare(request)
 
     poll_interval = 1.0
-    read_cap = 512_000
     last_mtime: float = 0.0
     last_content = ""
     resolved_at_start = await asyncio.to_thread(os.path.realpath, path)
-
-    def _read_file(p: str, cap: int) -> str:
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(cap)
 
     try:
         while not (request.transport is None or request.transport.is_closing()):
@@ -1484,9 +1234,8 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
                     )
                     break
                 try:
-                    content = await asyncio.to_thread(_read_file, current_resolved, read_cap)
-                    content, _ = redact_exfiltration_urls(content)
-                    content, _ = redact_credentials(content)
+                    raw = await asyncio.to_thread(read_head, current_resolved)
+                    content, truncated, binary = file_as_read(raw)
                 except Exception:
                     logger.warning("file-watch read error for %s", path, exc_info=True)
                     await asyncio.sleep(poll_interval)
@@ -1494,7 +1243,8 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
 
                 if content != last_content:
                     last_content = content
-                    payload = json.dumps({"content": content, "mtime": mtime})
+                    revision = None if truncated or binary else revision_of(content)
+                    payload = json.dumps({"content": content, "mtime": mtime, "revision": revision})
                     await resp.write(f"data: {payload}\n\n".encode())
 
             await asyncio.sleep(poll_interval)
@@ -1527,7 +1277,13 @@ async def api_config_fs_watch(request: web.Request) -> web.StreamResponse:
 
 
 async def api_file_read(request: web.Request) -> web.Response:
-    """GET /api/file-read?path=... — read file content for the markdown panel."""
+    """GET /api/file-read?path=... — read file content for the markdown panel.
+
+    Plain text, redacted (:func:`file_as_read`). A whole read carries its revision in the
+    ``ETag`` header — the revision ``POST /api/file-write`` must name in ``If-Match``
+    (`personalclaw/stale_write.py`). A truncated (``X-Truncated``) or binary (``X-Binary``) read
+    carries none.
+    """
     import logging  # noqa: F811
 
     from personalclaw.validation import (  # noqa: F811
@@ -1577,28 +1333,17 @@ async def api_file_read(request: web.Request) -> web.Response:
         )
         return web.Response(status=200)
     try:
-        read_cap = 512_000
-        # Read RAW bytes first so a binary file (a .pyc/.so/.db/image-with-odd-ext) is
-        # DETECTED, not decoded into mojibake (utf-8 errors='replace' turns NUL/binary
-        # into a wall of  that renders as garbage in the editor). A NUL byte in the
-        # head is git's own binary heuristic; signal it so the FE shows a clean
-        # "binary file" placeholder instead of trying to display + edit it.
-        with open(path, "rb") as f:
-            raw = f.read(read_cap + 1)
-        truncated = len(raw) > read_cap
-        raw = raw[:read_cap]
-        if b"\x00" in raw[:8192]:
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="file_read", outcome="success", resources=path
-            )
-            return web.Response(text="", content_type="text/plain", headers={"X-Binary": "true"})
-        content = raw.decode("utf-8", errors="replace")
-        content, _ = redact_exfiltration_urls(content)
-        content, _ = redact_credentials(content)
+        # RAW bytes first, so a binary file (a .pyc/.so/.db/image-with-odd-ext) is DETECTED and
+        # the FE shows a clean "binary file" placeholder instead of an editor full of mojibake.
+        content, truncated, binary = file_as_read(read_head(path))
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_read", outcome="success", resources=path
         )
-        headers = {"X-Truncated": "true"} if truncated else {}
+        if binary:
+            return web.Response(text="", content_type="text/plain", headers={"X-Binary": "true"})
+        # The body IS the text, so the revision rides beside it as the ETag. A truncated read
+        # names none: it is not a copy of the file, so nothing may be saved over the file from it.
+        headers = {"X-Truncated": "true"} if truncated else {"ETag": f'"{revision_of(content)}"'}
         return web.Response(text=content, content_type="text/plain", headers=headers)
     except Exception:
         logging.getLogger(__name__).exception("file_read failed for %s", path)
@@ -1704,7 +1449,16 @@ async def api_file_raw(request: web.Request) -> web.Response:
 
 
 async def api_file_write(request: web.Request) -> web.Response:
-    """POST /api/file-write — write file content from the markdown panel."""
+    """POST /api/file-write — write file content from the markdown panel.
+
+    The body replaces the WHOLE file, built from the copy the page read — and the agent
+    (``write_file``/``edit_file``), an artifact's write-through or another tab may have changed the
+    file since. So the request names the revision it was built from in ``If-Match``: the ``ETag``
+    of the ``file-read``, or the ``revision`` of the ``file-watch`` frame, its copy came from. None
+    is ``428 revision_required``; one the file no longer has is ``409 stale_write``, and nothing is
+    written (`personalclaw/stale_write.py`). A saved file answers with the ``revision`` it now
+    reads back at, so a page that stays open saves again from that.
+    """
     import logging  # noqa: F811
 
     from personalclaw.validation import (  # noqa: F811
@@ -1754,7 +1508,26 @@ async def api_file_write(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "not found"}, status=404)
     try:
-
+        # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
+        # replaced with no await in between, so nothing in this process lands between the check
+        # and the write. A file that no longer reads back whole — it grew past the read cap, or is
+        # binary now — was no page's copy: `whole_text` is None and no base matches it.
+        head = read_head(path)
+        stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
+        if stale is not None:
+            _sel().log_tool_invocation(
+                session_key="dashboard",
+                tool_name="file_write",
+                outcome=refusal_outcome(stale),
+                resources=path,
+            )
+            return stale
+        # That copy is the file as `file_as_read` shows it, with a marker for every value it masks.
+        # Each marker is put back from the file itself, so saving an edit never writes one over
+        # the key it hides.
+        content = keep_masked_spans(
+            str(body.get("content", "")), head.decode("utf-8", errors="replace")
+        )
         tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
         try:
             try:
@@ -1762,7 +1535,7 @@ async def api_file_write(request: web.Request) -> web.Response:
             except OSError:
                 pass
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                f.write(body.get("content", ""))
+                f.write(content)
             os.replace(tmp_path, path)
         except Exception:
             try:
@@ -1773,7 +1546,15 @@ async def api_file_write(request: web.Request) -> web.Response:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_write", outcome="success", resources=path
         )
-        return web.json_response({"ok": True})
+        written = whole_text(content.encode("utf-8"))
+        return web.json_response(
+            {"ok": True, "revision": None if written is None else revision_of(written)}
+        )
+    except MaskConflict as exc:
+        _sel().log_tool_invocation(
+            session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
+        )
+        return web.json_response({"error": str(exc)}, status=409)
     except Exception:
         logging.getLogger(__name__).exception("file_write failed for %s", path)
         _sel().log_tool_invocation(

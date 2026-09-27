@@ -27,7 +27,7 @@ const KINDS = { 'watched-page': { display_name: 'Watched Page', form: 'web_page'
 function source(over: Partial<WatchedSource> = {}): WatchedSource {
   return {
     id: 'src-1', name: 'Product changelog', provider: 'watched-page', kind: 'web_page',
-    spec: { url: 'https://example.com/changelog' }, budget: {},
+    spec: { url: 'https://example.com/changelog' }, budget: {}, revision: 'r-src-1',
     enrichment: 'full', poll_interval_secs: 3600, item_type: 'bookmark', enabled: true,
     health_status: 'ok', last_error_summary: '', last_escalations: [], last_new_count: 2,
     last_poll_at: new Date().toISOString(), enrolled: true,

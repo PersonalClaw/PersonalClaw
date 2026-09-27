@@ -105,7 +105,7 @@ const SUBPAGES: SubPage[] = [
   // is what holds a session to this gateway; this is who may talk to the agent through a
   // messaging channel. The allowlist was writable from two places and readable from none
   // before EA-7 — an access-control list you cannot enumerate is one you cannot audit.
-  { id: 'sender-trust', label: 'Sender trust', icon: MessageCircle, render: () => <SenderTrustPanel /> },
+  { id: 'sender-trust', label: 'Sender trust', icon: MessageCircle, render: (c) => <SenderTrustPanel navigate={c.navigate} /> },
   { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
   // Beside Guardrails on purpose: "what can reach in, and can I cut it off" is the same
   // question Guardrails asks about what can act. EXTERNAL-ACCESS §1.5.

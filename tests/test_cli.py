@@ -105,6 +105,9 @@ class TestCronCli:
 
     They also had no `config_dir` isolation at all (the mock was the only thing between them and
     the user's real home). The store is a real file, so the fixture now redirects it.
+
+    `yes=True` is the owner's `--yes`: an agent job, and `--approval-mode auto`, need it, and what
+    the command says without it is `test_a_grant_is_for_the_action_the_owner_allowed`'s.
     """
 
     @pytest.fixture(autouse=True)
@@ -112,6 +115,30 @@ class TestCronCli:
         monkeypatch.setattr("personalclaw.cli_commands.config_dir", lambda: tmp_path)
         monkeypatch.setattr("personalclaw.cli_commands.sel", MagicMock())
         return tmp_path
+
+    @pytest.fixture
+    def fakechat(self, monkeypatch):
+        """An installed chat channel. `--channel` names the channel results go to, and the CLI
+        builds the installed channels to ask whether it can take the id."""
+        from personalclaw.channel_transports.base import ChannelTransportProvider
+
+        class _Chat(ChannelTransportProvider):
+            name = property(lambda self: "fakechat")
+            display_name = property(lambda self: "FakeChat")
+
+            async def connect(self) -> bool:
+                return True
+
+            async def disconnect(self) -> None:
+                return None
+
+            async def send(self, message: object) -> bool:
+                return True
+
+        monkeypatch.setattr(
+            "personalclaw.providers.loader.build_channel_transports", lambda: [_Chat()]
+        )
+        return "fakechat"
 
     def _store(self, tmp_path):
         from personalclaw.triggers.store import TriggerStore
@@ -135,6 +162,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="",
+                yes=True,
             )
         )
         row = self._only(tmp_path)
@@ -144,7 +172,7 @@ class TestCronCli:
         assert row.trigger.spec == {"kind": "interval", "interval_secs": 300}
         assert not (tmp_path / "crons.json").exists(), "nothing may be written to the legacy file"
 
-    def test_cron_add_with_channel(self, tmp_path):
+    def test_cron_add_with_channel(self, tmp_path, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="add",
@@ -152,14 +180,15 @@ class TestCronCli:
                 message="check",
                 every=300,
                 cron_expr=None,
-                channel="C0EXAMPLE01",
+                channel="fakechat:C0EXAMPLE01",
                 approval_mode="",
+                yes=True,
             )
         )
         # `delivery` is the store's spelling of the legacy `channel=` kwarg.
-        assert self._only(tmp_path).trigger.delivery == "channel:C0EXAMPLE01"
+        assert self._only(tmp_path).trigger.delivery == "channel:fakechat:C0EXAMPLE01"
 
-    def test_cron_add_with_cron_expr(self, tmp_path):
+    def test_cron_add_with_cron_expr(self, tmp_path, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="add",
@@ -167,13 +196,14 @@ class TestCronCli:
                 message="check",
                 every=None,
                 cron_expr="0 9 * * MON-FRI",
-                channel="C0EXAMPLE01",
+                channel="fakechat",
                 approval_mode="",
+                yes=True,
             )
         )
         row = self._only(tmp_path)
         assert row.trigger.spec == {"kind": "cron", "expr": "0 9 * * MON-FRI"}
-        assert row.trigger.delivery == "channel:C0EXAMPLE01"
+        assert row.trigger.delivery == "channel:fakechat"
         assert row.trigger.next_fire_at
 
     def test_cron_add_with_approval_mode(self, tmp_path):
@@ -186,6 +216,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="auto",
+                yes=True,
             )
         )
         inline = (self._only(tmp_path).trigger.workflow or {}).get("inline") or {}
@@ -207,6 +238,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="",
+                yes=True,
             )
         )
         assert self._only(tmp_path).trigger.created_by == "user"
@@ -241,6 +273,9 @@ class TestCronCli:
                     "config": {"task_template": "check", "agent": "helper", "model": "gpt"},
                 }
             },
+            # Granted, as `cron add` (`tools.create`) freezes it: resuming an ungranted row is
+            # refused (`triggers.grants`).
+            capabilities={"providers": ["invoke-agent"]},
         )
         for key, value in over.items():
             setattr(trigger, key, value)
@@ -259,6 +294,7 @@ class TestCronCli:
                 cron_expr=None,
                 channel=None,
                 approval_mode="auto",
+                yes=True,
             )
         )
         config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}
@@ -373,7 +409,7 @@ class TestCronCli:
         # And nothing may have been written on the way to that refusal.
         assert self._only(tmp_path).trigger.spec == {"kind": "interval", "interval_secs": 300}
 
-    def test_cron_update_not_found(self, tmp_path, capsys):
+    def test_cron_update_not_found(self, tmp_path, capsys, fakechat):
         _cron(
             argparse.Namespace(
                 cron_action="update",
@@ -382,7 +418,7 @@ class TestCronCli:
                 message=None,
                 every_secs=None,
                 cron_expr=None,
-                channel="C0EXAMPLE01",
+                channel="fakechat:C0EXAMPLE01",
                 approval_mode=None,
             )
         )

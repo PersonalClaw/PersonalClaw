@@ -16,7 +16,9 @@ It asserts, against a real wheel installed into a scratch venv:
      installed bundled-chat app reads — under a permitted licence, and the wheel carries no
      model weight and is still small; see :func:`_assert_installed_bundled_model`, and
   8. the booted install OFFERS that model's download on a fresh home (``chat_download_offer``
-     on ``GET /api/onboarding``); see :func:`_assert_download_offer`.
+     on ``GET /api/onboarding``); see :func:`_assert_download_offer`, and
+  9. it SERVES the licence notices Settings → Updates links, the fonts' and the bundled npm
+     packages', as plain text; see :func:`_assert_notices_served`.
 
 Everything is read from the ARTIFACT, never from this repository. Assertion 7 used to import
 ``personalclaw.bundled_model`` from ``src/`` and read the record from ``docs/`` — so it passed
@@ -40,7 +42,8 @@ Usage:
                   ``release.yml`` runs on the wheel ``uv build`` just produced.
     --build       the canonical distribution build (:func:`_canonical_distribution_build`):
                   clean every staging tree, install the root npm workspace from its
-                  lockfile, build and freshness-stamp the SPA, build and inspect the sdist
+                  lockfile, build and freshness-stamp the SPA, check every asset and npm
+                  package it ships has its licence notice, build and inspect the sdist
                   and the wheel, rebuild the wheel FROM the sdist and require it to be
                   byte-identical, then install and serve it.
     --keep        keep the scratch venvs/homes for debugging.
@@ -641,6 +644,29 @@ def _assert_download_offer(base: str) -> None:
     )
 
 
+#: The licence notices the installed wheel serves, and how each one's text opens.
+_NOTICE_TITLES = {
+    "/THIRD_PARTY_NOTICES.txt": "Third-party notices for the PersonalClaw dashboard\n",
+    "/THIRD_PARTY_NOTICES_NPM.txt": "Third-party notices for the PersonalClaw dashboard's code\n",
+}
+
+
+def _assert_notices_served(base: str) -> None:
+    """Assertion 9: the booted install serves both licence notices as plain text.
+
+    What a user opens from Settings → Updates → Licences. Both files are in the wheel's
+    ``static/dist`` (:func:`inspect_wheel` sees to that); this asks the INSTALLED gateway for them,
+    because an unrouted file is answered with the dashboard's own HTML and still returns 200.
+    """
+    for path, title in _NOTICE_TITLES.items():
+        status, ctype, body = _http_get(f"{base}{path}")
+        if status != 200:
+            _fail(f"{path} returned {status} (want 200 text/plain)")
+        if not ctype.lower().startswith("text/plain") or not body.startswith(title):
+            _fail(f"{path} did not serve its notices (content-type={ctype!r}): {body[:120]!r}")
+    _log(f"OK: {' and '.join(_NOTICE_TITLES)} → 200 text/plain (the licence notices)")
+
+
 def _assert_spa_in_wheel(wheel: Path) -> None:
     names = zipfile.ZipFile(wheel).namelist()
     if not any(n.endswith(_SPA_MARKER) for n in names):
@@ -869,6 +895,9 @@ def _boot_and_probe(py: Path, home: Path, bundled_apps: int = 0) -> None:
 
         # 8. /api/onboarding — the install offers its default chat model's download.
         _assert_download_offer(base)
+
+        # 9. The licence notices Settings → Updates links, served from the wheel's static/dist.
+        _assert_notices_served(base)
     finally:
         _log("stopping gateway…")
         proc.terminate()
@@ -912,7 +941,8 @@ def _verify_wheel_runtime(wheel: Path, *, keep: bool) -> None:
     _log(
         "PASS: wheel contract met (SPA packaged, installs from the wheel alone, the installed "
         "package carries a permitted bundled-model record and no weight, gateway serves / + "
-        "/api/healthz, every bundled app enabled, and the install offers its default model)."
+        "/api/healthz, every bundled app enabled, the install offers its default model, and "
+        "it serves its licence notices)."
     )
 
 
@@ -940,6 +970,9 @@ def _canonical_distribution_build(*, keep: bool) -> None:
         cwd=root,
         env=env,
     )
+    # Nothing ships without its licence notice: every tracked asset, every font and binary the
+    # SPA build emitted, and every npm package whose code it bundled (THIRD_PARTY_NOTICES_NPM.txt).
+    _run([sys.executable, "scripts/check_asset_licenses.py", "--built-web"], cwd=root, env=env)
 
     dist = root / "dist"
     _run([uv, "build", "--sdist", "--out-dir", str(dist)], cwd=root, env=env)

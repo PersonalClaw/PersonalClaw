@@ -29,7 +29,7 @@ import { AuditPanel, verifiedScope, capped } from './AuditPanel'
 // 🔑 WHAT THIS DELIBERATELY DOES NOT DO: offer a "verify everything" button. `personalclaw security
 // verify` already runs the exhaustive check — its own comment calls it "an explicit offline audit" —
 // and a button here would re-create the hang the window was added to fix. So the panel NAMES the
-// command, which is the same choice `DurabilityPanel` makes for `personalclaw restore --replace`.
+// command, which is the same choice `DurabilityPanel` makes for `personalclaw restore <archive> --mode replace`.
 
 const auditEvents = vi.fn()
 const auditVerify = vi.fn()

@@ -13,6 +13,8 @@ import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
+import { DeniedCallRerun } from './DeniedCallRerun'
+import { InboxSection as Section } from './InboxSection'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -167,6 +169,10 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
         </Section>
       )}
 
+      {/* A call denied without an answer — the one next step it really has (ask the chat
+          again, run its trigger again, run its workflow step again), or how its retry ended. */}
+      <DeniedCallRerun item={item} navigate={navigate} onChanged={onChanged} />
+
       {/* Deep link — for a non-channel item this REPLACES the reply machinery as the
           primary action: the answer to "a loop needs your input" is to go to the loop.
           Skipped for anything answerable in place above (proposals, workflow gates): the
@@ -257,18 +263,6 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
           {item.favorited ? 'Favorited' : 'Favorite'}
         </Button>
       </div>
-    </div>
-  )
-}
-
-function Section({ label, right, children }: { label: string; right?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center gap-s">
-        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{label}</span>
-        {right}
-      </div>
-      {children}
     </div>
   )
 }

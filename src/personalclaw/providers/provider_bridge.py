@@ -7,7 +7,9 @@ The model is:
 2. Resolve that provider from the config.json ``providers[]`` registry
    (``default_registry``), pinning to the selected model.
 3. Fall back to the first configured provider declaring the capability when no
-   model is selected.
+   model is selected, built with its own model (``ProviderEntry.own_model``). One that
+   names no model is never that fallback: the call is refused, never sent an empty model
+   or served by a model its provider picked.
 
 The bridge exports a single function ``create_provider_factory()`` that returns
 a callable matching the factory signature::
@@ -18,10 +20,14 @@ a callable matching the factory signature::
 import json
 import logging
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
 from personalclaw.llm.base import ModelProvider, ModelSubstitution
+
+if TYPE_CHECKING:
+    from personalclaw.agents.native.failover import ModelFailover
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +541,71 @@ def stamp_substitution(provider: object, substitution: ModelSubstitution | None)
         logger.debug("%s does not accept a substitution stamp", type(provider).__name__)
 
 
+@dataclass(frozen=True)
+class ResolutionBasis:
+    """What a native runtime's model was resolved from — what a rebind or an instance edit changes.
+
+    A runtime is built once and then cached per session (``SessionManager``), and it fixes its
+    model when it is built. So without this, rebinding chat in Settings → Models reached a new
+    chat and nothing already open: the persistent background session kept the model chat was
+    bound to when the gateway started, for every title, follow-up, suggestion, history
+    compression and memory consolidation after it, and an open chat that has no model of its
+    own kept answering on the old binding. ``SessionManager`` asks :meth:`holds` when it reuses
+    a runtime, and rebuilds one whose basis moved, at its next acquire.
+
+    ``chains`` are the Settings → Models chains the resolution read: the runtime's own axis
+    (``active_model_refs`` — the chat chain while that axis is unbound) and chat's, which a
+    chat's or an agent's own pick is checked against (``named_model_problem``). ``entry`` is the
+    registry entry the model is served from, compared by IDENTITY: an edit in Settings →
+    Providers (a new Default Model, endpoint or key) re-registers the entry, and a removal
+    drops it, so either reads as moved.
+    """
+
+    axis: str
+    chains: tuple[tuple[str, ...], tuple[str, ...]]
+    entry: object | None = None
+
+    @classmethod
+    def read(cls, axis: str) -> "ResolutionBasis":
+        """The chains as they read now, for a runtime about to resolve on ``axis``."""
+        return cls(axis=axis, chains=_basis_chains(axis))
+
+    def served_from(self, served_ref: str) -> "ResolutionBasis":
+        """This basis, pinned to the registry entry ``served_ref`` names (``""`` pins none)."""
+        name = served_ref.partition(":")[0]
+        if not name:
+            return self
+        try:
+            from personalclaw.llm.registry import get_default_registry
+
+            entry = next((e for e in get_default_registry().list_entries() if e.name == name), None)
+        except Exception:  # noqa: BLE001 — an unreadable registry pins nothing
+            logger.debug("resolution basis: registry unreadable for %r", name, exc_info=True)
+            entry = None
+        return ResolutionBasis(axis=self.axis, chains=self.chains, entry=entry)
+
+    def holds(self) -> bool:
+        """Whether a resolution now would read what this one read. A probe that fails holds:
+        a broken read must not rebuild every open session."""
+        try:
+            if _basis_chains(self.axis) != self.chains:
+                return False
+            if self.entry is None:
+                return True
+            from personalclaw.llm.registry import get_default_registry
+
+            return any(e is self.entry for e in get_default_registry().list_entries())
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.debug("resolution basis probe failed for %s", self.axis, exc_info=True)
+            return True
+
+
+def _basis_chains(axis: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    from personalclaw.providers.use_cases import active_model_refs
+
+    return tuple(active_model_refs(axis)), tuple(active_model_refs("chat"))
+
+
 def _build_native_runtime(
     *,
     use_case: str,
@@ -631,6 +702,9 @@ def _build_native_runtime(
     from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
 
     inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
+    # Read BEFORE resolving: a rebind that lands while this builds then reads as moved, and the
+    # runtime is rebuilt at its next acquire rather than kept on what it was built from.
+    basis = ResolutionBasis.read(inner_axis)
 
     def _resolve(override: str | None) -> ModelProvider:
         return resolve_provider_for_use_case(
@@ -679,16 +753,20 @@ def _build_native_runtime(
     # an empty model string and 400. Resolve a concrete chat model in that case.
     #
     # The model id is passed to the ALREADY-RESOLVED ``model_provider`` above and
-    # overrides its own pinned id, so it MUST name the same provider — pass that
-    # provider's entry name as the hint. ``_provider_entry_name`` derives it from
-    # the resolved provider (its bound entry name), falling back to the first
-    # active chat ref's provider (the ref the inner resolver picks first). Without
-    # this the fallback could return another provider's model (e.g. Alibaba's
-    # ``glm-5.2`` sent to the Bedrock client → "model identifier is invalid",
-    # which failed every background suggestions/consolidation turn).
+    # overrides its own pinned id, so it MUST name the same provider. The ref the seam
+    # built it for says both halves (``served_ref``, stamped where they are known): after
+    # the chain walk skipped the head (an open breaker, an entry that cannot be built),
+    # that is the LATER entry, and "the first ref of the chain" named the head's model
+    # to it. Only an unstamped provider falls back to that ordering
+    # (``_provider_entry_name``). Without agreement the model of one provider is sent to
+    # another (e.g. Alibaba's ``glm-5.2`` to the Bedrock client → "model identifier is
+    # invalid", which failed every background suggestions/consolidation turn).
     if not model:
-        model = _fallback_chat_model(
-            provider_hint=_provider_entry_name(model_provider, use_case=inner_axis),
+        served_entry, _, served_model = str(
+            getattr(model_provider, "served_ref", "") or ""
+        ).partition(":")
+        model = served_model or _fallback_chat_model(
+            provider_hint=served_entry or _provider_entry_name(model_provider, use_case=inner_axis),
             use_case=inner_axis,
         )
 
@@ -796,7 +874,57 @@ def _build_native_runtime(
     else:
         stamped = getattr(model_provider, "substituted_for", None)
         runtime.model_substitution = stamped if isinstance(stamped, ModelSubstitution) else None
+    # Where a turn may go when this model fails before any output. Not for an unattended run:
+    # nobody reads a live line there, and #3648's rule is that a substitute is always said.
+    if not unattended:
+        runtime.failover = _turn_failover(inner_axis, choices, runtime.served_model_ref, _resolve)
+    runtime.resolved_from = basis.served_from(runtime.served_model_ref)
     return runtime  # type: ignore[return-value]  # CI-2
+
+
+def _turn_failover(
+    axis: str,
+    choices: list[tuple[str, str, str]],
+    served: str,
+    resolve: Callable[[str], ModelProvider],
+) -> "ModelFailover | None":
+    """The models a turn on ``served`` may fall back to when it fails before any output.
+
+    Those after it in the order a native runtime picks its model: the chat's own pick, the agent's
+    pin (each only while it can run, :func:`named_model_problem`), then the use case's chain in
+    Settings → Models. ``None`` when nothing comes after it, or ``served`` is not in that order at
+    all (a provider built outside the resolution seam), so nothing is guessed.
+    """
+    from personalclaw.agents.native.failover import ModelFailover
+    from personalclaw.llm_helpers import failure_clause, use_case_chain
+
+    order: list[str] = []
+    whose: dict[str, str] = {}
+    for ref, who, _fix in choices:
+        qualified = _qualified_chat_ref(ref)
+        if qualified not in order and named_model_problem(ref) is None:
+            order.append(qualified)
+            whose[qualified] = who
+    order.extend(ref for ref in use_case_chain(axis) if ref not in order)
+    if not served or served not in order:
+        return None
+    later = tuple(order[order.index(served) + 1 :])
+    if not later:
+        return None
+
+    async def takes_images(ref: str) -> bool:
+        from personalclaw.providers.image_input import image_input
+
+        return (await image_input(ref)).accepted
+
+    return ModelFailover(
+        requested=served,
+        who=whose.get(served, ""),
+        candidates=later,
+        build=lambda ref: (resolve(ref), _strip_provider_prefix(ref)),
+        describe=failure_clause,
+        takes_images=takes_images,
+    )
 
 
 def _native_session_cwd(cwd: str | None) -> str:
@@ -899,13 +1027,14 @@ def _diagnose_unbuildable_ref(
        name is the user's own label and matches nothing installable.
     5. entry + factory present, but its declared capabilities do not cover the use case.
     6. the credential it names has no secret in the credential store.
-    7. anything left — which it states as *unsure*, with the model id to check and the log
+    7. the ref names no model, and the entry names none of its own.
+    8. anything left — which it states as *unsure*, with the model id to check and the log
        line to read, rather than asserting a specific wrong cause.
 
     "The model name is not offered by that provider" is deliberately NOT a branch:
     resolution passes ``model_override`` through to the factory unvalidated, so a wrong
     model id does not make this function return ``None``. When a factory rejects it, the
-    build failure lands in branch 7, which is why that branch names the model id.
+    build failure lands in branch 8, which is why that branch names the model id.
     """
     from personalclaw.providers.use_cases import _known_provider_names
 
@@ -961,7 +1090,7 @@ def _diagnose_unbuildable_ref(
                 f"provider {provider_name!r} declares type {entry.type!r}, and no installed "
                 f"app registers that type",
                 f"install an app that provides {entry.type!r} in the App Store, or change "
-                f"{provider_name!r}'s type in Settings → Providers",
+                f"the type of {provider_name!r} in Settings → Providers",
             )
         app_name, enabled = app
         if not enabled:
@@ -974,7 +1103,8 @@ def _diagnose_unbuildable_ref(
             f"provider {provider_name!r} declares type {entry.type!r} and its app "
             f"{app_name!r} is installed and enabled, but the type never registered — the "
             f"app failed to load",
-            f"check the gateway log for {app_name!r}'s import error, or {rebind}",
+            f"check the gateway log for the import error that stopped {app_name!r} loading, "
+            f"or {rebind}",
         )
 
     if target_cap not in (entry.declared_capabilities or type_capabilities):
@@ -998,6 +1128,13 @@ def _diagnose_unbuildable_ref(
             f"secret in the credential store",
             f"store {credential!r} in Settings → Secrets, or {rebind}",
         )
+
+    # The ref names no model (a stored ``"<entry>:"``) and the entry names none of its own, so
+    # there was nothing to build it for (``_served_model``).
+    if _served_model(entry, model_id) is None:
+        from personalclaw.llm.registry import no_model_chosen
+
+        return no_model_chosen(provider_name)
 
     return (
         f"provider {provider_name!r} (type {entry.type!r}) is configured and its type is "
@@ -1025,8 +1162,13 @@ def resolve_provider_for_use_case(
        (``reasoning`` / ``code_tools``) with no model of its own borrows the parent
        ``chat`` selection.
     2. Implicit fallback: any configured provider (config.json ``providers[]``)
-       declaring the requested capability — picks the first. Avoids forcing the
-       user to set a selection when only one sensible provider exists.
+       declaring the requested capability and naming a model of its own — picks the
+       first, built with that model. Avoids forcing the user to set a selection when
+       only one sensible provider exists; a provider that names no model refuses the
+       call instead (``_implicit_unready``). Never for
+       image understanding, which no provider-type declaration can pick a model for
+       (``_implicit_candidates``): an unbound image reader is resolved by name through
+       :func:`personalclaw.providers.image_input.resolve_image_reader`.
     """
     from personalclaw.providers.use_cases import (
         VALID_USE_CASES,
@@ -1377,11 +1519,34 @@ def resolve_provider_for_use_case(
     if fallback is not None:
         return fallback
 
-    # Nothing READY declares the capability. When something does declare it but its type says
-    # it cannot serve yet (a model that is not downloaded), that is the true cause and the only
-    # one with a fix a user can act on — "no provider declares the capability" would be false
-    # about a home that has one. ``what`` stays the no-model sentence on purpose: from the
-    # user's side no model is set up yet, and the chat surface's calm setup state keys on it.
+    # Image understanding with nothing bound: no implicit pick can name a model that reads images
+    # (see ``_implicit_candidates``), and the chat-model fallback is ``image_input.image_reader``'s
+    # to make, by name. Reaching here means neither holds, so the refusal says what does.
+    from personalclaw.llm.capabilities import Capability
+
+    if _capability_enum(capability) is Capability.VISION:
+        raise ProviderResolutionError(
+            "No image model is set up. Choose one in Settings → Models.",
+            AgentError(
+                code="ERR_MODEL_UNRESOLVED",
+                what=f"no model is set up to read images (use case {use_case!r})",
+                why=(
+                    "nothing is bound to image understanding, and a provider that carries images "
+                    "does not say which of its models reads them"
+                ),
+                fix=(
+                    "choose an image-understanding model in Settings → Models, or chat with a "
+                    "model that takes images"
+                ),
+            ),
+        )
+
+    # Nothing READY declares the capability. When something does declare it but cannot serve
+    # (it names no model of its own, or its type says a model is not downloaded yet), that is
+    # the true cause and the only one with a fix a user can act on — "no provider declares the
+    # capability" would be false about a home that has one. ``what`` stays the no-model sentence
+    # on purpose: from the user's side no model is set up yet, and the chat surface's calm setup
+    # state keys on it (and names the provider when the cause is that none is chosen for it).
     unready = _first_unready_candidate(capability)
     raise ProviderResolutionError(
         f"No provider configured for use case {use_case!r}. "
@@ -1436,24 +1601,61 @@ def _implicit_candidates(registry: Any, target_cap: Any, *, skip_agent_runtimes:
     as the search registry's keyless floor (``search_providers/registry.py``: "a provider that
     declares itself ``keyless`` sorts last among candidates so a user-configured/keyed provider
     always wins").
+
+    Image understanding has NO implicit candidate. Reading an image is a property of a MODEL: a
+    type that declares vision says its wire can carry an image, not which of its models reads one,
+    so this walk could only hand back an entry built with its own ``model`` — empty for an instance
+    saved from the Add-instance form, which Ollama refused ("model is required"), and a text-only
+    model otherwise. With nothing bound, the chat model reads images when it takes them:
+    :func:`personalclaw.providers.image_input.image_reader` asks, and resolves it by name.
+
+    Nor is an entry that names no model of its own a candidate (:func:`_implicit_unready`).
     """
+    from personalclaw.llm.capabilities import Capability
+
+    if target_cap is Capability.VISION:
+        return []
     out = []
     for entry in sorted(registry.list_entries(), key=lambda e: getattr(e, "floor", False)):
         if skip_agent_runtimes and entry.type == "acp_agent":
             continue
         if target_cap not in _entry_capabilities(registry, entry):
             continue
-        if registry.not_ready(entry, implicit=True) is not None:
+        if _implicit_unready(registry, entry) is not None:
             continue
         out.append(entry)
     return out
 
 
+def _implicit_unready(registry: Any, entry: Any) -> tuple[str, str] | None:
+    """Why ``entry`` cannot be the implicit pick when nothing is bound, or ``None`` when it can.
+
+    First its type's own answer (``registry.not_ready``), which is the more specific one when it
+    has one: a bundled-model row with no weight on disk is "not downloaded yet", not "no model
+    chosen". Then it must name a model of its own (:attr:`~personalclaw.llm.registry.
+    ProviderEntry.own_model`): nothing names one for an unbound call, so an instance saved from
+    the Add-instance form with no Default Model could only be sent an empty model (Ollama
+    answered every chat turn and background chore ``400 model is required``) or have its provider
+    pick one of its own (the one-shot path took the first model the endpoint listed, the Groq app
+    its discovery's first chat model). An agent runtime runs its CLI's own model, so it names
+    none by design.
+    """
+    from personalclaw.llm.registry import no_model_chosen
+
+    unready = registry.not_ready(entry, implicit=True)
+    if unready is not None:
+        return unready
+    if entry.type != "acp_agent" and not entry.own_model:
+        return no_model_chosen(entry.name)
+    return None
+
+
 def _first_unready_candidate(capability: str) -> tuple[str, str] | None:
     """``(why, fix)`` of the first model entry that declares ``capability`` but cannot serve.
 
-    Only consulted once resolution has already found nothing ready, to say WHY. ``None`` when
-    no entry declares the capability at all — the plain "no provider" case.
+    Only consulted once resolution has already found nothing ready, to say WHY — in the words of
+    the one answer the implicit walk asks (:func:`_implicit_unready`). ``None`` when no entry
+    declares the capability at all — the plain "no provider" case.
     """
     try:
         from personalclaw.llm.registry import get_default_registry
@@ -1467,7 +1669,7 @@ def _first_unready_candidate(capability: str) -> tuple[str, str] | None:
                 continue
             if target_cap not in _entry_capabilities(registry, entry):
                 continue
-            unready = registry.not_ready(entry, implicit=True)
+            unready = _implicit_unready(registry, entry)
             if unready is not None:
                 return unready
     except Exception:  # noqa: BLE001 — a diagnosis must never raise over the failure it explains
@@ -1492,7 +1694,22 @@ def _ref_can_serve(registry: Any, entries: dict[str, Any], ref: str) -> bool:
     entry = entries.get(parsed[0])
     if entry is None:
         return True
-    return registry.not_ready(entry, implicit=False) is None
+    return _served_model(entry, parsed[1]) is not None and (
+        registry.not_ready(entry, implicit=False) is None
+    )
+
+
+def _served_model(entry: Any, named: str | None) -> str | None:
+    """The model a call on ``entry`` is served by: the one it ``named``, else the entry's own.
+
+    ``None`` when neither names one: the entry cannot serve that call, and resolution refuses it
+    rather than build a provider that would send an empty model or pick its own. ``""`` only for
+    an agent runtime, which runs its CLI's own model.
+    """
+    model = str(named or "").strip() or entry.own_model
+    if model or entry.type == "acp_agent":
+        return model
+    return None
 
 
 def can_resolve_use_case(use_case: str) -> bool:
@@ -1603,7 +1820,12 @@ def serving_entry(use_case: str) -> Any:
         for ref in refs:
             parsed = split_ref(ref)
             entry = entries.get(parsed[0]) if parsed else None
-            if entry is not None and registry.not_ready(entry, implicit=False) is None:
+            if (
+                entry is not None
+                and parsed is not None
+                and _served_model(entry, parsed[1]) is not None
+                and registry.not_ready(entry, implicit=False) is None
+            ):
                 return entry
         return None
     target_cap = _capability_enum(parent_capability(use_case))
@@ -1611,6 +1833,32 @@ def serving_entry(use_case: str) -> Any:
         return None
     candidates = _implicit_candidates(registry, target_cap, skip_agent_runtimes=True)
     return candidates[0] if candidates else None
+
+
+def expected_served_ref(model: str) -> str:
+    """The ``"<entry>:<model>"`` a native chat turn would be served by, WITHOUT building it.
+
+    For a surface that must answer before a runtime exists (the attachment chip on a new
+    chat). ``model`` is the session's selection: a ``"<entry>:<model>"`` ref naming a
+    registered entry stands as given; a bare id is served by the entry the ``chat`` binding
+    resolves to (:func:`serving_entry`); ``""``/``"auto"`` takes that entry's model the way a
+    runtime picks it (:func:`_fallback_chat_model`, else the entry's own model). ``""`` when
+    nothing would serve chat.
+    """
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import split_ref
+
+    chosen = (model or "").strip()
+    parsed = split_ref(chosen)
+    if parsed and parsed[0] in {e.name for e in get_default_registry().list_entries()}:
+        return chosen
+    entry = serving_entry("chat")
+    if entry is None:
+        return ""
+    if chosen and chosen.lower() != "auto":
+        return f"{entry.name}:{chosen}"
+    picked = _fallback_chat_model(entry.name) or entry.own_model
+    return f"{entry.name}:{picked}" if picked else ""
 
 
 def _resolve_from_config_registry(
@@ -1663,34 +1911,29 @@ def _resolve_from_config_registry(
     if not entries:
         return None
 
-    # If model_override is provider-qualified, route to that provider and strip
-    # the prefix so the bare model id reaches the SDK. Two qualified shapes:
-    #   • "ProviderName/model"  (slash) — legacy composer form.
+    # A ``provider_hint`` means the caller already split the ref (the chain walk names the entry
+    # and passes the model id alone), so the override IS the model id, whole. Parsing it again
+    # split any id with a slash in it on the slash branch below: a chat bound to
+    # "groq:meta-llama/llama-4-scout-17b-16e-instruct" was sent to Groq as
+    # "llama-4-scout-17b-16e-instruct", and every OpenRouter, Together and NVIDIA id the same way.
+    #
+    # Only an override that names no provider is read for one, in two shapes:
     #   • "ProviderName:model"  (colon) — the active_models.json ref form a chat
     #     session stores (e.g. "Bedrock:global.anthropic.claude-opus-4-8").
+    #   • "ProviderName/model"  (slash) — legacy composer form.
     # Colons are ambiguous — Bedrock model ids themselves contain them
     # (…-v1:0) — so split on the FIRST colon ONLY when the prefix matches a
-    # known provider entry name. Otherwise leave the override untouched.
-    # Order matters: check the COLON form FIRST when its prefix names a known
-    # provider. A "Provider:model_id" ref can carry a model id that itself
-    # contains a slash (NVIDIA "nvidia:meta/llama-3.1-8b-instruct", OpenRouter
-    # "or:meta-llama/llama-3.3"), so splitting on "/" first would mis-parse the
-    # provider as "nvidia:meta" → unknown → wrong provider (fell back to Bedrock).
-    if (
-        model_override
-        and ":" in model_override
-        and any(e.name == model_override.split(":", 1)[0] for e in entries)
-    ):
-        _hint, model_override = model_override.split(":", 1)
-        provider_hint = provider_hint or _hint
-    elif model_override and "/" in model_override:
-        _hint, model_override = model_override.split("/", 1)
-        provider_hint = provider_hint or _hint
-    elif model_override and ":" in model_override:
-        _maybe_provider = model_override.split(":", 1)[0]
-        if any(e.name == _maybe_provider for e in entries):
-            _hint, model_override = model_override.split(":", 1)
-            provider_hint = provider_hint or _hint
+    # known provider entry name. The colon form goes FIRST because its model id
+    # can itself contain a slash (NVIDIA "nvidia:meta/llama-3.1-8b-instruct",
+    # OpenRouter "or:meta-llama/llama-3.3"), so splitting on "/" first would name
+    # the provider "nvidia:meta" → unknown → wrong provider.
+    if model_override and not provider_hint:
+        if ":" in model_override and any(
+            e.name == model_override.split(":", 1)[0] for e in entries
+        ):
+            provider_hint, model_override = model_override.split(":", 1)
+        elif "/" in model_override:
+            provider_hint, model_override = model_override.split("/", 1)
 
     candidate = None
     if provider_hint:
@@ -1716,20 +1959,15 @@ def _resolve_from_config_registry(
     if candidate is None:
         return None
 
-    config: dict[str, Any] = {
-        "model": candidate.model,
-        **(candidate.options or {}),
-    }
-    if model_override:
-        config["model"] = model_override
-    if cwd:
-        config["cwd"] = cwd
-    if session_key:
-        config["session_key"] = session_key
-    if agent:
-        config["agent"] = agent
-    for k, v in kwargs.items():
-        config.setdefault(k, v)
+    # The model this call is served by: the one the caller named (a binding's ref, a chat's own
+    # pick, a pinned judge), else the entry's own (``ProviderEntry.own_model``: its model, else
+    # the Default Model the Add-instance form saves). An entry that names none is not built for a
+    # call that names none: every factory would send the model empty or have its provider pick
+    # one. The implicit walk above already passes such an entry over; this is the named case
+    # (a stored ``"<entry>:"`` ref), which the chain walk then reports in the same words.
+    served_model = _served_model(candidate, model_override)
+    if served_model is None:
+        return None
 
     # A config.json registry entry resolves through the registry's registered TYPE
     # factory — the same factory the provider's module (core-native ollama, or an
@@ -1739,16 +1977,14 @@ def _resolve_from_config_registry(
     # type isn't registered (e.g. its app isn't installed) registry.build raises and
     # we return None (no provider resolves) rather than crash.
     #
-    # A model_override (a specific model pinned for this turn — e.g. the active
-    # model an axis resolved from active_models.json) must win over the entry's
-    # stored model. Thread it as the ``model`` build kwarg: every model provider's
-    # register_type factory honors ``model`` over ``entry.model`` (registry.build
-    # forwards kwargs to the factory). This replaces an older entry-replace dance
-    # that relied on register_entry being overwrite-idempotent — it isn't (it raises
-    # on a duplicate name), so that path silently no-op'd and the override was lost.
+    # The served model rides as the ``model`` build kwarg, always, so no factory is left to
+    # re-derive the entry's model its own way (``registry.build`` forwards kwargs to it). This
+    # replaces an older entry-replace dance that relied on register_entry being
+    # overwrite-idempotent — it isn't (it raises on a duplicate name), so that path silently
+    # no-op'd and the override was lost.
     build_kwargs = dict(kwargs)
-    if model_override:
-        build_kwargs["model"] = model_override
+    if served_model:
+        build_kwargs["model"] = served_model
     if "credential_store" not in build_kwargs and candidate.credential:
         try:
             from personalclaw.config import config_dir
@@ -1784,7 +2020,6 @@ def _resolve_from_config_registry(
     # built from and the model it was built for — so it is recorded here rather than re-derived
     # downstream. The window resolver reads it to name the model that actually answers a turn,
     # including the zero-config floor, which is a registry entry and never a binding.
-    served_model = str(config.get("model") or candidate.model or "")
     served_ref = f"{candidate.name}:{served_model}" if served_model else candidate.name
 
     # §2 chokepoint: wrap the resolved provider for the non-interactive text axis

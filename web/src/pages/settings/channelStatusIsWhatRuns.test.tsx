@@ -51,15 +51,16 @@ describe('the channel status row', () => {
 
   it('saving the channel settings re-reads the card, so the row shows the receiver the save started', async () => {
     vi.spyOn(api, 'providerSchema').mockResolvedValue({ properties: { bot_token: { type: 'string', 'x-meta': { label: 'Bot Token', sensitive: true } } } })
-    vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: { bot_token: '' }, _secret_set: [] })
-    const save = vi.spyOn(api, 'saveProviderConfig').mockResolvedValue({ config: {} })
+    vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: { bot_token: '' }, _secret_set: [], revision: 'rev-1' })
+    const save = vi.spyOn(api, 'saveProviderConfig').mockResolvedValue({ config: { bot_token: '' }, _secret_set: ['bot_token'], revision: 'rev-2' })
     const onChanged = vi.fn()
     mount(channel('offline', 'No bot token configured', false), onChanged, true)
 
     const field = await screen.findByLabelText('Bot Token')
     fireEvent.change(field, { target: { value: '123:ABC' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
-    expect(save).toHaveBeenCalledWith('telegram-channel', { bot_token: '123:ABC' })
+    // Over the revision the form read — the save replaces the whole config.
+    expect(save).toHaveBeenCalledWith('telegram-channel', { bot_token: '123:ABC' }, 'rev-1')
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
   })
 })

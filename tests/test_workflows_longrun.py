@@ -741,33 +741,34 @@ def test_a_node_below_an_iteration_marker_keeps_its_spec_path():
 
 def test_a_container_bodied_loop_finds_its_parent():
     """The marker need not END the path. It always does for a leaf body, never for a container
-    one — so `int("0.children[2]")` raised, `_advance_loop` returned silently, the loop never
-    advanced and the run deadlocked after exactly one iteration. Five shipped templates use
+    one — so `int("0.children[2]")` raised, `loop_iteration.advance_loop` returned silently, the
+    loop never advanced and the run deadlocked after exactly one iteration. Five shipped templates
+    use
     container-bodied loops."""
-    from personalclaw.workflows.controller import _loop_parent
+    from personalclaw.workflows.models import loop_parent
 
-    assert _loop_parent("root.children[1].body@0.children[2]") == ("root.children[1]", 0)
-    assert _loop_parent("root.children[0].body@2") == ("root.children[0]", 2)
+    assert loop_parent("root.children[1].body@0.children[2]") == ("root.children[1]", 0)
+    assert loop_parent("root.children[0].body@2") == ("root.children[0]", 2)
 
 
 def test_the_innermost_loop_marker_wins():
     """A loop nested in another loop's body must advance ITSELF, not its parent."""
-    from personalclaw.workflows.controller import _loop_parent
+    from personalclaw.workflows.models import loop_parent
 
-    assert _loop_parent("root.body@1.body@3.children[0]") == ("root.body@1", 3)
+    assert loop_parent("root.body@1.body@3.children[0]") == ("root.body@1", 3)
 
 
 def test_a_foreach_marker_is_not_a_loop_iteration():
-    from personalclaw.workflows.controller import _loop_parent
+    from personalclaw.workflows.models import loop_parent
 
-    assert _loop_parent("root.body#2.children[0]") == (None, 0)
+    assert loop_parent("root.body#2.children[0]") == (None, 0)
 
 
 def test_instance_paths_sort_numerically():
     """A string sort puts `body@10` before `body@2`, so "oldest first" silently became wrong at
     the tenth iteration: the window would keep the wrong items and `previous.output` would
     return the wrong cycle. Ten cycles in is later than any short test would reach."""
-    from personalclaw.workflows.controller import _natural_key
+    from personalclaw.workflows.node_bindings import _natural_key
 
     paths = [f"root.body@{n}.children[0]" for n in range(12)]
     ordered = [p.split("@")[1].split(".")[0] for p in sorted(paths, key=_natural_key)]

@@ -60,6 +60,16 @@ async def _consented_install(client, source: str):
     return await client.post("/api/apps", json={"source": source, "consent": token})
 
 
+async def _save_config(client, name: str, values: dict):
+    """Save an app's settings the way Configure does: over the revision of the config it read.
+    The PUT replaces the whole file, so it names the copy it replaces
+    (`personalclaw/stale_write.py`)."""
+    revision = (await (await client.get(f"/api/apps/{name}/config")).json())["revision"]
+    return await client.put(
+        f"/api/apps/{name}/config", json=values, headers={"If-Match": f'"{revision}"'}
+    )
+
+
 def _app_src(
     tmp_path: Path,
     name: str,
@@ -283,11 +293,11 @@ async def test_config_get_put_validated(tmp_path):
         assert body["config"] == {} and body["schema"]["required"] == ["apiKey"]
 
         # invalid: wrong type + missing required
-        r = await client.put("/api/apps/notes/config", json={"maxItems": "lots"})
+        r = await _save_config(client, "notes", {"maxItems": "lots"})
         assert r.status == 400
 
         # valid
-        r = await client.put("/api/apps/notes/config", json={"apiKey": "sk-1", "maxItems": 10})
+        r = await _save_config(client, "notes", {"apiKey": "sk-1", "maxItems": 10})
         assert r.status == 200
         assert (await client.get("/api/apps/notes/config")).status == 200
         body = await (await client.get("/api/apps/notes/config")).json()
@@ -297,7 +307,7 @@ async def test_config_get_put_validated(tmp_path):
         assert body["_secret_set"] == ["apiKey"]
 
         # unknown key rejected
-        r = await client.put("/api/apps/notes/config", json={"apiKey": "x", "bogus": 1})
+        r = await _save_config(client, "notes", {"apiKey": "x", "bogus": 1})
         assert r.status == 400
 
 
@@ -319,8 +329,8 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         await _consented_install(client, src)
 
         # set a real secret + a normal field
-        r = await client.put(
-            "/api/apps/sec/config", json={"api_key": "sk-REALSECRET-123", "endpoint": "https://x"}
+        r = await _save_config(
+            client, "sec", {"api_key": "sk-REALSECRET-123", "endpoint": "https://x"}
         )
         assert r.status == 200
         put_body = await r.json()
@@ -337,9 +347,7 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         mask = body["config"]["api_key"]
 
         # PUT the mask sentinel back (with a changed endpoint) → secret PRESERVED
-        r = await client.put(
-            "/api/apps/sec/config", json={"api_key": mask, "endpoint": "https://y"}
-        )
+        r = await _save_config(client, "sec", {"api_key": mask, "endpoint": "https://y"})
         assert r.status == 200
 
         # confirm the stored secret is still the real one (as the app itself reads it)
@@ -350,9 +358,7 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
         assert raw["endpoint"] == "https://y"  # normal field updated
 
         # a genuinely new secret value DOES overwrite
-        r = await client.put(
-            "/api/apps/sec/config", json={"api_key": "sk-NEW-456", "endpoint": "https://y"}
-        )
+        r = await _save_config(client, "sec", {"api_key": "sk-NEW-456", "endpoint": "https://y"})
         assert r.status == 200
         assert ProviderSettings.load("sec")["api_key"] == "sk-NEW-456"
 
@@ -378,9 +384,8 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
     async with _client(tmp_path) as client:
         src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
         await _consented_install(client, src)
-        r = await client.put(
-            "/api/apps/sec/config",
-            json={"api_key": "sk-DETAIL-SECRET-789", "endpoint": "https://x"},
+        r = await _save_config(
+            client, "sec", {"api_key": "sk-DETAIL-SECRET-789", "endpoint": "https://x"}
         )
         assert r.status == 200, await r.text()
 
@@ -429,8 +434,8 @@ async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, 
             ("VAULT_FIXTURE_KEY", "a credential in Settings → Secrets"),
             (others, "another app's credential"),
         ):
-            r = await client.put(
-                "/api/apps/sec/config", json={"api_key": make_ref(key), "endpoint": "https://x"}
+            r = await _save_config(
+                client, "sec", {"api_key": make_ref(key), "endpoint": "https://x"}
             )
             text = await r.text()
             assert r.status == 400, text
@@ -445,9 +450,7 @@ async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, 
             assert not config_file.exists(), "a refused save reached the disk"
 
         # The supported path: type the key itself, and it is stored under this app.
-        r = await client.put(
-            "/api/apps/sec/config", json={"api_key": "sk-typed-here", "endpoint": "https://x"}
-        )
+        r = await _save_config(client, "sec", {"api_key": "sk-typed-here", "endpoint": "https://x"})
         assert r.status == 200, await r.text()
         assert ProviderSettings.load("sec")["api_key"] == "sk-typed-here"
 
@@ -474,7 +477,7 @@ async def test_a_reference_in_a_field_the_schema_does_not_call_secret_is_masked(
             assert body["_secret_set"] == ["endpoint"]
 
         # …and the mask a form sends back keeps the reference rather than storing the dots.
-        r = await client.put("/api/apps/sec/config", json={"endpoint": SECRET_MASK})
+        r = await _save_config(client, "sec", {"endpoint": SECRET_MASK})
         assert r.status == 200, await r.text()
         assert json.loads(config_file.read_text(encoding="utf-8")) == {"endpoint": ref}
 
@@ -534,11 +537,9 @@ async def test_config_falls_back_to_provider_settings_schema(tmp_path):
 
         # validated against it: valid saves, wrong type rejected
         assert (
-            await client.put("/api/apps/wiki/config", json={"lang": "en", "timeout_secs": 20})
+            await _save_config(client, "wiki", {"lang": "en", "timeout_secs": 20})
         ).status == 200
-        assert (
-            await client.put("/api/apps/wiki/config", json={"timeout_secs": "slow"})
-        ).status == 400
+        assert (await _save_config(client, "wiki", {"timeout_secs": "slow"})).status == 400
 
 
 @pytest.mark.asyncio

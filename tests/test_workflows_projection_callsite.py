@@ -24,6 +24,7 @@ import pathlib
 
 import pytest
 
+from personalclaw.workflows import task_projection
 from personalclaw.workflows.journal import TASK_MATERIALIZED, ledger
 
 
@@ -177,8 +178,11 @@ def test_projecting_the_SAME_node_twice_in_one_run_is_a_REFRESH():
     # write (and therefore the event) is now scheduled rather than inline.
     async def _reproject() -> None:
         item = next(i for i in controller.instances)
-        controller._project_task(
-            type("_I", (), {"node": controller.root.children[0], "path": item})(), None, None
+        task_projection.project_task(
+            controller,
+            type("_I", (), {"node": controller.root.children[0], "path": item})(),
+            None,
+            None,
         )
         if controller._projection_writes:
             await asyncio.gather(*list(controller._projection_writes))
@@ -241,9 +245,7 @@ def test_the_hook_passes_the_keys_materialize_actually_READS():
     swallows."""
     import inspect
 
-    from personalclaw.workflows.controller import RunController
-
-    source = inspect.getsource(RunController._project_task)
+    source = inspect.getsource(task_projection.project_task)
     assert '"id": item.node.id' in source
     assert '"node_id": item.node.id' not in source
 
@@ -253,19 +255,17 @@ def test_the_hook_reads_TaskSpec_attributes_not_dict_keys():
     hook's own `except`, so the projection would fail invisibly on every node.
 
     Read across the projection path rather than one method: S61g split the emission into
-    `_schedule_task_write`, and pinning a single function name would make this test a rename
-    detector instead of a contract check.
+    `task_projection._schedule_task_write`, and pinning a single function name would make this test
+    a rename detector instead of a contract check.
     """
     import inspect
-
-    from personalclaw.workflows.controller import RunController
 
     source = "".join(
         inspect.getsource(fn)
         for fn in (
-            RunController._project_task,
-            RunController._schedule_task_write,
-            RunController._write_projected_task,
+            task_projection.project_task,
+            task_projection._schedule_task_write,
+            task_projection._write_projected_task,
         )
     )
     assert "spec.binding.fingerprint" in source
@@ -282,11 +282,17 @@ def test_the_projection_hook_runs_on_the_SUCCESS_branch_only():
     source = inspect.getsource(RunController)
     success_at = source.index("if result.state in SUCCESS_STATES:")
     else_at = source.index("        else:", success_at)
-    assert "self._project_task(" in source[success_at:else_at]
+    assert "task_projection.project_task(self, " in source[success_at:else_at]
 
 
 def test_materialize_now_HAS_a_caller():
     """The inverse of the grep that motivated the session: `materialize` is imported by the
-    controller. A module with no caller is a module whose rules are decoration."""
-    source = pathlib.Path("src/personalclaw/workflows/controller.py").read_text(encoding="utf-8")
-    assert "materialize" in source
+    controller's task projection. A module with no caller is a module whose rules are decoration."""
+    source = pathlib.Path("src/personalclaw/workflows/task_projection.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from personalclaw.workflows import materialize" in source
+    controller = pathlib.Path("src/personalclaw/workflows/controller.py").read_text(
+        encoding="utf-8"
+    )
+    assert "task_projection.project_task(" in controller

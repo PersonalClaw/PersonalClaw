@@ -7,6 +7,7 @@ and history modules.
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -20,6 +21,7 @@ from personalclaw.llm.base import (
     LLMEvent,
     ModelProvider,
 )
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
 from personalclaw.sel import sel as _sel
 
 _PROMPT_BUSY_RETRIES = 2
@@ -66,6 +68,7 @@ async def stream_and_collect(
     on_chunk: Callable[[str], None] | None = None,
     on_tool_approval: Callable[[LLMEvent], Awaitable[bool]] | None = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
+    on_substitution: Callable[[str], None] | None = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -85,6 +88,12 @@ async def stream_and_collect(
             write-sites use (COST-AND-TOKEN-OBSERVABILITY C2). Default ``None``
             leaves the streamed text byte-identical for every other caller. Never
             raises into the turn: a callback fault is swallowed.
+        on_substitution: For a caller that shows it, the sentence a turn says when its
+            model failed before replying and the next model of its chain answers ("Ran on
+            Y instead of X: …"), before anything that model streams. Passing it is what
+            lets the turn fall back at all (``NativeAgentRuntime.announce_failover``): a
+            caller with nowhere to show the sentence keeps the failure, since another
+            model's reply would read as the chosen one's.
 
     Returns:
         The complete response text.
@@ -93,12 +102,19 @@ async def stream_and_collect(
 
     for attempt in range(_PROMPT_BUSY_RETRIES + 1):
         result_text = ""
+        if on_substitution is not None:
+            announce_failover = getattr(provider, "announce_failover", None)
+            if callable(announce_failover):
+                announce_failover()
         try:
             async for event in provider.stream(message):
                 if event.kind == EVENT_TEXT_CHUNK:
                     result_text += event.text
                     if on_chunk:
                         on_chunk(event.text)
+                elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                    if on_substitution is not None:
+                        on_substitution(event.text)
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     approved = await _resolve_permission(
                         provider, event, approval_policy, hooks, on_tool_approval
@@ -362,12 +378,12 @@ def _enforces_json_schema_natively(model_ref: str) -> bool:
 # exactly this walk, and a second hand-rolled copy of it would be a divergence defect
 # — two answers to "should we try the next model" drifting apart.
 #
-# The INTERACTIVE chat/code_tools stream is deliberately NOT a consumer: it advances at
-# call-start only, via the seam's own resolution-time chain walk (the breaker-OPEN skip
-# in ``provider_bridge.resolve_provider_for_use_case``). See that seam's comment for
-# why — a human-watched turn must not stack N provider timeouts, and its provider is a
-# NativeAgentRuntime holding per-turn tool/transcript state that cannot be rebuilt
-# mid-stream.
+# The INTERACTIVE chat/code_tools stream is deliberately NOT a consumer of this walk: its
+# provider is a NativeAgentRuntime holding per-turn tool/transcript state that cannot be
+# rebuilt mid-stream. It advances at call-start via the seam's resolution-time chain walk
+# (the breaker-OPEN skip in ``provider_bridge.resolve_provider_for_use_case``), and at call
+# time by swapping only the runtime's INNER model (``agents/native/failover.py``): once, per
+# later model, while nothing of the turn has been shown, and said on the turn.
 
 
 def use_case_chain(use_case: str) -> list[str]:
@@ -735,20 +751,25 @@ async def one_shot_completion(
     if provider is None:
         from personalclaw.llm.registry import get_default_registry
 
+        # ``provider`` is None only because the bridge raised, so this is its refusal.
+        assert unresolved is not None
         registry = get_default_registry()
         entries = registry.list_entries()
-        if not entries:
-            # Nothing can serve, so the bridge's refusal IS the cause: typed, with the
-            # WHAT/WHY/FIX it derived (which use case, and what to add where). A bare
-            # RuntimeError here left a workflow step unable to tell "no model is set up" from
-            # a transient fault, and the run page offered a Retry that could only fail again.
-            if unresolved is not None:
-                raise unresolved
-            raise RuntimeError("No provider entries registered")
-        fallback = entries[0]
-        fallback_ref = f"{fallback.name}:{fallback.model}" if fallback.model else fallback.name
+        fallback = entries[0] if entries else None
+        # With no entry, or one that names no model of its own (``ProviderEntry.own_model``),
+        # nothing can serve: nothing named a model for this call, and building that entry could
+        # only send the model empty or leave its provider to pick one. So the bridge's refusal
+        # IS the cause: typed, with the WHAT/WHY/FIX it derived (which use case, and what to set
+        # where). A bare RuntimeError here left a workflow step unable to tell "no model is set
+        # up" from a transient fault, and the run page offered a Retry that could only fail again.
+        if fallback is None or (not fallback.own_model and fallback.type != "acp_agent"):
+            raise unresolved
+        fallback_model = fallback.own_model
+        fallback_ref = f"{fallback.name}:{fallback_model}" if fallback_model else fallback.name
         try:
-            provider = registry.build(fallback.name, **(await _entry_kw(fallback_ref)))
+            provider = registry.build(
+                fallback.name, **{"model": fallback_model, **(await _entry_kw(fallback_ref))}
+            )
         except Exception:  # noqa: BLE001 — an unaccepted build kwarg degrades, never blocks
             logger.debug(
                 "one_shot_completion: last-resort build rejected derived kwargs for %r",
@@ -859,19 +880,39 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       already the sentence (which tool, whose bug, and a workaround that is true on the surface
       that shows it). The raw dump it replaces contains ``400`` and ``permission``-shaped words
       the substring map below would misread.
+    * ``NoModelAnswered`` names every model a turn fell back to and why each failed, which no
+      one provider's error can; and a model app's ``ProviderResolutionError`` (the SDK's) is its
+      own sentence for why a model cannot serve this account, naming the fix only it knows
+      (Bedrock's model access, a data-retention policy). The map would replace either with a
+      generic line.
+
+    A status code in the map matches only as a number of its own: ``401`` inside an account id
+    or an ARN is not an HTTP 401, and read as one it named the API key for a permission error.
+    A permission error is its own class: the provider knew the credentials and would not let
+    them use the model, so the fix is access to that model, not a new key.
 
     **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
-    whatever surface shows it, and four of them name a chat-only fix: the composer's model
-    selector, "start a new chat", "your message". A room member's model is its AGENT BINDING's,
-    chosen on the Agents page, and what outgrows a model there is the room's conversation — so
-    given the member's name those four say that instead. Every other sentence is surface-neutral
-    and is the same words either way; with no member, every word is exactly the chat's.
+    whatever surface shows it, and some of them name a chat-only fix: the composer's model
+    selector, "start a new chat", "your message", "this chat's models". A room member's model is
+    its AGENT BINDING's, chosen on the Agents page, and what outgrows a model there is the room's
+    conversation — so given the member's name those say that instead. Every other sentence is
+    surface-neutral and is the same words either way; with no member, every word is exactly the
+    chat's.
     """
-    from personalclaw.guardrails.failure import PromptExceedsWindow, request_exceeds_window_sentence
+    from personalclaw.guardrails.failure import (
+        NoModelAnswered,
+        PromptExceedsWindow,
+        request_exceeds_window_sentence,
+    )
+    from personalclaw.llm.registry import ProviderResolutionError
     from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence(room=bool(room_member))
+    if isinstance(exc, NoModelAnswered):
+        return exc.sentence(room_member=room_member)
+    if isinstance(exc, ProviderResolutionError) and str(exc).strip():
+        return str(exc).strip()
     if isinstance(exc, PromptExceedsWindow):
         if room_member:
             return request_exceeds_window_sentence(
@@ -931,12 +972,26 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
         ),
         (
             (
+                "permission",
+                "forbidden",
+                "403",
+                "access denied",
+                "accessdenied",
+                "not authorized to",
+                "don't have access",
+                "do not have access",
+            ),
+            "The model provider refused this request: the credentials it was sent aren't allowed "
+            "to use this model. Give them access to it with the provider, or pick a different "
+            "model.",
+        ),
+        (
+            (
                 "authentication",
                 "invalid api key",
                 "invalid x-api-key",
                 "401",
                 "unauthorized",
-                "permission",
                 "invalid_api_key",
             ),
             "The model provider rejected the API key (auth failed). Check the key in "
@@ -954,7 +1009,40 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
         ),
     ]
     for needles, friendly in _MAP:
-        if any(n in low for n in needles):
+        if any(_mentions(low, n) for n in needles):
             return friendly
     # Unrecognized — return the raw text (trimmed) so no real error is hidden.
     return raw if len(raw) <= 500 else raw[:500] + "…"
+
+
+def _mentions(text: str, needle: str) -> bool:
+    """Whether ``text`` says ``needle``; a status code only as a number of its own.
+
+    Not inside a longer number (an account id, an ARN, a request id) and not as part of a figure
+    ("1,429 tokens", "401.5").
+    """
+    if needle.isdigit():
+        return re.search(rf"(?<![\d.,]){needle}(?!\d|[.,]\d)", text) is not None
+    return needle in text
+
+
+#: The longest failure clause :func:`failure_clause` gives, in characters.
+_CLAUSE_CAP = 160
+
+
+def failure_clause(exc: BaseException) -> str:
+    """A model's failure as a clause for "it failed before it replied (…)".
+
+    The first sentence of what the chat shows for that failure (:func:`humanize_provider_error`),
+    without its closing stop, its first letter lowered when it starts a sentence ("The model
+    provider…" → "the model provider…", while "HTTP 500" stays as it is), and cut at a word past
+    :data:`_CLAUSE_CAP` characters. One reading of a failure, so a fallback's line and the
+    error the same failure shows cannot describe it differently.
+    """
+    text = humanize_provider_error(exc).strip()
+    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].rstrip(".!?")
+    if len(first) > _CLAUSE_CAP:
+        first = first[:_CLAUSE_CAP].rsplit(" ", 1)[0] + "…"
+    if len(first) > 1 and first[0].isupper() and first[1].islower():
+        first = first[0].lower() + first[1:]
+    return first

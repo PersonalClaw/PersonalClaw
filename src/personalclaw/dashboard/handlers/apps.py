@@ -44,6 +44,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,14 @@ def _app_status(name: str) -> dict[str, Any]:
     }
 
 
+def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
+    """Whether any provider the raw manifest declares runs ``execution: "sidecar"``."""
+    from personalclaw.apps.manifest import EXECUTION_SIDECAR
+
+    declared = [manifest.get("provider"), *(manifest.get("providers") or [])]
+    return any(isinstance(p, dict) and p.get("execution") == EXECUTION_SIDECAR for p in declared)
+
+
 def _quality_wire(raw: Any) -> dict[str, Any]:
     """The DECLARED quality axes, and only those (APE-4).
 
@@ -332,6 +341,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 ),
                 "hasConfig": has_config,
                 "configuredPerInstance": per_instance,
+                # A provider of it runs its engine in a child process with its own Python
+                # environment, which Configure offers to install (Install engine).
+                "sidecar": _runs_a_sidecar(manifest),
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 # The DECLARED quality block, for the Library card's badge row.
@@ -714,6 +726,37 @@ async def api_app_install(request: web.Request) -> web.Response:
     return web.json_response(payload, status=status)
 
 
+def _engine_installing(request: web.Request, name: str) -> web.Response | None:
+    """A 409 while *name*'s engine install runs (Install engine), else ``None``.
+
+    pip writes into the app's own Python environment inside its folder for as long as that
+    takes, and an update swaps the folder while a removal deletes it: either one under a live
+    pip leaves an environment every later step believes. The answer is shaped like a refused
+    install so the Update dialog shows its sentence.
+    """
+    from personalclaw.apps.app_manager import display_name_of
+    from personalclaw.dashboard.model_downloads import ModelDownloadRegistry
+
+    # The registry is what starts an engine install, so a process without one has none running.
+    downloads = getattr(request.app.get("state"), "model_downloads", None)
+    registry = downloads() if callable(downloads) else None
+    if not isinstance(registry, ModelDownloadRegistry) or not registry.install_running(name):
+        return None
+    return web.json_response(
+        {
+            "ok": False,
+            "name": name,
+            "needs_consent": False,
+            "reason": "engine_installing",
+            "error": (
+                f"{display_name_of(name)} is installing its engine. Wait for that to finish, "
+                "or cancel it, then try again"
+            ),
+        },
+        status=409,
+    )
+
+
 async def api_app_update(request: web.Request) -> web.Response:
     """POST /api/apps/{name}/update — atomic update from ``{source, consent?}``.
 
@@ -728,6 +771,8 @@ async def api_app_update(request: web.Request) -> web.Response:
     src = str(body.get("source", "")).strip()
     if not src:
         return web.json_response({"error": "source is required"}, status=400)
+    if (busy := _engine_installing(request, name)) is not None:
+        return busy
     consent = _consent_token(body)
 
     try:
@@ -837,6 +882,8 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
         fn, op = app_manager.uninstall_keep_data, "apps.uninstall_keep_data"
     else:
         fn, op = app_manager.uninstall, "apps.uninstall"
+    if (force or remove) and (busy := _engine_installing(request, name)) is not None:
+        return busy
     ok = await asyncio.to_thread(fn, name, caller=caller)
     _sel_log(op, "ok" if ok else "error", name, request)
     if not ok:
@@ -944,12 +991,15 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     # the STORED form, so this route never reads a credential: each reference is masked,
     # whether or not the schema declared its field sensitive.
     masked, secret_set = mask_secrets(read_stored(name), schema)
+    # The PUT below writes the whole file, so the config carries the revision it must name
+    # (`personalclaw/stale_write.py`) — of this masked form, never of the stored secrets.
     return web.json_response(
         {
             "name": name,
             "config": masked,
             "schema": schema,
             "_secret_set": secret_set,
+            "revision": revision_of(masked),
         }
     )
 
@@ -975,11 +1025,25 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     schema = _effective_config_schema(manifest)
+    stored = read_stored(name)
+    # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE FORM WAS BUILT FROM. This replaces the
+    # whole file — and deletes the credentials the new one stops referencing — with a form built
+    # from the copy it read, so a form opened before Settings → Providers, another tab, or the
+    # app itself saved this file put its stale values back over that save. Compared in the
+    # masked form the GET hands out; no `await` between this check and the write below.
+    # Named as Settings → Providers names it (`providers/routes.handle_patch_config`): the two
+    # routes write the same file, so a refusal from either is about the same thing.
+    stale = stale_write_refusal(
+        request, mask_secrets(stored, schema)[0], what=f"the settings of {name!r}"
+    )
+    if stale is not None:
+        _sel_log("apps.config", refusal_outcome(stale), name, request)
+        return stale
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
     # means "keep the stored secret" — don't overwrite it with the placeholder (#43). What is
     # folded back is the stored REFERENCE, which the write keeps as it is; a reference that
     # names another owner's credential is refused there, with what to do instead.
-    values = preserve_unchanged_secrets(values, read_stored(name), schema)
+    values = preserve_unchanged_secrets(values, stored, schema)
     try:
         write_config(name, values, schema)
     except AppConfigError as exc:
@@ -992,10 +1056,17 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 
     await apply_saved_settings(name)
     # Never echo the freshly-saved secret back either: the response is what reached the disk,
-    # masked — a credential-named field the schema did not declare included.
+    # masked — a credential-named field the schema did not declare included. The revision is
+    # of this same read, so a form that stays open saves its next edit over what it now shows.
     masked, secret_set = mask_secrets(read_stored(name), schema)
     return web.json_response(
-        {"ok": True, "name": name, "config": masked, "_secret_set": secret_set}
+        {
+            "ok": True,
+            "name": name,
+            "config": masked,
+            "_secret_set": secret_set,
+            "revision": revision_of(masked),
+        }
     )
 
 

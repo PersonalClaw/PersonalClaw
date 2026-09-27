@@ -17,7 +17,7 @@ from typing import Any, Callable, Iterable
 from personalclaw import notification_addressing, notification_kinds
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_for_display
 
 
 def config_dir() -> Path:
@@ -706,14 +706,14 @@ def redact_item(item: dict) -> dict:
     would have been the R18 duplicate that eventually diverges. `handlers_inbox._redact_item` is
     now an alias for this function, so there is exactly one implementation.
     """
+    # `redact_for_display`, the mask a saved or sent draft is restored from
+    # (`handlers_inbox.api_inbox_update`, `api_inbox_send`): the draft editor is seeded from here.
     for key in ("message", "draft", "text", "context_summary"):
         if item.get(key):
-            item[key], _ = redact_exfiltration_urls(item[key])
-            item[key], _ = redact_credentials(item[key])
+            item[key] = redact_for_display(item[key])
     for ctx in item.get("thread_context", []):
         if ctx.get("text"):
-            ctx["text"], _ = redact_exfiltration_urls(ctx["text"])
-            ctx["text"], _ = redact_credentials(ctx["text"])
+            ctx["text"] = redact_for_display(ctx["text"])
     # Feedback producer meta (additive): each judgment field on the
     # item names its producing artifact — the bound prompt ref — so the FE thumbs
     # can attribute a verdict without a second lookup. Digest items are their own

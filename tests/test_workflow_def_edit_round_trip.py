@@ -59,13 +59,15 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _req(method: str, path: str, *, match_info=None, body=None):
+def _req(method: str, path: str, *, match_info=None, body=None, headers=None):
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request
 
     app = web.Application()
     app["state"] = None
-    req = make_mocked_request(method, path, app=app, match_info=match_info or {})
+    req = make_mocked_request(
+        method, path, app=app, match_info=match_info or {}, headers=headers or {}
+    )
     if body is not None:
 
         async def _json():
@@ -79,11 +81,17 @@ def _body(resp) -> dict[str, Any]:
     return json.loads(resp.body.decode())
 
 
-async def _read(name: str) -> dict[str, Any]:
-    """What the editor opens: the detail route's (stripped) definition."""
+async def _opened(name: str) -> tuple[dict[str, Any], str]:
+    """What the editor opens: the detail route's (stripped) definition, and its revision — the
+    base a save over this definition names (`api_def_save`)."""
     resp = await H.api_def_detail(_req("GET", f"/api/workflows/{name}", match_info={"name": name}))
     assert resp.status == 200, _body(resp)
-    return _body(resp)["definition"]
+    body = _body(resp)
+    return body["definition"], body["revision"]
+
+
+async def _read(name: str) -> dict[str, Any]:
+    return (await _opened(name))[0]
 
 
 def _editable(definition: dict[str, Any]) -> dict[str, Any]:
@@ -92,8 +100,13 @@ def _editable(definition: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in definition.items() if k not in skip}
 
 
-async def _save(name: str, doc: dict[str, Any], **extra: Any):
-    return await H.api_def_save(_req("POST", "/api/workflows", body={"name": name, **doc, **extra}))
+async def _save(name: str, doc: dict[str, Any], *, base: str = "", **extra: Any):
+    """`POST /api/workflows`; ``base`` is the revision a save over an existing definition of yours
+    names — none for a new name."""
+    headers = {"If-Match": f'"{base}"'} if base else None
+    return await H.api_def_save(
+        _req("POST", "/api/workflows", body={"name": name, **doc, **extra}, headers=headers)
+    )
 
 
 def _stored(name: str) -> dict[str, Any]:
@@ -175,12 +188,12 @@ async def test_editing_in_place_keeps_a_hidden_value_and_takes_the_edit() -> Non
     first = await _save("drafter", {"description": "Drafts things", "root": root})
     assert first.status == 201, _body(first)
 
-    opened = await _read("drafter")
+    opened, revision = await _opened("drafter")
     draft = _find(opened["root"], "draft")
     assert draft is not None and draft["config"].get("_has_max_tokens") is True
     draft["config"]["prompt"] = "Draft it twice"
 
-    resp = await _save("drafter", _editable(opened))
+    resp = await _save("drafter", _editable(opened), base=revision)
 
     assert resp.status == 201, _body(resp)
     saved = _find(_stored("drafter")["root"], "draft")
@@ -280,7 +293,8 @@ async def test_one_recorded_version_can_be_read_back_stripped() -> None:
     root_v1 = {"kind": "infer", "id": "only", "config": {"prompt": "one", "max_tokens": 50}}
     root_v2 = {"kind": "infer", "id": "only", "config": {"prompt": "two", "max_tokens": 50}}
     assert (await _save("history", {"root": root_v1})).status == 201
-    assert (await _save("history", {"root": root_v2})).status == 201
+    _, v1_revision = await _opened("history")
+    assert (await _save("history", {"root": root_v2}, base=v1_revision)).status == 201
 
     resp = await H.api_def_version_detail(
         _req(
@@ -325,15 +339,19 @@ async def test_restoring_an_old_version_keeps_the_values_that_version_hid() -> N
     v1 = {"kind": "infer", "id": "only", "config": {"prompt": "one", "max_tokens": 50}}
     v2 = {"kind": "infer", "id": "other", "config": {"prompt": "two"}}
     assert (await _save("history", {"root": v1})).status == 201
-    assert (await _save("history", {"root": v2})).status == 201
+    _, v1_revision = await _opened("history")
+    assert (await _save("history", {"root": v2}, base=v1_revision)).status == 201
 
     old = _body(
         await H.api_def_version_detail(
             _req("GET", "/", match_info={"name": "history", "version": "1"})
         )
     )["definition"]
+    # A restore replaces the CURRENT definition, so it names the current one's revision — not the
+    # recorded version's.
+    _, current_revision = await _opened("history")
 
-    resp = await _save("history", _editable(old), based_on_version=1)
+    resp = await _save("history", _editable(old), base=current_revision, based_on_version=1)
 
     assert resp.status == 201, _body(resp)
     assert _stored("history")["root"]["config"] == {"prompt": "one", "max_tokens": 50}

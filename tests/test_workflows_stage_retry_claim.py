@@ -50,6 +50,7 @@ from typing import Any
 import pytest
 
 from personalclaw.workflows import engine
+from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import leases, store
 from personalclaw.workflows.bindings import BindingContext
@@ -133,6 +134,28 @@ def _spec() -> dict[str, Any]:
     }
 
 
+def _gated_spec() -> dict[str, Any]:
+    """The stage beside a gate that waits indefinitely. A stage that FAILS then leaves the run LIVE
+    — parked on the gate, since a `parallel` settles once every child has — which is where a user
+    rewinds a failed step. A run that FAILED is one attempt and refuses the edit; a retry of it is
+    a fork."""
+    return {
+        "name": "stage-retry-gated",
+        "root": {
+            "kind": "parallel",
+            "id": "root",
+            "children": [
+                {"kind": "stage", "id": "work", "config": {"prompt": "do the thing"}},
+                {
+                    "kind": "gate",
+                    "id": "hold",
+                    "config": {"kind": "approval", "prompt": "hold", "timeout_secs": 0},
+                },
+            ],
+        },
+    }
+
+
 @pytest.fixture
 def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A real `RunController` over a real spec, with only the subagent manager faked.
@@ -142,9 +165,11 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
 
-    def _build(**kw: Any) -> tuple[RunController, _FakeSubagents, WorkflowRun]:
+    def _build(
+        *, gated: bool = False, **kw: Any
+    ) -> tuple[RunController, _FakeSubagents, WorkflowRun]:
         fake = _FakeSubagents(**kw)
-        spec = _spec()
+        spec = _gated_spec() if gated else _spec()
         run = store.create(WorkflowRun(id="", workflow_name="stage-retry"))
         store.write_spec(run.id, spec)
         controller = RunController(
@@ -187,7 +212,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     the wrong place. The target is now taken from the recorder, so the release is asserted against
     the key the run demonstrably took.
     """
-    controller, fake, run = wired(errors=(REAPED, ""))
+    controller, fake, run = wired(errors=(REAPED, ""), gated=True)
     acquired: list[tuple[str, str, bool]] = []
     real_acquire = leases.acquire_claim
 
@@ -199,6 +224,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     monkeypatch.setattr(leases, "acquire_claim", _recording)
 
     async def _go() -> tuple[RunStatus, RunStatus]:
+        # The stage fails and the run stays live, parked on the gate beside it.
         first = await controller.run_to_completion(timeout=RUN_TIMEOUT)
         inst = controller.instances[STAGE_PATH]
         assert inst.state is InstanceState.FAILED, (
@@ -223,12 +249,20 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
             "assertion below would be measuring the unfixed code"
         )
         assert _rewind(controller)["ok"], "the rewind was refused, so no retry was requested"
+        # The parked run applies the rewind at once: the stage re-runs, and the run waits on its
+        # gate again. Answering the gate is what then lets it complete.
+        await asyncio.wait_for(controller._terminal.wait(), timeout=RUN_TIMEOUT)
+        pending = HI.list_continuations(run.id)
+        assert len(pending) == 1, f"the gate is not waiting to be answered: {pending}"
+        assert controller.resume(pending[0].token, True)["ok"]
         return first, await controller.run_to_completion(timeout=RUN_TIMEOUT)
 
     first, second = asyncio.run(_go())
     inst = controller.instances[STAGE_PATH]
 
-    assert first is RunStatus.FAILED, f"the first attempt did not fail (status={first.value})"
+    assert (
+        first is RunStatus.NEEDS_INPUT
+    ), f"the run did not stay live on its gate after the stage failed (status={first.value})"
     assert len(fake.spawns) == 2, (
         f"the retry never reached the subagent manager ({len(fake.spawns)} spawn(s)) — it was "
         f"refused by its own claim: {inst.degraded_reason!r}"
@@ -282,6 +316,88 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     )
 
 
+def _rewind_as_the_run_page_does(controller: RunController) -> dict[str, Any]:
+    """`POST …/rewind {node_id, confirm_cascade: true}`, through `service._reentry`: the run page's
+    Re-run and the Inbox's "Run this step again" after the owner confirmed the re-run."""
+    return controller.submit_mutation(
+        [{"op": "rewind", "node_id": "work", "redo_effects": False, "force": False}],
+        actor="chat",
+        confirm=True,
+    )
+
+
+def test_a_rewind_the_owner_confirmed_reruns_a_stage_that_SUCCEEDED(wired) -> None:
+    """A settled attempt's claim goes back when a rewind resets it, whichever way it settled.
+
+    The success settle keeps its claim (below), and a confirmed rewind of that DONE stage is the
+    same instance asking to run again, so it met its own lease: `another worker holds the claim on
+    this node (held by … for another 774s) — not executing twice`, DEGRADED, which the run counts as
+    a success. Driven that way on a live gateway: the owner confirmed "Re-run "draft"?", the page
+    said the step was running again, and nothing ran — for the claim's whole 900s TTL, which is
+    exactly when a step is re-run (its approval had just gone unanswered).
+
+    The committed-effects redo gate does not intercept it: the owner's confirm IS that gate's
+    answer. What the reset gives back is only a SETTLED attempt's claim; a live one keeps it
+    (`test_a_rewind_of_a_live_stage_keeps_its_claim`).
+    """
+    controller, fake, run = wired(errors=("", ""), gated=True)
+
+    async def _go() -> tuple[RunStatus, RunStatus]:
+        first = await controller.run_to_completion(timeout=RUN_TIMEOUT)
+        inst = controller.instances[STAGE_PATH]
+        assert inst.state is InstanceState.DONE, f"the premise failed: {inst.state.value}"
+        assert len(fake.spawns) == 1, f"the premise failed: {len(fake.spawns)} spawns"
+        held = leases.read_claim(inst.claim_target)
+        assert held is not None, "the premise failed: the succeeded stage holds no claim"
+        assert _rewind_as_the_run_page_does(controller)["ok"], "the rewind was refused"
+        await asyncio.wait_for(controller._terminal.wait(), timeout=RUN_TIMEOUT)
+        pending = HI.list_continuations(run.id)
+        assert len(pending) == 1, f"the gate is not waiting to be answered: {pending}"
+        assert controller.resume(pending[0].token, True)["ok"]
+        return first, await controller.run_to_completion(timeout=RUN_TIMEOUT)
+
+    first, second = asyncio.run(_go())
+    inst = controller.instances[STAGE_PATH]
+
+    assert first is RunStatus.NEEDS_INPUT, f"the run did not stay live on its gate: {first.value}"
+    assert len(fake.spawns) == 2, (
+        f"the confirmed re-run never reached the subagent manager ({len(fake.spawns)} spawn(s)) — "
+        f"it was refused by its own claim: {inst.degraded_reason!r}"
+    )
+    assert inst.state is InstanceState.DONE, f"{inst.state.value}: {inst.degraded_reason!r}"
+    assert second is RunStatus.COMPLETE, f"the re-run did not complete (status={second.value})"
+    started = [
+        e
+        for e in J.journal_records(run.id, kinds={"step_started"})
+        if str(e.get("node_id") or "") == "work"
+    ]
+    assert len(started) == 2, f"the ledger records {len(started)} dispatch(es): {started}"
+
+
+def test_a_rewind_of_a_live_stage_keeps_its_claim(wired) -> None:
+    """The other direction: a rewind of a stage whose subagent is still running resets the node but
+    not the attempt, which is still executing. Its claim stays, so the re-dispatch is refused as a
+    second, concurrent execution — the invariant the claim exists for."""
+    controller, fake, run = wired(settles=False, gated=True)
+
+    async def _go() -> None:
+        await controller.run_to_completion(timeout=LIVE_TIMEOUT)
+        inst = controller.instances[STAGE_PATH]
+        assert inst.state is InstanceState.RUNNING, f"the premise failed: {inst.state.value}"
+        live = leases.read_claim(inst.claim_target)
+        assert live is not None and live.holder == inst.claim_holder, f"no live claim: {live}"
+        assert _rewind_as_the_run_page_does(controller)["ok"], "the rewind was refused"
+        await controller.run_to_completion(timeout=LIVE_TIMEOUT)
+
+    live_target = claim_key(run.id, STAGE_PATH)
+    asyncio.run(_go())
+    still = leases.read_claim(live_target)
+    assert still is not None, "a rewind released the claim of an attempt that is still running"
+    assert (
+        len(fake.spawns) == 1
+    ), f"the rewind let a second execution start beside the live one ({len(fake.spawns)} spawns)"
+
+
 def test_a_stage_that_SUCCEEDS_still_holds_its_claim(wired) -> None:
     """🔴 The scope boundary, pinned: the release is on the FAILED settle ONLY, deliberately.
 
@@ -297,10 +413,12 @@ def test_a_stage_that_SUCCEEDS_still_holds_its_claim(wired) -> None:
     #3531 has already rewritten. So the narrow release is not caution about an unknown; it is
     declining to fix a second issue's defect a second way.
 
-    A re-run of the same SUCCEEDED instance is intercepted before the claim is consulted anyway.
-    Measured on a `rewind` of a completed stage: the node lands **BLOCKED** on the committed-effects
-    redo gate (`effects.redo_blocked` — a `stage` is `_commits_effects`), and a rewind that does not
-    bump the epoch is served from the WF2-A1 resume cache in `_launch` instead of dispatching.
+    A re-run of the same SUCCEEDED instance is a rewind, and the rewind gives the settled attempt's
+    claim back when it resets the node (`mid_flight._apply_reentry`,
+    `test_a_rewind_the_owner_confirmed_reruns_a_stage_that_SUCCEEDED`). This used to say such a
+    re-run is intercepted before the claim is consulted — by the committed-effects redo gate, then
+    the WF2-A1 resume cache. A rewind the owner CONFIRMED is not: the confirm is that gate's answer,
+    and the reset clears the cache entry, so it dispatched and met this claim.
 
     **If you widen the release to both branches, this test is the one that must change**: rewrite it
     as the new behaviour and check `test_research_kind_as_run.py` in the same commit.

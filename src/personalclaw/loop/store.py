@@ -516,6 +516,27 @@ _EDITABLE_SPEC_COLS = frozenset(
 )
 
 
+def edited_spec(loop: Loop) -> dict[str, Any]:
+    """The part of ``loop`` an edit can replace — :data:`_EDITABLE_SPEC_COLS` — as the REDACTED
+    view shows it.
+
+    What every read's ``revision`` describes and what ``PUT /api/loops/{id}`` compares a
+    whole-document edit's base against (``personalclaw/stale_write.py``), built one way for both.
+    The redacted form because that is the copy a page holds and sends back, and a revision must
+    never encode more than its reader could see. Run state (status, cycles, findings, spend) is
+    left out: the engine moves it without anyone editing the spec, and no edit sends it.
+    """
+    view = _redact_loop(loop.to_dict())
+    return {k: view[k] for k in _EDITABLE_SPEC_COLS if k in view}
+
+
+def spec_revision(loop: Loop) -> str:
+    """The revision a read of ``loop`` reports — the digest of :func:`edited_spec`."""
+    from personalclaw.stale_write import revision_of
+
+    return revision_of(edited_spec(loop))
+
+
 def update_spec(loop_id: str, fields: dict) -> Loop | None:
     """Patch editable spec fields on a PRE-LAUNCH loop. Returns None if the loop
     is missing OR its spec is frozen (already started) — the caller routes a
@@ -715,6 +736,9 @@ def get_redacted(loop_id: str) -> dict | None:
     if loop is None:
         return None
     view = _redact_loop(loop.to_dict())
+    # The revision a whole-document edit of this spec names (`edited_spec`) — from the same
+    # `loop` this view is built from, so it describes the spec beside it.
+    view["revision"] = spec_revision(loop)
     # Whether this kind advances phase_status (#448) — declared by the kind strategy, so
     # the FE never re-enumerates the phase-tracking kinds itself.
     view["phase_tracked"] = _phase_tracked(loop.kind)
@@ -821,6 +845,7 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
         if kind and loop.kind != kind:
             continue
         d = _redact_loop(loop.to_dict())
+        d["revision"] = spec_revision(loop)
         # Same declaration as the detail view (#448) — the list rows fold a run through the
         # SAME runFold, so withholding it here would make the cards disagree with the cockpit.
         d["phase_tracked"] = _phase_tracked(loop.kind)

@@ -747,7 +747,7 @@ class CompileResult:
             active.append(
                 f"isolated workspace ({BATCH_WORKSPACE_MODE}): declared in the spec's top-level "
                 "`workspace:` block, which `provisioning.declares_workspace` reads and "
-                "`controller._provision_workspace` provisions at run start — RUN-scoped, so the "
+                "`run_start.provision_workspace` provisions at run start — RUN-scoped, so the "
                 "whole fan-out shares one isolated substrate and no branch touches the real tree"
             )
         return active
@@ -904,7 +904,7 @@ def compile_batch(
         "origin": {"kind": "subagent-tool"},
         "project_id": project_id,
         # The TOP-LEVEL block, which is the one `provisioning.declares_workspace` reads and the
-        # run-start applier (`controller._provision_workspace` → `provisioning.provision`) acts on.
+        # run-start applier (`run_start.provision_workspace` → `provisioning.provision`) acts on.
         # Provisioning is RUN-scoped by design — there is no per-node provisioning anywhere in the
         # engine — so a compiled batch gets ONE isolated workspace for the whole fan-out, which is
         # what "each branch runs in an isolated workspace" means on this architecture: no branch

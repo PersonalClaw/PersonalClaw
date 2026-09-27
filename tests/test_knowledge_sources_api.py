@@ -153,10 +153,12 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-def _call(handler, store, method, path, *, body=None, match_info=None):
+def _call(handler, store, method, path, *, body=None, match_info=None, headers=None):
     app = web.Application()
     app["state"] = SimpleNamespace(knowledge_store=store)
-    req = make_mocked_request(method, path, app=app, match_info=match_info or {})
+    req = make_mocked_request(
+        method, path, app=app, match_info=match_info or {}, headers=headers or {}
+    )
 
     async def _json():
         return body or {}
@@ -174,7 +176,8 @@ def _create(store, **body):
     return _call(H.create_watched_source, store, "POST", "/api/knowledge/sources", body=body)
 
 
-def _patch(store, sid, **body):
+def _patch(store, sid, *, base=None, **body):
+    """A spec/budget edit names the source's revision (*base*) in If-Match, as the page does."""
     return _call(
         H.update_watched_source,
         store,
@@ -182,6 +185,7 @@ def _patch(store, sid, **body):
         f"/api/knowledge/sources/{sid}",
         body=body,
         match_info={"id": sid},
+        headers={"If-Match": f'"{base}"'} if base is not None else None,
     )
 
 
@@ -565,7 +569,12 @@ def test_allowing_the_render_tier_flips_only_that_knob(store, registered):
     )
     sid = created["source"]["id"]
 
-    resp, body = _patch(store, sid, budget={"max_requests": 4, "allow_render": True})
+    resp, body = _patch(
+        store,
+        sid,
+        budget={"max_requests": 4, "allow_render": True},
+        base=created["source"]["revision"],
+    )
 
     assert resp.status == 200
     assert body["source"]["budget"] == {"max_requests": 4, "allow_render": True}
@@ -576,9 +585,11 @@ def test_allowing_the_render_tier_flips_only_that_knob(store, registered):
 def test_a_url_fix_is_revalidated_by_the_provider(store, registered):
     _, created = _create(store, name="Page", provider="watched-page", spec={"url": PAGE_URL})
     sid = created["source"]["id"]
+    base = created["source"]["revision"]
 
-    bad, bad_body = _patch(store, sid, spec={"url": "not-a-url"})
-    good, good_body = _patch(store, sid, spec={"url": "https://app.example.com/blog"})
+    bad, bad_body = _patch(store, sid, spec={"url": "not-a-url"}, base=base)
+    # The refused edit wrote nothing, so the same copy is still current.
+    good, good_body = _patch(store, sid, spec={"url": "https://app.example.com/blog"}, base=base)
 
     assert bad.status == 400 and "url" in bad_body["error"]
     assert good.status == 200

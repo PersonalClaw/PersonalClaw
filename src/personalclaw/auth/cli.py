@@ -15,7 +15,6 @@ code for pairing another device — the store keeps only its hash, so it cannot 
 from __future__ import annotations
 
 import getpass
-import json
 import os
 import sys
 
@@ -54,26 +53,22 @@ def _auth_config() -> dict:
 
 
 def _set_auth_field(name: str, value: object) -> None:
-    """Write one `auth.*` field into config.json, preserving everything else."""
-    from personalclaw.atomic_write import atomic_json_write
-    from personalclaw.config.loader import config_path
+    """Write one `auth.*` field into config.json, preserving everything else, in the config
+    transaction — so a running gateway saving a setting at the same moment keeps it."""
+    from personalclaw.config.loader import ConfigWriteError
+    from personalclaw.config.transactions import mutate_config
 
-    path = config_path()
-    data: dict = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (json.JSONDecodeError, OSError) as exc:
-            print(f"❌ Could not read {path}: {exc}")
-            raise SystemExit(1) from exc
-    section = data.get("auth")
-    if not isinstance(section, dict):
-        section = {}
-    section[name] = value
-    data["auth"] = section
-    atomic_json_write(path, data)
+    def _apply(data: dict) -> None:
+        section = data.get("auth")
+        if not isinstance(section, dict):
+            section = data["auth"] = {}
+        section[name] = value
+
+    try:
+        mutate_config(_apply)
+    except ConfigWriteError as exc:
+        print(f"❌ {exc}")
+        raise SystemExit(1) from exc
 
 
 def _read_new_password() -> str | None:

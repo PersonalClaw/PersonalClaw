@@ -182,6 +182,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # (nothing to retry — it was already answered, or it expired).
     "browse_grant_action_invalid": "A browse grant may only be approved or rejected.",
     "browse_grant_not_pending": "No browse grant is waiting on that id.",
+    # ── a channel's rules for strangers and groups (handlers/channel_trust.py) ──
+    "channel_trust_provider_unknown": "No chat channel by that name is set up.",
+    "channel_trust_channel_unknown": "That group is not tracked on this channel.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── a channel's owner and its pairing (handlers/channel_owner.py) ──
@@ -479,6 +482,21 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "version_conflict": (
         "The artifact moved since it was read, so the write would have destroyed somebody "
         "else's edit. Fix: reload and re-apply. The `error` object names the current version."
+    ),
+    # ── whole-document writes from a page's copy (personalclaw/stale_write.py) ──
+    # The same refusal as `version_conflict`, for the settings documents, lists and records that
+    # carry a content `revision` instead of an artifact version. Two codes because the remedies
+    # differ: `revision_required` is a client that never read what it is replacing (fix the
+    # client), `stale_write` is a copy that went stale (re-read, re-apply, save). Neither carries
+    # the current revision — only a read of the document hands one out.
+    "revision_required": (
+        "A write that replaces a whole document must name the revision it replaces in "
+        "`If-Match`. Fix: read the document, then resend with its `revision`."
+    ),
+    "stale_write": (
+        "The document changed since the copy this write was built from was read, so saving it "
+        "would have undone that change. Nothing was saved. Fix: read it again, re-apply the "
+        "edit, and save with the new revision."
     ),
     # Same family as `version_conflict` above: a write refused because it would have
     # destroyed data the caller never saw. An intent's id is DERIVED from its goal, so two
@@ -818,6 +836,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "mcp_sign_in_refused": (
         "The authorization server did not sign you in, or its answer did not come from the server "
         "the sign-in started with."
+    ),
+    # ── starting a model download (dashboard/handlers/model_downloads.py —
+    #    POST /api/models/downloads) ──
+    # Refused before any byte moves; the message names what the download needs and what is free.
+    "insufficient_disk_space": (
+        "There is not enough free disk space for this download; the message says how much it "
+        "needs and how much is free."
     ),
 }
 

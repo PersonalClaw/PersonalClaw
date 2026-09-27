@@ -319,6 +319,12 @@ def test_the_site_list_is_not_STALE():
         # call. The properties that earn the exemption are asserted in
         # `test_the_delegating_provider_only_hands_off_to_a_frozen_name` below.
         "personalclaw.action_providers.selfqa_watch_provider",
+        # The grant copy — `triggers.grants` resolves a provider to read ONE attribute,
+        # `display_name`, for the words the owner reads when a grant is asked for or a run is
+        # refused ("not allowed to use the “Bash Command” action"). It decides nothing and runs
+        # nothing; the properties that earn the exemption are asserted in
+        # `test_the_grant_copy_only_reads_the_display_name` below.
+        "personalclaw.triggers.grants",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -327,6 +333,24 @@ def test_the_site_list_is_not_STALE():
         "these modules reach an action provider but are not in EXECUTION_SITES: "
         f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
     )
+
+
+def test_the_grant_copy_only_reads_the_display_name():
+    """The properties that earn `triggers.grants`' exemption.
+
+    A grant question and a refusal have to say what the action is — "Bash Command", not the bare
+    id `bash` — and that takes the provider's `display_name` and nothing more. "It's different" is
+    not an exemption, so the difference is asserted: if this module ever USES the provider it
+    resolves, this fails and it must argue its way into `EXECUTION_SITES` with a real policy gate.
+    """
+    import re
+
+    src = _source("personalclaw.triggers.grants")
+    calls = re.findall(r"get_action_provider\(", src)
+    assert calls, "the exemption is stale if the grant copy no longer resolves a provider"
+    assert ".execute(" not in src, "the grant copy must never execute a provider"
+    assert ".reverse(" not in src, "the grant copy must never undo through a provider"
+    assert '"display_name"' in src, "the only reason to resolve here is the display name"
 
 
 def test_the_delegating_provider_only_hands_off_to_a_frozen_name():

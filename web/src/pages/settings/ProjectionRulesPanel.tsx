@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { Scissors, Plus, X, AlertTriangle, Gauge, RotateCcw } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
-import { useQuery } from '../../lib/data'
+import { invalidateKeys, useQuery } from '../../lib/data'
+import { sameDocument, type Rebase } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { ListSkeleton } from '../../ui/ListScaffold'
@@ -28,22 +31,53 @@ const STRATEGIES: { id: ProjectionStrategy; label: string; blurb: string }[] = [
  *  maps a regex marker (matched against the output head) to a builtin strategy —
  *  declarative, so no user code runs, and a bad regex is rejected on save. */
 export function ProjectionRulesPanel() {
-  const { data: rules, error: loadErr, refresh } = useQuery(
+  const { data: stored, error: loadErr, refresh } = useQuery(
     'settings:projection-rules', () => api.projectionRules(),
     { persist: true },
   )
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // Bumped when a refused NEW rule is settled from the notice — re-applied, saved over, or dropped —
+  // so the add form starts empty again: it keeps what was typed through the refusal, which is the
+  // point of keeping the change. A rule that lands first time needs no bump (the form clears
+  // itself, and keeps the user's focus in its inputs), and a refused edit of another row leaves
+  // whatever is typed in the add form alone.
+  const [addForm, setAddForm] = useState(0)
+  const addRefused = useRef(false)
+  const settled = () => {
+    invalidateKeys('settings:projection-rules'); refresh()
+    if (addRefused.current) { addRefused.current = false; setAddForm((k) => k + 1) }
+  }
+  // 🔴 THE RULES ARE SAVED AS ONE LIST, over the revision this panel read them at. A tab that had
+  // the panel open before another tab added a rule used to save its own copy and delete that rule
+  // without a word. A stale copy is now refused, and the edit — which is an operation on the list,
+  // never the list itself — is re-applied on top of what is stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<ProjectionRule[]>({
+    read: api.projectionRules,
+    write: (next, base) => api.setProjectionRules(next, base),
+    onSaved: settled,
+    onDiscard: settled,
+  })
 
-  /** Resolves whether the server took the list, so a form can tell a saved rule from a refused one. */
-  const save = async (next: ProjectionRule[]): Promise<boolean> => {
+  /** `landed`; `held` — refused as stale, and the notice now holds the change; or `failed`, with
+   *  the error line saying why. */
+  const attempt = async (op: Rebase<ProjectionRule[]>): Promise<'landed' | 'held' | 'failed'> => {
+    if (!stored) return 'failed'
     setBusy(true); setErr('')
-    try { await api.setProjectionRules(next); refresh(); return true }
-    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save'); return false }
+    try { return (await guard.apply(stored, op)) ? 'landed' : 'held' }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Failed to save'); return 'failed' }
     finally { setBusy(false) }
   }
+  const save = async (op: Rebase<ProjectionRule[]>) => (await attempt(op)) === 'landed'
 
+  const rules = stored?.value
   const list = rules ?? []
+  const locked = busy || guard.conflict !== null
+  const addRule = async (r: ProjectionRule) => {
+    const outcome = await attempt((theirs) => [...theirs, r])
+    addRefused.current = outcome === 'held'
+    return outcome === 'landed'
+  }
 
   return (
     <div>
@@ -55,10 +89,12 @@ export function ProjectionRulesPanel() {
       <Section title="Custom rules"
         hint="A rule maps a content marker (regex, matched against the start of the output) to a projection strategy. Use it for a tool whose big output the builtin sniffer treats as generic (a blunt head/tail cut) — e.g. a domain-specific log or dump. Rules are checked before the builtin sniff.">
         <div className="flex flex-col gap-2">
+          {/* Keyed by the rule, not its position: another tab inserting a rule above this one must not
+              hand this row's unsaved draft to a different rule. */}
           {list.map((r, i) => (
-            <RuleRow key={i} rule={r} disabled={busy}
-              onChange={(next) => save(list.map((x, j) => (j === i ? next : x)))}
-              onRemove={() => save(list.filter((_, j) => j !== i))} />
+            <RuleRow key={ruleKey(list, i)} rule={r} disabled={locked}
+              onChange={(next) => save(replaceRule(r, next))}
+              onRemove={() => save(removeRule(r))} />
           ))}
           {/* Failed → loading → genuinely empty, in that order. `rules` is undefined for all three,
               so a later test placed first can never be reached. This panel had NO loading branch at
@@ -77,10 +113,12 @@ export function ProjectionRulesPanel() {
               No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
             </div>
           ) : null}
-          {/* 🔴 ONLY ONCE THE RULES HAVE BEEN READ. Adding writes the WHOLE list (`save([...list, r])`,
-              and the server replaces it), so while `rules` is unread — loading, or failed behind the
-              Retry above — `list` is a fabricated `[]` and one added rule deleted every stored one. */}
-          {rules !== undefined && <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />}
+          {/* 🔴 ONLY ONCE THE RULES HAVE BEEN READ. Adding writes the WHOLE list, over the revision it
+              was read at (`save`), so while `rules` is unread — loading, or failed behind the Retry
+              above — there is no copy to add to: `list` is a fabricated `[]`, and a rule added to it
+              once deleted every stored one. */}
+          {rules !== undefined && <AddRule key={addForm} disabled={locked} onAdd={addRule} />}
+          <StaleWriteNotice guard={guard} what="Your projection rules" />
           {/* `role="alert"`: a refusal arrives after the click, so it is announced rather than left
               to be found. It carries the server's reason — an invalid regex names the pattern. */}
           {err && <div role="alert" data-type="body-s" className="flex items-center gap-1.5 text-danger"><AlertTriangle size={13} /> {err}</div>}
@@ -88,6 +126,29 @@ export function ProjectionRulesPanel() {
       </Section>
     </div>
   )
+}
+
+/** A row's key: the rule's content, plus how many identical rules come before it. */
+function ruleKey(list: ProjectionRule[], i: number): string {
+  const same = list.slice(0, i).filter((x) => sameDocument(x, list[i])).length
+  return `${JSON.stringify(list[i])}#${same}`
+}
+
+/** Replace the rule that WAS `before` with `after`, found by content — so it is the same rule
+ *  wherever another tab moved it — or `null` when it was changed or removed elsewhere. */
+function replaceRule(before: ProjectionRule, after: ProjectionRule): Rebase<ProjectionRule[]> {
+  return (theirs) => {
+    const i = theirs.findIndex((x) => sameDocument(x, before))
+    return i < 0 ? null : theirs.map((x, j) => (j === i ? after : x))
+  }
+}
+
+/** Remove the rule, found by content. Already gone elsewhere is the same outcome, so nothing to do. */
+function removeRule(rule: ProjectionRule): Rebase<ProjectionRule[]> {
+  return (theirs) => {
+    const i = theirs.findIndex((x) => sameDocument(x, rule))
+    return i < 0 ? theirs : theirs.filter((_, j) => j !== i)
+  }
 }
 
 /** Read-only TokenJuice savings card — estimated tokens saved by output

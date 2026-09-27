@@ -26,9 +26,11 @@ the one already-correct path accepts. Each `return _deny(msg, resources)` became
 `raise ConfigValueError(msg, resources)`; the caller decides how to render it (an HTTP 400
 with a SEL row, or a CLI error and exit 1).
 
-The spec registry stays in `dashboard/handlers/core.py`: the inert-surface census parses
-that module for the `_EDITABLE_CONFIG` literal to find `editable_config` entries with no
-backing field, and moving the dict here would make that detector match nothing while
+The spec registry is `config/editable.py`, beside this module and below every writer that
+validates against it — the dashboard handler, the CLI, pack imports and an app's install-time
+`permissions.config` check — so none of them has to import the HTTP surface to read it. The
+inert-surface census parses that file for the `_EDITABLE_CONFIG` literal (to find entries with no
+backing field) and refuses to run if it cannot find it, so the detector cannot match nothing while
 looking clean.
 
 Security posture: which fields are security controls, and which way loosens one

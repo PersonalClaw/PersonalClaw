@@ -289,7 +289,8 @@ async def test_project_update_rejects_unknown_and_reserved_keys(tmp_path):
             assert r.status == 400, key
             assert key in (await r.json())["error"], key
         # a rejected body changes NOTHING, and the legitimate fields still write
-        assert (await (await client.get(f"/api/projects/{pid}")).json())["name"] == "Strict"
+        read = await (await client.get(f"/api/projects/{pid}")).json()
+        assert read["name"] == "Strict"
         r = await client.put(
             f"/api/projects/{pid}",
             json={
@@ -300,6 +301,8 @@ async def test_project_update_rejects_unknown_and_reserved_keys(tmp_path):
                 "agent_instructions_template": "be brief",
                 "workspace_dir": "/tmp/repo",
             },
+            # The template is replaced whole, so the write names the revision it replaces.
+            headers={"If-Match": read["revisions"]["agent_instructions_template"]},
         )
         assert r.status == 200
         body = await r.json()

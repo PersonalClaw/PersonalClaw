@@ -41,7 +41,7 @@ For a new field `foo` on `LegibilityConfig` (the worked example the codebase alr
 2. **`load()` mapping:** `AppConfig.load()` reads it explicitly —
    `legibility=LegibilityConfig(foo=bool(legibility_data.get("foo", True)), …)`.
 3. **`to_dict()`:** the section is serialized (`"legibility": asdict(self.legibility)`).
-4. **`_EDITABLE_CONFIG`** (`dashboard/handlers/core.py`), **only if runtime-editable via
+4. **`_EDITABLE_CONFIG`** (`config/editable.py`), **only if runtime-editable via
    PATCH:** add the dotted path with its validation spec —
    `"legibility.foo": {"type": "bool"}` — plus a frontend control if user-facing.
 

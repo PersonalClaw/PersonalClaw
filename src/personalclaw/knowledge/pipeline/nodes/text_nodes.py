@@ -78,7 +78,7 @@ class DocumentReadNode:
         if meta.get("format") == "pdf" and meta.get("text_layer") is False:
             from personalclaw.knowledge.pipeline.registry import resolve_runnable
 
-            if resolve_runnable("ocr", "vision-llm") is None:
+            if await resolve_runnable("ocr", "vision-llm") is None:
                 meta["ocr"] = "unavailable"
             else:
                 classification = "no-text-layer"

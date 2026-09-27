@@ -21,6 +21,7 @@ from personalclaw.request_validation import (
 )
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import is_sensitive_path, is_system_path
+from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.workflows import containers, leases
 from personalclaw.workflows import store as run_store
@@ -138,13 +139,19 @@ def _workspace_refusal(workspace_dir: str) -> web.Response | None:
 def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None = None) -> dict:
     """Serialize a project for the API, enriched with its context dir path + a
     task-list count. ``list_counts`` lets the list endpoint pass a precomputed
-    {project_id: count} map so it isn't recomputed per project."""
+    {project_id: count} map so it isn't recomputed per project.
+
+    ``revisions`` carries the revision of the one field a PUT replaces as a whole DOCUMENT —
+    the agent-instructions template, a free text the page rebuilds from what it read — which a
+    PUT writing it must name in ``If-Match`` (``personalclaw/stale_write.py``). The other fields
+    are one scalar each, so a write of one is the edit the user made and needs no base."""
     d = project.to_dict()
     d["context_dir"] = str(store.context_dir(project.id))
     if list_counts is None:
         d["task_list_count"] = len(store.list_task_lists(project_id=project.id))
     else:
         d["task_list_count"] = list_counts.get(project.id, 0)
+    d["revisions"] = {_TEMPLATE_FIELD: revision_of(project.agent_instructions_template)}
     return d
 
 
@@ -693,7 +700,11 @@ async def api_projects_work_release(request: web.Request) -> web.Response:
 
 
 async def api_projects_update(request: web.Request) -> web.Response:
-    """PUT /api/projects/{project_id}"""
+    """PUT /api/projects/{project_id}
+
+    A body carrying ``agent_instructions_template`` replaces that whole text, so it names the
+    revision the read reported for it (``revisions.agent_instructions_template``) in
+    ``If-Match``; a stale one is refused with ``409 stale_write`` and nothing is written."""
     body = await json_object_body(request)
     rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
     if rejected is not None:
@@ -706,8 +717,24 @@ async def api_projects_update(request: web.Request) -> web.Response:
         if refusal is not None:
             return refusal
     store = _store()
+    pid = request.match_info["project_id"]
+    current = store.get_project(pid) if _TEMPLATE_FIELD in body else None
+    if current is not None:
+        # 🔴 THE INSTRUCTIONS ARE REPLACED ONLY OVER THE COPY THEY WERE BUILT FROM. Accepting a
+        # learning proposal appends an instruction to this text
+        # (`learning.project_context_review._install_instruction`), and the judge-guidance dialog
+        # saves the whole text it opened with — so an accept that landed while the dialog was
+        # open was erased by its Save. Nothing is awaited between this check and the write; a
+        # project that does not exist is the store's `not found` below.
+        stale = stale_write_refusal(
+            request,
+            current.agent_instructions_template,
+            what=f"the agent instructions of the project {current.name!r}",
+        )
+        if stale is not None:
+            return stale
     try:
-        project = store.update_project(request.match_info["project_id"], **body)
+        project = store.update_project(pid, **body)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     if not project:

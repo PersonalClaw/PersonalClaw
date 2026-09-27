@@ -4,7 +4,7 @@ Defines the backend-neutral :class:`AgentEvent` that every backend (ACP via
 ``acp/adapter.py``, the native loop, the HTTP model providers) emits and the
 chat runner consumes. ``LLMEvent`` aliases it.
 
-The field set mirrors ``acp.types.AcpEvent`` (identical field names + defaults).
+The field set is a superset of ``acp.types.AcpEvent`` (same names + defaults).
 The event-kind constants live here as the canonical home; ``acp.types`` imports
 them.
 """
@@ -28,6 +28,12 @@ EVENT_COMPLETE = "complete"
 EVENT_COMPACTION_STATUS = "compaction_status"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
+# The turn's model failed before it said anything and the next model in its chain answers
+# instead. ``text`` is the sentence that says so ("Ran on X instead of Y: …"), and it arrives
+# before anything that model streams. Only the native loop emits it, and only for a caller
+# that asked it to fail over (``NativeAgentRuntime.announce_failover``), since a caller that
+# drops this event would be showing another model's reply as the chosen one's.
+EVENT_MODEL_SUBSTITUTION = "model_substitution"
 
 #: The ``stop_reason`` of a reply that stopped because it reached the model's OUTPUT cap — the
 #: Anthropic/Bedrock spelling, which a provider that owns its own decoding also emits.
@@ -50,14 +56,22 @@ def is_length_stop(stop_reason: object) -> bool:
 #: policy: the app's grant, your Trust, or YOLO. Absent for a call that asks nobody.
 TOOL_META_APPROVAL_WAIVED = "approval_waived"
 
+#: The ``tool_meta`` key a TOOL_RESULT carries when the call needed an approval and the run was
+#: unattended, so the runtime declined it without asking anyone. The runtime cannot reach
+#: the Inbox; whoever consumes its stream — the chat runner, the subagent manager — records the
+#: denial there (``dashboard/auto_denials.py``) so the morning can see what did not run.
+TOOL_META_AUTO_DENIED = "auto_denied"
+
 
 @dataclass
 class AgentEvent:
     """A neutral event from any agent/model backend's turn stream.
 
-    Field names + defaults match ``acp.types.AcpEvent`` exactly so the chat
-    runner consumes either without change. ``tool_input``/``tool_output`` are
-    typed ``Any`` (the native loop may pass structured values; ACP passes str).
+    Every ``acp.types.AcpEvent`` field is here under the same name and default,
+    so the chat runner consumes either without change. ``risk_level`` and
+    ``served_model_ref`` have no ACP twin, since an ACP agent reports neither.
+    ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
+    structured values; ACP passes str).
     """
 
     kind: str  # one of the EVENT_* constants above
@@ -115,3 +129,7 @@ class AgentEvent:
     # carry the input schema + render hint. Empty for backends that don't supply
     # it (ACP) → the UI renders exactly as before. Mirror in acp.types.AcpEvent.
     tool_meta: dict[str, Any] = field(default_factory=dict)
+    #: The ``"<entry>:<model>"`` ref of the model that answered, on the native loop's terminal
+    #: EVENT_COMPLETE: the fallback when the turn fell back down its chain, so the usage this
+    #: event carries is priced by the model that ran. ``""`` from a backend that does not say.
+    served_model_ref: str = ""

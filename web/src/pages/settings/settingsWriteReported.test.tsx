@@ -37,12 +37,13 @@ function mockNotify() {
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('a refused speech setting rolls back and says so', () => {
-  async function mountVoice(save: () => Promise<unknown>) {
+  async function mountVoice(save: (useCase: string, next: Record<string, unknown>, base: string) => Promise<unknown>) {
     mockNotify()
     vi.doMock('../../lib/api', async (orig) => ({
       ...(await orig<Record<string, unknown>>()),
       api: {
-        useCaseSettings: () => Promise.resolve({ enabled: false }),
+        // Each use case's settings with the revision a save names: the file is saved whole.
+        useCaseSettings: () => Promise.resolve({ value: { enabled: false }, revision: 'rev-1' }),
         // 🪤 The toggle is `disabled={!bound}`, and `bound` comes from `modelsActive` — with an empty
         // map the switch never moves and both drives failed for a reason that had nothing to do with
         // the fix. Bind a model for both use cases so the control is actually operable.
@@ -80,11 +81,15 @@ describe('a refused speech setting rolls back and says so', () => {
   })
 
   it('keeps the new value and stays quiet when the save succeeds', async () => {
-    await mountVoice(() => Promise.resolve({ ok: true }))
+    // The gateway answers with the settings as it now stores them, and their new revision.
+    const save = vi.fn((_u: string, next: Record<string, unknown>) => Promise.resolve({ ok: true, settings: next, revision: 'rev-2' }))
+    await mountVoice(save)
     const toggle = await waitFor(() => screen.getAllByRole('switch')[0])
     const before = toggle.getAttribute('aria-checked')
     fireEvent.click(toggle)
     await waitFor(() => expect(screen.getAllByRole('switch')[0].getAttribute('aria-checked')).not.toBe(before))
+    // Saved over the revision the panel painted.
+    expect(save).toHaveBeenCalledWith('stt', { enabled: true }, 'rev-1')
     expect(notified, 'a successful save says nothing').toEqual([])
   })
 })
@@ -184,7 +189,7 @@ describe('the shared settings mutation reports as well as reconciles', () => {
       // an accurate reason rather than a description of the outcome.
       // 🪤 Its SIBLING in the same file — `setOverride`, wired to `TokensView.onOverride` — is a user
       // edit and is NOT excused; it now reports. One file, two catches, opposite verdicts.
-      'pages/loops/DesignStepPreview.tsx  api.updateULoop': {
+      'pages/loops/DesignStepPreview.tsx  api.saveULoopSpec': {
         why: 'mount-time auto-merge, not a user action; the preview loads regardless',
       },
       // 🔑 EXCUSED ON A MEASUREMENT, AND MY FIRST JUSTIFICATION FOR IT WAS WRONG. I originally wrote
@@ -247,6 +252,9 @@ describe('the shared settings mutation reports as well as reconciles', () => {
 
     const preview = codeOf('pages/loops/DesignStepPreview.tsx')
     expect(preview, 'the user token edit reports').toMatch(/reportingWrite\(`save the \$\{path\} override`/)
-    expect(preview, 'and its refetch is gated').toMatch(/if \(ok\) await loadTokens\(\)/)
+    // Gated by the stale-write guard: only a write that LANDED reaches `onSaved` — a refused one
+    // resolves without throwing, so a refetch after the call would run on a refusal too.
+    expect(preview, 'and its refetch is gated').toMatch(/onSaved: \(\) => \{ void loadTokens\(\) \}/)
+    expect(preview, 'with nothing refetching behind the call').not.toMatch(/if \(ok\) await loadTokens\(\)/)
   })
 })

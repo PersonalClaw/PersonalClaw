@@ -13,8 +13,9 @@ Three properties are load-bearing and live here rather than in each scanner:
 - **The fingerprint is the only thing a choice carries.** The step picks items by
   fingerprint and the import re-scans and keeps only the fingerprints ITS scan found, so
   ids travel and content never does: a caller cannot name a path or supply a body.
-- **One secret policy.** Text an item carries (``text``, a conversation's messages) has every
-  credential the platform's detector finds redacted, and counted. An MCP server's ``env`` and
+- **One secret policy.** Text an item carries (``text``, and a conversation's messages when the
+  import reads them) has every credential the platform's detector finds redacted, and counted.
+  An MCP server's ``env`` and
   ``headers`` values stay in its ``payload`` because the MCP writer keeps them in the credential
   store, as Tools › Import does. A file or entry that would carry a credential anywhere else is
   left out and counted (``ScanResult.secrets_skipped``, and the item's own share of it). A payload
@@ -29,6 +30,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 
 class ImportCategory(str, Enum):
@@ -151,8 +153,9 @@ class ImportItem:
     ``text`` is the redacted body (instructions, memories, an agent's or a prompt's
     instructions); ``payload`` is the structured value (an MCP server's definition with its
     values, which the writer stores as credential references; an agent's description; a
-    conversation's redacted messages; a denylist pattern); ``path`` is the source directory for
-    skills.
+    denylist pattern); ``path`` is what the import reads when it runs — a skill's directory, a
+    conversation's transcript. A conversation is read there and then, one at a time, rather than
+    held by the scan: a months-long history is gigabytes of transcripts.
     """
 
     source: str
@@ -190,6 +193,10 @@ class ImportItem:
     secrets_skipped: int = 0
     #: A skill's supply-chain scan, made when the tool was scanned. ``None`` for anything else.
     scan: SkillScan | None = None
+    #: True while what is said of the item comes from only the start of its file: a conversation
+    #: the scan looked into but has not read in full yet. Its title and origin name it; its note
+    #: says it is not read yet rather than giving a count, and ``redactions`` is not a count yet.
+    provisional: bool = False
     #: The ``consent`` of the warnings the person accepted for THIS import. Set by
     #: :func:`~.engine.run_import` from the request, never by a scanner, and never on the wire.
     accepted_warnings: str = ""
@@ -216,6 +223,7 @@ class ImportItem:
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
             "scan": self.scan.to_dict() if self.scan is not None else None,
+            "provisional": self.provisional,
         }
 
 
@@ -318,6 +326,14 @@ class ScanResult:
     notes: list[str] = field(default_factory=list)
     #: What the tool holds that is not brought over, each with its count and reason.
     not_imported: list[NotImported] = field(default_factory=list)
+    #: How many conversation files the scan found, read in full or not.
+    conversation_files: int = 0
+    #: The conversation files not read in full yet (a scan that only LOOKS): each is either an item
+    #: marked ``provisional`` or, when its start held no prompt, not an item until it is read. What
+    #: depends on reading them — their counts, and "Not brought over" rows about files that cannot
+    #: be read — is not final while any remain. Paths, so never on the wire: :meth:`to_dict` says
+    #: how many.
+    unread: list[Path] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         """Per-category item counts. The step counts from ``items`` instead, because its
@@ -359,6 +375,10 @@ class ScanResult:
             "redactions": self.redactions,
             "notes": list(self.notes),
             "not_imported": [entry.to_dict() for entry in self.not_imported],
+            "reading": {
+                "read": self.conversation_files - len(self.unread),
+                "of": self.conversation_files,
+            },
         }
 
 
@@ -374,6 +394,9 @@ class WriteResult:
     destination: str = ""
     #: Why — value-free ("mcp server 'x' already configured with a different command").
     detail: str = ""
+    #: Credential-like strings redacted from the text THIS write brought over. A count, and 0 for
+    #: anything but ``imported``: nothing else lands.
+    redactions: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -393,11 +416,11 @@ class ImportReport:
     withheld counts.
 
     ``results`` is what happened to every CHOSEN item the run's own re-scan found. The other
-    two lists are what makes the report a record of the choice rather than of the writes
-    alone: ``unselected`` is everything that re-scan found and the caller did not pick, each
-    with the plan it had just before the writes (so "left out by you" and "already here" stay
-    distinguishable), and ``missing`` is every chosen fingerprint the re-scan could not find —
-    reported, never dropped in silence.
+    lists are what makes the report a record of the choice rather than of the writes alone:
+    ``unselected`` is everything that re-scan found and the caller did not pick, each with the
+    plan it had just before the writes (so "left out by you" and "already here" stay
+    distinguishable), ``missing`` is every chosen fingerprint the re-scan could not find, and
+    ``not_reached`` every chosen one the run stopped before — reported, never dropped in silence.
     """
 
     results: list[WriteResult] = field(default_factory=list)
@@ -406,6 +429,9 @@ class ImportReport:
     secrets_skipped: int = 0
     redactions: int = 0
     notes: list[str] = field(default_factory=list)
+    #: Chosen items the run never reached because it was stopped — asked to, or by the gateway
+    #: shutting down. Nothing was written for them, so importing again brings them over.
+    not_reached: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         counter = Counter(r.outcome.value for r in self.results)
@@ -420,6 +446,7 @@ class ImportReport:
             "results": [r.to_dict() for r in self.results],
             "unselected": [offer(item, plan) for item, plan in self.unselected],
             "missing": list(self.missing),
+            "not_reached": list(self.not_reached),
             "secrets_skipped": self.secrets_skipped,
             "redactions": self.redactions,
             "notes": list(self.notes),

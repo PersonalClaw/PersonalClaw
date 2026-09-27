@@ -66,7 +66,7 @@ const response = (items: AlwaysOnItem[]): AlwaysOnResponse => ({
 beforeEach(() => {
   notify.mockReset()
   alwaysOn.mockReset().mockResolvedValue(response([SKILL, OVERVIEW, LEDGER]))
-  alwaysOnDoc.mockReset().mockResolvedValue({ ...OVERVIEW, body: VERBATIM })
+  alwaysOnDoc.mockReset().mockResolvedValue({ ...OVERVIEW, body: VERBATIM, revision: 'o1' })
   saveAlwaysOnDoc.mockReset()
   projects.mockReset().mockResolvedValue([{ id: 'p-1', name: 'Roofing Rebuild' }])
 })
@@ -113,13 +113,14 @@ describe('AlwaysOnConventions', () => {
   })
 
   it('saves the draft and reports what the store now holds', async () => {
-    saveAlwaysOnDoc.mockResolvedValue({ ok: true, item: { ...OVERVIEW, body: 'edited text' } })
+    saveAlwaysOnDoc.mockResolvedValue({ ok: true, item: { ...OVERVIEW, body: 'edited text', revision: 'o2' } })
     const { getAllByRole, findByRole, getByRole } = await mount()
     await act(async () => { fireEvent.click(getAllByRole('button', { name: 'Edit' })[0]) })
     const box = await findByRole('textbox') as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: 'edited text' } })
     await act(async () => { fireEvent.click(getByRole('button', { name: 'Save' })) })
-    expect(saveAlwaysOnDoc).toHaveBeenCalledWith('project_instruction:overview.md', 'p-1', 'edited text')
+    // Over the revision of the verbatim body the editor opened with.
+    expect(saveAlwaysOnDoc).toHaveBeenCalledWith('project_instruction:overview.md', 'p-1', 'edited text', 'o1')
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Saved overview.md'), 'success')
     expect(box.value).toBe('edited text')
   })

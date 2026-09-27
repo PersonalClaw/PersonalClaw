@@ -14,8 +14,8 @@ Three claims are load-bearing here, and each has an easy false version:
 2. **The template's convergence reaches the engine's policy.** The false version asserts the JSON
    contains the block. That would pass with the parser deleted, because `POLICY_FIELDS` would
    still list it and the block would still be on disk. So the assertion goes through
-   `RunController._supervisor_policy` and carries a POSITIVE CONTROL: the same node with the block
-   removed must resolve to `orchestrated`, which is what the default was before this landed.
+   `loop_convergence._supervisor_policy` and carries a POSITIVE CONTROL: the same node with the
+   block removed must resolve to `orchestrated`, which is what the default was before this landed.
 3. **The four un-ported kinds are untouched.** A session that breaks four working kinds to land
    one is a regression, not a bridgehead — so their read-time resolution and their table policy are
    both asserted, and the launch path must REFUSE them by name rather than run a stub.
@@ -42,7 +42,7 @@ from typing import Any
 import pytest
 
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import loop_aliases, service, store, supervisor_policy
+from personalclaw.workflows import loop_aliases, loop_convergence, service, store, supervisor_policy
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import Node, RunStatus, WorkflowRun
@@ -213,12 +213,12 @@ def test_a_general_kind_run_executes_and_writes_its_own_ledger() -> None:
     "deliberately NOT asserted: the template still cannot complete", because a loop BODY received no
     `last` at all — so only iteration 0 had an honest value to read and every later one failed to
     bind. Three separate engine seams had to land for the template to finish, the last two in #3524:
-    the stage reconciler advancing the iteration counter, `_context_for` handing a body its previous
-    iteration (:func:`test_a_loop_body_reads_its_previous_iteration`), and a spawned stage's output
-    reaching its declared `schema` at all. With those in, the loop ends on its OWN declared
-    `until_dry` streak rather than burning its iteration budget, which is a stronger claim than a
-    terminal state: `dry_streak` can only be reached by reading `meaningful_progress` out of the
-    body's output, so a green here is also evidence the declared shape arrived.
+    the stage reconciler advancing the iteration counter, `node_bindings.context_for` handing a body
+    its previous iteration (:func:`test_a_loop_body_reads_its_previous_iteration`), and a spawned
+    stage's output reaching its declared `schema` at all. With those in, the loop ends on its OWN
+    declared `until_dry` streak rather than burning its iteration budget, which is a stronger claim
+    than a terminal state: `dry_streak` can only be reached by reading `meaningful_progress` out of
+    the body's output, so a green here is also evidence the declared shape arrived.
     """
     status, run_id, fake = _drive_the_template()
 
@@ -315,23 +315,25 @@ def test_a_loop_body_reads_its_previous_iteration() -> None:
     """The other half of the old blocker, now CLOSED (#3524) and pinned as the fixed behaviour.
 
     This replaces `test_a_loop_body_still_gets_no_real_previous_iteration`, whose claim was that
-    `RunController._context_for` sets no `last_output`/`has_last` so a body prompt may never read
+    `node_bindings.context_for` sets no `last_output`/`has_last` so a body prompt may never read
     `last`. It does now, and the contract that test said was missing is the one it named: what a
     loop ITERATION's output IS when the body is a container whose children emit different schemas.
     The answer is the body's outputs LAYERED in document order — this template reads `summary` from
     its worker and `verdict` from its judge in one prompt, so no single child's output could ever
-    have been it (`RunController._last_output`).
+    have been it (`node_bindings._last_output`).
 
     **Runtime, on the SECOND iteration's real prompt, not on a hand-built context.** A
-    `_context_for` assertion would pass against a `_last_output` that returns the right shape from
-    the wrong iteration, and the value that matters is the one the model is handed. So this asserts
-    the previous iteration's own words are in iteration 1's `work` prompt, and that the first-pass
-    default is NOT — which is what tells a carried value from a rescued absence.
+    `node_bindings.context_for` assertion would pass against a `node_bindings._last_output` that
+    returns the right shape from the wrong iteration, and the value that matters is the one the
+    model is handed. So this asserts the previous iteration's own words are in iteration 1's `work`
+    prompt, and that the first-pass default is NOT — which is what tells a carried value from a
+    rescued absence.
 
     Three engine seams had to land together for this, and the third is why fixing `last` alone was
     not enough: a spawned stage's output was `{"result": "<raw text>"}` regardless of its declared
     `schema`, so wiring `last` only moved the failure from `unresolved reference at 'last'` to
-    `unresolved reference at 'summary'`. `_settled_stage_output` carries that argument.
+    `unresolved reference at 'summary'`. `stage_settlement._settled_stage_output` carries that
+    argument.
     """
     _, run_id, fake = _drive_the_template()
 
@@ -384,10 +386,10 @@ class _ProseWorker(_FakeSubagents):
     fail: the loop runs all six, `meaningful_progress` is never parseable out of prose so
     `until_dry` cannot fire, and it stops on `max_iterations` HONESTLY.
 
-    `_iteration_failures` reports `(0, 6, '')` and the run journals ZERO `step_failed`
-    rows. That is the negative direction of the test below — the same template, the same ceiling,
-    and the reason must stay `max_iterations` — and it is what stops `iterations_failed` from being
-    a label this suite would hang on any run that ran out of room.
+    `loop_convergence._iteration_failures` reports `(0, 6, '')` and the run journals ZERO
+    `step_failed` rows. That is the negative direction of the test below — the same template, the
+    same ceiling, and the reason must stay `max_iterations` — and it is what stops
+    `iterations_failed` from being a label this suite would hang on any run that ran out of room.
     """
 
     def spawn(self, **kw: Any) -> _Info:
@@ -417,9 +419,10 @@ class _ReapedWorker(_FakeSubagents):
     The error is applied at LOOKUP, not at spawn. `dispatch_stage` reads `info.error` the moment
     `spawn` returns and files a non-empty one as a PERMISSION-class *spawn rejection* — a child that
     never started. A reap is a child that started, ran and was killed, which settles through
-    `_reconcile_dispatched_stages` as `FailureClass.TIMEOUT` with `retries_exhausted`. Those are
-    different rows with different `cause_plain` values (`spawn rejected: …` vs the sentence itself),
-    and only the second is the run this escalation was measured on.
+    `stage_settlement.reconcile_dispatched_stages` as `FailureClass.TIMEOUT` with
+    `retries_exhausted`. Those are different rows with different `cause_plain` values (`spawn
+    rejected: …` vs the sentence itself), and only the second is the run this escalation was
+    measured on.
     """
 
     def __init__(self) -> None:
@@ -454,8 +457,9 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
     the problem. The engine held both facts and surfaced the wrong one.
 
     Asserted on `run.attention`, the record the panel really renders (`attentionMeta.readAttention`
-    → `EscalationPanel`), rather than on the helper that derives it: a `_iteration_failures` unit
-    test would pass against a `_surface_loop` that ignored it.
+    → `EscalationPanel`), rather than on the helper that derives it: a
+    `loop_convergence._iteration_failures` unit test would pass against a
+    `loop_convergence.surface_loop` that ignored it.
 
     **The PREMISE was re-derived here, and the reason is worth stating rather than absorbing.** The
     failing iterations used to be produced by `_ProseWorker`, whose unstructured output made every
@@ -537,8 +541,8 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
 
     # ── the other direction: the SAME ceiling, iterations that did not fail ──────────────────
     #
-    # Without this the token above would be satisfied by a `_surface_loop` that had simply stopped
-    # reading the budget reason at all and always said `iterations_failed`.
+    # Without this the token above would be satisfied by a `loop_convergence.surface_loop` that had
+    # simply stopped reading the budget reason at all and always said `iterations_failed`.
     ctl_status, ctl_controller, ctl_run_id = _drive(_ProseWorker())
     ctl_attention = ctl_controller.run.attention or {}
 
@@ -559,11 +563,11 @@ def test_a_loop_that_spent_its_budget_failing_does_not_blame_its_ceiling() -> No
 def test_a_tripped_breaker_reaches_the_timeline_a_user_can_read() -> None:
     """A tripped breaker is journaled; before #3524 no surface showed it.
 
-    `controller._advance_loop` records a trip as an `iteration` row with
+    `loop_iteration.advance_loop` records a trip as an `iteration` row with
     `outcome="breaker:<reason>"`, and that was the ONLY record: `breaker_trip` is a kind only the
     LOOP noun writes (`introspection.RAIL_PRODUCERS` declares that asymmetry deliberately), and
-    `iteration` was outside `service._TIMELINE_KINDS`. The node-inspect endpoint did return the row,
-    but `web/src/pages/workflows/ledgerRowDetail.ts` projects only `kind`/`sha`/`impact`/
+    `iteration` was outside `run_cockpit._TIMELINE_KINDS`. The node-inspect endpoint did return the
+    row, but `web/src/pages/workflows/ledgerRowDetail.ts` projects only `kind`/`sha`/`impact`/
     `rationale`, so it rendered as the bare word `iteration`. An inert signal.
 
     **The filter is asserted in BOTH directions**, because allowlisting `iteration` wholesale is the
@@ -571,7 +575,7 @@ def test_a_tripped_breaker_reaches_the_timeline_a_user_can_read() -> None:
     cycle for months, which is the noise the whitelist exists to keep out. So a `breaker:` row must
     arrive and a `continue` row must not.
     """
-    from personalclaw.workflows.service import introspection_timeline
+    from personalclaw.workflows.run_cockpit import introspection_timeline
 
     rows = introspection_timeline(
         [
@@ -684,7 +688,7 @@ def test_the_template_declared_convergence_reaches_the_resolved_policy() -> None
     store.write_spec(run.id, spec)
     controller = RunController(run, spec, services=EngineServices())
 
-    resolved = controller._supervisor_policy(node)
+    resolved = loop_convergence._supervisor_policy(controller, node)
     assert resolved.convergence.signal == DONE_VERIFY_COMMAND
     assert resolved.convergence.command_key == "verify_command"
     assert resolved.convergence.done_check_optional is True
@@ -692,7 +696,9 @@ def test_the_template_declared_convergence_reaches_the_resolved_policy() -> None
     # The positive control: strip the declaration, resolve the SAME way, get the default.
     stripped = dict(node.config or {})
     stripped.pop("supervisor", None)
-    bare = controller._supervisor_policy(Node.from_dict({**spec["root"], "config": stripped}))
+    bare = loop_convergence._supervisor_policy(
+        controller, Node.from_dict({**spec["root"], "config": stripped})
+    )
     assert bare.convergence.signal == DONE_ORCHESTRATED, (
         "a node declaring no supervisor block resolved to something other than the default — "
         "the control is broken, so the assertion above proves nothing"

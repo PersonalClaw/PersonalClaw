@@ -82,9 +82,13 @@ suggestions; use one of those.
   `automation_create`. Then read it back (§3).
 - **Add knowledge and verify retrieval:** `knowledge_create` (`type`, `title`,
   `content`) → `knowledge_search` for the title to confirm it's indexed.
-- **Bind a model to a use case:** `PUT /api/models/active/{use_case}` with body
-  `{"models": ["provider_name:model_id", ...]}` → `GET /api/models/active` to
-  confirm.
+- **Bind a model to a use case:** read `GET /api/models/active` first — the PUT
+  replaces the use case's whole chain, so it names the chain it replaces:
+  `PUT /api/models/active/{use_case}` with body
+  `{"models": ["provider_name:model_id", ...]}` and header
+  `If-Match: "<revisions[use_case] from that read>"`. A `409 stale_write` means the
+  chain changed since you read it: read again, re-apply your change, and save. Then
+  `GET /api/models/active` to confirm.
 - **Drive an app backend route:** call the app-route tool the manifest surfaces
   for that app's declared route (see `app_surfaces[]` in the manifest); don't
   reach into the app's process directly.

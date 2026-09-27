@@ -280,6 +280,9 @@ class TestPlanModeSel:
     def _app(state) -> web.Application:
         app = web.Application()
         app["state"] = state
+        app.router.add_get(
+            "/api/chat/sessions/{session}/plan-session", chat_plan.api_chat_plan_session
+        )
         app.router.add_post(
             "/api/chat/sessions/{session}/plan/activate", chat_plan.api_chat_plan_activate
         )
@@ -344,9 +347,14 @@ class TestPlanModeSel:
             chat.append("assistant", "## Plan\n1. read\n2. report", "msg msg-a")
             chat.drain()
             assert chat_plan.maybe_submit_plan_draft(state, chat) is True
+            # The edit names the draft it was made on: the revision the plan-session read
+            # reports for the step (`personalclaw/stale_write.py`).
+            read = await (await client.get("/api/chat/sessions/s1/plan-session")).json()
+            base = read["session"]["steps"][0]["revision"]
             r = await client.post(
                 "/api/chat/sessions/s1/plan/edit",
                 json={"step_id": "chat-plan-1", "markdown": "## Plan\n1. read only"},
+                headers={"If-Match": f'"{base}"'},
             )
             assert r.status == 200, await r.text()
             r = await client.post(

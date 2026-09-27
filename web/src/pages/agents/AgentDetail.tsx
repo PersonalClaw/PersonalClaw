@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX, RefreshCw, FileText } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -9,7 +9,10 @@ import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { Skeleton } from '../../ui/ListScaffold'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { HELD_CHANGE_REASON, rebaseRecord, rebaseText, sameDocument, type Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type AgentHook } from '../../lib/api'
 import { useActiveChatModelOptions, canonicalAgentKey } from '../../lib/agents'
 import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
@@ -17,6 +20,12 @@ import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm
 import { ModelUnavailableNote, unavailableModelOption } from './agentModelStatus'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { repoDocUrl } from '../../lib/repoDocs'
+
+/** An agent as the editor starts from it: the draft of its profile, with the revision the same read
+ *  reported — the base the save names. */
+function baseOf(agent: SavedAgent): Revisioned<AgentDraft> {
+  return { value: toDraft(agent), revision: agent.revision }
+}
 
 /** Native agent inspector: view ↔ in-panel edit (full builder), set-as-default,
  *  delete. */
@@ -28,9 +37,27 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   // reserved built-in is model-only so it can never enter the edit form.
   const editing = editingProp && !reserved
   const setEditing = onEditingChange
-  const [draft, setDraft] = useState<AgentDraft>(() => toDraft(agent))
+  // 🔴 THE PROFILE IS SAVED WHOLE, OVER THE COPY THE DRAFT WAS SEEDED FROM. The editor sends every
+  // field it shows, the untouched ones as it read them — so a change made since (the chat's "Always
+  // allow for this agent", a skill ticked in another tab) was reverted by the next save here without a
+  // word. `base` is that copy with the revision the same read reported, seeded together with the draft
+  // and never refreshed under it; a stale save is refused and offered back (`ui/StaleWriteNotice`).
+  const [base, setBase] = useState<Revisioned<AgentDraft>>(() => baseOf(agent))
+  const [draft, setDraft] = useState<AgentDraft>(() => base.value)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const guard = useStaleWriteGuard<AgentDraft>({
+    read: async () => {
+      const stored = (await api.agents()).agents.find((a) => a.name === agent.name)
+      if (!stored) throw new Error(`the agent “${agent.name}” is no longer configured`)
+      return baseOf(stored)
+    },
+    write: (next, revision) => api.updateAgent(agent.name, draftToPayload(next), revision),
+    onSaved: () => { onSaved(); setEditing(false) },
+    // Dropping the change leaves the editor on what is stored: the list re-reads, and the next Edit
+    // seeds from it.
+    onDiscard: () => { onSaved(); setEditing(false); setErr('') },
+  })
   // Trigger bindings store the hook's raw id (unlike skills/tools, whose stored
   // values ARE their labels), so the panel resolves ids through the same
   // endpoint the picker built its options from (#629). null = not loaded (no
@@ -50,12 +77,23 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   // scope_ref model are gone with the old feature (WORKFLOWS-V2 Phase 1); v2
   // definitions are not agent-scoped, so there is nothing equivalent to show.
 
-  useEffect(() => { setDraft(toDraft(agent)) }, [agent.name])
+  // Seeded from the agent as the list shows it when the editor opens (or another agent is picked) —
+  // never over an edit, where a revalidation landing mid-edit must not replace what is typed.
+  const reseed = () => { const b = baseOf(agent); setBase(b); setDraft(b.value) }
+  useEffect(() => { reseed() }, [agent.name, editing])
+  // A FRESHER COPY REPLACES AN UNTOUCHED ONE. A reload straight into the editor (`?edit=1`) paints the
+  // tab's cached list first, and the fresh read that lands a moment later never reached the form — so
+  // it showed values older than what was stored, and its first save was refused. Nothing was lost,
+  // but a page that is only stale because it has not caught up should catch up.
+  useEffect(() => {
+    if (agent.revision !== base.revision && guard.conflict === null && sameDocument(draft, base.value)) reseed()
+  }, [agent.revision])  // eslint-disable-line
 
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
     setSaving(true); setErr('')
-    try { await api.updateAgent(agent.name, draftToPayload(draft)); onSaved(); setEditing(false) }
+    // A refusal keeps the draft and the editor open, with the notice below offering the way back.
+    try { await guard.save(base, draft, rebaseRecord(base.value, draft)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {
@@ -67,11 +105,16 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   if (editing) {
     return (
       <div className="flex flex-col gap-l">
-        <AgentForm draft={draft} onChange={setDraft} nameLocked compact
-          unavailable={agent.model_unavailable && agent.model ? { model: agent.model, reason: agent.model_unavailable } : undefined} />
+        <HeldChange guard={guard}>
+          <AgentForm draft={draft} onChange={setDraft} nameLocked compact
+            unavailable={agent.model_unavailable && agent.model ? { model: agent.model, reason: agent.model_unavailable } : undefined} />
+        </HeldChange>
+        <StaleWriteNotice guard={guard} what={`The agent “${agent.name}”`} />
         <FormFooter error={err}>
-          <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(agent)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} loading={saving}><Check size={15} /> Save</Button>
+          {/* Cancelling a refused save drops the kept change, exactly as "Discard my change" does. */}
+          <Button variant="ghost" size="sm" onClick={() => { if (guard.conflict) guard.discard(); else { setEditing(false); setErr('') } }}><X size={15} /> Cancel</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={guard.conflict !== null}
+            disabledReason={HELD_CHANGE_REASON}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )
@@ -173,7 +216,10 @@ function AgentAdvanced({ agentName }: { agentName: string }) {
 
 /** "When to use this agent" routing notes — populate the orchestrator's generated delegation roster. */
 function RoutingNotesEditor({ agentName }: { agentName: string }) {
-  const [content, setContent] = useState<string | null>(null)
+  // The note as read, with the revision the same read reported: the editor saves the WHOLE note over
+  // it, so a note changed since — in another tab, or seeded by the orchestrator from the agent's
+  // description — is refused instead of overwritten (`lib/staleWrite.ts`).
+  const [stored, setStored] = useState<Revisioned<string> | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -190,20 +236,42 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   // already fixed one state earlier: two situations told apart only by a missing signal.
   useEffect(() => {
     let alive = true
-    setContent(null)
+    setStored(null)
     setLoadErr('')
     api.agentMetadata(agentName)
-      .then((c) => { if (alive) { setContent(c); setDraft(c) } })
+      .then((note) => { if (alive) { setStored(note); setDraft(note.value) } })
       .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not load the routing note') })
     return () => { alive = false }
   }, [agentName, reloads])
+  // What the write answered — the note as stored after it, and its new revision — which is what the
+  // next save is based on. Taken from the write, never from a later read: a later read can carry
+  // another tab's save, and a draft measured against THAT would overwrite it unrefused.
+  const written = useRef<Revisioned<string> | null>(null)
+  const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 1800) }
+  const guard = useStaleWriteGuard<string>({
+    read: () => api.agentMetadata(agentName),
+    write: async (next, revision) => {
+      const res = await api.saveAgentMetadata(agentName, next, revision)
+      written.current = { value: res.content, revision: res.revision }
+    },
+    onSaved: () => {
+      const note = written.current
+      written.current = null
+      // No write result: the re-read already held this exact note, so nothing was sent — read it again.
+      if (note) { setStored(note); setDraft(note.value) } else setReloads((n) => n + 1)
+      flash()
+    },
+    onDiscard: () => setReloads((n) => n + 1),
+  })
+  const content = stored ? stored.value : null
   const dirty = content !== null && draft !== content
   const save = async () => {
+    if (!stored) return
     setBusy(true)
     setErr('')
     // Keeping the draft on failure is right; being silent about it was not. `Saved ✓` appears only on
     // success, so without this a refused save was indistinguishable from a click that never landed.
-    try { await api.saveAgentMetadata(agentName, draft); setContent(draft); setSaved(true); setTimeout(() => setSaved(false), 1800) }
+    try { await guard.save(stored, draft, rebaseText(stored.value, draft)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
@@ -217,10 +285,14 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
         </div>
       ) : content === null ? <Skeleton className="h-16 w-full rounded-md" /> : (
         <div className="flex flex-col gap-2">
-          <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
-            placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
+          <HeldChange guard={guard}>
+            <TextArea value={draft} onChange={setDraft} rows={3} size="sm" ariaLabel="Routing notes"
+              placeholder="e.g. Use for deep code reviews and multi-file refactors; prefers a thorough, direct style." />
+          </HeldChange>
+          <StaleWriteNotice guard={guard} what="This routing note" />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} loading={busy} loadingLabel="Saving…" disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> Save notes</Button>
+            <Button size="sm" onClick={save} loading={busy} loadingLabel="Saving…" disabled={!dirty || busy || guard.conflict !== null}
+              disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : !dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> Save notes</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
             {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
           </div>
@@ -347,7 +419,9 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
   const dirty = model !== (agent.model ?? '')
   const save = async () => {
     setSaving(true); setErr('')
-    try { await api.updateAgent(agent.name, { model }); onSaved() }
+    // The one field this editor owns, alone: no copy of the rest of the profile rides along to go
+    // stale, so it names no base (`api.setAgentModel`).
+    try { await api.setAgentModel(agent.name, model); onSaved() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
 

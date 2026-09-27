@@ -35,7 +35,8 @@ _ROUTES = {
     "natural-voice": ("patch", {"natural_voice": "on"}, "natural_voice", "on"),
     "title": ("patch", {"title": "named"}, "title", "named"),
     "lifecycle": ("patch", {"never_archive": True}, "never_archive", True),
-    "tags": ("put", {"tags": []}, "tags", []),
+    # One tag out of the session's `["t1"]` — the route takes edits, never a whole list.
+    "tags": ("put", {"remove": ["t1"]}, "tags", []),
 }
 
 

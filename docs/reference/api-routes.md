@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **865 registrations** over **699 distinct paths** — 858 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **874 registrations** over **706 distinct paths** — 867 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 127 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 78 | 66 |
+| `/api/chat` | 79 | 67 |
 | `/api/knowledge` | 72 | 59 |
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
@@ -37,6 +37,7 @@ The 127 families the surface divides into, largest first.
 | `/api/mcp` | 18 | 14 |
 | `/api/triggers` | 18 | 15 |
 | `/api/voice` | 17 | 11 |
+| `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
 | `/api/dashboard` | 13 | 8 |
@@ -44,9 +45,9 @@ The 127 families the surface divides into, largest first.
 | `/api/tasks` | 13 | 9 |
 | `/api/agents` | 12 | 8 |
 | `/api/providers` | 12 | 8 |
-| `/api/channels` | 11 | 10 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
+| `/api/onboarding` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/lexicon` | 10 | 6 |
 | `/api/notifications` | 10 | 7 |
@@ -56,7 +57,6 @@ The 127 families the surface divides into, largest first.
 | `/api/learning` | 9 | 7 |
 | `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
-| `/api/onboarding` | 8 | 7 |
 | `/api/auth` | 7 | 7 |
 | `/api/browse` | 7 | 5 |
 | `/api/config` | 6 | 3 |
@@ -154,7 +154,7 @@ The 127 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 867 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -269,7 +269,12 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/channel/upload-file` | upload a file to the active channel (internal, called by notify_attachment). |
 | `GET` | `/api/channels` | all comms transports with info + health. |
 | `GET` | `/api/channels/reply-targets` | list channels the bot can reply in. |
-| `GET` | `/api/channels/trust` | the whole sender-trust posture, per provider. |
+| `GET` | `/api/channels/trust` | the whole sender-trust posture, per chat channel. |
+| `POST` | `/api/channels/trust/{provider}/channels` | track one group. |
+| `DELETE` | `/api/channels/trust/{provider}/channels/{channel_id}` | stop tracking one group. |
+| `DELETE` | `/api/channels/trust/{provider}/pairing` | cancel the outstanding sender code. |
+| `POST` | `/api/channels/trust/{provider}/pairing` | mint a sender's code and return it once. |
+| `PUT` | `/api/channels/trust/{provider}/policies` | set the DM and/or group policy. |
 | `DELETE` | `/api/channels/trust/{provider}/senders/{sender_id}` | revoke one sender. |
 | `GET` | `/api/channels/{name}` | one transport's info + health. |
 | `POST` | `/api/channels/{name}/connect` | bring the transport online. |
@@ -283,6 +288,7 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/folders` | create a project folder. |
 | `DELETE` | `/api/chat/folders/{id}` | delete a folder, ungroup its sessions. |
 | `PATCH` | `/api/chat/folders/{id}` | rename or reorder a folder. |
+| `GET` | `/api/chat/image-input` | whether an attached image reaches the model as one. |
 | `POST` | `/api/chat/mode` | set the tool APPROVAL mode (whether tools auto-approve). |
 | `POST` | `/api/chat/nav/resolve-links` | batch-summarize bare links. |
 | `GET` | `/api/chat/screen-frame` | can this session share its screen? |
@@ -341,7 +347,7 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/side/turn` | ask one side question. |
 | `POST` | `/api/chat/sessions/{session}/stop` | cooperative stop with kill fallback. |
 | `POST` | `/api/chat/sessions/{session}/switch-variant` | switch which regenerated variant is active. |
-| `PUT` | `/api/chat/sessions/{session}/tags` | replace the session's tag list. |
+| `PUT` | `/api/chat/sessions/{session}/tags` | add tags to a session and remove tags from it. |
 | `PATCH` | `/api/chat/sessions/{session}/title` | rename a chat session. |
 | `GET` | `/api/chat/sessions/{session}/tool-result/{rid}` | the FULL raw output of |
 | `POST` | `/api/chat/sessions/{session}/undo` | roll back the last N conversation turns. |
@@ -732,7 +738,10 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
 | `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |
-| `POST` | `/api/onboarding/import` | import the picked items and report outcomes. |
+| `POST` | `/api/onboarding/import` | start importing the picked items. |
+| `DELETE` | `/api/onboarding/import/job` | stop the running import after the item it is on. |
+| `GET` | `/api/onboarding/import/job` | the running or last import, and its report once finished. |
+| `GET` | `/api/onboarding/import/stream` | ``status`` frames: the reading pass and the import. |
 | `GET` | `/api/onboarding/local-model` | is a local Ollama reachable on localhost? |
 | `POST` | `/api/onboarding/local-model/bind` | credential-free bind of an endpoint. |
 | `POST` | `/api/onboarding/local-model/scan` | opt-in LAN sweep for an Ollama. |
@@ -972,7 +981,7 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/voice/resolve` | which level wins, and why. |
 | `POST` | `/api/voice/synthesize` | sentence-chunked Piper TTS. |
 | `GET` | `/api/workflows` | _(no summary)_ |
-| `POST` | `/api/workflows` | _(no summary)_ |
+| `POST` | `/api/workflows` | validate a definition and, unless ``save: false``, save it. |
 | `GET` | `/api/workflows/attention` | per-template §4.4 attention summaries. |
 | `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
 | `GET` | `/api/workflows/manifest` | the machine-readable self-description of this instance. |
@@ -1007,7 +1016,7 @@ The 858 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/workflows/runs/{run_id}/workspace` | GET the run's workspace review: changed files + the two reintegration verbs (§4.1). |
 | `GET` | `/api/workflows/surfacing` | The templates list with its surfacing state — what the UX renders. |
 | `DELETE` | `/api/workflows/{name}` | _(no summary)_ |
-| `GET` | `/api/workflows/{name}` | _(no summary)_ |
+| `GET` | `/api/workflows/{name}` | one definition, and the ``revision`` a save over it names. |
 | `POST` | `/api/workflows/{name}/a2a-publish` | the template detail UI's publish toggle. |
 | `GET` | `/api/workflows/{name}/ledger` | recent runs of this template with their ledger totals. |
 | `POST` | `/api/workflows/{name}/refine` | fire the refiner over this template on demand. |

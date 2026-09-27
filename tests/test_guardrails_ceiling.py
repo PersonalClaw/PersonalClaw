@@ -284,7 +284,7 @@ def test_ceiling_is_read_once_so_a_mid_run_edit_cannot_widen(home):
 
 def test_ceiling_has_no_config_patch_surface():
     """It is not config: nothing in the dashboard's PATCH allowlist can reach it."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     flat = json.dumps(_EDITABLE_CONFIG, default=str)
     assert "ceiling" not in flat and "governance" not in flat

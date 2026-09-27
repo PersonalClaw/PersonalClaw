@@ -1,10 +1,12 @@
 """CLI config subcommand — get, set, edit configuration values."""
 
 import argparse
-import copy
 import json
 import os
+import shlex
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import NoReturn
 
@@ -13,10 +15,11 @@ from personalclaw.apps.secret_fields import (
     mask_secrets_in_document,
     preserve_unchanged_secrets_in_document,
 )
-from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.secret_refs import reveal_stored_values, store_config_secrets
+from personalclaw.config.loader import ConfigWriteError
+from personalclaw.config.secret_refs import reveal_stored_values
+from personalclaw.config.transactions import mutate_config, replace_unreadable_config
 from personalclaw.hooks import safe_read_file
 from personalclaw.sel import sel
 
@@ -191,72 +194,81 @@ def _config_cmd(args: argparse.Namespace) -> None:
                 print("❌ Invalid JSON: config must be a JSON object", file=sys.stderr)
                 sys.exit(1)
             p = config_path()
+
+            def _replace(stored: dict) -> None:
+                # `stored` is the file as it is now, read in the config transaction: the checks
+                # below compare the operator's document with what the write would replace, not
+                # with a copy another process has changed since.
+                #
+                # 🔴 THE OTHER HALF OF MASKING, and the reason masking the read alone would have
+                # been worse than the leak. `config get > f.json` → edit → `config set --file
+                # f.json` is a documented loop, so the file arriving here is usually one `config
+                # get` printed — and a masked one NAMES `providers`, which means the merge below
+                # (key-level and shallow on purpose) sees the key already present and copies
+                # nothing forward. Without this, the round-trip would persist the MASK over the
+                # only copy of the API key: a disclosure bug traded for a data-loss bug. A masked
+                # field means "keep the stored value", the same rule the dashboard's PATCH has
+                # always applied to a round-tripped form.
+                document, unresolved = preserve_unchanged_secrets_in_document(data, stored)
+                if unresolved:
+                    # Fail CLOSED. A mask we cannot resolve to a stored value would otherwise be
+                    # written as the credential itself. `--reveal` is the round-trip source that
+                    # has no masks to resolve.
+                    _refuse(
+                        "config_set_file",
+                        str(fp),
+                        "❌ refusing to write config: "
+                        f"{len(unresolved)} masked credential field(s) could not be matched to a "
+                        f"value in {p.name}, and writing the mask would destroy them: "
+                        + ", ".join(unresolved)
+                        + "\n   Use `personalclaw config get --reveal` as the source of a file you "
+                        "intend to write back.",
+                        outcome="denied",
+                    )
+                # 🔴 OMISSION CANNOT MEAN REMOVAL HERE, SO IT MUST NOT READ AS SUCCESS. The merge
+                # below copies every top-level block this document does not name forward, which
+                # is what stops a handed-back file deleting `providers[]` by omission (#951) —
+                # and is exactly why a block the operator DELETED on purpose survived at `✅`
+                # exit 0 (#3125). One signal cannot mean both "leave alone" and "delete", so this
+                # path keeps preservation and stops pretending: the write is refused, the blocks
+                # it could not apply are named, and `config unset` is the verb that removes one.
+                # Nonzero, because an operator who removed a credential and was told ✅ still has
+                # the secret on disk.
+                #
+                # AFTER the mask check above, deliberately. An unresolvable mask is the
+                # fail-closed case — it would destroy the only copy of a credential — so it earns
+                # the more specific message when a document manages to be wrong in both ways.
+                dropped = sorted(k for k in stored if k not in document)
+                if dropped:
+                    _refuse(
+                        "config_set_file",
+                        str(fp),
+                        f"❌ refusing to write config: {len(dropped)} top-level block(s) in "
+                        f"{p.name} are missing from {fp.name}, and this path preserves blocks it "
+                        "is not shown rather than deleting them: " + ", ".join(dropped) + "\n   "
+                        f"To remove one, run `personalclaw config unset {dropped[0]}`. To apply "
+                        "the rest of this file, put the block back.",
+                        outcome="denied",
+                    )
+                # Belt and braces, kept on purpose rather than deleted as unreachable: the
+                # refusal above makes this a no-op only for as long as its comparison stays
+                # exactly as wide as this merge's. #951 is the bug where that invariant was held
+                # in one place and broken in another, so the guarantee is stated twice and the
+                # census in `test_config_file_roundtrip_preserves_unmodeled_blocks.py` reads it.
+                document = config_loader.merge_unmodeled_top_keys(document, stored)
+                stored.clear()
+                stored.update(document)
+
+            # Its secrets go to the credential store inside the transaction
+            # (`secret_refs.store_config_secrets`), before the file is replaced.
             try:
-                stored = config_loader.read_config_for_merge(p)
-            except config_loader.ConfigPreserveError as exc:
+                mutate_config(_replace, path=p)
+            except ConfigWriteError as exc:
                 # Refusing beats writing blind: a config whose content cannot be read is exactly
                 # the case where we cannot know what the write would destroy.
                 _refuse("config_set_file", str(fp), f"❌ {exc}")
-            # 🔴 THE OTHER HALF OF MASKING, and the reason masking the read alone would have been
-            # worse than the leak. `config get > f.json` → edit → `config set --file f.json` is a
-            # documented loop, so the file arriving here is usually one `config get` printed — and
-            # a masked one NAMES `providers`, which means the merge below (key-level and shallow
-            # on purpose) sees the key already present and copies nothing forward. Without this,
-            # the round-trip would persist the MASK over the only copy of the API key: a
-            # disclosure bug traded for a data-loss bug. A masked field means "keep the stored
-            # value", the
-            # same rule the dashboard's PATCH has always applied to a round-tripped form.
-            data, unresolved = preserve_unchanged_secrets_in_document(data, stored)
-            if unresolved:
-                # Fail CLOSED. A mask we cannot resolve to a stored value would otherwise be
-                # written as the credential itself. `--reveal` is the round-trip source that has
-                # no masks to resolve.
-                _refuse(
-                    "config_set_file",
-                    str(fp),
-                    "❌ refusing to write config: "
-                    f"{len(unresolved)} masked credential field(s) could not be matched to a "
-                    f"value in {p.name}, and writing the mask would destroy them: "
-                    + ", ".join(unresolved)
-                    + "\n   Use `personalclaw config get --reveal` as the source of a file you "
-                    "intend to write back.",
-                    outcome="denied",
-                )
-            # 🔴 OMISSION CANNOT MEAN REMOVAL HERE, SO IT MUST NOT READ AS SUCCESS. The merge
-            # below copies every top-level block this document does not name forward, which is
-            # what stops a handed-back file deleting `providers[]` by omission (#951) — and is
-            # exactly why a block the operator DELETED on purpose survived at `✅` exit 0 (#3125).
-            # One signal cannot mean both "leave alone" and "delete", so this path keeps
-            # preservation and stops pretending: the write is refused, the blocks it could not
-            # apply are named, and `config unset` is the verb that removes one. Nonzero, because
-            # an operator who removed a credential and was told ✅ still has the secret on disk.
-            #
-            # AFTER the mask check above, deliberately. An unresolvable mask is the fail-closed
-            # case — it would destroy the only copy of a credential — so it earns the more
-            # specific message when a document manages to be wrong in both ways at once.
-            dropped = sorted(k for k in stored if k not in data)
-            if dropped:
-                _refuse(
-                    "config_set_file",
-                    str(fp),
-                    f"❌ refusing to write config: {len(dropped)} top-level block(s) in {p.name} "
-                    f"are missing from {fp.name}, and this path preserves blocks it is not shown "
-                    "rather than deleting them: " + ", ".join(dropped) + "\n   To remove one, run "
-                    f"`personalclaw config unset {dropped[0]}`. To apply the rest of this file, "
-                    "put the block back.",
-                    outcome="denied",
-                )
-            # Belt and braces, kept on purpose rather than deleted as unreachable: the refusal
-            # above makes this a no-op only for as long as its comparison stays exactly as wide as
-            # this merge's. #951 is the bug where that invariant was held in one place and broken
-            # in another, so the guarantee is stated twice and the census in
-            # `test_config_file_roundtrip_preserves_unmodeled_blocks.py` reads this line.
-            data = config_loader.merge_unmodeled_top_keys(data, stored)
-            try:
-                data = store_config_secrets(data, previous=stored)
             except (ValueError, OSError) as exc:
                 _refuse("config_set_file", str(fp), f"❌ {exc}")
-            atomic_write(p, json.dumps(data, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set_file",
@@ -336,23 +348,26 @@ def _config_cmd(args: argparse.Namespace) -> None:
             # printed ✅ (#951). The blocks were not emptied, they were never serialised.
             #
             # Read → apply one field → write the merged document is what the dashboard PATCH
-            # already does. Doing it here too is what makes the two write paths agree; the
-            # divergence is why the API got fixed while the CLI stayed destructive.
+            # already does, in the same config transaction. Doing it here too is what makes the
+            # two write paths agree; the divergence is why the API got fixed while the CLI
+            # stayed destructive.
             p = config_path()
+            dotted: str = key
+
+            def _put(document: dict) -> dict:
+                _dict_put(document, dotted, parsed)
+                return document
+
             try:
-                doc = config_loader.read_config_for_merge(p)
-            except config_loader.ConfigPreserveError as exc:
+                # The document is stored in place, so `doc` reads back what was written — the
+                # webhook token as its reference to the credential store.
+                doc = mutate_config(_put, path=p)
+            except ConfigWriteError as exc:
                 # Absent is safe to write over, unreadable is not — the rule `AppConfig.save()`
-                # already enforces, now stated once in the loader and shared by all three writes.
+                # enforces too, stated once in the loader and shared by every write.
                 _refuse("config_set", shown, f"❌ {exc}")
-            before = copy.deepcopy(doc)
-            _dict_put(doc, key, parsed)
-            # The webhook token reaches the file as a reference to the credential store.
-            try:
-                doc = store_config_secrets(doc, previous=before)
             except (ValueError, OSError) as exc:
                 _refuse("config_set", shown, f"❌ {key}: {exc}")
-            atomic_write(p, json.dumps(doc, indent=2) + "\n")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set",
@@ -380,28 +395,29 @@ def _config_cmd(args: argparse.Namespace) -> None:
         # disagreed on the exit contract). `--file` preserves and refuses; `unset` removes.
         key = args.key
         p = config_path()
+
+        def _pop(document: dict) -> None:
+            # A key that is not in the file is REFUSED, not shrugged off. `config unset slak`
+            # answering success while `slack` survives is the same false-success defect this verb
+            # exists to end — and the one where being wrong leaves a credential on disk.
+            if _dict_pop(document, key) is _MISSING:
+                _refuse(
+                    "config_unset",
+                    key,
+                    f"❌ Not set in {p.name}: {key}\n"
+                    "   `personalclaw config get` shows what the file holds. A modelled key "
+                    "absent from the file is already at its default.",
+                    outcome="denied",
+                )
+
+        # Removing the reference removes the secret it pointed at, inside the transaction: an
+        # unset that left the token in the credential store would be the "✅ while it stays on
+        # disk" this verb exists to end.
         try:
-            doc = config_loader.read_config_for_merge(p)
-        except config_loader.ConfigPreserveError as exc:
+            mutate_config(_pop, path=p)
+        except ConfigWriteError as exc:
             # Same rule as every other write: unreadable means the damage is unknowable.
             _refuse("config_unset", key, f"❌ {exc}")
-        # A key that is not in the file is REFUSED, not shrugged off. `config unset slak` answering
-        # success while `slack` survives is the same false-success defect this verb exists to end —
-        # and the one where being wrong leaves a credential on disk.
-        before = copy.deepcopy(doc)
-        if _dict_pop(doc, key) is _MISSING:
-            _refuse(
-                "config_unset",
-                key,
-                f"❌ Not set in {p.name}: {key}\n"
-                "   `personalclaw config get` shows what the file holds. A modelled key absent "
-                "from the file is already at its default.",
-                outcome="denied",
-            )
-        # Removing the reference removes the secret it pointed at: an unset that left the token in
-        # the credential store would be the "✅ while it stays on disk" this verb exists to end.
-        doc = store_config_secrets(doc, previous=before)
-        atomic_write(p, json.dumps(doc, indent=2) + "\n")
         sel().log_api_access(
             caller="cli",
             operation="config_unset",
@@ -413,37 +429,111 @@ def _config_cmd(args: argparse.Namespace) -> None:
         )
         print(f"✅ Removed {key}")
     elif action == "edit":
-
-        p = config_path()
-        if not p.exists():
-            cfg = AppConfig()
-            cfg.save()
-            print(f"Created default config: {p}")
-        sel().log_api_access(
-            caller="cli",
-            operation="config_edit",
-            outcome="allowed",
-            source="cli",
-            resources=str(p),
-        )
-        editor = os.environ.get("EDITOR", "vi")
-        os.execvp(editor, [editor, str(p)])
+        _edit_config()
     else:
         print("Usage: personalclaw config {get,set,unset,edit}", file=sys.stderr)
         sys.exit(1)
 
 
+def _edit_config() -> None:
+    """``personalclaw config edit``: ``$EDITOR`` on a COPY, and only the edit is written back.
+
+    🔴 The editor used to replace this process (``execvp``) on the live file, so for as long as
+    it was open every other writer's change was on disk and nowhere in the editor's buffer — and
+    saving put it all back, with no lock, no check that the result was JSON, and no store for a
+    secret typed into it. Now the editor gets a private copy beside the file; when it exits 0 and
+    leaves a JSON object, the difference between the copy it was given and the one it saved is
+    applied in the config transaction, so a change made elsewhere meanwhile survives unless the
+    editor changed the same key. An editor that fails, or leaves anything that is not a JSON
+    object, changes nothing.
+
+    A file that cannot be read is the one case with nothing to diff against: the edit is the
+    repair, so it replaces the file — but only if the file still holds the bytes the repair was
+    made from (``transactions.replace_unreadable_config``).
+    """
+    p = config_path()
+    if not p.exists():
+        cfg = AppConfig()
+        cfg.save()
+        print(f"Created default config: {p}")
+    try:
+        original = p.read_bytes()
+    except OSError as exc:
+        _refuse("config_edit", str(p), f"❌ Could not read {p}: {exc}")
+    before: dict | None
+    try:
+        before = config_loader.read_config_for_merge(p)
+    except config_loader.ConfigPreserveError:
+        before = None
+    sel().log_api_access(
+        caller="cli",
+        operation="config_edit",
+        outcome="allowed",
+        source="cli",
+        resources=str(p),
+    )
+    editor = shlex.split(os.environ.get("EDITOR") or "vi")
+    # Beside the file, so it is on the same private (0700) filesystem, and `.json` so the
+    # editor knows what it is editing. `mkstemp` creates it 0600.
+    fd, name = tempfile.mkstemp(prefix=".config.edit.", suffix=".json", dir=p.parent)
+    staged = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(original)
+        try:
+            completed = subprocess.run([*editor, str(staged)], check=False)
+        except OSError as exc:
+            _refuse("config_edit", str(p), f"❌ Could not start the editor {editor[0]!r}: {exc}")
+        if completed.returncode != 0:
+            _refuse(
+                "config_edit",
+                str(p),
+                f"❌ The editor exited with status {completed.returncode}; "
+                f"{p.name} was not changed.",
+            )
+        try:
+            edited = json.loads(staged.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            _refuse(
+                "config_edit",
+                str(p),
+                f"❌ The edit is not valid JSON ({exc}); {p.name} was not changed.",
+            )
+        if not isinstance(edited, dict):
+            _refuse(
+                "config_edit",
+                str(p),
+                f"❌ The edit is not a JSON object; {p.name} was not changed.",
+            )
+        try:
+            if before is None:
+                replace_unreadable_config(original, edited, path=p)
+            else:
+                baseline = before
+                mutate_config(
+                    lambda document: config_loader.apply_document_changes(
+                        document, baseline, edited
+                    ),
+                    path=p,
+                )
+        except ConfigWriteError as exc:
+            _refuse("config_edit", str(p), f"❌ {exc}")
+        except (ValueError, OSError) as exc:
+            _refuse("config_edit", str(p), f"❌ {exc}")
+    finally:
+        staged.unlink(missing_ok=True)
+    print(f"✅ Saved {p}")
+
+
 def _editable_spec(key: str) -> dict | None:
     """The PATCH allowlist's spec for a dotted key, or None if it declares none.
 
-    Imported lazily: the registry lives in a dashboard handler module (the inert-surface
-    census parses that file for the `_EDITABLE_CONFIG` literal, so it cannot move), and
-    `personalclaw config get` should not pay for importing aiohttp. A failure to import is
-    not a reason to refuse a write — it means no spec is available, which is exactly the
-    "key not declared" case.
+    Imported lazily, so `personalclaw config get` does not pay for the registry's own imports
+    (`config/editable.py`). A failure to import is not a reason to refuse a write — it means no
+    spec is available, which is exactly the "key not declared" case.
     """
     try:
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         return _EDITABLE_CONFIG.get(key)
     except Exception:  # noqa: BLE001 — no spec available is the same as no spec declared

@@ -27,6 +27,7 @@ from personalclaw.providers.use_cases import (
     load_active_models,
     save_active_models,
 )
+from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -479,13 +480,22 @@ async def api_models_available(request: web.Request) -> web.Response:
 async def api_models_active(request: web.Request) -> web.Response:
     """GET /api/models/active — active models per use-case.
 
-    Returns {use_cases: {chat: [model_ids...], embedding: [model_id], ...}}.
+    Returns ``{use_cases: {chat: [model_ids...], embedding: [model_id], ...}, revisions: {...}}``.
+
+    Each use case's chain is ONE document — the PUT below replaces all of it — so each carries
+    the revision that write must name (`personalclaw/stale_write.py`), keyed by use case and
+    taken from the very chain beside it.
     """
     active = load_active_models()
     normalized: dict[str, list[str]] = {}
     for uc in USE_CASES:
         normalized[uc] = active.get(uc, [])
-    return web.json_response({"use_cases": normalized})
+    return web.json_response(
+        {
+            "use_cases": normalized,
+            "revisions": {uc: revision_of(chain) for uc, chain in normalized.items()},
+        }
+    )
 
 
 async def api_models_active_set(request: web.Request) -> web.Response:
@@ -495,6 +505,10 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     for EVERY use case (MODEL-USE-CASES-V2): position 0 is the default, later
     entries are fallbacks resolution walks when an earlier provider's breaker is
     open or its build fails. Order is preserved verbatim.
+
+    The chain is replaced whole, so the request names the revision it was built from in
+    ``If-Match`` — ``revisions[use_case]`` from the GET — and a chain that changed since is
+    refused with ``409 stale_write`` (`personalclaw/stale_write.py`).
     """
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
@@ -585,6 +599,17 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         logger.debug("active-model provider validation skipped", exc_info=True)
 
     active = load_active_models()
+    # 🔴 A CHAIN IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The Models panel builds the
+    # chain it sends from the one it read — a toggle appends to it, a reorder swaps two of its
+    # entries — so a tab opened before another tab (or onboarding, or a provider's removal)
+    # changed this use case replaced that change with its own copy, without a word. Checked here,
+    # with no `await` before the save, so nothing can land between the comparison and the write.
+    stale = stale_write_refusal(
+        request, active.get(use_case, []), what=f"the {use_case} model chain"
+    )
+    if stale is not None:
+        _sel_log("models.active_set", refusal_outcome(stale), use_case, request)
+        return stale
     active[use_case] = [str(m) for m in models]
     save_active_models(active)
 
@@ -596,7 +621,15 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         f"{use_case}={','.join(active[use_case]) or '(cleared)'}",
         request,
     )
-    return web.json_response({"ok": True, "use_case": use_case, "models": active[use_case]})
+    # The new revision, so a panel that stays open saves its next edit over this one.
+    return web.json_response(
+        {
+            "ok": True,
+            "use_case": use_case,
+            "models": active[use_case],
+            "revision": revision_of(active[use_case]),
+        }
+    )
 
 
 async def api_models_chat(request: web.Request) -> web.Response:
@@ -636,7 +669,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     # branching). Each provider's list runs concurrently; a provider with no
     # catalog contributes nothing.
     from personalclaw.llm.capabilities import Capability
-    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.llm.registry import get_default_registry, own_model
 
     registry = get_default_registry()
     live = {e.name: e for e in registry.list_entries()}
@@ -685,12 +718,15 @@ async def api_models_chat(request: web.Request) -> web.Response:
         if connection.state == FAILED:
             continue
         catalog = _catalog_for_config_provider(p)
+        # The instance's own model (its model, else its Default Model): the one it serves when
+        # nothing names one, so the model offered when discovery cannot list any.
+        pinned = own_model(p.get("model"), p.get("options"))
         if catalog is None:
-            # No discovery available — surface a pinned model if the entry has one.
-            if p.get("model"):
-                _add(pname, p["model"])
+            # No discovery available — surface the instance's own model if it names one.
+            if pinned:
+                _add(pname, pinned)
             continue
-        tasks.append((pname, p.get("model", ""), catalog.list_models()))
+        tasks.append((pname, pinned, catalog.list_models()))
 
     if tasks:
         results = await asyncio.gather(*(t[2] for t in tasks), return_exceptions=True)
@@ -712,7 +748,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
     # are never floors), and the row above contributed nothing for it.
     listed = {m["provider"] for m in all_models}
     for entry in live.values():
-        if entry.name in listed or entry.type == "acp_agent" or not entry.model:
+        if entry.name in listed or entry.type == "acp_agent" or not entry.own_model:
             continue
         if entry.name in config_names and not getattr(entry, "floor", False):
             continue
@@ -724,7 +760,7 @@ async def api_models_chat(request: web.Request) -> web.Response:
                 caps = frozenset()
         if Capability.CHAT not in caps or _cannot_serve(entry.name):
             continue
-        _add(entry.name, entry.model)
+        _add(entry.name, entry.own_model)
 
     return web.json_response(all_models)
 

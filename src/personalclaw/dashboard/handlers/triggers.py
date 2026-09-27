@@ -20,15 +20,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.handlers import trigger_revisions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    MaskConflict,
+    keep_masked_spans,
+    keep_masked_values,
+    redact_for_display,
+)
 
 
 def config_dir():
@@ -57,7 +64,9 @@ def _sel():
 
 
 def _redact(s: str) -> str:
-    return redact_credentials(redact_exfiltration_urls(s or "")[0])[0]
+    # `redact_for_display`: a schedule's edit form is seeded from these rows, and the PUT puts back
+    # exactly this mask (`_keep_masked_schedule`).
+    return redact_for_display(s or "")
 
 
 def _split_id(trigger_id: str) -> tuple[str, str]:
@@ -394,6 +403,8 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": errors,
         "warnings": warnings,
+        "needs_review": _needs_review(trigger),
+        "needs_grant": _needs_grant(trigger),
         **_attribution(trigger, owner=owner),
     }
 
@@ -444,14 +455,32 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
             projected[key] = _redact(str(projected[key]))
     projected["broken"] = errors
     projected["warnings"] = warnings
+    projected["needs_review"] = _needs_review(trigger)
+    projected["needs_grant"] = _needs_grant(trigger)
     projected.update(_attribution(trigger, owner=owner))
-    return projected
+    return trigger_revisions.with_revision(projected, schedule=True)
+
+
+def _needs_review(trigger: Any) -> bool:
+    """Whether the row is one a legacy import brought over and the owner has not switched on — the
+    page badges it and says what switching it on will ask (`triggers.legacy_import`)."""
+    from personalclaw.triggers.legacy_import import needs_review
+
+    return needs_review(trigger)
+
+
+def _needs_grant(trigger: Any) -> list[str]:
+    """The actions the row runs that it is not allowed to, by display name — `[]` when it may run.
+    The page badges the row and offers Allow; both dispatches refuse it (`triggers.grants`)."""
+    from personalclaw.triggers.grants import labels
+
+    return labels(trigger)
 
 
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
     from personalclaw.hooks import BLOCKING_EVENTS, hook_enforcement
 
-    return {
+    row = {
         "kind": _LIFECYCLE,
         "id": f"{_LIFECYCLE}:{hook.id}",
         "raw_id": hook.id,
@@ -475,7 +504,11 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "enforcement": hook_enforcement(
             hook.event, enabled=bool(hook.enabled), bound=bool(used_by)
         ),
+        # What it is not allowed to use — the same verdict a store trigger carries: the page badges
+        # the row and offers Allow, and its fires are refused (`hooks.run_script_hook`).
+        "needs_grant": _needs_grant(hook),
     }
+    return trigger_revisions.with_revision(row, schedule=False)
 
 
 def _hook_store(state: DashboardState):
@@ -719,12 +752,13 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
     return ""
 
 
-def _unconsented_action(
+def _unconsented_loosening(
     request: web.Request, body: dict, *, where: str, stored: dict[str, Any]
-) -> web.Response | None:
-    """``400 confirmation_required`` when *body*'s action loosens whether the trigger's agent asks
-    you — an ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over the
-    *stored* action config (``{}`` for a new trigger) without ``confirm: true``; ``None`` otherwise.
+) -> tuple[str, str] | None:
+    """``(field, consent)`` when *body*'s action loosens whether the trigger's agent asks you — an
+    ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over the *stored* action
+    config (``{}`` for a new trigger) without ``confirm: true``; ``None`` otherwise. The refusal is
+    written to the security audit; the caller answers ``consent_required``.
 
     The owner's half of the rule; an app cannot define a trigger at all
     (``apps/permissions.ROUTE_AUTHZ``). The Schedule form's "Auto-approve tools" switch is the
@@ -741,7 +775,7 @@ def _unconsented_action(
     )
     if loosened is None:
         return None
-    field, consent = loosened
+    field, _consent = loosened
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="trigger.write",
@@ -749,7 +783,79 @@ def _unconsented_action(
         source="dashboard",
         resources=f"{field}: loosening without confirm",
     )
-    return consent_required(field, consent)
+    return loosened
+
+
+def _grant_for_save(
+    state: DashboardState, body: dict, *, kind: str, raw: str
+) -> tuple[list[str], str] | None:
+    """``(providers, sentence)`` when saving *body*'s action needs the owner to allow it, else
+    ``None`` (`triggers.grants.question`).
+
+    The editor is where the owner re-points an action or rewrites what it runs, so it is where they
+    are asked: an edit that saved `bash` into a trigger allowed only `notify`, or a new command into
+    a trigger allowed to run the old one, used to save with nothing asked. With the owner's yes the
+    save grants it (`tools.update`), so Run now works straight away.
+    """
+    import copy
+
+    from personalclaw.triggers import grants
+
+    action = body.get("action")
+    if kind == _LIFECYCLE:
+        # A lifecycle save may also send `enabled: true`, which is the toggle's switch-on — or its
+        # Allow, when the trigger is on already — and is asked the toggle's question. Not asking it
+        # of a trigger that is on would leave `_update_lifecycle` to switch it off, the opposite of
+        # what the save asked for.
+        hook = _hook_store(state).get(raw)
+        if hook is None:
+            return None
+        candidate = copy.copy(hook)
+        if isinstance(action, dict):
+            _apply_hook_action(candidate, action)
+            return grants.question(candidate, before=hook)
+        need = grants.missing(candidate) if body.get("enabled") is True else []
+        return (need, grants.consent(candidate, need)) if need else None
+    if not isinstance(action, dict):
+        return None
+    row = _trigger_store().get(raw)
+    if row is None:
+        return None
+    # The shape `_update_schedule` writes, so the question is about the row the save would store.
+    candidate = copy.copy(row.trigger)
+    candidate.workflow = {"inline": action}
+    return grants.question(candidate, before=row.trigger)
+
+
+def _grant_for_create(body: dict, *, trigger_type: str) -> tuple[list[str], str] | None:
+    """``(providers, sentence)`` when creating *body*'s trigger needs the owner to allow its action,
+    else ``None``. The create dialog asks it with the rest, so creating one stays a single step."""
+    from personalclaw.hooks import ScriptHook
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.models import Trigger
+
+    action = body.get("action")
+    if not isinstance(action, dict):
+        return None
+    name = str(body.get("name") or "").strip()
+    if trigger_type == _LIFECYCLE:
+        candidate: Any = ScriptHook(name=name)
+        _apply_hook_action(candidate, action)
+    elif trigger_type in (_SCHEDULE, _EVENT):
+        kind = "clock" if trigger_type == _SCHEDULE else "event"
+        candidate = Trigger(id="", name=name, kind=kind, workflow={"inline": action})
+    else:
+        return None
+    return grants.question(candidate)
+
+
+def _apply_hook_action(hook: Any, action: dict) -> None:
+    """Put *action* on *hook* the way `_update_lifecycle` does: the provider when one is named, the
+    config when one is sent."""
+    if action.get("provider"):
+        hook.provider = str(action["provider"])
+    if "config" in action:
+        hook.provider_config = dict(action.get("config") or {})
 
 
 async def api_trigger_create(request: web.Request) -> web.Response:
@@ -760,6 +866,12 @@ async def api_trigger_create(request: web.Request) -> web.Response:
     delivery); lifecycle triggers take ``event`` + ``matcher``; data-event triggers take
     ``pattern`` + that pattern's one matcher field (and optionally ``max_fires`` /
     ``debounce_secs``).
+
+    Creating one is a single step with the owner's yes in it: once the body is valid, an action
+    that needs a grant and a posture that loosens whether its agent asks are asked about in one
+    ``confirmation_required`` before anything is written (:func:`_creation_consent`), and the
+    resend with ``confirm: true`` creates it allowed to run (`triggers.grants`). A read-only action
+    asks nothing.
     """
     state: DashboardState = request.app["state"]
     try:
@@ -769,32 +881,59 @@ async def api_trigger_create(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    # The consent names the trigger it is about. A name that is not a string only labels it
-    # "new" here; refusing that is the create path's job, not this check's.
-    name = body.get("name")
-    unconsented = _unconsented_action(
-        request,
-        body,
-        where=f"triggers.{name if isinstance(name, str) and name else 'new'}.action",
-        stored={},
-    )
-    if unconsented is not None:
-        return unconsented
-
+    trigger_type = str(body.get("trigger_type") or "").strip().lower()
+    if trigger_type not in (_LIFECYCLE, _SCHEDULE, _EVENT):
+        return web.json_response(
+            {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
+        )
     problem = await _action_problem(body.get("action"))
     if problem:
         return json_error("invalid_request", message=problem, status=400)
-
-    trigger_type = str(body.get("trigger_type") or "").strip().lower()
     if trigger_type == _LIFECYCLE:
         return await _create_lifecycle(state, body, request)
     if trigger_type == _SCHEDULE:
         return await _create_schedule(state, body, request)
-    if trigger_type == _EVENT:
-        return _create_event(state, body, request)
-    return web.json_response(
-        {"error": "trigger_type must be 'schedule', 'lifecycle', or 'event'"}, status=400
-    )
+    return _create_event(state, body, request)
+
+
+def _creation_consent(
+    request: web.Request, body: dict, *, trigger_type: str
+) -> web.Response | None:
+    """The one question creating *body*'s trigger asks the owner, or None when it needs no yes.
+
+    Asked by each create path after its own validation and before it writes, so the owner is never
+    asked about a trigger the next line would refuse: the grant its action needs
+    (`_grant_for_create`) and a loosened posture for its agent, in one ``confirmation_required``.
+    The consent names the trigger it is about; a name that is not a string only labels it "new"
+    here, and refusing that is the create path's job.
+    """
+    from personalclaw.safety_flags import confirm_granted
+
+    name = body.get("name")
+    label = name if isinstance(name, str) and name else "new"
+    grant = _grant_for_create(body, trigger_type=trigger_type)
+    field = f"triggers.{label}.capabilities"
+    asks: list[tuple[str, str]] = []
+    if grant is not None and not confirm_granted(body):
+        caller = request.get("user", "dashboard")
+        _audit_grant(caller, "denied", f"{field}: creating without confirm")
+        asks.append((field, grant[1]))
+    loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
+    if loosened is not None:
+        asks.append(loosened)
+    if not asks:
+        return None
+    return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
+
+
+def _audit_created_grant(request: web.Request, trigger_id: str, granted: Any) -> None:
+    """The security-audit row for the grant a create gave with the owner's yes, if it gave one."""
+    if isinstance(granted, (list, tuple)) and granted:
+        _audit_grant(
+            request.get("user", "dashboard"),
+            "success",
+            f"trigger:{trigger_id}: {', '.join(str(p) for p in granted)}",
+        )
 
 
 def _create_event(state: DashboardState, body: dict, request: web.Request) -> web.Response:
@@ -851,6 +990,11 @@ def _create_event(state: DashboardState, body: dict, request: web.Request) -> we
         )
     field = PATTERN_MATCHER[pattern]
     spec = event_spec(pattern, str(body.get(field) or "").strip() if field else "")
+    asked = _creation_consent(request, body, trigger_type=_EVENT)
+    if asked is not None:
+        return asked
+
+    from personalclaw.safety_flags import confirm_granted
 
     store = _trigger_store()
     result = _tools.create(
@@ -861,12 +1005,16 @@ def _create_event(state: DashboardState, body: dict, request: web.Request) -> we
         gates=gates,
         workflow={"inline": action},
         created_by="user",
+        # `_creation_consent` asked the owner first, so `confirm: true` is their yes to it.
+        owner_consented=confirm_granted(body),
     )
     if not result.ok:
         return json_error(
             "invalid_request", message=result.text.removeprefix("Error: "), status=400
         )
-    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    made = result.data.get("trigger") or {}
+    raw_id = str(made.get("id") or "")
+    _audit_created_grant(request, raw_id, (made.get("capabilities") or {}).get("providers"))
     state.push_refresh("crons")
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
@@ -905,7 +1053,19 @@ async def _create_lifecycle(
         validated = validate_tool_args(payload, HOOK_CREATE_SCHEMA)
     except ValidationError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    hook = _hook_store(state).create(validated)
+    asked = _creation_consent(request, body, trigger_type=_LIFECYCLE)
+    if asked is not None:
+        return asked
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants
+
+    store = _hook_store(state)
+    hook = store.create(validated)
+    # `_creation_consent` asked the owner first, so `confirm: true` is their yes to what it runs.
+    granted = grants.give(hook) if confirm_granted(body) else []
+    if granted:
+        store.update(hook.id, {"capabilities": hook.capabilities})
+        _audit_created_grant(request, f"{_LIFECYCLE}:{hook.id}", granted)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="trigger.create",
@@ -916,13 +1076,34 @@ async def _create_lifecycle(
     return web.json_response({"ok": True, "trigger": _serialize_lifecycle(hook, [])})
 
 
+#: What a failure route may be, said when a caller sends something else.
+_FAILURE_ROUTE_RULE = (
+    "'failure_delivery' must be 'inbox', 'none', 'channel:<name>', 'channel:<name>:<id>', or '' to "
+    "follow the result route"
+)
+
+
+def _channel_problem(channel: str | None) -> str:
+    """Why a schedule's ``channel`` can't be delivered to, or ``""``.
+
+    ``channel`` is the chat channel's name, for the owner's DM there, or ``<name>:<target>`` for a
+    chat on it: the route without its ``channel:`` prefix, which is how a schedule row shows it.
+    The channel checks its own ids (``validate_target``). The one rule core used to apply was a
+    single platform's channel-id shape, which refused every other channel's chats.
+    """
+    if not channel:
+        return ""
+    from personalclaw.triggers import delivery as _delivery
+
+    return _delivery.channel_route_problem(f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}")
+
+
 async def _create_schedule(state: DashboardState, body: dict, request: web.Request) -> web.Response:
     from zoneinfo import available_timezones
 
     from personalclaw.schedule import normalize_action
     from personalclaw.triggers import delivery as _delivery
     from personalclaw.triggers.models import Trigger
-    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     name = str(body.get("name", "")).strip()
     if not name:
@@ -936,8 +1117,9 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     cron_expr = body.get("cron")
     at_ts = body.get("at")
     channel = str(body.get("channel", "")).strip() or None
-    if channel and (len(channel) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(channel)):
-        return web.json_response({"error": "invalid channel ID format"}, status=400)
+    problem = _channel_problem(channel)
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
     timezone_val = str(body.get("timezone") or "").strip()
     if timezone_val and timezone_val not in available_timezones():
         return web.json_response(
@@ -951,14 +1133,10 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     # field must accept it identically.
     failure_delivery = body.get("failure_delivery", Trigger.failure_delivery)
     if not _delivery.is_valid_route(failure_delivery):
-        return json_error(
-            "invalid_request",
-            message=(
-                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
-                "result route"
-            ),
-            status=400,
-        )
+        return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
+    problem = _delivery.channel_route_problem(failure_delivery)
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
     failure_dedupe = body.get("failure_dedupe", False)
     if not isinstance(failure_dedupe, bool):
         return json_error(
@@ -1013,6 +1191,11 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     enabled_raw = body.get("enabled", True)
     if not isinstance(enabled_raw, bool):
         return json_error("invalid_request", message="'enabled' must be a boolean", status=400)
+    asked = _creation_consent(request, body, trigger_type=_SCHEDULE)
+    if asked is not None:
+        return asked
+
+    from personalclaw.safety_flags import confirm_granted
 
     store = _trigger_store()
     result = _tools.create(
@@ -1028,11 +1211,15 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         # `channel`/`silent` are DELIVERY on the entity, not action config (LEGACY_FIELD_MAP:
         # `channel → delivery`, `silent → delivery == none`).
         created_by="user",
+        # `_creation_consent` asked the owner first, so `confirm: true` is their yes to it.
+        owner_consented=confirm_granted(body),
     )
     if not result.ok:
         return web.json_response({"error": result.text}, status=400)
 
-    raw_id = str((result.data.get("trigger") or {}).get("id") or "")
+    made = result.data.get("trigger") or {}
+    raw_id = str(made.get("id") or "")
+    _audit_created_grant(request, raw_id, (made.get("capabilities") or {}).get("providers"))
     row = store.get(raw_id)
     if row is not None:
         trigger = row.trigger
@@ -1140,24 +1327,88 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    unconsented = _unconsented_action(
+    if kind != _LIFECYCLE:
+        try:
+            body = _keep_masked_schedule(state, kind, raw, body)
+        except MaskConflict as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+    # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
+    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
+    stale = trigger_revisions.refusal(
+        request, body, schedule=kind == _SCHEDULE, current=lambda: _row_now(state, kind, raw)
+    )
+    if stale is not None:
+        return stale
+    # One question for everything this save needs the owner's yes for, so a single "Allow" is never
+    # consent to a sentence the dialog did not show: a grant for the action as it is saved — a new
+    # provider, or what a granted one runs changed — and a loosened approval posture for its agent.
+    from personalclaw.safety_flags import confirm_granted
+
+    caller = request.get("user", "dashboard")
+    grant = _grant_for_save(state, body, kind=kind, raw=raw)
+    grant_field = f"triggers.{request.match_info['id']}.capabilities"
+    asks: list[tuple[str, str]] = []
+    if grant is not None and not confirm_granted(body):
+        _audit_grant(caller, "denied", f"{grant_field}: saving without confirm")
+        asks.append((grant_field, grant[1]))
+    loosened = _unconsented_loosening(
         request,
         body,
         where=f"triggers.{request.match_info['id']}.action",
         stored=_stored_action_config(state, kind, raw),
     )
-    if unconsented is not None:
-        return unconsented
-    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
-    if problem:
-        return json_error("invalid_request", message=problem, status=400)
+    if loosened is not None:
+        asks.append(loosened)
+    if asks:
+        return consent_required(asks[0][0], " ".join(consent for _field, consent in asks))
 
     if kind == _LIFECYCLE:
-        return await _update_lifecycle(state, raw, body)
-    return await _update_schedule(state, raw, body)
+        saved = _update_lifecycle(state, raw, body)
+    else:
+        saved = _update_schedule(state, raw, body)
+    if grant is not None and saved.status == 200:
+        # The save carried the owner's yes and the action it was asked about, so the save granted
+        # exactly what the question named.
+        _audit_grant(caller, "success", f"trigger:{raw}: {', '.join(grant[0])}")
+    return saved
 
 
-async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+def _row_now(state: DashboardState, kind: str, raw: str) -> dict[str, Any] | None:
+    """The row a fresh read hands out for the trigger as stored now, or ``None`` when absent."""
+    if kind == _SCHEDULE:
+        return None if (row := _trigger_store().get(raw)) is None else _schedule_row_for(state, row)
+    hook = _hook_store(state).get(raw)
+    return None if hook is None else _serialize_lifecycle(hook, _used_by_index().get(raw, []))
+
+
+def _keep_masked_schedule(state: DashboardState, kind: str, raw: str, body: dict) -> dict:
+    """*body* with each hidden value it echoes back restored from the stored schedule.
+
+    The edit form is seeded from :func:`_schedule_row_for`, which masks the name and the prompt,
+    and renaming an agent schedule sends both back, so the prompt would be stored as the marker.
+    Restored BEFORE the consent and action checks, so they judge what is actually saved.
+    """
+    out = dict(body)
+    if isinstance(out.get("name"), str):
+        row = _trigger_store().get(raw)
+        if row is not None:
+            out["name"] = keep_masked_spans(out["name"], row.trigger.name or "")
+    if isinstance(out.get("action"), dict):
+        out["action"] = keep_masked_values(out["action"], _stored_action(state, kind, raw))
+    return out
+
+
+def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+    """Save a lifecycle trigger's edit, and settle its grant the way `tools.update` settles a store
+    trigger's: what the edit changed keeps no grant (`grants.narrow`), and `api_trigger_detail`
+    asked the owner about it first, so `confirm: true` gives it. A save that would leave the trigger
+    on without the grant it needs is switched off rather than left running unallowed."""
+    import copy
+
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants
     from personalclaw.validation import HOOK_UPDATE_SCHEMA, ValidationError, validate_tool_args
 
     patch: dict[str, Any] = {}
@@ -1173,22 +1424,34 @@ async def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.
         validated = validate_tool_args(patch, HOOK_UPDATE_SCHEMA)
     except ValidationError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    store = _hook_store(state)
+    stored = store.get(raw)
+    before = copy.deepcopy(stored) if stored is not None else None
     try:
-        hook = _hook_store(state).update(raw, validated)
+        hook = store.update(raw, validated)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     if not hook:
         return web.json_response({"error": "not found"}, status=404)
+    reshaped = "provider" in validated or "provider_config" in validated
+    if reshaped or validated.get("enabled") is True:
+        if reshaped:
+            grants.narrow(hook, before)
+        if grants.missing(hook):
+            if confirm_granted(body):
+                grants.give(hook)
+            else:
+                hook.enabled = False
+        hook = store.update(raw, {"capabilities": hook.capabilities, "enabled": hook.enabled})
     return web.json_response(
         {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
     )
 
 
-async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
+def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Response:
     from zoneinfo import available_timezones
 
     from personalclaw.triggers import delivery as _delivery
-    from personalclaw.validation import CHANNEL_ID_RE, CHANNEL_MAX_LEN
 
     kwargs: dict[str, Any] = {}
     # 🔴 `failure_delivery`/`failure_dedupe` join this allowlist. The delivery contract
@@ -1206,15 +1469,12 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     ):
         if key in body:
             kwargs[key] = body[key]
-    if "failure_delivery" in kwargs and not _delivery.is_valid_route(kwargs["failure_delivery"]):
-        return json_error(
-            "invalid_request",
-            message=(
-                "'failure_delivery' must be 'inbox', 'none', 'channel:<id>', or '' to follow the "
-                "result route"
-            ),
-            status=400,
-        )
+    if "failure_delivery" in kwargs:
+        if not _delivery.is_valid_route(kwargs["failure_delivery"]):
+            return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
+        problem = _delivery.channel_route_problem(kwargs["failure_delivery"])
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
     if "failure_dedupe" in kwargs and not isinstance(kwargs["failure_dedupe"], bool):
         # A 400, not a coercion, and for the reason `enabled` gives on the create path: the JSON
         # string "false" is truthy under `bool()`, so coercing would silently turn dedup ON for a
@@ -1227,8 +1487,9 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
     if "channel" in kwargs:
         ch = (kwargs["channel"] or "").strip() or None
         kwargs["channel"] = ch
-        if ch and (len(ch) > CHANNEL_MAX_LEN or not CHANNEL_ID_RE.match(ch)):
-            return web.json_response({"error": "invalid channel ID format"}, status=400)
+        problem = _channel_problem(ch)
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
     if "cron" in body:
         kwargs["cron_expr"] = body["cron"]
     if "every" in body:
@@ -1320,7 +1581,13 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
             policy["dedupe_hash"] = bool(kwargs["failure_dedupe"])
             patch["failure_policy"] = policy
 
-        result = _tools.update(store, trigger_id=raw, patch=patch)
+        from personalclaw.safety_flags import confirm_granted
+
+        # `api_trigger_detail` asked for the grant this save needs (`_grant_for_save`), so a body
+        # carrying `confirm: true` is the owner's yes, and the save gives it.
+        result = _tools.update(
+            store, trigger_id=raw, patch=patch, owner_consented=confirm_granted(body)
+        )
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
         if cadence_changed:
@@ -1380,8 +1647,66 @@ def _carried(spec: dict[str, Any]) -> dict[str, Any]:
 # ── toggle / run / test ──
 
 
+def _switch_on_grant(
+    request: web.Request,
+    body: Any,
+    trigger: Any,
+    *,
+    persist: Callable[[], Any],
+    broken: bool = False,
+) -> web.Response | None:
+    """Give a trigger what switching it on needs, asking the owner first. None when it may go on.
+
+    A trigger whose action runs a write-capable provider its frozen block does not permit — a row a
+    legacy import brought over (`triggers.legacy_import`), an edit saved without the owner's yes, a
+    row the chat made, a lifecycle trigger made before hooks carried a grant — is refused by every
+    dispatch (`triggers.grants`). Switching it on is the moment to ask, and so is Allow on a trigger
+    that is already on, which the panel sends here as ``enabled: true``: without ``confirm: true``
+    this answers ``400 confirmation_required`` in the gateway's own words, which the page's
+    ``withSecurityConsent`` turns into the consent dialog; with it, the providers are granted and an
+    imported row becomes the owner's (`grants.give`), *persist* stores that, and both the refusal
+    and the grant are written to the security audit. An imported nudge needs no grant, only the
+    owner's switch, so it is adopted without a question. A *broken* row (parse errors) is left to
+    `set_paused`, which refuses it with the reason rather than asking about a trigger that cannot
+    run anyway.
+    """
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants, legacy_import
+
+    if broken:
+        return None
+    missing = grants.missing(trigger)
+    if not missing and not legacy_import.needs_review(trigger):
+        return None
+    field = f"triggers.{request.match_info['id']}.capabilities"
+    caller = request.get("user", "dashboard")
+    if missing and not confirm_granted(body):
+        _audit_grant(caller, "denied", f"{field}: switching on without confirm")
+        return consent_required(field, grants.consent(trigger, missing))
+    granted = grants.give(trigger)
+    persist()
+    if granted:
+        _audit_grant(caller, "success", f"trigger:{trigger.id}: {', '.join(granted)}")
+    return None
+
+
+def _audit_grant(caller: str, outcome: str, resources: str) -> None:
+    """The security-audit row for one grant decision: asked and refused, or given."""
+    _sel().log_api_access(
+        caller=caller,
+        operation="trigger.grant",
+        outcome=outcome,
+        source="dashboard",
+        resources=resources,
+    )
+
+
 async def api_trigger_toggle(request: web.Request) -> web.Response:
-    """POST /api/triggers/{id}/toggle — enable/disable."""
+    """POST /api/triggers/{id}/toggle — enable/disable.
+
+    Switching a store-backed trigger ON first gives it what its action needs, with the owner's
+    consent (`_switch_on_grant`); switching one off never asks.
+    """
     state: DashboardState = request.app["state"]
     kind, raw = _split_id(request.match_info["id"])
     if kind == _STORE:
@@ -1396,14 +1721,41 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         body = await json_object_body(request)
         want = body.get("enabled") if isinstance(body, dict) else None
         paused = row.trigger.enabled if want is None else (not bool(want))
+        if not paused:
+            asked = _switch_on_grant(
+                request,
+                body,
+                row.trigger,
+                persist=lambda: store.upsert(row.trigger),
+                broken=bool(row.errors),
+            )
+            if asked is not None:
+                return asked
         result = T.set_paused(store, trigger_id=raw, paused=paused)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
         return web.json_response({"ok": True, "trigger": _serialize_store(store.get(raw))})
     if kind == _LIFECYCLE:
-        hook = _hook_store(state).toggle(raw)
+        # A lifecycle trigger is switched on the way a store trigger is: asked first when its action
+        # needs a grant, and Allow is the switch sent on again (`enabled: true` on one that is on).
+        hooks = _hook_store(state)
+        hook = hooks.get(raw)
         if not hook:
             return web.json_response({"error": "not found"}, status=404)
+        body = await json_object_body(request)
+        want = body.get("enabled") if isinstance(body, dict) else None
+        on = (not hook.enabled) if want is None else bool(want)
+        if on:
+            asked = _switch_on_grant(
+                request,
+                body,
+                hook,
+                persist=lambda: hooks.update(hook.id, {"capabilities": hook.capabilities}),
+            )
+            if asked is not None:
+                return asked
+        if hook.enabled != on:
+            hook = hooks.toggle(raw)
         return web.json_response(
             {"ok": True, "trigger": _serialize_lifecycle(hook, _used_by_index().get(raw, []))}
         )
@@ -1419,6 +1771,16 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         from personalclaw.triggers import tools as _tools
 
         want = (not row.trigger.enabled) if enabled is None else bool(enabled)
+        if want:
+            asked = _switch_on_grant(
+                request,
+                body,
+                row.trigger,
+                persist=lambda: store.upsert(row.trigger),
+                broken=bool(row.errors),
+            )
+            if asked is not None:
+                return asked
         result = _tools.set_paused(store, trigger_id=raw, paused=not want)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
@@ -1522,9 +1884,11 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
        (fail-closed). A violation is a security event — logged and audited, never a silent
        substitution.
     4. **rate cap** (→ 429): per client, so one noisy integration cannot starve another.
-    5. **resolve** (→ 404): only a `webhook`-kind store trigger is fireable here; an unknown id or a
-       non-webhook kind answers 404 rather than confirming a non-webhook trigger's existence. Done
-       AFTER auth+scope, so a misscoped caller learns nothing about which triggers exist.
+    5. **resolve** (→ 404): only a `webhook`-kind store trigger that is switched on is fireable
+       here; an unknown id, a non-webhook kind or a paused trigger answers 404 rather than
+       confirming a non-webhook trigger's existence or saying why it will not fire — the answer the
+       inbound gate gives a surface that is switched off. Done AFTER auth+scope, so a misscoped
+       caller learns nothing about which triggers exist. Then the trigger's own grant (→ 403).
     6. **fence + fire**: the raw body is capped and fenced (`framing.fence_payload`) so it reaches
        the agent as data and never instructions, then the action is dispatched fire-and-forget (202)
        — a webhook sender must not block on an LLM turn (the `view`-render idiom).
@@ -1610,19 +1974,47 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         )
     clients_mod.touch_last_seen(client_id)
 
-    # 5) Resolve the trigger. Only a `webhook`-kind store trigger is fireable here.
+    # 5) Resolve the trigger. Only a `webhook`-kind store trigger that is switched on is fireable
+    #    here. A paused one answers exactly as an unknown one does: 404 is what the inbound gate
+    #    answers for a surface that is switched off (`inbound.gate.admission_problem`), so the
+    #    caller learns no more than that there is nothing to fire. The audit row says which.
     kind, raw = _split_id(trigger_id)
     store = _trigger_store()
     row = store.get(raw) if kind == _STORE else None
-    if row is None or row.trigger.kind != "webhook":
+    if row is None or row.trigger.kind != "webhook" or not row.trigger.fires_automatically:
         audit_mod.audit(
             _WEBHOOK_SURFACE,
             route=route,
             status=404,
-            refused="unknown or non-webhook trigger",
+            refused=(
+                "unknown or non-webhook trigger"
+                if row is None or row.trigger.kind != "webhook"
+                else "the trigger is switched off or paused"
+            ),
             client_id=client_id,
         )
         return json_error("not_found", status=404, headers=_NO_STORE)
+
+    # 5b) The trigger's own grant (`triggers.grants`): a scoped token lets a caller fire THIS
+    #     trigger, and says nothing about what its action may run. Refused here rather than after a
+    #     202, so the caller learns the fire did not happen; the action is not named to an outside
+    #     caller, and the owner sees the grant on the Triggers page.
+    from personalclaw.triggers import grants
+
+    if grants.missing(row.trigger):
+        audit_mod.audit(
+            _WEBHOOK_SURFACE,
+            route=route,
+            status=403,
+            refused="the trigger's action is not allowed to run",
+            client_id=client_id,
+        )
+        return json_error(
+            "forbidden",
+            message="This automation is not allowed to run its action until its owner allows it.",
+            status=403,
+            headers=_NO_STORE,
+        )
 
     # 6) Fence the untrusted body, then fire the trigger's action fire-and-forget.
     declared = request.content_length or 0
@@ -1677,7 +2069,8 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     execute the same action the same way.
 
     Manual runs bypass quiet-hours + duty limits but never the injection screen, capability
-    allowlist, or budget — the boundary `tools.MANUAL_NEVER_BYPASSES` pins.
+    allowlist, or budget — the boundary `tools.MANUAL_NEVER_BYPASSES` pins. The capability
+    allowlist is enforced here and in `_dispatch_store_action`, which is what makes that true.
     """
     from personalclaw.triggers import tools as T
 
@@ -1728,6 +2121,22 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     refusal = T.manual_refusal()
     if refusal:
         return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
+    # 🔴 THE GRANT, for every trigger (`triggers.grants`). This route is not only the owner's Run
+    # button: the chat's `automation_run` and `schedule_trigger` post here too. Measured on `main`:
+    # an enabled `bash` schedule with an empty capability block ran its command from here. The
+    # dispatch refuses the same row, so no caller can forget; asked here as well so the answer is
+    # the refusal, in words that say which grant and how the owner gives it.
+    from personalclaw.triggers import grants
+
+    missing = grants.missing(row.trigger)
+    if missing:
+        return web.json_response(
+            {
+                "ok": False,
+                "name": row.trigger.name,
+                "refused": grants.refusal(row.trigger, missing),
+            }
+        )
     # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
     # the failure carried as prose in `result` — so "no action provider configured" arrived as an
     # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
@@ -1776,11 +2185,18 @@ async def _dispatch_store_action(
 
     `late` is the review's reason when this run stands in for a slot that did not run (a missed
     fire, or a run a restart interrupted): the recorded row then says the run was late, and why.
+
+    🔴 NOTHING RUNS WITHOUT ITS GRANT. Every attended run reaches its action here — Run now, the
+    restart review's Run now, a view refresh, a webhook fire — and none of them walks
+    `service.admit_fire`, where the fence lives for a clock fire. So the grant is checked HERE, the
+    one place they share, and a refusal is `(False, <what is missing and how to allow it>)`.
+    Measured on `main`: every one of those four ran an ungranted `bash` action.
     """
     import time
 
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
+    from personalclaw.triggers import grants
 
     workflow = trigger.workflow or {}
     inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
@@ -1792,6 +2208,11 @@ async def _dispatch_store_action(
     provider = get_action_provider(provider_name)
     if provider is None:
         return False, f"unknown action provider {provider_name!r}"
+    missing = grants.missing(trigger)
+    if missing:
+        refusal = grants.refusal(trigger, missing)
+        logger.info("trigger %s not run (%s): %s", getattr(trigger, "id", ""), event, refusal)
+        return False, refusal
     # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it
     # recorded NOTHING — no `ScheduleRunStore` row, no `last_run_ts` stamp. So the action ran while
     # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
@@ -1812,6 +2233,7 @@ async def _dispatch_store_action(
         context="",
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+        trigger_id=str(getattr(trigger, "id", "") or ""),
     )
     from personalclaw.triggers.firepath import action_timeout
 
@@ -2498,6 +2920,12 @@ async def api_trigger_review(request: web.Request) -> web.Response:
         refusal = T.manual_refusal()
         if refusal:
             return web.json_response({"ok": False, "refused": refusal})
+        # And so does a missing grant (`triggers.grants`), for the same reason: the card waits.
+        from personalclaw.triggers import grants
+
+        missing = grants.missing(row.trigger)
+        if missing:
+            return web.json_response({"ok": False, "refused": grants.refusal(row.trigger, missing)})
         from personalclaw.triggers import claims as _claims
 
         # And so does a run already in flight, the Run button's 409: a second run beside it is the

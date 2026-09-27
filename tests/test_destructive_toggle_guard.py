@@ -7,7 +7,7 @@ view filter and is wired to a delete. The user's mental model of a toggle is "an
 it back"; when that is false, the state is gone and no downgrade recovers it.
 
 **The enumeration is machine-derived, and this is the whole design.** The toggle list comes
-from :data:`personalclaw.dashboard.handlers.core._EDITABLE_CONFIG` — the *actual object* the
+from :data:`personalclaw.config.editable._EDITABLE_CONFIG` — the *actual object* the
 PATCH handler validates against, imported rather than re-typed — filtered to
 ``{"type": "bool"}``. A hand-written list would be the cheatable version of this change: it can
 only ever contain the toggles someone already suspected, so the one that deletes your models
@@ -65,6 +65,7 @@ from personalclaw import seed as seed_mod
 FIXTURE_NAME = "six-month-home"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CORE_HANDLERS = _REPO_ROOT / "src" / "personalclaw" / "dashboard" / "handlers" / "core.py"
+_EDITABLE_REGISTRY = _REPO_ROOT / "src" / "personalclaw" / "config" / "editable.py"
 
 #: Home subtrees whose contents legitimately change on any config write (the state-history
 #: committer, the log, the runtime secret). Excluded from the file-inventory observable so the
@@ -90,7 +91,7 @@ def boolean_toggles() -> tuple[str, ...]:
     This is the *live object* the write path validates against, not a copy of it. If the two
     could drift the rail would be worthless, so there is deliberately nothing to keep in sync.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     return tuple(
         sorted(key for key, spec in _EDITABLE_CONFIG.items() if spec.get("type") == "bool")
@@ -455,16 +456,23 @@ def test_the_enumeration_is_derived_not_declared() -> None:
 def test_the_derivation_tracks_the_write_path_it_claims_to() -> None:
     """The allowlist this reads is the one the PATCH handler validates against.
 
-    Proven by parsing the handler's source for the literal and comparing key-for-key with the
-    imported object, so a second copy of the dict appearing somewhere else cannot quietly
-    become the thing this rail sweeps.
+    Proven in two halves: the PATCH handler imports the allowlist from the registry module, and
+    the registry's source declares the literal, compared key-for-key with the imported object.
+    A second copy of the dict appearing somewhere else cannot quietly become the thing this rail
+    sweeps.
     """
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
-    source = _CORE_HANDLERS.read_text(encoding="utf-8")
+    handler = _CORE_HANDLERS.read_text(encoding="utf-8")
+    assert "from personalclaw.config.editable import _EDITABLE_CONFIG\n" in handler, (
+        f"{_CORE_HANDLERS.relative_to(_REPO_ROOT)} no longer takes the PATCH allowlist from "
+        f"{_EDITABLE_REGISTRY.relative_to(_REPO_ROOT)} — repoint this rail at the allowlist the "
+        "PATCH path actually validates against"
+    )
+    source = _EDITABLE_REGISTRY.read_text(encoding="utf-8")
     assert "_EDITABLE_CONFIG: dict[str, dict] = {" in source, (
         "the _EDITABLE_CONFIG literal is no longer declared in "
-        f"{_CORE_HANDLERS.relative_to(_REPO_ROOT)} — find where the PATCH path's allowlist "
+        f"{_EDITABLE_REGISTRY.relative_to(_REPO_ROOT)} — find where the PATCH path's allowlist "
         "moved to and repoint this rail, because an allowlist nothing sweeps is the whole "
         "defect this file exists to prevent"
     )

@@ -65,9 +65,11 @@ logger = logging.getLogger(__name__)
 #: Delivery targets. ``native`` is LIVE as of DESKTOP-CAPABILITIES `DC-5` (see
 #: :func:`native_delivery`) and ``push`` is LIVE — a rule
 #: carrying it sends a content-free ``{kind, item_id}`` ping through
-#: :mod:`personalclaw.push`. ``channel_dm`` is the one target still accepted and persisted
-#: but inert; storing it means a user's choice survives rather than being silently dropped
-#: and needing re-entry later.
+#: :mod:`personalclaw.push`. ``channel_dm`` sends the note to the owner's DM on the first
+#: connected chat channel that reaches them (``channel_delivery.reach_owner``, from
+#: ``DashboardState.notify``); for ``approval/requested`` it asks there, with Approve/Deny
+#: where the channel has them (``DashboardApprovalState._ask_on_a_channel``). Unlike ``push``
+#: it carries the note's text, because the channel is where the owner reads it.
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
 
@@ -91,6 +93,7 @@ SOUND_CUES: tuple[str, ...] = (
 #: capability vocabulary the second name comes from.
 NATIVE_TARGET = "native"
 NATIVE_CAPABILITY = "native_notifications"
+
 
 #: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
 DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
@@ -299,6 +302,34 @@ def _coerce_rule(registered: nk.NotificationKind, raw: Any) -> Rule:
         verify=registered.verifiable and bool(raw.get("verify")),
         sound=_coerce_sound(raw.get("sound")),
     )
+
+
+def edited_list(
+    registered: nk.NotificationKind, raw: Any, field: str, edit: dict[str, str]
+) -> list[str]:
+    """*registered*'s ``targets`` or ``keywords`` after ONE ``{"add": name}`` / ``{"remove":
+    name}`` *edit*.
+
+    Applied to the list as it resolves from *raw* — the rule stored NOW (``None`` when unset), so
+    a kind still on its defaults starts from the ``dashboard`` target the matrix shows. One entry
+    in or out of what is stored cannot undo a change made elsewhere, which is why the rules PUT
+    takes these and never a whole list: the matrix built that list from its copy, so a tab opened
+    before the phone turned push on (:func:`ensure_target`) saved its copy and switched push off.
+
+    Removing the last target leaves ``dashboard``: a rule with none is read back as the default
+    anyway (:func:`_coerce_targets`), so storing it is what keeps the matrix honest about it.
+    """
+    rule = _coerce_rule(registered, raw)
+    current = list(rule.targets) if field == "targets" else list(rule.conditions.keywords)
+    # Stripped the way a stored keyword is read back, so " deploy " neither duplicates the
+    # "deploy" the matrix shows nor fails to remove it.
+    if "add" in edit:
+        name = edit["add"].strip()
+        return current if name in current else [*current, name]
+    kept = [x for x in current if x != edit["remove"].strip()]
+    if field == "targets" and not kept:
+        return list(DEFAULT_TARGETS)
+    return kept
 
 
 def load_rules() -> dict[str, Any]:

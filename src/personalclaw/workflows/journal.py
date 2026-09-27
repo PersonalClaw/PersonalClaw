@@ -619,9 +619,9 @@ class Journal(LedgerWriter):
         wall clock to make a scheduling decision — a `wait` deadline or a `gate` timeout crossing
         wall time. `clock` is the value it read and `wake_at` the deadline that value crossed. This
         is the missing third of the nondeterminism envelope (provider responses are spilled by
-        `output_ref`, the resolved prompt by `_store_prompt`): journaled so a replay can substitute
-        a recorded clock and resolve the same node at the same point in the trajectory rather than
-        against a live clock that would never match.
+        `output_ref`, the resolved prompt by `node_bindings.store_prompt`): journaled so a replay
+        can substitute a recorded clock and resolve the same node at the same point in the
+        trajectory rather than against a live clock that would never match.
         """
         self.write(
             CLOCK_READ,

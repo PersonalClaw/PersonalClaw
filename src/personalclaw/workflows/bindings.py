@@ -86,7 +86,7 @@ class BindingContext:
     has_item: bool = False
     iter_index: int | None = None  # loop iteration
     #: The previous ITERATION of the loop this node is in, LAYERED across the whole body — see
-    #: `RunController._last_output`, which is the one definition of that value for a body node
+    #: `node_bindings._last_output`, which is the one definition of that value for a body node
     #: and for the loop's own `condition` alike.
     last_output: Any = None
     has_last: bool = False
@@ -780,7 +780,7 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
             )
         value: Any = ctx.secret_resolver(key)
         # "" is how the credential store answers for a key it does not hold
-        # (`controller._secret_resolver`). Substituted, a request carrying it fails at the
+        # (`node_bindings._secret_resolver`). Substituted, a request carrying it fails at the
         # receiver with nothing naming the key, so the trigger path refuses it too.
         if value is None or value == "":
             raise BindingError(
@@ -872,11 +872,11 @@ def _first_cycle_miss(head: str, ctx: BindingContext) -> bool:
     Given that signal, `not has_last` is a MEASUREMENT rather than an unwired seam, which is what
     changed in #3524 and why the rule is no longer pinned to `iter_index == 0`. Both `previous`
     and `last` are now computed for every node the controller dispatches
-    (`RunController._last_output` / `_previous_output`), so "the engine did not supply it" and
-    "the engine looked and there was nothing to supply" are the same statement: either this is
-    the first iteration, or the previous one produced no output at all. Both are honest
-    `| default(...)` cases, and before #3524 the second rendered
-    `unresolved reference at 'last'` on iterations 2..N of six bundled templates.
+    (`node_bindings._last_output` / `node_bindings._previous_output`), so "the engine did not supply
+    it" and "the engine looked and there was nothing to supply" are the same statement: either this
+    is the first iteration, or the previous one produced no output at all. Both are honest
+    `| default(...)` cases, and before #3524 the second rendered `unresolved reference at 'last'`
+    on iterations 2..N of six bundled templates.
 
     A `last` read OUTSIDE any loop body (`iter_index is None`) and a typo'd `lastt` still raise —
     those are authoring errors, and nothing in the engine will ever supply them.

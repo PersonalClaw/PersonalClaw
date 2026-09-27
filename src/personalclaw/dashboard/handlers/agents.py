@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.atomic_write import atomic_json_write, atomic_write
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
     ConfigValueError,
@@ -20,15 +20,31 @@ from personalclaw.config.edit_spec import (
     loosens_toward,
     unconsented_loosening,
 )
-from personalclaw.config.loader import AgentProfile, AppConfig, resolve_agent_config_path
+from personalclaw.config.loader import (
+    AgentProfile,
+    AppConfig,
+    ConfigWriteError,
+    resolve_agent_config_path,
+)
 from personalclaw.config.schema import SCHEMA_REGISTRY, config_entry_to_dict
+from personalclaw.config.transactions import mutate_config_async, update_config_async
 from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
+from personalclaw.dashboard.handlers._shared import (
+    RefusedInConfigTransaction,
+    config_write_refusal,
+)
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.stale_write import (
+    claimed_revision,
+    refusal_outcome,
+    revision_of,
+    stale_write_refusal,
+)
 
 
 def config_dir() -> Path:
@@ -267,11 +283,27 @@ async def api_themes_create(request: web.Request) -> web.Response:
         "light": _strip_to_allowed_vars(body.get("light", {})),
     }
     target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
-    return web.json_response({"ok": True, "slug": slug, "theme": theme_data})
+    # The new theme's revision, so the editor that just saved it can update it in place next.
+    return web.json_response(
+        {"ok": True, "slug": slug, "theme": theme_data, "revision": revision_of(theme_data)}
+    )
+
+
+def _stored_theme(target: Path) -> dict | None:
+    """The theme file's record as the read hands it out, or ``None`` when it cannot be read."""
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 async def api_theme_detail(request: web.Request) -> web.Response:
-    """GET/PUT/DELETE /api/themes/{slug} — get, update, or delete a custom theme."""
+    """GET/PUT/DELETE /api/themes/{slug} — get, update, or delete a custom theme.
+
+    A theme is one document — ``PUT`` rebuilds all of it from the body — so ``GET`` carries its
+    ``revision`` and ``PUT`` must name it in ``If-Match`` (`personalclaw/stale_write.py`).
+    """
     slug = request.match_info["slug"]
     # Sanitize slug to prevent path traversal
     safe_slug = re.sub(r"[^a-z0-9\-]", "", slug)
@@ -303,11 +335,20 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             body.get("emoji", _THEME_DEFAULT_EMOJI).strip()[:_THEME_EMOJI_MAX_LEN]
             or _THEME_DEFAULT_EMOJI
         )
-        # Preserve created_at from existing file
-        try:
-            existing = json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            existing = {}
+        # 🔴 A THEME IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. "Update theme" sends the
+        # name and emoji the Design panel loaded and the colors this browser holds, so a theme
+        # renamed or recolored since — in another tab, or pulled from another device by sync —
+        # was replaced by this page's copy without a word. Read and compared with no `await`
+        # before the write, so nothing can land between the two. A theme that cannot be read
+        # cannot be compared, so it is not written over either.
+        existing = _stored_theme(target)
+        if existing is None:
+            if not target.exists():
+                return web.json_response({"error": "not found"}, status=404)
+            return web.json_response({"error": "failed to read theme"}, status=500)
+        stale = stale_write_refusal(request, existing, what=f"the theme {safe_slug!r}")
+        if stale is not None:
+            return stale
         theme_data = {
             "name": name,
             "slug": safe_slug,
@@ -317,16 +358,17 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             "light": _strip_to_allowed_vars(body.get("light", {})),
         }
         target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
-        return web.json_response({"ok": True, "theme": theme_data})
+        return web.json_response(
+            {"ok": True, "theme": theme_data, "revision": revision_of(theme_data)}
+        )
 
     # GET
     if not target.exists():
         return web.json_response({"error": "not found"}, status=404)
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = _stored_theme(target)
+    if data is None:
         return web.json_response({"error": "failed to read theme"}, status=500)
-    return web.json_response(data)
+    return web.json_response({**data, "revision": revision_of(data)})
 
 
 # ── Agent Config ──
@@ -396,20 +438,16 @@ async def api_agent_config(request: web.Request) -> web.Response:
                 diff = sorted(set(shipped.get(key, [])) - set(config.get(key, [])))
                 if diff:
                     removed_per_key[key] = diff
-            pc_cfg_path = _h.config_path()  # type: ignore[operator]
-            try:
-                pc_cfg = (
-                    json.loads(pc_cfg_path.read_text(encoding="utf-8"))
-                    if pc_cfg_path.exists()
-                    else {}
-                )
-            except Exception:
-                pc_cfg = {}
-            if removed_per_key:
-                pc_cfg["removedTools"] = removed_per_key
-            else:
-                pc_cfg.pop("removedTools", None)
-            atomic_write(pc_cfg_path, json.dumps(pc_cfg, indent=2) + "\n")
+
+            # In the config transaction: an unreadable config.json is refused rather than read
+            # as `{}`, which wrote `{"removedTools": …}` over every other setting.
+            def _record_removed(pc_cfg: dict) -> None:
+                if removed_per_key:
+                    pc_cfg["removedTools"] = removed_per_key
+                else:
+                    pc_cfg.pop("removedTools", None)
+
+            await mutate_config_async(_record_removed, path=_h.config_path())
             # The MCP document writer: an `mcpServers` env value edited here reaches the file as
             # a credential-store reference, like every other writer of this file.
             from personalclaw.config.secret_refs import write_mcp_document
@@ -466,18 +504,21 @@ async def api_default_agent(request: web.Request) -> web.Response:
                     },
                     status=400,
                 )
-        path = _h.config_path()
+
+        def _set_default(data: dict) -> None:
+            # Single authoritative top-level default_agent (what AppConfig.default_agent,
+            # the agents-list endpoint, and the resolver all read). Drop any stale
+            # nested agent.default_agent left by older configs.
+            data["default_agent"] = name
+            if isinstance(data.get("agent"), dict):
+                data["agent"].pop("default_agent", None)
+
+        # In the config transaction: an unreadable config.json is refused rather than read as
+        # `{}`, which wrote `{"default_agent": …}` over every other setting.
         try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            data = {}
-        # Single authoritative top-level default_agent (what AppConfig.default_agent,
-        # the agents-list endpoint, and the resolver all read). Drop any stale
-        # nested agent.default_agent left by older configs.
-        data["default_agent"] = name
-        if isinstance(data.get("agent"), dict):
-            data["agent"].pop("default_agent", None)
-        atomic_write(path, json.dumps(data, indent=2) + "\n")
+            await mutate_config_async(_set_default, path=_h.config_path())
+        except ConfigWriteError as exc:
+            return config_write_refusal(exc)
         return web.json_response({"ok": True, "default_agent": name})
     cfg = AppConfig.load()
     return web.json_response({"default_agent": cfg.default_agent})
@@ -620,7 +661,7 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                     )
                     return web.json_response({"ok": True})
                 if request.method == "PATCH" and patch_body is not None:
-                    async with _get_config_lock():
+                    async with _get_agent_file_lock():
                         data = json.loads(f.read_text(encoding="utf-8"))
                         unconsented = _unconsented_agent_loosening(
                             name,
@@ -943,22 +984,40 @@ def _unavailable_agent_name(name: str) -> str | None:
     return None
 
 
-async def api_personalclaw_agents(request: web.Request) -> web.Response:
-    """GET /api/agents — list all PersonalClaw agent definitions."""
+def _agent_record(name: str, profile: AgentProfile) -> dict[str, Any]:
+    """One agent as ``GET /api/agents`` lists it — and the document ``PUT /api/agents/{name}``
+    compares a record write's base against, built by this one function so the revision a read
+    hands out and the one a write is checked against always describe the same thing."""
     from personalclaw.agents.defaults import is_reserved_agent
 
+    return {
+        "name": name,
+        **dataclasses.asdict(profile),
+        "reserved": is_reserved_agent(name),
+        "editable": not is_reserved_agent(name),
+    }
+
+
+async def api_personalclaw_agents(request: web.Request) -> web.Response:
+    """GET /api/agents — list all PersonalClaw agent definitions.
+
+    Each record carries its ``revision``: the agent editor saves the whole profile it painted,
+    so that write names the revision it was built from (`personalclaw/stale_write.py`).
+    """
     cfg = AppConfig.load()
-    agents = [
-        {
-            "name": name,
-            **dataclasses.asdict(agent_cfg),
-            "reserved": is_reserved_agent(name),
-            "editable": not is_reserved_agent(name),
-            # The pin is KEPT; this says it cannot run, where the pin was chosen and the fix is.
-            "model_unavailable": agent_model_problem(agent_cfg, cfg),
-        }
-        for name, agent_cfg in cfg.agents.items()
-    ]
+    agents = []
+    for name, agent_cfg in cfg.agents.items():
+        record = _agent_record(name, agent_cfg)
+        agents.append(
+            {
+                **record,
+                "revision": revision_of(record),
+                # The pin is KEPT; this says it cannot run, where the pin was chosen and the fix
+                # is. Not part of the revision: it is derived from the models set up, not edited
+                # here, so a model going away must not refuse a save of this profile.
+                "model_unavailable": agent_model_problem(agent_cfg, cfg),
+            }
+        )
     return web.json_response(
         {
             "agents": agents,
@@ -967,18 +1026,25 @@ async def api_personalclaw_agents(request: web.Request) -> web.Response:
     )
 
 
-_config_lock: asyncio.Lock | None = None
-_config_lock_loop: asyncio.AbstractEventLoop | None = None
+_agent_file_lock: asyncio.Lock | None = None
+_agent_file_lock_loop: asyncio.AbstractEventLoop | None = None
 
 
-def _get_config_lock() -> asyncio.Lock:
-    """Return a config lock bound to the current event loop (Python 3.10 compat)."""
-    global _config_lock, _config_lock_loop
+def _get_agent_file_lock() -> asyncio.Lock:
+    """The lock the gateway's read-modify-writes of the AGENT files take (``agents/*.json``,
+    ``personalclaw.json`` among them), bound to the current event loop.
+
+    Not ``config.json``'s: that file has its own cross-process transaction
+    (``config.transactions``), which every writer of it takes. This one used to be named
+    ``_get_config_lock`` and guarded both files, which is how the config writers came to believe
+    an in-process lock protected them from a CLI in another terminal.
+    """
+    global _agent_file_lock, _agent_file_lock_loop
     loop = asyncio.get_running_loop()
-    if _config_lock is None or _config_lock_loop is not loop:
-        _config_lock = asyncio.Lock()
-        _config_lock_loop = loop
-    return _config_lock
+    if _agent_file_lock is None or _agent_file_lock_loop is not loop:
+        _agent_file_lock = asyncio.Lock()
+        _agent_file_lock_loop = loop
+    return _agent_file_lock
 
 
 #: The canonical agent-name validator, shared by every path that can INTRODUCE a name into
@@ -1144,8 +1210,7 @@ async def api_personalclaw_agents_sync(request: web.Request) -> web.Response:
     a file folds in is an agent's instructions and tools as well as its approval mode.
     """
     body = await json_object_body(request)
-    async with _get_config_lock():
-        return await _do_agents_sync(request, body)
+    return await _do_agents_sync(request, body)
 
 
 def _sync_consent(loosening: list[tuple[str, str]]) -> str:
@@ -1162,68 +1227,83 @@ def _sync_consent(loosening: list[tuple[str, str]]) -> str:
 
 
 async def _do_agents_sync(request: web.Request, body: dict) -> web.Response:
-    cfg = AppConfig.load()
     entries, unreadable = _file_store_agents()
     synced: list[str] = []
     skipped: list[str] = []
-    folding: list[tuple[str, dict[str, Any]]] = []
-    for name, fields in entries:
-        # Already in config.json — case-insensitively, the same resolution the CRUD paths
-        # use, so `personalclaw.json`'s "personalclaw" matches the seeded "PersonalClaw"
-        # instead of folding a duplicate profile in beside it.
-        if _resolve_agent_name(name, cfg) is not None:
-            continue
-        # The SAME name guard `POST /api/agents` applies, for the same stated reason ("so
-        # names can't be later interpolated"). A file's `name` field is attacker-shaped input
-        # on the install path — an app bundle or a restored snapshot writes it — so a
-        # traversal-looking or unbounded name must not become a config key here either.
-        if not _AGENT_NAME_RE.fullmatch(name):
-            skipped.append(_reportable_agent_name(name))
-            continue
-        # The two name classes a CREATE already refuses, refused here for the same reasons
-        # (`_unavailable_agent_name`): a RESERVED name is owned by the seeding migration, and
-        # a RETIRED one is pruned by the very next config load — so folding either in would
-        # report success and leave nothing behind.
-        if _unavailable_agent_name(name) is not None:
-            skipped.append(_reportable_agent_name(name))
-            continue
-        try:
-            staged = _staged_agent_fields(fields, _AGENT_SYNC_KEYS)
-        except ConfigValueError as exc:
-            # A file on disk is not a request: one bad field must not fail the whole sync,
-            # and it must not persist a wrong type into config.json either (the #349 defect
-            # class). Skip the file, name it in the response.
-            logger.info("agents sync: skipping %r — %s", name, exc)
-            skipped.append(_reportable_agent_name(name))
-            continue
-        folding.append((name, staged))
-    approval = _AGENT_FIELD_SPECS["approval_mode"]["security"]
-    loosening = [
-        (name, str(staged["approval_mode"]))
-        for name, staged in folding
-        if "approval_mode" in staged
-        and approval.loosens(_PROFILE_DEFAULTS["approval_mode"], staged["approval_mode"])
-    ]
-    if loosening and not confirm_granted(body):
-        field = f"agents.{loosening[0][0]}.approval_mode"
-        _sel().log_api_access(
-            caller=request.get("user", "dashboard"),
-            operation="agents.sync",
-            outcome="denied",
-            source="dashboard",
-            resources=f"{','.join(n for n, _ in loosening)}: looser approval mode without confirm",
-        )
-        return consent_required(field, _sync_consent(loosening))
-    for name, staged in folding:
-        # `source` is STAMPED, never read off the file: it records where PersonalClaw found
-        # the profile, and a file that named its own origin could claim "builtin".
-        cfg.agents[name] = AgentProfile(**staged, source="local")
-        synced.append(name)
-    # Only write when something changed. The old body was an unconditional `load(); save()`,
-    # which rewrote the user's whole config.json on every press to bump `lastTouchedAt` — a
-    # full-file write of the live config in answer to a control that reported nothing.
+
+    def fold(cfg: AppConfig) -> None:
+        # Decided against the config as it is at the write, in the config transaction, so an
+        # agent another writer added meanwhile is found here rather than folded in over.
+        folding: list[tuple[str, dict[str, Any]]] = []
+        for name, fields in entries:
+            # Already in config.json — case-insensitively, the same resolution the CRUD paths
+            # use, so `personalclaw.json`'s "personalclaw" matches the seeded "PersonalClaw"
+            # instead of folding a duplicate profile in beside it.
+            if _resolve_agent_name(name, cfg) is not None:
+                continue
+            # The SAME name guard `POST /api/agents` applies, for the same stated reason ("so
+            # names can't be later interpolated"). A file's `name` field is attacker-shaped
+            # input on the install path — an app bundle or a restored snapshot writes it — so a
+            # traversal-looking or unbounded name must not become a config key here either.
+            if not _AGENT_NAME_RE.fullmatch(name):
+                skipped.append(_reportable_agent_name(name))
+                continue
+            # The two name classes a CREATE already refuses, refused here for the same reasons
+            # (`_unavailable_agent_name`): a RESERVED name is owned by the seeding migration,
+            # and a RETIRED one is pruned by the very next config load — so folding either in
+            # would report success and leave nothing behind.
+            if _unavailable_agent_name(name) is not None:
+                skipped.append(_reportable_agent_name(name))
+                continue
+            try:
+                staged = _staged_agent_fields(fields, _AGENT_SYNC_KEYS)
+            except ConfigValueError as exc:
+                # A file on disk is not a request: one bad field must not fail the whole sync,
+                # and it must not persist a wrong type into config.json either (the #349 defect
+                # class). Skip the file, name it in the response.
+                logger.info("agents sync: skipping %r — %s", name, exc)
+                skipped.append(_reportable_agent_name(name))
+                continue
+            folding.append((name, staged))
+        approval = _AGENT_FIELD_SPECS["approval_mode"]["security"]
+        loosening = [
+            (name, str(staged["approval_mode"]))
+            for name, staged in folding
+            if "approval_mode" in staged
+            and approval.loosens(_PROFILE_DEFAULTS["approval_mode"], staged["approval_mode"])
+        ]
+        if loosening and not confirm_granted(body):
+            raise RefusedInConfigTransaction(
+                consent_required(
+                    f"agents.{loosening[0][0]}.approval_mode", _sync_consent(loosening)
+                ),
+                audit={
+                    "caller": request.get("user", "dashboard"),
+                    "operation": "agents.sync",
+                    "outcome": "denied",
+                    "source": "dashboard",
+                    "resources": (
+                        f"{','.join(n for n, _ in loosening)}: looser approval mode without confirm"
+                    ),
+                },
+            )
+        for name, staged in folding:
+            # `source` is STAMPED, never read off the file: it records where PersonalClaw found
+            # the profile, and a file that named its own origin could claim "builtin".
+            cfg.agents[name] = AgentProfile(**staged, source="local")
+            synced.append(name)
+
+    # A sync that folds nothing in changes nothing, so it writes nothing. The old body was an
+    # unconditional `load(); save()`, which rewrote the user's whole config.json on every press
+    # to bump `lastTouchedAt` — a full-file write of the live config in answer to a control that
+    # reported nothing.
+    try:
+        await update_config_async(fold)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
     if synced:
-        cfg.save()
         state: DashboardState = request.app["state"]
         state.push_refresh("agents")
     _sel().log_api_access(
@@ -1286,10 +1366,13 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
     if unconsented is not None:
         return unconsented
 
-    async with _get_config_lock():
-        cfg = AppConfig.load()
+    def create(cfg: AppConfig) -> None:
+        # The check and the write are one step in the config transaction, so two creates of
+        # the same name — from two tabs, or the CLI — cannot both pass it.
         if _resolve_agent_name(name, cfg):
-            return web.json_response({"error": f"Agent '{name}' already exists"}, status=409)
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": f"Agent '{name}' already exists"}, status=409)
+            )
         # A name the system owns is refused BEFORE the write, not reconciled after it.
         # AFTER the duplicate check deliberately: when the name IS already in the config,
         # "already exists" is the more specific answer, and it is what the case-insensitive
@@ -1298,14 +1381,22 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
         # must never be written under (see `_unavailable_agent_name`).
         unavailable = _unavailable_agent_name(name)
         if unavailable:
-            return json_error("forbidden", message=unavailable, status=403)
+            raise RefusedInConfigTransaction(
+                json_error("forbidden", message=unavailable, status=403)
+            )
         # Every field comes from the ONE validated table, and the dataclass defaults fill
         # whatever the body omitted. The seventeen hand-written `body.get(...)` calls this
         # replaces had a parallel seventeen in the update handler, which is how `triggers`
         # came to be accepted by one path and dropped by the other, and how thirteen scalar
         # fields came to skip the guard their three list siblings had.
         cfg.agents[name] = AgentProfile(**staged)
-        cfg.save()
+
+    try:
+        await update_config_async(create)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="agent.create",
@@ -1317,7 +1408,15 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
 
 
 async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
-    """PUT /api/agents/{name} — update a PersonalClaw agent."""
+    """PUT /api/agents/{name} — update a PersonalClaw agent.
+
+    Sets each profile field present in the body. A body that sets several fields, or a list
+    (``skills``/``tools``/``triggers``), is a RECORD write — the agent editor's whole form, built
+    from the profile it read — so it must name that read's ``revision`` in ``If-Match``, and a
+    stale one is refused with ``409 stale_write`` (`personalclaw/stale_write.py`). One scalar
+    field alone (the reserved agents' model picker sends only ``model``) is the edit the user made
+    and needs none, the config PATCH's rule for a scalar.
+    """
 
     name = request.match_info["name"]
     try:
@@ -1348,23 +1447,60 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         staged = _staged_agent_fields(body)
     except ConfigValueError as exc:
         return _agent_write_refusal(exc)
+    record_write = len(staged) > 1 or any(
+        _AGENT_FIELD_SPECS[key]["type"] == "str_list" for key in staged
+    )
 
-    async with _get_config_lock():
-        cfg = AppConfig.load()
+    def update(cfg: AppConfig) -> tuple[AgentProfile, bool]:
         if name not in cfg.agents:
-            return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": f"Agent '{name}' not found"}, status=404)
+            )
         agent = cfg.agents[name]
+        if record_write:
+            # 🔴 A PROFILE IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The editor sends every
+            # field it shows, the untouched ones as it read them, so a change made since — the
+            # chat's "Always allow for this agent", a skill ticked in another tab, the CLI — was
+            # reverted by the next save here without a word. Against the agent as it is at the
+            # write, in the config transaction, and before the consent check: a stale save is
+            # refused whatever it would change, and asking the owner to consent to one would be
+            # asking about the wrong profile.
+            stale = stale_write_refusal(
+                request, _agent_record(name, agent), what=f"the agent {name!r}"
+            )
+            if stale is not None:
+                raise RefusedInConfigTransaction(
+                    stale,
+                    audit={
+                        "caller": request.get("user", "dashboard"),
+                        "operation": "agent.update",
+                        "outcome": refusal_outcome(stale),
+                        "source": "dashboard",
+                        "resources": name,
+                    },
+                )
+        # Against the agent as it is at the write, in the config transaction.
         unconsented = _unconsented_agent_loosening(name, staged, dataclasses.asdict(agent), body)
         if unconsented is not None:
-            return unconsented
-        # `_staged_agent_fields` walks `_AGENT_FIELD_SPECS` in order, so this audit list is
-        # deterministic rather than request-order dependent.
-        changed: list[str] = []
+            raise RefusedInConfigTransaction(unconsented)
         for field_name, value in staged.items():
             setattr(agent, field_name, value)
-            changed.append(field_name)
-        cfg.save()
-    _agent_edited(request, name, agent.provider_agent, is_default=name == cfg.default_agent)
+        return agent, name == cfg.default_agent
+
+    try:
+        agent, is_default = await update_config_async(update)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
+    # `_staged_agent_fields` walks `_AGENT_FIELD_SPECS` in order, so this audit list is
+    # deterministic rather than request-order dependent.
+    changed = list(staged)
+    _agent_edited(request, name, agent.provider_agent, is_default=is_default)
+    # The revision of the profile as this write stored it, which a profile's lossless config round
+    # trip makes the one the next read reports. Not re-read: a read after the transaction could
+    # hand out the revision of a later writer's change this page never saw.
+    saved = _agent_record(name, agent)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
         operation="agent.update",
@@ -1372,7 +1508,7 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"{name} ({','.join(changed)})",
     )
-    return web.json_response({"ok": True, "name": name})
+    return web.json_response({"ok": True, "name": name, "revision": revision_of(saved)})
 
 
 def _agent_edited(
@@ -1419,17 +1555,27 @@ async def api_personalclaw_agent_delete(request: web.Request) -> web.Response:
             {"error": f"'{name}' is a built-in system agent and cannot be deleted"},
             status=403,
         )
-    async with _get_config_lock():
-        cfg = AppConfig.load()
+
+    def delete(cfg: AppConfig) -> AgentProfile:
         if name not in cfg.agents:
-            return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
-        if name == cfg.default_agent:
-            return web.json_response(
-                {"error": f"Cannot delete default agent '{name}'. Change default_agent first."},
-                status=409,
+            raise RefusedInConfigTransaction(
+                web.json_response({"error": f"Agent '{name}' not found"}, status=404)
             )
-        removed = cfg.agents.pop(name)
-        cfg.save()
+        if name == cfg.default_agent:
+            raise RefusedInConfigTransaction(
+                web.json_response(
+                    {"error": f"Cannot delete default agent '{name}'. Change default_agent first."},
+                    status=409,
+                )
+            )
+        return cfg.agents.pop(name)
+
+    try:
+        removed = await update_config_async(delete)
+    except RefusedInConfigTransaction as refused:
+        return refused.answer()
+    except ConfigWriteError as exc:
+        return config_write_refusal(exc)
     _agent_edited(request, name, removed.provider_agent, is_default=False)
     _sel().log_api_access(
         caller=request.get("user", "dashboard"),
@@ -1459,16 +1605,25 @@ def _regen_orchestrator() -> None:
 
 
 async def api_agent_metadata_get(request: web.Request) -> web.Response:
-    """GET /api/agent-metadata/{name} — read agent routing metadata."""
+    """GET /api/agent-metadata/{name} — read agent routing metadata.
+
+    With the note's ``revision``: the editor saves the whole note, so that write names the
+    revision it was built from.
+    """
     name = request.match_info["name"]
     from personalclaw.agent_metadata import load  # noqa: F811
 
     content = load(name)
-    return web.json_response({"name": name, "content": content})
+    return web.json_response({"name": name, "content": content, "revision": revision_of(content)})
 
 
 async def api_agent_metadata_put(request: web.Request) -> web.Response:
-    """PUT /api/agent-metadata/{name} — write agent routing metadata."""
+    """PUT /api/agent-metadata/{name} — write agent routing metadata.
+
+    The note is replaced whole, so replacing a stored one needs the revision it was read at in
+    ``If-Match`` (`personalclaw/stale_write.py`); writing the first note for an agent replaces
+    nothing and needs none. The response carries the note as stored afterwards and its revision.
+    """
     caller = request.get("user", "")
     if not caller:
         try:
@@ -1506,8 +1661,27 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         )
     body = await json_object_body(request)
     content = string_field(body, "content")
-    from personalclaw.agent_metadata import delete, save  # noqa: F811
+    from personalclaw.agent_metadata import delete, load, save  # noqa: F811
 
+    # 🔴 A NOTE IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. The editor sends the whole note
+    # as typed into the copy it read, so a note changed since — in another tab, or seeded by the
+    # orchestrator from the agent's description — was overwritten without a word. No `await`
+    # between this read and the write below. Nothing stored and no revision named is the agent's
+    # first note: a create, which replaces nothing.
+    stored = load(name)
+    if stored or claimed_revision(request):
+        stale = stale_write_refusal(request, stored, what=f"the routing note for {name!r}")
+        if stale is not None:
+            try:
+                _sel().log_api_access(
+                    caller=caller,
+                    operation="agent_metadata.put",
+                    outcome=refusal_outcome(stale),
+                    resources=name,
+                )
+            except Exception:
+                logger.warning("SEL logging failed", exc_info=True)
+            return stale
     if not content:
         # Clearing the field is the natural way to say "this agent has no routing
         # note" — the empty state is already supported everywhere else (load()
@@ -1528,7 +1702,13 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)
-    return web.json_response({"ok": True, "name": name})
+    # As stored NOW, not as sent: with the orchestrator skill on, `_regen_orchestrator` re-seeds
+    # a missing note from the agent's description, so a cleared note can already hold text
+    # again, and the editor must show — and next save over — what is actually there.
+    now = load(name)
+    return web.json_response(
+        {"ok": True, "name": name, "content": now, "revision": revision_of(now)}
+    )
 
 
 async def api_agent_metadata_delete(request: web.Request) -> web.Response:

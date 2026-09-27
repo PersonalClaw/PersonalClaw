@@ -320,7 +320,7 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 ### `automation_create`
 
-Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation, and capped by workflows.self_schedule_max_outstanding.
+Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a cadence becomes a cron schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation, and capped by workflows.self_schedule_max_outstanding. It does not run until the owner allows it on the Triggers page, so tell them it is waiting.
 
 **Response type:** `automation.create.result`
 
@@ -510,7 +510,7 @@ Fire an automation now. `dry_run: true` walks the gates and reports what WOULD r
 
 ### `automation_update`
 
-Patch an automation. Only settable fields apply (name, spec, gates, workflow, enabled, delivery, …); health/run fields are rejected and reported.
+Patch an automation. Only settable fields apply (name, spec, gates, workflow, enabled, delivery, …); health/run fields are rejected and reported. An edit that changes what its action runs switches it off until the owner allows the change on the Triggers page, and letting its agent approve its own tool calls is the owner's to change, not yours.
 
 **Response type:** `automation.update.result`
 
@@ -531,7 +531,7 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 ### `set_onetime_task`
 
-Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning'. The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself.
+Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning'. The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
 
 **Response type:** `automation.create.result`
 
@@ -567,7 +567,7 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
 
 ### `set_recurring_task`
 
-Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing rather than a single follow-up. Counts against your outstanding-task allowance for as long as it stays enabled, so pause or delete one you no longer need.
+Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 9', 'hourly', 'every Monday'. Use for ongoing monitoring you should keep doing rather than a single follow-up. Counts against your outstanding-task allowance for as long as it stays enabled, so pause or delete one you no longer need. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
 
 **Response type:** `automation.create.result`
 

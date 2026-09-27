@@ -16,7 +16,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BundledFloorNotice } from './BundledFloorNotice'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import type { DownloadJob } from '../../lib/api'
 
 vi.mock('../../lib/api', async (orig) => {
@@ -29,6 +29,7 @@ vi.mock('../../lib/api', async (orig) => {
       startModelDownload: vi.fn(),
       cancelModelDownload: vi.fn(),
       setActiveModel: vi.fn(),
+      activeChain: vi.fn(),
       downloadStreamUrl: vi.fn(() => 'http://localhost/stream'),
     },
   }
@@ -38,10 +39,14 @@ const modelDownloads = vi.mocked(api.modelDownloads)
 const startModelDownload = vi.mocked(api.startModelDownload)
 const cancelModelDownload = vi.mocked(api.cancelModelDownload)
 const setActiveModel = vi.mocked(api.setActiveModel)
+const activeChain = vi.mocked(api.activeChain)
 
 const BOUND = { needs_model: false, has_model_provider: true, has_chat_binding: true }
 const FLOOR = { needs_model: false, has_model_provider: true, has_chat_binding: false }
 const UNSET = { needs_model: true, has_model_provider: false, has_chat_binding: false }
+// A provider is connected but no model is chosen for it — an instance saved from the form with
+// no Default Model, nothing bound — so nothing answers chat and the offer shows.
+const UNCHOSEN = { needs_model: true, has_model_provider: true, has_chat_binding: false }
 const OFFER = {
   provider: 'bundled-chat',
   model: 'SmolLM2-135M-Instruct-Q8_0',
@@ -55,7 +60,7 @@ const OFFER = {
 const job = (state: DownloadJob['state'], extra: Partial<DownloadJob> = {}): DownloadJob => ({
   id: 'job-1', provider: OFFER.provider, model: OFFER.model, kind: 'weights', state,
   downloaded_bytes: 0, total_bytes: OFFER.bytes, progress: 0, speed_bps: 0, eta_s: 0,
-  error: '', reason: '', ...extra,
+  error: '', reason: '', warning: '', ...extra,
 })
 
 beforeEach(() => {
@@ -64,6 +69,8 @@ beforeEach(() => {
   startModelDownload.mockReset()
   cancelModelDownload.mockReset().mockResolvedValue(undefined as never)
   setActiveModel.mockReset().mockResolvedValue({ ok: true } as never)
+  // Nothing bound to chat, at the revision of that empty chain — which the bind names.
+  activeChain.mockReset().mockResolvedValue({ value: [], revision: 'rev-empty' })
   // EventSource does not exist in jsdom; the hook guards construction, and these tests drive
   // job state through `modelDownloads`/`startModelDownload` rather than through a live stream.
   vi.stubGlobal('EventSource', undefined)
@@ -84,6 +91,16 @@ describe('BundledFloorNotice — the download offer', () => {
     expect(screen.getByRole('link', { name: /connect a provider/i })).toHaveAttribute('href', '#/settings/models')
     // …and it says what the model is like, so a short shaky answer is expected rather than a defect.
     expect(card).toHaveTextContent(/short, shaky answers and no tool use/i)
+  })
+
+  it('with a provider connected but no model chosen, its link says to choose one, not connect one', async () => {
+    // 🔴 Red on main: the link told a user who had just connected Ollama to "connect a provider".
+    onboarding.mockResolvedValue({ ...UNCHOSEN, chat_download_offer: OFFER })
+    render(<BundledFloorNotice />)
+    await screen.findByTestId('bundled-model-offer')
+    const link = screen.getByRole('link', { name: 'Or choose a model from a provider you’ve connected' })
+    expect(link).toHaveAttribute('href', '#/settings/models')
+    expect(screen.queryByRole('link', { name: /connect a provider/i })).toBeNull()
   })
 
   it('shows bytes, a percentage bar and an ETA while it runs, with a reachable cancel', async () => {
@@ -195,17 +212,31 @@ describe('BundledFloorNotice — a finished download becomes the chat model', ()
   it('binds it as the chat model when nothing else is bound', async () => {
     onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
     await downloadHere()
-    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`]))
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`], 'rev-empty'))
     expect(setActiveModel).toHaveBeenCalledTimes(1)
   })
 
   it('never overwrites a chat model the user already bound', async () => {
     onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: ['openai:gpt-5'] })
+    activeChain.mockResolvedValue({ value: ['openai:gpt-5'], revision: 'rev-bound' })
     await downloadHere()
-    // The binding step ran (it re-read readiness)…
+    // The binding step ran (it read the chain live, then re-read readiness)…
     await waitFor(() => expect(onboarding.mock.calls.length).toBeGreaterThanOrEqual(3))
     // …and left the user's binding alone.
     expect(setActiveModel).not.toHaveBeenCalled()
+  })
+
+  it('a model bound elsewhere between the read and the bind is kept, and is not called a failure', async () => {
+    // The bind names the revision of the empty chain it read. Another tab (or onboarding) binding a
+    // model in between makes that stale, and the gateway refuses the write instead of replacing it:
+    // exactly "something else already is", so nothing is overwritten and nothing is reported.
+    onboarding.mockResolvedValue({ ...UNSET, chat_download_offer: OFFER, chat_model_refs: [] })
+    setActiveModel.mockRejectedValue(new ApiError('the chat model chain changed', 409, 'stale_write'))
+    await downloadHere()
+    await waitFor(() => expect(setActiveModel).toHaveBeenCalledWith('chat', [`${OFFER.provider}:${OFFER.model}`], 'rev-empty'))
+    // Settled — it re-reads readiness afterwards — with no refusal on screen.
+    await waitFor(() => expect(onboarding.mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(screen.queryByText(/could not be set as your chat model/)).toBeNull()
   })
 
   it('says so when the binding is refused, rather than swallowing it', async () => {

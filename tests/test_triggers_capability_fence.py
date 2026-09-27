@@ -234,21 +234,25 @@ def test_capabilities_for_action_leaves_a_read_only_action_EMPTY():
     assert capabilities_for_action(trigger) == {}
 
 
-def test_tools_create_FREEZES_the_capability_set(tmp_path):
-    """The chat tools and the API both create through here. Without the freeze, every trigger they
-    make would refuse on its next fire."""
+def test_tools_create_FREEZES_the_capability_set_with_the_owners_yes(tmp_path):
+    """The owner's surfaces create through here after asking (the create dialog, `cron add
+    --yes`). Without the freeze every trigger they make would refuse on its next fire — and without
+    their yes nothing is frozen, so a trigger the chat makes waits for the owner's Allow."""
     from personalclaw.triggers import tools as T
 
     store = TriggerStore(base_dir=tmp_path)
-    T.create(
-        store,
-        name="writer",
-        kind="clock",
-        spec={"kind": "interval", "interval_secs": 3600},
-        workflow={"provider": "bash", "config": {"command": "x"}},
-        created_by="user",
-    )
+    for name, consented in (("writer", True), ("asked", False)):
+        T.create(
+            store,
+            name=name,
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "bash", "config": {"command": "x"}},
+            created_by="user",
+            owner_consented=consented,
+        )
     assert store.get("clock:writer").trigger.capabilities == {"providers": ["bash"]}
+    assert store.get("clock:asked").trigger.capabilities == {}
 
 
 def test_a_created_write_trigger_actually_FIRES(tmp_path):
@@ -264,6 +268,7 @@ def test_a_created_write_trigger_actually_FIRES(tmp_path):
         spec={"kind": "interval", "interval_secs": 60},
         workflow={"provider": "run-prompt", "config": {"message": "go"}},
         created_by="user",
+        owner_consented=True,
     )
     row = store.get("clock:writer").trigger
     row.next_fire_at = "2027-01-15T07:00:00+00:00"
@@ -293,109 +298,6 @@ def test_the_digest_reconciler_freezes_too():
     assert "capabilities_for_action" in src
 
 
-# ── the boot backfill for pre-S116 rows ──
-
-
-def test_the_backfill_freezes_a_pre_S116_write_row(store):
-    """🔴 THE POPULATION THAT WOULD HAVE BROKEN. No writer set `capabilities` before this session,
-    so every automation already on a user's disk carries an empty block — and the fence denies on
-    one. Wiring enforcement without this backfill is a 100% outage of existing automations."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:old", "run-prompt")
-    assert backfill_capabilities(store) == ["clock:old"]
-    assert store.get("clock:old").trigger.capabilities == {"providers": ["run-prompt"]}
-
-
-def test_the_backfill_grants_only_what_the_CURRENT_action_does(store):
-    """A faithful grandfather, not a widening. The row is granted the provider it is already
-    configured to run — so re-pointing that action at something else still needs a fresh opt-in."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:old", "run-prompt")
-    backfill_capabilities(store)
-    granted = store.get("clock:old").trigger.capabilities["providers"]
-    assert granted == ["run-prompt"], "not a blanket write grant"
-    assert "bash" not in granted
-
-
-def test_the_backfill_leaves_a_read_only_row_EMPTY(store):
-    """Decision 7's default already permits it, and writing a block would imply an opt-in the user
-    never made — which matters the day that action is edited to something write-capable."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:ro", "notify")
-    assert backfill_capabilities(store) == []
-    assert store.get("clock:ro").trigger.capabilities == {}
-
-
-def test_the_backfill_never_WIDENS_an_existing_grant(store):
-    """An author who deliberately fenced a row tighter than its action must keep that decision."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:tight", "bash", caps={"providers": ["notify"]})
-    assert backfill_capabilities(store) == []
-    assert store.get("clock:tight").trigger.capabilities == {"providers": ["notify"]}
-
-
-def test_the_backfill_is_IDEMPOTENT(store):
-    """It runs on every boot, so a second pass must be a no-op rather than a re-grant."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:old", "run-prompt")
-    assert backfill_capabilities(store) == ["clock:old"]
-    assert backfill_capabilities(store) == []
-
-
-def test_a_backfilled_row_actually_FIRES(store, tmp_path):
-    """The end-to-end proof, driven through a real tick: the grandfathered row passes the fence."""
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    _due(store, "clock:old", "run-prompt")
-    backfill_capabilities(store)
-    assert [f.trigger.id for f in _tick(store, tmp_path).fires] == ["clock:old"]
-
-
-def test_boot_RUNS_the_backfill(tmp_path):
-    """🔴 The wiring, not the helper. A backfill nothing calls is the inert-control defect this
-    whole session exists to close — so assert `migrate_and_arm` reports it."""
-    from personalclaw.triggers import boot_migrate
-
-    store = TriggerStore(base_dir=tmp_path)
-    store.upsert(
-        Trigger(
-            id="clock:old",
-            name="old",
-            kind="clock",
-            enabled=True,
-            spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"inline": {"provider": "run-prompt", "config": {}}},
-        )
-    )
-    report = boot_migrate.migrate_and_arm(base_dir=tmp_path, now=NOW)
-    assert report["frozen"] == ["clock:old"]
-    assert store.get("clock:old").trigger.capabilities == {"providers": ["run-prompt"]}
-
-
-def test_the_backfill_SKIPS_a_broken_row(tmp_path):
-    """Granting capabilities to a row that does not parse is how a fence becomes decorative.
-
-    The `ok is False` assertion is load-bearing: without it an `if not row.ok` guard in the test
-    would make this pass vacuously against a store that parsed the row just fine.
-    """
-    from personalclaw.triggers.boot_migrate import backfill_capabilities
-
-    (tmp_path / "triggers.json").write_text(
-        '[{"id": "clock:broken", "name": "b", "kind": "clock", "spec": {"kind": "??"},'
-        ' "workflow": {"inline": {"provider": "bash", "config": {}}}}]'
-    )
-    store = TriggerStore(base_dir=tmp_path)
-    rows = store.load()
-    assert [r.ok for r in rows] == [False], "the fixture must actually be a broken row"
-    assert backfill_capabilities(store) == []
-    assert store.load()[0].trigger.capabilities == {}
-
-
 # ── the doctor finding for pre-S116 rows ──
 
 
@@ -423,7 +325,9 @@ def test_the_doctor_reports_an_unfenced_write_action(store):
     _due(store, "clock:old", "bash")
     finding = next(f for f in _diagnose(store).findings if f.code == "unfenced_write_action")
     assert "bash" in finding.detail
-    assert "re-save" in finding.fix, "and it must say how to fix it"
+    # And it must say how to fix it — the owner's Allow, which is the only thing that grants now
+    # (`triggers.grants`); "re-save" was advice no save path followed.
+    assert "Allow" in finding.fix and "Triggers page" in finding.fix
 
 
 def test_the_doctor_is_SILENT_for_a_granted_trigger(store):

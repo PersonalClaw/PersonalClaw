@@ -76,15 +76,12 @@ from personalclaw.model_windows import resolved_context_window  # noqa: E402
 
 
 def _configured_thresholds() -> list[float]:
-    from personalclaw.agents.native.runtime import NativeAgentRuntime
     from personalclaw.config.loader import SessionConfig
     from personalclaw.session import _BG_RECYCLE_PCT
 
-    return [
-        NativeAgentRuntime._COMPACT_THRESHOLD_PCT,
-        _BG_RECYCLE_PCT,
-        SessionConfig().autocompact_pct,
-    ]
+    # The chat threshold is ONE setting: the native loop and the session manager both read
+    # `session.autocompact_pct`, so its default is the chat entry here.
+    return [_BG_RECYCLE_PCT, SessionConfig().autocompact_pct]
 
 
 #: Windows the product can actually resolve: values from ``model_tokens.json``, the measured
@@ -304,11 +301,14 @@ class TestEveryThresholdIsReachable:
 
     def test_the_thresholds_are_the_products_own(self) -> None:
         """Failability control for this whole class: prove the thresholds resolved, are
-        real percentages, and include the 70% the two issues name."""
+        real percentages, and include the chat setting. The 70% the two issues name was the
+        native loop's own fixed trigger; the loop now compacts at the Settings value."""
+        from personalclaw.config.loader import SessionConfig
+
         thresholds = _configured_thresholds()
-        assert len(thresholds) == 3, thresholds
+        assert len(thresholds) == 2, thresholds
         assert all(0 < t < 100 for t in thresholds), thresholds
-        assert 70.0 in thresholds, thresholds
+        assert SessionConfig().autocompact_pct in thresholds, thresholds
 
     def test_the_capped_adversary_really_is_unreachable_so_the_exclusion_is_honest(
         self,

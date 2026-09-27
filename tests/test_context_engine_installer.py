@@ -223,7 +223,7 @@ def test_the_edit_boundary_accepts_only_a_registered_name(registered):
     registered has to be refused rather than written and silently ignored at the next
     boot."""
     from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG["session.context_engine"]
     if registered:

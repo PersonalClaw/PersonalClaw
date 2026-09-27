@@ -60,7 +60,7 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
         builtin: ['rm -rf'], user: [], user_additions: 0,
         baseline: { version: '1', pattern_count: 1, sha256: 'a'.repeat(64), verified: true, user_additions: 0 },
       }),
-      securityEgress: () => Promise.resolve({ allow_hosts: [], deny_hosts: [], allow_private: false }),
+      securityEgress: () => Promise.resolve({ value: { allow_hosts: [], deny_hosts: [], allow_private: false }, revision: 'r1' }),
       outsideHome: () => Promise.resolve({ places: [], allowed: [] }),
       desktopState: () => Promise.resolve({
         connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',
@@ -69,7 +69,8 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
       migrateCredentialsToKeychain: migrate,
       rollbackCredentialsToKeychain: rollback,
       setCredentialKeychain: () => Promise.resolve({}),
-      setUserDeniedCommands: () => Promise.resolve({}),
+      addDeniedCommand: () => Promise.resolve({}),
+      removeDeniedCommand: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
       // The child-process ceilings section (`sandbox.*`) renders inside this SAME panel. A total
       // module mock makes an unstubbed read `undefined()`, which throws in the effect and fails

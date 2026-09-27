@@ -139,6 +139,15 @@ dependencies = [
     # one, and minimal Linux images have none, so `America/Los_Angeles` would not load and
     # setup would refuse it. This package is the stdlib's own fallback for exactly that case.
     "tzdata>=2024.1",
+    # Codex keeps an old session compressed (`sessions/**/rollout-*.jsonl.zst`), and the Codex
+    # importer (onboarding_import/sources/codex.py) reads it as it reads a plain one. Python has
+    # no zstd in its standard library before 3.14, and requires-python stops at 3.13. The lower
+    # bound is the first release with CPython 3.13 wheels: 0.22 has cp312 wheels only, so a 3.13
+    # install would compile it. BSD-3-Clause, with prebuilt wheels for macOS, Linux (glibc and
+    # musl) and Windows. Measured on 0.25.0 for CPython 3.13: +0.6 MB to download and +1.8 MB
+    # installed on macOS arm64, and +5.5 MB and +23 MB on Linux x86_64, whose wheel ships both
+    # of its backends' shared objects with their debug symbols.
+    "zstandard>=0.23,<1",
     # Owner-login password hashing (auth/credentials.py).
     # CORE rather than an extra, deliberately: a password verifier that only exists on
     # some installs means `auth.login_enabled` would be a setting that silently cannot

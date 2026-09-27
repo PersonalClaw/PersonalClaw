@@ -198,7 +198,7 @@ class TestCallSiteCarriesTheBrief:
         gateway.dashboard_state.request_approval.assert_awaited_once()
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
-        assert set(kwargs) == {"tool_input", "tool_purpose", "session"}
+        assert set(kwargs) == {"tool_input", "tool_purpose", "session", "trigger"}
 
 
 # ── 2. Additive, with vacuity proofs ────────────────────────────────────────────

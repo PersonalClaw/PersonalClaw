@@ -320,7 +320,7 @@ def test_every_branch_is_INDIVIDUALLY_ADDRESSABLE_for_retry():
 def test_the_compiled_spec_declares_the_workspace_the_APPLIER_READS():
     """The key mismatch that made this clause inert.
 
-    The applier is RUN-level and fully wired (`controller._provision_workspace` →
+    The applier is RUN-level and fully wired (`run_start.provision_workspace` →
     `provisioning.provision`); its gate is `provisioning.declares_workspace`, which reads a
     TOP-LEVEL `workspace:` block. The compiler only wrote `postures[node]["workspace_mode"]`, a
     render surface no applier reads — so provisioning silently no-opped for every compiled batch.

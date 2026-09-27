@@ -684,7 +684,7 @@ async def test_key_derived_gate_still_obeys_the_flag(monkeypatch, tmp_path):
 def test_flag_is_in_the_editable_patch_allowlist():
     """Point 4 of the round-trip: without this a PATCH is rejected as unknown."""
     from personalclaw.config.edit_spec import security_control
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     spec = _EDITABLE_CONFIG.get("agent.unattended_requires_verified_adapter")
     assert spec is not None
@@ -735,7 +735,7 @@ def test_frontend_exposes_the_toggle():
 
 
 def test_health_check_interval_is_in_the_editable_patch_allowlist():
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG.get("agent.runner_health_check_secs") == {
         "type": "int",

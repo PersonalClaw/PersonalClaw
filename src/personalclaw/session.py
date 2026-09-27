@@ -129,9 +129,9 @@ _STATELESS_PREFIXES = ("cron:", _SUBAGENT_PREFIX, _CHANNEL_PREFIX, "inbox:", "si
 BACKGROUND_KEY = "_bg"
 
 
-# Context usage thresholds
+# Context usage at which a turn's log line is a warning. Compaction itself happens at the
+# Settings threshold, `context_compaction.autocompact_pct()`.
 _CONTEXT_WARN_PCT = 70.0
-_CONTEXT_COMPACT_PCT = 80.0
 
 # Circuit breaker: force-reset after this many consecutive failures
 _CIRCUIT_BREAKER_THRESHOLD = 5
@@ -245,6 +245,19 @@ def _push_approval_policy(provider: Any, policy: str) -> None:
     setter = getattr(provider, "set_approval_policy", None)
     if callable(setter):
         setter(policy)
+
+
+def _resolution_moved(provider: Any) -> bool:
+    """Whether what a cached runtime's model was resolved from no longer holds.
+
+    A native runtime records it when it is built (``resolved_from``,
+    ``provider_bridge.ResolutionBasis``): the Settings → Models chains it read and the provider
+    entry it serves from. A rebind or an edit of that instance moves it, and the session is then
+    rebuilt at its next acquire. Any other runtime (an ACP CLI runs its own model) records none,
+    and never moves.
+    """
+    basis = getattr(provider, "resolved_from", None)
+    return basis is not None and not basis.holds()
 
 
 @dataclass
@@ -1097,16 +1110,27 @@ class SessionManager:
         if reuse is not None:
             provider, was_new, sess = reuse
             await sess.semaphore.acquire()
-            if not sess.definition_stale:
+            stale = (
+                "its agent was edited"
+                if sess.definition_stale
+                else (
+                    "what its model was resolved from changed"
+                    if _resolution_moved(provider)
+                    else ""
+                )
+            )
+            if not stale:
                 return provider, was_new, False
-            # The agent was edited while this runtime was cached. Checked AFTER the permit is
-            # held, so a turn that was running when the edit landed finished on the definition it
-            # started with, and this one — the first to start after — gets a runtime built from
-            # the definition as it now reads. The session map is kept, as for a dead provider,
-            # so an ACP runtime resumes its conversation; a native chat restores its own.
+            # The agent was edited while this runtime was cached, or what its model was resolved
+            # from moved (a rebind in Settings → Models, an edit or removal of the instance it
+            # serves from). Checked AFTER the permit is held, so a turn that was running when the
+            # change landed finished on what it started with, and this one — the first to start
+            # after — gets a runtime built from how things now read. The session map is kept, as
+            # for a dead provider, so an ACP runtime resumes its conversation; a native chat
+            # restores its own.
             sess.semaphore.release()
             await self._drop_session(key, sess)
-            logger.info("Session %s: its agent was edited — rebuilding its runtime", key)
+            logger.info("Session %s: %s — rebuilding its runtime", key, stale)
             return await self.get_or_create(
                 key,
                 agent=agent,
@@ -1402,13 +1426,18 @@ class SessionManager:
             logger.debug("Reset session: %s (pid=%s)", key, pid)
 
     def check_context_usage(self, key: str, provider: ModelProvider) -> float | None:
-        """Check context usage and fire background compaction at >= 90%.
+        """Check context usage after a turn, and restart the session at the Settings threshold.
 
-        Falls back to prompt-count compaction if metadata never reports %.
-        Returns the context usage percentage immediately — never blocks — or
-        ``None`` when the provider measured none. An unmeasured session neither
-        compacts nor logs a percentage: there is no percentage to log.
+        The threshold is ``session.autocompact_pct`` as config.json reads now — the same value
+        the native loop compacts its own history at, so one setting governs both. A provider
+        that still compacts itself (``compacts_automatically``) is left to do so: restarting it
+        here would always come first and throw away the history it was about to compact.
+        Returns the context usage percentage immediately — never blocks — or ``None`` when
+        the provider measured none. An unmeasured session neither compacts nor logs a
+        percentage: there is no percentage to log.
         """
+        from personalclaw.context_compaction import autocompact_pct
+
         pct = provider.context_usage_pct()
 
         # Track prompts for background session recycle fallback
@@ -1418,8 +1447,11 @@ class SessionManager:
 
         if pct is None:
             return None
-        if pct >= self._cfg.session.autocompact_pct:
-            self._trigger_compaction(key, f"context at {pct:.0f}%", pct)
+        if pct >= autocompact_pct():
+            if provider.compacts_automatically:
+                logger.info("Session %s context at %.0f%% — it compacts its own history", key, pct)
+            else:
+                self._trigger_compaction(key, f"context at {pct:.0f}%", pct)
         elif pct >= _CONTEXT_WARN_PCT:
             logger.warning("Session %s context at %.0f%%", key, pct)
         else:

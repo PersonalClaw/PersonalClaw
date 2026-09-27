@@ -42,7 +42,9 @@ const SECTION = F('loop/LoopSection.tsx')
 
 /** file → the loop writes it owns. */
 const WRITES: Array<[string, string, string[]]> = [
-  ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'updateULoop']],
+  // The token edits write through `saveULoopSpec`: they name the revision of the copy they were built
+  // from (`lib/staleWrite.ts`), where the old `updateULoop` wrote over whatever was stored.
+  ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'saveULoopSpec']],
   // deleteULoop joined in AUD-A11: the list's delete hand-rolled its own notify() while
   // every other write in the same file rode reportingWrite.
   ['loops/LoopsListPage.tsx', LIST, ['uLoopAction', 'deleteULoop']],
@@ -112,6 +114,22 @@ describe('a loop action that fails tells the user', () => {
     }
   })
 
+  it('a token edit refetches only once it LANDED — in the stale-write guard, not after the call', () => {
+    // The two token edits are `void reportingWrite(…, () => guard.apply(…))`, outside the gated count
+    // above on purpose: a refused edit (`409 stale_write`) RESOLVES, so a refetch after the call would
+    // run on a refusal too. It lives in the guard's `onSaved`, which only a landed write reaches — the
+    // first try or one re-applied from the notice.
+    const src = strip(COCKPIT)
+    const edits = [...src.matchAll(/void reportingWrite\(/g)]
+    expect(edits.length, 'the colour edit and the token edit').toBe(2)
+    for (const m of edits) {
+      const body = src.slice(m.index!, src.indexOf('}, [loop, guard.apply])', m.index!))
+      expect(body, 'the edit runs through the guard').toContain('guard.apply(')
+      expect(body, 'and nothing refetches behind it').not.toMatch(/loadLoop\(|loadTokens\(/)
+    }
+    expect(src).toMatch(/onSaved: \(\) => \{ loadLoop\(\); loadTokens\(\) \}/)
+  })
+
   it('a failed nudge KEEPS the message and the panel open', () => {
     // The decision, pinned: clearing on failure destroyed the only copy of what the user typed.
     const body = strip(COCKPIT)
@@ -152,7 +170,7 @@ describe('a loop action that fails tells the user', () => {
     // If a later pass added an optimistic flip, the failure shape changes to "a control showing a
     // value the server refused" and the remedy changes with it.
     const src = strip(COCKPIT)
-    for (const call of ['uLoopAction', 'updateULoop']) {
+    for (const call of ['uLoopAction', 'saveULoopSpec']) {
       const at = src.indexOf(`api.${call}(`)
       const before = src.slice(Math.max(0, at - 200), at)
       expect(before, `${call} gained an optimistic flip`).not.toMatch(/setStatus\(|setLoop\(/)

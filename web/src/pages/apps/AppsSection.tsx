@@ -6,7 +6,7 @@ import {
   Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Archive, HardDrive, MapPin, AlertTriangle,
-  Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert,
+  Boxes, Package, Store, KeyRound, RotateCw, ShieldAlert, Wrench,
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
@@ -36,6 +36,7 @@ import {
 } from '../../lib/api'
 import { catalogApps } from '../../lib/appCatalog'
 import { ChannelOwnerSection } from '../settings/ChannelOwnerSection'
+import { EngineSection } from '../settings/EngineSection'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
 import { setActivation } from '../../app/appActivation'
@@ -46,12 +47,14 @@ import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
+import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
 import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
@@ -71,6 +74,9 @@ export interface StoreItem extends AppCatalogEntry {
   /** A multi-instance provider: no app-level settings — its instances are managed in
    *  Settings → Providers, which is where its "Manage instances" action goes. */
   configuredPerInstance?: boolean
+  /** An installed app whose provider runs its engine in a Python environment of its own:
+   *  Configure offers to install that engine. */
+  sidecar?: boolean
   /** Provenance for the source divider: builtin/registry origin → "Built-in";
    *  a git URL or a local path → that source. */
   origin?: string
@@ -84,6 +90,9 @@ export interface StoreItem extends AppCatalogEntry {
   updateSource?: string
 }
 
+/** "A", "A and B", "A, B and C": the names a card says an app needs. */
+const NEEDS = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' })
+
 /** An installed app (AppSummary) projected onto the catalog-entry shape so it can
  *  sit beside available entries in one list, carrying its origin/source for the
  *  source-divider grouping. */
@@ -93,7 +102,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     icon: a.icon, heroUrl: a.heroUrl, author: '', source: a.source ?? '', sourceKind: 'bundled',
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
-    native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, origin: a.origin,
+    native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, sidecar: !!a.sidecar, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
     updateSource: a.updateSource,
     // Carried, not defaulted. Coercing an installed app's absent block to `{}`
@@ -192,7 +201,7 @@ type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 
 // Carries the DISPLAY NAME as well as the slug: the slug is the API's identifier, the display
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
 type DispatchAppAction = (app: {
-  name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean
+  name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean; sidecar?: boolean
 } & UpdateFields, action: AppActionKind) => void
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
@@ -200,7 +209,7 @@ type DispatchAppAction = (app: {
  *  detail panel call, the `busyName` (app mid-toggle), and the `modals` node. */
 function useAppActions(nav: (p: string) => void, reload: () => void) {
   const [busyName, setBusyName] = useState<string | null>(null)
-  const [configFor, setConfigFor] = useState<{ name: string; displayName: string } | null>(null)
+  const [configFor, setConfigFor] = useState<{ name: string; displayName: string; sidecar?: boolean } | null>(null)
   // Each carries the display name beside the slug: the slug is the API's identifier, and a
   // dialog title is a sentence for a person ("Update research-lab" named nobody's app).
   type Named = { name: string; displayName: string }
@@ -215,7 +224,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       // managed in Settings → Providers, and its Configure goes there instead.
       case 'configure':
         if (app.configuredPerInstance) { nav('settings/providers'); return }
-        setConfigFor({ name: app.name, displayName: app.displayName }); return
+        setConfigFor({ name: app.name, displayName: app.displayName, sidecar: app.sidecar }); return
       case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
       case 'force-uninstall': setUninstallFor({ name: app.name, displayName: app.displayName }); return
@@ -239,7 +248,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
     <>
       {updateFor && <UpdateModal name={updateFor.name} displayName={updateFor.displayName} start={updateFor.start}
         onClose={() => setUpdateFor(null)} onUpdated={() => { setUpdateFor(null); reload() }} />}
-      {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} onClose={() => setConfigFor(null)} />}
+      {configFor && <ConfigModal name={configFor.name} displayName={configFor.displayName} sidecar={configFor.sidecar} onClose={() => setConfigFor(null)} />}
       {removeFor && <RemoveAppModal name={removeFor.name} displayName={removeFor.displayName} onClose={() => setRemoveFor(null)}
         onDone={() => { setRemoveFor(null); reload() }} />}
       {uninstallFor && <UninstallModal name={uninstallFor.name} displayName={uninstallFor.displayName} onClose={() => setUninstallFor(null)}
@@ -253,7 +262,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, sidecar: item.sidecar, ...updateFields(item) }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -1226,7 +1235,7 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, ...updateFields(item) }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, sidecar: item.sidecar, ...updateFields(item) }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1389,6 +1398,16 @@ function AppCard({ item, index, onInstall, onOpen, onAction }: {
         {/* The app's DECLARED quality bar. Renders nothing at all when the app
             declared no block — an unbadged app and a failing app are different states. */}
         <QualityBadges quality={item.quality} />
+
+        {/* What it needs that PersonalClaw does not install, named before the click that installs
+            it; the detail panel and the install review say why and how. */}
+        {!item.installed && (item.requires ?? []).length > 0 && (
+          <span data-testid="store-card-requires" data-type="label-s" className="flex items-start gap-1 text-on-surface-var"
+            title={(item.requires ?? []).map((r) => `${r.name}: ${r.why}`).join('\n')}>
+            <Wrench size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
+            Needs {NEEDS.format((item.requires ?? []).map((r) => r.name))}
+          </span>
+        )}
 
         {!item.installed && item.refused && <ListingRefusal refused={item.refused} compact />}
 
@@ -1765,7 +1784,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
 
       {updateOpen && <UpdateModal name={app.name} displayName={app.displayName} start={updateStart(app)}
         onClose={() => setUpdateOpen(false)} onUpdated={() => { setUpdateOpen(false); onChanged() }} />}
-      {configOpen && <ConfigModal name={app.name} displayName={app.displayName} onClose={() => setConfigOpen(false)} />}
+      {configOpen && <ConfigModal name={app.name} displayName={app.displayName} sidecar={app.sidecar} onClose={() => setConfigOpen(false)} />}
       {confirmRemove && <RemoveAppModal name={app.name} displayName={app.displayName}
         onClose={() => setConfirmRemove(false)}
         onDone={() => { setConfirmRemove(false); onClose(); onChanged() }} />}
@@ -1873,11 +1892,13 @@ export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onIns
 
 
 
-function ConfigModal({ name, displayName, onClose }: {
+function ConfigModal({ name, displayName, sidecar, onClose }: {
   /** The app SLUG — the config API's identifier. Never the title: `weather-forecast` is a
    *  path segment, and every other surface in this page already says “Weather Forecast”. */
   name: string
   displayName: string
+  /** Its provider runs an engine in a Python environment of its own, which this page installs. */
+  sidecar?: boolean
   onClose: () => void
 }) {
   const cfg = useAppConfig(name)
@@ -1894,6 +1915,8 @@ function ConfigModal({ name, displayName, onClose }: {
     <Modal title={`Configure ${displayName}`} icon={<Settings2 size={18} />} onClose={onClose}>
       <div className="flex flex-col gap-m p-l" style={{ minWidth: 440 }}>
         {channel && <ChannelOwnerSection channel={channel.name} onChanged={() => invalidateKeys('settings:channels', true)} />}
+        {/* Its engine installs from here, as it does from its card in Settings → Providers. */}
+        {sidecar && <EngineSection app={name} displayName={displayName} />}
         {cfg.error ? (
           // A failed read used to leave "Loading…" on screen forever, with Save still live over an
           // empty form. Say what happened and offer the retry the hook now exposes.
@@ -1902,7 +1925,9 @@ function ConfigModal({ name, displayName, onClose }: {
           : !cfg.hasSchema ? (
             <div data-type="body-s" className="text-on-surface-low">This app declares no configurable options.</div>
           ) : (
-            <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+            <HeldChange guard={cfg.guard}>
+              <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
+            </HeldChange>
           )}
         {/* 🔴 The one with a data cost. `cfg.err` is `appConfigForm`'s save guard, which exists because
             the backend's `write_config` REPLACES the file — so a save from a form that never loaded
@@ -1911,12 +1936,16 @@ function ConfigModal({ name, displayName, onClose }: {
             a class Tailwind compiles to NOTHING, so it inherited `--color-on-surface` — the app's
             primary body ink, indistinguishable from a hint — with no live region either. */}
         {cfg.err && <FieldError>{cfg.err}</FieldError>}
+        {/* A save refused as stale keeps the modal open: the notice holds the edit, and re-applying
+            it closes the modal the way the first Save would have. */}
+        <StaleWriteNotice guard={cfg.guard} what={`${displayName}'s settings`} present={cfg.present} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
               footer sits outside the branch above, so this button was clickable during the load. */}
-          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0}
-            disabledReason={cfg.error ? 'The configuration failed to load'
+          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0 || cfg.guard.conflict !== null}
+            disabledReason={cfg.guard.conflict !== null ? HELD_CHANGE_REASON
+              : cfg.error ? 'The configuration failed to load'
               : cfg.loading ? 'Still loading the configuration'
               // #491: naming the LABELS is the fix — the old feedback was a server 400 quoting the
               // schema key, which the user then had to map to a form row themselves.

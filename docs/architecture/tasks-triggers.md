@@ -73,10 +73,61 @@ relative to `PersonalClaw/src/personalclaw/`.
   and at most 30 event fires a minute run across all event triggers. A process
   with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
   run in — parks an event a stored trigger wants in `trigger-spool.jsonl`, and
-  the gateway's next tick re-emits it. A legacy `event_triggers.json` is
-  absorbed into the store once at boot and renamed `.migrated`. An
-  agent-lifecycle event (a session ending, a tool call) is a **lifecycle**
-  trigger, not an event trigger.
+  the gateway's next tick re-emits it. An agent-lifecycle event (a session
+  ending, a tool call) is a **lifecycle** trigger, not an event trigger.
+- **Legacy automation files** (`triggers/legacy_import.py`) — `crons.json`,
+  `event_triggers.json` and `autonudge.json` held automations before the one
+  store. All three are imported by the boot pass
+  (`boot_migrate.migrate_and_arm`, before the dashboard is up) **once per home**
+  and renamed `<name>.imported-<date>`; a copy by that name (or the `.migrated` an earlier
+  build left) means the import happened, so a file found again is not read and
+  the Doctor names it (`automations.legacy_files`). An imported row is
+  `created_by: import`, carries no capability block and none of the step keys
+  that loosen whether its agent asks (`automation_posture.loosened_keys`), and
+  one that would run anything needing a grant — or a nudge, which types into a
+  chat — arrives switched off (`needs_review` on the wire). Switching it on is
+  how it is allowed: `POST /api/triggers/{id}/toggle` answers
+  `confirmation_required` until the owner consents, then grants the providers,
+  makes the row theirs and writes the grant to the SEL (**Grants**, below). One Inbox
+  item (`cron/trigger_import`) lists what waits, raised once the dashboard is
+  up from the rows still waiting, so a crash between the import and the
+  announcement still announces it — once. The legacy MCP store
+  `settings/mcp.json` is not read at all (the Doctor names a server left in
+  it, `tools.legacy_mcp_settings`).
+- **Grants** (`triggers/grants.py`) — a trigger runs only what its frozen
+  `capabilities` block allows: a read-only action needs nothing, and every
+  other one needs its provider listed (`screen.ungranted_providers`). Both
+  dispatches check it — the attended one (`_dispatch_store_action`: Run now,
+  the restart review's Run now, a view refresh, a webhook fire) and the
+  unattended one (`gateway._fire_store_trigger`: clock, event, file,
+  web_watch, chained) — and a refusal names the missing action and how the
+  owner allows it; an unattended refusal is a `skipped_gate` row in the
+  trigger's Runs history. A grant is for the action as the owner allowed it:
+  an edit that changes what a granted action runs (another command, URL,
+  prompt, agent or workflow) keeps no grant for the change, and neither does a
+  provider the edited action stopped using (`grants.narrow`); the step keys
+  that decide whether its agent asks you are asked about on their own, when
+  they loosen. Only the owner grants, by saying yes: creating a trigger whose
+  action needs one (the create dialog asks), saving an edit that needs one (the
+  editor asks, in the same question as a loosened approval posture), switching
+  a trigger on (or Allow on one that is on, the same toggle sent on again), and
+  `personalclaw cron add|update --yes`, which asks the same questions in the
+  terminal and changes nothing without it. A trigger the chat makes
+  (`automation_create`, `set_onetime_task`, `set_recurring_task`) is not
+  allowed to run until the owner allows it; a chat edit that needs a grant is
+  saved switched off; a chat edit that loosens the posture is refused; and the
+  chat cannot switch such a trigger on or run it. PersonalClaw's own triggers
+  are granted by the code that makes them, since each runs an action it fixes
+  behind a switch the owner holds (an app's crons, the `system:*` singletons, a
+  research report's schedule, the triage digest, the Self-QA watch, a logged
+  decision's review card). Nothing unattended grants: there is no boot
+  backfill, a pack's triggers are deployed with no grant, and a legacy import
+  grants nothing. A lifecycle trigger carries the same grant and meets the same
+  rule when it fires (`hooks.run_script_hook`); on the gating seam an ungranted
+  one blocks the tool call it was asked about rather than letting it through.
+  The wire carries `needs_grant` (display names) so the page can badge the row
+  and offer Allow. A `webhook` trigger that is switched off or paused answers
+  `/fire` with the 404 an unknown one gets.
 - **`nl_to_cron.py`** — natural language → 5-field cron via a constrained
   one-shot LLM call, **validated with croniter before use** (a hallucinated
   expression never reaches the store).
@@ -103,6 +154,15 @@ When the action IS a dashboard notification (`notify`), a successful fire
 sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
+
+**An agent a trigger starts carries the trigger.** Both store-trigger dispatches
+set `ActionContext.trigger_id`, and `invoke-agent` and `run-prompt` spawn their
+agent with it (`SubagentInfo.trigger_id`). An approval that agent asks for is
+listed under the trigger ("The trigger “Nightly plan” is waiting for your
+decision on write_file"), and a call nobody answered leaves an Inbox note that
+can run the trigger again. That re-run is Run now, and a trigger with
+`needs_grant` goes through Allow first, the same consent its page asks
+(`docs/architecture/inbox-channels.md`, "How long it waits").
 
 **A Run workflow action names its workflow, and is checked where it is saved.**
 Its form comes from the bundled `apps/native/run-workflow-action/app.json`: a

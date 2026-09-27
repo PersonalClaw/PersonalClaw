@@ -289,11 +289,11 @@ def test_the_dedup_set_is_recorded_BEFORE_the_write_is_scheduled():
     still in flight — and the board would grow two rows for one node."""
     import inspect
 
-    from personalclaw.workflows.controller import RunController
+    from personalclaw.workflows import task_projection
 
-    source = inspect.getsource(RunController._project_task)
-    appended = source.index("self._projected.append(")
-    scheduled = source.index("self._schedule_task_write(")
+    source = inspect.getsource(task_projection.project_task)
+    appended = source.index("ctl._projected.append(")
+    scheduled = source.index("_schedule_task_write(ctl, ")
     assert appended < scheduled
 
 

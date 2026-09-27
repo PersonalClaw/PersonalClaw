@@ -96,7 +96,7 @@ function mockApi(schema: unknown, config: unknown, secretSet: string[], saveAppC
   vi.doMock('../../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     api: {
-      appConfig: () => Promise.resolve({ schema, config, _secret_set: secretSet }),
+      appConfig: () => Promise.resolve({ schema, config, _secret_set: secretSet, revision: 'rev-1' }),
       saveAppConfig,
     },
   }))

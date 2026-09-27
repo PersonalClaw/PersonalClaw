@@ -27,11 +27,11 @@ import { useChatSocket, type WsMessage } from './useChatSocket'
 
 /** Where a tap should land, by notification SOURCE.
  *
- *  Keyed on source rather than kind because source is the surface family — the thirteen
- *  values here are every source in `notification_kinds.py`, and each value is a route
- *  `App.tsx` already serves (`nativeNotifications.test.ts` pins that against `App.tsx`'s
- *  own NAV + ROUTABLE lists, so a renamed route reds this file instead of silently
- *  deep-linking nowhere).
+ *  Keyed on source rather than kind because source is the surface family — the keys here
+ *  are every source in `notification_kinds.py` (`nativeNotifications.test.tsx` parses that
+ *  file, so a new source without a row reds it), and each value is a route `App.tsx`
+ *  already serves (the same test pins that against `App.tsx`'s own NAV + ROUTABLE lists,
+ *  so a renamed route reds this file instead of silently deep-linking nowhere).
  *
  *  `notifications` is the honest answer for the sources with no surface of their own — a
  *  heartbeat or a hook firing has no page to open, and the feed is where you act on it.
@@ -62,6 +62,8 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   planning: 'tasks',
   skills: 'skills',
   system: 'notifications',
+  // `tasks/due` — a task's due-date reminder (`tasks/due_notices.py`). The task is on Tasks.
+  tasks: 'tasks',
   // A note you captured lives in the inbox, so a tap goes there and not to the feed.
   // Defaults to `badge`, which raises nothing native at all; this row is what makes the route
   // right for the user who switches the rule to Notify with Desktop ticked, rather than

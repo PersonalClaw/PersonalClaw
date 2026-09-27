@@ -129,10 +129,10 @@ def svc(monkeypatch):
     return s
 
 
-def _req(method, path, state, *, body=None, match_info=None):
+def _req(method, path, state, *, body=None, match_info=None, headers=None):
     app = web.Application()
     app["state"] = state
-    req = make_mocked_request(method, path, match_info=match_info or {}, app=app)
+    req = make_mocked_request(method, path, match_info=match_info or {}, app=app, headers=headers)
     req["user"] = "alice"
     if body is not None:
 
@@ -147,6 +147,13 @@ def _body(resp):
     import json
 
     return json.loads(resp.body.decode())
+
+
+def _based_on_the_read(state, cid: str) -> dict[str, str]:
+    """The `If-Match` a spec edit carrying `kind_config` (or a plan/capability list) names — the
+    revision `GET /api/loops/{id}` reports (`personalclaw/stale_write.py`)."""
+    read = _run(H.api_loop_get(_req("GET", f"/api/loops/{cid}", state, match_info={"id": cid})))
+    return {"If-Match": f'"{_body(read)["revision"]}"'}
 
 
 class TestCreate:
@@ -1158,6 +1165,7 @@ class TestListGetUpdate:
                     state,
                     body={"kind_config": {"goal_type": "verifiable", "verify_command": "rm -rf /"}},
                     match_info={"id": cid},
+                    headers=_based_on_the_read(state, cid),
                 )
             )
         )
@@ -1175,6 +1183,7 @@ class TestListGetUpdate:
                         "kind_config": {"goal_type": "verifiable", "verify_command": "make test"}
                     },
                     match_info={"id": cid},
+                    headers=_based_on_the_read(state, cid),
                 )
             )
         )
@@ -1363,6 +1372,7 @@ class TestUpdateTreatsKindConfigAsAPatch:
                     state,
                     body={"kind_config": kc},
                     match_info={"id": cid},
+                    headers=_based_on_the_read(state, cid),
                 )
             )
         )
@@ -1807,6 +1817,7 @@ class TestGrillSaveSeam:
                         }
                     },
                     match_info={"id": cid},
+                    headers=_based_on_the_read(state, cid),
                 )
             )
         )

@@ -4,7 +4,9 @@ PersonalClaw's own code and artwork are MIT-licensed (see LICENSE in the Persona
 repository). The dashboard also ships the third-party fonts below, each under its own
 licence. The SIL Open Font License 1.1 and Creative Commons Attribution 4.0 texts are
 reproduced in full at the end of this file. ASSET_LICENSES.json, at the root of the
-repository, records where each file came from and pins its exact bytes.
+repository, records where each file came from and pins its exact bytes. The open-source
+packages bundled into the dashboard's code have their notices in THIRD_PARTY_NOTICES_NPM.txt,
+beside this file.
 
 File paths are relative to this file in the built dashboard.
 
@@ -66,6 +68,10 @@ Copyright 2025 The Google Sans Code Project Authors (github.com/googlefonts/goog
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 Google and Google Sans Code are trademarks of Google LLC.
+
+fonts/google-sans-code.woff2 is GoogleSansCode[MONO,wght].ttf from the v7.000 release,
+compressed to WOFF2. Its glyphs and tables are unchanged but for the flag WOFF2 sets
+in the head table to mark its lossless transform.
 
 ------------------------------------------------------------------------------
 KaTeX fonts 0.18.7 (math in rendered messages)

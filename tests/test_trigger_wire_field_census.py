@@ -144,6 +144,26 @@ def _action_config_fields() -> set[str]:
     return names - {"action"}
 
 
+def _function_source(path: Path, func: str) -> str:
+    """One top-level function's source — `def` or `async def` — up to the next top-level line.
+
+    Anchored on the function itself rather than on the next `async def`, so a handler turning
+    synchronous (as `_update_schedule` did, to keep its revision check and its write free of an
+    `await`) neither loses the region nor quietly absorbs the helpers that follow it.
+    """
+    text = path.read_text(encoding="utf-8")
+    m = re.search(rf"^(?:async )?def {re.escape(func)}\(", text, re.M)
+    if m is None:
+        pytest.fail(
+            f"{path.relative_to(_REPO_ROOT)}: no top-level `def {func}(`. The census cannot see "
+            "this handler any more — re-point it at whatever replaced it, then re-check that the "
+            "fields below still line up."
+        )
+    rest = text[m.end() :]
+    nxt = re.search(r"\n\S", rest)
+    return text[m.start() : m.end() + (nxt.start() if nxt else len(rest))]
+
+
 def _handler_reads(func: str) -> set[str]:
     """Body keys a handler reads: `body.get("x")`, `body["x"]`, `"x" in body`, and tuple loops.
 
@@ -151,7 +171,7 @@ def _handler_reads(func: str) -> set[str]:
     `for key in ("name", "channel", …)`. Without it the four fields that path DOES read would read
     as unread, and the census would fail on fields that work fine.
     """
-    region = _region(_HANDLERS, f"async def {func}(", "\n\nasync def ")
+    region = _function_source(_HANDLERS, func)
     keys = set(re.findall(r'body\.get\(\s*"([a-z_][a-z_0-9]*)"', region))
     keys |= set(re.findall(r'body\[\s*"([a-z_][a-z_0-9]*)"\s*\]', region))
     keys |= set(re.findall(r'"([a-z_][a-z_0-9]*)"\s+in\s+body', region))

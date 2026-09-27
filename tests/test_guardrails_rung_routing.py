@@ -491,6 +491,8 @@ def test_draft_only_files_a_PROPOSAL_row_through_a_real_hook_run(_isolated_home)
         event="Stop",
         provider="acme-do-thing",
         provider_config={"note": "x"},
+        # The owner's yes (`triggers.grants`): the rung decides what an allowed action does next.
+        capabilities={"providers": ["acme-do-thing"]},
     )
     result = asyncio.run(run_script_hook(hook))
 
@@ -583,6 +585,8 @@ def _fire_store_trigger(action: _AppAction, kind: str = "clock") -> Any:
         id=f"{kind}:acme",
         kind=kind,
         workflow={"inline": {"provider": action.name, "config": {"note": "x"}}},
+        # Granted, as a row a fire brings here is: it passed `admit_fire`'s fence first.
+        capabilities={"providers": [action.name]},
     )
     original = ap.get_action_provider
     try:

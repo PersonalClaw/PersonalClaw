@@ -11,7 +11,9 @@ import { confirm } from '../../ui/dialog'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
 
-export interface AgentDraft {
+/** A type, not an interface: a refused save is re-applied field by field (`rebaseRecord` in
+ *  `lib/staleWrite.ts`), which takes a plain record. */
+export type AgentDraft = {
   name: string; description: string; model: string; system_prompt: string; voice: string
   /** Plainer PROSE — distinct from `voice` (WHO the agent is). */
   natural_voice: boolean

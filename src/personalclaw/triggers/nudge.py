@@ -33,8 +33,9 @@ which is assembled from row + sidecar so ``asdict()`` keeps the wire byte-compat
 
 What restarts look like now: rows and arm points PERSIST (the timers did not), and ``start()``
 restamps ``armed_at`` for every active loop — the old boot re-arm, so a gateway restart still
-waits a full quiet period before the first fire. A legacy ``autonudge.json`` found at start is
-migrated losslessly into rows + sidecars and renamed ``autonudge.json.migrated``.
+waits a full quiet period before the first fire. A legacy ``autonudge.json`` is imported by the
+boot pass, once per home, switched off until the owner switches each loop on
+(:func:`import_legacy`).
 
 Feature-flagged via env ``PERSONALCLAW_AUTONUDGE`` (on by default; ``0`` disables) — the flag
 gates THIS adapter only; plain (message-less) user idle triggers were never gated by it and still
@@ -127,6 +128,129 @@ def is_nudge(trigger: Any) -> bool:
     return bool(str(spec.get("message") or "").strip())
 
 
+def _nudge_row(
+    *,
+    loop_id: str,
+    session_name: str,
+    message: str,
+    idle_secs: int,
+    max_cycles: int,
+    stop_sentinel_path: str,
+    first_idle_secs: int,
+    enabled: bool = True,
+) -> Trigger:
+    return Trigger(
+        id=loop_id,
+        name=f"Auto-nudge — {session_name}",
+        kind="idle",
+        enabled=enabled,
+        created_by="system",
+        spec={
+            "scope": f"session:{session_name}",
+            "idle_secs": idle_secs,
+            "first_idle_secs": first_idle_secs,
+            "message": message,
+            "max_cycles": max_cycles,
+            "stop_sentinel_path": stop_sentinel_path,
+        },
+        # The fire renders into the live conversation, and a mid-turn fire is dropped —
+        # the same overlap semantics the kind always had.
+        session=f"conversation:{session_name}",
+        overlap="skip",
+        delivery="none",
+    )
+
+
+def import_legacy(base_dir: Path, *, now: float = 0.0) -> int:
+    """Import a legacy ``autonudge.json`` into rows + sidecars, once per home. Returns the loops.
+
+    Every ``NudgeLoop`` field has a destination: message/idle_secs/first_idle_secs/
+    max_cycles/stop_sentinel_path → spec; cycle_count/last_fire_ts/error_count/created_ts →
+    sidecar; the loop id is kept VERBATIM (it is the wire handle).
+
+    What a loop is NOT given is the owner's go-ahead. A nudge types its message into one of the
+    owner's chats each time it goes quiet, the file records no consent for that, and it can
+    reach a home by a restore or a copy. So each loop goes through `legacy_import.admit`: it is
+    written `created_by: import`, switched off whatever the file said, and waits for review
+    (`legacy_import.needs_review`) until the owner switches it on. The file is then renamed
+    ``autonudge.json.imported-<date>`` (kept, so a rollback finds its store), and a home that
+    holds such a copy, or the ``.migrated`` an earlier build left, does not read a later
+    ``autonudge.json``. A loop already in the store is left as it is, and a loop with no id is
+    skipped rather than given a random one, which a crash midway would have written twice.
+
+    Run by the boot pass (`triggers.boot_migrate.migrate_and_arm`) beside the other two legacy
+    imports, before the dashboard is up: the one review item the boot raises is built from the
+    rows waiting then, so an import that ran later would be missing from it. Skipped, and the file
+    left unread, while the ``PERSONALCLAW_AUTONUDGE`` flag has this adapter off. Never raises.
+    """
+    import json
+
+    from personalclaw.triggers import legacy_import
+
+    root = Path(base_dir)
+    legacy = root / _LEGACY_FILE
+    if not enabled() or not legacy.exists():
+        return 0
+    if legacy_import.already_imported(root, _LEGACY_FILE):
+        logger.warning(
+            "AutoNudge: %s is back after this home imported it; it is not read again", legacy
+        )
+        return 0
+    try:
+        data = json.loads(legacy.read_text(encoding="utf-8"))
+        loops = data.get("loops", []) if isinstance(data, dict) else []
+        store = TriggerStore(base_dir=root)
+        existing = {row.trigger.id for row in store.load()}
+    except Exception:  # noqa: BLE001 - an unreadable legacy store must not stop the gateway
+        logger.warning("AutoNudge: legacy %s unreadable — leaving in place", legacy)
+        return 0
+    migrated = 0
+    waiting = 0
+    for raw in loops:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            loop_id = str(raw.get("id") or "").strip()
+            session_name = str(raw.get("session_name") or "")
+            if not loop_id or not session_name:
+                logger.warning("AutoNudge: skipping a legacy loop with no id or chat: %r", raw)
+                continue
+            if loop_id in existing:
+                continue
+            row = _nudge_row(
+                loop_id=loop_id,
+                session_name=session_name,
+                message=str(raw.get("message") or ""),
+                idle_secs=int(raw.get("idle_secs", 60) or 60),
+                max_cycles=int(raw.get("max_cycles", 0) or 0),
+                stop_sentinel_path=str(raw.get("stop_sentinel_path") or ""),
+                first_idle_secs=int(raw.get("first_idle_secs", 0) or 0),
+                enabled=bool(raw.get("active", True)),
+            )
+            if legacy_import.admit(row):
+                waiting += 1
+            store.upsert(row)
+            existing.add(loop_id)
+            state = idle_poll.load_state(loop_id, base_dir=root)
+            state.cycle_count = int(raw.get("cycle_count", 0) or 0)
+            state.last_fire = float(raw.get("last_fire_ts", 0.0) or 0.0)
+            state.error_count = int(raw.get("error_count", 0) or 0)
+            state.created_ts = float(raw.get("created_ts", 0.0) or 0.0)
+            state.armed_at = now or time.time()
+            idle_poll.save_state(loop_id, state, base_dir=root)
+            migrated += 1
+        except Exception:  # noqa: BLE001 - one malformed loop must not strand the rest
+            logger.warning("AutoNudge: skipping malformed legacy loop: %r", raw, exc_info=True)
+    retired = legacy_import.retire(legacy, now=now)
+    legacy_import.audit_import(_LEGACY_FILE, imported=migrated, waiting=waiting, retired=retired)
+    logger.info(
+        "AutoNudge: imported %d legacy loops into the trigger store; %d wait for review",
+        migrated,
+        waiting,
+    )
+    return migrated
+
+
 class AutoNudgeService:
     """Manages reactive per-session nudge loops over the trigger store + idle sidecars."""
 
@@ -211,7 +335,6 @@ class AutoNudgeService:
         if not enabled():
             logger.info("AutoNudge disabled (PERSONALCLAW_AUTONUDGE=0)")
             return
-        self._migrate_legacy()
         # Boot re-arm: the old engine re-armed a timer per active loop on start, so a restart
         # waited a full quiet period before the first fire. Restamping `armed_at` is the same
         # thing as state — without it, a loop idle across a long downtime would fire on the
@@ -233,96 +356,7 @@ class AutoNudgeService:
         if _INSTANCE is self:
             _INSTANCE = None
 
-    def _migrate_legacy(self) -> None:
-        """Absorb a legacy ``autonudge.json`` into trigger rows + sidecars, LOSSLESSLY, once.
-
-        Every ``NudgeLoop`` field has a destination: message/idle_secs/first_idle_secs/
-        max_cycles/stop_sentinel_path → spec; cycle_count/last_fire_ts/error_count/created_ts →
-        sidecar; active → ``enabled``; the loop id is kept VERBATIM (it is the wire handle).
-        The file is renamed, not deleted, so a rollback to a pre-port build finds its store.
-        """
-        legacy = self._base_dir / _LEGACY_FILE
-        if not legacy.exists():
-            return
-        import json
-
-        try:
-            data = json.loads(legacy.read_text(encoding="utf-8"))
-            loops = data.get("loops", []) if isinstance(data, dict) else []
-        except Exception:  # noqa: BLE001 - an unreadable legacy store must not stop the gateway
-            logger.warning("AutoNudge: legacy %s unreadable — leaving in place", legacy)
-            return
-        migrated = 0
-        for raw in loops:
-            if not isinstance(raw, dict):
-                continue
-            try:
-                loop_id = str(raw.get("id") or "") or f"{_ID_PREFIX}{uuid.uuid4().hex[:8]}"
-                session_name = str(raw.get("session_name") or "")
-                if not session_name:
-                    continue
-                self._store.upsert(
-                    self._build_row(
-                        loop_id=loop_id,
-                        session_name=session_name,
-                        message=str(raw.get("message") or ""),
-                        idle_secs=int(raw.get("idle_secs", 60) or 60),
-                        max_cycles=int(raw.get("max_cycles", 0) or 0),
-                        stop_sentinel_path=str(raw.get("stop_sentinel_path") or ""),
-                        first_idle_secs=int(raw.get("first_idle_secs", 0) or 0),
-                        enabled=bool(raw.get("active", True)),
-                    )
-                )
-                state = idle_poll.load_state(loop_id, base_dir=self._base_dir)
-                state.cycle_count = int(raw.get("cycle_count", 0) or 0)
-                state.last_fire = float(raw.get("last_fire_ts", 0.0) or 0.0)
-                state.error_count = int(raw.get("error_count", 0) or 0)
-                state.created_ts = float(raw.get("created_ts", 0.0) or 0.0)
-                state.armed_at = time.time()
-                idle_poll.save_state(loop_id, state, base_dir=self._base_dir)
-                migrated += 1
-            except Exception:  # noqa: BLE001 - one malformed loop must not strand the rest
-                logger.warning("AutoNudge: skipping malformed legacy loop: %r", raw, exc_info=True)
-        try:
-            legacy.rename(legacy.with_suffix(".json.migrated"))
-        except Exception:  # noqa: BLE001
-            logger.warning("AutoNudge: could not rename migrated %s", legacy, exc_info=True)
-        logger.info("AutoNudge: migrated %d legacy loops into the trigger store", migrated)
-
     # ── Loop CRUD ──
-
-    def _build_row(
-        self,
-        *,
-        loop_id: str,
-        session_name: str,
-        message: str,
-        idle_secs: int,
-        max_cycles: int,
-        stop_sentinel_path: str,
-        first_idle_secs: int,
-        enabled: bool = True,
-    ) -> Trigger:
-        return Trigger(
-            id=loop_id,
-            name=f"Auto-nudge — {session_name}",
-            kind="idle",
-            enabled=enabled,
-            created_by="system",
-            spec={
-                "scope": f"session:{session_name}",
-                "idle_secs": idle_secs,
-                "first_idle_secs": first_idle_secs,
-                "message": message,
-                "max_cycles": max_cycles,
-                "stop_sentinel_path": stop_sentinel_path,
-            },
-            # The fire renders into the live conversation, and a mid-turn fire is dropped —
-            # the same overlap semantics the kind always had.
-            session=f"conversation:{session_name}",
-            overlap="skip",
-            delivery="none",
-        )
 
     async def add(
         self,
@@ -344,7 +378,7 @@ class AutoNudgeService:
             existing = self._find_by_session(session_name)
             if existing:
                 self.remove_sync(existing.id)
-            trigger = self._build_row(
+            trigger = _nudge_row(
                 loop_id=f"{_ID_PREFIX}{uuid.uuid4().hex[:8]}",
                 session_name=session_name,
                 message=message,
@@ -390,6 +424,12 @@ class AutoNudgeService:
             trigger.spec = spec
             if active is not None:
                 trigger.enabled = bool(active)
+                if trigger.enabled:
+                    # The owner switching an imported loop on is the review it was waiting for
+                    # (`PATCH /api/autonudge/{id}` is the owner's own control).
+                    from personalclaw.triggers.legacy_import import adopt
+
+                    adopt(trigger)
             self._store.upsert(trigger)
             # Re-arm with the new settings — the old engine cancelled and re-armed the timer
             # here; restamping the arm point is the same thing as state.

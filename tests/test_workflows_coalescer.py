@@ -300,12 +300,11 @@ def test_the_allowlist_is_a_subset_of_the_published_events() -> None:
     import re
     from pathlib import Path
 
+    from tests.controller_sources import controller_modules
+
     root = Path(__file__).resolve().parents[1]
     published: set[str] = set()
-    for rel in (
-        "src/personalclaw/workflows/controller.py",
-        "src/personalclaw/workflows/service.py",
-    ):
-        text = (root / rel).read_text(encoding="utf-8")
+    for path in (*controller_modules(), root / "src/personalclaw/workflows/service.py"):
+        text = path.read_text(encoding="utf-8")
         published |= set(re.findall(r'_publish\(\s*"(workflow_[a-z_]+)"', text))
     assert COALESCING_EVENTS <= published, sorted(COALESCING_EVENTS - published)

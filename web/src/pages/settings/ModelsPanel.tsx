@@ -10,7 +10,7 @@ import {
   api, isNotRun, isSwitchedOff, type AvailableModel, type JudgeBenchRecommendation, type ProviderHealth,
   type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
 } from '../../lib/api'
-import { humanBytes } from '../../lib/chunkedUpload'
+import { modelBytes } from '../chat/bundledModelDownload'
 import { splitModelRef } from '../../lib/modelRef'
 import {
   occupantDetail, pressureDetail, pressureTone, reclaimableCount, sortOccupants,
@@ -23,6 +23,9 @@ import { SearchField } from '../../ui/SearchField'
 import { TextInput } from '../../ui/forms'
 import { StatusPill } from '../../ui/StatusPill'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import type { Rebase, Revisioned } from '../../lib/staleWrite'
+import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
 import { notify } from '../../app/appSdk'
@@ -34,6 +37,7 @@ import { DisclosureCard } from '../../ui/DisclosureCard'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
 import { InlineModelDownload, isDownloadable, modelLabel } from './InlineModelDownload'
+import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -160,7 +164,7 @@ function ModelChips({ model, onRepair, repairing }: {
   )
 }
 
-/** "Reclaim N GB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
+/** "Reclaim N GiB" — surfaces the partial-download leftovers (cancelled/crashed fetches)
  *  that otherwise sit invisible across every local provider's cache root, and unlinks
  *  them on confirm. Renders nothing when there's nothing to reclaim, so a clean install
  *  shows no affordance. `onReclaimed` lets the caller revalidate the model list after a
@@ -180,7 +184,7 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
 
   const reclaim = async () => {
     const ok = await confirm({
-      title: `Reclaim ${humanBytes(totalBytes)}?`,
+      title: `Reclaim ${modelBytes(totalBytes)}?`,
       body: 'Deletes partial-download leftovers (.part / .tmp / .incomplete files) from cancelled or interrupted fetches. Fully downloaded models are untouched.',
       confirmLabel: 'Reclaim',
     })
@@ -198,7 +202,7 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
   return (
     <Button variant="tonal" size="xs" loading={busy} onClick={reclaim}
       title="Delete partial-download leftovers from cancelled or interrupted fetches.">
-      <Trash2 size={13} /> Reclaim {humanBytes(totalBytes)}
+      <Trash2 size={13} /> Reclaim {modelBytes(totalBytes)}
     </Button>
   )
 }
@@ -226,7 +230,8 @@ export function ModelsPanel() {
   const { data, error: modelsErr, refresh } = useQuery('settings:models', async () => {
     const [rows, active] = await Promise.all([
       api.modelsAvailable(),
-      api.modelsActive(),
+      // Each chain WITH its revision: a row saves its whole chain, over the copy it painted.
+      api.activeChains(),
     ])
     // `local` marks a provider the local-model registry lists — one that can DOWNLOAD a model it
     // does not have yet — so a row can offer its Download right where it is chosen.
@@ -284,7 +289,7 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} localProviders={localProviders} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -337,7 +342,7 @@ function LocalRuntimeSection() {
       <RowGroup>
         <ToggleRow label="Hide models this device cannot run" cfg={cfg} field="hide_unrunnable_models" patch={patch}
           hint="Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog." />
-        <NumberRow label="Memory reserve (GB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
+        <NumberRow label="Memory reserve (GiB)" cfg={cfg} field="memory_reserve_gb" min={0} max={64} step={0.5} patch={patch}
           hint="Memory held back for your OS and the inference runtime, subtracted before any model-fit verdict. Raise it if models fit on paper but your machine struggles — verdicts get more cautious. It never blocks anything." />
         <NumberRow label="Memory pressure warning (%)" cfg={cfg} field="pressure_warn_pct" min={1} max={100} patch={patch}
           hint="Percent of system RAM in use at which the loaded-models bar above warns. Advisory only — nothing is unloaded for you." />
@@ -668,8 +673,34 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
   return <span role="img" className="size-2 shrink-0 rounded-pill" style={{ background: color }} title={label} aria-label={label} />
 }
 
-function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, judgeRec, onChanged }: {
-  useCase: string; activeModels: string[]; allModels: AvailableModel[]
+/** A use case with nothing bound, for one the read did not list: its empty chain has no revision,
+ *  so a save from it names none and is refused (`428`) rather than taken as a blind overwrite. */
+const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
+
+/** Why a chain control is unavailable while a refused change waits in the notice above it. */
+
+// Each chain edit as an OPERATION, so a refused save re-applies onto the chain as stored now —
+// the same edit, found by model rather than by position, wherever another tab moved it.
+/** Add `ref` at the end, unless it is already bound. */
+const appendRef = (ref: string): Rebase<string[]> => (theirs) => (theirs.includes(ref) ? theirs : [...theirs, ref])
+/** Unbind `ref`. Already gone elsewhere is the same outcome. */
+const withoutRef = (ref: string): Rebase<string[]> => (theirs) => theirs.filter((m) => m !== ref)
+/** Make `ref` the default, keeping every other bound model after it. */
+const asDefault = (ref: string): Rebase<string[]> => (theirs) => [ref, ...theirs.filter((m) => m !== ref)]
+/** Move `ref` one place earlier (`-1`) or later (`1`) — `null` when it is no longer bound, or there
+ *  is no place to move it to, so the notice says the change cannot be re-applied on its own. */
+const moveRef = (ref: string, dir: -1 | 1): Rebase<string[]> => (theirs) => {
+  const i = theirs.indexOf(ref)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= theirs.length) return null
+  const next = [...theirs]
+  ;[next[i], next[j]] = [next[j], next[i]]
+  return next
+}
+
+function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRec, onChanged }: {
+  /** The use case's chain as the panel read it, with the revision of exactly that chain. */
+  useCase: string; chain: Revisioned<string[]>; allModels: AvailableModel[]
   /** Providers that can download a model they do not have yet (see `isDownloadable`). */
   localProviders: ReadonlySet<string>
   health: ProviderHealth[]
@@ -683,6 +714,7 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
   // The `provider:id` ref currently being re-downloaded (truncated → Repair), so its
   // button shows a pending state without blocking the rest of the list.
   const [repairing, setRepairing] = useState<string | null>(null)
+  const activeModels = chain.value
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', chain: false, icon: Boxes }
   // Filter to models declaring this capability, then DEDUPE by the `provider:id`
   // ref. A model can legitimately surface from two discovery paths (e.g.
@@ -741,7 +773,27 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
     })
   }
 
-  const setActive = async (models: string[]) => {
+  // 🔴 THE CHAIN IS SAVED WHOLE, over the revision this row read it at. Every edit here used to
+  // send this row's copy with one change spliced in — so a panel opened before another tab,
+  // onboarding or a provider's removal changed this use case put its old chain straight back.
+  // A stale copy is now refused, and the edit — an operation on the chain, never the chain — is
+  // re-applied on top of what is stored (`ui/StaleWriteNotice`).
+  const guard = useStaleWriteGuard<string[]>({
+    read: () => api.activeChain(useCase),
+    write: (next, base) => api.setActiveModel(useCase, next, base),
+    onSaved: (saved) => {
+      onChanged()
+      // The re-index the embedding confirm warned about, once a model is bound — on the first
+      // save or on a re-applied one alike.
+      if (useCase === 'embedding' && saved.length > 0) startReindex()
+    },
+    onDiscard: onChanged,
+  })
+  // While a refused change waits for the user, a second edit would be built from the same stale
+  // copy — and replace the change the notice is holding.
+  const conflicted = guard.conflict !== null
+
+  const setActive = async (op: Rebase<string[]>) => {
     if (useCase === 'embedding') {
       const ok = await confirm({
         title: 'Change the embedding model?',
@@ -754,24 +806,23 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
     try {
       // The embedding branch above warns this re-indexes ALL knowledge and memories. A silent
       // failure there is the worst case in this file: nothing changes, nothing is said, and the
-      // re-index the user was warned about never starts — so `startReindex()` is gated too.
-      if (!(await reportingWrite('change the model', () => api.setActiveModel(useCase, models)))) return
-      onChanged()
-      if (useCase === 'embedding' && models.length > 0) startReindex()
+      // re-index the user was warned about never starts — so `startReindex()` runs from the
+      // guard's `onSaved`, only once a save has landed. A stale copy is not a failure: the notice
+      // below keeps the change for the user to re-apply or drop.
+      await reportingWrite('change the model', () => guard.apply(chain, op))
     } finally { setSaving(false) }
   }
   const toggle = (ref: string) => {
     // Chain use-cases APPEND a newly-picked model to the end of the chain (the
     // user then reorders); picking an already-chained model removes it.
-    if (meta.chain) setActive(activeModels.includes(ref) ? activeModels.filter((m) => m !== ref) : [...activeModels, ref])
-    else setActive(activeModels.includes(ref) ? [] : [ref])
+    const bound = activeModels.includes(ref)
+    if (meta.chain) setActive(bound ? withoutRef(ref) : appendRef(ref))
+    else setActive(bound ? withoutRef(ref) : () => [ref])
   }
   const move = (i: number, dir: -1 | 1) => {
-    const j = i + dir
-    if (j < 0 || j >= activeModels.length) return
-    const next = [...activeModels]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    setActive(next)
+    const ref = activeModels[i]
+    if (ref === undefined || i + dir < 0 || i + dir >= activeModels.length) return
+    setActive(moveRef(ref, dir))
   }
   // Repair a truncated model: re-run the same download the "not downloaded" path uses
   // (the runner overwrites the incomplete weights), then revalidate so the chip clears.
@@ -808,6 +859,7 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
         <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
         {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
       </div>
+      <StaleWriteNotice guard={guard} what={`The models for ${meta.label}`} />
 
       {/* The "one user action": the judge benchmark measured this axis and named the
           cheapest ADEQUATE tier, so binding it is a click rather than a hand-copy from the
@@ -827,8 +879,9 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
               <Check size={12} /> already the default
             </span>
           ) : (
-            <Button size="sm" variant="tonal" disabled={saving} disabledReason={BUSY_REASON}
-              onClick={() => setActive([judgeRec.model_ref, ...activeModels.filter((m) => m !== judgeRec.model_ref)])}>
+            <Button size="sm" variant="tonal" disabled={saving || conflicted}
+              disabledReason={conflicted ? HELD_CHANGE_REASON : BUSY_REASON}
+              onClick={() => setActive(asDefault(judgeRec.model_ref))}>
               Bind as default
             </Button>
           )}
@@ -859,13 +912,14 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
                     it into `disabled` made all three arrows announce "unavailable" for the
                     length of a request they had just started. */}
                 <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
-                  disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
-                  disabledReason={i === 0 ? 'Already the default' : undefined} />
+                  disabled={i === 0 || conflicted} loading={saving} onClick={() => move(i, -1)}
+                  disabledReason={conflicted ? HELD_CHANGE_REASON : i === 0 ? 'Already the default' : undefined} />
                 <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
-                  disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
-                  disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
+                  disabled={i === activeModels.length - 1 || conflicted} loading={saving} onClick={() => move(i, 1)}
+                  disabledReason={conflicted ? HELD_CHANGE_REASON : i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
                 <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
-                  loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+                  disabled={conflicted} disabledReason={conflicted ? HELD_CHANGE_REASON : undefined}
+                  loading={saving} onClick={() => setActive(withoutRef(ref))} />
               </div>
             )
           })}
@@ -956,7 +1010,7 @@ function UseCaseRow({ useCase, activeModels, allModels, localProviders, health, 
                 className="flex flex-col rounded-md transition-colors hover:bg-surface-high"
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
                 <div className="flex items-center gap-2.5 pr-3">
-                  <button type="button" onClick={() => toggle(ref)} disabled={saving}
+                  <button type="button" onClick={() => toggle(ref)} disabled={saving || conflicted}
                     className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left">
                     <span className="grid size-4 shrink-0 place-items-center rounded border"
                       style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>

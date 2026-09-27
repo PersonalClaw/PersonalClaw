@@ -13,9 +13,9 @@ the usual result is two notifications for one event or an inbox row nobody was t
 Three properties this has to get right:
 
 **Deduped per (run, node, epoch).** The watchdog re-polls a waiting run every few seconds and
-`_ensure_continuation` is idempotent per epoch — so without a dedup key a gate would stack a
-row per poll, each with a valid resume token. Keyed on the EPOCH rather than the token because
-a rewind legitimately re-asks the same question, and that genuinely is a new ask.
+`gate_answers.ensure_continuation` is idempotent per epoch — so without a dedup key a gate would
+stack a row per poll, each with a valid resume token. Keyed on the EPOCH rather than the token
+because a rewind legitimately re-asks the same question, and that genuinely is a new ask.
 
 **Resolved when answered.** An inbox row that stays open after its gate is answered is worse
 than no row: the user clicks it, finds nothing to do, and stops trusting the inbox. The
@@ -70,6 +70,10 @@ def ask_title(workflow: str, node_id: str, ask: dict[str, Any] | None) -> str:
 def ask_body(ask: dict[str, Any] | None, handoff: dict[str, Any] | None) -> str:
     """The row's detail: what kind of answer is wanted, and what the run was doing.
 
+    What the asking step already tried comes next, when it says: a step that parked on a
+    sign-in page names the site and why it stopped ("opened example.com — it has never been
+    signed in on this machine"), which is the reason the user is being asked at all.
+
     The handoff's outstanding work is included because the decision often depends on it — "is
     this the last step or are eight more waiting on me?" changes how urgently a user acts.
     """
@@ -84,6 +88,9 @@ def ask_body(ask: dict[str, Any] | None, handoff: dict[str, Any] | None) -> str:
                 "form": "Waiting for you to fill in a form.",
             }.get(kind, f"Waiting for a {kind} answer.")
         )
+    attempted = [str(a) for a in ((handoff or {}).get("attempted") or []) if str(a).strip()]
+    if attempted:
+        parts.append(f"Tried: {'; '.join(attempted)}.")
     outstanding = (handoff or {}).get("outstanding")
     if isinstance(outstanding, list) and outstanding:
         parts.append(f"{len(outstanding)} other step(s) still pending.")
@@ -110,18 +117,53 @@ def raise_gate_item(
     owner: str = "",
     project_id: str = "",
     now: float = 0.0,
+    card: dict[str, Any] | None = None,
 ) -> str:
     """Project one waiting gate into the inbox + a notification. Returns the item id or "".
 
     `refs` carries the run id AND the resume token, which is what makes the row actionable
     rather than a notification with extra steps: the surface reading it can answer in place
     instead of sending the user off to find the run.
+
+    `card` is a `NeedsInputItem` the waiting step composed itself — browse's sign-in handoff
+    (`browse.handoff.request_login`) builds one with its blocker, what it tried and its evidence.
+    It is carried as its producer wrote it rather than re-derived from the ask, re-bound to THIS
+    run's node and token, and its choices are the ask's: an approval continuation takes yes or no,
+    so a labelled choice ("I have signed in") offered as a button would be an answer the resume
+    path refuses.
     """
     if state is None:
         return ""
     try:
         from personalclaw.inbox import ItemKind, emit_attention_item
 
+        if card:
+            from dataclasses import replace
+
+            parsed = needs_input.NeedsInputItem.from_dict(card)
+            item = replace(
+                parsed,
+                run_id=run_id,
+                node_id=node_id,
+                resume_token=resume_token,
+                choices=[str(c) for c in ((ask or {}).get("choices") or [])],
+                owner=owner or parsed.owner,
+                project_id=project_id or parsed.project_id,
+                created_at=now or parsed.created_at,
+            )
+        else:
+            item = needs_input.build_item(
+                run_id=run_id,
+                node_id=node_id,
+                ask=ask,
+                failure=failure,
+                attempts=attempts,
+                evidence=evidence,
+                resume_token=resume_token,
+                owner=owner,
+                project_id=project_id,
+                now=now,
+            )
         return emit_attention_item(
             state,
             source=SOURCE,
@@ -138,20 +180,7 @@ def raise_gate_item(
                 "workflow_name": workflow,
                 "workflow_node": node_id,
                 "resume_token": resume_token,
-                **needs_input.card_refs(
-                    needs_input.build_item(
-                        run_id=run_id,
-                        node_id=node_id,
-                        ask=ask,
-                        failure=failure,
-                        attempts=attempts,
-                        evidence=evidence,
-                        resume_token=resume_token,
-                        owner=owner,
-                        project_id=project_id,
-                        now=now,
-                    )
-                ),
+                **needs_input.card_refs(item),
             },
             dedup_key=dedup_key(run_id, instance_path, epoch),
         )

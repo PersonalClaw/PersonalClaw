@@ -159,11 +159,13 @@ or clear your Hugging Face token, download, install, delete or unload a model, o
 what you stored. It may not read them either: your providers, your bindings, your routing
 table and your usage are yours. The onboarding wizard's one-click bind of a local model
 (`/api/onboarding/local-model/bind`) is refused for the same reason: it adds a model provider
-and moves your chats onto it.
+and moves your chats onto it. The rest of your first-run setup (`/api/onboarding`) is yours too.
+An app may not read it, since it names the model your chats are bound to, move its progress, or
+have the gateway look for model servers on this machine or sweep your network for them.
 
 Every write route in these families, and every read in your conversation families, your
-notification log, your providers and your models, has to be declared one way or the other: one
-that is not is refused to every app until someone declares it, and
+notification log, your providers, your models and your first-run setup, has to be declared one
+way or the other: one that is not is refused to every app until someone declares it, and
 `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,
@@ -466,7 +468,9 @@ run under your own account:
 
 - provider modules, imported into the gateway's own process
   (`providers/loader.py::_load_ext_module`), or run as a child of it when the manifest says
-  `execution: sidecar`;
+  `execution: sidecar`, with the engine packages (`dependencies.sidecarDependencies`) that
+  **Install engine** puts in that child's own Python environment, `apps/<app>/venv`
+  (`local_models/sidecar.py::SidecarInstall`);
 - a backend, started as a process on this machine (`apps/backend_runtime.py`);
 - the MCP servers in its manifest's `mcpServers`, each a command the gateway launches with
   the gateway's own environment, which carries the stored credentials PersonalClaw exports
@@ -479,7 +483,10 @@ run under your own account:
   sources fetch, fenced off from the network but not from your files
   (`knowledge_providers/pack_parse.py`).
 
-The Python packages an app installs load into the gateway's process too (§3).
+The Python packages an app installs load into the gateway's process too (§3). Its engine
+packages do not: they install only when you choose Install engine, into the app's own
+environment, and run in its child process. A sidecar is a crash boundary, not a sandbox, so
+that child has your files and your network as well.
 
 That code can read and write every file in your PersonalClaw home. It can switch YOLO on
 by editing `config.json`, with no `PATCH /api/config/personalclaw` to refuse; it can add
@@ -513,6 +520,7 @@ limit what the app asks the gateway for, not what that code does
 (`apps/disclosure._runs_as_you`). Below it the row names every kind: the server process it
 starts, and the sandbox tier it runs in when it names one; each provider module, with the
 entry point the gateway loads and whether it runs inside the gateway or as a child of it;
+the engine packages Install engine would put in its own environment, verbatim;
 the shell command of each lifecycle hook, verbatim, with when it runs (the install or
 update now, switching the app on, switching it off, removing it); the steps it adds to
 `personalclaw setup` and `personalclaw doctor`; each source parser; and each MCP server

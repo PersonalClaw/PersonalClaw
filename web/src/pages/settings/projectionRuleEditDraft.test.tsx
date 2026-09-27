@@ -19,15 +19,15 @@ import type { ProjectionRule } from '../../lib/api'
 
 const RULE: ProjectionRule = { name: 'myapp', match_regex: '^\\[MYAPP\\]', strategy: 'log' }
 
-const setProjectionRules = vi.fn((_rules: ProjectionRule[]) => Promise.resolve({}))
+const setProjectionRules = vi.fn((_rules: ProjectionRule[], _base: string) => Promise.resolve({}))
 
 async function mount() {
   vi.resetModules()
   setProjectionRules.mockClear()
   vi.doMock('../../lib/api', () => ({
     api: {
-      projectionRules: () => Promise.resolve([{ ...RULE }]),
-      setProjectionRules: (rules: ProjectionRule[]) => setProjectionRules(rules),
+      projectionRules: () => Promise.resolve({ value: [{ ...RULE }], revision: 'r1' }),
+      setProjectionRules: (rules: ProjectionRule[], base: string) => setProjectionRules(rules, base),
       toolsSavings: () => Promise.resolve(null),
     },
   }))

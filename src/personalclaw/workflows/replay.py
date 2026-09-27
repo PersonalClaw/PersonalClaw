@@ -13,9 +13,9 @@ run depended on is already journaled:
 * **provider responses** are spilled by `output_ref` — the recorded-response provider hands
   each node back its own recorded output, keyed by that ref, so downstream routing and downstream
   prompts see exactly what the run saw;
-* **the resolved prompt** is stored by the controller's `_store_prompt` — so the ORIGINAL
-  trajectory carries the prompt each node actually ran, and the replay re-resolves the prompt FRESH
-  from the (possibly edited) spec and compares. A prompt edit shows up here and nowhere else;
+* **the resolved prompt** is stored by `node_bindings.store_prompt` — so the ORIGINAL trajectory
+  carries the prompt each node actually ran, and the replay re-resolves the prompt FRESH from the
+  (possibly edited) spec and compares. A prompt edit shows up here and nowhere else;
 * **the wall clock** is the one thing `frontier()` cannot supply — it is pure and reads no clock.
   The controller reads it in `_wake_due_nodes` and now journals that read as a `clock_read` event
   (PP-6). Replay resolves a parked node against that RECORDED clock, so a `wait` lands at the same

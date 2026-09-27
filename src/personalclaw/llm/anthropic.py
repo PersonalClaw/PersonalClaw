@@ -39,7 +39,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
-from personalclaw.llm.registry import CredentialMissing
+from personalclaw.llm.registry import CredentialMissing, require_model
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,28 @@ def _image_block(data_url: str) -> dict | None:
     }
 
 
+def _translate_parts(content: list) -> list:
+    """A user/assistant message's list ``content`` with neutral image parts in Anthropic's shape.
+
+    The platform's image part is ``{"type": "image_url", "image_url": {"url": <data URL>}}``
+    (``ModelProvider.complete``). The Messages API refuses that type outright, so every one
+    becomes an ``image`` block; a part whose URL is not a base64 data URL is dropped rather
+    than sent as a block the API would 400 on. Every other part passes through, and the
+    caller's list and dicts are never mutated.
+    """
+    out: list = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            ref = part.get("image_url")
+            url = ref.get("url", "") if isinstance(ref, dict) else ""
+            block = _image_block(url) if isinstance(url, str) else None
+            if block is not None:
+                out.append(block)
+            continue
+        out.append(part)
+    return out
+
+
 def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[dict]]:
     """Split OpenAI-shaped ``messages`` into ``(system_prompt, anthropic_messages)``.
 
@@ -197,7 +219,8 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
       results are merged into a single user turn (Anthropic groups parallel
       tool results in one user message).
     * Plain ``user``/``assistant`` string messages pass through as
-      ``{role, content}``.
+      ``{role, content}``. A LIST content passes through with its neutral image parts
+      translated to Anthropic ``image`` blocks (:func:`_translate_parts`).
 
     Cache translation (PCS-4 / §C4): a message carrying the NEUTRAL
     :data:`~personalclaw.llm.prompt_cache.CACHE_HINT_KEY` is the trailing boundary of
@@ -302,6 +325,11 @@ def _translate_messages(messages: list[dict]) -> tuple[str | list[dict], list[di
                 _mark_block(blocks[-1])
             out.append({"role": "assistant", "content": blocks})
             continue
+
+        # Block-shaped content carries the platform's neutral parts: its image parts
+        # become Anthropic image blocks before anything else looks at the list.
+        if isinstance(content, list):
+            content = _translate_parts(content)
 
         # Plain user / assistant text message — pass through unchanged UNLESS hinted,
         # in which case it must become block-shaped to carry the marker.
@@ -408,9 +436,6 @@ class AnthropicProvider(ModelProvider):
         # ordinal — it compares a report against the largest prompt this binding has
         # already had measured — see personalclaw.context_gauge.
         self._gauge = ContextGauge()
-        # One-shot image content part for the next turn. Empty on every
-        # ordinary turn, which keeps the untouched wire payload byte-identical.
-        self._pending_image: str = ""
 
     @property
     def sampling_temperature(self) -> float | None:
@@ -460,57 +485,6 @@ class AnthropicProvider(ModelProvider):
         if body:
             request_kwargs["extra_body"] = body
 
-    # ── Image content parts ───────────────────────────────────────────
-
-    def stage_image_part(self, data_url: str) -> bool:
-        """Stage *data_url* onto the next turn's user message. See the base docstring.
-
-        True unconditionally: the Messages API carries image blocks, so delivery is
-        a transport property. It is delivered in ANTHROPIC's shape — an
-        ``{"type": "image", "source": {"type": "base64", ...}}`` block — which is
-        precisely why this lives in the adapter and not in the caller. The
-        OpenAI-shaped ``image_url`` block the rest of the platform passes around is
-        not a wire format this API accepts; a caller that built one and handed it
-        over would get a 400, not a degraded answer.
-        """
-        if not data_url:
-            return False
-        self._pending_image = data_url
-        return True
-
-    def _with_pending_image(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Return *messages* with any staged image appended to the last user turn.
-
-        Returns the SAME list object when nothing is staged. Consumes the stage
-        (one-shot) and never mutates the caller's dicts. A data URL that doesn't
-        split into ``media_type`` + base64 payload is dropped rather than sent as a
-        malformed block.
-        """
-        data_url = self._pending_image
-        if not data_url:
-            return messages
-        self._pending_image = ""
-        block = _image_block(data_url)
-        if block is None:
-            return messages
-        idx = next(
-            (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
-            -1,
-        )
-        if idx < 0:
-            return messages
-        out = list(messages)
-        original = out[idx]
-        content = original.get("content")
-        parts: list[Any]
-        if isinstance(content, list):
-            parts = list(content)
-        else:
-            parts = [{"type": "text", "text": str(content or "")}]
-        parts.append(block)
-        out[idx] = {**original, "content": parts}
-        return out
-
     # ── Lifecycle ─────────────────────────────────────────────────────
 
     async def start(self) -> None:
@@ -552,13 +526,14 @@ class AnthropicProvider(ModelProvider):
         duck-typed ``getattr`` access here so the module never imports
         them at load time (Property 11).
         """
+        model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         request_kwargs: dict[str, Any] = {
-            "model": self._model,
-            "messages": self._with_pending_image(self._history),
+            "model": model,
+            "messages": self._history,
             "max_tokens": self._max_tokens,
         }
         self._add_options(request_kwargs, unsent=self._unsent(self._model, thinking=False))
@@ -731,10 +706,10 @@ class AnthropicProvider(ModelProvider):
         """
         # Stage the image BEFORE translation so the block rides through as a plain
         # list-content user message (which `_translate_messages` passes through).
-        system_prompt, anth_messages = _translate_messages(self._with_pending_image(messages))
+        system_prompt, anth_messages = _translate_messages(messages)
 
         request_kwargs: dict[str, Any] = {
-            "model": model or self._model,
+            "model": require_model(model or self._model),
             "messages": anth_messages,
             "max_tokens": self._max_tokens,
         }

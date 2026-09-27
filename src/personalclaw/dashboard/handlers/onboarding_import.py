@@ -1,6 +1,6 @@
 """HTTP API for onboarding import — ``/api/onboarding/import``.
 
-The onboarding step's two calls, and nothing else.
+The onboarding step's calls, and nothing else.
 
 ``GET``
     Scan every registered source and answer what could be adopted, item by item: what
@@ -9,16 +9,32 @@ The onboarding step's two calls, and nothing else.
     destination by the planner the writer itself consults). Read-only in both
     directions: it never writes to the foreign root, and it never writes to our home.
 
-``POST``
-    Re-scan, import exactly the items the user picked, and answer the report: every
-    picked item's outcome, every item left out, and every pick that no longer exists. A
-    skill whose scan has warnings comes over only when the pick also names, under
-    ``accepted``, the ``consent`` the scan showed for it — the warnings the user accepted.
+    The scan LOOKS rather than reads (:mod:`personalclaw.onboarding_import.engine`): a
+    months-long history is thousands of transcripts, and reading them all before answering
+    kept the step on a spinner for minutes (measured: 41 s for 5.3 GB). Each conversation not
+    read before is listed from its start and marked ``provisional``, each source says how many
+    of its conversation files are read (``reading``), and a reading pass then reads the rest in
+    the background, so the next answer is final.
 
-**The POST re-scans; it never accepts items from the client.** An
+``POST``
+    Start the import of the items the user picked: ``202`` with the job, whose progress the
+    stream carries and whose report ``GET …/job`` answers once it has finished. A skill
+    whose scan has warnings comes over only when the pick also names, under ``accepted``,
+    the ``consent`` the scan showed for it — the warnings the user accepted. One import runs
+    at a time: a second POST while one runs is ``409`` with the running job.
+
+``GET …/job`` · ``DELETE …/job``
+    The running or last import (``null`` when none has run), with its report once finished ·
+    stop it, between two items.
+
+``GET …/stream``
+    Server-sent ``status`` frames, twice a second: the reading pass's progress and the
+    import job's (its report left out — fetch it from ``…/job``).
+
+**The import re-scans; it never accepts items from the client.** An
 :class:`~personalclaw.onboarding_import.ImportItem` carries a filesystem ``path``
-(skills) and a file body, so honouring a client-supplied one would let any caller
-name any directory and have it copied into the home. The wire therefore carries only
+(skills, conversations) and a file body, so honouring a client-supplied one would let any
+caller name any directory and have it copied into the home. The wire therefore carries only
 FINGERPRINTS — each validated as the 16-hex shape the scanner mints — and the import
 keeps only those its own re-scan found. Ids travel, content never does: any other key
 in the body is ignored, and a fingerprint the re-scan does not contain imports nothing
@@ -27,14 +43,13 @@ and comes back in ``missing`` rather than disappearing.
 **Nothing is swallowed.** ``conflict`` and ``rejected`` are ordinary rows of the
 report the step renders, so a destination that already held something different is
 *shown*, not hidden behind a success count. A writer that raises outright (an
-unreadable destination, a full disk) answers ``500 onboarding_import_failed``
-carrying the failure's own sentence rather than an empty 200. Retrying after either
-is safe: the fingerprint ledger records each write as it lands, so whatever already
-arrived comes back as ``existing``.
+unreadable destination, a full disk) ends the job ``failed``, carrying the failure's own
+sentence rather than a report that reads as a success. Retrying after either is safe:
+each write is whole or absent and whatever arrived comes back as ``existing``.
 
-The scan and the import both do synchronous filesystem work, so both run through
-:func:`asyncio.to_thread` — a first-run directory walk must not stall the gateway's
-event loop.
+The scan and the import both do synchronous filesystem work: the scan through
+:func:`asyncio.to_thread`, the reading pass and the import on their own threads — a
+first-run directory walk must not stall the gateway's event loop.
 """
 
 from __future__ import annotations
@@ -45,38 +60,28 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.onboarding_import.activity import ImportActivity
 
 logger = logging.getLogger(__name__)
 
-#: An error sentence is a line, not a document.
-_MAX_MESSAGE = 200
+#: The most fingerprints one import may name. A power user's agent-tool history is thousands
+#: of conversations (measured: 12,005 across Claude Code and Codex after months of daily use)
+#: beside dozens of other items; this bounds a request long before the body ceiling does,
+#: without being a limit any real setup reaches.
+_MAX_CHOSEN = 100_000
 
-#: The most fingerprints one import may name. A machine's agent-tool config is dozens
-#: of items, occasionally hundreds; this bounds a request long before the body ceiling
-#: does, without being a limit any real setup reaches.
-_MAX_CHOSEN = 10_000
+#: The step's background work in this app: the reading pass and the import job.
+ACTIVITY = web.AppKey("onboarding_import_activity", ImportActivity)
 
-
-def _redacted(exc: BaseException) -> str:
-    """The failure's own words, screened once and clamped to a line.
-
-    Screened HERE, at the one boundary where an exception becomes a user-visible
-    string: a writer's ``OSError`` names a path, and a path from a foreign root can
-    itself look like a credential. Screening at entry (rather than composing a
-    sentence first and screening that) is what keeps the redactor from eating a
-    field name it was never shown.
-    """
-    from personalclaw.onboarding_import.floors import safe_text
-
-    cleaned, _ = safe_text(str(exc) or exc.__class__.__name__)
-    return cleaned[:_MAX_MESSAGE]
+#: How often the stream sends the step where the reading and the import have got to.
+_STREAM_SECONDS = 0.5
 
 
 def _scan_with_plans() -> tuple[list, dict]:
     """One thread hop for both reads: the foreign roots, then each item's destination."""
     from personalclaw.onboarding_import import plans, scan_all
 
-    results = scan_all()
+    results = scan_all(look=True)
     return results, plans(results)
 
 
@@ -89,31 +94,42 @@ async def api_onboarding_import_scan(request: web.Request) -> web.Response:
     re-deriving "detected" on the client. Each source's ``items`` carry the stable
     ``fingerprint`` a pick sends back, plus the item's plan. ``categories`` is the
     closed category vocabulary in declaration order, so the step's groups cannot
-    drift from the writers' dispatch table.
+    drift from the writers' dispatch table. ``reading`` is the reading pass, started
+    here when the scan left conversation files unread.
     """
     from personalclaw.onboarding_import import ImportCategory, detected, offer
+    from personalclaw.onboarding_import.floors import screened_failure
 
-    try:
-        results, planned = await asyncio.to_thread(_scan_with_plans)
-    except Exception as exc:  # noqa: BLE001 — a scan fault is reported, never a blank step
-        logger.warning("onboarding import: scan failed", exc_info=True)
-        return json_error(
-            "onboarding_import_failed",
-            message=f"The scan for other agent tools failed: {_redacted(exc)}",
-            status=500,
+    activity = request.app[ACTIVITY]
+    # A reading pass waits while this answer is made — the scan, and composing a history's worth
+    # of items: parsing beside it in the same interpreter made the answer ten times slower.
+    with activity.reading.paused():
+        try:
+            results, planned = await asyncio.to_thread(_scan_with_plans)
+        except Exception as exc:  # noqa: BLE001 — a scan fault is reported, never a blank step
+            logger.warning("onboarding import: scan failed", exc_info=True)
+            return json_error(
+                "onboarding_import_failed",
+                message=f"The scan for other agent tools failed: {screened_failure(exc)}",
+                status=500,
+            )
+
+        activity.read_behind(results)
+        found = {result.source for result in detected(results)}
+        sources = []
+        for result in results:
+            payload = result.to_dict()
+            payload["detected"] = result.source in found
+            payload["items"] = [offer(item, planned[item.fingerprint]) for item in result.items]
+            sources.append(payload)
+
+        return web.json_response(
+            {
+                "sources": sources,
+                "categories": [category.value for category in ImportCategory],
+                "reading": activity.reading.to_dict(),
+            }
         )
-
-    found = {result.source for result in detected(results)}
-    sources = []
-    for result in results:
-        payload = result.to_dict()
-        payload["detected"] = result.source in found
-        payload["items"] = [offer(item, planned[item.fingerprint]) for item in result.items]
-        sources.append(payload)
-
-    return web.json_response(
-        {"sources": sources, "categories": [category.value for category in ImportCategory]}
-    )
 
 
 def _chosen(body: dict) -> tuple[list[str], web.Response | None]:
@@ -193,18 +209,15 @@ def _accepted(body: dict) -> tuple[dict[str, str], web.Response | None]:
 
 
 async def api_onboarding_import_run(request: web.Request) -> web.Response:
-    """POST /api/onboarding/import — import the picked items and report outcomes.
+    """POST /api/onboarding/import — start importing the picked items.
 
     Body: ``{"fingerprints": [fingerprint, …], "accepted": {fingerprint: consent, …}}`` — the
     items to bring over, as the scan named them, and for a skill whose scan has warnings the
-    ``consent`` of the warnings accepted. Answers the
-    :class:`~personalclaw.onboarding_import.ImportReport`:
-    per-item outcomes, the items left out, the picks that no longer exist, and the
-    withheld-secret counts — with ``200`` even when every row is a ``conflict``: a
-    conflict is a real answer the step renders, not a request failure.
+    ``consent`` of the warnings accepted. Answers ``202`` with the job; the job's report, once it
+    has finished, is the :class:`~personalclaw.onboarding_import.ImportReport`: per-item
+    outcomes, the items left out, the picks that no longer exist, those a stop left unreached,
+    and the withheld-secret counts. A conflict is a real answer the step renders, not a failure.
     """
-    from personalclaw.onboarding_import import run_import, scan_all
-
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 — an unparsable body is a 400, never a 500
@@ -219,28 +232,70 @@ async def api_onboarding_import_run(request: web.Request) -> web.Response:
     if refusal is not None:
         return refusal
 
-    def _run():
-        # Re-scan HERE, inside the same thread hop as the write: the items are read
-        # from the foreign root under the request, never taken from the caller.
-        return run_import(scan_all(), fingerprints=fingerprints, accepted=accepted)
-
-    try:
-        report = await asyncio.to_thread(_run)
-    except Exception as exc:  # noqa: BLE001 — a write fault is reported, never swallowed
-        logger.warning("onboarding import: write failed", exc_info=True)
-        return json_error(
-            "onboarding_import_failed",
-            message=(
-                f"The import stopped after a write failed: {_redacted(exc)}. "
-                "Anything already imported was recorded, so importing again is safe."
-            ),
-            status=500,
+    # The items are re-scanned inside the job, from the foreign root, never taken from the
+    # caller: the pick is fingerprints and the job keeps only those its own scan found.
+    job, started = request.app[ACTIVITY].start_import(fingerprints, accepted)
+    if not started:
+        return web.json_response(
+            {
+                "error": {
+                    "code": "import_running",
+                    "message": "An import is already running. Wait for it, or stop it first.",
+                },
+                "job": job.to_dict(report=False),
+            },
+            status=409,
         )
+    return web.json_response(job.to_dict(), status=202)
 
-    return web.json_response(report.to_dict())
+
+async def api_onboarding_import_job(request: web.Request) -> web.Response:
+    """GET /api/onboarding/import/job — the running or last import, and its report once finished.
+
+    Answers ``{"job"}``, ``null`` when this gateway has run none — the answer to every first
+    visit, so it is a 200 and not a 404 a browser reports as an error. After a restart the job a
+    step was watching is gone, and what it wrote is what the next scan shows as already here.
+    """
+    job = request.app[ACTIVITY].job
+    return web.json_response({"job": job.to_dict() if job is not None else None})
+
+
+async def api_onboarding_import_stop(request: web.Request) -> web.Response:
+    """DELETE /api/onboarding/import/job — stop the running import after the item it is on.
+
+    ``202`` with the job, still ``running`` until that item is written (``stopping`` true);
+    ``409`` when no import is running.
+    """
+    job = request.app[ACTIVITY].job
+    if job is None or not job.running:
+        return json_error("not_running", message="No import is running.", status=409)
+    job.stop()
+    return web.json_response(job.to_dict(report=False), status=202)
+
+
+async def api_onboarding_import_stream(request: web.Request) -> web.StreamResponse:
+    """GET /api/onboarding/import/stream — ``status`` frames: the reading pass and the import."""
+    from personalclaw.dashboard.sse import Periodic, SseHub, stream_response
+
+    activity = request.app[ACTIVITY]
+    return await stream_response(
+        request,
+        SseHub(),
+        periodic=Periodic(lambda: ("status", activity.status()), _STREAM_SECONDS),
+    )
+
+
+async def _stop_activity(app: web.Application) -> None:
+    """Gateway shutdown: stop the reading pass and the import between two items."""
+    await asyncio.to_thread(app[ACTIVITY].shutdown)
 
 
 def register_onboarding_import_routes(app: web.Application) -> None:
-    """Register the two /api/onboarding/import routes."""
+    """Register the /api/onboarding/import routes, and the step's background work they drive."""
+    app[ACTIVITY] = ImportActivity()
+    app.on_shutdown.append(_stop_activity)
     app.router.add_get("/api/onboarding/import", api_onboarding_import_scan)
     app.router.add_post("/api/onboarding/import", api_onboarding_import_run)
+    app.router.add_get("/api/onboarding/import/job", api_onboarding_import_job)
+    app.router.add_delete("/api/onboarding/import/job", api_onboarding_import_stop)
+    app.router.add_get("/api/onboarding/import/stream", api_onboarding_import_stream)

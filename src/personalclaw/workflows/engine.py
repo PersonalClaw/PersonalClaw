@@ -40,7 +40,7 @@ from typing import Any
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
-from personalclaw.workflows import engine_support, leases, longrun, ownership
+from personalclaw.workflows import engine_support, leases, longrun, ownership, publish_seam
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.failure_taxonomy import (
@@ -549,9 +549,9 @@ def release_execution_claim(claim_target: str, holder: str) -> None:
 
     Public because the second caller is the controller. A stage's claim is taken here and outlives
     this function — the spawn is live when `dispatch_stage` returns — so the only code that can know
-    the attempt is over is the code that settles it (`_reconcile_dispatched_stages`), and WF2-R10
-    puts that in the controller. `NodeResult.claim_target`/`claim_holder` are how the identity gets
-    there; see `dispatch_stage`.
+    the attempt is over is the code that settles it
+    (`stage_settlement.reconcile_dispatched_stages`), and WF2-R10 puts that in the controller.
+    `NodeResult.claim_target`/`claim_holder` are how the identity gets there; see `dispatch_stage`.
 
     Never raises: a failed release costs one TTL of a stalled branch, while an exception here would
     turn a recoverable no-spawn return into a crashed dispatch — or a settled node into an unsettled
@@ -805,10 +805,10 @@ async def dispatch_stage(
     # outlived the attempt, so the retry of a settled-FAILED instance met its own lease and was
     # refused as a duplicate for fifteen minutes. The identity travels out on the result — a pair,
     # because a release names both the target and the holder and `containers.release` refuses any
-    # other holder — so `_reconcile_dispatched_stages` can release THIS attempt's claim at the
-    # settle. Carried rather than re-derived: `claim_holder` is a fresh uuid per attempt, so it is
-    # unrecoverable from anything the controller holds, and re-deriving the target would put a
-    # second copy of `claim_key` at the release site to drift from this one.
+    # other holder — so `stage_settlement.reconcile_dispatched_stages` can release THIS attempt's
+    # claim at the settle. Carried rather than re-derived: `claim_holder` is a fresh uuid per
+    # attempt, so it is unrecoverable from anything the controller holds, and re-deriving the target
+    # would put a second copy of `claim_key` at the release site to drift from this one.
     return NodeResult(
         state=InstanceState.RUNNING,
         output={"subagent_id": info.id},
@@ -1064,6 +1064,7 @@ async def dispatch_action(
     instance_path: str = "",
     cwd: str = "",
     idempotency_key: str = "",
+    answer: Any = None,
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -1071,6 +1072,10 @@ async def dispatch_action(
     work STARTED, not that it succeeded, so it maps to DEGRADED with a reason rather than
     a clean DONE. Reporting it as success would make a fire-and-forget action look
     verified.
+
+    `answer` is what a person answered when this step last parked on them, handed to the
+    provider as `ActionContext.answer` on the dispatch that answer started (the controller's
+    `_park_answers`, single-use). None on every other dispatch.
     """
     cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
@@ -1133,7 +1138,10 @@ async def dispatch_action(
     if idempotency_key:
         payload.setdefault("idempotency_key", idempotency_key)
     context = ActionContext(
-        event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
+        event="workflow_node",
+        context=str(cfg.get("context", "") or ""),
+        payload=payload,
+        answer=answer,
     )
     try:
         result = await provider.execute(action_config, context, timeout=timeout)
@@ -1174,25 +1182,48 @@ async def dispatch_action(
             degraded_reason="action queued a run behind one already in flight; it has not started",
         )
     if getattr(result, "outcome", "") == "needs_input":
-        # The action did real work, ran into a ceiling it cannot lift
-        # (steps or budget), and kept what it learned. WAITING with NO `wake_at`, which is the
-        # combination the controller reads as "nothing will wake this run" and finishes as
-        # `RunStatus.NEEDS_INPUT` — a human decides whether to raise the ceiling or accept the
-        # partial result.
+        # The action stopped on something only a person can lift —
+        # a sign-in page, its step ceiling, the model budget — and kept what it produced. WAITING
+        # with NO `wake_at`, carrying an ASK, which the controller handles the way it handles a
+        # gate's: it keeps the output on the step, mints the continuation and the Inbox row, and
+        # parks the run as `needs_input`. Approving runs the step again (`Ask.rerun`); denying
+        # ends it as declined.
         #
         # Not DONE (the goal was not reached, and downstream nodes would consume a partial as
         # if it were complete), not FAILED (a failure buries the notes under a red error and
         # invites the retry machinery to pay for the whole task again to hit the same
         # ceiling), and not DEGRADED (that is a SUCCESS with a reason, and this needs a
         # person). The output carries the partial result, so the notes survive the park.
+        question = _park_question(output, getattr(result, "stderr", ""))
+        from personalclaw.workflows.human_input import Ask
+
         return NodeResult(
             state=InstanceState.WAITING,
             output=output,
-            degraded_reason=str(getattr(result, "stderr", "") or "the action needs your input"),
+            degraded_reason=question,
+            ask=Ask(prompt=question, node_id=node.id, rerun=True).to_dict(),
         )
     if getattr(result, "outcome", "") == "skip":
         return NodeResult(state=InstanceState.NO_CHANGE, output=output)
     return NodeResult(state=InstanceState.DONE, output=output)
+
+
+def _park_question(output: Any, stderr: Any) -> str:
+    """What a parked action asks the person, in one sentence.
+
+    The blocker of the needs-input card the step composed, when it did: browse's sign-in handoff
+    (`browse.handoff.request_login`) puts one under the output's `needs_input` key, and its
+    blocker IS the question ("Sign in to example.com, then confirm — the browse run resumes with
+    that session."). Otherwise the sentence the provider wrote for its park, which says what
+    stopped it. The card wins because it is the question, where the provider's sentence is an
+    account of what happened.
+    """
+    card = output.get("needs_input") if isinstance(output, dict) else None
+    if isinstance(card, dict):
+        blocker = str(card.get("blocker") or "").strip()
+        if blocker:
+            return blocker
+    return str(stderr or "").strip() or "This step stopped and needs your input to continue."
 
 
 async def dispatch_wait(node: Node, ctx: BindingContext, *, now: float) -> NodeResult:
@@ -2027,313 +2058,6 @@ def _restriction_skip(cfg: dict[str, Any], run_id: str) -> tuple[bool, str]:
     return ownership.skips_node(cfg, mode)
 
 
-def _publish_media_resolver(cwd: str | None) -> Any:
-    """A `rewrite_media_refs` resolver reading files under the run's own cwd — and only there.
-
-    Containment is the whole security posture of the copy: `..` traversal and symlinks out of the
-    tree are refused, so a published body cannot pull `~/.ssh/id_rsa` into an artifact the dashboard
-    serves by writing `![](../../../.ssh/id_rsa)`. Returns None (never raises) for anything it will
-    not read, which `rewrite_media_refs` reports as unresolved rather than silently dropping.
-    """
-    import hashlib
-    from pathlib import Path
-
-    from personalclaw.security import is_sensitive_path
-
-    #: Companion copies ride inside the artifact's version dir, which the dashboard serves and the
-    #: 50-snapshot window holds. A large binary copied per version would blow both, so the cap is
-    #: deliberately far below the artifact body cap.
-    max_bytes = 8 * 1024 * 1024
-
-    def _resolve(reference: str) -> tuple[bytes, str] | None:
-        if not cwd:
-            return None
-        try:
-            root = Path(cwd).resolve()
-            target = (root / reference).resolve()
-            if not target.is_relative_to(root) or not target.is_file():
-                return None
-            if is_sensitive_path(str(target)):
-                return None
-            if target.stat().st_size > max_bytes:
-                return None
-            data = target.read_bytes()
-        except (OSError, ValueError):
-            return None
-        return data, hashlib.sha256(data).hexdigest()
-
-    return _resolve
-
-
-def apply_publish(
-    node: Node, result: NodeResult, *, run_id: str = "", cwd: str | None = None
-) -> NodeResult:
-    """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
-    S47).
-
-    At the dispatch seam beside the artifact gate, so a new node kind inherits publishing
-    rather than
-    silently dropping a declared output.
-
-    A MALFORMED declaration FAILS the node. The alternative — treating it as "no publish" —
-    would let
-    a node whose author declared a deliverable report success while producing nothing, which is the
-    completion-lie class the artifact gate exists to catch. A declaration is a promise about output.
-
-    A REGISTRY failure does not fail the node. The work happened; losing the copy is worth reporting
-    on the result, not worth discarding a completed stage over. The distinction is deliberate: a bad
-    declaration is the author's bug (fail loudly), a registry outage is the environment's (degrade
-    honestly).
-    """
-    from personalclaw.workflows.publish import (
-        PublishAction,
-        flatten_lineage,
-        parse_publish,
-        rewrite_media_refs,
-        upsert_plan,
-    )
-
-    cfg = node.config or {}
-    if "publish" not in cfg:
-        return result
-    spec, error = parse_publish(cfg)
-    if error:
-        return NodeResult(
-            state=InstanceState.FAILED,
-            output=result.output,
-            failure=Failure(
-                failure_class=FailureClass.USER,
-                cause_plain=f"invalid publish declaration: {error}",
-                remediation=(
-                    "fix the node's `publish:` block; it declares an output nothing produced"
-                ),
-            ),
-        )
-    if spec is None or result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
-        return result
-
-    content = result.output if isinstance(result.output, str) else ""
-    if not content and isinstance(result.output, dict):
-        content = str(result.output.get("text") or result.output.get("output") or "")
-    if not content.strip():
-        # Nothing to publish is NOT an error: a node whose output is structured data the caller
-        # binds elsewhere has still done its job. Recording it keeps the absence visible.
-        return _with_publish(result, {"action": "noop", "reason": "node output was not text"})
-
-    try:
-        from personalclaw.artifacts.registry import get_provider as _artifact_provider
-
-        provider = _artifact_provider()
-        if provider is None or provider.readonly:
-            # Guarded FIRST rather than mid-flow: the earlier shape reached the writer branches with
-            # `provider` still possibly None, which typechecking caught. A publish path that could
-            # dereference a missing provider would turn "no artifact store configured" into a
-            # traceback on a completed stage.
-            return _with_publish(
-                result, {"action": "noop", "reason": "no writable artifact provider"}
-            )
-        # Media self-containment BEFORE the material-change comparison:
-        # the rewritten body is what gets stored, so gating on the pre-rewrite text would compare a
-        # body the artifact never holds. A first publish would then look unchanged on its second run
-        # purely because the reference names differ.
-        content, media_copies, media_unresolved = rewrite_media_refs(
-            content, _publish_media_resolver(cwd)
-        )
-        existing = provider.find_similar(spec.artifact)
-        previous = None
-        if existing is not None:
-            detail = provider.get(existing.slug)
-            previous = getattr(detail, "content", None) if detail else None
-        plan = upsert_plan(
-            spec, content, existing_content=previous, run_id=run_id, node_id=node.id or ""
-        )
-        # The lineage and change note ride on the artifact's own EVENT metadata. Without
-        # this the plan computed a full run/node lineage and the artifact landed carrying none of it
-        # — provenance computed and discarded, so "which run produced this" had no answer on disk.
-        event_meta = {
-            "run_id": run_id,
-            "node_id": node.id or "",
-            "change_note": plan.change_note,
-            # Flattened to scalar keys: `clean_event_metadata` bounds event metadata to scalars, so
-            # the nested dict was being stringified into an unparseable Python repr.
-            **flatten_lineage(plan.lineage),
-        }
-        if plan.action is PublishAction.CREATE:
-            created = provider.create(
-                name=spec.artifact,
-                content=content,
-                kind=spec.kind,
-                source="subagent",
-                description=spec.description,
-                actor="workflow",
-                event_metadata=event_meta,
-            )
-            payload = {**plan.to_dict(), "slug": getattr(created, "slug", "")}
-        elif plan.action is PublishAction.VERSION and existing is not None:
-            updated = provider.update(
-                existing.slug,
-                content=content,
-                snapshot=True,
-                event_type="iterated",
-                actor="workflow",
-                event_metadata=event_meta,
-            )
-            payload = {
-                **plan.to_dict(),
-                "slug": getattr(updated, "slug", existing.slug if existing else ""),
-            }
-        else:
-            payload = {**plan.to_dict(), "slug": existing.slug if existing else ""}
-        # Copies land AFTER the body, because the destination is keyed by the slug the write just
-        # settled. A copy failure does NOT fail the node for the same reason a registry failure does
-        # not: the work happened. It is REPORTED instead — a body whose image reference points at a
-        # copy that was never made must say so, or the artifact looks self-contained and isn't.
-        payload["media"] = _land_media_copies(
-            provider, str(payload.get("slug") or ""), media_copies, media_unresolved
-        )
-        _journal_publish(run_id, node.id or "", payload)
-        _open_publish_outcome(run_id, node.id or "", payload)
-        return _with_publish(result, payload)
-    except Exception as exc:
-        logger.debug("publish failed for node %s", node.id, exc_info=True)
-        return _with_publish(result, {"action": "error", "reason": f"{type(exc).__name__}: {exc}"})
-
-
-#: How long a published artifact gets to find a reader before the bet is graded. A week,
-#: because a deliverable nobody opened in a week is the signal the dormancy sweep exists to
-#: surface, and anything shorter would grade a Friday artifact on Monday morning.
-PUBLISH_CONSUMPTION_HORIZON_SECS = 7 * 24 * 3600.0
-
-
-def _open_publish_outcome(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
-    """Open the artifact's outcome question: we published a deliverable — did anyone consume it?
-
-    The `publish:` producer of the general outcome facility (PP-9). Publishing records what the run
-    DID; this records the bet about what it was FOR, so an artifact stream nobody reads becomes a
-    measurable fact instead of a busy outbox. `PP-10` supplies the ground truth this asks for: a
-    :data:`~personalclaw.ledger.outcomes.SOURCE_CONSUMPTION` question is graded off the artifact's
-    own lifecycle timeline and the dashboard pin list — writers that already exist — so the answer
-    is a real `measured` 1.0/0.0 on any box, with no vector store and no new counter. `PP-10`'s
-    dormancy sweep (`learning/consumer_liveness.py`) then reads the RESOLUTIONS and proposes pausing
-    or retiring a work unit whose last N cycles all went untouched.
-
-    Best-effort, like the publish journal beside it: the artifact already landed, and no ledger
-    write is worth failing a completed stage over.
-    """
-    slug = str(payload.get("slug") or "")
-    if not run_id or not slug:
-        return
-    from personalclaw.ledger import outcomes
-    from personalclaw.workflows.journal import Journal
-
-    try:
-        Journal(run_id).open_outcome(
-            producer=outcomes.PRODUCER_PUBLISH,
-            subject=f"published artifact `{slug}`",
-            metric=outcomes.consumption_metric(slug),
-            metric_source=outcomes.SOURCE_CONSUMPTION,
-            horizon_secs=PUBLISH_CONSUMPTION_HORIZON_SECS,
-            # One consumption is the whole bet: a deliverable is for somebody.
-            baseline=1.0,
-            node_id=node_id,
-            slug=slug,
-            artifact=str(payload.get("artifact") or ""),
-            action=str(payload.get("action") or ""),
-        )
-    except Exception:
-        logger.debug("publish outcome open failed for run %s", run_id, exc_info=True)
-
-
-def _journal_publish(run_id: str, node_id: str, payload: dict[str, Any]) -> None:
-    """Record one publish outcome in the run's own log — what the §2.5 outbox lists.
-
-    A run-scoped journal rather than a query over the artifact registry: the registry knows an
-    artifact exists, not which run published it, and reconstructing that from event metadata means
-    scanning every artifact's events to answer "what did THIS run produce". A NOOP is journalled
-    too,
-    because an outbox that hides a converged republish makes the artifact look abandoned by its
-    producer — the same reason `upsert_plan` attaches provenance to a no-op.
-    """
-    if not run_id or not payload.get("slug"):
-        return
-    from datetime import datetime, timezone
-
-    from personalclaw.workflows import store as _store
-
-    try:
-        _store.append_jsonl(
-            run_id,
-            "publishes.jsonl",
-            {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "node_id": node_id,
-                "slug": payload.get("slug", ""),
-                "artifact": payload.get("artifact", ""),
-                "kind": payload.get("kind", ""),
-                "action": payload.get("action", ""),
-                "change_note": payload.get("change_note", ""),
-                "media": payload.get("media", {}),
-            },
-        )
-    except Exception:
-        # A journal write must never fail a completed stage — the artifact already landed.
-        logger.debug("publish journal write failed for run %s", run_id, exc_info=True)
-
-
-def _land_media_copies(
-    provider: Any, slug: str, copies: list[Any], unresolved: list[tuple[str, str]]
-) -> dict[str, Any]:
-    """Copy each referenced local file into the artifact's version dir. Reports what landed.
-
-    `unresolved` rides in the SAME record as the successes so one read answers "is this artifact
-    self-contained?". Split across two fields on two surfaces, the failures are the ones nobody
-    looks at.
-    """
-    stored: list[dict[str, Any]] = []
-    failed: list[dict[str, str]] = [{"reference": r, "reason": why} for r, why in unresolved]
-    for copy in copies:
-        ok = False
-        if slug:
-            try:
-                ok = provider.store_version_file(slug, copy.filename, copy.data)
-            except Exception:
-                logger.debug("media copy failed for %s/%s", slug, copy.filename, exc_info=True)
-                ok = False
-        if ok:
-            stored.append(
-                {
-                    "reference": copy.reference,
-                    "filename": copy.filename,
-                    "sha256": copy.sha256,
-                    "size": copy.size,
-                }
-            )
-        else:
-            failed.append(
-                {
-                    "reference": copy.reference,
-                    "reason": "the artifact store did not accept the copy",
-                }
-            )
-    return {"stored": stored, "unresolved": failed, "self_contained": not failed}
-
-
-def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:
-    """Attach the publish outcome to the node's output without disturbing it.
-
-    A string output stays reachable at its original binding path — wrapping it in a dict would
-    break
-    every `{{nodes.x.output}}` downstream, so publishing a node's output would change what its
-    consumers read.
-    """
-    result.published = payload
-    if isinstance(result.output, dict):
-        # Mirrored into the output too, so a downstream `{{nodes.x.output.published.slug}}` binding
-        # can reach it — the typed field is for the ledger, the mirror is for the graph.
-        result.output = {**result.output, "published": payload}
-    return result
-
-
 # ── output contract ──────────────────────────────────────────────────────────
 
 
@@ -2465,7 +2189,7 @@ def apply_schema_notice(node: Node, result: NodeResult, observed: Any) -> NodeRe
     * **A SUCCESS state.** A FAILED step already carries a `Failure` saying why, and `infer`'s own
       unparseable-output branch is that case — a notice there would restate a legible failure. A
       spawned stage is still RUNNING at the dispatch seam, so it is named at its settle instead
-      (`RunController._settled_stage_output`), through this same helper.
+      (`stage_settlement._settled_stage_output`), through this same helper.
     * **Something observed.** `dispatch_stage`'s two DEGRADED paths (a restricted-origin skip, a
       claim already held) produce `output=None`; why they produced nothing is already in
       `degraded_reason`, and re-reading it as "the schema was ignored" would be false.
@@ -2496,8 +2220,8 @@ def parse_json_loose(text: Any) -> Any:
     cases with ZERO retries — measurably cheaper than a retry round-trip.
 
     PUBLIC because a stage's output is not produced at a dispatch seam: `dispatch_stage` returns at
-    the spawn, so `RunController._settled_stage_output` is where a subagent's text becomes an output
-    and it has to apply the same parse an `infer` node gets here (#3524).
+    the spawn, so `stage_settlement._settled_stage_output` is where a subagent's text becomes an
+    output and it has to apply the same parse an `infer` node gets here (#3524).
     """
     import json
 
@@ -2609,6 +2333,8 @@ async def dispatch(
     unattended: bool = False,
     #: The effect's idempotency key (`effects.effect_key`). Only the ACTION branch reads it.
     idempotency_key: str = "",
+    #: A person's answer to this step's last park, on the dispatch it started. ACTION only.
+    answer: Any = None,
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2640,6 +2366,7 @@ async def dispatch(
         judge_hints=judge_hints,
         unattended=unattended,
         idempotency_key=idempotency_key,
+        answer=answer,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # schema notice may compare (#3545). The judge contract writes every key a judge schema
@@ -2655,7 +2382,7 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after the gate
     # deliberately — publishing the output of a node that failed its own artifact gate would
     # store a deliverable the run does not stand behind.
-    result = apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    result = publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
     # The SAME seam for the declared-schema notice (#3545): after the gates, so it reads the final
     # state (a gate can still fail the node), but comparing `observed` rather than the output the
     # gates rebuilt. An observation only: it never changes `state`, `output` or `failure`.
@@ -2705,6 +2432,7 @@ async def _dispatch_inner(
     judge_hints: JudgeHints | None = None,
     unattended: bool = False,
     idempotency_key: str = "",
+    answer: Any = None,
 ) -> NodeResult:
     kind = node.kind
     dispatcher = _LEAF_DISPATCHERS.get(kind)
@@ -2741,6 +2469,7 @@ async def _dispatch_inner(
             instance_path=instance_path,
             cwd=cwd,
             idempotency_key=idempotency_key,
+            answer=answer,
         )
     if dispatcher is dispatch_wait:
         return await dispatcher(node, ctx, now=clock)

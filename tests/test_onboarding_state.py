@@ -636,6 +636,6 @@ def test_onboarding_is_not_wired_into_config(_isolate_home):
     cfg = AppConfig.load()
     assert not hasattr(cfg, "onboarding_step")
     assert not hasattr(cfg, "first_success")
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert not any(k.startswith("onboarding") or k == "first_success" for k in _EDITABLE_CONFIG)

@@ -329,7 +329,7 @@ class TestTheCircuitCeilingIsConfigurable:
         """Contract point 4. Without this the Settings control 400s while every backend test
         stays green — the exact gap ``test_config_section_modules``' docstring names."""
         from personalclaw.config.edit_spec import security_control
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG["guardrails.loop_breaker.circuit_threshold"]
         # The validation shape, exactly; `security` is the field's place on the security list

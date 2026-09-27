@@ -35,6 +35,10 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
         return False, "unexpected response from gateway"
     if resp.get("error"):
         return False, str(resp["error"])
+    if resp.get("refused"):
+        # The gateway's own sentence — a missing grant says which and how to give it, the kill
+        # switch says how to resume. "trigger failed" in its place told the caller nothing.
+        return False, str(resp["refused"])
     if resp.get("ok"):
         name = resp.get("name") or job_id
         return True, f"triggered '{name}'"

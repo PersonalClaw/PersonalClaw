@@ -59,7 +59,8 @@ _STATUS: dict[RunStatus, LoopStatus] = {
 }
 
 #: The escalation reasons that mean the loop spent its cycle budget, as opposed to giving up on the
-#: work (`controller._BUDGET_TRIPS` — the one token the engine surfaces a satisfied budget with).
+#: work (`loop_iteration._BUDGET_TRIPS` — the one token the engine surfaces a satisfied budget
+#: with).
 _BUDGET_REASONS = frozenset({"max_iterations"})
 
 #: What each lifecycle action may be invoked FROM on a RUN-BACKED loop, in the projected loop
@@ -97,7 +98,7 @@ def _redact(text: str | None) -> str | None:
 def _epoch(ts: str | None) -> float | None:
     """A run's ISO-8601 ``...Z`` stamp as the epoch seconds the loop wire shape carries.
 
-    ``calendar.timegm`` for the reason `controller._epoch` records (``mktime`` reads the struct as
+    ``calendar.timegm`` for the reason `models.stamp_epoch` records (``mktime`` reads the struct as
     LOCAL time). ``None`` for an absent or unreadable stamp: the loop shape types ``started_at`` and
     ``completed_at`` nullable, and a 0 there would render as 1970.
     """
@@ -157,7 +158,7 @@ def _loop_root(spec: dict[str, Any] | None) -> tuple[str, Node] | None:
 def _cycles_completed(run_id: str, loop_path: str) -> int:
     """How many iterations of the loop at ``loop_path`` have finished — the run's cycle count.
 
-    Read off the ledger's ``iteration`` rows, which `RunController._advance_loop` writes as each
+    Read off the ledger's ``iteration`` rows, which `loop_iteration.advance_loop` writes as each
     iteration ends. DISTINCT iteration indexes, because a tripped breaker writes a second row for
     the same iteration (``breaker:<reason>`` and then the continue decision), and counting rows
     would report one iteration as two.

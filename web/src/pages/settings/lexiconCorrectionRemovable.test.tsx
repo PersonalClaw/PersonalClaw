@@ -44,7 +44,7 @@ async function mountVoice(over: { deleteFails?: boolean; confirmed?: boolean } =
   vi.doMock('../../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
     api: {
-      useCaseSettings: () => Promise.resolve({ enabled: false }),
+      useCaseSettings: () => Promise.resolve({ value: { enabled: false }, revision: 'r0' }),
       modelsActive: () => Promise.resolve({}),
       personalclawConfig: () => Promise.resolve({}),
       voiceLoopConfig: () => Promise.resolve({}),

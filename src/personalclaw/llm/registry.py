@@ -86,6 +86,56 @@ class CredentialMissing(ProviderResolutionError):
     """
 
 
+#: The option an instance's Default Model is saved under: the field the Add-instance form writes
+#: (it creates the record with ``model: ""``), and the one every model app's settings schema
+#: declares for it.
+DEFAULT_MODEL_OPTION = "default_model"
+
+
+def own_model(model: object, options: object) -> str:
+    """The model a provider instance serves when nothing names one, or ``""`` when it names none.
+
+    THE one answer to that question, for an entry (:attr:`ProviderEntry.own_model`) and for a
+    ``config.json`` record read before it is one. The record's ``model``, else its Default Model
+    (:data:`DEFAULT_MODEL_OPTION`). Nothing else: not the first model its endpoint lists, and not
+    a model its app would pick. A provider choosing a model nobody chose is as wrong as sending an
+    empty one, so an instance that names none serves only calls that name a model themselves (a
+    binding in Settings → Models), and an unbound call refuses with :func:`no_model_chosen`.
+    """
+    named = str(model or "").strip()
+    if named:
+        return named
+    if isinstance(options, dict):
+        return str(options.get(DEFAULT_MODEL_OPTION) or "").strip()
+    return ""
+
+
+def no_model_chosen(entry_name: str) -> tuple[str, str]:
+    """``(why, fix)`` for a call that names no model, on an instance that names none either."""
+    return (
+        f"no model is chosen for “{entry_name}”",
+        "choose one of its models in Settings → Models",
+    )
+
+
+#: What a wire client says instead of sending a request that names no model.
+NO_MODEL_NAMED = "No model is chosen for this call. Choose one in Settings → Models."
+
+
+def require_model(model: object) -> str:
+    """``model``, the id a request is about to name, or a refusal when it names none.
+
+    Every wire client asks this right before it sends, so no request goes out with an empty model
+    (Ollama answers ``400 model is required``) and no client picks one of its own in its place.
+    Resolution builds every provider for a model (:func:`own_model`) or refuses first; this is the
+    backstop for a provider built outside it.
+    """
+    named = str(model or "")
+    if not named.strip():
+        raise ProviderResolutionError(NO_MODEL_NAMED)
+    return named
+
+
 @dataclass(frozen=True)
 class ProviderEntry:
     """A configured provider description, not yet instantiated.
@@ -113,6 +163,11 @@ class ProviderEntry:
     #: Entries synced from ``config.json`` are never floors: a row the user's config carries
     #: is a configured choice by definition.
     floor: bool = False
+
+    @property
+    def own_model(self) -> str:
+        """The model this entry serves when nothing names one (:func:`own_model`), or ``""``."""
+        return own_model(self.model, self.options)
 
 
 class ProviderRegistry:
@@ -350,17 +405,17 @@ class ProviderRegistry:
 
         Resolves the catalog factory registered for ``entry.type`` (via
         :meth:`register_catalog`) and invokes it with the entry's stored options +
-        pinned model — NO live session is opened (this is the discovery axis, not
-        inference). Fail-soft: a type with no catalog registered, or a factory that
-        raises, yields ``None`` so the caller degrades to "no discovery" rather than
-        erroring. Unlike :meth:`build` this takes the entry directly (discovery
+        its own model (:attr:`ProviderEntry.own_model`) — NO live session is opened (this is
+        the discovery axis, not inference). Fail-soft: a type with no catalog registered, or a
+        factory that raises, yields ``None`` so the caller degrades to "no discovery" rather
+        than erroring. Unlike :meth:`build` this takes the entry directly (discovery
         handlers already hold it) and never raises for an unknown type.
         """
         factory = self._catalog_factories.get(entry.type)
         if factory is None:
             return None
         try:
-            return factory(_catalog_options(entry), model=entry.model)
+            return factory(_catalog_options(entry), model=entry.own_model)
         except Exception:  # noqa: BLE001 — a catalog build never breaks a hot GET
             logger.debug("catalog factory for type %r failed", entry.type, exc_info=True)
             return None

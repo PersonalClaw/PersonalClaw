@@ -59,21 +59,15 @@ def _build_agent_model_map() -> dict[str, str]:
     return model_map
 
 
-def _active_provider_model() -> str:
-    """Return the model configured on the active provider, or '' if unavailable."""
-    providers = _load_providers_raw()
-    if providers:
-        return providers[0].get("model", "")
-    return ""
-
-
 def _model_matches_provider(model: str) -> bool:
     """Check if a persisted session model is compatible with the active provider.
 
     On restore, a session may carry a model pinned by a provider the user has since
     swapped out (e.g. a ``claude-*`` model when the active provider now speaks a
-    different family) — that model would fail at call time, so the caller replaces
-    it with the active provider's model instead.
+    different family) — that model would fail at call time, so the caller drops it and
+    the chat runs on its binding in Settings → Models, following every later rebind. It
+    used to pin the first provider's own ``model`` in its place: a choice nobody made, which
+    then outranked the binding for the life of the chat.
 
     The check is provider-agnostic: it asks whether the active provider TYPE serves
     the model's family, using the shared, data-driven family→type map in
@@ -488,7 +482,7 @@ def _rehydrate_session_from_history(
         if _model_matches_provider(normalized):
             session.model = normalized
         else:
-            session.model = _active_provider_model()
+            session.model = ""
     elif session.agent:
         try:
             pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None
@@ -654,7 +648,7 @@ def restore_recent_sessions(
             if _model_matches_provider(normalized):
                 session.model = normalized
             else:
-                session.model = _active_provider_model()
+                session.model = ""
         elif session.agent:
             try:
                 pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None

@@ -217,6 +217,11 @@ class CatalogEntry:
     # registry-index pointer, whose manifest is not read until install; ``consentKnown``
     # is again the one authority for which of those two silences it is.
     pythonDependencies: list[dict[str, Any]] = field(default_factory=list)  # noqa: N815
+    # What Install engine puts in the app's own Python environment, where its sidecar child runs
+    # it, and what it needs that PersonalClaw does not install (`{name, why, how}`). Both are
+    # read before install from the same projection, so the card and the dialog say one thing.
+    sidecarDependencies: list[str] = field(default_factory=list)  # noqa: N815
+    requires: list[dict[str, str]] = field(default_factory=list)
     # #492. Whether this app ships browser code — the one consent fact the permission
     # block cannot state. A UI bundle is imported into the DASHBOARD PAGE
     # (`appSdk.loadContributedModule`, no iframe), so it runs with the host DOM, the
