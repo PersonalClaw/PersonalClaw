@@ -39,11 +39,10 @@ Destinations
 ``denied_commands``  ``config.json`` → ``security.denied_commands``: a pattern the
                      shell denylist refuses (Settings › Security). Only ever a
                      command the other tool refused to run: an import tightens it
-``settings``         ``onboarding/staged/<source>-<key>.json`` — a REVIEW QUEUE.
-                     Foreign settings never reach live config, so for this
-                     category ``imported`` means "staged for a human", which is
-                     that category's destination.
 ===================  ==========================================================
+
+Another tool's own options have no destination: they are not PersonalClaw's, so a scan names
+them under "Not brought over" and no writer exists for them.
 """
 
 from __future__ import annotations
@@ -89,7 +88,6 @@ def config_dir() -> Path:
 logger = logging.getLogger(__name__)
 
 _STATE_REL = Path("onboarding") / "import_state.json"
-_STAGED_REL = Path("onboarding") / "staged"
 _IMPORTED_DIRNAME = "imported"
 #: How much of an imported doc goes into the memory record's text. The full document
 #: is written to disk; the record is the searchable one-liner that points at it.
@@ -339,9 +337,9 @@ def _write_mcp_server(item: ImportItem, dest: str) -> WriteResult:
         servers = {}
     servers[item.target] = dict(item.payload)
     data["mcpServers"] = servers
-    # The MCP document writer: every env value the scan kept reaches the file as a
-    # credential-store reference (`config.secret_refs`) — a value the secret-NAME floor let
-    # through (a `DATABASE_URL` with a password in it) is still a secret.
+    # The MCP document writer, Tools › Import's too: every `env` and `headers` value reaches the
+    # file as a credential-store reference (`config.secret_refs`), whatever its name — a
+    # `DATABASE_URL` with a password in it is as secret as an `API_KEY`.
     from personalclaw.config.secret_refs import write_mcp_document
 
     write_mcp_document(path, data)
@@ -728,58 +726,6 @@ def _write_denied_command(item: ImportItem, dest: str) -> WriteResult:
     return _result(item, WriteOutcome.IMPORTED, dest)
 
 
-# ── settings → the review queue (never live config) ──────────────────────────
-
-
-def staged_settings_path(source: str, key: str) -> Path:
-    return config_dir() / _STAGED_REL / f"{_slug(source)}-{_slug(key)}.json"
-
-
-def _staged_settings_text(item: ImportItem) -> str:
-    return (
-        json.dumps(
-            {"source": item.source, "key": item.key, "settings": item.payload},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
-
-
-def _plan_settings(item: ImportItem) -> Plan:
-    path = staged_settings_path(item.source, item.key)
-    dest = _rel_to_home(path)
-    if path.is_file():
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            current = ""
-        if current == _staged_settings_text(item):
-            return Plan(ItemState.EXISTING, dest, "already staged for review")
-        return Plan(
-            ItemState.CONFLICT,
-            dest,
-            "different settings from this source are already staged for review, "
-            "and they are kept",
-        )
-    return Plan(ItemState.NEW, dest)
-
-
-def _write_settings(item: ImportItem, dest: str) -> WriteResult:
-    """Stage foreign settings for human review. Never merge them into config.
-
-    Another tool's settings keys are not ours, so an automatic merge could only
-    guess. The destination for this category IS the review queue: ``imported``
-    means "staged", and a differing staged file is a ``conflict`` rather than an
-    overwrite.
-    """
-    path = staged_settings_path(item.source, item.key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, _staged_settings_text(item))
-    _record(item, dest)
-    return _result(item, WriteOutcome.IMPORTED, dest, "staged for review — not applied to config")
-
-
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
 #: Both maps are exhaustive over ImportCategory on purpose (see model.ImportCategory).
@@ -794,7 +740,6 @@ _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
     ImportCategory.PROMPTS: _plan_prompt,
     ImportCategory.CONVERSATIONS: _plan_conversation,
     ImportCategory.DENIED_COMMANDS: _plan_denied_command,
-    ImportCategory.SETTINGS: _plan_settings,
 }
 _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.INSTRUCTIONS: _write_memory,
@@ -805,7 +750,6 @@ _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
     ImportCategory.PROMPTS: _write_prompt,
     ImportCategory.CONVERSATIONS: _write_conversation,
     ImportCategory.DENIED_COMMANDS: _write_denied_command,
-    ImportCategory.SETTINGS: _write_settings,
 }
 
 

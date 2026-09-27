@@ -754,6 +754,9 @@ _CREDENTIAL_PATTERNS = re.compile(
     r"|sk-proj-[A-Za-z0-9_-]{20,}"  # OpenAI project key
     r"|sk-[A-Za-z0-9]{32,}"  # OpenAI classic / compatible
     r"|gh[pousr]_[A-Za-z0-9]{20,}"  # GitHub token
+    # GitHub fine-grained PAT: `github_pat_`, 22 characters, `_`, 59 more. The classic prefix
+    # rule above cannot see it, so one pasted into a CLAUDE.md or an env block went through.
+    r"|github_pat_[A-Za-z0-9_]{22,}"
     r"|hf_[A-Za-z0-9]{20,}"  # HuggingFace token (static, broad-privilege — LMMV-4)
     r"|AIza[0-9A-Za-z_-]{35}"  # Google API key
     # Measured while wiring the ConfirmationRequest preview (S57): the patterns above missed
@@ -942,6 +945,43 @@ def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     return "".join(out), warnings
 
 
+# 🔴 A WEBHOOK URL IS ITS OWN CREDENTIAL. An incoming webhook (Slack, Discord, Teams, Zapier, a
+# `hooks.` host) needs no header and no login: whoever has the URL can post as you, because the
+# secret is the PATH. No rule above sees one — there is no userinfo, no query, no key name and no
+# token shape — so a Slack webhook pasted into a CLAUDE.md went into memory as it was.
+#
+# Like the userinfo pass, it keeps the scheme and the host and replaces only the secret, so a
+# redacted log still says which service a request went to. The path class excludes whitespace,
+# quotes and brackets, so the redaction tag (which holds a space and brackets) can never match
+# again: idempotent by construction. Each alternative is one literal-led host with no nested
+# ambiguity, so the scan stays linear in the length of the text.
+_WEBHOOK_URL_RE = re.compile(
+    r"\b(?P<scheme>https?)://"
+    r"(?P<host>"
+    r"hooks\.[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"  # hooks.slack.com, hooks.zapier.com, …
+    r"|(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks"
+    r"|[A-Za-z0-9-]+\.webhook\.office\.com/webhookb2"
+    r"|outlook\.office(?:365)?\.com/webhook"
+    r")"
+    r"/[^\s\"'<>()\[\]{}]{8,}",
+    re.IGNORECASE,
+)
+
+_WEBHOOK_TAG = "[REDACTED: webhook]"
+
+
+def redact_webhook_urls(text: str) -> tuple[str, list[str]]:
+    """Replace the secret part of every incoming-webhook URL, keeping scheme and host."""
+    warnings: list[str] = []
+
+    def _tag(m: "re.Match[str]") -> str:
+        warnings.append(f"Redacted a webhook URL to {m.group('host').split('/')[0]}")
+        return f"{m.group('scheme')}://{m.group('host')}/{_WEBHOOK_TAG}"
+
+    result = _WEBHOOK_URL_RE.sub(_tag, text)
+    return result, warnings
+
+
 def redact_credentials(text: str) -> tuple[str, list[str]]:
     """Redact raw credential patterns from text, including base64-encoded.
 
@@ -951,9 +991,11 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
 
     # 0. URL userinfo, positionally — see `_URL_USERINFO_CORE_RE`. FIRST, so a credential in a URL
     #    redacts the same way whatever its shape, instead of only when the shape-based patterns
-    #    below happen to recognise it.
+    #    below happen to recognise it. Then a webhook URL, whose path is the credential.
     result, url_warnings = redact_url_userinfo(text)
     warnings.extend(url_warnings)
+    result, webhook_warnings = redact_webhook_urls(result)
+    warnings.extend(webhook_warnings)
 
     # 1. Redact plaintext credential patterns — ONE pass, splicing the spans the scan found.
     #

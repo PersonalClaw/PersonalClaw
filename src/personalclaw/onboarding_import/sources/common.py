@@ -3,12 +3,14 @@
 - **Paths another machine recorded.** A tool's home copied from an old laptop names that laptop's
   home (``/Users/old-name/src/app``). :func:`on_this_machine` finds the same path under THIS home,
   and :func:`display_path` says it the way a person reads it.
-- **One file, one item** (:func:`text_item`), read through floors 1 and 3.
+- **One file, one item** (:func:`text_item`), read through floors 1 and 2.
 - **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from.
 - **Prompt history** (:func:`prompt_history`): counted and named, never imported.
 - **A conversation's title and note** (:func:`one_line`, :func:`conversation_note`).
-- **An MCP server** (:class:`McpServer`): what a tool has configured, values included, for the
-  onboarding scan (through floor 2) and for the Tools page's Import (whole, server-side).
+- **An MCP server** (:class:`McpServer`, :func:`mcp_item`): what a tool has configured, values
+  included, for the onboarding scan and the Tools page's Import — one definition, one writer.
+- **A command the tool refuses** (:func:`denied_command_item`), and the rest of its settings
+  (:func:`settings_not_imported`), named and left where they are.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import read_text_safely, refuses
+from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
@@ -104,7 +106,7 @@ def text_item(
     preselect: bool = True,
     seen_files: set[Path] | None = None,
 ) -> bool:
-    """One file read through floors 1 and 3 into an item. False when nothing was added: the file
+    """One file read through floors 1 and 2 into an item. False when nothing was added: the file
     is empty, refused, or (``seen_files``) already an item."""
     if seen_files is not None:
         # One file, one item: a tool can reach one file by two names.
@@ -194,6 +196,117 @@ def prompt_history(path: Path) -> NotImported | None:
     )
 
 
+# ── commands a tool refuses, and the rest of its settings ─────────────────────
+
+#: The characters that mean something in a regular expression outside a character class.
+_REGEX_SPECIAL_RE = re.compile(r"([.^$*+?{}\[\]\\|()])")
+
+
+def denied_pattern(pattern: tuple[tuple[str, ...], ...]) -> str:
+    """A command prefix as a shell-denylist pattern: its words in order, each position one of the
+    words the tool accepts there, apart by whitespace, bounded so ``rm -rf`` does not also refuse
+    ``rm -rfv``.
+
+    PersonalClaw matches the pattern anywhere in a command, whatever the case, so it refuses at
+    least every command the other tool refused — ``bash -lc "rm -rf build"`` too.
+    """
+    positions = []
+    for alternatives in pattern:
+        words = [_REGEX_SPECIAL_RE.sub(r"\\\1", word) for word in alternatives]
+        positions.append(words[0] if len(words) == 1 else f"(?:{'|'.join(words)})")
+    start = r"\b" if all(re.match(r"\w", w[0]) for w in pattern[0]) else r"(?<!\S)"
+    end = r"\b" if all(re.match(r"\w", w[-1]) for w in pattern[-1]) else r"(?!\S)"
+    return start + r"\s+".join(positions) + end
+
+
+def denied_command_item(
+    source: str,
+    result: ScanResult,
+    *,
+    key: str,
+    pattern: tuple[tuple[str, ...], ...],
+    note: str = "",
+) -> None:
+    """A command the other tool refuses to run, as one it refuses here: a shell-denylist item.
+
+    A command that itself holds a credential is left out and counted: its pattern would carry
+    the credential into ``config.json``.
+    """
+    title, redacted = safe_text(" ".join("|".join(alternatives) for alternatives in pattern))
+    if redacted:
+        result.secrets_skipped += 1
+        return
+    clean_note, redactions = safe_text(note)
+    result.redactions += redactions
+    result.items.append(
+        ImportItem(
+            source=source,
+            category=ImportCategory.DENIED_COMMANDS,
+            key=key,
+            title=title,
+            payload={"pattern": denied_pattern(pattern)},
+            note=clean_note,
+            redactions=redactions,
+        )
+    )
+
+
+#: Rules that ask before a command runs, and rules that let one run unasked: what PersonalClaw
+#: does with each, in the words both tools' scans use.
+RULES_THAT_ASK = (
+    "Command rules that ask first",
+    "PersonalClaw has no rule that asks before one particular command.",
+)
+RULES_THAT_ALLOW = (
+    "Command rules that allow without asking",
+    "Letting a command run without asking stays your call in PersonalClaw, so an import never "
+    "makes it.",
+)
+
+
+def and_list(words: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def not_imported_rows(result: ScanResult, rows: list[tuple[int, str, str]]) -> None:
+    """``(count, what, why)`` rows, each named under "Not brought over" when it counts anything."""
+    for count, what, why in rows:
+        if count:
+            result.not_imported.append(NotImported(what=what, count=count, why=why))
+
+
+#: How many of a tool's option names a "Not brought over" row lists before it says how many more.
+_NAMES_SHOWN = 6
+
+
+def settings_not_imported(result: ScanResult, tool: str, names: list[str]) -> None:
+    """A tool's own options, named and left where they are.
+
+    They are the tool's options, not PersonalClaw's: an import that guessed at a match would
+    change live settings on a guess, and a copy set aside for review was a file nothing read. So
+    the step names them, and no value in them becomes a setting here. (An ``env`` value reaches
+    PersonalClaw only inside an MCP server that names it, and then only in the credential store.)
+    """
+    if not names:
+        return
+    shown = names[:_NAMES_SHOWN]
+    more = len(names) - len(shown)
+    listed = and_list([*shown, f"{more} more"] if more else shown)
+    one = len(names) == 1
+    result.not_imported.append(
+        NotImported(
+            what=f"{tool} settings",
+            count=len(names),
+            why=(
+                f"{listed} {'is' if one else 'are'} {tool}'s own "
+                f"{'option' if one else 'options'}. PersonalClaw keeps its own in Settings, so "
+                f"{'it stays' if one else 'they stay'} in {tool}."
+            ),
+        )
+    )
+
+
 # ── conversations ─────────────────────────────────────────────────────────────
 
 
@@ -247,3 +360,25 @@ class McpServer:
         """A stable id for this server in this scope — what a pick names instead of a path."""
         raw = "\0".join((self.source, self.scope, self.project, self.name)).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def mcp_item(source: str, server: McpServer, *, key: str) -> ImportItem:
+    """One MCP server as an item, its definition WHOLE.
+
+    The one secret policy, the same as Tools › Import's: the MCP writer keeps every ``env`` and
+    ``headers`` value in the credential store (``secret_refs.write_mcp_document``), so a
+    credential is stored as a reference rather than dropped for the user to type in again.
+    The item's payload never leaves the server — it is not in :meth:`ImportItem.to_dict` — and
+    the note says only what a person should know first.
+    """
+    return ImportItem(
+        source=source,
+        category=ImportCategory.MCP_SERVERS,
+        key=key,
+        title=server.name,
+        name=server.name,
+        payload=dict(server.spec),
+        origin=server.origin,
+        note=server.note,
+        preselect=server.approved,
+    )

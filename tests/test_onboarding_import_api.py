@@ -130,11 +130,11 @@ def make_client(home: Path):
     return _make
 
 
-def _bytes_under(root: Path) -> bytes:
-    """Every byte of every file under ``root``, concatenated. For secret sweeps."""
+def _bytes_under(root: Path, *, but: Path | None = None) -> bytes:
+    """Every byte of every file under ``root`` (bar ``but``), concatenated. For secret sweeps."""
     blob = b""
     for path in sorted(root.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path != but:
             blob += path.read_bytes()
     return blob
 
@@ -196,13 +196,14 @@ async def test_the_scan_names_every_item_by_a_fingerprint_the_server_derives(mak
 
 @pytest.mark.asyncio
 async def test_each_item_says_what_was_withheld_from_it(make_client):
-    """The MCP server loses its API key on the way over; the user sees it on THAT row, so they
-    know which server needs its key entered again."""
+    """What was left out is said on the row it was left out of. The MCP server loses nothing —
+    its API key goes to the credential store, so no key needs entering again — and the key in
+    CLAUDE.md's prose is redacted on CLAUDE.md's row."""
     async with make_client() as client:
         body = await _scan(client)
 
     by_key = {i["key"]: i for i in _items(body)}
-    assert by_key["weather"]["secrets_skipped"] == 1
+    assert by_key["weather"]["secrets_skipped"] == 0
     assert by_key["CLAUDE.md"]["redactions"] >= 1
 
 
@@ -350,9 +351,13 @@ async def test_planted_secret_never_reaches_the_home_through_the_route(make_clie
         status, report = await _import(
             client, fingerprints=[i["fingerprint"] for i in _items(scan)]
         )
+    from personalclaw.config.loader import env_path
+
     assert status == 200
     assert report["counts"]["imported"] >= 1
-    assert SECRET.encode() not in _bytes_under(home)
+    # The server's key is in the credential store and in no other byte under the home.
+    assert SECRET.encode() not in _bytes_under(home, but=env_path())
+    assert SECRET.encode() in env_path().read_bytes()
     # The user is TOLD something was withheld — a count, never the value.
     assert report["secrets_skipped"] + report["redactions"] >= 1
     assert all(SECRET not in note for note in report["notes"])

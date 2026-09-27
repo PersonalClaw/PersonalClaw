@@ -19,8 +19,8 @@ What it maps — the layout Claude Code 2.x writes, and nothing it does not:
 ``agents/**/*.md``                              ``agents``
 ``commands/**/*.md``                            ``prompts``
 ``projects/<cwd>/<session>.jsonl``              ``conversations``
-``settings.json``                               ``settings`` (review-gated, never live config)
-``history.jsonl``                               not imported — the scan counts it and says why
+``settings.json`` → ``permissions.deny``        ``denied_commands`` (each ``Bash(…)`` rule)
+``settings.json`` → the rest, ``history.jsonl``  not imported — the scan counts each and says why
 ==============================================  =============================================
 
 **Where the projects are.** Claude Code records every directory it has been used in as a key of
@@ -41,24 +41,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import (
-    read_json_safely,
-    read_text_safely,
-    refuses,
-    safe_text,
-    strip_secrets,
-)
+from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
 from personalclaw.onboarding_import.sources.common import (
+    RULES_THAT_ALLOW,
+    RULES_THAT_ASK,
     TITLE_CHARS,
     McpServer,
     conversation_note,
+    denied_command_item,
     display_path,
     markdown_files,
+    mcp_item,
+    not_imported_rows,
     on_this_machine,
     one_line,
     prompt_history,
     scan_skills,
+    settings_not_imported,
     slug_name,
     text_item,
 )
@@ -280,8 +280,9 @@ def _project_approvals(project: Project, user_settings: dict[str, Any]) -> tuple
 def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) -> list[McpServer]:
     """Every MCP server Claude Code has configured, in all three of its scopes.
 
-    THE reader of Claude Code's MCP configuration: the onboarding scan (through the floors) and
-    the Tools page's Import both call it, so the two cannot disagree about what Claude Code has.
+    THE reader of Claude Code's MCP configuration: the onboarding scan and the Tools page's Import
+    both call it and both write what it returns through the one MCP writer, so the two cannot
+    disagree about what Claude Code has or where its values go.
     ``config_path`` is the global config (:func:`global_config_path` of ``root`` when omitted) and
     ``root`` the config directory whose ``settings.json`` goes with it (:func:`config_dir_of` the
     file when omitted), so a caller naming one file never reads another installation's settings.
@@ -542,24 +543,15 @@ def _scan_memories(base: Path, known: list[Project], result: ScanResult) -> None
 
 
 def _scan_mcp(base: Path, explicit: Path | None, result: ScanResult) -> None:
-    """Every server in every scope (:func:`mcp_servers`), each through floor 2 on its own, so
-    each says how many of its own credentials stay behind — the one a user will re-enter."""
+    """Every server in every scope (:func:`mcp_servers`), definition whole: the MCP writer keeps
+    each ``env`` and ``headers`` value in the credential store, as Tools › Import does."""
     for server in mcp_servers(base, config_path=global_config_path(explicit)):
-        clean, withheld = strip_secrets(server.spec)
-        result.secrets_skipped += withheld
         user = server.scope == SCOPE_USER
         result.items.append(
-            ImportItem(
-                source=NAME,
-                category=ImportCategory.MCP_SERVERS,
+            mcp_item(
+                NAME,
+                server,
                 key=server.name if user else f"{server.scope}:{server.project}:{server.name}",
-                title=server.name,
-                name=server.name,
-                payload=clean,
-                origin=server.origin,
-                note=server.note,
-                preselect=server.approved,
-                secrets_skipped=withheld,
             )
         )
 
@@ -721,7 +713,7 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     was for. Tool OUTPUT is not carried — it is where a transcript is largest and where a pasted
     or printed credential sits — and neither are a subagent's own turns, Claude Code's notices,
     or the summary it writes after compacting (the conversation it summarises is imported
-    whole). Every text passes floor 3. ``None`` for a file with no prompt in it.
+    whole). Every text passes floor 2. ``None`` for a file with no prompt in it.
     """
     if refuses(path):
         return None
@@ -826,21 +818,82 @@ def _scan_conversations(base: Path, known: list[Project], result: ScanResult) ->
             )
 
 
+#: A Bash permission rule, ``Bash(<command>)`` — or ``Bash`` alone, which is every command.
+_BASH_RULE_RE = re.compile(r"^Bash(?:\((?P<command>.*)\))?$", re.DOTALL)
+#: How a rule's command says "and anything after it": ``Bash(npm run test:*)``, ``Bash(ls *)``.
+_ANY_AFTER = (":*", " *")
+#: The permission lists a rule can be in, and ``settings.json``'s keys that are not options.
+_RULE_LISTS = ("deny", "ask", "allow")
+_NOT_OPTIONS = frozenset({"$schema", "permissions"})
+
+
+def _refused_command_words(command: str) -> tuple[str, ...] | None:
+    """The words a ``Bash(<command>)`` deny rule refuses every command starting with, or
+    ``None`` when a wildcard anywhere but the end leaves no such words (``Bash(git * main)``,
+    ``Bash``)."""
+    for suffix in _ANY_AFTER:
+        if command.endswith(suffix):
+            command = command[: -len(suffix)]
+            break
+    words = tuple(command.split())
+    if not words or any("*" in word for word in words):
+        return None
+    return words
+
+
 def _scan_settings(base: Path, result: ScanResult) -> None:
+    """``settings.json``. A command Claude Code refuses (``permissions.deny``, ``Bash(…)``)
+    becomes one PersonalClaw refuses: a shell-denylist item. Its other rules and its own options
+    are counted and named, and no value in them becomes a setting here."""
     path = base / _SETTINGS_FILE
     if not path.is_file():
         return
-    data, skipped = read_json_safely(path)
-    result.secrets_skipped += skipped
-    if not isinstance(data, dict) or not data:
+    if refuses(path):
+        result.secrets_skipped += 1
         return
-    result.items.append(
-        ImportItem(
-            source=NAME,
-            category=ImportCategory.SETTINGS,
-            key=_SETTINGS_FILE,
-            title=f"{DISPLAY_NAME} settings",
-            payload=data,
-            secrets_skipped=skipped,
-        )
+    settings = _read_json_document(path)
+    permissions = settings.get("permissions")
+    permissions = permissions if isinstance(permissions, dict) else {}
+    counted = {"ask": 0, "allow": 0, "wildcard": 0, "other": 0}
+    for decision in _RULE_LISTS:
+        rules = permissions.get(decision)
+        for rule in rules if isinstance(rules, list) else []:
+            match = _BASH_RULE_RE.match(rule.strip()) if isinstance(rule, str) else None
+            if match is None:
+                counted["other"] += 1
+                continue
+            if decision != "deny":
+                counted[decision] += 1
+                continue
+            words = _refused_command_words(match["command"] or "")
+            if words is None:
+                counted["wildcard"] += 1
+                continue
+            denied_command_item(
+                NAME,
+                result,
+                key=f"{_SETTINGS_FILE}:permissions.deny:{rule.strip()}",
+                pattern=tuple((word,) for word in words),
+            )
+    not_imported_rows(
+        result,
+        [
+            (counted["ask"], *RULES_THAT_ASK),
+            (counted["allow"], *RULES_THAT_ALLOW),
+            (
+                counted["wildcard"],
+                "Refused commands with wildcards",
+                "A refused command comes over as the words it starts with. These rules use a "
+                "wildcard instead, so they stay in Claude Code.",
+            ),
+            (
+                counted["other"],
+                "Other permission rules",
+                "They are about files, websites and tools. This import brings over only the "
+                "commands Claude Code refuses.",
+            ),
+        ],
     )
+    names = [str(key) for key in settings if key not in _NOT_OPTIONS]
+    names += [f"permissions.{key}" for key in permissions if key not in _RULE_LISTS]
+    settings_not_imported(result, DISPLAY_NAME, names)
