@@ -242,6 +242,9 @@ class RunPromptActionProvider(ActionProvider):
                     capability_class=capability_class,
                     silent=False,
                     dry_run=dry_run,
+                    # The trigger whose fire this is (`ActionContext.trigger_id`), so a call the
+                    # agent is denied names it and can be run again from the Inbox.
+                    trigger_id=ctx.trigger_id,
                 )
             except Exception:
                 logger.warning("run-prompt: spawn failed", exc_info=True)

@@ -168,14 +168,44 @@ for the chat runner or the subagent manager to see. Either way the call is **den
 answer**, and `dashboard/auto_denials.py` leaves one `system/auto_denied` Inbox item for it.
 The item says what was denied, who asked, when and why, and that the call did not run. Its refs
 are `auto_denied` (`expired` | `unattended`), `tool` and `session`, plus `chat` when that is a
-chat a person answers in. The Inbox then offers **Ask it to try again** (it sends a stated
-message into that chat, so the approval is asked again while someone is there) and opens the
-chat or the workflow step where it happened. There is one item per approval, and one per
-session and tool for the unattended case, so a run that retries a declined call leaves one
-item. The approval's own row still closes. Before this, the row closing was the whole record,
-so by morning an approval asked at night was on no surface. There used to be a second,
-five-minute window for "unattended" sources, keyed by a substring of `source`. No caller ever
-passed one, so it is gone.
+chat a person answers in, `trigger` when a trigger's action started the work, and, for an
+expired one, `call` (a digest of the tool and its redacted input). The trigger travels with the
+work: the store-trigger dispatch sets `ActionContext.trigger_id`, the `invoke-agent` and
+`run-prompt` actions spawn their agent with it (`SubagentInfo.trigger_id`), and the gateway lists
+that agent's approvals under it (`request_approval(trigger=…)`), so the ask and its note both
+name the trigger. The chat's steps summary says the same thing as the note: an expired call's
+step reads "(denied, no answer)", a stopped turn's "(cancelled)", and only a Deny reads
+"(rejected)", in the transcript row and in the audit row's outcome.
+
+The Inbox offers the one next step the call really has, by where it was asked
+(`web/src/pages/inbox/DeniedCallRerun.tsx`), and only for an `expired` call, since that one
+asked and can be asked again:
+
+- a chat (`refs.chat`): **Ask it to try again** sends a stated message into that chat, so the
+  approval is asked again while someone is there;
+- a trigger's run (`refs.trigger`): **Run it again** is the trigger's Run now. A trigger that is
+  not allowed to run its action (`needs_grant`) offers **Allow and run it again**, which goes
+  through the same Allow consent as its page (#3702). One that is switched off and not allowed,
+  or that waits for review, is left to its page, because allowing it would switch it on to run
+  by itself again;
+- a workflow step (`refs.session` is `workflow:<run>:<node>`): **Run this step again** is the run
+  page's Re-run (`web/src/pages/workflows/reentry.ts`), while the run is live. A finished run
+  never runs again, so its note says so.
+
+An `unattended` note offers none of these. The run that declined it had nobody to ask and
+would decline it the same way again, so the note says that instead. An expired note is handled
+(`auto_denials.settle_retried`, from `withdraw_approval`) once the same call (`refs.call`) is
+asked again where it was asked before, its session or its trigger's run, and someone answers it
+either way. The answer goes on `refs.retry` (`approved` | `rejected`), and the note moves through
+`inbox.set_item_status`. Sending the retry does not close it, because nothing has been decided
+yet.
+
+There is one item per approval, and one per session and tool for the unattended case (per
+trigger and tool when a trigger ran it, since each fire runs in a new session), so a run that
+retries a declined call leaves one item. The approval's own row still closes. Before this, the
+row closing was the whole record, so by morning an approval asked at night was on no surface.
+There used to be a second, five-minute window for "unattended" sources, keyed by a substring of
+`source`. No caller ever passed one, so it is gone.
 
 **An ended owner ends its approvals.** Cancelling a workflow run stops its dispatched stages
 (each subagent cancelled with the run's own reason), and a run that ends for any reason cancels

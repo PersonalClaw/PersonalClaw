@@ -108,6 +108,19 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if agent:
         # Only a chat-held approval names its agent; that is how the two origins are told apart.
         return f"{agent} in “{title}”" if title else f"{agent} in a chat"
+    if entry.get("trigger"):
+        # Work a trigger started (its action's agent): the trigger is what the owner knows it by,
+        # and what the Inbox offers to run again.
+        from personalclaw.dashboard.auto_denials import trigger_asker
+
+        return trigger_asker(str(entry.get("trigger_name") or ""))
+    from personalclaw.workflows.ownership import parse_owned
+
+    step = parse_owned(str(entry.get("session") or ""))
+    if step is not None:
+        # A workflow step's agent asks under its run's key: the step is what the run page, and the
+        # Inbox's "Run this step again", call it.
+        return f"The “{step[1]}” step of a workflow run"
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     return "A background task"
@@ -183,6 +196,7 @@ class DashboardApprovalState:
         tool_input: object = "",
         tool_purpose: str = "",
         session: str = "",
+        trigger: str = "",
         asked_on_channel: bool = False,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
@@ -190,6 +204,10 @@ class DashboardApprovalState:
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
         gateway's race for a background origin), so the ``channel_dm`` target must not ask a
         second time.
+
+        ``trigger`` is the store id of the trigger whose run asked (its action's agent), or ``""``.
+        It names the asker on every surface, and it is what lets the note an unanswered one leaves
+        offer to run that trigger again (``auto_denials.note_expired``).
 
         Waits :meth:`approval_window_secs`. Timeout always fails closed to deny, and leaves a
         note in the Inbox saying so (:meth:`end_approval`).
@@ -232,6 +250,7 @@ class DashboardApprovalState:
             tool_input=display_input,
             tool_purpose=tool_purpose,
             session=session,
+            trigger=trigger,
             # #2821: the same command-screening verdict the chat card gets, from the same
             # owner, so the two surfaces that ask a human for permission cannot describe
             # one call differently.
@@ -338,6 +357,7 @@ class DashboardApprovalState:
         agent: str = "",
         risk: str = "",
         grant_agent: str = "",
+        trigger: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -347,8 +367,11 @@ class DashboardApprovalState:
 
         Every LLM-sourced string is redacted here, once, for both origins. ``agent``/``risk``/
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
-        is "not known", never "none".
+        is "not known", never "none". ``trigger`` is known only to a trigger's run, and its name is
+        read once, here, so the ask and its note name it the same way.
         """
+        from personalclaw.triggers.store import trigger_name
+
         live = self._sessions.get(session) if session else None
         # A session's title defaults to its key until the chat is named; a key is not a title.
         title = live.title if live is not None and live.title and live.title != live.key else ""
@@ -367,6 +390,8 @@ class DashboardApprovalState:
             "risk": risk,
             "is_read_only": is_read_only,
             "grant_agent": grant_agent,
+            "trigger": trigger,
+            "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",
             "ts": time.time(),
         }
 
@@ -451,6 +476,10 @@ class DashboardApprovalState:
         one of :data:`APPROVAL_OUTCOMES` and required, so no path can end an approval without
         stating which of the four things happened; ``approved`` stays on the frame for the
         readers that only need to know whether the call runs.
+
+        An ANSWERED one also settles any "Denied, no answer" note for the same call asked in the
+        same place (``auto_denials.settle_retried``): that call is decided now, so the note has
+        nothing left to ask. Here, because this is where every door's answer arrives.
         """
         if outcome not in APPROVAL_OUTCOMES:
             raise ValueError(f"unknown approval outcome {outcome!r}")
@@ -468,6 +497,10 @@ class DashboardApprovalState:
             resolve_attention_items(self, {"approval": approval_id})
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
+        if entry and outcome not in UNANSWERED_OUTCOMES:
+            from personalclaw.dashboard import auto_denials
+
+            auto_denials.settle_retried(self, entry, answer=outcome)
         try:
             self.broadcast_ws(
                 "approval_resolved",

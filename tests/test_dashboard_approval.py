@@ -513,14 +513,14 @@ class TestBatchRejection:
         # First tool rejected interactively, second auto-rejected
         client.reject_tool.assert_any_call("req-1")
         client.reject_tool.assert_any_call("req-2")
-        assert session._batch_rejected is False  # reset in finally
+        assert session._batch_rejected == ""  # reset in finally
 
     @pytest.mark.asyncio
     async def test_batch_rejected_reset_on_exception(self, tmp_path):
         """_batch_rejected is reset even if event loop raises."""
         state, client = _make_state(tmp_path, context_builder=_context_builder())
         session = _make_session()
-        session._batch_rejected = True
+        session._batch_rejected = "rejected"
 
         async def _exploding_stream():
             yield _permission_event()
@@ -534,7 +534,7 @@ class TestBatchRejection:
             except RuntimeError:
                 pass
 
-        assert session._batch_rejected is False
+        assert session._batch_rejected == ""
 
 
 class TestToolCompletionTracking:

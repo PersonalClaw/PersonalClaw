@@ -402,6 +402,11 @@ class SubagentInfo:
     # child failure.
     cancelled: bool = False
     _outcome_noted: bool = False  # guards double-counting in the breaker/meter
+    # The store id of the trigger whose fire started this agent (its `invoke-agent` or
+    # `run-prompt` action), or "". An approval it asks for is listed under the trigger, and a call
+    # it is denied leaves a note that can run the trigger again (`dashboard/auto_denials.py`).
+    # Last, so no field an app passes by position moves (`sdk.channel` exports this class).
+    trigger_id: str = ""
 
 
 # Delivery callback (C1.1): a BATCH of completed subagents that all share one
@@ -1067,6 +1072,8 @@ class SubagentManager:
         parent_run: str = "",
         sandbox: str = "none",
         extra_env: dict[str, str] | None = None,
+        *,
+        trigger_id: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1108,6 +1115,8 @@ class SubagentManager:
                 or any caller-chosen fan-out key). Scopes the run-level concurrency
                 lane, the consecutive-failure breaker and the run budget so one
                 wide fan-out cannot starve or overspend against every other run.
+            trigger_id (str): The trigger whose fire this is (``ActionContext.trigger_id``),
+                kept on the info so its approvals and denials can name and re-run it.
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1298,6 +1307,7 @@ class SubagentManager:
             parent_run=parent_run,
             sandbox=sandbox or "none",
             extra_env=dict(extra_env or {}),
+            trigger_id=trigger_id or "",
         )
         info._raw_task = task  # unredacted prompt for ACP agent execution
 

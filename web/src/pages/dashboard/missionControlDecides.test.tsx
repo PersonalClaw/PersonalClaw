@@ -39,7 +39,8 @@ vi.mock('../../lib/api', async (orig) => ({
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },
 }))
-vi.mock('../../lib/useChatSocket', () => ({
+vi.mock('../../lib/useChatSocket', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   useChatSocket: (onMessage: (m: WsMessage) => void) => { socket.onMessage = onMessage },
 }))
 

@@ -4847,6 +4847,10 @@ export interface PendingApproval {
   // `readOnlyCommandOf` rather than testing truthiness.
   is_read_only?: boolean | null
   grant_agent: string
+  /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
+  trigger?: string
+  /** That trigger's name, "" when it has none or is gone. */
+  trigger_name?: string
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has (MC-5 §C3).

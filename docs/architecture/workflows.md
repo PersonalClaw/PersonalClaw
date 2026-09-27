@@ -356,7 +356,13 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
 A rewind whose cascade would re-run completed work reports
 `needs_confirmation` and applies nothing until confirmed. The cascade is
 computed over the **binding-dependency graph**, not the container tree, so
-editing a node invalidates what actually reads it.
+editing a node invalidates what actually reads it. Resetting a node whose
+attempt has settled gives that attempt's no-double-execution claim back
+(`mid_flight._apply_reentry`): a stage that settled DONE keeps its claim, and
+its confirmed re-run is the same instance, so it used to meet its own lease, read
+DEGRADED ("not executing twice") and run nothing for the claim's 900s TTL. A
+node whose subagent is still RUNNING keeps its claim, so the re-dispatch is
+refused as the second execution it would be.
 
 A finished run is one attempt and cannot be re-entered, so a retry is a
 **fork**, not a rewind: the child draft inherits only the steps that SUCCEEDED

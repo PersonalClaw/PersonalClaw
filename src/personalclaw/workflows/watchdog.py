@@ -207,7 +207,7 @@ class WorkflowWatchdog:
         return publish
 
     def _raw_publish(self, key: str, event: str, payload: Any) -> None:
-        """The coalescer's sink: the actual SSE write plus the WS refetch signal."""
+        """The coalescer's sink: the run's own SSE write, plus the run list's refresh hint."""
         state = self._state
         if state is None:
             return
@@ -219,14 +219,18 @@ class WorkflowWatchdog:
             logger.debug("workflow sse publish failed", exc_info=True)
         self._publish_to_equivalent_loop_hub(state, key, event, payload)
         try:
-            broadcast = getattr(state, "_broadcast", None)
-            if callable(broadcast) and event == "workflow_run_update":
-                # WS envelopes are refetch SIGNALS, not payloads (the DashboardLive
-                # convention) — the client refetches on receipt.
-                run_id = key.split(":", 1)[1] if ":" in key else key
-                broadcast({"type": "workflow_run_update", "run_id": run_id})
+            refresh = getattr(state, "push_refresh", None)
+            if callable(refresh) and event == "workflow_run_update":
+                # A run started, moved or ended, so every open page that LISTS runs re-reads them:
+                # Mission Control's Working lane, the Workflows list, Home's work. The gateway's
+                # refresh hint is the listing signal those pages already route on the one socket;
+                # a run's own page follows it on the SSE above. This was a hand-built
+                # `{"type": "workflow_run_update"}` note, but `_broadcast` reads `_type`, so it went
+                # out as a `notification` frame that nothing read as a run changing, and a
+                # finished run kept its Working card until a reload.
+                refresh("workflow_runs")
         except Exception:
-            logger.debug("workflow ws broadcast failed", exc_info=True)
+            logger.debug("workflow run-list refresh hint failed", exc_info=True)
 
     def _publish_to_equivalent_loop_hub(
         self, state: Any, key: str, event: str, payload: Any

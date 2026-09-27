@@ -484,3 +484,19 @@ RUNTIME_FIELDS: tuple[str, ...] = (
 #: own docstring argued that naming the broken ids beats counting them, and the same argument
 #: retires it. Inventing a caller to justify a producer is the defect this issue is about, one
 #: level up.
+
+
+def trigger_name(trigger_id: str) -> str:
+    """What a stored trigger is called, for a sentence that names it — ``""`` when it is not there.
+
+    Best-effort by design: the callers name a trigger in prose that is true without the name too
+    ("A trigger asked to run …"), so an unreadable store costs the name and nothing else.
+    """
+    if not trigger_id:
+        return ""
+    try:
+        row = TriggerStore().get(trigger_id)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not read the name of trigger %s", trigger_id, exc_info=True)
+        return ""
+    return str(row.trigger.name or "") if row is not None else ""

@@ -515,13 +515,19 @@ class GatewayOrchestrator:
     # ------------------------------------------------------------------
 
     def _interactive_approval(
-        self, source: str, session_resolver: Callable[[str], str] | None = None
+        self,
+        source: str,
+        session_resolver: Callable[[str], str] | None = None,
+        trigger_resolver: Callable[[str], str] | None = None,
     ) -> ToolApprovalCallback:
         """Return an approval callback that races dashboard vs channel DM.
 
         Uses the same rich Block Kit message as the main-agent approval flow
         so users see full command text, security redactions, and Trust-session
         controls for background agents too.
+
+        ``trigger_resolver`` names the trigger whose run asked, from the approval id, so the
+        approval is listed under it and a note it leaves unanswered can run it again.
         """
 
         async def _approve(event: LLMEvent, parent_session_key: str = "") -> bool:
@@ -711,6 +717,7 @@ class GatewayOrchestrator:
                                     if session_resolver
                                     else resolved_session
                                 ),
+                                trigger=trigger_resolver(request_id) if trigger_resolver else "",
                                 # This channel is already asking: the `channel_dm` target
                                 # must not ask a second time.
                                 asked_on_channel=True,
@@ -768,6 +775,7 @@ class GatewayOrchestrator:
                     tool_input=event.tool_input,
                     tool_purpose=event.tool_purpose,
                     session=session_resolver(request_id) if session_resolver else resolved_session,
+                    trigger=trigger_resolver(request_id) if trigger_resolver else "",
                 )
             return True  # no UI → auto-approve
 
@@ -1293,6 +1301,7 @@ class GatewayOrchestrator:
             context=context,
             payload=payload,
             status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
+            trigger_id=str(getattr(trigger, "id", "") or ""),
         )
 
         # 🔴 THE DENYLIST, at the seam that lost it (AUTONOMY-GUARDRAILS §1.2 — AG-12). §1.2 says
@@ -4157,8 +4166,16 @@ class GatewayOrchestrator:
             )
             return session
 
+        def _spawn_trigger_resolver(request_id: str) -> str:
+            """The trigger whose fire started the subagent an approval id names, or ""."""
+            agent_id = approval_subagent_id(request_id)
+            info = self.subagent_mgr.get(agent_id) if self.subagent_mgr is not None else None
+            return str(getattr(info, "trigger_id", "") or "") if info else ""
+
         _approve_subagent = self._interactive_approval(
-            "subagent", session_resolver=_spawn_session_resolver
+            "subagent",
+            session_resolver=_spawn_session_resolver,
+            trigger_resolver=_spawn_trigger_resolver,
         )
 
         async def _spawn_approve(
@@ -4180,17 +4197,27 @@ class GatewayOrchestrator:
 
                 parent = self.dashboard_state.get_session(session_name) if session_name else None
                 title = getattr(parent, "title", "") if parent is not None else ""
+                # Started by a trigger's action: the note names that trigger, which is what the
+                # owner knows the work by (`auto_denials.note_unattended` words it).
+                trigger = str(getattr(info, "trigger_id", "") or "")
                 auto_denials.note_unattended(
                     self.dashboard_state,
                     session_key=session_name or f"subagent:{info.id}",
                     tool=str(extra.get("tool") or ""),
                     who=(
-                        f"A subagent of “{title}”"
-                        if title and title != session_name
+                        ""
+                        if trigger
                         else (
-                            "A workflow step" if ownership.is_owned(session_name) else "A subagent"
+                            f"A subagent of “{title}”"
+                            if title and title != session_name
+                            else (
+                                "A workflow step"
+                                if ownership.is_owned(session_name)
+                                else "A subagent"
+                            )
                         )
                     ),
+                    trigger=trigger,
                 )
                 return
             if etype == "subagent_injection_failed":

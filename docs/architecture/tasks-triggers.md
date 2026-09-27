@@ -155,6 +155,15 @@ sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
+**An agent a trigger starts carries the trigger.** Both store-trigger dispatches
+set `ActionContext.trigger_id`, and `invoke-agent` and `run-prompt` spawn their
+agent with it (`SubagentInfo.trigger_id`). An approval that agent asks for is
+listed under the trigger ("The trigger “Nightly plan” is waiting for your
+decision on write_file"), and a call nobody answered leaves an Inbox note that
+can run the trigger again. That re-run is Run now, and a trigger with
+`needs_grant` goes through Allow first, the same consent its page asks
+(`docs/architecture/inbox-channels.md`, "How long it waits").
+
 **A Run workflow action names its workflow, and is checked where it is saved.**
 Its form comes from the bundled `apps/native/run-workflow-action/app.json`: a
 picker of your workflows, then the chosen workflow's declared inputs as fields

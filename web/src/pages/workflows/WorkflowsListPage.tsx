@@ -11,6 +11,7 @@ import { PresetEmptyState } from '../../ui/PresetEmptyState'
 import { api, ApiError, type WorkflowDef, type WorkflowSurfacingFinding, type WorkflowSurfacingRow } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
@@ -79,6 +80,13 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     // for every mounted reader, so the run-detail panel beside this list moves too.
     invalidateKeys('workflows:', true)
   }, [])
+
+  // A run starting, changing status or ending reaches the socket as the gateway's listing hint
+  // (`refresh` naming `workflow_runs`, `workflows/watchdog`), so the Runs tab follows it while it
+  // is open. It was read once: a run that finished still read "running" here until a reload.
+  useChatSocket((m: WsMessage) => {
+    if (refreshKinds(m).includes('workflow_runs')) invalidateKeys('workflows:runs')
+  })
 
   const filteredRuns = useMemo(() => {
     const needle = q.trim().toLowerCase()

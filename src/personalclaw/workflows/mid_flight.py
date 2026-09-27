@@ -16,9 +16,11 @@ from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
 from personalclaw.workflows.bindings import node_deps
+from personalclaw.workflows.engine import release_execution_claim
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
+    TERMINAL_STATES,
     InstanceState,
     Node,
     now_stamp,
@@ -139,6 +141,17 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         inst = ctl._instance(path)
         if inst.output_ref:
             store.archive_output(ctl.run.id, path, ctl.run.spec_version)
+        if inst.state in TERMINAL_STATES and inst.claim_target:
+            # The attempt this resets is over, so its no-double-execution claim goes back. A stage
+            # that settled DONE keeps its claim (`stage_settlement`), and the re-run asked for here
+            # is that same instance: it met its own lease, read DEGRADED ("another worker holds the
+            # claim on this node … not executing twice"), and a confirmed Re-run ran nothing for
+            # the claim's whole TTL (#3533's shape). A RUNNING attempt keeps its claim: its
+            # subagent is still executing, and a second execution beside it is what the claim is
+            # for.
+            release_execution_claim(inst.claim_target, inst.claim_holder)
+            inst.claim_target = ""
+            inst.claim_holder = ""
         inst.state = InstanceState.PENDING
         inst.epoch = epoch
         inst.output_ref = ""

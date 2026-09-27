@@ -17,9 +17,17 @@ A tool call that needs a person's approval ends one of four ways
 Each now leaves ONE Inbox item, ``system/auto_denied`` with item kind ``system``: what was denied,
 who asked, when, why, and that it did not run. ``refs.session`` is where it happened, so the Inbox
 opens the chat or the workflow step; ``refs.chat`` is set only when that is a chat a person can
-answer in, which is what lets the Inbox offer to ask it to try again. Deduplicated per approval,
-and per ``(session, tool)`` for the unattended case, so a run that retries a declined call is one
-item and not twenty.
+answer in, which is what lets the Inbox offer to ask it to try again. ``refs.trigger`` is the
+trigger whose run it was, when a trigger started the work, which is what lets the Inbox offer to
+run that trigger again. Deduplicated per approval, and per ``(session, tool)`` for the unattended
+case, so a run that retries a declined call is one item and not twenty.
+
+**When a note is done.** An expired note stands for one call, ``refs.call``, asked in one place
+(its session, or its trigger's run). :func:`settle_retried` moves it to HANDLED, with the answer on
+``refs.retry``, when that call is asked there again and answered, allowed or denied. That is the
+Inbox's own rule (``inbox.resolve_attention_items``): a row raised for a standing request closes
+when the request stops standing. Sending the retry does not close it, because nothing has been
+decided yet. An unattended note has no answer to wait for, and stays until the owner handles it.
 
 Best-effort like the approval row it follows: the denial has already happened, and failing to
 record it must never turn into a failure of the run that was denied.
@@ -27,6 +35,7 @@ record it must never turn into a failure of the run that was denied.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from typing import Any
@@ -99,6 +108,30 @@ def unattended_origin(session_key: str) -> str:
     return "A run"
 
 
+def trigger_asker(name: str) -> str:
+    """A trigger as the one who asked, in a sentence: by its name, else "A trigger"."""
+    return f"The trigger “{name}”" if name else "A trigger"
+
+
+def call_key(tool: str, tool_input: str) -> str:
+    """One call, as its approval described it: a digest of its tool and its input.
+
+    What a note and a later approval are compared by, so asking THIS call again settles the note
+    and a different call of the same tool does not. It digests the registry's own redacted strings
+    (``approval_state._approval_entry``), so it carries nothing the note's body does not show.
+    """
+    return hashlib.sha256(f"{tool}\n{tool_input}".encode("utf-8")).hexdigest()[:16]
+
+
+def _call_of(entry: dict[str, Any]) -> str:
+    return call_key(str(entry.get("tool") or ""), str(entry.get("tool_input") or ""))
+
+
+def _asked_in(entry: dict[str, Any]) -> dict[str, str]:
+    """Where a call was asked: its session, its trigger's run, or both. Empty for nowhere known."""
+    return {key: str(entry[key]) for key in ("session", "trigger") if entry.get(key)}
+
+
 def note_expired(state: Any, entry: dict[str, Any], *, who: str, window_secs: float) -> str:
     """Record an approval nobody answered in time. Returns the Inbox item id, or ``""``."""
     tool = str(entry.get("tool") or "a tool")
@@ -119,7 +152,8 @@ def note_expired(state: Any, entry: dict[str, Any], *, who: str, window_secs: fl
             "auto_denied": EXPIRED,
             "tool": tool,
             "denied_approval": str(entry.get("id") or ""),
-            **({"session": session} if session else {}),
+            "call": _call_of(entry),
+            **_asked_in(entry),
             **({"chat": answerable_chat(session)} if answerable_chat(session) else {}),
         },
         dedup_key=f"auto_denied:{entry.get('id') or ''}",
@@ -127,12 +161,31 @@ def note_expired(state: Any, entry: dict[str, Any], *, who: str, window_secs: fl
 
 
 def note_unattended(
-    state: Any, *, session_key: str, tool: str, tool_input: str = "", who: str = ""
+    state: Any,
+    *,
+    session_key: str,
+    tool: str,
+    tool_input: str = "",
+    who: str = "",
+    trigger: str = "",
 ) -> str:
-    """Record a call an unattended run declined without asking. Returns the item id, or ``""``."""
+    """Record a call an unattended run declined without asking. Returns the item id, or ``""``.
+
+    ``trigger`` is the trigger whose run it was, when one started the work. It names the asker,
+    and it is the note's identity: every fire of a nightly trigger runs in a new session, so a
+    trigger declined every night is one note until the owner handles it, not one per night.
+    """
+    from personalclaw.security import redact_field
+    from personalclaw.triggers.store import trigger_name
+
     tool = tool or "a tool"
+    asker = who or (
+        trigger_asker(redact_field(trigger_name(trigger)))
+        if trigger
+        else unattended_origin(session_key)
+    )
     lines = [
-        f"{who or unattended_origin(session_key)} asked to run {tool} while running unattended. "
+        f"{asker} asked to run {tool} while running unattended. "
         "An unattended run cannot wait for an approval, so it was denied and did not run."
     ]
     detail = _input_line(tool_input)
@@ -146,9 +199,60 @@ def note_unattended(
             "auto_denied": UNATTENDED,
             "tool": tool,
             **({"session": session_key} if session_key else {}),
+            **({"trigger": trigger} if trigger else {}),
         },
-        dedup_key=f"auto_denied:{session_key}:{tool}",
+        dedup_key=f"auto_denied:{f'trigger:{trigger}' if trigger else session_key}:{tool}",
     )
+
+
+#: ``refs.retry`` values: how the call a note stands for was answered once it was asked again —
+#: the two answers an approval has (``approval_state.APPROVAL_OUTCOMES``).
+RETRY_ANSWERS = frozenset({"approved", "rejected"})
+
+
+def settle_retried(state: Any, entry: dict[str, Any], *, answer: str) -> int:
+    """Mark HANDLED each open expired note for the call *entry* was, recording *answer*.
+
+    Called with every answered approval (``approval_state.withdraw_approval``, where every door's
+    answer arrives). A note settles only for the same call (``refs.call``) asked in the same place,
+    every pair of :func:`_asked_in` matching — the Inbox's ref-subset rule — so a different call of
+    the same tool, or the same call in another chat, leaves it open. The answer goes on the row
+    first and the row then moves through the Inbox's one status transition, which tells every open
+    surface and reads the note's notification in the bell. Returns how many notes moved.
+    """
+    if answer not in RETRY_ANSWERS:
+        return 0
+    place = _asked_in(entry)
+    if not place:
+        # Asked nowhere in particular, so it cannot be told from the same call asked elsewhere.
+        # `resolve_attention_items` refuses an unscoped resolve for the same reason.
+        return 0
+    wanted = {"auto_denied": EXPIRED, "call": _call_of(entry), **place}
+    try:
+        from personalclaw.inbox import (
+            OPEN_STATUSES,
+            InboxStore,
+            ItemStatus,
+            live_store,
+            set_item_status,
+        )
+
+        store = live_store(state)
+        if store is None:
+            store = InboxStore()
+            store.load()
+        notes = [
+            item
+            for item in list(store.items.values())
+            if item.status in OPEN_STATUSES
+            and all(item.refs.get(key) == value for key, value in wanted.items())
+        ]
+        for item in notes:
+            item.refs["retry"] = answer
+        return len(set_item_status(state, store, notes, ItemStatus.HANDLED))
+    except Exception:  # noqa: BLE001 - see the module docstring: best-effort
+        logger.debug("could not settle the notes for %s", entry.get("id"), exc_info=True)
+        return 0
 
 
 def _emit(state: Any, *, title: str, body: str, refs: dict[str, Any], dedup_key: str) -> str:
