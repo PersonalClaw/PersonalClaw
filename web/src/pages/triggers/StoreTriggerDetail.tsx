@@ -9,7 +9,7 @@ import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerStatusMeta, explainsCause } from '../schedule/scheduleMeta'
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
 import { DryRunResult } from './DryRunResult'
-import { ConfigReadout, ReviewNote } from './ReviewNote'
+import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -73,6 +73,21 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
     }
   }
 
+  // Allow on a trigger that is already on: the switch sent ON again, which is where the gateway asks
+  // for the grant its action needs (`needs_grant`) — so it asks first, like switching on does.
+  async function allow() {
+    setBusy(true)
+    setErr('')
+    try {
+      await api.toggleStoreTrigger(trigger.raw_id, true)
+      onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not allow this automation')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // 🔴 The lifecycle state, in words (S169). This panel's only status line was
   // `enabled ? 'Firing on its own' : 'Paused — it will not fire until re-enabled'`, so an
   // AUTOPAUSED automation (five consecutive failures) and a QUARANTINED one (a payload matched an
@@ -92,21 +107,26 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   const lc = triggerStatusMeta({ health: trigger.health, state: trigger.state, hasRun })
   // Brought over from an older version and not allowed to run here yet (the server's verdict).
   const needsReview = trigger.needs_review === true
+  // Not allowed to run what its action uses — Run now and every fire are refused until the owner
+  // allows it (the server's verdict). An imported row says so in its own note.
+  const needsGrant = !needsReview ? (trigger.needs_grant ?? []) : []
   const statusLine = needsReview
     ? 'Waiting for your review — it does not run until you switch it on'
-    : trigger.state === 'autopaused'
-      ? 'Stopped by the system after repeated failures'
-      : trigger.state === 'quarantined'
-        ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
-        : trigger.state === 'parked'
-          ? 'Parked — a resource it needs is busy; it resumes on its own'
-          : isManual
-            ? 'Runs only when you run it — it never fires on its own'
-            : !trigger.enabled
-              ? 'Paused — it will not fire until re-enabled'
-              : eventPattern
-                ? 'Listening — it fires when a matching event arrives'
-                : 'Firing on its own'
+    : needsGrant.length > 0 && trigger.enabled
+      ? 'Not allowed to run — it does nothing until you allow it'
+      : trigger.state === 'autopaused'
+        ? 'Stopped by the system after repeated failures'
+        : trigger.state === 'quarantined'
+          ? 'Quarantined — a payload matched an injection pattern; re-author it to resume'
+          : trigger.state === 'parked'
+            ? 'Parked — a resource it needs is busy; it resumes on its own'
+            : isManual
+              ? 'Runs only when you run it — it never fires on its own'
+              : !trigger.enabled
+                ? 'Paused — it will not fire until re-enabled'
+                : eventPattern
+                  ? 'Listening — it fires when a matching event arrives'
+                  : 'Firing on its own'
 
   async function run(isDry: boolean) {
     setBusy(true)
@@ -174,6 +194,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
         </div>
       )}
       {needsReview && <ReviewNote />}
+      {needsGrant.length > 0 && !readOnly && (
+        <GrantNote labels={needsGrant} enabled={trigger.enabled} busy={busy} onAllow={allow} />
+      )}
 
       <div className="flex items-center justify-between">
         <div>
@@ -248,7 +271,7 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
         <div data-type="body-m" className="text-on-surface">{actionLabel(trigger.action?.provider)}</div>
         {/* The step itself, for the row the owner has to decide about: "Run a shell command" is not
             enough to allow one — the command is. */}
-        {needsReview && <ConfigReadout config={trigger.action?.config} />}
+        {(needsReview || needsGrant.length > 0) && <ConfigReadout config={trigger.action?.config} />}
       </Section>
 
       {/* 🔴 A store trigger's run history, which this panel never showed (S168). The backend has

@@ -583,6 +583,8 @@ def _fire_store_trigger(action: _AppAction, kind: str = "clock") -> Any:
         id=f"{kind}:acme",
         kind=kind,
         workflow={"inline": {"provider": action.name, "config": {"note": "x"}}},
+        # Granted, as a row a fire brings here is: it passed `admit_fire`'s fence first.
+        capabilities={"providers": [action.name]},
     )
     original = ap.get_action_provider
     try:

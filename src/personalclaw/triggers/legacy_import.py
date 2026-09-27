@@ -29,7 +29,8 @@ One rule per clause of the contract:
   into a chat — arrives switched off and waits for review; its action is kept, so the owner can see
   what it would do. Switching it on is the only grant: the Triggers page's toggle asks first
   (`dashboard.handlers.triggers.api_trigger_toggle`) and :func:`adopt` makes the row the owner's.
-  Neither the boot's capability backfill nor a chat tool gives one.
+  Nothing unattended gives one: a boot grants nothing, and a chat tool cannot switch one on
+  (`triggers.grants`).
 * **Idempotent.** Rows keep ids derived from the file, and a row already in the store is left
   exactly as it is, so a second boot, or one after a crash midway, writes nothing twice. The Inbox
   item is derived from the store — the rows still waiting — rather than from the run that imported
@@ -254,29 +255,11 @@ def _action_label(trigger: Any) -> str:
     provider = str(_step(workflow).get("provider") or "").strip()
     if not provider:
         return "a workflow" if workflow.get("ref") else "nothing"
+    from personalclaw.triggers.grants import provider_label
+
     label = provider_label(provider)
     # A registered provider's name is the product's own words; an unknown one is the file's.
     return _literal(label) if label == provider else label
-
-
-def provider_label(provider: str) -> str:
-    """An action provider's display name (`bash` → `Bash Command`), or its id when none is known.
-
-    Through `dispatchable_action_providers` first: the built-ins register lazily on the first action
-    run, so a boot that has run none would otherwise label every action by its bare id.
-    """
-    try:
-        from personalclaw.action_providers.registry import (
-            dispatchable_action_providers,
-            get_action_provider,
-        )
-
-        dispatchable_action_providers()
-        found = get_action_provider(provider)
-    except Exception:  # noqa: BLE001 - a label must not fail the sentence it is in
-        found = None
-    label = str(getattr(found, "display_name", "") or "") if found is not None else ""
-    return label or provider
 
 
 def announce(state: Any, *, store: Any, home: Path | str) -> str:

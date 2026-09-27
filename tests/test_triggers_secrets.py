@@ -194,6 +194,8 @@ def _trigger(command: str, tid: str = "clock:x"):
     return types.SimpleNamespace(
         id=tid,
         workflow={"inline": {"provider": "bash", "config": {"command": command}}},
+        # Granted, as a row a clock fire brings here is: it passed `admit_fire`'s fence first.
+        capabilities={"providers": ["bash"]},
     )
 
 

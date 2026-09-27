@@ -44,6 +44,9 @@ def _seed(home, raw_id="abc123", *, agent="", approval_mode=""):
             enabled=True,
             spec={"kind": "interval", "interval_secs": 300},
             workflow={"inline": {"provider": "invoke-agent", "config": config}},
+            # Granted, as `tools.create` freezes it — an edit that keeps a granted action asks
+            # nothing (`triggers.grants`), which is what these tests drive.
+            capabilities={"providers": ["invoke-agent"]},
         )
     )
 

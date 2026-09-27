@@ -342,6 +342,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               it runs — what the Inbox's review item sends you here to find. Warn, not
                               danger: nothing is broken, it is waiting for a decision. */}
                           {t.needsReview && <span data-type="caption" className="shrink-0 text-warn">· waiting for your review</span>}
+                          {/* Its action is not allowed to run — Run now and every fire are refused
+                              until the owner allows it on its panel. An imported row already says
+                              so as "waiting for your review". */}
+                          {!t.needsReview && (t.needsGrant?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 text-warn">· not allowed to run</span>}
                           {/* The row's WARNING-severity issues, which reached no surface at all
                               before issue 531 — the store computed them on every load and the wire
                               projection dropped them. Rendered ONLY when there is no error: a row

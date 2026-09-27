@@ -272,6 +272,8 @@ def _trigger(config: dict, *, tid: str = "clock:nightly"):
         id=tid,
         kind="clock",
         workflow={"inline": {"provider": "bash", "config": config}},
+        # Granted, as a row a clock fire brings here is: it passed `admit_fire`'s fence first.
+        capabilities={"providers": ["bash"]},
     )
 
 

@@ -1194,6 +1194,24 @@ class GatewayOrchestrator:
             logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
             return
 
+        # 🔴 THE GRANT, at the dispatch every unattended fire shares (`triggers.grants`). A clock or
+        # event fire meets the frozen-capability fence in `service.admit_fire`; a file, web_watch or
+        # chained fire comes straight here, and nothing on this path read the capability block.
+        # Measured on `main`: an ungranted `bash` file trigger ran on the next change. Refused
+        # before anything else, and written to the Runs history like the denylist's refusal below,
+        # because a refusal only a log knows about is a silent drop.
+        from personalclaw.triggers import grants
+
+        missing = grants.missing(trigger)
+        if missing:
+            refusal = grants.refusal(trigger, missing)
+            logger.warning("trigger %s not run: %s", trigger.id, refusal)
+            await self._record_refused_fire(
+                trigger, status=Outcome.SKIPPED_GATE.value, error=refusal
+            )
+            self._push_trigger_refresh()
+            return
+
         # 🔴 THE INJECTION SCREEN, on the payload that actually carries untrusted text (§7/R4 rule a
         # — S134). Measured: `FireContext.payload_text` defaulted to "" and `service.tick` never set
         # it, so `evaluate`'s `if ctx.payload_text:` was permanently false — the

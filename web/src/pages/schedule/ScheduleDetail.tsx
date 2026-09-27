@@ -13,7 +13,7 @@ import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type Trig
 import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
-import { ReviewNote } from '../triggers/ReviewNote'
+import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
 import {
   ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
 } from './ScheduleForm'
@@ -211,6 +211,14 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     catch (e) { setErr(e instanceof Error ? e.message : (job.enabled ? 'Disable failed' : 'Enable failed')) }
     finally { setBusy(false) }
   }
+  // Allow on a schedule that is already on: the switch sent ON again, which is where the gateway
+  // asks for the grant its action needs (`needs_grant`) — so it asks first, like switching on does.
+  async function allow() {
+    setBusy(true); setErr('')
+    try { await api.enableSchedule(job.id, true); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Allow failed') }
+    finally { setBusy(false) }
+  }
   async function openChat() {
     setBusy(true); setNote('')
     try { const r = await api.scheduleToChat(job.id); if (r?.session) setNote(`Opened as chat session "${r.session}" — find it in Chat.`) }
@@ -319,6 +327,11 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {/* A schedule brought over from an older version waits, switched off, for the owner to allow
           what it runs — the sections below are what they are deciding about. */}
       {job.needs_review && <ReviewNote />}
+      {/* Not allowed to run what its action uses — Run now and every fire are refused until the
+          owner allows it. The sections below are what they are allowing. */}
+      {!job.needs_review && (job.needs_grant ?? []).length > 0 && (
+        <GrantNote labels={job.needs_grant ?? []} enabled={job.enabled} busy={busy} onAllow={allow} />
+      )}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}
       {provider === 'run-prompt' ? (
