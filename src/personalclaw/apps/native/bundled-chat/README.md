@@ -42,9 +42,21 @@ that fetch are all in `provider.py::download_weight` rather than in any caller:
 | **Never half-installed** | bytes go to a `.partial` sibling and are verified before the replace, so nothing at the real path is ever unverified and a dead transfer cannot be mistaken for a finished model |
 
 Failures carry one of core's `DOWNLOAD_*` outcome codes, because the four need four different
-things from a user: `unreachable` → retry when connected; `bad-status` → the pinned source is
-broken, stop retrying; `truncated` / `digest-mismatch` → the bytes were refused. Every one
-leaves the install usable and the offer retryable.
+things from a user: `unreachable` → retry, once the thing the sentence names is fixed;
+`bad-status` → the pinned source is broken, stop retrying; `truncated` / `digest-mismatch` →
+the bytes were refused. Every one leaves the install usable and the offer retryable.
+
+`unreachable` covers every failure a retry can fix, and the sentence says which one it was: no
+network (retry when connected); a proxy asking for credentials (HTTP 407: ask whoever runs the
+network to let the source through, or retry on another network) or refusing to connect (retry,
+or ask whoever runs the network to allow the source); a source that cannot answer right now
+(HTTP 408, 429 or 5xx, retry in a few minutes,
+or when its `Retry-After` says); a certificate that could not be verified (fix the clock, or
+trust the certificate authority a proxy on the network uses; the check is never switched off);
+and a secure connection cut off before any certificate was checked (retry, or ask whoever runs
+the network). Through an HTTPS proxy a 407 is not an HTTP status: `http.client` raises it as an
+`OSError` from the refused CONNECT, and the sentence is read from that. Any other HTTP status is
+`bad-status`.
 
 `scripts/fetch_bundled_model.py` is the same call without a browser — for an offline image, a
 fleet, or a test rig. It refuses to run without `PERSONALCLAW_HOME`.
