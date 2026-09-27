@@ -1,11 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { Check, Ban, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { RungChip } from '../../ui/RungChip'
 import { Segmented } from '../../ui/Segmented'
 import { Checkbox } from '../../ui/forms'
-import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { approvalOutcome } from './approvalOutcome'
 import { deriveBlastRadius, establishedFacets } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
@@ -176,14 +174,10 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
   // The destructive-call unlock (#506). Starts closed, so the standing-grant scopes are not
   // merely un-selected but un-offered until the user asks for them.
   const [widened, setWidened] = useState(false)
-  // The earned-autonomy rung of the action type behind this ask, when one governs it
-  // (AUTONOMY-GUARDRAILS §4.3). A permission prompt is the one moment the user weighs
-  // widening an automation's leash, so what it may ALREADY do on its own belongs beside
-  // the risk chip — same lookup as the trigger rows, so the two surfaces cannot disagree.
-  // Chat tools with no governing action type (bash, editors) get no chip: absent is
-  // honest, a guessed rung would claim governance that does not exist.
-  const { ladder } = useAutonomyLadder()
-  const rungType = useMemo(() => providerRungIndex(ladder).get(seg.tool), [ladder, seg.tool])
+  // No autonomy rung here. A rung is declared per ACTION PROVIDER, the thing a trigger or hook
+  // dispatches (`lib/rungs.providerRungIndex`), and a tool call dispatches none, so no rung
+  // describes it. Looking the tool's name up in the ladder is what put "runs on its own" on a
+  // `bash` call waiting for this very answer: `bash` is also an action provider's name.
   if (seg.resolved) {
     // Every outcome the backend persists is mapped EXPLICITLY (approvalOutcome), not
     // inferred from `!== 'approved'`: the trust/YOLO grants are approvals, and testing
@@ -208,14 +202,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
       tool={seg.tool}
       args={seg.input}
       purpose={seg.purpose}
-      badge={
-        rungType || seg.risk ? (
-          <span className="inline-flex items-center gap-1.5">
-            {rungType && <RungChip type={rungType} ladder={ladder} />}
-            {seg.risk && <RiskChip risk={seg.risk} />}
-          </span>
-        ) : undefined
-      }
+      badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
       meta={<BlastRadiusChips tool={seg.tool} risk={seg.risk} readOnlyCommand={seg.readOnlyCommand} />}
       scope={
         <div className="mt-2 flex flex-col gap-1">

@@ -173,6 +173,12 @@ export interface CallerHealth {
   dollars_est: number
 }
 
+/** An action provider's registry name: what a trigger or hook DISPATCHES, and the key the
+ *  autonomy ladder declares a rung under. Its own type because a tool can have the very same
+ *  name — `bash` is the chat's shell tool and also an action provider — and a tool's name must
+ *  not be usable where a provider is meant (`lib/rungs.providerRungIndex`). */
+export type ActionProviderName = string & { readonly __actionProvider: true }
+
 // The earned-autonomy ladder (AUTONOMY-GUARDRAILS §5-§6). One row per DECLARED action
 // type: the rung it resolves at, where that rung came from (`authority`), the recomputed
 // track record, and whether the next rung has been earned. Nothing here is editable in
@@ -182,7 +188,7 @@ export interface AutonomyType {
   floor: string
   ceiling: string
   leaves_machine: boolean
-  providers: string[]
+  providers: ActionProviderName[]
   resolved_rung: string
   granted_rung: string
   /** Granted higher than it currently resolves, because the incident kill switch is on. */
@@ -4919,6 +4925,9 @@ export interface PendingApproval {
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */
   trigger_name?: string
+  /** Who asked, as `kind:name` (`agent:dashboard:…`, `app:…`, `run:…`, `trigger:…`). Only you
+   *  answer an approval, and never the party that asked it (`approval_answer`). */
+  asked_by?: string
 }
 
 // GET /api/push — what a browser needs to subscribe, plus what already has (MC-5 §C3).
@@ -6852,6 +6861,14 @@ export const api = {
     post<{ ok: boolean; client_id: string; disabled: boolean }>(
       `/api/external-access/clients/${encodeURIComponent(clientId)}/disabled`,
       { disabled },
+    ),
+  /** Your answer to a control-bridge action waiting in the Inbox (`refs.confirmation`):
+   *  `confirm: true` runs it once, `false` drops it. Only you answer it; the agent that asked
+   *  cannot. `status: 'ok'` carries the action's result, `'declined'` means nothing ran. */
+  answerBridgeConfirmation: (confirmation: string, confirm: boolean) =>
+    post<{ status: 'ok' | 'declined'; action?: string; result?: unknown }>(
+      `/api/external-access/bridge/confirmations/${encodeURIComponent(confirmation)}`,
+      { confirm },
     ),
 
   // ── Guardrails: incident kill switch + derived provider health (§1.3, §2.5) ──

@@ -420,13 +420,23 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     action you confirmed a sign-in for goes on to the run. Deny closes the question; the trigger
     asks again the next time its action stops. The refusals a Run button honours are read BEFORE
     the token is spent, so a refused answer leaves the question answerable.
+
+    Only you answer it (`approval_answer`). An agent's tool reaches this route with the gateway's
+    internal secret (`/api/triggers` is a mixed internal path, for `/run`), and it is refused 403
+    `approval_owner_only` with an audit row, before anything about the trigger is read.
     """
 
+    from personalclaw import approval_answer
     from personalclaw.dashboard.handlers.triggers import _split_id, _trigger_store
     from personalclaw.triggers import parks
     from personalclaw.triggers import tools as T
 
     _kind, raw = _split_id(request.match_info["id"])
+    refused = approval_answer.forbidden(
+        request, what=f"park:{raw}", asked_by=approval_answer.trigger(raw).label
+    )
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     answer = body.get("answer")
     if not isinstance(answer, bool):

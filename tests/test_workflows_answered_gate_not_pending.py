@@ -38,6 +38,7 @@ import threading
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import service, store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -237,10 +238,10 @@ async def test_a_SECOND_token_less_approval_reports_NO_PENDING_not_unknown_token
     controller = await _parked("approve")
     sup = _Supervisor(controller)
 
-    first = service.resume_run(controller.run.id, supervisor=sup, answer=True)
+    first = service.resume_run(controller.run.id, supervisor=sup, answer=True, by=YOU)
     assert first["ok"], f"the token-less approval did not land: {first}"
 
-    again = service.resume_run(controller.run.id, supervisor=sup, answer=True)
+    again = service.resume_run(controller.run.id, supervisor=sup, answer=True, by=YOU)
     assert not again["ok"]
     assert (
         again["code"] == "WF_NO_PENDING_GATE"
@@ -255,7 +256,7 @@ async def test_the_needs_input_ROUTE_stops_offering_an_answered_gate(tmp_path, m
     """
     controller = await _parked("approve")
     token = HI.list_continuations(controller.run.id)[0].token
-    assert controller.resume(token, True)["ok"]
+    assert controller.resume(token, True, by=YOU)["ok"]
 
     assert (
         HI.list_continuations(controller.run.id) == []

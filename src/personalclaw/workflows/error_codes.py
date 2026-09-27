@@ -416,9 +416,10 @@ WF_ERROR_CODES: dict[str, str] = {
     # Returned as inline result dicts from
     # `resume`/`gate_answers.resume_revise`/`loop_convergence.converge_loop`.
     "WF_RESUME_NOT_OWNER": (
-        "The responder or channel is not permitted to answer this gate. Checked before the "
-        "token is touched, and deliberately terse — echoing the gate's content to a shared "
-        "channel would leak it to everyone in it."
+        "Only the owner answers a gate: an agent's tool, a trigger, an app or the run itself "
+        "cannot, and a remote reply must come from the run's owner (`approval_answer`). Checked "
+        "before the token is touched, and deliberately terse — echoing the gate's content to a "
+        "shared channel would leak it to everyone in it."
     ),
     "WF_RESUME_UNKNOWN_TOKEN": "No continuation exists for that resume token on this run.",
     "WF_RESUME_EXPIRED": (

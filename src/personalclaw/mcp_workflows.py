@@ -28,6 +28,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw import approval_answer
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
@@ -422,41 +423,14 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "workflow_resume",
             "annotations": {"readOnlyHint": False},
             "description": (
-                "Answer a workflow that is waiting on a human, or clear a pause. `answer` is "
-                "JSON text: for an approval gate pass true or false; for a choice or form pass "
-                "the value or object. To change ONE step instead of accepting or rejecting the "
-                'whole plan, pass {"revise": {"step_ref": "<step id>", "comment": "what to '
-                "change\"}} — that step's instruction is amended and the gate re-asks, "
-                "leaving every other step exactly as it was. With no answer this just lifts a "
-                "pause. Each answer is consumed once — calling twice will not approve twice. "
-                "If several gates are pending you must name one with resume_token."
+                "Lift a workflow's pause so it carries on. It answers no gate: a workflow "
+                "waiting on a human (an approval, a choice, a form, a plan to review) is "
+                "answered by the owner, never by an agent. Tell them it is waiting; they "
+                "answer it in PersonalClaw (the Inbox, Home or the run's page)."
             ),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "run_id": run_id,
-                    # JSON TEXT: an answer can be a bool, a string or an object, and an untyped
-                    # value has no portable schema (tool_providers.portable_schema).
-                    "answer": {
-                        "type": "string",
-                        "description": (
-                            "The answer as JSON text: true or false for an approval; a JSON "
-                            'string or object otherwise; or {"revise": {"step_ref": "...", '
-                            '"comment": "..."}} to amend one step and re-ask.'
-                        ),
-                    },
-                    "resume_token": {
-                        "type": "string",
-                        "description": "Which gate to answer (required if several are pending).",
-                    },
-                    "always_allow": {
-                        "type": "boolean",
-                        "description": (
-                            "Auto-approve this same operation for the rest of THIS run "
-                            "(cleared if the run is rewound)."
-                        ),
-                    },
-                },
+                "properties": {"run_id": run_id},
                 "required": ["run_id"],
             },
         },
@@ -794,13 +768,15 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(service.pause_run(run_id, supervisor=_supervisor()))
 
     if name == "workflow_resume":
+        # An agent lifts a pause and answers nothing (`approval_answer`). An answer it sends
+        # anyway, left over from an older description of this tool, goes to the service as an
+        # answer, which refuses it and audits it rather than quietly lifting the pause instead.
         return _fmt(
             service.resume_run(
                 run_id,
+                by=approval_answer.agent(_current_session_id()),
                 supervisor=_supervisor(),
                 token=str(args.get("resume_token", "") or ""),
-                # Declared JSON text on the tool surface (an untyped value has no portable
-                # schema); decoded HERE rather than in the service the REST route shares.
                 answer=decode_json_text(args.get("answer")),
                 always_allow=bool(args.get("always_allow")),
             )

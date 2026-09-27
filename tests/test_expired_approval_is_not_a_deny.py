@@ -23,6 +23,7 @@ import pytest
 from test_pending_approval_every_surface import world  # noqa: F401 - a fixture, used by name
 from test_pending_approval_every_surface import _bash_request, _finish, _start, _turn, _until
 
+from personalclaw.approval_answer import YOU
 from personalclaw.sel import SecurityEventLog
 
 
@@ -105,7 +106,7 @@ async def test_a_person_s_deny_still_reads_rejected(world, audit):  # noqa: F811
         ),
     )
     try:
-        world.state.decide_session_approval(world.session, "req-1", "rejected")
+        world.state.decide_session_approval(world.session, "req-1", "rejected", by=YOU)
         await asyncio.wait_for(task, timeout=5)
     finally:
         await _finish(task)

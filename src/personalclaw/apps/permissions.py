@@ -1035,6 +1035,11 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     # Answering the question an automation stopped on (`triggers/parks.py`): Approve runs its
     # action again, now, through the Run button's own path — the same firing by hand.
     "POST /api/triggers/{id}/answer": OwnerOnly(_FIRES_AUTOMATION),
+    # Your answer to an action a local agent asked the control bridge for (`inbound/bridge.py`):
+    # Confirm runs it. Only you answer it, never an app relaying it (`approval_answer`).
+    "POST /api/external-access/bridge/confirmations/{id}": OwnerOnly(
+        "confirming an action a local agent asked to run"
+    ),
     "POST /api/triggers/{id}/test": OwnerOnly(_FIRES_AUTOMATION),
     "POST /api/triggers/view/render": OwnerOnly(_FIRES_AUTOMATION),
     # Deciding a restart's missed or interrupted run: `run_now` fires the automation.
@@ -1073,9 +1078,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/workflows/runs/{run_id}/cancel": AppMay(_STOPS_WORK),
     "POST /api/workflows/runs/{run_id}/pause": AppMay(_STOPS_WORK),
     "DELETE /api/workflows/runs/{run_id}": OwnerOnly("deleting your runs and what they produced"),
-    "POST /api/workflows/runs/{run_id}/confirm": AppMay(
-        "answers one pending confirmation once — the relay a companion needs, like a one-off "
-        "answer to a chat approval"
+    "POST /api/workflows/runs/{run_id}/confirm": OwnerOnly(
+        "answering a run's gate — only you answer one, never an app relaying it"
     ),
     "POST /api/workflows/runs/{run_id}/drop": AppMay(
         "adds a file to the run's approval-gated drop; the run reads it only after you approve"

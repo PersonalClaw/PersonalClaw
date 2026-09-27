@@ -1,5 +1,6 @@
 """Shared helpers for chat test modules."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp import web
@@ -38,10 +39,19 @@ def _api_app(state: DashboardState) -> web.Application:
     gate are not what a chat handler test is about, and pulling them in would make these
     builders a second copy of the server. This one is included because it is part of the
     request/response CONTRACT the assertions below read, not part of the environment.
+
+    The request is also the signed-in owner's, as the auth middleware records it
+    (``request["user"]``): the routes that answer an approval ask who is answering
+    (`approval_answer.of_request`), and a request no middleware signed in is nobody's.
     """
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application(middlewares=[request_boundary_middleware()])
+    @web.middleware
+    async def _signed_in_as_the_owner(request: web.Request, handler: Any) -> web.StreamResponse:
+        request["user"] = request.get("user") or "owner"
+        return await handler(request)
+
+    app = web.Application(middlewares=[_signed_in_as_the_owner, request_boundary_middleware()])
     app["state"] = state
     return app
 

@@ -709,13 +709,6 @@ Examples:
         action="store_true",
         help="Replace an existing token (the old one stops working)",
     )
-    # `confirm` resolves a control-bridge action the bridge flagged
-    # `requiresConfirmation` (EXTERNAL-ACCESS §4). It is a CLI verb because the whole
-    # point is that a HUMAN authorises the write — the agent that asked cannot.
-    inbound_confirm = inbound_sub.add_parser(
-        "confirm", help="Confirm a pending control-bridge action by its token"
-    )
-    inbound_confirm.add_argument("confirm_token", help="The confirm_token the bridge returned")
 
     # capture — telemetry import for agents that cannot be proxied
     # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,

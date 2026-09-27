@@ -601,6 +601,26 @@ and header names. That is what you are shown, so that is what a yes is to.
   a file to bind, so a home with no `mcp.json` yet leaves the path writable to the agent's shell,
   as it does for `config.json`. A definition written there waits for your Allow like any other.
 
+## 10. A process running as you can answer as you
+
+Only you answer an approval (`approval_answer`; [security.md](../architecture/security.md#who-answers-an-approval-approval_answerpy)).
+An app's token, an agent's tool, a trigger, a workflow run and a control-bridge client are
+refused, and so is the party that asked. What the gateway checks is the credential a request
+presents. It cannot see past that credential to the process holding it.
+
+- **Your sign-in can be minted by any process running as you.** `personalclaw token` prints a link
+  that signs in as you. It signs the link with `session_key` in your PersonalClaw home, a file every
+  process under your account can read. The agent's file tools and its shell's command screen refuse
+  that path by name (`security.HOME_SECRET_FILE_BASENAMES`). Nothing stops a shell from running
+  `personalclaw token`, which reads the key inside its own process. So could a local program that
+  talks to the control bridge, and so could an app's code (§7).
+- **What that credential then answers as is you.** The refusals above stop every path that presents
+  what it is: an app's token, the internal secret, a bridge bearer, a trigger. They do not stop a
+  process that takes your own credential.
+- **What limits it today:** an agent has to leave its tools' contract to do this. It must run the
+  CLI in a shell and then call the dashboard's API with the link, which is a deliberate act. It is
+  not a door left open for a model that follows its tools' descriptions.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -610,7 +630,7 @@ patched inline in a docs change. Every item above has a named future direction
 #2; out-of-process providers for the residual half of #3; a distinct origin for app
 UI, with the SDK crossing it as a message channel, for #4; checking a hand-copied
 weight's sha256 when it loads, for the gap in #5; per-app OS isolation for every kind of app
-code, which today only a backend that names a sandbox tier has, for #7). This page will shrink
-as those land.
+code, which today only a backend that names a sandbox tier has, for #7; a session signing key the
+agent's shell cannot read, for #10). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

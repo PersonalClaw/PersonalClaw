@@ -27,6 +27,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from mcp_owner_allowed import confirmed
 
+from personalclaw.approval_answer import YOU
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AgentProfile, AppConfig
 
@@ -175,7 +176,7 @@ class TestAgentEditor:
             session.agent = AGENT
             session.append("permission", "bash", json.dumps({"request_id": "req-1"}))
             session._approval_futures["req-1"] = asyncio.get_running_loop().create_future()
-            grant = state.decide_session_approval(session, "req-1", "trust_agent")
+            grant = state.decide_session_approval(session, "req-1", "trust_agent", by=YOU)
             assert grant == {"scope": "agent", "persisted": True, "agent": AGENT}
 
             # The editor, still holding approval mode "", saves a description edit.

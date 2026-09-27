@@ -24,6 +24,7 @@ import pytest
 from personalclaw import channel_delivery
 from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules as rules
+from personalclaw.approval_answer import YOU
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.dashboard import channel_messages
@@ -211,7 +212,7 @@ async def test_an_answer_in_the_dashboard_closes_the_channel_prompt(tmp_path):
 
     waiter = asyncio.ensure_future(state.request_approval("ap-3", "cron:nightly", "bash"))
     await _until(lambda: channel.prompts, "the channel asked")
-    assert state.resolve_approval("ap-3", True) is True
+    assert state.resolve_approval("ap-3", True, by=YOU) is True
     assert await asyncio.wait_for(waiter, timeout=5) is True
     await _until(lambda: channel.prompts[0].future.done(), "the channel prompt closed")
     assert channel.prompts[0].future.result() == "approved"
@@ -230,7 +231,7 @@ async def test_a_prompt_that_runs_out_on_the_channel_decides_nothing(tmp_path):
     await _settle()
     assert "ap-4" in state._pending_approvals and not waiter.done(), "still waiting on you"
 
-    assert state.resolve_approval("ap-4", True) is True  # floor: it can still be answered
+    assert state.resolve_approval("ap-4", True, by=YOU) is True  # floor: it can still be answered
     assert await asyncio.wait_for(waiter, timeout=5) is True
 
 
@@ -248,7 +249,7 @@ async def test_a_channel_with_no_approval_prompt_gets_a_link_instead(tmp_path, m
     text = channel.sent[0][1]
     assert "waiting for your approval: bash" in text
     assert "https://claw.example/companion?approval=ap-5" in text
-    state.resolve_approval("ap-5", False)
+    state.resolve_approval("ap-5", False, by=YOU)
     assert await asyncio.wait_for(waiter, timeout=5) is False
 
 
@@ -268,7 +269,7 @@ async def test_no_second_prompt_when_the_caller_is_already_asking_on_a_channel(t
     other = asyncio.ensure_future(state.request_approval("ap-7", "cron:nightly", "bash"))
     await _until(lambda: channel.prompts, "the channel asked")
     for approval_id in ("ap-6", "ap-7"):
-        state.resolve_approval(approval_id, False)
+        state.resolve_approval(approval_id, False, by=YOU)
     await asyncio.wait_for(asyncio.gather(waiter, other), timeout=5)
 
 
@@ -280,5 +281,5 @@ async def test_no_channel_dm_target_no_prompt(tmp_path):
     waiter = asyncio.ensure_future(state.request_approval("ap-8", "cron:nightly", "bash"))
     await _settle(50)
     assert channel.prompts == [] and channel.sent == []
-    state.resolve_approval("ap-8", False)
+    state.resolve_approval("ap-8", False, by=YOU)
     await asyncio.wait_for(waiter, timeout=5)

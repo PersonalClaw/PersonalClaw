@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName } from '../../lib/api'
+import { dispatchedProvider } from '../../lib/rungs'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 
@@ -240,11 +241,11 @@ export interface Trigger {
   whenTone: string
   actionLabel: string        // "Agent" / "Bash" / "Notify" …
   actionIcon: LucideIcon
-  /** The raw action-provider name, when the row has one. Carried alongside the derived
+  /** The action provider this row DISPATCHES, when it has one. Carried alongside the derived
    *  label/icon because the autonomy ladder is keyed on the provider IDENTITY, not on its
-   *  presentation: `providerRungIndex` maps this exact string to the action type that
-   *  governs it, which is the same thing the backend dispatch seams hold. */
-  actionProvider?: string
+   *  presentation: `providerRungIndex` maps it to the action type that governs it, which is the
+   *  same thing the backend dispatch seams hold. */
+  actionProvider?: ActionProviderName
   lastRunTs: number | null
   /** 🔴 THE RUN-OUTCOME vocabulary ONLY — `Outcome` / the run store's `status` / a hook's
    *  `last_status`. NEVER a `TriggerHealth` value: this field and `health` speak two different
@@ -334,7 +335,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     whenLabel: j.schedule, whenIcon: km.icon, whenTone: km.tone,
     actionLabel: provider ? actionLabel(provider) : mm.label,
     actionIcon: provider ? actionIcon(provider) : mm.icon,
-    actionProvider: provider,
+    actionProvider: provider ? dispatchedProvider(provider) : undefined,
     lastRunTs: j.last_run_ts ?? null,
     // Honest last-run status (T7): the newest run record's status — it persists across restarts and
     // carries launched/failure/timeout. The wire's `last_status` is NOT a second source for this
@@ -376,7 +377,7 @@ export function hookToTrigger(h: HookItem): Trigger {
   return {
     kind: 'lifecycle', id: `lifecycle:${h.id}`, rawId: h.id, name: h.name, enabled: h.enabled,
     whenLabel: humanizeEvent(h.event), whenIcon: Anchor, whenTone: 'var(--color-primary)',
-    actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider), actionProvider: h.provider,
+    actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider), actionProvider: h.provider ? dispatchedProvider(h.provider) : undefined,
     // A hook keeps no run store and no health rollup — `last_status` here IS the run outcome, from
     // the nine-member vocabulary `hooks.py::_record` closes (`ok`/`error`/`timeout`/`launched`/
     // `queued`/`blocked`/`advisory`/`held_for_rung`/`skipped_incident`). So it lands in `runStatus`,
@@ -418,7 +419,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     whenLabel: km.label, whenIcon: km.icon, whenTone: isEvent ? 'var(--color-secondary)' : 'var(--color-primary)',
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
-    actionProvider: provider,
+    actionProvider: provider ? dispatchedProvider(provider) : undefined,
     // 🔴 `t.health` used to land in `runStatus` and the list then read that field with the HEALTH
     // mapper — the one-field-two-vocabularies shape itself. It now travels as `health`, and the run
     // outcome comes from the row's own run fields: `last_run_status` (its newest run record) and

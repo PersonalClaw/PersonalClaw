@@ -26,6 +26,7 @@ import asyncio
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -135,7 +136,7 @@ class TestTheRunAdvances:
         """The atom's clause, end to end: the widget's payload IS the gate answer, and the
         node after the gate produces its output without anybody driving the engine."""
         controller, token = await _parked()
-        result = controller.resume(token, {"amount": "12.40", "vendor": "Acme"})
+        result = controller.resume(token, {"amount": "12.40", "vendor": "Acme"}, by=YOU)
         assert result["ok"] is True and result["approved"] is True
 
         status = await _settled(controller)
@@ -149,7 +150,7 @@ class TestTheRunAdvances:
         """A form whose values are dropped on the way in would advance the run with an empty
         answer — the run moves, and the user's input is gone."""
         controller, token = await _parked()
-        controller.resume(token, {"amount": "12.40", "vendor": "Acme"})
+        controller.resume(token, {"amount": "12.40", "vendor": "Acme"}, by=YOU)
         await _settled(controller)
         assert controller._outputs.get("ask", {}).get("answer") == {
             "amount": "12.40",
@@ -159,8 +160,8 @@ class TestTheRunAdvances:
     async def test_the_token_is_single_use(self) -> None:
         """A double-clicked submit must not replay one answer into two resolutions."""
         controller, token = await _parked()
-        controller.resume(token, {"amount": "1", "vendor": "A"})
-        again = controller.resume(token, {"amount": "1", "vendor": "A"})
+        controller.resume(token, {"amount": "1", "vendor": "A"}, by=YOU)
+        again = controller.resume(token, {"amount": "1", "vendor": "A"}, by=YOU)
         assert again["ok"] is False
         assert again["code"] in ("WF_RESUME_UNKNOWN_TOKEN", "WF_RESUME_ALREADY_USED")
 
@@ -168,7 +169,7 @@ class TestTheRunAdvances:
         """The falsification leg for the clause above: with a bad token the SAME assertions
         must fail, so "the run advanced" is evidence about the answer and not about time."""
         controller, _token = await _parked()
-        refused = controller.resume("0" * 32, {"amount": "1", "vendor": "A"})
+        refused = controller.resume("0" * 32, {"amount": "1", "vendor": "A"}, by=YOU)
         assert refused["ok"] is False
         await asyncio.sleep(0.3)
         assert controller.run.status == RunStatus.NEEDS_INPUT

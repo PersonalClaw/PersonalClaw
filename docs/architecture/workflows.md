@@ -446,6 +446,17 @@ ceiling bounds them, so under `{"approval": {"value": "ask"}}` neither stands an
 gate asks, and a gate the policy did approve is written to the audit log
 (`workflow_gate.approved_without_asking`) as well as the run's journal.
 
+**Only you answer.** A gate's question is put to you, and `controller.resume`, the one entry point
+every answer goes through, refuses anyone else before the token is touched (`approval_answer`,
+[security.md](security.md#who-answers-an-approval-approval_answerpy)). That covers an app's token,
+an agent's tool (the gateway's internal secret) and the run itself. An agent's `workflow_resume`
+lifts a pause and answers nothing: an answer it sends is refused with the sentence saying who
+answers, and audited (`approval.answer_refused`). The one exception is an `event` gate, which
+parks a run until something happens and asks nobody's permission. The trigger it waits for answers
+it, as a monitor's self-scheduled wake does, and you still can. A trigger answers no other gate, so
+a trigger an agent armed against its own run (`resume_run_id: "self"`) cannot approve that run's
+approval gate. Its fire is refused, and the gate waits for you.
+
 A trigger's action that stops the same way asks through the trigger instead
 ([tasks-triggers.md](tasks-triggers.md#an-action-that-stops-for-you-asks-you)):
 its run is recorded `waiting`, one Inbox row carries the same card, and Approve
@@ -462,8 +473,8 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
 * **Deny** — on a gate, or on a parked step — makes the step `declined`: not a
   failure, so no `on_error` can continue past it, and not a pass. The run ends
   `declined`, and its error names the gate and who said no ("“approve” was declined
-  by Keyur, so nothing after it ran"): the owner's name for a dashboard answer, the
-  channel for a remote one, the trigger for an automation.
+  by Keyur, so nothing after it ran"): the owner's name, and the channel for a remote
+  reply.
 * **No answer** — the gate's deadline passed — keeps the gate `failed`, because
   nobody chose it and an unattended run must surface it (WF2-R7). The run ends
   `failed`, saying how long it waited. A gate waits as long as every other approval:

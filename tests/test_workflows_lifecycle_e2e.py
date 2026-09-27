@@ -24,6 +24,7 @@ from collections import Counter
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import service, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.journal import ledger
@@ -175,7 +176,9 @@ def _answer_the_gate(run_id: str, sup: WorkflowWatchdog) -> None:
 
     pending = list_continuations(run_id)
     assert len(pending) == 1, pending
-    answered = service.resume_run(run_id, supervisor=sup, token=pending[0].token, answer=True)
+    answered = service.resume_run(
+        run_id, supervisor=sup, token=pending[0].token, answer=True, by=YOU
+    )
     assert answered.get("ok"), answered
 
 
@@ -472,9 +475,9 @@ class TestDoubleResume:
         assert pending, "the gate did not mint a continuation"
         token = pending[0].token
 
-        first = controller.resume(token, True)
+        first = controller.resume(token, True, by=YOU)
         assert first.get("ok"), first
-        second = controller.resume(token, False)
+        second = controller.resume(token, False, by=YOU)
         assert second.get("ok") is False
         # A consumed token is UNKNOWN, not merely "already used": the record is deleted on claim, so
         # a replayed link cannot even be identified — which is the stronger guarantee.
@@ -505,8 +508,8 @@ class TestDoubleResume:
         from personalclaw.workflows.human_input import list_continuations
 
         token = list_continuations(run.id)[0].token
-        controller.resume(token, True)
-        controller.resume(token, False)  # the replay
+        controller.resume(token, True, by=YOU)
+        controller.resume(token, False, by=YOU)  # the replay
         assert await controller.wait_for_terminal(timeout=20) == RunStatus.COMPLETE
         assert store.read_output(run.id, "root.children[1]") == "went ahead"
 

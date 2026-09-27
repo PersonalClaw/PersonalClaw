@@ -668,9 +668,10 @@ def _pending(state, name: str, *, creator: str = ""):
 
 
 class TestAnAppAnswersNoApprovalInAChat:
-    """The chat's approve route is yours in every conversation. The relay the menu-bar companion
-    runs is ``/api/approvals``, which it declares: it carries your answer, once, and never answers
-    what the app's own conversation asked."""
+    """The chat's approve route is yours in every conversation, and so is ``/api/approvals``: an
+    app's token answers no approval (`approval_answer`), not even to relay your click. The
+    menu-bar companion answers with your own sign-in (the token ``personalclaw token`` prints), so
+    it is you."""
 
     def test_the_verbs_are_the_cards_whole_vocabulary(self) -> None:
         from personalclaw.dashboard.approval_state import SESSION_APPROVAL_ACTIONS
@@ -716,10 +717,46 @@ class TestAnAppAnswersNoApprovalInAChat:
         assert pending.done() and pending.result() == "approved"
 
     @pytest.mark.asyncio
-    async def test_the_companion_relays_your_answer_through_the_approvals_list(
-        self, tmp_path
+    @pytest.mark.parametrize("whose", ["yours", "the app's"])
+    async def test_an_app_answers_no_approval_through_the_approvals_list(
+        self, tmp_path, whose
     ) -> None:
-        """What the menu-bar companion does (``POST /api/approvals/{id}/approve``), unchanged."""
+        """``POST /api/approvals/{id}/approve`` with an app's token: refused, in your chat as in
+        the app's own. It used to relay the answer for any chat but the app's own, which let any
+        app that declared ``/api/approvals`` approve every tool call you were asked about."""
+        from personalclaw.dashboard.approval_state import chat_approval_id
+        from personalclaw.dashboard.handlers.sessions import api_approval_resolve
+
+        state = _make_state(tmp_path)
+        rows = MagicMock()
+        with _home(tmp_path), patch("personalclaw.sel.sel", return_value=rows):
+            _install(tmp_path, APP, {"api": ["/api/approvals"]})
+            name = "mine" if whose == "yours" else "ours"
+            session, pending = _pending(state, name, creator="" if whose == "yours" else APP)
+            approval_id = chat_approval_id(session.key, "req-1")
+            state._pending_approvals[approval_id] = {
+                "id": approval_id,
+                "session": session.key,
+                "request_id": "req-1",
+                "asked_by": f"agent:dashboard:{session.key}" if whose == "yours" else f"app:{APP}",
+            }
+            route = ("POST", "/api/approvals/{id}/{action}", api_approval_resolve)
+            async with TestClient(TestServer(_gateway(state, APP, [route]))) as client:
+                resp = await client.post(f"/api/approvals/{approval_id}/approve")
+                body = await resp.json()
+        assert resp.status == 403, body
+        assert body["error"]["code"] == "approval_owner_only"
+        assert not pending.done(), "the app's answer decided the approval"
+        refused = [
+            c.kwargs
+            for c in rows.log_api_access.call_args_list
+            if c.kwargs.get("operation") == "approval.answer_refused"
+        ]
+        assert [r["caller"] for r in refused] == [f"app:{APP}"]
+
+    @pytest.mark.asyncio
+    async def test_you_answer_through_the_approvals_list(self, tmp_path) -> None:
+        """The companion's answer, with your own sign-in: answered."""
         from personalclaw.dashboard.approval_state import chat_approval_id
         from personalclaw.dashboard.handlers.sessions import api_approval_resolve
 
@@ -731,38 +768,11 @@ class TestAnAppAnswersNoApprovalInAChat:
             "session": mine.key,
             "request_id": "req-1",
         }
-        with _home(tmp_path):
-            _install(tmp_path, APP, {"api": ["/api/approvals"]})
-            route = ("POST", "/api/approvals/{id}/{action}", api_approval_resolve)
-            async with TestClient(TestServer(_gateway(state, APP, [route]))) as client:
-                resp = await client.post(f"/api/approvals/{approval_id}/approve")
-                assert resp.status == 200, await resp.text()
+        route = ("POST", "/api/approvals/{id}/{action}", api_approval_resolve)
+        async with TestClient(TestServer(_gateway(state, "", [route]))) as client:
+            resp = await client.post(f"/api/approvals/{approval_id}/approve")
+            assert resp.status == 200, await resp.text()
         assert pending.done() and pending.result() == "approved"
-
-    @pytest.mark.asyncio
-    async def test_the_relay_never_answers_the_apps_own_conversation(self, tmp_path) -> None:
-        from personalclaw.dashboard.approval_state import chat_approval_id
-        from personalclaw.dashboard.handlers.sessions import api_approval_resolve
-
-        state = _make_state(tmp_path)
-        rows = MagicMock()
-        with _home(tmp_path), patch("personalclaw.dashboard.handlers.sel", return_value=rows):
-            _install(tmp_path, APP, {"api": ["/api/approvals"]})
-            own, pending = _pending(state, "ours", creator=APP)
-            approval_id = chat_approval_id(own.key, "req-1")
-            state._pending_approvals[approval_id] = {
-                "id": approval_id,
-                "session": own.key,
-                "request_id": "req-1",
-            }
-            route = ("POST", "/api/approvals/{id}/{action}", api_approval_resolve)
-            async with TestClient(TestServer(_gateway(state, APP, [route]))) as client:
-                resp = await client.post(f"/api/approvals/{approval_id}/approve")
-                body = await resp.json()
-        assert resp.status == 403, body
-        assert body["error"]["code"] == "approval_owner_only"
-        assert not pending.done()
-        assert rows.log_api_access.call_args.kwargs["caller"] == f"app:{APP}"
 
 
 # ── 6. Rooms, the inbox, and the doors that speak as your agent ────────────────────────

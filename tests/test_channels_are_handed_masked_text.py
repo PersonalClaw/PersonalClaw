@@ -314,7 +314,8 @@ def _door(name: str) -> Any:
     return {
         "delivery_for": lambda: channel_delivery.delivery_for("telegram"),
         "owner_reachable": channel_delivery.owner_reachable,
-        "approval_delivery": channel_delivery.approval_delivery,
+        # `(provider, delivery)`: the provider names who answers there.
+        "approval_delivery": lambda: channel_delivery.approval_delivery()[1],
         "the dashboard's delivery_for": lambda: state.delivery_for("telegram"),
         "the dashboard's channel_delivery": lambda: state.channel_delivery,
         "the gateway's _channel_delivery": lambda: gateway._channel_delivery,
@@ -451,8 +452,10 @@ async def test_an_approval_keeps_what_routes_the_answer(telegram):
         tool_meta={"brief": {"tool": f"call {SECRET}", "risk": "high"}},
         options=[{"optionId": "allow", "name": "Allow"}],
     )
-    handle = channel_delivery.approval_delivery()
-    assert handle is not None
+    asking = channel_delivery.approval_delivery()
+    assert asking is not None
+    provider, handle = asking
+    assert provider == "telegram"
 
     assert await handle.request_approval(event, source="chat") is True
 

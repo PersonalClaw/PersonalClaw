@@ -17,6 +17,7 @@ import pytest
 from chat_test_helpers import _make_state
 
 import personalclaw.dashboard.approval_state as approval_state
+from personalclaw.approval_answer import YOU
 
 
 def _capture_window(monkeypatch) -> list[float]:
@@ -72,7 +73,7 @@ async def test_approval_granted_before_timeout(tmp_path):
 
     async def _resolve_soon():
         await asyncio.sleep(0.01)
-        state.resolve_approval("a2", approved=True)
+        state.resolve_approval("a2", approved=True, by=YOU)
 
     task = asyncio.create_task(_resolve_soon())
     result = await state.request_approval("a2", "dashboard", "ls", session="chat-1")

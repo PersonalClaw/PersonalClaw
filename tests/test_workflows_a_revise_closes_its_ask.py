@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.learning import outcome_resolver
 from personalclaw.learning import proposals as P
 from personalclaw.ledger import outcomes
@@ -94,7 +95,9 @@ def _confirmations(c: RunController, kind: str) -> list[dict]:
 
 async def _revised_then_asked_again(c: RunController) -> tuple[HI.Continuation, HI.Continuation]:
     first = _ask(c)
-    result = c.resume(first.token, {"revise": {"step_ref": "draft", "comment": "be terser"}})
+    result = c.resume(
+        first.token, {"revise": {"step_ref": "draft", "comment": "be terser"}}, by=YOU
+    )
     assert result["ok"] and result["revised"], result
     await c.run_to_completion(timeout=20)
     second = _ask(c)
@@ -123,7 +126,7 @@ async def test_the_re_ask_is_a_new_question_with_its_own_id() -> None:
     assert pending == [first.confirmation_id, second.confirmation_id]
 
     # Answering the re-ask closes the re-ask, and nothing else.
-    assert c.resume(second.token, True)["ok"]
+    assert c.resume(second.token, True, by=YOU)["ok"]
     await c.run_to_completion(timeout=20)
     closes = [(e["confirmation_id"], e["verb"]) for e in _confirmations(c, J.CONFIRMATION_RESOLVED)]
     assert closes == [(first.confirmation_id, "revised"), (second.confirmation_id, "approve")]
@@ -132,7 +135,7 @@ async def test_the_re_ask_is_a_new_question_with_its_own_id() -> None:
 async def test_the_gates_scoring_counts_a_revise_apart_from_yes_and_no() -> None:
     c = await _parked()
     _first, second = await _revised_then_asked_again(c)
-    c.resume(second.token, True)
+    c.resume(second.token, True, by=YOU)
     await c.run_to_completion(timeout=20)
 
     stats = introspection.gate_stats(J.ledger(c.run.id))["approve"]
@@ -147,7 +150,7 @@ async def test_the_escalation_bet_grades_a_revise_as_its_own_answer() -> None:
     1.0 and a no is 0.0 — which would score this −1, as if the person had refused the work."""
     c = await _parked()
     first, second = await _revised_then_asked_again(c)
-    c.resume(second.token, True)
+    c.resume(second.token, True, by=YOU)
     await c.run_to_completion(timeout=20)
 
     events = J.ledger(c.run.id)

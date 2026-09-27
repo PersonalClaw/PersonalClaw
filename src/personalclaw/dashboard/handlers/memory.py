@@ -553,6 +553,17 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
             raise ValueError("suppressed is not user-writable")
     except ValueError:
         return web.json_response({"error": "verdict must be 'approve' or 'deny'"}, status=422)
+    if verdict is Verdict.APPROVE:
+        # An approve rule answers every matching proposal before it is asked, so only you teach
+        # one (`approval_answer`): an agent's tool that could would be approving its own work
+        # ahead of time. A deny rule only takes away, so anyone who reaches this may add one.
+        from personalclaw import approval_answer
+
+        refused = approval_answer.forbidden(
+            request, what=f"approval_rule:{pattern[:80]}", asked_by=""
+        )
+        if refused is not None:
+            return refused
     try:
         rule = ApprovalRule(
             pattern=pattern,

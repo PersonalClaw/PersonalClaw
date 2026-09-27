@@ -281,3 +281,25 @@ async def api_external_access_client_toggle(request: web.Request) -> web.Respons
     if not clients_mod.set_disabled(client_id, bool(body["disabled"]), reason="operator action"):
         return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
     return web.json_response({"ok": True, "client_id": client_id, "disabled": body["disabled"]})
+
+
+async def api_bridge_confirmation(request: web.Request) -> web.Response:
+    """POST /api/external-access/bridge/confirmations/{id} — your answer to a control-bridge action.
+
+    Body ``{confirm: bool}``. A local agent's confirm-flagged action waits here, raised in your
+    Inbox, until you answer: ``true`` runs it once, ``false`` drops it. Only you answer
+    (``approval_answer``): an app, an agent's tool and the bridge client that asked are refused 403
+    ``approval_owner_only``, and the attempt is audited.
+    """
+    from personalclaw import approval_answer
+    from personalclaw.inbound import bridge
+
+    body = await json_object_body(request)
+    if not isinstance(body, dict) or not isinstance(body.get("confirm"), bool):
+        return json_error("invalid_body", message="body must be {confirm: bool}", status=400)
+    return await bridge.answer_confirmation(
+        request.app["state"],
+        str(request.match_info.get("id", "") or ""),
+        approved=bool(body["confirm"]),
+        by=approval_answer.of_request(request),
+    )

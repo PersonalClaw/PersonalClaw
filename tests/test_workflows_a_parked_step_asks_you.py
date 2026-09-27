@@ -33,6 +33,7 @@ import pytest
 
 from personalclaw.action_providers.base import ActionContext, ActionResult
 from personalclaw.action_providers.browse_provider import OUTCOME_NEEDS_INPUT, BrowseActionProvider
+from personalclaw.approval_answer import YOU
 from personalclaw.browse.handoff import mark_expired, record_login, site_slug
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
@@ -235,7 +236,7 @@ async def test_approving_a_parked_step_runs_it_again_and_the_run_carries_on() ->
     c, status = await _run(_spec(), step, state=state)
     assert status == RunStatus.NEEDS_INPUT
 
-    result = c.resume(_only_token(c.run.id), True)
+    result = c.resume(_only_token(c.run.id), True, by=YOU)
     assert result["ok"] and result["approved"], result
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
 
@@ -257,7 +258,7 @@ async def test_denying_a_parked_step_ends_it_as_declined() -> None:
     step = _ParksOnce()
     c, _status = await _run(_spec(), step, state=state)
 
-    result = c.resume(_only_token(c.run.id), False)
+    result = c.resume(_only_token(c.run.id), False, by=YOU)
     assert result["ok"] and result["approved"] is False, result
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
 
@@ -281,7 +282,7 @@ async def test_once_you_confirm_the_sign_in_the_browse_step_does_not_ask_again()
     browse = _Browse()
     c, _status = await _run(_spec(), browse, state=state)
 
-    assert c.resume(_only_token(c.run.id), True)["ok"]
+    assert c.resume(_only_token(c.run.id), True, by=YOU)["ok"]
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
 
     assert len(browse.contexts) == 2
@@ -335,7 +336,7 @@ async def test_dont_ask_again_is_not_kept_for_a_parked_step() -> None:
     """Remembering an allow for a sign-in would promise something no later park honours."""
     state = _State()
     c, _status = await _run(_spec(), _ParksOnce(), state=state)
-    assert c.resume(_only_token(c.run.id), True, always_allow=True)["ok"]
+    assert c.resume(_only_token(c.run.id), True, always_allow=True, by=YOU)["ok"]
     assert len(c._allow_memory) == 0
 
 
@@ -385,7 +386,7 @@ async def test_an_action_that_asks_a_question_in_its_output_can_be_answered() ->
     assert pending[0].ask["choices"] == ["dev", "prod"]
     assert len(_open_rows(state, c.run.id)) == 1
 
-    assert c.resume(pending[0].token, "prod")["ok"]
+    assert c.resume(pending[0].token, "prod", by=YOU)["ok"]
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
     assert c.run.status == RunStatus.COMPLETE
     assert store.read_output(c.run.id, STEP)["answer"] == "prod"

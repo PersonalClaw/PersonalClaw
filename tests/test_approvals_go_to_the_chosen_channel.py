@@ -31,6 +31,7 @@ import pytest
 from personalclaw import channel_delivery
 from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules as rules
+from personalclaw.approval_answer import YOU
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID, AppConfig
@@ -199,7 +200,7 @@ async def test_by_default_the_first_channel_that_knows_you_asks(tmp_path):
     waiter = asyncio.ensure_future(state.request_approval("ap-1", "cron:nightly", "bash"))
     await _until(lambda: first.prompts, f"{FIRST} asked")
     assert last.prompts == [] and last.sent == []
-    state.resolve_approval("ap-1", False)
+    state.resolve_approval("ap-1", False, by=YOU)
     await asyncio.wait_for(waiter, timeout=5)
 
 
@@ -230,7 +231,7 @@ async def test_a_chosen_channel_that_is_not_connected_asks_nobody_else(tmp_path)
     assert last.prompts == [] and last.sent == []
     assert "ap-3" in state._pending_approvals and not waiter.done(), "still waiting on you"
 
-    assert state.resolve_approval("ap-3", True) is True  # floor: answered in the dashboard
+    assert state.resolve_approval("ap-3", True, by=YOU) is True  # floor: answered in the dashboard
     assert await asyncio.wait_for(waiter, timeout=5) is True
 
 
@@ -249,7 +250,7 @@ async def test_a_chosen_channel_without_buttons_gets_the_link_not_another_channe
     await _until(lambda: last.sent, f"{LAST} was told")
     assert "https://claw.example/companion?approval=ap-4" in last.sent[0][1]
     assert first.prompts == [] and first.sent == []
-    state.resolve_approval("ap-4", False)
+    state.resolve_approval("ap-4", False, by=YOU)
     await asyncio.wait_for(waiter, timeout=5)
 
 
@@ -283,7 +284,7 @@ async def test_an_origin_that_cannot_ask_hands_over_to_send_approvals_to(tmp_pat
     await _until(lambda: last.prompts, f"{LAST} asked")
     assert first.prompts == []
     assert last.asked_in[0] == ("", None), "the setting's channel asks in the owner's DM"
-    state.resolve_approval("ap-6", False)
+    state.resolve_approval("ap-6", False, by=YOU)
     await asyncio.wait_for(waiter, timeout=5)
 
 

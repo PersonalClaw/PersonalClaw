@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import service, store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -161,7 +162,7 @@ def test_pause_stops_the_running_stage_and_resume_redispatches_it() -> None:
         assert fake.spawned == ["sub1"], f"a paused run dispatched {fake.spawned}"
 
         fake.hold = False
-        assert service.resume_run(run.id, supervisor=sup)["ok"]
+        assert service.resume_run(run.id, supervisor=sup, by=YOU)["ok"]
         await _until(lambda: len(fake.spawned) >= 2)
         # The SAME stage came back: it is the work step, not the judge that follows it.
         assert "You are verifying" not in str(fake.infos["sub2"].result)

@@ -1262,7 +1262,12 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
 
     A batch approve is N calls to this endpoint (the frontend fans out), so per-item
     outcomes are per-request and one failure never rolls back a sibling's success.
+
+    Only you approve a proposal, never the app that proposed it (`approval_answer`): an app's
+    token never reaches this route (`apps/permissions.ROUTE_AUTHZ`), and the handler holds the
+    answer to the same rule every other door does.
     """
+    from personalclaw import approval_answer
     from personalclaw import proposals_contract as pc
 
     state: "DashboardState" = request.app["state"]
@@ -1271,6 +1276,14 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     item = inbox.items.get(item_id)
     if item is None:
         return web.json_response({"error": "not found"}, status=404)
+    proposer = str((item.refs or {}).get("app") or "")
+    refused = approval_answer.forbidden(
+        request,
+        what=f"proposal:{item_id}",
+        asked_by=approval_answer.app(proposer).label if proposer else "",
+    )
+    if refused is not None:
+        return refused
 
     edited = None
     if request.can_read_body:

@@ -26,10 +26,13 @@ store the same way every other surface's client does. A file that carried the se
 would make "readable discovery file" and "authenticated" the same thing.
 
 **`requiresConfirmation` is enforced HERE, not by client politeness.** A confirm-flagged
-action never mutates on first call: it returns ``needs_confirmation`` plus an opaque
-token and raises a needs-input notification, and only the USER (in the dashboard, or via
-``personalclaw inbound confirm <token>``) turns that into an execution. A client that
-ignores the flag gets a refusal, not a mutation.
+action never mutates on first call: it returns ``needs_confirmation`` and raises a row in
+your Inbox, and only YOU turn that into an execution, from that row
+(:func:`answer_confirmation`, behind ``POST /api/external-access/bridge/confirmations/{id}``).
+The client that asked cannot: a confirmation records who asked it, and ``/confirm`` refuses
+every bridge client with a 403 and an audit row (``approval_answer``). It used to redeem the
+token the 202 had just handed that same client, with the bearer it asked with, so a confirm-
+flagged action needed nobody's confirmation at all.
 
 **User content leaves through the ONE inbound wrapper.** ``read_transcript`` hands a
 model the user's own conversation, which is the classic injection carrier: whatever was
@@ -51,8 +54,8 @@ enumeration of the authority the caller lacks. `GET /actions` therefore resolves
 bearer to a client record (`_admit`), narrows the catalogue by that record's ``tools``
 binding, and fingerprints the SERVED list — because a digest computed over the full
 registry never matches a filtered payload, which turns the client's cache into a
-per-request re-fetch. The same `_bound` predicate gates `/action` AND `/confirm`, so the
-description and the enforcement cannot drift.
+per-request re-fetch. The same `_bound` predicate gates `/action` and the confirmation
+you answer, so the description and the enforcement cannot drift.
 """
 
 from __future__ import annotations
@@ -71,7 +74,8 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
-from personalclaw import notification_kinds
+from personalclaw import approval_answer, notification_kinds
+from personalclaw.approval_answer import Principal
 from personalclaw.http_errors import json_error
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
@@ -420,10 +424,17 @@ def pending_count() -> int:
     return len(_pending)
 
 
-def _mint_confirmation(action: Action, params: dict) -> str:
+def _mint_confirmation(action: Action, params: dict, *, asked_by: str) -> str:
+    """Hold a confirm-flagged intent for you to answer. *asked_by* is the client that asked,
+    which may never answer it (``approval_answer``, rule 2)."""
     _reap()
     token = secrets.token_urlsafe(32)
-    _pending[token] = {"action": action.name, "params": params, "created": time.monotonic()}
+    _pending[token] = {
+        "action": action.name,
+        "params": params,
+        "created": time.monotonic(),
+        "asked_by": asked_by,
+    }
     return token
 
 
@@ -639,7 +650,8 @@ async def handle_action(request: web.Request) -> web.Response:
 
     state = request.app["state"]
     if action.requires_confirmation:
-        token = _mint_confirmation(action, params)
+        asked_by = approval_answer.bridge(client.client_id if client is not None else "").label
+        token = _mint_confirmation(action, params, asked_by=asked_by)
         try:
             # `emit_attention_item`, not `state.notify`: `needs_input` is an ATTENTION
             # kind, and that function is documented as "the only correct way to raise a
@@ -656,26 +668,58 @@ async def handle_action(request: web.Request) -> web.Response:
                 source="loop",
                 kind="needs_input",
                 title="Confirm a control-bridge action",
-                body=f"A local agent wants to run {action.name}. Confirm to allow it.",
+                body=_confirmation_body(action, params),
                 refs={
                     "source": "control_bridge",
                     "action": action.name,
-                    "confirm_token": token,
+                    "confirmation": token,
+                    "asked_by": asked_by,
                 },
                 dedup_key=f"control_bridge:{token}",
             )
         except Exception:
             logger.warning("control bridge confirm notification failed", exc_info=True)
         audit(BRIDGE_SURFACE, route="/action", status=202, tool=action.name, refused="")
-        return _json({"status": "needs_confirmation", "confirm_token": token}, status=202)
+        return _json(
+            {
+                "status": "needs_confirmation",
+                "confirmation": token,
+                "message": (
+                    f"{action.name} waits for the owner to confirm it in PersonalClaw's Inbox. "
+                    "It runs if they do, within 10 minutes; this client cannot confirm it."
+                ),
+            },
+            status=202,
+        )
     return await _run(state, action, params, "/action")
 
 
-async def handle_confirm(request: web.Request) -> web.Response:
-    """POST /confirm — redeem a confirm_token, running the action the user approved.
+def _confirmation_body(action: Action, params: dict) -> str:
+    """What the Inbox row asks you: which action, with what, and what Confirm does.
 
-    Single-use and TTL-bounded: an abandoned intent expires rather than staying
-    redeemable by whatever still holds the token.
+    The parameters are shown because a confirmation you cannot read is one you approve blind.
+    They are the asking agent's own input, redacted and cut short like every other string an
+    approval shows.
+    """
+    from personalclaw.security import redact_field
+
+    shown = redact_field(json.dumps(params, sort_keys=True, default=str))[:300] if params else ""
+    what = f"{action.name} with {shown}" if shown else action.name
+    return (
+        f"A local agent on the control bridge asks to run {what}. Confirm runs it once; the "
+        "agent cannot confirm it itself. It expires 10 minutes after it was asked."
+    )
+
+
+async def handle_confirm(request: web.Request) -> web.Response:
+    """POST /confirm — refused, always: only you confirm a control-bridge action.
+
+    A bridge client is the party that asks for a confirmation, so it never answers one
+    (``approval_answer``). This used to redeem the token the 202 had just handed the same
+    client, which made a confirm-flagged action a two-call action nobody confirmed. The door
+    stays so that a client still calling it learns where the confirmation went, and so the
+    attempt is on record: a 403 ``approval_owner_only``, a row in the inbound audit and one in
+    the security log. The confirmation is not spent, and still waits for you in the Inbox.
     """
     refusal, _, client = _admit(request, "/confirm")
     if refusal is not None:
@@ -683,29 +727,94 @@ async def handle_confirm(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        # Audited like `/action`'s twin. The asymmetry (one audited, one not) had no
-        # reason behind it, and `/confirm` is the more security-relevant of the two.
-        audit(BRIDGE_SURFACE, route="/confirm", status=400, refused="invalid JSON")
-        return json_error("invalid_json", status=400)
-    token = str((body or {}).get("confirm_token") or "").strip()
-    intent = take_confirmation(token) if token else None
+        body = {}
+    token = str((body if isinstance(body, dict) else {}).get("confirmation") or "").strip()
+    intent = _pending.get(token) if token else None
+    by = approval_answer.bridge(client.client_id if client is not None else "")
+    why = approval_answer.check(
+        by,
+        what=f"bridge:{token[:8]}" if token else "bridge",
+        asked_by=str((intent or {}).get("asked_by") or ""),
+    )
+    audit(BRIDGE_SURFACE, route="/confirm", status=403, refused=why)
+    return json_error("approval_owner_only", message=why, status=403)
+
+
+async def answer_confirmation(
+    state: Any, token: str, *, approved: bool, by: Principal
+) -> web.Response:
+    """Your answer to a pending confirmation: run it once (*approved*), or drop it.
+
+    *by* is who answered, held to ``approval_answer`` (only you, never the client that asked)
+    before the intent is touched. Single-use and TTL-bounded: an abandoned intent expires rather
+    than staying answerable, and either answer closes its Inbox row. Declining also spends it, so
+    the client has to ask again.
+    """
+    intent = _pending.get(token)
+    refused = approval_answer.check(
+        by,
+        what=f"bridge:{token[:8]}",
+        asked_by=str((intent or {}).get("asked_by") or ""),
+    )
+    if refused:
+        return json_error("approval_owner_only", message=refused, status=403)
+    intent = take_confirmation(token)
+    _close_row(state, token)
     if intent is None:
-        audit(BRIDGE_SURFACE, route="/confirm", status=404, refused="unknown or expired token")
-        return json_error("confirm_token_invalid", status=404)
+        audit(BRIDGE_SURFACE, route="confirmation", status=404, refused="unknown or expired")
+        return json_error(
+            "confirm_token_invalid",
+            message="This confirmation was already answered, or it expired: nothing ran.",
+            status=404,
+        )
     action = _action(str(intent["action"]))
     if action is None:  # pragma: no cover - registry cannot shrink at runtime
-        audit(BRIDGE_SURFACE, route="/confirm", status=410, refused="action no longer exists")
+        audit(BRIDGE_SURFACE, route="confirmation", status=410, refused="action no longer exists")
         return json_error("unknown_action", status=410)
+    client, gone = _asker_record(str(intent.get("asked_by") or ""))
+    if gone:
+        audit(BRIDGE_SURFACE, route="confirmation", status=409, tool=action.name, refused=gone)
+        return json_error("bridge_client_gone", message=f"Nothing ran: {gone}.", status=409)
     if not _bound(client, action.name):
-        # The pin is re-checked at REDEMPTION, not only at minting. Otherwise a token
-        # minted by a wider principal becomes a way for a narrower one to run an action
-        # its own record forbids — the exact drift a separately-filtered catalogue and a
-        # separately-enforced invoke path produce. Redemption is single-use, so the token
-        # is already spent by the time we refuse; that is deliberate, because a rejected
-        # redemption that left the token live would let a narrow client burn a wide
-        # client's intent over and over while probing the pin.
-        return _refuse_unbound(client, action, "/confirm")
-    return await _run(request.app["state"], action, dict(intent["params"]), "/confirm")
+        # The pin is re-checked when you answer, not only when the client asked: a record
+        # narrowed in between must not run what it no longer may.
+        return _refuse_unbound(client, action, "confirmation")
+    if not approved:
+        audit(
+            BRIDGE_SURFACE, route="confirmation", status=200, tool=action.name, refused="declined"
+        )
+        return _json({"status": "declined", "action": action.name})
+    return await _run(state, action, dict(intent["params"]), "confirmation")
+
+
+def _asker_record(asked_by: str) -> tuple[InboundClient | None, str]:
+    """The client record a confirmation's asker names, re-read now: ``(record, "")``, or
+    ``(None, "")`` for the surface token, which carries no record and so no pin.
+
+    ``(None, why)`` when the client that asked has since been revoked or switched off. Its
+    request goes with it: running it would act for a client you have just taken away.
+    """
+    from personalclaw.inbound.clients import load_clients
+
+    client_id = asked_by.removeprefix("bridge:")
+    if client_id in ("", "surface"):
+        return None, ""
+    record = load_clients().get(client_id)
+    if record is None:
+        return None, f"the client that asked for it ({client_id}) has been revoked"
+    if record.disabled:
+        return None, f"the client that asked for it ({client_id}) is switched off"
+    return record, ""
+
+
+def _close_row(state: Any, token: str) -> None:
+    """Close the confirmation's Inbox row, whichever way it ended."""
+    try:
+        from personalclaw.inbox import resolve_attention_items
+
+        resolve_attention_items(state, {"source": "control_bridge", "confirmation": token})
+    except Exception:  # noqa: BLE001 - the answer stands whether or not its row closed
+        logger.debug("control bridge: could not close a confirmation's row", exc_info=True)
 
 
 # ── lifecycle: its own runner, its own discovery file ────────────────────────
@@ -806,50 +915,6 @@ async def stop() -> None:
         except Exception:  # pragma: no cover - defensive
             logger.debug("control bridge cleanup failed", exc_info=True)
     _runner, _site = None, None
-
-
-def confirm_cli(token: str) -> int:
-    """``personalclaw inbound confirm <token>`` — redeem from OUTSIDE the gateway.
-
-    The pending intent lives in the gateway's memory, so the CLI cannot resolve it
-    locally; it goes through the same authenticated ``/confirm`` route an agent would,
-    reading the port from the discovery file and the token from the credential store.
-    That keeps ONE confirmation path rather than a second in-process one.
-    """
-    import urllib.error
-    import urllib.request
-
-    from personalclaw.inbound.auth import load_surface_token
-
-    path = discovery_path()
-    if not path.is_file():
-        print("control bridge is not running (no discovery file)")
-        return 1
-    try:
-        info = json.loads(path.read_text())
-    except Exception:
-        print(f"discovery file is unreadable: {path}")
-        return 1
-    bearer = load_surface_token(BRIDGE_SURFACE)
-    if not bearer:
-        print(f"no bridge token configured ({token_env_key(BRIDGE_SURFACE)})")
-        return 1
-    req = urllib.request.Request(
-        f"{info.get('url')}/confirm",
-        data=json.dumps({"confirm_token": token}).encode(),
-        headers={"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            print(resp.read().decode()[:2000])
-        return 0
-    except urllib.error.HTTPError as e:
-        print(f"confirm refused ({e.code}): {e.read().decode()[:400]}")
-        return 1
-    except Exception as e:
-        print(f"confirm failed: {e}")
-        return 1
 
 
 def _sync_stop() -> None:  # pragma: no cover - process-exit backstop

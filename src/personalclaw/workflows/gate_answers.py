@@ -40,6 +40,7 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.step_usage import NOTHING_SENT
 
 if TYPE_CHECKING:
+    from personalclaw.approval_answer import Principal
     from personalclaw.workflows.controller import RunController
 
 logger = logging.getLogger(__name__)
@@ -280,23 +281,16 @@ def _gate_kind(node: Any) -> str:
     return str((node.config or {}).get("kind", "") or "")
 
 
-def decliner(responder: str, channel: str) -> str:
+def decliner(by: Principal, channel: str) -> str:
     """Who declined, as the run's record names them.
 
-    A dashboard, CLI or HTTP answer carries no responder — the gateway already authenticated the
-    one person who can give it — so it names the owner (Settings → Account → "Your name"), or
-    "you" when no name was given. A channel reply must come from the run's owner
-    (`gate_policy.may_answer`) and names where it came from. A trigger that answers a gate is an
-    automation, and is named as one.
+    Only you answer a gate (``approval_answer``), so it names you (Settings → Account → "Your
+    name"), or "you" when no name was given. A channel reply must come from the run's owner
+    (`gate_policy.may_answer`) and names who replied and where.
     """
     from personalclaw.identity import operator_name
 
-    responder = (responder or "").strip()
-    if responder.startswith("trigger:"):
-        return f"the trigger {responder.split(':', 1)[1]}"
-    if responder == "trigger":
-        return "a trigger"
-    name = responder or operator_name() or "you"
+    name = (by.name if channel else "") or operator_name() or "you"
     return f"{name} in {channel}" if channel else name
 
 
@@ -517,7 +511,7 @@ def resume_revise(
     step_ref: str,
     comment: str,
     *,
-    responder: str = "",
+    by: Principal,
     channel: str = "",
 ) -> dict[str, Any]:
     """Apply `revise{step_ref, comment}` to exactly one node, then let the run carry on.
@@ -561,7 +555,10 @@ def resume_revise(
             "message": "a revise must say what to change (`comment`)",
         }
 
-    patch = revision.comment_patch(root, node_id, text, requested_by=responder or channel or "user")
+    # "user" is what the step's prompt calls the reviewer; a channel reply names who replied.
+    patch = revision.comment_patch(
+        root, node_id, text, requested_by=(by.name if channel else "") or "user"
+    )
     if patch is None:
         return {
             "ok": False,
@@ -594,7 +591,7 @@ def resume_revise(
         confirmation_id=cont.confirmation_id,
         verb=REVISED,
         approved=False,
-        resolved_by=responder or channel or "dashboard",
+        resolved_by=by.label,
         reason=f"sent “{node_id}” back to be revised",
     )
 
@@ -616,7 +613,7 @@ def resume_revise(
         preview=mutations.CascadePreview(rerun=[node_id]),
         spec=merged.spec,
     )
-    mid_flight.commit_mutation(ctl, result, responder or channel or "user")
+    mid_flight.commit_mutation(ctl, result, (by.name if channel else "") or "user")
 
     # The revised step re-asks. PENDING at the SAME epoch, matching `mid_flight._apply_reentry`'s
     # no-force behaviour — and the cache cannot serve the old answer anyway, because the
@@ -636,7 +633,7 @@ def resume_revise(
         epoch=cont.epoch,
         step_ref=node_id,
         comment=text,
-        revised_by=responder or channel or "dashboard",
+        revised_by=by.label,
     )
     ctl.run.attention = None
     if ctl.run.status == RunStatus.NEEDS_INPUT:

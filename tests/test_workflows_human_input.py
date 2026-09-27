@@ -24,6 +24,7 @@ import time
 
 import pytest
 
+from personalclaw.approval_answer import YOU
 from personalclaw.workflows import gate_answers
 from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
@@ -320,7 +321,7 @@ class TestResume:
     async def test_approving_completes_the_gate_and_unblocks_the_run(self) -> None:
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        result = c.resume(token, True)
+        result = c.resume(token, True, by=YOU)
         assert result["ok"] and result["approved"]
         assert c.instances["root.children[1]"].state == InstanceState.DONE
         # The run can now finish, and the downstream node reads the answer.
@@ -334,7 +335,7 @@ class TestResume:
         caption naming who said no."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        result = c.resume(token, False)
+        result = c.resume(token, False, by=YOU)
         assert result["ok"] and not result["approved"]
         inst = c.instances["root.children[1]"]
         assert inst.state == InstanceState.DECLINED
@@ -345,8 +346,8 @@ class TestResume:
         """The headline: two clicks must not become two deployments."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        first = c.resume(token, True)
-        second = c.resume(token, True)
+        first = c.resume(token, True, by=YOU)
+        second = c.resume(token, True, by=YOU)
         assert first["ok"]
         assert not second["ok"] and second["code"] == "WF_RESUME_UNKNOWN_TOKEN"
 
@@ -354,21 +355,21 @@ class TestResume:
         """Rejecting after consumption would leave a dead link and an unanswered gate."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        bad = c.resume(token, "yes please")
+        bad = c.resume(token, "yes please", by=YOU)
         assert not bad["ok"] and bad["code"] == "WF_RESUME_INVALID_ANSWER"
         # The token survives, so the user can correct their answer.
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
 
     async def test_an_unknown_token_is_refused(self) -> None:
         c, _status = await _blocked({"timeout_secs": 0})
-        assert c.resume("nope", True)["code"] == "WF_RESUME_UNKNOWN_TOKEN"
+        assert c.resume("nope", True, by=YOU)["code"] == "WF_RESUME_UNKNOWN_TOKEN"
 
     async def test_an_expired_token_yields_a_typed_item(self) -> None:
         c, _status = await _blocked({"timeout_secs": 0})
         cont = HI.list_continuations(c.run.id)[0]
         cont.expires_at = time.time() - 10
         HI.save_continuation(cont)
-        result = c.resume(cont.token, True)
+        result = c.resume(cont.token, True, by=YOU)
         assert not result["ok"] and result["code"] == "WF_RESUME_EXPIRED"
         assert result["item"]["kind"] == "resume_expired"
         # Consumed, so the dead token cannot be retried forever.
@@ -378,7 +379,7 @@ class TestResume:
         """A later reader needs to know WHO decided WHAT, not merely that it continued."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        c.resume(token, True)
+        c.resume(token, True, by=YOU)
         resolved = [e for e in J.ledger(c.run.id) if e.get("kind") == J.GATE_RESOLVED]
         assert len(resolved) == 1
         assert resolved[0]["approved"] is True and resolved[0]["node_id"] == "approve"
@@ -389,7 +390,7 @@ class TestResume:
         c, _status = await _blocked({"timeout_secs": 0})
         cont = HI.list_continuations(c.run.id)[0]
         c.instances[cont.instance_path].epoch = 5
-        assert c.resume(cont.token, True)["code"] == "WF_RESUME_STALE_EPOCH"
+        assert c.resume(cont.token, True, by=YOU)["code"] == "WF_RESUME_STALE_EPOCH"
 
     async def test_a_form_answer_is_stored_and_never_read_as_a_denial(self) -> None:
         """Text/form answers are DATA, not verdicts — an empty-ish value must not fail a
@@ -402,7 +403,7 @@ class TestResume:
             }
         )
         token = HI.list_continuations(c.run.id)[0].token
-        result = c.resume(token, {"note": ""})
+        result = c.resume(token, {"note": ""}, by=YOU)
         assert result["ok"] and result["approved"]
 
 
@@ -423,7 +424,7 @@ class TestAnsweringRestartsTheRun:
         token = HI.list_continuations(c.run.id)[0].token
 
         # Answer, then WAIT — no manual run_to_completion. The run must drive itself.
-        assert c.resume(token, True)["ok"]
+        assert c.resume(token, True, by=YOU)["ok"]
         for _ in range(100):
             if c.run.status == RunStatus.COMPLETE:
                 break
@@ -441,7 +442,7 @@ class TestAnsweringRestartsTheRun:
         stale needs_input — the UI polls exactly there."""
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        c.resume(token, True)
+        c.resume(token, True, by=YOU)
         assert c.run.status != RunStatus.NEEDS_INPUT
         assert store.get(c.run.id).status != RunStatus.NEEDS_INPUT
 
@@ -451,7 +452,7 @@ class TestAnsweringRestartsTheRun:
 
         c, _status = await _blocked({"timeout_secs": 0})
         token = HI.list_continuations(c.run.id)[0].token
-        c.resume(token, False)
+        c.resume(token, False, by=YOU)
         for _ in range(100):
             if c.run.is_terminal:
                 break

@@ -454,7 +454,9 @@ TRIAGE_RULES_SCHEMA = ToolSchema(
         FieldSpec("action", str, required=True, allowed=frozenset({"list", "add", "revoke"})),
         FieldSpec("pattern", str, max_len=MAX_SHORT_STRING),
         # `suppressed` is deliberately NOT accepted: a cooldown is something the
-        # digest derives from declines, not a verdict a caller may assert.
+        # digest derives from declines, not a verdict a caller may assert. `approve` is
+        # accepted but not advertised: the tool refuses it in words (only the owner teaches
+        # an approve rule), where an unknown-value error would not say why.
         FieldSpec("verdict", str, allowed=frozenset({"approve", "deny"})),
         FieldSpec("id", str, max_len=MAX_SHORT_STRING),
         FieldSpec("scope", str, allowed=frozenset({"global", "workspace"}), default="global"),
@@ -786,12 +788,12 @@ WORKFLOW_RESUME_SCHEMA = ToolSchema(
     tool_name="workflow_resume",
     fields=[
         FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
-        # `answer` is deliberately UNTYPED -- but it must still be DECLARED. An approval
-        # is a bool, a choice a string, a form or a `revise` an object; `object` accepts
-        # all of them (`isinstance(x, object)` is always true) while keeping the field in
-        # `known_fields`, because `validate_tool_args` rejects any arg it has no FieldSpec
-        # for. The ask's own `validate_answer` checks the value against the gate's real
-        # shape, and `controller.resume` parses the `revise` verb.
+        # An agent's `workflow_resume` lifts a pause and answers no gate: only the owner answers
+        # one (`approval_answer`). These three are validated but no longer advertised, so an
+        # answer an agent still sends reaches the service, which refuses it with the sentence
+        # saying who answers and an audit row. An unknown-field error would say neither.
+        # `answer` stays UNTYPED (`object`), because an approval is a bool, a choice a string,
+        # and a form or a `revise` an object.
         FieldSpec("answer", object),
         FieldSpec("resume_token", str, max_len=64),
         FieldSpec("always_allow", bool, default=False),

@@ -376,6 +376,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "action_not_bound": "The calling client's bindings do not include this action.",
     "action_failed": "The control-bridge action raised while running.",
     "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # A 409 on the owner's answer to a control-bridge confirmation: the client that asked for it
+    # has been revoked or switched off since, so its request is not run.
+    "bridge_client_gone": (
+        "The control-bridge client that asked for this has been revoked or switched off."
+    ),
     # ── OpenAI-compatible inbound dialect (inbound/openai_dialect.py — EXTERNAL-ACCESS §2) ──
     #
     # ADMISSION reuses the generic rows for the same reason the MCP surface below does: a
@@ -789,11 +794,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_ended": (
         "The work that asked for this approval has ended, so it was cancelled and nothing ran."
     ),
-    # 403 (dashboard/handlers/sessions.py): an app tried to answer an approval raised in a
-    # conversation the app itself started. The person the app works for answers it, not the app.
+    # A 403: the caller may not answer this approval (`approval_answer.refusal`). Only the owner
+    # answers one, from a signed-in session or on their paired channel. An app, an agent's tool,
+    # a trigger, a run and a control-bridge client answer nothing, and neither does the party
+    # that asked. The approval stays pending and the attempt is audited.
     "approval_owner_only": (
-        "An approval raised in a conversation this app started is the owner's to answer, not "
-        "the app's."
+        "Only the owner answers an approval, in PersonalClaw or on their paired chat channel."
     ),
     # A 409 refusal of a standing grant (a chat's Trust, Trust reads, YOLO, "Always allow for
     # this agent"): the operator ceiling (`governance/ceiling.json`, `approval`) says every call

@@ -18,6 +18,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from personalclaw import approval_answer
+from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
@@ -60,16 +62,6 @@ def _mark_permission_resolved(messages: list[dict], request_id: str, decision: s
 #: set is a 400 at the route, never a silent denial.
 SESSION_APPROVAL_ACTIONS = frozenset(
     {"approved", "rejected", "trust", "trust_agent", "trust_reads", "yolo"}
-)
-
-#: Why an app may not answer an approval raised in a conversation the app itself started — the
-#: refusal ``handlers/sessions.api_approval_resolve`` gives (the chat's own approve route is the
-#: owner's outright, in ``apps/permissions.ROUTE_AUTHZ``). The relay a companion runs there
-#: carries YOUR decision; in the app's own conversation the app answering would be the app
-#: deciding its own request, past whatever made that conversation ask (the operator ceiling, or
-#: an ``agent`` grant it no longer holds).
-APP_OWN_APPROVAL_REFUSAL = (
-    "an approval raised in a conversation this app started is yours to answer, not the app's"
 )
 
 #: How a pending approval ENDS — the ``outcome`` every ``approval_resolved`` frame carries. The
@@ -124,6 +116,20 @@ def _who_asked(entry: dict[str, Any]) -> str:
     if entry.get("source") == "subagent":
         return f"A subagent of “{title}”" if title else "A subagent"
     return "A background task"
+
+
+def _background_asker(*, source: str, session: str, trigger: str) -> str:
+    """Who raised a background origin's approval, as the principal an answer is compared with
+    (``approval_answer``, rule 2): the trigger whose run asked, the workflow run whose step asked,
+    else the agent (a subagent, an MCP server's question) under its source."""
+    if trigger:
+        return approval_answer.trigger(trigger).label
+    from personalclaw.workflows.ownership import parse_owned
+
+    step = parse_owned(session)
+    if step is not None:
+        return approval_answer.run(step[0]).label
+    return approval_answer.agent(source or session).label
 
 
 def _approval_row_body(entry: dict[str, Any]) -> str:
@@ -255,6 +261,7 @@ class DashboardApprovalState:
             tool_purpose=tool_purpose,
             session=session,
             trigger=trigger,
+            asked_by=_background_asker(source=source, session=session, trigger=trigger),
             # #2821: the same command-screening verdict the chat card gets, from the same
             # owner, so the two surfaces that ask a human for permission cannot describe
             # one call differently.
@@ -348,6 +355,9 @@ class DashboardApprovalState:
             agent=agent,
             risk=risk,
             grant_agent=grant_agent,
+            asked_by=approval_answer.asker_of_chat(
+                f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
+            ).label,
         )
         await self._hold_approval(entry)
 
@@ -362,6 +372,7 @@ class DashboardApprovalState:
         tool_purpose: str,
         session: str,
         is_read_only: bool | None,
+        asked_by: str,
         agent: str = "",
         risk: str = "",
         grant_agent: str = "",
@@ -377,7 +388,8 @@ class DashboardApprovalState:
         ``grant_agent`` are known only to a chat and stay empty for a background origin: empty
         is "not known", never "none". ``risk`` is the call's effective risk, from what its tool
         declares, when it declares one. ``trigger`` is known only to a trigger's run, and its name
-        is read once, here, so the ask and its note name it the same way.
+        is read once, here, so the ask and its note name it the same way. ``asked_by`` is the
+        principal that raised it, which may never answer it (``approval_answer``, rule 2).
         """
         from personalclaw.triggers.store import trigger_name
 
@@ -401,6 +413,7 @@ class DashboardApprovalState:
             "grant_agent": grant_agent,
             "trigger": trigger,
             "trigger_name": redact_field(trigger_name(trigger)) if trigger else "",
+            "asked_by": asked_by,
             "ts": time.time(),
         }
 
@@ -903,7 +916,11 @@ class DashboardApprovalState:
             future = getattr(seen.get("pending"), "future", None)
             pressed = future is not None and future.done() and not future.cancelled()
             if pressed and approval_id in self._pending_approvals:
-                self.resolve_approval(approval_id, bool(approved))
+                # The channel's app checked the press is its paired owner's (the contract of
+                # `ChannelDelivery.request_approval`), so this is you, on that channel.
+                self.resolve_approval(
+                    approval_id, bool(approved), by=approval_answer.on_channel(provider)
+                )
             return
         await self._approval_link_on_a_channel(approval_id, entry)
 
@@ -943,8 +960,24 @@ class DashboardApprovalState:
                 "approval %s: no channel reached the owner: %s", approval_id, outcome.sentence()
             )
 
-    def resolve_approval(self, approval_id: str, approved: bool) -> bool:
+    def answer_refusal(self, approval_id: str, by: Principal) -> str:
+        """Why *by* may not answer the pending approval *approval_id*, audited; ``""`` if it may.
+
+        ``approval_answer``'s rule for this registry: only you answer, and never the principal the
+        approval recorded as asking it (``asked_by``). Asked by every door before it delivers an
+        answer, and again by :meth:`resolve_approval` and :meth:`decide_session_approval`
+        themselves, so a door that forgot to ask still answers nothing.
+        """
+        entry = self._pending_approvals.get(approval_id) or {}
+        return approval_answer.check(
+            by, what=f"approval:{approval_id}", asked_by=str(entry.get("asked_by") or "")
+        )
+
+    def resolve_approval(self, approval_id: str, approved: bool, *, by: Principal) -> bool:
         """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.
+
+        *by* is who is answering. Only you answer, and never the party that asked
+        (:meth:`answer_refusal`): anyone else is refused and audited, and this returns False.
 
         A background origin's future lives here and receives the ``bool`` its gateway waiter
         converts. A chat-held approval is answered by :meth:`decide_session_approval` — the very
@@ -955,6 +988,8 @@ class DashboardApprovalState:
         An approval whose owner has ended is not answered at all: :meth:`refuse_ended_owner`
         cancels it and this returns False, so no door can deliver an Approve to work that is over.
         """
+        if self.answer_refusal(approval_id, by):
+            return False
         if self.refuse_ended_owner(approval_id):
             return False
         fut = self._approval_futures.get(approval_id)
@@ -967,7 +1002,8 @@ class DashboardApprovalState:
                     tool_name="approval_decision",
                     outcome="approved" if approved else "rejected",
                     request_id=approval_id,
-                    source="dashboard",
+                    # Who answered: you, or you on a named channel.
+                    source=by.label,
                 )
             except Exception:
                 self._log.warning("SEL audit failed for approval resolution", exc_info=True)
@@ -980,18 +1016,13 @@ class DashboardApprovalState:
         held = session._approval_futures.get(request_id)
         if held is None or held.done():
             return False
-        self.decide_session_approval(session, request_id, "approved" if approved else "rejected")
+        self.decide_session_approval(
+            session, request_id, "approved" if approved else "rejected", by=by
+        )
         return True
 
-    def approval_conversation_app(self, approval_id: str) -> str:
-        """The app that started the conversation holding the pending approval *approval_id* (by its
-        REGISTRY id), or ``""`` — for one of your chats, and for an approval no chat holds."""
-        entry = self._pending_approvals.get(approval_id)
-        session = self._sessions.get(str(entry.get("session") or "")) if entry else None
-        return session.created_by_app if session is not None else ""
-
     def decide_session_approval(
-        self, session: "_ChatSession", request_id: str, action: str
+        self, session: "_ChatSession", request_id: str, action: str, *, by: Principal
     ) -> dict[str, object] | None:
         """Answer the approval a chat is waiting on — the ONE decision path, whichever door.
 
@@ -1008,7 +1039,13 @@ class DashboardApprovalState:
         grant actually did, or None for every other verb: a scope that grants nothing has no
         grant to describe, and an always-present object with ``persisted: false`` would read as
         a failed grant on an Allow-once (#541/#683).
+
+        *by* is who is answering, held to :meth:`answer_refusal` here as well as at the door: a
+        refused answer raises :class:`AnswerRefused` and decides nothing, whatever the door did.
         """
+        refused = self.answer_refusal(chat_approval_id(session.key, request_id), by)
+        if refused:
+            raise AnswerRefused(refused)
         name = session.key
         original_action = action
         grant: dict[str, object] | None = None
