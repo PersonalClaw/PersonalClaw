@@ -50,6 +50,7 @@ from typing import Any
 import pytest
 
 from personalclaw.workflows import engine
+from personalclaw.workflows import human_input as HI
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import leases, store
 from personalclaw.workflows.bindings import BindingContext
@@ -133,6 +134,28 @@ def _spec() -> dict[str, Any]:
     }
 
 
+def _gated_spec() -> dict[str, Any]:
+    """The stage beside a gate that waits indefinitely. A stage that FAILS then leaves the run LIVE
+    — parked on the gate, since a `parallel` settles once every child has — which is where a user
+    rewinds a failed step. A run that FAILED is one attempt and refuses the edit; a retry of it is
+    a fork."""
+    return {
+        "name": "stage-retry-gated",
+        "root": {
+            "kind": "parallel",
+            "id": "root",
+            "children": [
+                {"kind": "stage", "id": "work", "config": {"prompt": "do the thing"}},
+                {
+                    "kind": "gate",
+                    "id": "hold",
+                    "config": {"kind": "approval", "prompt": "hold", "timeout_secs": 0},
+                },
+            ],
+        },
+    }
+
+
 @pytest.fixture
 def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A real `RunController` over a real spec, with only the subagent manager faked.
@@ -142,9 +165,11 @@ def wired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
 
-    def _build(**kw: Any) -> tuple[RunController, _FakeSubagents, WorkflowRun]:
+    def _build(
+        *, gated: bool = False, **kw: Any
+    ) -> tuple[RunController, _FakeSubagents, WorkflowRun]:
         fake = _FakeSubagents(**kw)
-        spec = _spec()
+        spec = _gated_spec() if gated else _spec()
         run = store.create(WorkflowRun(id="", workflow_name="stage-retry"))
         store.write_spec(run.id, spec)
         controller = RunController(
@@ -187,7 +212,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     the wrong place. The target is now taken from the recorder, so the release is asserted against
     the key the run demonstrably took.
     """
-    controller, fake, run = wired(errors=(REAPED, ""))
+    controller, fake, run = wired(errors=(REAPED, ""), gated=True)
     acquired: list[tuple[str, str, bool]] = []
     real_acquire = leases.acquire_claim
 
@@ -199,6 +224,7 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
     monkeypatch.setattr(leases, "acquire_claim", _recording)
 
     async def _go() -> tuple[RunStatus, RunStatus]:
+        # The stage fails and the run stays live, parked on the gate beside it.
         first = await controller.run_to_completion(timeout=RUN_TIMEOUT)
         inst = controller.instances[STAGE_PATH]
         assert inst.state is InstanceState.FAILED, (
@@ -223,12 +249,20 @@ def test_a_rewound_stage_retries_after_its_first_attempt_FAILED(wired, monkeypat
             "assertion below would be measuring the unfixed code"
         )
         assert _rewind(controller)["ok"], "the rewind was refused, so no retry was requested"
+        # The parked run applies the rewind at once: the stage re-runs, and the run waits on its
+        # gate again. Answering the gate is what then lets it complete.
+        await asyncio.wait_for(controller._terminal.wait(), timeout=RUN_TIMEOUT)
+        pending = HI.list_continuations(run.id)
+        assert len(pending) == 1, f"the gate is not waiting to be answered: {pending}"
+        assert controller.resume(pending[0].token, True)["ok"]
         return first, await controller.run_to_completion(timeout=RUN_TIMEOUT)
 
     first, second = asyncio.run(_go())
     inst = controller.instances[STAGE_PATH]
 
-    assert first is RunStatus.FAILED, f"the first attempt did not fail (status={first.value})"
+    assert (
+        first is RunStatus.NEEDS_INPUT
+    ), f"the run did not stay live on its gate after the stage failed (status={first.value})"
     assert len(fake.spawns) == 2, (
         f"the retry never reached the subagent manager ({len(fake.spawns)} spawn(s)) — it was "
         f"refused by its own claim: {inst.degraded_reason!r}"

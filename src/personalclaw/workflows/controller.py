@@ -337,6 +337,12 @@ class RunController:
         #: direct application: a handler applying a mutation mid-launch would make two
         #: writers of run state (WF2-R10).
         self._pending_mutations: list[tuple[mutations.BatchResult, str]] = []
+        #: instance path → what a person answered when that step parked on them, held for the ONE
+        #: dispatch the answer starts (`gate_answers.settle_parked_step` writes it,
+        #: `step_dispatch.execute` pops it into `ActionContext.answer`). In memory, like the
+        #: steering injection: a restart between the answer and that dispatch loses it, and the
+        #: step then asks again rather than claiming an answer it cannot show.
+        self._park_answers: dict[str, Any] = {}
         #: Run-scoped "always allow" decisions (WF2-R7). Cleared on rewind: remembering
         #: across one would auto-approve the very step the user rewound to reconsider.
         self._allow_memory = gate_policy.AllowMemory()
@@ -722,13 +728,14 @@ class RunController:
 
         if not self._inflight and not fr.ready and not fr.deferred:
             waiting = [p for p, i in self.instances.items() if i.state == InstanceState.WAITING]
-            gates = [p for p in waiting if gate_answers.is_gate(self, p)]
-            # A gate awaiting a HUMAN surfaces as needs_input IMMEDIATELY (WF2-R7): a run
-            # that parks quietly for 45s and only then surfaces is a run nobody knows to
-            # answer. Surfacing and terminating are separate, though — see below.
-            for path in gates:
+            asks = [p for p in waiting if gate_answers.awaits_human(self, p)]
+            # A step awaiting a HUMAN — a gate, or an action that stopped for one — surfaces as
+            # needs_input IMMEDIATELY (WF2-R7): a run that parks quietly for 45s and only then
+            # surfaces is a run nobody knows to answer. Surfacing and terminating are separate,
+            # though — see below.
+            for path in asks:
                 gate_answers.ensure_continuation(self, path)
-            if gates and self.run.status != RunStatus.NEEDS_INPUT:
+            if asks and self.run.status != RunStatus.NEEDS_INPUT:
                 gate_answers.surface_needs_input(self)
             if waiting and self._next_wake_delay() is None:
                 # Nothing will wake this run: no deadline, no in-flight work. NOW it is
@@ -812,13 +819,17 @@ class RunController:
 
         filled = ask.apply_defaults(answer)
         approved = gate_answers.is_approved(ask, filled)
-        if approved and always_allow:
+        if approved and always_allow and not ask.rerun:
             # Run-scoped, keyed by (operation, target) — and cleared on rewind, so it can
-            # never auto-approve a step the user rewound to reconsider.
+            # never auto-approve a step the user rewound to reconsider. Never for a step that
+            # parked (`ask.rerun`): what it waits for is a person's act, which no remembered
+            # answer can perform the next time it parks.
             node = dict(walk(self.root)).get(spec_path(cont.instance_path))
             self._allow_memory.remember(node.config if node else {}, cont.node_id)
         inst.wake_at = 0.0
-        if approved:
+        if ask.rerun:
+            gate_answers.settle_parked_step(self, cont, inst, approved=approved, answer=filled)
+        elif approved:
             inst.state = InstanceState.DONE
             ref, preview = self.journal.store_output(
                 cont.instance_path, {"answer": filled, "approved": True}
@@ -826,6 +837,7 @@ class RunController:
             inst.output_ref = ref
             if cont.node_id:
                 self._outputs[cont.node_id] = preview
+            inst.completed_at = now_stamp()
         else:
             inst.state = InstanceState.FAILED
             inst.failure = Failure(
@@ -834,7 +846,7 @@ class RunController:
                 remediation="adjust the work the gate rejects, then re-run from this node",
                 terminal_reason="denied",
             )
-        inst.completed_at = now_stamp()
+            inst.completed_at = now_stamp()
         # The resolution half. AFTER the claim is won and the epoch verified, so the ledger records
         # answers that actually applied — emitting before the claim would log an approval for a race
         # the caller lost, and the audit would show two people approving one gate.
@@ -932,7 +944,33 @@ class RunController:
 
         A cascade that re-runs completed work needs `confirm=True`. Without the gate, a
         one-line prompt edit could silently re-run (and re-bill) a dozen finished stages.
+
+        Queued means APPLIED AT THE NEXT TICK, so two runs have to be dealt with here:
+
+        * a finished run is one attempt and is never re-entered — a retry is a fork — so its
+          edit is refused with that sentence. Its controller stays registered until the
+          supervisor's next poll, and in that window a batch used to answer `queued: true` and
+          sit forever in a queue no loop would drain;
+        * a run parked on a question has no tick loop (`_step` finished it `needs_input` and the
+          loop exited, since nothing but an answer wakes it), so the queue is drained by WAKING
+          the loop, the way a cancel wakes it. A rewind confirmed at a gate otherwise waited for
+          as long as the gate did. Waking is a request, not a write: the loop applies the batch
+          at its drain point, as for a running run. A PAUSED run is not woken — its next step
+          would pause again before draining — so its edit applies when it is resumed, the
+          pause → edit → resume the run page offers.
         """
+        if self.run.is_terminal:
+            message = (
+                f"run is already {self.run.status.value} — a finished run is not edited; fork "
+                "it to run it again"
+            )
+            return {
+                "ok": False,
+                "code": "WF_RUN_ALREADY_TERMINAL",
+                "message": message,
+                "issues": [{"code": "WF_RUN_ALREADY_TERMINAL", "message": message, "node_id": ""}],
+                "preview": mutations.CascadePreview().to_dict(),
+            }
         if expect_version is not None and int(expect_version) != int(self.run.spec_version):
             return {
                 "ok": False,
@@ -971,6 +1009,8 @@ class RunController:
             return body
         self._pending_mutations.append((result, actor))
         body["queued"] = True
+        if self.run.status == RunStatus.NEEDS_INPUT:
+            self._resume_loop()
         return body
 
     def _skip(self, path: str) -> None:
@@ -1441,14 +1481,24 @@ class RunController:
             # it is actually unattended, and a remembered "always allow" honours a decision
             # the user already made. A DESTRUCTIVE gate still asks — an unreviewed
             # destructive action is worse than a stalled run.
-            verdict = gate_policy.decide(
-                item.node.config or {},
-                item.node.id,
-                origin_kind=self.run.origin.kind,
-                mode=self.run.mode,
-                memory=self._allow_memory,
+            #
+            # GATES only. The policy answers the question a gate asks; a `wait` is parked on the
+            # clock and an ACTION that parked is waiting for a person to do something (sign in,
+            # raise a budget) that no policy can do for them. Applied to every WAITING result, it
+            # marked a `risk: caution` browse step in a scheduled run done with `approved: true`
+            # for a sign-in nobody made.
+            verdict = (
+                gate_policy.decide(
+                    item.node.config or {},
+                    item.node.id,
+                    origin_kind=self.run.origin.kind,
+                    mode=self.run.mode,
+                    memory=self._allow_memory,
+                )
+                if item.node.kind == NodeKind.GATE
+                else None
             )
-            if verdict.approved:
+            if verdict is not None and verdict.approved:
                 inst.state = InstanceState.DONE
                 inst.completed_at = now_stamp()
                 ref, preview = self.journal.store_output(
@@ -1484,6 +1534,13 @@ class RunController:
             # memory-only deadline is lost on restart, and every waiting run then parks
             # forever with nothing scheduled to wake it.
             inst.wake_at = float(result.wake_at or 0.0)
+            if item.node.kind == NodeKind.ACTION:
+                # An action that PARKED keeps what it produced (browse's notes, the sign-in
+                # handoff's card) and states why it stopped. Both persist with the step, so the
+                # run page, `ensure_continuation`'s card and the answer that runs it again all read
+                # the same record. Not bound downstream: WAITING is not a success state.
+                inst.output_ref = self.journal.store_output(item.path, result.output)[0]
+                inst.degraded_reason = result.degraded_reason
             if result.ask:
                 self.run.attention = dict(result.ask)
                 self._publish(
@@ -1995,6 +2052,10 @@ class RunController:
                 self.run.elapsed_seconds = max(
                     0.0, stamp_epoch(self.run.completed_at) - stamp_epoch(self.run.started_at)
                 )
+        if status in TERMINAL_RUN_STATUSES:
+            # An ended run's waits end with it — the gate a cancel caught stops reading
+            # `waiting` and its token stops being offered — BEFORE the state below is persisted.
+            gate_answers.close_waits(self)
         totals = journal_mod.run_totals(self.run.id)
         self._inherit_ledger_tokens(totals)
         self._save_run()

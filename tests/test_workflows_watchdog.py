@@ -11,6 +11,8 @@ boundary — a `..`-shaped id must delete nothing.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from personalclaw.workflows import store
@@ -222,26 +224,35 @@ class TestOrphanReaping:
 
 class TestStickyCancel:
     async def test_a_cancel_with_no_controller_is_honoured(self) -> None:
-        """A cancel issued while the gateway was down must not be lost."""
+        """A cancel issued while the gateway was down must not be lost — and it lands through a
+        controller's terminal writer, so it closes what the run still holds (its waits, tokens,
+        Inbox rows, approvals, leases). The watchdog writing the row itself closed none of them."""
         run = _run()
         store.request_cancel(run.id)
         wd = WorkflowWatchdog(None, EngineServices())
         await wd._poll_once()
+        controller = wd.controller(run.id)
+        assert controller is not None, "the cancel was not handed to a controller"
+        await asyncio.wait_for(controller._terminal.wait(), timeout=5)
         assert store.get(run.id).status == RunStatus.CANCELLED
         assert not store.cancel_requested(run.id)  # intent consumed
         await wd.stop()
 
     async def test_a_live_controller_cancels_itself(self) -> None:
         """Two writers on one run is the failure mode; the controller owns its own
-        terminal write."""
+        terminal write. The watchdog WAKES it, because a controller whose loop has exited — a
+        run parked at a gate, a paused one — has no next step to read the intent on."""
         run = _run()
         wd = WorkflowWatchdog(None, EngineServices())
         mine = RunController(run, SPEC, services=EngineServices())
         wd.register(mine)
         store.request_cancel(run.id)
         await wd._poll_once()
-        # The watchdog deferred rather than writing the status itself.
+        # The watchdog deferred rather than writing the status itself…
         assert store.cancel_requested(run.id)
+        # …and the controller it woke wrote it.
+        await asyncio.wait_for(mine._terminal.wait(), timeout=5)
+        assert store.get(run.id).status == RunStatus.CANCELLED
         await wd.stop()
 
 

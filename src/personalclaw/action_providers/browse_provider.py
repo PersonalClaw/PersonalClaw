@@ -384,8 +384,15 @@ class BrowseActionProvider(ActionProvider):
         result = None
         try:
             state_before = session_state(start_url)
-            if state_before != SESSION_FRESH and (
-                state_before != SESSION_ABSENT or looks_like_login_url(start_url)
+            # On the dispatch a person's answer started (`ActionContext.answer`: "I have signed
+            # in"), the pre-run check does not park again. It reads the profile's `.meta.json`,
+            # which a person signing in never writes, so re-running it parked on the same check
+            # by construction and the handoff could not be left. §5.2: on the user's confirmation
+            # the run resumes. The session is still OBSERVED, not assumed — a completed run
+            # records it (`_to_result`), and a page still asking for a password parks mid-run.
+            if getattr(ctx, "answer", None) is None and (
+                state_before != SESSION_FRESH
+                and (state_before != SESSION_ABSENT or looks_like_login_url(start_url))
             ):
                 reason = (
                     REASON_SESSION_EXPIRED if state_before == SESSION_EXPIRED else REASON_NO_SESSION
@@ -544,21 +551,18 @@ class BrowseActionProvider(ActionProvider):
         # `payload` is where the dataclass docstring says structured event data lives. Empty when
         # nothing supplied one, which the needs-input card tolerates: an unbound card is answerable
         # from any surface, the correct posture for a run the user started themselves.
-        handoff = request_login(
-            url,
-            reason=reason,
-            run_id=str((getattr(ctx, "payload", None) or {}).get("run_id") or ""),
-            node_id=PROVIDER_NAME,
-        )
+        run_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+        handoff = request_login(url, reason=reason, run_id=run_id, node_id=PROVIDER_NAME)
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)
             # BA-5 §(c): the moment auth_state=expired is written, SURFACE it — a persistent banner
-            # and a needs_input inbox item — so an expired session is visible whether or not this
-            # run was dispatched through the workflow engine's own attention projection (a schedule
-            # tick, a hook, a manual run never touch that path). Best-effort inside the seam.
+            # always, and a needs_input inbox item for a dispatch the workflow engine does not own
+            # (a schedule tick, a hook, a trigger's Test). Inside a run the engine raises the run's
+            # own row for this park, which is the one that can be answered; a second, site-level
+            # row would ask the same question again with nothing behind it. Best-effort.
             from personalclaw.browse.mirror import surface_auth_expired
 
-            surface_auth_expired(url)
+            surface_auth_expired(url, inbox_item=not run_id)
         payload = handoff.to_payload()
         # The argv the caller needs to open the headful window on the RIGHT profile. Handed over
         # rather than executed — see the module docstring on why core does not launch Chrome.

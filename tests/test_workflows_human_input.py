@@ -248,7 +248,10 @@ class TestContinuations:
             "checks_run",
             "next_steps",
             "risks",
+            # What the asking step already tried; empty for a gate, which tried nothing.
+            "attempted",
         }
+        assert bundle["attempted"] == []
 
 
 # ── controller integration ───────────────────────────────────────────────────

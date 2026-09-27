@@ -126,6 +126,12 @@ class Ask:
     choices: list[str] = field(default_factory=list)
     #: Suppress surfacing in unattended mode — for gates whose answer has a safe default.
     unattended_suppress: bool = False
+    #: Approving RUNS THE STEP AGAIN instead of recording the answer as its output. The ask of a
+    #: step that parked for a person (an action's `outcome="needs_input"`, e.g. browse stopping at
+    #: a sign-in page): what the person does is lift what stopped it, and the answer is "carry on",
+    #: not the step's result. Such an ask is never remembered as "always allow" — nothing can
+    #: approve a sign-in on the user's behalf.
+    rerun: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +141,7 @@ class Ask:
             "fields": [f.to_dict() for f in self.fields],
             "choices": list(self.choices),
             "unattended_suppress": self.unattended_suppress,
+            "rerun": self.rerun,
         }
 
     @classmethod
@@ -152,6 +159,7 @@ class Ask:
             fields=[AskField.from_dict(f) for f in (d.get("fields") or []) if isinstance(f, dict)],
             choices=[str(c) for c in (d.get("choices") or [])],
             unattended_suppress=bool(d.get("unattended_suppress", False)),
+            rerun=bool(d.get("rerun", False)),
         )
 
     def validate_answer(self, answer: Any) -> str:
@@ -315,9 +323,15 @@ def handoff_bundle(
     checks_run: list[str] | None = None,
     next_steps: list[str] | None = None,
     risks: list[str] | None = None,
+    attempted: list[str] | None = None,
 ) -> dict[str, Any]:
     """The blocked-run context bundle (WF2-R7). Fixed shape so the widget can render it
-    without knowing which node produced it."""
+    without knowing which node produced it.
+
+    `attempted` is what the step that is asking already tried, one line each — the
+    `NeedsInputItem.attempted` its own card carries (a browse sign-in park's "opened <site> — it
+    has never been signed in on this machine"). Empty for a gate, which tried nothing: it asks.
+    """
     return {
         "scope": scope,
         "status": status,
@@ -325,6 +339,7 @@ def handoff_bundle(
         "checks_run": list(checks_run or []),
         "next_steps": list(next_steps or []),
         "risks": list(risks or []),
+        "attempted": [str(a) for a in (attempted or [])],
     }
 
 
@@ -463,7 +478,8 @@ def drop_continuations(run_id: str, *, instance_prefix: str = "") -> int:
 
     Called on rewind: a token for a node that is about to re-run would resume a step that no
     longer exists in that form. Better a typed `resume_expired` than a token that silently
-    lands in the wrong epoch.
+    lands in the wrong epoch. And, unscoped, when a run ENDS (`gate_answers.close_waits`): a
+    finished run answers nothing, so a token for it is a question nobody can answer.
 
     Only PENDING records are dropped. An already-claimed record is history, not a live token —
     it cannot resume anything, so dropping it would destroy the audit trail without closing any

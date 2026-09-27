@@ -324,7 +324,8 @@ WF_ERROR_CODES: dict[str, str] = {
         "to start."
     ),
     "WF_RUN_ALREADY_TERMINAL": (
-        "The run has already finished, so it cannot be cancelled, paused, steered or resumed."
+        "The run has already finished, so it cannot be cancelled, paused, steered, resumed or "
+        "edited; a finished run is forked to be run again."
     ),
     "WF_RUN_NOT_TERMINAL": (
         "The run is still live, so it cannot be deleted; cancel it and delete once it reports "
