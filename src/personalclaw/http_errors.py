@@ -158,6 +158,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "auth_locked_out": "Too many failed attempts from this address; try again later.",
     "auth_totp_required": "A second factor is required to finish this login.",
     "auth_enroll_code_invalid": "The enrollment code did not verify.",
+    "auth_bearer_invalid": "The bearer credential cannot authorize this request.",
+    "auth_credential_conflict": "The request presents two different owner credentials.",
     # ── device pairing (handlers/devices.py) — fixed message per code ──
     "device_pair_code_invalid": "The pairing code did not verify.",
     "device_pair_expired": "The pairing code has expired.",

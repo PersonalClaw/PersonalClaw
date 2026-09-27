@@ -219,16 +219,15 @@ async function stopGateway(proc) {
 
 // ── gateway API (read-only checks + setup that is NOT part of a validated leg) ──
 
-/** The gateway's own API. `token` rides the query string (the documented
- *  non-browser path); POSTs also carry an allowed Origin for the CSRF check.
- *  Used ONLY for setup and for cross-checking what the UI showed — never as a
- *  substitute for a UI leg. */
+/** The gateway's own API. `token` rides the `Authorization: Bearer` header (the
+ *  non-browser path — a URL would carry it into every log that records one); POSTs
+ *  also carry an allowed Origin for the CSRF check. Used ONLY for setup and for
+ *  cross-checking what the UI showed — never as a substitute for a UI leg. */
 function apiClient(base, token) {
   const call = async (method, route, body) => {
-    const sep = route.includes('?') ? '&' : '?'
-    const res = await fetch(`${base}${route}${sep}token=${encodeURIComponent(token)}`, {
+    const res = await fetch(`${base}${route}`, {
       method,
-      headers: { 'Content-Type': 'application/json', Origin: base },
+      headers: { 'Content-Type': 'application/json', Origin: base, Authorization: `Bearer ${token}` },
       body: body === undefined ? undefined : JSON.stringify(body),
     })
     let json = null

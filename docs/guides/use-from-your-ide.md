@@ -208,12 +208,12 @@ actually requires, and they are verified below; the JSON key names are your clie
 
 **Two traps worth naming:**
 
-- **`Authorization: Bearer` is correct for `/mcp` and wrong everywhere else.** The dashboard's
-  owner token goes in `?token=…` or a `pc_token_<port>` cookie; a Bearer header against any
-  `/api/…` path gets you `403 {"error": "Token required"}` instead. `/mcp` is the exception — it is
-  exempt from the dashboard's cookie auth and carries this bearer credential instead. So if you see
-  `Token required`, your client is talking to the wrong path. Also do not try to reuse the dashboard
-  secret here: this surface refuses to accept it as its own token.
+- **The path decides which Bearer token is valid.** `/mcp` accepts only the dedicated inbound
+  token from step 1; `/api/…` accepts only the dashboard's owner token (the value inside the URL
+  `personalclaw token` prints). Both travel as `Authorization: Bearer`, but they are separate
+  credentials and neither stands in for the other: the MCP token against an `/api/…` path gets
+  you `403` with the code `auth_bearer_invalid`, and `/mcp` refuses the owner token as its own. So
+  if you see `auth_bearer_invalid`, your client is talking to the wrong path.
 - **If your client only speaks stdio,** it needs a stdio-to-HTTP bridge process in front of this
   URL. That is a normal MCP pattern, but no bridge was exercised while writing this guide, so
   treat the bridge half as your client's problem and verify it with step 5 before trusting it.
@@ -340,6 +340,6 @@ client holding the old token will get `401` until you do.
 | `{"error": "unauthorized"}` (401) | missing, malformed, or stale `Authorization: Bearer` header. Rotate and re-copy. |
 | `CSRF check failed: request origin not allowed.` (403) | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |
 | `{"error": "forbidden"}` (403) | the MCP surface's *own* peer refusal — same cause (not loopback), but you rarely see it, because the CSRF check above fires first. |
-| `{"error": "Token required"}` (403) | you pointed the client at an `/api/…` path instead of `/mcp`, or sent a Bearer header to one. That is the *dashboard's* auth talking, not this surface's. |
+| `{"error": {"code": "auth_bearer_invalid", …}}` (403) | you pointed the client at an `/api/…` path instead of `/mcp`, with this surface's token in the Bearer header. That is the *dashboard's* auth talking, not this surface's. |
 | `{"error": "rate limited"}` (429) | you exceeded the burst of 20. The SDK drops the whole transport on this — reconnect and slow down. |
 | `-32601 unknown tool '…'` | that tool does not exist here. Only the six read-only tools do. |

@@ -1271,9 +1271,9 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     Matches ``/apps/{name}/api/{tail:.*}`` for any method. 404 if the app isn't
     installed, 502 if its backend isn't running, 403 if the app is disabled.
 
-    The owner's session credential (cookie / bearer) is STRIPPED before forwarding —
-    an app backend must never receive the owner's token (it could replay it against
-    the full gateway API). Instead we forward a fresh app-scoped token so the backend
+    The owner's session credential (cookie / bearer / ``?token=``) is STRIPPED before
+    forwarding — an app backend must never receive the owner's token (it could replay it
+    against the full gateway API). Instead we forward a fresh app-scoped token so the backend
     has an identity bounded to its own declared permissions."""
     import aiohttp
 
@@ -1303,9 +1303,17 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     from yarl import URL
 
     from personalclaw.apps.app_secret import read_app_secret
+    from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
     from personalclaw.sdk.security import PROXY_SIGNATURE_HEADER, sign_proxy_request
 
-    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(request.rel_url.query)
+    # The query loses its credentials for the same reason the headers below lose the cookie
+    # and Authorization: `?token=` is the owner's token and `?app_token=` an app's, and the
+    # backend must hold neither — nor may the client error this proxy logs on a failure,
+    # whose text can carry the upstream URL.
+    forwarded_query = [
+        (k, v) for k, v in request.rel_url.query.items() if k not in RESERVED_QUERY_PARAMS
+    ]
+    target_url = URL(rb.base_url).with_path(f"/{tail}").with_query(forwarded_query)
     path_qs = target_url.raw_path_qs
 
     # Fail closed: without the per-app secret we cannot prove this request came from the

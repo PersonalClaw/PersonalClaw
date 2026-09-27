@@ -221,6 +221,7 @@ def test_presented_session_nonce_resolves_a_real_paired_session(_isolated) -> No
         def __init__(self, cookies: dict[str, str]) -> None:
             self.query: dict[str, str] = {}
             self.cookies = cookies
+            self.headers: dict[str, str] = {}
 
     token = token_auth.generate_token(devices_h.PAIRED_DEVICE_USER, ttl_seconds=3600)
     nonce = token_auth.token_nonce(token)
