@@ -82,11 +82,15 @@ async def _until(predicate, *, what: str, timeout: float = 8.0) -> None:
         await asyncio.sleep(0.05)
 
 
-async def _parked(spec: dict[str, Any], *, clock: _Clock | None = None) -> RunController:
+async def _parked(
+    spec: dict[str, Any], *, clock: _Clock | None = None, inputs: dict[str, Any] | None = None
+) -> RunController:
     """Start the run and return once it waits at its gate. Started rather than driven to
     completion: a background gate carries a deadline, so its loop keeps ticking while it waits."""
     spec = copy.deepcopy(spec)
-    run = store.create(WorkflowRun(id="", workflow_name=spec["name"], mode="background"))
+    run = store.create(
+        WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=dict(inputs or {}))
+    )
     store.write_spec(run.id, spec)
     c = RunController(run, spec, services=EngineServices(clock=clock or _Clock()))
     await c.start()
@@ -266,13 +270,26 @@ def _approval_gates() -> list[tuple[str, str]]:
     return found
 
 
-def _stubbed(template: str) -> dict[str, Any]:
+def _holds_approval(node: Node) -> bool:
+    cfg = node.config or {}
+    if node.kind == NodeKind.GATE and cfg.get("kind") == "approval":
+        return True
+    return any(_holds_approval(child) for child in node.child_nodes())
+
+
+def _stubbed(template: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The template's REAL structure — its containers, ids, positions and `needs` — with every
     step's work replaced by a zero-token transform, so what follows the gate is exactly what the
-    template would have run. Only the approval gate keeps its kind (and its declared deadline)."""
+    template would have run. Only the approval gate keeps its kind (and its declared deadline).
+
+    A branch is routed, by a run input, to the case that holds the approval — its default when
+    that is where the approval sits, else its first case — and each case it does not take is one
+    transform: an untaken case is skipped, never run, so its insides cannot matter. Returns the
+    spec and the inputs that route it."""
     wdef = read_template(template)
     assert wdef is not None
     root = wdef.root if isinstance(wdef.root, Node) else Node.from_dict(wdef.root)
+    inputs: dict[str, Any] = {}
 
     def stub(node: Node) -> dict[str, Any]:
         if node.kind in (NodeKind.SEQUENCE, NodeKind.PARALLEL):
@@ -281,6 +298,27 @@ def _stubbed(template: str) -> dict[str, Any]:
                 "id": node.id,
                 "children": [stub(c) for c in node.children],
             }
+        elif node.kind == NodeKind.BRANCH:
+            labels = list(node.cases)
+            held = [label for label in labels if _holds_approval(node.cases[label])]
+            by_default = node.default_case is not None and _holds_approval(node.default_case)
+            # A value no case is named, when the approval is in the default.
+            taken = "" if by_default else (held[0] if held else labels[0])
+            key = f"route_{len(inputs)}"
+            inputs[key] = taken or "no case of this name"
+            out = {
+                "kind": "branch",
+                "id": node.id,
+                "config": {"on": f"{{{{inputs.{key}}}}}"},
+                "cases": {
+                    label: stub(case) if label == taken else _transform(case.id)
+                    for label, case in node.cases.items()
+                },
+            }
+            if node.default_case is not None:
+                out["default"] = (
+                    stub(node.default_case) if by_default else _transform(node.default_case.id)
+                )
         elif node.kind == NodeKind.GATE and (node.config or {}).get("kind") == "approval":
             deadline = (node.config or {}).get("timeout_secs")
             out = _gate(node.id, **({} if deadline is None else {"timeout_secs": deadline}))
@@ -291,7 +329,7 @@ def _stubbed(template: str) -> dict[str, Any]:
             out["needs"] = list(node.needs)
         return out
 
-    return {"name": f"stub-{template}", "root": stub(root)}
+    return {"name": f"stub-{template}", "root": stub(root)}, inputs
 
 
 GATES = _approval_gates()
@@ -301,23 +339,32 @@ def test_the_census_found_every_approval_gate_in_the_library() -> None:
     """Non-vacuity for the two tests below: the library's approval gates, by name."""
     assert GATES == [
         ("design-review", "accept"),
+        ("produce-and-audit", "quality_gate"),
         ("project-planning", "accept_plan"),
         ("publish-article", "approve"),
     ]
 
 
+def _holds(node: dict[str, Any], gate_id: str) -> bool:
+    parts = [*node.get("children", []), *node.get("cases", {}).values()]
+    parts += [node[key] for key in ("body", "default") if key in node]
+    return node.get("id") == gate_id or any(_holds(part, gate_id) for part in parts)
+
+
 def _followers(spec: dict[str, Any], gate_id: str) -> list[str]:
-    """The step ids after the gate in the root sequence — the work the gate guards."""
-    ids = [c["id"] for c in spec["root"]["children"]]
-    return ids[ids.index(gate_id) + 1 :]
+    """The step ids after the gate in the root sequence — the work the gate guards. Counted from
+    the root step that holds the gate, which is the gate itself unless a branch holds it."""
+    children = spec["root"]["children"]
+    at = next(i for i, child in enumerate(children) if _holds(child, gate_id))
+    return [child["id"] for child in children[at + 1 :]]
 
 
 @pytest.mark.parametrize(("template", "gate_id"), GATES)
 async def test_every_bundled_approval_gate_stops_what_follows_it_when_denied(
     template: str, gate_id: str
 ) -> None:
-    spec = _stubbed(template)
-    c = await _parked(spec)
+    spec, inputs = _stubbed(template)
+    c = await _parked(spec, inputs=inputs)
     _deny(c)
     await _ended(c)
     followers = set(_followers(spec, gate_id))
@@ -333,8 +380,8 @@ async def test_every_bundled_approval_gate_stops_what_follows_it_when_nobody_ans
     template: str, gate_id: str
 ) -> None:
     clock = _Clock()
-    spec = _stubbed(template)
-    c = await _parked(spec, clock=clock)
+    spec, inputs = _stubbed(template)
+    c = await _parked(spec, clock=clock, inputs=inputs)
     clock.t += 2 * 86400  # past any declared deadline, including publish-article's 24 h
     c.wake()
     await _ended(c)

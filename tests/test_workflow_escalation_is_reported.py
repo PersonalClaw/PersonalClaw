@@ -8,20 +8,18 @@ server, and neither is obvious from reading the handler:
    client simply never read it. If that ever changes, the panel goes blank and only this test
    would say why.
 
-2. **`error` is EMPTY on exactly the runs that carry an escalation.** A node that exhausts its
-   retries makes the frontier's outcome FAILED, and the run goes terminal through
-   `_finish(status)` with no `error=` argument. So `run.error_message` is `''` while the
-   escalation on `attention` holds the reason, the cause and the per-attempt evidence.
+2. **`error` names the step that failed and its cause, and `attention` keeps the rest.** A node
+   that exhausts its retries makes the frontier's outcome FAILED, and the run goes terminal
+   through the completion path, whose ending names the failed step and why
+   (`ending_sentence.for_failures`): "“i” failed: ConnectionError: network down." That field
+   used to be empty on exactly these runs — the completion path's terminal write took no
+   `error` — so the run page's one explanation slot (`run.error && <p>`) rendered a failed run
+   with a blank reason. The escalation on `attention` still holds what the sentence does not:
+   the reason, the per-attempt evidence and the engine's fix instruction.
 
-Measured here rather than asserted from reading, because (2) is the part that makes the whole
-issue user-visible: the run page's one explanation slot is `run.error && <p>`, so a
-retries-exhausted run rendered a failed run with a completely blank reason.
-
-Not a change to the engine: `error_message` staying empty on this path is the engine's own
-choice (the frontier's outcome IS the report), and the fix is to read what it does write. If a
-later change starts filling `error_message` here, this test reds — and the panel's
-detail-deduplication (`EscalationPanel`'s `runError` prop) is what stops the same sentence
-appearing twice.
+Measured here rather than asserted from reading. The cause now appears twice on the wire, in the
+sentence and as the escalation's `detail`, and the panel's detail-deduplication
+(`EscalationPanel`'s `runError` prop) is what keeps it from appearing twice on the page.
 """
 
 from __future__ import annotations
@@ -82,19 +80,16 @@ async def _run_that_escalates(max_attempts: int = 2) -> WorkflowRun:
     return controller.run
 
 
-async def test_the_run_reports_no_error_at_all_and_only_attention_says_why():
-    """🔑 The measured shape of #565, both halves in one place."""
+async def test_the_run_names_the_failed_step_and_attention_keeps_the_whole_account():
+    """🔑 Both halves in one place: the sentence the run page renders, and the record under it."""
     run = await _run_that_escalates()
     payload = service.status(run.id)
 
-    # Half one: nothing in the field the run page renders.
-    assert payload["error"] == "", (
-        "this run now reports an error — the panel's detail dedup carries the weight here; "
-        f"got {payload['error']!r}"
-    )
+    # Half one: the field the run page renders names the step and its cause. It was empty.
+    attention = payload["attention"]
+    assert payload["error"] == f"“i” failed: {attention['detail']}.", payload["error"]
 
     # Half two: the whole account, on a field the client received and discarded.
-    attention = payload["attention"]
     assert attention["kind"] == "escalation"
     assert attention["reason"] == "retries_exhausted"
     assert attention["detail"], "the cause is what makes the reason actionable"

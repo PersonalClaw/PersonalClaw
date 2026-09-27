@@ -88,7 +88,7 @@
         "id": "accept",
         "config": {
           "kind": "approval",
-          "prompt": "The panel has reviewed and a recommendation is ready. Approve to accept it, or deny to send it back with your own notes."
+          "prompt": "The panel has reviewed and a recommendation is ready. Approve to accept it. Deny ends the run without accepting it."
         }
       }
     ]

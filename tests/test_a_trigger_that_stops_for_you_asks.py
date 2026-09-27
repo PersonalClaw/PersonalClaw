@@ -558,6 +558,53 @@ def test_a_run_that_goes_through_stamps_success_and_not_waiting(home, finishes):
     assert _last_run_ts(live) == _epoch(live.last_success_at)
 
 
+# ── what a Run button is told: the run's own status, in its row's words ──
+
+
+def test_run_now_answers_that_its_run_waits_for_you_in_the_rows_own_words(home, browse):
+    """🔴 Red on main: `/run` answered `{"ok": true, "result": "ran"}` for a run that stopped for
+    you, so both Run buttons flashed a finished run, and the `automation_run` tool — which relays
+    this answer — told the agent it ran. It answers the status its run recorded, and the row's own
+    line."""
+    _trigger(home)
+
+    body = _run()
+
+    (row,) = _history(home)
+    assert body["ok"] is True
+    assert body["status"] == row["status"] == "waiting"
+    assert body["result"] == row["summary"] and body["result"].startswith("Waiting for you. ")
+
+
+def test_run_now_answers_a_run_that_went_through_as_the_success_it_recorded(home, finishes):
+    """CONTROL: a run that did its work answers `success`, and "ran"."""
+    _trigger(home, workflow=_PUBLIC)
+    body = _run()
+    assert (body["ok"], body["status"], body["result"]) == (True, "success", "ran")
+
+
+def test_the_restart_reviews_run_now_answers_that_its_run_waits_too(home, browse):
+    """The review's Run now reaches the action through the same dispatch, and its card said the
+    automation "ran now" for a run that had stopped for you."""
+    from personalclaw.triggers import review
+
+    _trigger(home)
+    review.record(
+        [review.ReviewCard(trigger_id=TID, kind="missed", count=1, latest=1.0, oldest=1.0)],
+        base_dir=home,
+    )
+    request = _req(
+        "/api/triggers/review",
+        body={"trigger_id": TID, "kind": "missed", "action": "run_now"},
+        match_info={},
+    )
+
+    body = _body(asyncio.run(T.api_trigger_review(request)))
+
+    assert body["ok"] is True and body["status"] == "waiting"
+    assert body["result"].startswith("Waiting for you. ")
+
+
 def test_the_waiting_stamp_survives_a_reload_and_stays_in_this_home(home, browse):
     """It is written to the row, read back from it, and — like every stamp of what has happened to
     a trigger here — dropped when a snapshot brings the row into another home."""

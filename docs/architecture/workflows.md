@@ -52,6 +52,7 @@ while not terminal:
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `loop_convergence.py` | what a tripped loop does next (PP-15): one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
 | `gate_answers.py` | a step waiting on a human (WF2-R7) — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, a decline and ending the run at an approval it did not get, closing an ended run's waits, and withdrawing an ask nobody answered |
+| `ending_sentence.py` | the sentence a run ends with when a step's failure is the reason: how a step is named (a fan-out item by its item), a failure's cause as one clause, the steps after a step in each sequence that holds it, and the ending of a run that went on past a failed step (`for_failures`) |
 | `mid_flight.py` | the mid-flight mutation queue — held beside the run so a restart keeps it — and applying it at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags |
 | `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
 | `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded |
@@ -492,10 +493,17 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
   that escalated. A check continues past a failure only when the gate itself
   declares it: `on_error: null_continue` runs what follows and the run still ends
   `failed`; `allow_failure: true` records the failure as degraded and the run can
-  complete. Of the bundled templates, `knowledge-lint` declares `allow_failure` on
-  its per-item judge (it records each item's verdict, and nothing after it writes),
-  and `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
-  branch.
+  complete. An `expression` gate asks nobody, so the words its author gives it are
+  its `message`: what the step's failure and the run's ending say when the condition
+  is false ("“Frozen region untouched” failed: the candidate wrote into the frozen
+  region …, so nothing after it ran"); without one, the condition itself is the
+  cause. Of the bundled templates, `knowledge-lint` declares `allow_failure` on its
+  per-item judge (it records each item's verdict, and nothing after it writes),
+  `audit-sweep`'s `fix_enabled`, a mode switch that was written as a gate, is a
+  branch, and `produce-and-audit`'s quality gate, whose words asked a person to
+  accept an artifact the audit had not passed, is a real approval that a branch asks
+  only then. No bundled gate carries words the engine never shows
+  (`test_workflows_no_gate_text_goes_unshown`).
 
 Every way, each step after the gate, in each sequence that holds it, is marked
 skipped with the reason ("not run: “approve” was declined", "not run: “verify”
@@ -504,6 +512,21 @@ container holding it (`tick.container_outcome`) and makes even a plain `needs`
 onto it unreachable. The engine has no construct for an author to declare a path
 taken on a decline — a denied gate's answer never entered the binding namespace,
 and `on_error` is a failure policy — so a decline always stops the run.
+
+**A failure the run went on past says so.** Outside a gate, `on_error:
+null_continue` — the default — lets the steps after a failed step run, and the run
+ends `failed` (or `escalated`, for a judge or a loop that would not decide) once
+they have. Its error says the run continued past a failed step when a step after it
+ran, then names each failed step and its cause, a fan-out item by its item
+(`ending_sentence.for_failures`): "The run continued past “summarize”, which failed:
+model output was not valid JSON." The continuation comes first because the line is
+read cut short — the Workflows list shows it on one line, and a cause can be a
+model's whole reply. A failed last step, or a failed `parallel` leg whose siblings
+ran beside it, is named without that claim. The failures are followed down
+from the run's own outcome through the scheduler's derivation, so a failure the run
+tolerated (`allow_failure`, a `skip` fan-out, a leg of an `any` join) is never named
+as its reason. That ending used to be empty — the completion path's terminal write
+took no `error` — so the run page read "Failed" over nothing.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
 `gate_answers.close_waits` cancels each waiting step and withdraws its ask, and

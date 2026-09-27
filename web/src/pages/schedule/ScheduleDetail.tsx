@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
@@ -72,10 +72,14 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // next list poll (~10s), so without this the UI would look like nothing
   // happened. We hold this true from click until the run is observed finished.
   const [triggered, setTriggered] = useState(false)
-  // Brief post-run flash ON the Run button: 'ok'|'error' shows a result label
-  // for a couple seconds, fades, then the button reverts to "Run now". `fading`
-  // drives the opacity transition before we clear the flash.
-  const [ranFlash, setRanFlash] = useState<null | 'ok' | 'error'>(null)
+  // Brief post-run flash ON the Run button: what the run recorded, in its history row's words
+  // ("Run finished", or "Waiting for you" for a run that stopped for you), for a couple seconds, then
+  // the button reverts to "Run now". `fading` drives the opacity transition before we clear it.
+  const [ranFlash, setRanFlash] = useState<ReturnType<typeof runFlashMeta> | null>(null)
+  // The status the run THIS press started recorded — `/run` answers it — read when the watcher
+  // below sees that run land. It used to be the trigger's health rollup, which says how the
+  // automation has been going and nothing about this run.
+  const ranStatusRef = useRef('')
   const [fading, setFading] = useState(false)
   // The last dry run's RESPONSE — its whole result, since a dry run records nothing anywhere else.
   const [dry, setDry] = useState<TriggerRunResult | null>(null)
@@ -123,7 +127,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     const finished = !job.is_running && job.last_run_ts != null && job.last_run_ts !== runStartRef.current
     if (finished) {
       setTriggered(false)
-      setRanFlash(job.last_status === 'error' ? 'error' : 'ok')
+      setRanFlash(runFlashMeta(ranStatusRef.current))
       return
     }
     const t = window.setInterval(() => onChanged(), 2500)
@@ -176,6 +180,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       // completion-watcher effect clears it and confirms when the run lands.
       // The animated "Running…" pill below is the sole in-flight indicator —
       // no redundant note here.
+      ranStatusRef.current = r.status ?? ''
       setTriggered(true)
       onChanged()
     } catch (e) {
@@ -264,18 +269,17 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       {/* action row */}
       <div className="flex flex-wrap items-center gap-s">
         {/* 🪤 THE REASON IS CONDITIONAL, because one disjunct of this gate is NOT in-flight at all.
-            `ranFlash` is the transient post-run confirmation (✓ "Run finished" / ⚠ "Run failed"), so
+            `ranFlash` is the transient post-run confirmation ("Run finished", "Waiting for you"), so
             during it "An action is already in progress" would be FALSE — the action just ended. The
             label already says what happened, so the flash keeps the native attribute and no reason. */}
         <Button size="sm" variant="secondary" onClick={runNow} disabled={busy || running || !!ranFlash}
           disabledReason={ranFlash ? undefined : BUSY_REASON}>
           <span className={`inline-flex items-center gap-1.5 transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
-            style={ranFlash === 'ok' ? { color: 'var(--color-ok)' } : ranFlash === 'error' ? { color: 'var(--color-danger)' } : undefined}>
+            style={ranFlash ? { color: ranFlash.tone } : undefined}>
             {running ? <Loader2 size={14} className="animate-spin" />
-              : ranFlash === 'ok' ? <Check size={14} />
-              : ranFlash === 'error' ? <AlertTriangle size={14} />
+              : ranFlash ? <ranFlash.icon size={14} />
               : <PlayCircle size={14} />}
-            {running ? 'Running…' : ranFlash === 'ok' ? 'Run finished' : ranFlash === 'error' ? 'Run failed' : 'Run now'}
+            {running ? 'Running…' : ranFlash ? ranFlash.label : 'Run now'}
           </span>
         </Button>
         {/* The explanation rides the button's own `title` (which `Button` joins to a blocked reason)
@@ -580,8 +584,13 @@ function RunTrace({ triggerId, runId, preview }: { triggerId: string; runId: str
           }
         >{run.error}</div>
       )}
-      {/* `trace` is the full result; `summary` is just a prefix of it — render the
-          richest one we have as markdown, not raw text. */}
+      {/* `trace` is the full result — what the action printed. `summary` is the row's line: a prefix
+          of the trace for an action that wrote no sentence, or the sentence one wrote for a person
+          (`ActionResult.summary`), which the row cuts to one line. That sentence is said here in
+          full, above the trace; a prefix would only repeat the trace's own opening. */}
+      {run.summary && run.trace && !run.trace.startsWith(run.summary) && (
+        <div className="text-on-surface leading-relaxed">{run.summary}</div>
+      )}
       {(run.trace || run.summary) && <div className="rounded-md bg-surface px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{run.trace || run.summary || ''}</Markdown></div>}
       {/* `traceErr != null`, not `traceErr &&` — the state is `unknown`, and `unknown && …`
           is `unknown`, which is not a ReactNode. */}

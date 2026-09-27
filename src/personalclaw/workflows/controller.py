@@ -56,6 +56,7 @@ from personalclaw.workflows import (
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import (
     effect_boundary,
+    ending_sentence,
     execution_hints,
     gate_answers,
     gate_policy,
@@ -708,7 +709,9 @@ class RunController:
 
         if fr.complete and not self._inflight:
             status = _ROOT_TO_RUN.get(fr.outcome or InstanceState.DONE, RunStatus.COMPLETE)
-            await self._finish(status)
+            # A run that went on past a failed step (`on_error: null_continue`, the default) says
+            # which step failed and that it continued past it; a clean run says nothing.
+            await self._finish(status, error=ending_sentence.for_failures(self))
             return True
 
         self._check_budget_warning()

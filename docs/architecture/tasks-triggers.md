@@ -169,7 +169,27 @@ row's summary as the sentence the action wrote for a person
 (`ActionResult.summary`, `schedule_history.summary_for_result`), else what it
 printed, which stays the row's trace. A browse run prints its whole account as
 JSON for the workflow engine to bind, and says "Browse finished in 3 steps at
-example.com. Noted: …" for its row.
+example.com. Noted: …" for its row. The other providers whose `stdout` is JSON
+write one too: run-workflow says what it started, queued or skipped and why
+("Started “triage-inbox” as run 3f2a91c0."), net-fetch how much it read and from
+where ("Fetched 1,234 characters from example.com (HTTP 200, text/html)."), and
+inbox-op what it did to which message ("Archived the message from alice in
+#general."). A sentence names a site by `host[:port]` and a message by who sent
+it and where, and quotes nothing either of them said. The row's line flattens
+markdown (an agent's reply is markdown) but strips markup only where it is
+markup (`scheduleMeta.mdToPlain`), so the `#`, `-` and `_` a name is spelled with
+survive; and since the line is cut to the panel's width, an opened row says the
+whole sentence above the trace.
+
+**A Run button says what its run recorded.** `POST /api/triggers/{id}/run`
+answers `status`, the status the run recorded (`last_run_status` on the list row
+reads the same record), and its `result` is the row's own line for a run that
+stopped for you ("Waiting for you. Sign in to …") rather than "ran". So the
+schedule panel's button flashes "Waiting for you", "Launched" or "Queued" where
+that is what happened, and "Run finished" only for a run that did its work; the
+automation panel and the restart review's Run now say the same. The flash used
+to read the trigger's health rollup, which says how the automation has been
+going and nothing about this run.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.

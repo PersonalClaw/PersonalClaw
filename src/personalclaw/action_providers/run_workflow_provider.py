@@ -115,6 +115,10 @@ class RunWorkflowActionProvider(ActionProvider):
                     outcome="launched",
                     stdout=json.dumps({"run_id": existing, "deduped": True}),
                     duration_ms=int((time.monotonic() - started) * 1000),
+                    summary=(
+                        f"This request already started “{name}” as run {existing}, so no second "
+                        "run began."
+                    ),
                 )
 
         definition = await _load_def(defs_mod, name)
@@ -166,6 +170,10 @@ class RunWorkflowActionProvider(ActionProvider):
                     {"skipped": True, "reason": "already running", "run_id": active[0].id}
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
+                summary=(
+                    f"Did not start “{name}”: run {active[0].id} is still going, and this "
+                    "workflow skips a start while one is."
+                ),
             )
 
         if (action_config or {}).get("dry_run"):
@@ -212,6 +220,10 @@ class RunWorkflowActionProvider(ActionProvider):
                     }
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
+                summary=(
+                    f"Did not start “{name}”: its queue is full, and run {queued[0].id} is "
+                    "already waiting to start."
+                ),
             )
 
         if action not in (Act.QUEUE, Act.START, Act.CANCEL_THEN_START):
@@ -264,6 +276,10 @@ class RunWorkflowActionProvider(ActionProvider):
                     }
                 ),
                 duration_ms=int((time.monotonic() - started) * 1000),
+                summary=(
+                    f"Queued “{name}” as run {run.id}; it starts when {_ahead(active)} "
+                    f"{'ends' if len(active) == 1 else 'end'}."
+                ),
             )
 
         if action == Act.CANCEL_THEN_START:
@@ -279,6 +295,10 @@ class RunWorkflowActionProvider(ActionProvider):
                 stdout=json.dumps({"run_id": run.id, "started": False}),
             )
 
+        # The row's line says it STARTED — the same claim `launched` makes, and no stronger.
+        said = f"Started “{name}” as run {run.id}"
+        if action == Act.CANCEL_THEN_START and active:
+            said += f", after asking {_ahead(active)} to stop"
         return ActionResult(
             success=True,
             # "launched", never plain success: the run has STARTED, and its real outcome
@@ -287,7 +307,13 @@ class RunWorkflowActionProvider(ActionProvider):
             outcome="launched",
             stdout=json.dumps({"run_id": run.id, "workflow": name, "started": True}),
             duration_ms=int((time.monotonic() - started) * 1000),
+            summary=f"{said}.",
         )
+
+
+def _ahead(active: list[Any]) -> str:
+    """The run a start waits behind or displaces, for its history row's sentence."""
+    return f"run {active[0].id}" if len(active) == 1 else "the runs in progress"
 
 
 async def config_problem(action_config: dict[str, Any] | None) -> str:

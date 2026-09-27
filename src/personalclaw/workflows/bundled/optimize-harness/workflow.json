@@ -178,11 +178,11 @@
             {
               "kind": "gate",
               "id": "verify_scope",
-              "label": "A frozen-region touch is REFUSED, not merely recorded",
+              "label": "Frozen region untouched",
               "config": {
                 "kind": "expression",
                 "expr": "{{nodes.scope_check.output.outcome}} != 'scope_violation'",
-                "prompt": "This candidate wrote into the frozen region — the live artifact or its .pclaw-lock.json. It is dead regardless of what it scored, and the search must not carry it forward. Approve only if you have personally checked which path it touched and why."
+                "message": "the candidate wrote into the frozen region (the live artifact or its .pclaw-lock.json), which makes it dead whatever it scored"
               }
             },
             {

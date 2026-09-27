@@ -457,6 +457,10 @@ class TriggerStore(TriggerStoreProvider):
 #: Fields that belong to what has HAPPENED to a trigger in one home, not to what it IS — the
 #: fields a snapshot merge drops from a row it brings in from another home (`snapshot.py`), so an
 #: armed fire or a run count from elsewhere never arrives here as if it had happened here.
+#:
+#: Every `Trigger` field is either here or part of what the trigger is, and
+#: `test_trigger_runtime_fields.py` fails on a field that is neither, so a new stamp cannot ride a
+#: merge unclassified.
 RUNTIME_FIELDS: tuple[str, ...] = (
     "next_fire_at",
     "last_run_id",
@@ -464,6 +468,15 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "last_success_at",
     "last_failure_at",
     "last_waiting_at",
+    # When it last fired HERE — what debounce spaces a fire from, so another home's fire would
+    # hold back this home's first one.
+    "last_fired_at",
+    # Another home's park cooldown, from an outage this home never had.
+    "park_retry_after",
+    # Another home's alert dedupe: brought in, it would silence this home's first alert of a
+    # failure only the other home had reported.
+    "last_alert_hash",
+    "last_alert_at",
     "health_status",
     "last_error_summary",
     "state",
