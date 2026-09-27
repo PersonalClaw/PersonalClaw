@@ -332,12 +332,21 @@ def _write_shard(root: Path, rel: str, rows: list[dict]) -> list[ShardFile]:
     return written
 
 
-def _export_blobs(root: Path, src_dir: Path) -> int:
-    """Content-addressed blob dir for binary originals, deduplicated by sha256."""
+def _export_blobs(root: Path, src_dir: Path, *, entry_path: str = "") -> int:
+    """Content-addressed blob dir for binary originals, deduplicated by sha256.
+
+    Given the inventory ``entry_path`` of the tree, what that entry declares ``derived_within``
+    stays out, as it does from a snapshot and an export: an app's ``venv/`` is gigabytes built
+    for this machine, and the hourly export copied every file of it.
+    """
+    from personalclaw.portability import _is_derived_within
+
     count = 0
     blob_root = root / "blobs"
     for path in sorted(src_dir.rglob("*")):
         if not path.is_file() or path.is_symlink():
+            continue
+        if entry_path and _is_derived_within(entry_path, path.relative_to(src_dir).as_posix()):
             continue
         try:
             data = path.read_bytes()
@@ -445,7 +454,7 @@ def export_shards(
                     )
             else:  # KIND_TREE — text-ish trees ride the tar; binaries go to blobs
                 if src.is_dir():
-                    result.blobs += _export_blobs(out_dir / entry.id, src)
+                    result.blobs += _export_blobs(out_dir / entry.id, src, entry_path=entry.path)
                 else:
                     result.blobs += _export_blobs(out_dir / entry.id, src.parent)
 

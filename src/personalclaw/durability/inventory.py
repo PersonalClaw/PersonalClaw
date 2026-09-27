@@ -497,7 +497,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         # minted on demand (`apps.app_secret.ensure_app_secret`) when the backend starts. It
         # rode every snapshot and every export inside this tree; nothing is lost by leaving it
         # out, and a copy that travels is a key that lets its holder sign as the gateway.
-        derived_within=("*/.app_secret",),
+        #
+        # Each app's `venv/` is the Python environment its sidecar runs in, with the engine Install
+        # engine put there (`sdk.sidecar.sidecar_venv_dir`): gigabytes, built for this machine's
+        # OS, CPU and Python. It rode every snapshot without its interpreter (the capture skips
+        # links), and a restore brought back its package receipt, so Install engine re-made the
+        # interpreter and skipped pip: the engine read as installed with another machine's
+        # packages. Left behind, a restored app has no engine and offers Install engine. A bundle
+        # never ships a `venv` (`supply_chain.NEVER_INSTALLED_NAMES`), so one at any depth here
+        # was built on this machine, and the `.{name}.rollback` copy of an update matches too.
+        derived_within=("*/.app_secret", "*/venv"),
     ),
     StateEntry(
         id="extensions",
@@ -594,9 +603,10 @@ INVENTORY: tuple[StateEntry, ...] = (
     # longest way round to exactly that. Now that `evals/studies/<id>/locked/` has a writer
     # (`evals/store.write_locked_check`), the control has something to protect.
     #
-    # `derived_within` is the field with a live reader on BOTH paths that copy this tree
-    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`), so declaring
-    # it here excludes the answer keys from the portability export AND from snapshots. The
+    # `derived_within` is the field with a live reader on every path that copies this tree
+    # (`portability.py:_is_derived_within` and `snapshot.py:_derived_within`: the export, the
+    # snapshot, the hourly shard export and a restore), so declaring it here excludes the
+    # answer keys from the portability export AND from snapshots. The
     # snapshot half is a deliberate consequence, not an oversight: an answer key belongs on
     # one machine, and the cost — a REGISTERED-but-unrun study restored from a snapshot has
     # lost its checks — is caught loudly rather than silently, because `studies.run_study`

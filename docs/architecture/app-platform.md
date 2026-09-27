@@ -124,6 +124,13 @@ backend**.
   of the app answers 409 `engine_installing`: pip is writing into the folder those replace or
   delete. **Remove engine** deletes an environment PersonalClaw made, never one someone else
   did.
+- **Backups leave the engine behind.** `apps/<app>/venv` is gigabytes built for this machine's
+  OS, CPU and Python, so the `apps` inventory entry declares `*/venv` `derived_within`: a
+  snapshot, an export and the hourly shard export leave it out. A restore or an import never
+  plants one an older archive still carries, since that copy came without its interpreter but
+  with its package receipt, and Install engine would then skip pip. The restore names each app
+  it brought back whose engine is not installed here (`snapshot._engines_not_here`), and the
+  app offers Install engine. A merge into a home that has the engine keeps it.
 
 ## Unload and load (`apps/app_runtime.py`)
 
