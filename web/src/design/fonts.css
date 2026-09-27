@@ -2,10 +2,10 @@
    Each file's source, version and sha256 are recorded in ASSET_LICENSES.json, and its
    notice ships beside it in web/public/THIRD_PARTY_NOTICES.txt.
    DEFAULT: DM Sans (warm, rounded) — off Google Sans. Inter (neutral) + JetBrains
-   Mono (code) are selectable in Appearance. Google Sans faces retained as a legacy
-   option. The NE signature — fractional variable weights — holds on the variable faces
-   (DM Sans, JetBrains Mono, Google Sans Flex); inter.woff2 and google-sans-code.woff2
-   are static. */
+   Mono (code) are selectable in Appearance, and the terminal draws in Google Sans Code.
+   Every face is variable, and each block declares exactly the weight range its file
+   carries (design/fontFaces.test.ts reads it out of the file), so the NE signature
+   of fractional variable weights holds on all of them. */
 @font-face {
   font-family: "DM Sans";
   font-style: normal;
@@ -30,16 +30,18 @@
   src: url("/fonts/jetbrains-mono.woff2") format("woff2");
 }
 
-/* Legacy option (selectable, not default). */
+/* No longer offered in Appearance. The file carries weight and optical size, and no
+   width axis, so no font-stretch range. */
 @font-face {
   font-family: "Google Sans Flex";
   font-style: normal;
   font-weight: 1 1000;
-  font-stretch: 25% 151%;
   font-display: swap;
   src: url("/fonts/google-sans-flex.woff2") format("woff2");
 }
 
+/* The terminal's face (pages/terminal/TerminalView.tsx): Latin, Latin Extended and the
+   box-drawing and block characters terminal programs draw with. */
 @font-face {
   font-family: "Google Sans Code";
   font-style: normal;
