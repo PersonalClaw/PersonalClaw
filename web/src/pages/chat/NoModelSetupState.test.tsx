@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { NoModelSetupState, isNoModelSetupError, MODELS_ROUTE } from './NoModelSetupState'
+import { NoModelSetupState, isNoModelSetupError, noModelChosenFor, MODELS_ROUTE } from './NoModelSetupState'
 
 // WT-04. The trigger is a turn-level error, and the ONLY thing linking this surface to
 // the backend is the text of `AgentError.render()`. These fixtures are copied verbatim
@@ -14,6 +14,17 @@ const NO_MODEL_ENVELOPE = [
   "WHAT: no model provider resolves for use case 'chat'",
   'WHY: no provider in config.json declares the capability this use case needs',
   "FIX: add a model provider in Settings → Providers, then bind 'chat' to it",
+].join('\n')
+
+// A provider IS connected, but no model is chosen for it: an instance saved from the Add-instance
+// form with no Default Model (it writes `model: ""`), and nothing bound in Settings → Models. The
+// resolver refuses the turn rather than send Ollama an empty model or let a provider pick one, and
+// its WHY is `no_model_chosen` (src/personalclaw/llm/registry.py) — pinned by the backend's
+// tests/test_an_instance_that_names_no_model.py with these same three lines.
+const NO_MODEL_CHOSEN_ENVELOPE = [
+  "WHAT: no model provider resolves for use case 'chat'",
+  'WHY: no model is chosen for “local”',
+  'FIX: choose one of its models in Settings → Models',
 ].join('\n')
 
 // The stale-pin variant: a model WAS chosen and its provider later went missing. A
@@ -49,12 +60,27 @@ describe('isNoModelSetupError', () => {
     expect(isNoModelSetupError(MISSING_TYPE_FACTORY_ENVELOPE)).toBe(false)
   })
 
+  it('matches the no-model-CHOSEN envelope too (a provider is connected, no model picked)', () => {
+    expect(isNoModelSetupError(NO_MODEL_CHOSEN_ENVELOPE)).toBe(true)
+  })
+
   it('does NOT match unrelated turn errors or empty input', () => {
     expect(isNoModelSetupError('The model returned an error.')).toBe(false)
     expect(isNoModelSetupError('WHAT: a tool argument failed validation\nWHY: …\nFIX: …')).toBe(false)
     expect(isNoModelSetupError('')).toBe(false)
     expect(isNoModelSetupError(null)).toBe(false)
     expect(isNoModelSetupError(undefined)).toBe(false)
+  })
+})
+
+describe('noModelChosenFor', () => {
+  it('reads the provider out of the no-model-chosen WHY, and nothing out of any other', () => {
+    expect(noModelChosenFor(NO_MODEL_CHOSEN_ENVELOPE)).toBe('local')
+    expect(noModelChosenFor(NO_MODEL_ENVELOPE)).toBeNull()
+    expect(noModelChosenFor(STALE_PIN_ENVELOPE)).toBeNull()
+    expect(noModelChosenFor(MISSING_TYPE_FACTORY_ENVELOPE)).toBeNull()
+    expect(noModelChosenFor('')).toBeNull()
+    expect(noModelChosenFor(null)).toBeNull()
   })
 })
 
@@ -83,6 +109,18 @@ describe('NoModelSetupState', () => {
     const onSetup = vi.fn()
     render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} onSetup={onSetup} />)
     fireEvent.click(screen.getByRole('button', { name: /set up a model/i }))
+    expect(onSetup).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the provider when one is connected but no model is chosen for it', () => {
+    // 🔴 Red on main: the card said "No model connected yet" / "Connect a model" to a user who had
+    // just connected Ollama, because it read only the WHAT line.
+    const onSetup = vi.fn()
+    render(<NoModelSetupState detail={NO_MODEL_CHOSEN_ENVELOPE} onSetup={onSetup} />)
+    expect(screen.getByText('No model chosen for local')).toBeTruthy()
+    expect(screen.getByText('Choose which of its models to chat with in Settings → Models.')).toBeTruthy()
+    expect(screen.queryByText('No model connected yet')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose a model' }))
     expect(onSetup).toHaveBeenCalledTimes(1)
   })
 

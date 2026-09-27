@@ -35,7 +35,7 @@
           "default": "",
           "x-meta": {
             "label": "Default Model",
-            "help": "Model to use when no specific model is requested. Leave empty to use the first available."
+            "help": "The model this instance answers with when nothing in Settings → Models names one. Leave it empty to choose its models in Settings → Models."
           }
         },
         "embedding_model": {

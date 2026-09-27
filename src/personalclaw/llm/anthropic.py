@@ -39,7 +39,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
-from personalclaw.llm.registry import CredentialMissing
+from personalclaw.llm.registry import CredentialMissing, require_model
 
 logger = logging.getLogger(__name__)
 
@@ -526,12 +526,13 @@ class AnthropicProvider(ModelProvider):
         duck-typed ``getattr`` access here so the module never imports
         them at load time (Property 11).
         """
+        model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         request_kwargs: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "messages": self._history,
             "max_tokens": self._max_tokens,
         }
@@ -708,7 +709,7 @@ class AnthropicProvider(ModelProvider):
         system_prompt, anth_messages = _translate_messages(messages)
 
         request_kwargs: dict[str, Any] = {
-            "model": model or self._model,
+            "model": require_model(model or self._model),
             "messages": anth_messages,
             "max_tokens": self._max_tokens,
         }
