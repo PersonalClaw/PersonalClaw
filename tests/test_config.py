@@ -137,6 +137,12 @@ class TestObserveSizing:
 
 
 class TestConfigDir:
-    def test_config_dir_is_home_based(self):
+    def test_config_dir_is_home_based(self, tmp_path, monkeypatch):
+        """With no ``PERSONALCLAW_HOME`` the home is ``~/.personalclaw``. ``HOME`` is repointed
+        because ``config_dir()`` creates what it resolves, and this module's import of it is
+        not one conftest redirects: left alone, the call made the developer's real home."""
+        monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
         d = config_dir()
-        assert d.name == ".personalclaw"
+        assert d == tmp_path / ".personalclaw"
+        assert d.is_dir()

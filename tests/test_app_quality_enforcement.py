@@ -566,7 +566,7 @@ class TestTheCiCallSite:
         assert seen == 1
         assert axes(violations) == ["manifest"]
 
-    def test_the_module_is_executable_as_the_ci_step_invokes_it(self, tmp_path):
+    def test_the_module_is_executable_as_the_ci_step_invokes_it(self, tmp_path, tmp_path_factory):
         """`python -m personalclaw.apps.quality` — the literal command the apps-repo CI
         step runs. Pinning it here means a renamed module or a missing `__main__`
         guard fails in core, not silently in the other repo's workflow.
@@ -576,10 +576,19 @@ class TestTheCiCallSite:
         venv points at — another checkout, in a worktree — and the exit code would be 1
         for "no such module" while the test read it as "caught the liar": a green that
         proves the opposite of what it claims.
+
+        The child also gets its own ``PERSONALCLAW_HOME``. conftest redirects the home only
+        inside this process, so a child left on the inherited environment resolves the
+        developer's real one. It lives outside ``tmp_path`` because ``tmp_path`` is the tree
+        the CLI walks.
         """
         make_bundle(tmp_path, "lying-app", quality={"designSystem": "v2"}, frontend=_DIRTY_TSX)
         src_root = Path(personalclaw.__file__).resolve().parent.parent
-        env = {**os.environ, "PYTHONPATH": str(src_root)}
+        env = {
+            **os.environ,
+            "PYTHONPATH": str(src_root),
+            "PERSONALCLAW_HOME": str(tmp_path_factory.mktemp("quality-child-home")),
+        }
         proc = subprocess.run(
             [sys.executable, "-m", "personalclaw.apps.quality", str(tmp_path)],
             capture_output=True,

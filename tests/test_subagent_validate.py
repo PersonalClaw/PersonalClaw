@@ -1,73 +1,14 @@
 """Tests for the _validate_agent fallback chain in subagent.py.
 
-Heavy dependencies are stubbed at the sys.modules level so subagent.py imports
-without the full runtime.
+These used to replace eight core modules in ``sys.modules`` with hand-built stubs so
+``subagent`` would import "without the full runtime", and to drop ``personalclaw.subagent``
+around every test. The stubs broke the day ``subagent`` imported a name they did not define
+(``llm.base.EVENT_TOOL_RESULT``), and dropping a module other tests hold splits its identity
+for the rest of the worker. The test environment has the full runtime; ``_validate_agent``
+reads only ``AppConfig.load``, which each test patches.
 """
 
-import sys
-import types
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-# Stub out heavy transitive imports before importing subagent
-_STUBS = [
-    "personalclaw.context",
-    "personalclaw.hooks",
-    "personalclaw.providers",
-    "personalclaw.llm.base",
-    "personalclaw.sel",
-    "personalclaw.session",
-    "personalclaw.textfmt",
-    "personalclaw.stats",
-]
-
-
-@pytest.fixture(autouse=True)
-def _stub_modules():
-    """Inject stub modules so subagent.py can be imported."""
-    originals = {}
-    for mod_name in _STUBS:
-        originals[mod_name] = sys.modules.get(mod_name)
-        stub = types.ModuleType(mod_name)
-        # providers.base needs specific names
-        if mod_name == "personalclaw.llm.base":
-            stub.EVENT_COMPLETE = "complete"
-            stub.EVENT_PERMISSION_REQUEST = "permission"
-            stub.EVENT_TEXT_CHUNK = "text"
-            stub.EVENT_TOOL_CALL = "tool_call"
-            stub.LLMEvent = type("LLMEvent", (), {})
-            stub.ModelProvider = type("ModelProvider", (), {})
-        if mod_name == "personalclaw.hooks":
-            stub.TOOL_AUTO_APPROVE = "auto"
-            stub.TOOL_DENY = "deny"
-            stub.fire_tool_hooks = MagicMock()
-            stub.safe_read_file = lambda path: ""
-            stub.get_global_hook_store = MagicMock()
-        if mod_name == "personalclaw.textfmt":
-            stub.extract_options = lambda x: (x, [])
-        if mod_name == "personalclaw.stats":
-            stub.Stats = MagicMock
-        if mod_name == "personalclaw.sel":
-            stub.sel = MagicMock()
-        if mod_name == "personalclaw.context":
-            stub.ContextBuilder = MagicMock
-        if mod_name == "personalclaw.session":
-            stub.SessionManager = MagicMock
-        sys.modules[mod_name] = stub
-
-    # Clear cached subagent module so it reimports with stubs
-    sys.modules.pop("personalclaw.subagent", None)
-
-    yield
-
-    # Restore
-    for mod_name in _STUBS:
-        if originals[mod_name] is None:
-            sys.modules.pop(mod_name, None)
-        else:
-            sys.modules[mod_name] = originals[mod_name]
-    sys.modules.pop("personalclaw.subagent", None)
 
 
 def _config_with_agents(*names: str) -> MagicMock:
