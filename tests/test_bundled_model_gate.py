@@ -1065,13 +1065,16 @@ def _calls_in(function_name: str) -> list[tuple[int, str]]:
     )
 
 
-def test_main_asks_the_installed_package_after_installing_it() -> None:
+def test_every_verification_asks_the_installed_package_after_installing_it() -> None:
     """A perfect assertion with no call site guards nothing — and before the install there is no
-    artifact to ask, so the ORDER is part of the contract."""
-    calls = _calls_in("main")
-    names = [name for _line, name in calls]
-    assert "_assert_installed_bundled_model" in names, f"main() never runs assertion 7: {names}"
+    artifact to ask, so the ORDER is part of the contract. The install-and-boot half lives in
+    one function, and both ways in (``--wheel``, and ``make build``'s ``--build``) reach it."""
+    names = [name for _line, name in _calls_in("_verify_wheel_runtime")]
+    assert "_assert_installed_bundled_model" in names, f"assertion 7 never runs: {names}"
     assert names.index("_pip_install_wheel") < names.index("_assert_installed_bundled_model")
+    for entry in ("main", "_canonical_distribution_build"):
+        called = [name for _line, name in _calls_in(entry)]
+        assert "_verify_wheel_runtime" in called, f"{entry}() skips the installed checks: {called}"
 
 
 def test_the_boot_probe_asks_for_the_download_offer() -> None:

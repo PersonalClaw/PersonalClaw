@@ -231,6 +231,7 @@ Useful Makefile targets (see `make help` for the full list):
 | `make test` | Run the Python test suite (pytest). |
 | `make lint` / `make format` | black + isort + flake8 + mypy / auto-format. |
 | `make web-build` | Build the React SPA and link `static/dist -> web/dist` (a symlink by design — never copy). |
+| `make build` | Build a distribution: the sdist and wheel, inspected and proved reproducible (below). |
 | `make serve` / `make serve-fresh` | Dev gateway on `:10000` with an isolated `PERSONALCLAW_HOME` / same, after a fresh SPA build. |
 | `make serve-web` | Vite dev server with HMR on `:3100` (`server.port` in `web/vite.config.ts`), proxying `/api` — the `/api/ws` socket included — and `/apps` to a running gateway. |
 
@@ -314,6 +315,20 @@ producing a broken build. Use `make web-build` (or `npm ci && npm run build
 `rm -rf node_modules package-lock.json && npm install` from the root, then
 re-commit the regenerated lockfile. (End users never hit this — `pip`/`uv`/Docker
 installs ship a prebuilt `web/dist`.)
+
+**Build a distribution with `make build`.** It removes every generated tree a build could
+re-use (`build/`, `dist/`, `*.egg-info`, `web/dist` and the `static/dist` link), installs the
+root npm workspace from `package-lock.json`, builds and stamps the SPA, and builds the sdist
+and the wheel with `uv build`. Both are inspected against the checkout: every package,
+dashboard and bundled-app file the source declares and nothing else, metadata that matches
+`pyproject.toml`, and a wheel `RECORD` whose digests are true. Then a second wheel is built
+from the sdist and must be byte-identical to the first, and the wheel is installed into a
+scratch venv and served. That rebuild holds because the build backend is pinned
+(`build-system.requires`) and every archive timestamp is a fixed `SOURCE_DATE_EPOCH`. A bare
+`uv build` still works, and a wheel without a built dashboard is still a valid build: the
+apps repo's CI installs core that way, and the gateway answers `/` with its "Build the
+dashboard" page. `make build` never produces one: it builds the dashboard first and fails a
+wheel that lacks it.
 
 Two runtime facts that save debugging time:
 

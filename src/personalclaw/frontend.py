@@ -6,7 +6,6 @@ import json
 import logging
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -132,7 +131,9 @@ def write_spa_build_stamp(repo_root: Path) -> Optional[str]:
     dist = repo_root / _DIR_NAME / "dist"
     if digest is None or not dist.is_dir():
         return None
-    payload = {"inputs_sha256": digest, "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    # Content only. A wall-clock field made two builds of identical sources different, and
+    # the stamp ships inside web/dist, so every wheel and sdist differed with it.
+    payload = {"inputs_sha256": digest}
     try:
         (dist / _STAMP_NAME).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:

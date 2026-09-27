@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+# EXACT, on purpose: `make build` rebuilds the wheel from the sdist and requires the two to be
+# byte-identical, which holds only when both builds run the same backend. It is the setuptools
+# `uv.lock` resolves (CI's test environment, where the packaging tests drive the backend
+# in-process), and `tests/test_verify_wheel_contract.py` keeps the two equal. `wheel` is gone
+# because setuptools has carried `bdist_wheel` itself since 70.1.
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 # ── Project metadata (PEP 621) ────────────────────────────────────────────────
@@ -7,7 +12,9 @@ build-backend = "setuptools.build_meta"
 name = "personalclaw"
 version = "0.2.0"
 description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
-license = { text = "MIT" }
+# A PEP 639 SPDX expression, emitted as `License-Expression`; the trove classifier it
+# supersedes is gone, and setuptools refuses the pair.
+license = "MIT"
 # Upper-bounded ON PURPOSE, to the newest interpreter CI actually verifies. An open
 # `>=3.12` promised every future Python while the matrix proved two, and 3.14 collected on
 # that promise: the connector-pack parse fence denies `importlib`, so neutering the
@@ -27,7 +34,6 @@ authors = [
 keywords = ["ai", "agent", "llm", "mcp", "acp"]
 
 classifiers = [
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -367,7 +373,7 @@ personalclaw = [
     # already carries `apps/native/*/*.py` into the wheel with no glob declared, while a
     # `.txt`/`.yaml` beside it is dropped — so the inclusion is real but it rests entirely
     # on setuptools' implicit handling of Python sources under the package tree.
-    # `build-system.requires` is an unbounded `setuptools>=64`, so that implicit behaviour
+    # `build-system.requires` pins setuptools, but a pin is bumped, so that implicit behaviour
     # is not ours to rely on: without this line a future setuptools could stop shipping
     # `ollama-models`' and `personalclaw-ui-docs`' providers, and the failure would be a
     # bundled app whose manifest names a module that isn't there — an error row in the
