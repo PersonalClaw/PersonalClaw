@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
-from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
+from personalclaw.knowledge.embedder import floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
@@ -84,33 +84,18 @@ def _store(request: web.Request):
     return request.app["state"].knowledge_store
 
 
-def _create_embedder(app):
-    """Create embedder from PersonalClaw config. Returns None if disabled/unavailable."""
-    from personalclaw.config.loader import config_path
+def _embedder():
+    """The knowledge embedder for the embedding model bound in Settings → Models, or ``None``.
 
-    cfg_path = config_path()
-    try:
-        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
-    except Exception:
-        cfg = {}
-    return create_embedder_from_config(cfg)
+    The one every knowledge consumer uses (``knowledge.get_knowledge_embedder``: the agent's
+    knowledge tools, context search, the backfills), keyed on the binding so a rebind rebuilds
+    it. These handlers used to keep the instance built at boot whenever there was one, so after
+    a rebind and its re-index, list search, stats, batch embedding and context search here went
+    on embedding with the model the gateway started with, against vectors of the new one.
+    """
+    from personalclaw.knowledge import get_knowledge_embedder
 
-
-def _get_embedder(request_or_app):
-    """Resolve the active embedder dynamically — never stale.
-
-    Checks the boot-time cached instance first (fast path); if absent, tries to
-    build one on demand from the current model binding. This means setting an
-    embedding model in Settings → Models takes effect immediately without a
-    gateway restart."""
-    app = request_or_app if isinstance(request_or_app, dict) else request_or_app.app
-    embedder = app.get("knowledge_embedder")
-    if embedder is not None:
-        return embedder
-    embedder = _create_embedder(app)
-    if embedder is not None:
-        app["knowledge_embedder"] = embedder
-    return embedder
+    return get_knowledge_embedder()
 
 
 # ---------- Namespaces ----------
@@ -161,7 +146,7 @@ async def list_items(request: web.Request) -> web.Response:
 
     if q:
         # Use hybrid search: FTS5 keyword + graph traversal + optional vector + RRF fusion
-        embedder = _get_embedder(request)
+        embedder = _embedder()
         embed_fn = embedder.embed if embedder and embedder.is_available() else None
         retriever = HybridRetriever(store, embedder=embed_fn)
         # Searching WITHIN the Archived view must find archived items (the no-query
@@ -1691,7 +1676,7 @@ async def get_stats(request: web.Request) -> web.Response:
         "model_available": bool(can_resolve_use_case("background")),
         "entities": _entity_extraction_tally(store),
     }
-    embedder = _get_embedder(request)
+    embedder = _embedder()
     if embedder:
         embedded_count = store.db.execute(
             "SELECT COUNT(*) FROM items WHERE embedding IS NOT NULL"
@@ -1804,7 +1789,7 @@ async def ingest_file(request: web.Request) -> web.Response:
 async def get_embedding_status(request: web.Request) -> web.Response:
     """GET /api/knowledge/embedding/status -- embedding config and progress."""
     store = _store(request)
-    embedder = _get_embedder(request)
+    embedder = _embedder()
     total = store.db.execute("SELECT COUNT(*) as c FROM items WHERE status = 'active'").fetchone()[
         "c"
     ]
@@ -1831,7 +1816,7 @@ async def get_embedding_status(request: web.Request) -> web.Response:
 async def batch_embed_items(request: web.Request) -> web.Response:
     """POST /api/knowledge/embedding/generate -- embed all unembedded items (or re-embed all)."""
     store = _store(request)
-    embedder = _get_embedder(request)
+    embedder = _embedder()
     if not embedder:
         return web.json_response({"error": "Embedding not enabled"}, status=400)
     if not embedder.is_available():
@@ -1939,7 +1924,7 @@ async def search_for_context(request: web.Request) -> web.Response:
     except ValueError:
         pass
 
-    embedder = _get_embedder(request)
+    embedder = _embedder()
     embed_fn = embedder.embed if embedder and embedder.is_available() else None
     retriever = HybridRetriever(store, embedder=embed_fn)
     # Off the loop thread for the same reason as `list_items` above (#3097).
@@ -3914,7 +3899,6 @@ def setup_knowledge_routes(app: web.Application) -> None:
     if "knowledge_llm_pool" not in app:
         pool = LLMPool()
         app["knowledge_llm_pool"] = pool
-        app["knowledge_embedder"] = _create_embedder(app)
         # Wire the node-graph ingest queue's insights pool to the shared LLM pool,
         # and (re)start the queue now that the event loop is running (#30).
         try:

@@ -20,6 +20,7 @@ a callable matching the factory signature::
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
@@ -540,6 +541,71 @@ def stamp_substitution(provider: object, substitution: ModelSubstitution | None)
         logger.debug("%s does not accept a substitution stamp", type(provider).__name__)
 
 
+@dataclass(frozen=True)
+class ResolutionBasis:
+    """What a native runtime's model was resolved from — what a rebind or an instance edit changes.
+
+    A runtime is built once and then cached per session (``SessionManager``), and it fixes its
+    model when it is built. So without this, rebinding chat in Settings → Models reached a new
+    chat and nothing already open: the persistent background session kept the model chat was
+    bound to when the gateway started, for every title, follow-up, suggestion, history
+    compression and memory consolidation after it, and an open chat that has no model of its
+    own kept answering on the old binding. ``SessionManager`` asks :meth:`holds` when it reuses
+    a runtime, and rebuilds one whose basis moved, at its next acquire.
+
+    ``chains`` are the Settings → Models chains the resolution read: the runtime's own axis
+    (``active_model_refs`` — the chat chain while that axis is unbound) and chat's, which a
+    chat's or an agent's own pick is checked against (``named_model_problem``). ``entry`` is the
+    registry entry the model is served from, compared by IDENTITY: an edit in Settings →
+    Providers (a new Default Model, endpoint or key) re-registers the entry, and a removal
+    drops it, so either reads as moved.
+    """
+
+    axis: str
+    chains: tuple[tuple[str, ...], tuple[str, ...]]
+    entry: object | None = None
+
+    @classmethod
+    def read(cls, axis: str) -> "ResolutionBasis":
+        """The chains as they read now, for a runtime about to resolve on ``axis``."""
+        return cls(axis=axis, chains=_basis_chains(axis))
+
+    def served_from(self, served_ref: str) -> "ResolutionBasis":
+        """This basis, pinned to the registry entry ``served_ref`` names (``""`` pins none)."""
+        name = served_ref.partition(":")[0]
+        if not name:
+            return self
+        try:
+            from personalclaw.llm.registry import get_default_registry
+
+            entry = next((e for e in get_default_registry().list_entries() if e.name == name), None)
+        except Exception:  # noqa: BLE001 — an unreadable registry pins nothing
+            logger.debug("resolution basis: registry unreadable for %r", name, exc_info=True)
+            entry = None
+        return ResolutionBasis(axis=self.axis, chains=self.chains, entry=entry)
+
+    def holds(self) -> bool:
+        """Whether a resolution now would read what this one read. A probe that fails holds:
+        a broken read must not rebuild every open session."""
+        try:
+            if _basis_chains(self.axis) != self.chains:
+                return False
+            if self.entry is None:
+                return True
+            from personalclaw.llm.registry import get_default_registry
+
+            return any(e is self.entry for e in get_default_registry().list_entries())
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.debug("resolution basis probe failed for %s", self.axis, exc_info=True)
+            return True
+
+
+def _basis_chains(axis: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    from personalclaw.providers.use_cases import active_model_refs
+
+    return tuple(active_model_refs(axis)), tuple(active_model_refs("chat"))
+
+
 def _build_native_runtime(
     *,
     use_case: str,
@@ -636,6 +702,9 @@ def _build_native_runtime(
     from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES
 
     inner_axis = model_axis if model_axis in CHAT_SUBCATEGORIES else "chat"
+    # Read BEFORE resolving: a rebind that lands while this builds then reads as moved, and the
+    # runtime is rebuilt at its next acquire rather than kept on what it was built from.
+    basis = ResolutionBasis.read(inner_axis)
 
     def _resolve(override: str | None) -> ModelProvider:
         return resolve_provider_for_use_case(
@@ -809,6 +878,7 @@ def _build_native_runtime(
     # nobody reads a live line there, and #3648's rule is that a substitute is always said.
     if not unattended:
         runtime.failover = _turn_failover(inner_axis, choices, runtime.served_model_ref, _resolve)
+    runtime.resolved_from = basis.served_from(runtime.served_model_ref)
     return runtime  # type: ignore[return-value]  # CI-2
 
 
