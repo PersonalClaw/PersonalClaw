@@ -200,6 +200,19 @@ describe('a Retry inside a provider breaker window says when it can run', () => 
     fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
     await waitFor(() => expect(onOpenRun).toHaveBeenCalledWith('child-9'))
   })
+
+  it('a Retry whose fresh read fails starts nothing, and says so', async () => {
+    // The fresh read is what tells a Retry whether the breaker opened since the page loaded. A
+    // failed read used to count as "no window", so the fork and start went ahead on a guess.
+    workflowRun.mockResolvedValueOnce(failedRun(true)).mockRejectedValue(new Error('the gateway did not answer'))
+    const onOpenRun = vi.fn()
+    render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={onOpenRun} />)
+    fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('the gateway did not answer', 'error'))
+    expect(forkWorkflowRun).not.toHaveBeenCalled()
+    expect(startDraftWorkflowRun).not.toHaveBeenCalled()
+    expect(onOpenRun).not.toHaveBeenCalled()
+  })
 })
 
 describe('re-entry controls exist only where a live controller can apply them', () => {

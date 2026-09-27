@@ -67,10 +67,13 @@ describe('a failed notification action is reported', () => {
   })
 
   it("the bell's POLLED read keeps its silent catch, deliberately", () => {
-    // Documented distinction, pinned so a later sweep does not "converge" it into a toast every 15s.
+    // Documented distinction, pinned so a later sweep does not "converge" it into a toast on every poll.
+    // The poll became a once-a-minute safety net in #3620 (frames keep the badge current), so the pin
+    // is the reason itself rather than an interval that no longer exists.
     const src = read(BELL)
     expect(src, 'the poll must not report').toMatch(/api\.notifications\(\)[\s\S]{0,120}\.catch\(\(\) => \{\}\)/)
-    expect(readFileSync(join(SRC, BELL), 'utf8'), 'and the reason must stay written down').toMatch(/polls every 15s/)
+    expect(readFileSync(join(SRC, BELL), 'utf8'), 'and the reason must stay written down')
+      .toMatch(/reporting a failed poll would toast every tick/)
   })
 
   it('reads the real files (not vacuously green)', () => {

@@ -221,7 +221,10 @@ describe('a failure report lands where the failure happened', () => {
   })
 
   // ── the measured family ─────────────────────────────────────────────────────────────────────────
-  const TONE = /text-danger|text-warn|var\(--color-danger\)|var\(--color-warning\)|bg-danger|border-danger|role="alert"|LoadError|AlertTriangle|<Banner/
+  // `<FieldError` is the form primitive for exactly this (`ui/forms.tsx`: `role="alert"`, `text-danger`),
+  // and it was missing, so every panel that had ADOPTED it still counted as muted: 7 of the 10 sites this
+  // census reported rendered through it. The test below pins that the primitive still carries the tone.
+  const TONE = /text-danger|text-warn|var\(--color-danger\)|var\(--color-warning\)|bg-danger|border-danger|role="alert"|LoadError|AlertTriangle|<Banner|<FieldError\b/
   const MESSAGE_SHAPED = /^(msg|err|error)$|Msg$|Err$|Error$/
 
   /** Panels whose caught-failure MESSAGE state renders with no error tone at any of its sites. */
@@ -253,9 +256,19 @@ describe('a failure report lands where the failure happened', () => {
     expect(mutedFailureStates().filter((s) => s.startsWith(P)), `nor any other state in ${P}`).toEqual([])
   })
 
-  it('the remainder is a measured ceiling of 6 — classify, do not add', () => {
+  it('FieldError, which the tone list trusts, really renders the error tone', () => {
+    const forms = readFileSync(join(SETTINGS, '..', '..', 'ui', 'forms.tsx'), 'utf8')
+    const fieldError = forms.slice(forms.indexOf('export function FieldError'), forms.indexOf('export function Field('))
+    expect(fieldError, 'FieldError must stay an alert').toMatch(/role="alert"/)
+    expect(fieldError, 'and in the danger colour').toMatch(/text-danger/)
+  })
+
+  it('the remainder is a measured ceiling of 2 — classify, do not add', () => {
+    // `MemoryPanel`'s consolidate line and `UpdatesPanel`'s status line: each reuses one message state
+    // for success and failure and renders it in the hint's colour. 6 → 2 once `<FieldError` counted as
+    // a tone, which is what it always was; every site it cleared already rendered through it.
     const muted = mutedFailureStates()
-    expect(muted.length, `a caught failure in the hint's voice:\n${muted.join('\n')}`).toBeLessThanOrEqual(6)
+    expect(muted.length, `a caught failure in the hint's voice:\n${muted.join('\n')}`).toBeLessThanOrEqual(2)
     // Vacuity floor: if the scan stops finding the population the ceiling passes for the wrong reason.
     expect(muted.length, 'the census must still see the family it is bounding').toBeGreaterThan(0)
   })
