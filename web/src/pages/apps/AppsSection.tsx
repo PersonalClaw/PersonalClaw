@@ -52,7 +52,7 @@ import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
-import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi } from './installConsent'
+import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi, RequiresRow } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
@@ -1684,6 +1684,10 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
             </div>
           </div>
         )}
+
+        {/* What it needs that PersonalClaw doesn't install. Consent led with it, and the need
+            outlasts the install, so the installed app says it too. */}
+        <RequiresRow requires={app.requires ?? []} />
 
         <PermissionList perms={app.permissions} hostUi={consentHostUi(app)} />
 

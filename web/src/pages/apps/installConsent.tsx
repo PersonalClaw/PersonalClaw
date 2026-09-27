@@ -329,8 +329,9 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
 
 /** What the app needs on this machine that PersonalClaw does not install, each with what it is for
  *  and what to do to have it — first, because it decides whether installing is worth it at all.
- *  Plain text, as the manifest wrote it. Renders nothing when it needs nothing. */
-function RequiresRow({ requires }: { requires: AppPrerequisite[] }) {
+ *  An installed app's panel shows the same row, since the need outlasts the install. Plain text,
+ *  as the manifest wrote it. Renders nothing when it needs nothing. */
+export function RequiresRow({ requires }: { requires: AppPrerequisite[] }) {
   if (!requires.length) return null
   return (
     <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-requires">

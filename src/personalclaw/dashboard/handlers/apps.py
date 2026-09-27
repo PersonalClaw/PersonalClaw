@@ -202,6 +202,17 @@ def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
     return any(isinstance(p, dict) and p.get("execution") == EXECUTION_SIDECAR for p in declared)
 
 
+def _prerequisites(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """The raw manifest's ``requires``, each ``{name, why, how}`` as install consent showed it."""
+    from personalclaw.apps.manifest import Prerequisite
+
+    return [
+        Prerequisite.from_dict(r).to_dict()
+        for r in manifest.get("requires") or []
+        if isinstance(r, dict)
+    ]
+
+
 def _quality_wire(raw: Any) -> dict[str, Any]:
     """The DECLARED quality axes, and only those (APE-4).
 
@@ -344,6 +355,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # A provider of it runs its engine in a child process with its own Python
                 # environment, which Configure offers to install (Install engine).
                 "sidecar": _runs_a_sidecar(manifest),
+                # What it needs that PersonalClaw does not install. Install consent led with it
+                # before the app went in; the app's panel keeps saying it after.
+                "requires": _prerequisites(manifest),
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 # APE-4: the DECLARED quality block, for the Library card's badge row.
