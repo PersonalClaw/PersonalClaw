@@ -122,6 +122,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/channels/{name}` — one transport's info + health.
 - `POST /api/channels/{name}/connect` — bring the transport online.
 - `POST /api/channels/{name}/disconnect` — take the transport offline.
+- `GET /api/channels/{name}/owner` — the channel's owner and its pairing state.
+- `DELETE /api/channels/{name}/owner/pairing` — cancel the outstanding owner code.
+- `POST /api/channels/{name}/owner/pairing` — mint the owner's code and return it once.
 - `POST /api/channels/{name}/test` — active probe (e.g. Slack auth.test).
 - `POST /api/chat` — send message to a session, stream response via SSE.
 - `GET /api/chat/folders` — list all project folders.
@@ -158,7 +161,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
 - `POST /api/chat/sessions/{session}/fork-rewound` — restore a rewind tail as a fork.
 - `POST /api/chat/sessions/{session}/generate-title` — manually trigger title generation.
-- `POST /api/chat/sessions/{session}/handoff` — hand off session to channel DM thread.
+- `POST /api/chat/sessions/{session}/handoff` — continue a chat in a channel thread.
 - `POST /api/chat/sessions/{session}/interrupt` — stop the turn, KEEP the queue.
 - `PATCH /api/chat/sessions/{session}/lifecycle` — archive/restore one session.
 - `GET /api/chat/sessions/{session}/map` — the durable session-map marks.
@@ -767,6 +770,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers` — create a schedule, lifecycle or data-event trigger.
 - `GET /api/triggers/doctor` — structural problems across every trigger (§7 criterion 12).
 - `GET /api/triggers/history` — the run feed across every kind (AUTO crit 4).
+- `GET /api/triggers/review` — POST /api/triggers/review — what a restart left for you to decide (§3.4).
+- `POST /api/triggers/review` — POST /api/triggers/review — what a restart left for you to decide (§3.4).
 - `GET /api/triggers/variables` — the ``$variables`` each trigger kind exposes.
 - `POST /api/triggers/view/render` — the `view` kind's production render caller (WF2AUT-6).
 - `GET /api/triggers/week` — the week-grid projection, from `?start=` (AUTO-A1 — S70).
