@@ -195,6 +195,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "room_title_required": "A room needs a title.",
     "room_id_exhausted": "Could not derive a free room id from that title.",
     "room_state_unreadable": "The rooms index could not be read.",
+    "room_cursor_unreadable": "This room's record of what each member has read could not be read.",
     "room_member_name_required": "A member needs an agent-binding name.",
     "room_member_name_invalid": "That agent-binding name is not a plain name.",
     "room_member_unknown_agent": "No agent binding by that name is configured.",

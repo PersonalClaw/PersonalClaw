@@ -358,6 +358,30 @@ def test_an_unreadable_index_is_a_503_not_a_500(cfg, tmp_path):
     assert _body(response)["error"]["code"] == "room_state_unreadable"
 
 
+def test_a_removal_answers_what_happened_even_beside_an_unreadable_cursor_sidecar(cfg, tmp_path):
+    """🔴 The WIP removed the member, THEN failed closed on the cursor sidecar: the route answered
+    503 for a removal that had already happened. A removal now writes the roster alone, so its
+    answer is its outcome."""
+    room_id = _body(_create("Departure"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    sidecar = tmp_path / "rooms" / room_id / "cursors.json"
+    sidecar.write_text("{not json", encoding="utf-8")
+
+    response = asyncio.run(
+        h.api_room_member_remove(
+            _json_request(
+                "DELETE", f"/api/rooms/{room_id}/members/skeptic", room_id=room_id, name="skeptic"
+            )
+        )
+    )
+
+    assert response.status == 200, _body(response)
+    assert [m["name"] for m in _body(response)["room"]["members"]] == ["analyst"]
+    assert [m.name for m in store.require_room(room_id).members] == ["analyst"], "persisted"
+    assert sidecar.read_text(encoding="utf-8") == "{not json", "and the evidence is untouched"
+
+
 def test_the_human_cannot_forge_a_members_words(cfg):
     """The message route takes no speaker, so a caller cannot author as a member.
 
@@ -384,6 +408,7 @@ _RAISING_MODULES = (
     "personalclaw.rooms.store",
     "personalclaw.rooms.turn",
     "personalclaw.rooms.posture",
+    "personalclaw.rooms.cursors",
     h.__name__,
 )
 
