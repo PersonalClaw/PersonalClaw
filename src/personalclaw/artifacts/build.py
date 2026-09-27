@@ -410,6 +410,7 @@ async def _run_esbuild(
     signal is :func:`~personalclaw.cancellation.kill_timed_out`'s, not this module's:
     the local ``_kill_tree`` helper it used to hand-roll is gone.
     """
+    from personalclaw._installer import node_cli_env
     from personalclaw.sandbox import create_subprocess_limited
 
     proc = await create_subprocess_limited(
@@ -423,8 +424,14 @@ async def _run_esbuild(
             site="artifact-react-build",
             # NO_COLOR keeps escape codes out of the sentence a user reads; the two
             # npm variables make an accidental package-manager invocation offline
-            # rather than merely unlikely.
-            extra={"NO_COLOR": "1", "npm_config_offline": "true", "npm_config_audit": "false"},
+            # rather than merely unlikely; the bundler, a Node CLI, keeps its compile cache
+            # in the home rather than the temp folder.
+            extra={
+                "NO_COLOR": "1",
+                "npm_config_offline": "true",
+                "npm_config_audit": "false",
+                **node_cli_env(),
+            },
         ),
     )
     try:

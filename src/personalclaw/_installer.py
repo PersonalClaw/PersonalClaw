@@ -84,14 +84,16 @@ def installer_cache_env() -> dict[str, str]:
 
 #: Where a Node CLI PersonalClaw starts keeps the code it compiles. Node puts it in the temp folder
 #: (``node-compile-cache``) whenever a program turns the cache on, which npm does at every start,
-#: so each agent CLI or MCP server run through ``npx`` left one there. ``NODE_COMPILE_CACHE``
-#: moves it into the home, beside what the installers keep; the CLI keeps its faster start.
+#: so each agent CLI, MCP server, app backend or bundler run through Node could leave one there.
+#: ``NODE_COMPILE_CACHE`` moves it into the home, beside what the installers keep; the CLI keeps
+#: its faster start.
 NODE_COMPILE_CACHE_DIRNAME = "node-compile-cache"
 
 
 def node_cli_env() -> dict[str, str]:
-    """What every Node CLI PersonalClaw starts carries (an ACP agent, an MCP server): its compile
-    cache in ``<home>/installer-cache``, made here, owner-only, before the CLI looks for it."""
+    """What every Node CLI PersonalClaw starts carries (an ACP agent, an MCP server, an app's
+    backend or worker, the artifact bundler): its compile cache in ``<home>/installer-cache``,
+    made here, owner-only, before the CLI looks for it."""
     from personalclaw.config.loader import config_dir
 
     cache = config_dir() / INSTALLER_CACHE_DIRNAME / NODE_COMPILE_CACHE_DIRNAME

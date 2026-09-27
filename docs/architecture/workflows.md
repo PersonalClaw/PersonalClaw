@@ -643,8 +643,11 @@ opened, with a sentence in its tab that names the tier and why. App backends sel
 through the `backend.sandbox` manifest field, with the app's `permissions.network` →
 `egress_tier` and `permissions.storage` → `allowed_write_paths`; a terminal session selects one
 per-session through the picker (`GET /api/sandbox/providers`). The tier is part of the terminal's
-session id (`<id>@<tier>`), so every open of the session, a reconnect after a gateway restart
-included, is in that tier or refused, and a tier shell is never a tmux client.
+session id (`<id>@<tier>`, `<id>@none` for the host shell), so every open of the session, a
+reconnect after a gateway restart included, is in that tier or refused, and a tier shell is never
+a tmux client. An id that names no tier was made before ids carried one; nothing says where its
+shell ran, so opening it is refused (*This terminal was opened before an update; open a new
+one.*) while closing it still works.
 
 ## Templates
 

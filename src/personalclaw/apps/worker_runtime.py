@@ -515,6 +515,7 @@ class WorkerSupervisor:
           identify itself to the gateway, that belongs on the SDK side of the seam, where
           the constant already is.)
         """
+        from personalclaw._installer import node_cli_env
         from personalclaw.apps.backend_runtime import shared_storage_env
         from personalclaw.apps.background import WORKER_ID_ENV
         from personalclaw.apps.manager import app_data_dir
@@ -524,6 +525,9 @@ class WorkerSupervisor:
         checker = checker_for(rec.app)
         storage_ok = checker is not None and checker.can_use_storage()
         extra: dict[str, str] = {
+            # A worker run through Node keeps its compile cache in the home, not the temp
+            # folder, as the app's backend does.
+            **node_cli_env(),
             "PERSONALCLAW_APP_NAME": rec.app,
             WORKER_ID_ENV: rec.worker,
             # The handshake `WorkerContext.from_env` refuses to start without: the permission

@@ -147,6 +147,19 @@ def test_an_app_backend_cannot_read_a_planted_gateway_secret(tmp_path: Path) -> 
     assert len(env) < len(os.environ), (len(env), len(os.environ))
 
 
+def test_a_backend_run_through_node_keeps_its_compile_cache_in_the_home(tmp_path: Path) -> None:
+    """Node writes the code it compiles to the temp folder whenever a program turns the cache on
+    (npm does at every start); a backend's points into the home instead. From the child's own
+    environment, through the real spawn."""
+    dump = tmp_path / "env-dump.json"
+    manifest = _install_backend_app(tmp_path, "cacheprobe", dump)
+    env = _child_env(BackendSupervisor(), manifest, dump)
+
+    cache = tmp_path / "installer-cache" / "node-compile-cache"
+    assert env.get("NODE_COMPILE_CACHE") == str(cache), env.get("NODE_COMPILE_CACHE")
+    assert cache.is_dir()
+
+
 def _platform_injected_names() -> set[str]:
     """Names the PLATFORM adds to a child after exec, measured rather than assumed.
 
@@ -172,8 +185,10 @@ def _platform_injected_names() -> set[str]:
     return set(json.loads(out.stdout))
 
 
-def test_the_backend_env_is_the_allowlist_plus_only_the_computed_four(tmp_path: Path) -> None:
-    """Nothing outside `CHILD_ENV_BASE_NAMES` + the four computed names may arrive.
+def test_the_backend_env_is_the_allowlist_plus_only_what_the_site_computes(
+    tmp_path: Path,
+) -> None:
+    """Nothing outside `CHILD_ENV_BASE_NAMES` + the names this site computes may arrive.
 
     The blunt form of the assertion, and the one that makes this suite more than a
     two-name spot check. A future call site that reintroduced a copy — or quietly widened
@@ -186,7 +201,13 @@ def test_the_backend_env_is_the_allowlist_plus_only_the_computed_four(tmp_path: 
     manifest = _install_backend_app(tmp_path, "envprobe2", dump, permissions={"storage": True})
     env = _child_env(BackendSupervisor(), manifest, dump)
 
-    computed = {"PORT", "PERSONALCLAW_APP_NAME", APP_SECRET_ENV, "PERSONALCLAW_APP_DATA_DIR"}
+    computed = {
+        "PORT",
+        "PERSONALCLAW_APP_NAME",
+        APP_SECRET_ENV,
+        "PERSONALCLAW_APP_DATA_DIR",
+        "NODE_COMPILE_CACHE",
+    }
     allowed = set(CHILD_ENV_BASE_NAMES) | computed | _platform_injected_names()
     unexpected = set(env) - allowed
     assert not unexpected, f"a backend received undeclared variables: {sorted(unexpected)}"
