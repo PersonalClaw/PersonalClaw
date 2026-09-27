@@ -12,7 +12,7 @@ Two deliberate couplings, inherited from the measurement and kept visible:
 * :func:`reap_orphan_dirs` uses the ROW store's ``list_all`` as its GC oracle (a file
   dir with no backing row is an orphan). The import is function-local — the only
   files→row edge, and it points that way because the row is authoritative.
-* ``loops.db`` lives under the same root this module owns (``_loops_root``), because
+* ``loops.db`` lives under the same root this module owns (``loops_root``), because
   the root IS the durability artifact (durability/inventory.py, snapshot, merge) —
   splitting the code must not move a byte on disk.
 """
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
-from personalclaw.security import redact_for_display
+from personalclaw.security import redact_for_display, redact_values_for_display
 
 
 def config_dir() -> Path:
@@ -54,7 +55,7 @@ STOP_SENTINEL = "STOP"
 # ── paths ──
 
 
-def _loops_root() -> Path:
+def loops_root() -> Path:
     return config_dir() / "loop"
 
 
@@ -67,7 +68,7 @@ def loop_dir(loop_id: str) -> Path | None:
     under the root + confirms containment so a crafted id can't escape."""
     if not valid_loop_id(loop_id):
         return None
-    root = _loops_root().resolve()
+    root = loops_root().resolve()
     d = (root / loop_id).resolve()
     if not d.is_relative_to(root):
         return None
@@ -83,11 +84,27 @@ def safe_loop_dir(loop_id: str) -> Path | None:
     """Read-only variant — never creates."""
     if not valid_loop_id(loop_id):
         return None
-    root = _loops_root().resolve()
+    root = loops_root().resolve()
     d = (root / loop_id).resolve()
     if not d.is_relative_to(root) or not d.exists():
         return None
     return d
+
+
+def file_inside(folder: str | Path, name: str) -> Path | None:
+    """*name* as a file inside *folder*, or None — symlinks and ``..`` resolved first.
+
+    For a loop's deliverable, whose name a goal or research loop takes from its
+    ``primary_deliverable``, a name the owner types: one that climbs out of the folder is not the
+    loop's deliverable, so it is neither read nor graduated. The same containment the artifact
+    store applies to a pointer (`file_roots.admit`), so a deliverable the watchdog graduates is one
+    the store would admit.
+    """
+    from personalclaw.file_roots import admit
+
+    root = os.path.realpath(str(folder))
+    admitted = admit(os.path.join(root, name), [root])
+    return Path(admitted) if admitted is not None and os.path.isfile(admitted) else None
 
 
 # ── ledger store (PP-5) ──
@@ -165,28 +182,12 @@ def write_artifact(loop_id: str, node_path: str, output: Any) -> str:
 # ── redaction ──
 
 
-def _redact_str(s: str) -> str:
-    # `redact_for_display`, the mask `api_loop_update` puts back when an editor shown this view
-    # (plan review, the design pages) sends a field back.
-    return redact_for_display(s)
-
-
-def _redact_value(val: Any) -> Any:
-    if isinstance(val, str):
-        return _redact_str(val)
-    if isinstance(val, list):
-        return [_redact_value(v) for v in val]
-    if isinstance(val, dict):
-        return {k: _redact_value(v) for k, v in val.items()}
-    return val
-
-
 def redact_finding(finding: dict) -> dict:
-    """Redact credentials + exfiltration URLs from a worker-authored finding.
+    """A worker-authored finding masked for display (`security.redact_values_for_display`).
     Tolerates a non-dict (returns {}) so one malformed file can't poison a list."""
     if not isinstance(finding, dict):
         return {}
-    return {k: _redact_value(v) for k, v in finding.items()}
+    return dict(redact_values_for_display(finding))
 
 
 # ── file-based worker interface (status / brief / guidance / findings / …) ──
@@ -517,7 +518,7 @@ def pending_question(loop_id: str) -> dict | None:
         return None
     for k in ("question", "why"):
         if isinstance(q.get(k), str):
-            q[k] = _redact_str(q[k])
+            q[k] = redact_for_display(q[k])
     return q
 
 
@@ -582,7 +583,7 @@ def get_nudges(loop_id: str) -> list[dict]:
         return []
     try:
         log = json.loads(p.read_text())
-        return [_redact_value(n) for n in log] if isinstance(log, list) else []
+        return list(redact_values_for_display(log)) if isinstance(log, list) else []
     except (json.JSONDecodeError, OSError):
         return []
 
@@ -649,7 +650,7 @@ def reap_orphan_dirs() -> int:
     sidecar is never at risk. Per-entry guarded: one bad entry (permission error,
     broken symlink) is logged + skipped rather than aborting the whole sweep + leaking
     the rest. Runs once at boot."""
-    root = _loops_root()
+    root = loops_root()
     if not root.is_dir():
         return 0
     # The ONE files->row edge, function-local on purpose: the row is the GC oracle

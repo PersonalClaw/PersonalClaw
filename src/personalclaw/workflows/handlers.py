@@ -45,7 +45,7 @@ from personalclaw.stale_write import (
     revision_of,
     stale_write_refusal,
 )
-from personalclaw.workflows import run_cockpit, service, store
+from personalclaw.workflows import journal, run_cockpit, service, store
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
 
@@ -441,7 +441,6 @@ def _template_run_stats(name: str) -> dict[str, Any]:
     the R11 signal that separates a proven gate from one that has never fired). Bounded to the
     most recent runs so this stays a display read, not a scan of all history.
     """
-    from personalclaw.workflows import journal
     from personalclaw.workflows.journal import GATE_REJECTED
     from personalclaw.workflows.models import RunStatus
 
@@ -472,7 +471,7 @@ def _attention_scopes(
     """
     import time as _time
 
-    from personalclaw.workflows import introspection, journal
+    from personalclaw.workflows import introspection
 
     now = now if now is not None else _time.time()
     runs, _ = store.list_runs(limit=120)
@@ -735,8 +734,6 @@ async def api_def_ledger(request: web.Request) -> web.Response:
 
     The Run Ledger tab: what this template actually did, run by run, with tokens/cost/step counts
     so a reviewer can see whether it is healthy before refining it."""
-    from personalclaw.workflows import journal
-
     name = request.match_info.get("name", "")
     refusal = await _parent_def_refusal(name)
     if refusal is not None:
@@ -788,6 +785,38 @@ async def api_def_refine(request: web.Request) -> web.Response:
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
+#: The fields of a run that hold text a person or a model wrote: the name it was started under,
+#: what it was asked, the inputs it was given, why it failed and what it is waiting on. The Loops
+#: page masks the same run (`loop_view`), and the journal already holds each of them masked.
+_RUN_TEXT: frozenset[str] = frozenset({"title", "intent", "inputs", "error_message", "attention"})
+
+#: The same text as the status read names it (`service.status` sends `error_message` as `error`).
+_STATUS_TEXT: frozenset[str] = frozenset({"title", "error", "attention"})
+
+#: What a status row says about one step in words: why it failed, why it ran degraded, what its
+#: schema asked for and did not get, and the model it ran on instead.
+_NODE_TEXT: frozenset[str] = frozenset(
+    {"failure", "degraded_reason", "schema_shortfall", "model_substituted"}
+)
+
+
+def _shown(value: dict[str, Any], fields: frozenset[str]) -> dict[str, Any]:
+    """``value`` with each of ``fields`` masked through the journal's redactor, the one the
+    inspect drawer and the escalation rows use, so a run's text reads the same on every surface.
+    The rest is ids, states and numbers, which the redactor has no business rewriting."""
+    return {key: journal.redact(item) if key in fields else item for key, item in value.items()}
+
+
+def shown_status(result: dict[str, Any]) -> dict[str, Any]:
+    """A run's status as a read hands it out: the run page's first load, its live snapshot and
+    `GET /api/workflows/runs/{id}`. `service.status` returns the stored values as they are."""
+    out = _shown(result, _STATUS_TEXT)
+    nodes = out.get("nodes")
+    if isinstance(nodes, list):
+        out["nodes"] = [_shown(row, _NODE_TEXT) if isinstance(row, dict) else row for row in nodes]
+    return out
+
+
 def _owner_username() -> str:
     """The configured owner username, so the frontend can scope/label runs as mine vs theirs
     (TSE2-1). Never raises — attribution is a projection detail, not a reason to 500 a list."""
@@ -830,7 +859,7 @@ async def api_runs_list(request: web.Request) -> web.Response:
             total = len(runs)
     return web.json_response(
         {
-            "runs": [r.to_dict() for r in runs],
+            "runs": [_shown(r.to_dict(), _RUN_TEXT) for r in runs],
             "total": total,
             "limit": limit,
             "offset": offset,
@@ -873,7 +902,8 @@ def _api_origin() -> Any:
 
 
 async def api_run_status(request: web.Request) -> web.Response:
-    return _reply(service.status(request.match_info.get("run_id", "")))
+    result = service.status(request.match_info.get("run_id", ""))
+    return _reply(shown_status(result) if result.get("ok") else result)
 
 
 async def api_run_delete(request: web.Request) -> web.Response:
@@ -1107,9 +1137,16 @@ async def api_run_deliverable(request: web.Request) -> web.Response:
 
 
 async def api_run_output(request: web.Request) -> web.Response:
-    return _reply(
-        service.output(request.match_info.get("run_id", ""), request.match_info.get("node_id", ""))
+    """GET one node's output, masked the way the inspect drawer masks it.
+
+    The store keeps an output as the node produced it, so this read masks it on the way out, with
+    the journal's redactor that `api_run_node_inspect` uses."""
+    result = service.output(
+        request.match_info.get("run_id", ""), request.match_info.get("node_id", "")
     )
+    if result.get("ok"):
+        result = {**result, "output": journal.redact(result.get("output"))}
+    return _reply(result)
 
 
 async def api_run_node_inspect(request: web.Request) -> web.Response:
@@ -1138,8 +1175,6 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
     they are a bool and a list of finding CLASS names, carrying no matched value, and running a
     credential redactor over the word "credential" would only garble the explanation.
     """
-    from personalclaw.workflows import journal
-
     result = service.inspect_node(
         request.match_info.get("run_id", ""), request.match_info.get("node_id", "")
     )
@@ -1577,7 +1612,7 @@ async def api_run_events(request: web.Request) -> web.Response | web.StreamRespo
 
     key = registry_key(run_id)
     snap, _issues = project(run_id)
-    snapshot = json.dumps(snap)
+    snapshot = json.dumps(shown_status(snap))
     return await stream_response(
         request,
         registry.hub(key),

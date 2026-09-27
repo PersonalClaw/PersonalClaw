@@ -447,8 +447,12 @@ class LoopWatchdog:
             )
 
     def _loop_name(self, loop_id: str) -> str:
+        """The loop as its notifications name it: masked like the loop list's name
+        (`store.get_redacted`), since a notification is a read of the same loop."""
+        from personalclaw.security import redact_for_display
+
         loop = store.get(loop_id)
-        return loop.name if loop else loop_id
+        return redact_for_display(loop.name or loop_id) if loop else loop_id
 
     def _cycle_ctx(self):
         """The capabilities handed to a kind's per-cycle orchestration hook so it
@@ -751,14 +755,11 @@ class LoopWatchdog:
             return None
         ws = (loop.workspace_dir or "").strip()
         if ws:
-            cand = Path(ws) / name_on_disk
-            if cand.is_file():
-                return cand
+            found = loop_files.file_inside(Path(ws), name_on_disk)
+            if found is not None:
+                return found
         d = loop_files.safe_loop_dir(loop.id)
-        dcand = (d / name_on_disk) if d is not None else None
-        if dcand is not None and dcand.is_file():
-            return dcand
-        return None
+        return loop_files.file_inside(d, name_on_disk) if d is not None else None
 
     def _register_deliverable_artifact(self, loop_id: str) -> None:
         """On completion, surface the loop's document deliverable (REPORT.md /

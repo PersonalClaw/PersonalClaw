@@ -587,9 +587,11 @@ def _origin_label(origin: str, source_id: str) -> str:
     try:
         if origin == "loop":
             from personalclaw.loop import store as loop_store
+            from personalclaw.security import redact_for_display
 
             lp = loop_store.get(source_id)
-            return lp.name if lp and lp.name else source_id
+            # Masked like the loop list's name (`store.get_redacted`).
+            return redact_for_display(lp.name) if lp and lp.name else source_id
     except Exception:
         logger.debug("origin label lookup failed for %s/%s", origin, source_id, exc_info=True)
     return source_id

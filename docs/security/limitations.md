@@ -447,8 +447,8 @@ A secret still appears in plaintext in these places:
   editor) stays in the file until the gateway next starts and moves it.
 - **A token in an MCP server's arguments or URL.** Only `env` and `headers` values are stored.
   A key passed as an argument (`--api-key …`) or carried in the URL (`?token=…`, `https://user:pw@…`)
-  stays in `mcp.json` as written, travels with an export, and shows in the server's edit form. The
-  import list and the list of configured servers mask or leave out both, but the file keeps them.
+  stays in `mcp.json` as written and travels with an export. The server's edit form, the import
+  list and the list of configured servers mask or leave out both, but the file keeps them.
   Put a token in an environment variable or a header instead.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your

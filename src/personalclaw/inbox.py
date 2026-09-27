@@ -859,10 +859,12 @@ def emit_attention_item(
         item.refs["dedup_key"] = dedup_key
 
     # The row's one notification, named once: fired below, or held back for the second opinion.
+    # Masked the way the row itself reads (`redact_item`): the notification shows the same text,
+    # in the bell, on the lock screen and on a channel.
     note = {
         "kind": notification_kinds.kind_for_legacy_pair(source, kind),
-        "title": title,
-        "body": body,
+        "title": redact_for_display(title or ""),
+        "body": redact_for_display(body or ""),
         "item_kind": resolved_kind,
         **raiser,
     }

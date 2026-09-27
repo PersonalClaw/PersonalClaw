@@ -25,6 +25,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.env import augmented_path
 from personalclaw.hooks import safe_read_file
+from personalclaw.security import redact_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +323,9 @@ class McpServerInfo:
             "transport": self.transport,
             "status": self.status,
             "tools": self.tools,
-            "error": self.error,
+            # Masked for display: a failed connection's error can quote the URL or the header it
+            # used. Every read of a server's state goes through here, the probes included.
+            "error": redact_for_display(self.error) if self.error else self.error,
             "source": self.source,
         }
         if self.disabled_tools:

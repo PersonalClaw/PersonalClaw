@@ -329,6 +329,13 @@ flywheel, shipped in bug reports, and rendered in a UI — a credential reaching
 it is leaked to all three. Outputs past ~64KB, or matching a binary magic
 prefix, spill to a file and leave a typed `result_omitted` stub.
 
+The run row and a step's stored output are kept as written, so every read that
+shows them masks them with the same redactor: the run list, the run page's status
+and its live snapshot (`handlers.shown_status`), every live event
+(`RunController._publish`) and a step's output, as the inspect drawer does. The
+Loops page masks the same run (`loop_view`), and a run's text reads the same on
+both.
+
 ## Mid-flight mutation
 
 A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,

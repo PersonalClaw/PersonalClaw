@@ -52,7 +52,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.security import MaskConflict, is_sensitive_path, redact_credentials
+from personalclaw.security import MaskConflict, is_sensitive_path
 from personalclaw.sel import sel
 from personalclaw.stale_write import (
     claimed_revision,
@@ -291,7 +291,12 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             return web.json_response(
                 {
                     "error": "similar_artifact_exists",
-                    "similar": {"slug": similar.slug, "name": similar.name, "kind": similar.kind},
+                    # Named as the list names it (`_serialize`), masked.
+                    "similar": {
+                        "slug": similar.slug,
+                        "name": redacted(similar.name),
+                        "kind": similar.kind,
+                    },
                 },
                 status=409,
             )
@@ -999,9 +1004,9 @@ async def api_artifact_extract(request: web.Request) -> web.Response:
                 status=400,
             )
     truncated = len(text) > _EXTRACT_PREVIEW_CHARS
-    # Redacted like every other LLM-adjacent text surface: a generated document can
+    # Masked like every other read of an artifact (`models.redacted`): a generated document can
     # contain whatever was in the prompt that produced it.
-    body, _ = redact_credentials(text[:_EXTRACT_PREVIEW_CHARS])
+    body = redacted(text[:_EXTRACT_PREVIEW_CHARS])
     return web.json_response({"slug": slug, "text": body, "truncated": truncated})
 
 

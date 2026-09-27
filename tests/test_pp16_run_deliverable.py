@@ -366,8 +366,8 @@ def test_the_workspace_wins_over_the_run_dir(run_home):
 def test_a_credential_in_a_worker_authored_document_is_redacted(run_home):
     """A document is prose about whatever the worker was working on. That is where a token lands.
 
-    The loop side redacts its copy (`loop/files._redact_str`); the run side must too, or PP-16's
-    retirement would move the same document onto a surface that leaks it.
+    The loop side redacts its copy (`security.redact_for_display`); the run side must too, or
+    PP-16's retirement would move the same document onto a surface that leaks it.
     """
     from personalclaw.workflows import run_cockpit, store
 

@@ -2289,6 +2289,11 @@ class RunController:
         * `epoch` — the run's current epoch, so an event from a superseded epoch (a rewind
           landed while it was in flight) is DROPPED instead of resurrecting stale state.
           A payload that already carries a node-specific epoch keeps it.
+
+        The payload is masked through the journal's redactor on the way out. An event is the run
+        page's read of the moment the journal records masked, and the page's first load is masked
+        too (`handlers.shown_status`), so an error, an ask or an output preview arriving live must
+        not show what a reload would hide.
         """
         fn = self.services.publish
         if fn is None:
@@ -2299,7 +2304,7 @@ class RunController:
             "event_id": f"{self.run.id}-evt-{self._event_seq}",
             "seq": self._event_seq,
             "epoch": self._run_epoch(),
-            **payload,
+            **journal_mod.redact(payload),
         }
         try:
             fn(event, body)

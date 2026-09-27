@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from personalclaw.config import loader as config_loader
-from personalclaw.security import system_subtrees
+from personalclaw.security import redact_for_display, system_subtrees
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +66,12 @@ def dashboard_roots() -> list[tuple[str, str]]:
     in Files could turn YOLO on or define an MCP command past every refusal the config PATCH,
     the MCP routes and the automation routes make, and reading one could show the MCP servers'
     credentials. Only folders inside it that hold work are roots (the workspace, outbox,
-    uploads, screenshots, a project's context, a greenfield code loop's folder). For a request
-    the gateway scoped to an app (``permissions.request_app``), a root that CONTAINS the home,
-    such as a loop or project workspace bound to ``~``, is left out as well. The realpath checks
-    in :func:`admit` refuse a symlink or ``..`` back out of a root.
+    uploads, screenshots, a project's context, a loop's own folder where it works or keeps its
+    deliverable). For a request the gateway scoped to an app (``permissions.request_app``), a
+    root that CONTAINS the home, such as a loop or project workspace bound to ``~``, is left out
+    as well, and so is every loop's own folder: it holds the brief the loop's worker reads every
+    cycle, and steering a loop is the owner's. The realpath checks in :func:`admit` refuse a
+    symlink or ``..`` back out of a root.
     """
     roots = all_dashboard_roots()
     from personalclaw.apps.permissions import request_app
@@ -77,9 +79,15 @@ def dashboard_roots() -> list[tuple[str, str]]:
     if not request_app():
         return roots
     from personalclaw.config.loader import config_dir
+    from personalclaw.loop.files import loops_root
 
     home = os.path.realpath(str(config_dir()))
-    return [(label, r) for label, r in roots if not (home == r or home.startswith(r + os.sep))]
+    loops = os.path.realpath(str(loops_root()))
+    return [
+        (label, r)
+        for label, r in roots
+        if not (home == r or home.startswith(r + os.sep) or r.startswith(loops + os.sep))
+    ]
 
 
 def all_dashboard_roots() -> list[tuple[str, str]]:
@@ -130,17 +138,28 @@ def all_dashboard_roots() -> list[tuple[str, str]]:
 
     try:
         from personalclaw.loop import files as _loop_files
+        from personalclaw.loop import kinds as _loop_kinds
         from personalclaw.loop import store as _loop_store
 
+        _loop_kinds.ensure_loaded()
         for _lp in _loop_store.list_all():
             wsd = (_lp.workspace_dir or "").strip()
-            if not wsd and _lp.kind == "code":
-                # A greenfield code loop works in its own folder in the home (`effective_dir`),
-                # and its cockpit says so with a link here.
-                own = _loop_files.loop_dir(_lp.id)
-                wsd = str(own) if own is not None else ""
+            # Named as the Loops page names the loop (`loop.store._redact_loop`), masked.
+            shown = redact_for_display(_lp.name or "")[:24]
             if wsd:
-                _add_workspace_root(f"Loop: {_lp.name[:24]}", wsd)
+                _add_workspace_root(f"Loop: {shown}", wsd)
+            # A loop's OWN folder, in the home, when something the user opens lives there: a
+            # greenfield code loop works in it (`effective_dir`), and a loop whose kind keeps a
+            # document deliverable (REPORT.md, DESIGN.md) is told to maintain it there, which is
+            # where its completion graduates it as a file-backed artifact
+            # (`loop/watchdog._deliverable_file`). Without the root, that artifact's "Source file"
+            # opened a path Files refused.
+            namer = getattr(_loop_kinds.get_or_none(_lp.kind), "deliverable_name", None)
+            if (not wsd and _lp.kind == "code") or (namer is not None and namer(_lp)):
+                own = _loop_files.safe_loop_dir(_lp.id)
+                if own is not None:
+                    label = "Loop" if not wsd else "Loop folder"
+                    candidates.append((f"{label}: {shown}", os.path.realpath(own)))
     except Exception:
         pass
 
