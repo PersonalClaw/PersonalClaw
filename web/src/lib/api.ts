@@ -305,6 +305,9 @@ export interface DegradedSurface {
   floor: string
   backlog: number
   use_cases: string[]
+  /** False when the surface is down because no model is chosen for a use case it needs (an
+   *  instance saved without a Default Model, nothing bound) — waiting on a choice, not degraded. */
+  model_chosen: boolean
 }
 /** One scheduled backup job's last run + whether it's due (DURABILITY-AND-SYNC §3). */
 export interface DurabilityJob {
@@ -4448,7 +4451,10 @@ export interface MemoryVaultSyncResult { records: number; files: number; written
 export interface DailyDigest { day: string; text: string; created_at: string }
 export interface MemoryStats {
   semantic_active: number; semantic_deleted: number; episodic_active: number; episodic_deleted: number
-  events_count: number; embedded_count: number; embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
+  /** `embedded_count` — memories the model bound now embedded, so searchable by meaning;
+   *  `embedded_stale` — ones another model embedded, read by keyword until the re-index. With no
+   *  model bound (`embedding_provider: 'none'`), every memory holding a vector, and none stale. */
+  events_count: number; embedded_count: number; embedded_stale: number; embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
 }
 // A semantic memory entry. `value_json` is a JSON-encoded value (often double-
 // encoded) — parse defensively for display.

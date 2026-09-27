@@ -17,9 +17,7 @@ __all__ = [
 _store: "KnowledgeStore | None" = None
 _llm_pool = None  # lazy process-wide LLMPool for callers without a gateway handle
 _embedder = None  # cached process-wide embedder for callers without a gateway handle
-_embedder_spec: object = (
-    False  # the embedding selection the cache was built for (sentinel: not yet built)
-)
+_embedder_basis: object = False  # what the cache was built from (sentinel: not yet built)
 
 
 def knowledge_db_path() -> str:
@@ -74,19 +72,19 @@ def get_knowledge_embedder():
     and an agent search gets full hybrid (keyword+graph+vector) retrieval, not the
     degraded keyword-only path. Returns None when embeddings are disabled/unavailable.
 
-    Cached, but keyed on the active embedding selection (provider:model): if the user
-    switches embedding models in Settings, the next call rebuilds — never serving a stale
-    embedder that would write vectors of the wrong model/dimension into the shared store.
-    The native sentence-transformers model is expensive to load, so we don't rebuild when
-    the selection is unchanged."""
-    global _embedder, _embedder_spec
-    try:
-        from personalclaw.embedding_providers.registry import _active_embedding_spec
+    Cached, but keyed on what embedding with the bound model is built from
+    (``embedding_providers.registry.embedding_basis``): the binding (provider:model) and the
+    provider instance it embeds through. A rebind, a clear, or an edit of that instance in
+    Settings → Providers rebuilds it at the next call — never serving a stale embedder that
+    would write vectors of the wrong model/dimension into the shared store, or keep calling an
+    endpoint the user replaced. It used to be keyed on the binding alone, so an edited instance
+    kept the provider built from it before the edit. The native sentence-transformers model is
+    expensive to load, so we don't rebuild while the basis is unchanged."""
+    global _embedder, _embedder_basis
+    from personalclaw.embedding_providers.registry import embedding_basis, same_basis
 
-        spec = _active_embedding_spec()
-    except Exception:
-        spec = None
-    if spec != _embedder_spec:
+    basis = embedding_basis()
+    if _embedder_basis is False or not same_basis(basis, _embedder_basis):
         try:
             import json as _json
 
@@ -98,5 +96,7 @@ def get_knowledge_embedder():
             _embedder = create_embedder_from_config(cfg)
         except Exception:
             _embedder = None
-        _embedder_spec = spec
+        # Read after the build: building can register the instance it embeds through
+        # (`_llm_embed_fn` replays config.json), and the pre-build read would rebuild next call.
+        _embedder_basis = embedding_basis()
     return _embedder

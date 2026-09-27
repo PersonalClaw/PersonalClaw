@@ -677,6 +677,20 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
  *  so a save from it names none and is refused (`428`) rather than taken as a blind overwrite. */
 const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
 
+/** The confirm before an Embedding save. A change re-indexes; a clear re-indexes nothing — the
+ *  save starts the re-index only once a model is bound (`onSaved`) — so it says what clearing does
+ *  instead. It used to ask "Change & re-index" for a clear as well, and nothing re-indexed. */
+const EMBEDDING_CHANGE = {
+  title: 'Change the embedding model?',
+  body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
+  confirmLabel: 'Change & re-index',
+}
+const EMBEDDING_CLEAR = {
+  title: 'Stop using an embedding model?',
+  body: 'Memory and knowledge search will match by keyword instead of by meaning until you choose an embedding model again. The embeddings already stored are kept, and choosing a model re-indexes them.',
+  confirmLabel: 'Clear',
+}
+
 /** Why a chain control is unavailable while a refused change waits in the notice above it. */
 
 // Each chain edit as an OPERATION, so a refused save re-applies onto the chain as stored now —
@@ -889,11 +903,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, health, judgeRe
 
   const setActive = async (op: Rebase<string[]>) => {
     if (useCase === 'embedding') {
-      const ok = await confirm({
-        title: 'Change the embedding model?',
-        body: 'Changing the embedding model will re-index ALL knowledge and memories. Existing embeddings are computed with the current model and are incompatible with a different one, so they must be regenerated.\n\nRe-indexing runs in the background and may take a while for large stores.',
-        confirmLabel: 'Change & re-index',
-      })
+      const ok = await confirm((op(activeModels) ?? activeModels).length === 0 ? EMBEDDING_CLEAR : EMBEDDING_CHANGE)
       if (!ok) return
     }
     setSaving(true)

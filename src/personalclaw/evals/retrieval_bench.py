@@ -872,9 +872,8 @@ def rerank_retriever(knowledge_store) -> RerankRetriever:
 def memory_retriever(memory_store) -> Retriever:
     """Adapt :meth:`~personalclaw.vector_memory.VectorMemoryStore.rank_semantic`.
 
-    Binds ``embed_fn`` from the active embedding selection when the caller has not — the
-    gateway sets it on its own store handle, and a harness-opened store would otherwise
-    run with the vector arm dead.
+    A store embeds with the model bound in Settings → Models on its own, so a harness-opened
+    store runs the same vector arm the gateway's does.
     """
     from personalclaw import vector_memory
 
@@ -882,13 +881,6 @@ def memory_retriever(memory_store) -> Retriever:
         raise RetrievalBenchError(
             f"memory arm vocabulary drifted: {vector_memory.RECALL_ARMS!r} != {ARMS!r}"
         )
-    if getattr(memory_store, "embed_fn", None) is None:
-        try:
-            from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-            memory_store.embed_fn = get_active_embed_fn()
-        except Exception:  # noqa: BLE001 - a dead vector arm is reported, not raised
-            logger.debug("memory embed_fn unavailable", exc_info=True)
 
     def _search(query: str, k: int, arms: "tuple[str, ...]") -> list[str]:
         rows = memory_store.rank_semantic(query, limit=k, arms=arms)

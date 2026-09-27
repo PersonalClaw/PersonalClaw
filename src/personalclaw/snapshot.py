@@ -917,13 +917,18 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
         # logs and SKIPS the table, and the restore reported "imported: 0" while looking
         # like it worked. A restore that silently drops all memory is far worse than one
         # that drops a provenance column, so the column is opportunistic, not required.
-        def _with_contributor(base: str, table: str) -> str:
-            return f"{base}, contributor" if _both_have(conn, table, "contributor") else base
+        #
+        # `embedding_model` rides the same way: the model that wrote each vector. A vector merged
+        # without it reads as one with no model recorded — stale until a re-index — so it goes
+        # along whenever both sides carry it.
+        def _with_optional(base: str, table: str) -> str:
+            extra = [c for c in ("contributor", "embedding_model") if _both_have(conn, table, c)]
+            return ", ".join([base, *extra])
 
         for table, cols, where in [
             (
                 "semantic_memory",
-                _with_contributor(
+                _with_optional(
                     "key, value_json, confidence, source, created_at, updated_at, embedding",
                     "semantic_memory",
                 ),
@@ -931,7 +936,7 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
             ),
             (
                 "episodic_memories",
-                _with_contributor(
+                _with_optional(
                     "id, conversation_id, text, embedding, tags, importance, created_at, "
                     "last_accessed_at",
                     "episodic_memories",

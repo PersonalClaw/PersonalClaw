@@ -928,7 +928,10 @@ class GatewayOrchestrator:
             episodic_limit=self._cfg.memory.episodic_max_results,
         )
         # graph_enabled is deliberately NOT pinned here — the store reads
-        # `memory.graph_enabled` live so the Settings toggle works without a restart.
+        # `memory.graph_enabled` live so the Settings toggle works without a restart. Nor is an
+        # embedding function: the store embeds with the model bound in Settings → Models at each
+        # use, so a rebind or a clear reaches it without a restart — and an app-provided model is
+        # built at first use, after the dashboard init has registered the app's provider type.
         self.vector_memory.init()
         memory.vector_store = self.vector_memory
         self.vector_memory.serve_recall()
@@ -4839,24 +4842,6 @@ class GatewayOrchestrator:
     # Main run loop
     # ------------------------------------------------------------------
 
-    def _wire_embeddings(self) -> None:
-        """Bind the Settings > Models embedding selection to the gateway's vector memory.
-
-        Called AFTER the dashboard / API-server init, never before it: that init is where the
-        installed apps register their provider types (``load_all_extensions``) and where
-        ``config.json``'s ``providers[]`` are replayed into the LLM registry. Resolved any
-        earlier — as it was, right after ``_init_services()`` — an app-provided embedding model
-        (Ollama, the sentence-transformers app) could not be built because its app had not
-        registered it yet: the vector memory booted with no embed fn, and an Ollama binding logged
-        a chained traceback on every boot for a provider that was configured correctly. When no
-        embedding model is bound, semantic embeddings stay off until the user picks one.
-        """
-        from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-        embed_fn = get_active_embed_fn()
-        if embed_fn and getattr(self, "vector_memory", None) is not None:
-            self.vector_memory.embed_fn = embed_fn
-
     async def run(self) -> None:
         """Start all services and block until shutdown signal."""
         # ── GOVERNANCE BOOT, first and fail-closed (PLATFORM-HARDENING-FLOORS §5) ──
@@ -4913,7 +4898,6 @@ class GatewayOrchestrator:
         # What the boot passes found while the dashboard did not exist yet: one notice, now that
         # it can be delivered.
         self._surface_held_boot_review()
-        self._wire_embeddings()
 
         # Emit machine-readable READY line for test harnesses (--json-ready).
         # Printed BEFORE bg_session and other startup chatter so the harness

@@ -45,10 +45,9 @@ def config_write_refusal(exc: ConfigWriteError) -> web.Response:
 def _get_memory(state: DashboardState):
     """Get MemoryStore from context_builder, or create standalone.
 
-    Ensures the vector store's embed_fn is wired from the active embedding
-    model on first access — the same deferred resolution used by knowledge.
-    Without this, memory writes skip embedding when the gateway boots before
-    the model provider entry is registered."""
+    Its vector store embeds with the model bound in Settings → Models at each use
+    (``VectorMemoryStore.embed_fn``), so nothing is wired here: a function wired on first access
+    was the model bound then, which every later rebind and clear left in place."""
     if state.context_builder:
         mem = state.context_builder.memory
     else:
@@ -69,17 +68,6 @@ def _get_memory(state: DashboardState):
             mem.vector_store = vs
             state._standalone_memory = mem  # type: ignore[attr-defined]
         mem = state._standalone_memory  # type: ignore[attr-defined]
-    # Deferred embed_fn wiring: if the vector store exists but has no embed_fn,
-    # try to resolve it now (the provider entry may have been registered after boot).
-    if hasattr(mem, "vector_store") and mem.vector_store and not mem.vector_store.embed_fn:
-        try:
-            from personalclaw.embedding_providers.registry import get_active_embed_fn
-
-            embed_fn = get_active_embed_fn()
-            if embed_fn:
-                mem.vector_store.embed_fn = embed_fn
-        except Exception:
-            pass
     return mem
 
 

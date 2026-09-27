@@ -2550,57 +2550,6 @@ class TestRetriggerRecovery:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Tests: run() signal handling and bg session
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestRunSignalAndBgSession:
-    """Run method signal handling and background session."""
-
-    @pytest.mark.asyncio
-    async def test_run_wires_active_embedding(self):
-        """run() wires the embedding fn from the Settings > Models binding."""
-        # no_dashboard=True so the bg-session task short-circuits the dashboard
-        # branch (otherwise it races on _local_only/_dashboard_port set by the
-        # mocked _init_dashboard).
-        orch = _make_orchestrator(no_dashboard=True)
-
-        orch._init_services = MagicMock()
-        orch.vector_memory = MagicMock()
-        orch._init_cron = AsyncMock()
-        orch._init_heartbeat = AsyncMock()
-        orch._init_inbox = AsyncMock()
-        orch._init_mcp_discovery = MagicMock()
-        orch._init_subagents = MagicMock()
-        orch._init_dashboard = AsyncMock()
-        orch._init_autonudge = AsyncMock()
-        orch._init_api_server = AsyncMock()
-        orch._check_for_updates = AsyncMock()
-        orch._shutdown = AsyncMock()
-
-        # Use a fresh asyncio.Event bound to this test's loop. The shared
-        # module-level shutdown_event can be polluted by prior tests in full-file runs.
-        fresh_event = asyncio.Event()
-        fresh_event.set()
-        with patch(
-            "personalclaw.embedding_providers.registry.get_active_embed_fn",
-            return_value=lambda x: [0.0],
-        ) as mock_embed:
-            with patch("personalclaw.shutdown_event", fresh_event):
-                with patch("personalclaw.gateway.shutdown_event", fresh_event):
-                    with patch("personalclaw.session.cleanup_orphaned_sessions"):
-                        with patch(
-                            "personalclaw.dashboard.handlers._bg_mcp_probe", new_callable=AsyncMock
-                        ):
-                            with patch("os._exit"):
-                                with patch("resource.getrlimit", return_value=(256, 10240)):
-                                    with patch("resource.setrlimit"):
-                                        await orch.run()
-
-        mock_embed.assert_called()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Tests: _check_missing_deps pip install path
 # ═══════════════════════════════════════════════════════════════════════════
 

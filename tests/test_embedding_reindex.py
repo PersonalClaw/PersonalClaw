@@ -152,17 +152,19 @@ def test_memory_reembed_episodic(tmp_path, monkeypatch):
     assert store.write_episodic(
         "the project deadline is the end of the quarter", conversation_id="c1"
     )
-    assert store.count_episodic_to_reembed() == 2
+    assert store.count_to_reembed() == 0, "nothing embeds, so there is nothing to re-embed with"
 
-    # Now wire an embed_fn and re-embed.
+    # Now pin an embed_fn and re-embed: both memories are ones it has not embedded.
     store.embed_fn = lambda text: [0.5, 0.5, 0.5]
-    store._embedding_dim = 3
-    res = store.reembed_all()
+    assert store.count_to_reembed() == 2
+    res = store.reembed_stale()
     assert res["reembedded"] == 2 and res["total"] == 2
     rows = store.db.execute(
         "SELECT embedding FROM episodic_memories WHERE is_deleted = 0"
     ).fetchall()
     assert all(r["embedding"] is not None for r in rows)
+    assert store.count_to_reembed() == 0, "a second pass has nothing left to do"
+    assert store.index_state()["dim"] == 3 and len(store.index_state()["ids"]) == 2
 
 
 def test_memory_reembed_noop_without_embed_fn(tmp_path, monkeypatch):
@@ -173,7 +175,7 @@ def test_memory_reembed_noop_without_embed_fn(tmp_path, monkeypatch):
     store.write_episodic(
         "a sufficiently long episodic memory to pass length checks", conversation_id="c1"
     )
-    res = store.reembed_all()
+    res = store.reembed_stale()
     assert res == {"reembedded": 0, "failed": 0, "total": 0}
 
 

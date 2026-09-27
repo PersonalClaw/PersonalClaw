@@ -34,6 +34,7 @@ from personalclaw.memory_ranking import (
     FALLS_BACK_CLAUSE,
     MODES,
     NON_RANKING_CAPABILITIES,
+    STATE_FIELDS,
     RecallRanking,
     ranking_payload,
     recall_ranking,
@@ -81,9 +82,11 @@ def test_every_capability_field_is_classified():
 
 
 def test_every_axis_is_a_real_dataclass_field_on_recall_ranking():
-    """The wire shape is derived from the axis table, not typed twice."""
+    """The wire shape is derived from the axis table, not typed twice. The only other fields are
+    the store-state counts, named once in ``STATE_FIELDS``."""
     ranking_fields = {f.name for f in dataclasses.fields(RecallRanking)}
-    assert {a.field for a in AXES} == ranking_fields
+    assert {a.field for a in AXES} | set(STATE_FIELDS) == ranking_fields
+    assert not {a.field for a in AXES} & set(STATE_FIELDS)
 
 
 # ── the disclosure itself, in every state ─────────────────────────────────────

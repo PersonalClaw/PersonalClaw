@@ -13,7 +13,6 @@ from typing import Any, NoReturn
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
-from personalclaw.embedding_providers.registry import get_active_embedding_dim
 from personalclaw.eval.judge import LLMJudge
 from personalclaw.eval.runner import EvalRunner, format_results, score_by_dimension
 from personalclaw.eval.scenario import AssertionType, load_scenario, load_scenarios
@@ -1562,7 +1561,7 @@ def _learn(args: argparse.Namespace) -> None:
     # memory.db is the sole lesson store; a store with no embedder still persists
     # lessons (vector optional). ``write_lesson`` returning False means the lesson
     # was a dedup/supersession no-op, not that the store was unavailable.
-    vs = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
+    vs = VectorMemoryStore()
     vs.init()
     svc = MemoryService.over_vector_store(vs)
     try:
@@ -1600,7 +1599,7 @@ def _memory_cmd(args: argparse.Namespace) -> None:
     """Manage the memory system (record store) via the service."""
     from personalclaw.memory_service import MemoryService
 
-    store = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
+    store = VectorMemoryStore()
     store.init()
     svc = MemoryService.over_vector_store(store)
     try:
