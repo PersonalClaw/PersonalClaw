@@ -17,59 +17,76 @@ class _S:
         self._task_mode = mode
 
 
-# (mode, title, tool_kind, tool_input, expect_denied)
+# (mode, declared, title, tool_kind, tool_input, builds, expect_denied). `declared` is what the
+# tool declares (its RiskLevel value; "" = nothing, which is every ACP CLI's own tool).
 _CASES = [
     # agent: unrestricted
-    ("agent", "write_file", "edit", "{}", False),
-    ("agent", "bash", "command", '{"command":"rm -rf x"}', False),
+    ("agent", "caution", "write_file", "", "{}", False, False),
+    ("agent", "destructive", "bash", "", '{"command":"rm -rf x"}', False, False),
     # plan: read-only inspection ALLOWED (so the plan is grounded), mutation DENIED
-    ("plan", "read_file", "read", "{}", False),  # inspect to plan
-    ("plan", "grep", "read", "{}", False),
-    ("plan", "bash", "command", '{"command":"ls -la"}', False),  # read-only bash
-    ("plan", "write_file", "edit", "{}", True),  # no execution
-    ("plan", "bash", "command", '{"command":"rm -rf x"}', True),
-    ("plan", "artifact_save", "", "{}", True),  # plan != build
-    # ask: read-only allowed, every mutation denied (deny-by-default)
-    ("ask", "read_file", "read", "{}", False),
-    ("ask", "grep", "read", "{}", False),
-    ("ask", "bash", "command", '{"command":"ls -la"}', False),  # read-only bash
-    ("ask", "bash", "command", '{"command":"rm -rf x"}', True),  # mutating bash
-    ("ask", "bash", "command", '{"command":"cat a > b"}', True),  # redirect = write
-    ("ask", "write_file", "edit", "{}", True),
-    ("ask", "artifact_save", "", "{}", True),  # 'save' verb
-    ("ask", "memory_recall", "", "{}", False),  # read-ish name
-    ("ask", "delete_thing", "delete", "{}", True),
-    ("ask", "subagent_run", "", "{}", True),  # 'run'/'subagent'
-    # build: read-only + artifact/widget/skill producers; other mutations denied
-    ("build", "read_file", "read", "{}", False),
-    ("build", "artifact_save", "", "{}", False),  # producer
-    ("build", "widget_create", "", "{}", False),  # 'widget' hint
-    ("build", "skill_invoke", "", "{}", False),  # 'skill' hint
-    ("build", "bash", "command", '{"command":"rm -rf x"}', True),
-    ("build", "write_file", "edit", "{}", True),
-    ("build", "delete_artifact", "", "{}", True),  # TM11: destructive, NOT a producer
-    ("build", "remove_widget", "", "{}", True),  # TM11: destructive despite 'widget' hint
-    ("ask", "delete_artifact", "", "{}", True),  # ask never honors build hints
-    # image_generate: a media PRODUCER (creates a kind:image artifact + paid call) —
-    # NOT read-only, so ask/plan block it; build allows it (producing is the point).
-    ("ask", "image_generate", "", '{"prompt":"a cat"}', True),  # GAP6: was wrongly read-only
-    ("plan", "image_generate", "", '{"prompt":"a cat"}', True),
-    ("build", "image_generate", "", '{"prompt":"a cat"}', False),  # 'image' producer hint
-    ("agent", "image_generate", "", '{"prompt":"a cat"}', False),
-    ("ask", "prompt_render", "read", "{}", False),  # regression: read-only stays allowed
+    ("plan", "safe", "read_file", "", "{}", False, False),
+    ("plan", "safe", "grep", "", "{}", False, False),
+    ("plan", "destructive", "bash", "", '{"command":"ls -la"}', False, False),  # read-only bash
+    ("plan", "caution", "write_file", "", "{}", False, True),
+    ("plan", "destructive", "bash", "", '{"command":"rm -rf x"}', False, True),
+    ("plan", "caution", "artifact_save", "", "{}", True, True),  # plan != build
+    # ask: declared reads allowed, every change denied (deny-by-default)
+    ("ask", "safe", "read_file", "", "{}", False, False),
+    ("ask", "destructive", "bash", "", '{"command":"ls -la"}', False, False),  # read-only bash
+    ("ask", "destructive", "bash", "", '{"command":"rm -rf x"}', False, True),
+    ("ask", "destructive", "bash", "", '{"command":"cat a > b"}', False, True),  # redirect
+    ("ask", "caution", "write_file", "", "{}", False, True),
+    ("ask", "caution", "artifact_save", "", "{}", True, True),
+    ("ask", "safe", "memory_recall", "", "{}", False, False),
+    ("ask", "destructive", "memory_forget", "", "{}", False, True),
+    ("ask", "caution", "subagent_run", "", "{}", False, True),
+    # The measured holes: a change whose NAME carries no write-shaped word used to pass.
+    ("ask", "caution", "memory_remember", "", '{"rule":"x"}', False, True),
+    ("ask", "caution", "computer_click", "", '{"element_index":1}', False, True),
+    ("ask", "caution", "workflow_start", "", '{"name":"w"}', False, True),
+    # The declaration decides, never the name: a read-shaped name that declares a change is one,
+    # and a name that declares nothing is not a read — nor is an ACP CLI's "read" kind.
+    ("ask", "caution", "read_file", "", "{}", False, True),
+    ("ask", "", "memory_recall", "", "{}", False, True),
+    ("ask", "", "Read /etc/hosts", "read", "{}", False, True),
+    # An app's `run_script` that declares CAUTION does not become a read because its argument
+    # reads like one; only the platform's own shell has its command screened.
+    ("ask", "caution", "run_script", "", '{"command":"ls"}', False, True),
+    # ...while an ACP CLI's shell call still does (kind execute, the command text decides).
+    ("ask", "", "Terminal", "execute", '{"command":"ls"}', False, False),
+    # build: reads + the tools that declare they build the deliverable; other changes denied
+    ("build", "safe", "read_file", "", "{}", False, False),
+    ("build", "caution", "artifact_save", "", "{}", True, False),
+    ("build", "caution", "image_generate", "", '{"prompt":"a cat"}', True, False),
+    ("build", "safe", "skill_invoke", "", "{}", False, False),
+    ("build", "destructive", "bash", "", '{"command":"rm -rf x"}', False, True),
+    ("build", "caution", "write_file", "", "{}", False, True),
+    # Build never admits a destructive tool, whatever it declares about building.
+    ("build", "destructive", "artifact_delete", "", "{}", True, True),
+    # A producer-shaped NAME admits nothing: only the declaration does.
+    ("build", "caution", "widget_create", "", "{}", False, True),
+    ("build", "", "Write /tmp/image.png", "edit", "{}", False, True),
+    ("ask", "caution", "image_generate", "", '{"prompt":"a cat"}', True, True),
+    ("plan", "caution", "image_generate", "", '{"prompt":"a cat"}', True, True),
+    ("agent", "caution", "image_generate", "", '{"prompt":"a cat"}', True, False),
+    ("ask", "safe", "prompt_render", "", "{}", False, False),
 ]
 
 
-@pytest.mark.parametrize("mode,title,kind,inp,want_deny", _CASES)
-def test_task_mode_gate(mode, title, kind, inp, want_deny):
-    denied = bool(task_mode_denies(_S(mode), title, kind, inp))
-    assert denied is want_deny, f"[{mode}] {title}/{kind}: got deny={denied} want={want_deny}"
+@pytest.mark.parametrize("mode,declared,title,kind,inp,builds,want_deny", _CASES)
+def test_task_mode_gate(mode, declared, title, kind, inp, builds, want_deny):
+    denied = bool(task_mode_denies(_S(mode), declared, title, kind, inp, builds=builds))
+    assert denied is want_deny, f"[{mode}] {declared}/{title}/{kind}: got deny={denied}"
 
 
 def test_agent_mode_never_denies():
     s = _S("agent")
-    for title, kind in [("anything", "edit"), ("bash", "command"), ("delete_all", "delete")]:
-        assert task_mode_denies(s, title, kind, "{}") == ""
+    for declared, title, kind in [
+        ("caution", "anything", "edit"),
+        ("destructive", "bash", "command"),
+        ("", "delete_all", "delete"),
+    ]:
+        assert task_mode_denies(s, declared, title, kind, "{}") == ""
 
 
 def test_framing_per_mode():

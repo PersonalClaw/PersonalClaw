@@ -225,6 +225,7 @@ LOOSENING_WRITES = [
     ("security.credential_keychain", {"security": {"credential_keychain": True}}, False),
     ("security.denied_commands", {"security": {"denied_commands": ["^rm "]}}, []),
     ("security.mcp_elicitation_servers", {}, ["some-server"]),
+    ("security.mcp_read_only_servers", {}, ["some-server"]),
     ("security.outside_home", {}, ["agent-skills"]),
     ("sandbox.nofile", {}, 0),  # 0 removes the limit
     ("sandbox.max_pids", {"sandbox": {"max_pids": 500}}, 1000),

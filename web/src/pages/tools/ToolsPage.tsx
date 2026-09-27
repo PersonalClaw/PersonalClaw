@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
-import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
+import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -99,11 +99,14 @@ interface ToolsIndexData {
   // interrupt a tool call and ask the user a question. Empty on a fresh install; `null` when
   // the grants could not be read, which is a different answer (see the fetcher).
   elicitationServers: string[] | null
+  // The servers whose read-only labels (`readOnlyHint`) you trust. `null` when unreadable, for
+  // the same reason as the grants above.
+  readOnlyServers: string[] | null
 }
 
 export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data, error: loadErr, refresh } = useQuery<ToolsIndexData>('tools:index', async () => {
-    const [idx, servers, importable, poolStats, groups, elicitationServers] = await Promise.all([
+    const [idx, servers, importable, poolStats, groups, elicitationServers, readOnlyServers] = await Promise.all([
       // 🔴 The four reads below are tolerated on purpose — a dead MCP server or an unreachable pool
       // must not hide the built-in tools, and `load_failures` makes per-tool breakage first-class on
       // this surface. The INDEX is different in kind: it IS the collection, so substituting `[]` for
@@ -121,8 +124,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       // server as not granted, so its switch would offer to grant what is already granted and
       // could never revoke it. Unknown grants disable the control instead.
       api.mcpElicitationServers().catch(() => null),
+      api.mcpReadOnlyServers().catch(() => null),
     ])
-    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers }
+    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers, readOnlyServers }
   }, { persist: true })
   const tools = data?.tools ?? null
   const loadFailures = data?.loadFailures ?? []
@@ -131,6 +135,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   const poolStats = data?.poolStats ?? null
   /** `null` while unread or unreadable: no grant can be written from it. */
   const elicitationServers = data?.elicitationServers ?? null
+  const readOnlyServers = data?.readOnlyServers ?? null
   const groupsInfo = data?.groups ?? null
   const groupsEnabled = !!groupsInfo?.enabled
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -232,6 +237,26 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     const ok = await reportingWrite(
       `${granted ? 'stop' : 'let'} "${s.name}" ${granted ? 'asking' : 'ask'} you questions`,
       () => (granted ? api.revokeMcpElicitation(s.name) : api.grantMcpElicitation(s.name, true)))
+    if (ok) setTimeout(load, 400)
+  }
+
+  // Whether a server's own "read-only" labels are believed. Until they are, every one of its
+  // tools is treated as a change: it asks, Ask and Plan mode refuse it, and Trust reads never
+  // approves it. Trusting them lets the tools it labels read-only run as reads do, which is the
+  // owner's call per server — so it asks first, and saying no again needs no question.
+  async function toggleReadOnlyTrust(s: McpServer) {
+    if (!readOnlyServers) return
+    const trusted = readOnlyServers.includes(s.name)
+    if (!trusted && !(await confirm({
+      title: `Trust "${s.name}" to say which tools only read?`,
+      body: 'Tools this MCP server labels read-only will run in Ask and Plan mode, and without asking you under Trust reads. '
+        + 'If it labels a tool that changes something as read-only, that change happens without anyone being asked. '
+        + 'Every other tool of this server still asks. No other server is affected, and open chats take this from their next message.',
+      confirmLabel: 'Trust its labels',
+    }))) return
+    const ok = await reportingWrite(
+      `${trusted ? 'stop trusting' : 'trust'} "${s.name}"'s read-only labels`,
+      () => (trusted ? api.distrustMcpReadOnly(s.name) : api.trustMcpReadOnly(s.name, true)))
     if (ok) setTimeout(load, 400)
   }
 
@@ -469,7 +494,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
-              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
+              {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} readOnlyTrusted={!g.server ? false : readOnlyServers ? readOnlyServers.includes(g.server.name) : null} onToggleReadOnlyTrust={toggleReadOnlyTrust} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
               {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
             </div>
           )}
@@ -565,7 +590,7 @@ export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { labe
   return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
 }
 
-function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
+function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting, elicitationGranted, onToggleElicitation, readOnlyTrusted, onToggleReadOnlyTrust, onSignIn, onSignOut, pendingSignIn, onAllow, allowing }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onEditServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null; elicitationGranted: boolean | null; onToggleElicitation: (s: McpServer) => void; readOnlyTrusted: boolean | null; onToggleReadOnlyTrust: (s: McpServer) => void; onSignIn: (s: McpServer) => void; onSignOut: (s: McpServer) => void; pendingSignIn: PendingSignIn | null; onAllow: (s: McpServer) => void; allowing: string | null }) {
   const health = g.server ? serverHealth(g.server) : null
   const waiting = g.server?.status === 'waiting'
   // A server that waits is off: nothing runs it until its Allow, which switches it on too.
@@ -629,6 +654,23 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
               disabledReason="couldn't read which servers may ask you questions, so none can be changed. Reload the page to try again."
               on={!!elicitationGranted} iconSize={13} onClick={() => onToggleElicitation(g.server!)}>
               <MessageCircleQuestion size={13} />
+            </SquareIconButton>
+            {/* Whether this server's own "read-only" labels are believed — the same shape as the
+                elicitation grant beside it, and disabled for the same reason when unread. */}
+            <SquareIconButton label={readOnlyTrusted === null
+              ? `Read-only labels from ${g.server.name}`
+              : readOnlyTrusted
+                ? `Stop trusting ${g.server.name}'s read-only labels`
+                : `Trust ${g.server.name}'s read-only labels`}
+              title={readOnlyTrusted === null
+                ? `Whether ${g.server.name}'s read-only labels are trusted`
+                : readOnlyTrusted
+                  ? "Its tools labelled read-only run as reads: in Ask and Plan mode, and without asking under Trust reads. Its other tools still ask."
+                  : "None of its tools is treated as read-only, whatever it says: each one asks, and Ask and Plan mode refuse them."}
+              disabled={readOnlyTrusted === null}
+              disabledReason="couldn't read which servers' read-only labels you trust, so none can be changed. Reload the page to try again."
+              on={!!readOnlyTrusted} iconSize={13} onClick={() => onToggleReadOnlyTrust(g.server!)}>
+              <ShieldCheck size={13} />
             </SquareIconButton>
             {signInState === 'signed_in' && (
               <SquareIconButton icon={LogOut} iconSize={13} label={`Sign out of ${g.server.name}`}

@@ -4780,6 +4780,12 @@ class AppConfig:
                     for s in (security_data.get("mcp_elicitation_servers", []) or [])
                     if isinstance(s, str) and s.strip()
                 ],
+                # The same kind of per-server ALLOWLIST, filtered the same fail-closed way.
+                mcp_read_only_servers=[
+                    s.strip()
+                    for s in (security_data.get("mcp_read_only_servers", []) or [])
+                    if isinstance(s, str) and s.strip()
+                ],
                 # An allowlist too, filtered the same fail-closed way.
                 outside_home=[
                     s.strip()

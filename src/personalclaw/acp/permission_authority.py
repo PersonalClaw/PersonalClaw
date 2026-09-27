@@ -346,11 +346,11 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                     "AAP-5 live re-drive 2026-08-18 against real kiro-cli: in one "
                     "turn 'Creating todo_probe.txt' raised a card while "
                     "'Reading todo_probe.txt:1-10' (kind='read') did not — 6 tool "
-                    "calls, 1 gated, 5 ungated. Effective risk resolves to SAFE, so "
+                    "calls, 1 gated, 5 ungated. kiro reports it with kind 'read', so "
                     "this residue is labelled, never turn-aborting."
                 ),
                 title_patterns=("reading ",),
-                # Accepted: effective risk resolves to SAFE for a read, so the
+                # Accepted: kiro reports a read with kind 'read', so the
                 # label carries the whole signal — nothing to abort, nothing to
                 # deny. Blessed on that basis, not on kiro's behalf.
                 state=ResidualState.ACCEPTED,
@@ -389,8 +389,8 @@ NOT_GATEABLE: dict[str, ProviderCoverage] = {
                 reason=(
                     "claude-code self-approves its own file reads — the same missing "
                     "frame — so a read of a path the host would have questioned is "
-                    "never offered for a decision. NOT accepted: effective risk "
-                    "resolves to SAFE so it never aborts a turn, but nobody ever "
+                    "never offered for a decision. NOT accepted: claude-code reports "
+                    "it with kind 'read', so it never aborts a turn, but nobody ever "
                     "blessed it, and an unblessed hole stays loud."
                 ),
                 observation=(

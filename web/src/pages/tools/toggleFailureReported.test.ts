@@ -39,7 +39,13 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 // 🪤 So is a waiting server's Allow (`allowMcpServer`). A server the owner has not allowed reads off,
 // and its switch IS its Allow (`toggleServer` sends it there): the same data-driven switch, whose
 // failed write would otherwise leave it off with nothing said. Its Allow button is the same call.
-const TOGGLE_WRITES = ['toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation', 'allowMcpServer']
+//
+// The read-only-label trust beside it is the same shape again (`trustMcpReadOnly` /
+// `distrustMcpReadOnly`, one call site, one data-driven switch per server row).
+const TOGGLE_WRITES = [
+  'toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation',
+  'allowMcpServer', 'distrustMcpReadOnly', 'trustMcpReadOnly',
+]
 
 describe('a tool toggle that fails tells the user', () => {
   it('the reporter is the SHARED one, and this file keeps no copy of it', () => {
@@ -98,13 +104,13 @@ describe('a tool toggle that fails tells the user', () => {
   // `signOutMcp` when a signed-in server's card gained Sign out.
   const ALSO_ROUTED = ['probeMcp', 'importMcpServer', 'signOutMcp']
 
-  it('all six toggles go through the one reporter, and nothing unexpected does', () => {
+  it('all seven toggles go through the one reporter, and nothing unexpected does', () => {
     let toggles = 0
     for (const m of CODE.matchAll(/reportingWrite\([\s\S]{0,140}?api\.(\w+)\(/g)) {
       if ((TOGGLE_WRITES as readonly string[]).includes(m[1])) { toggles++; continue }
       expect(ALSO_ROUTED, `unexpected call routed: ${m[1]}`).toContain(m[1])
     }
-    expect(toggles, 'every toggle write routed through reportingWrite').toBe(6)
+    expect(toggles, 'every toggle write routed through reportingWrite').toBe(7)
   })
 
   it('the allowlist is not a dumping ground', () => {
@@ -119,7 +125,7 @@ describe('a tool toggle that fails tells the user', () => {
     // Refetching after a failure re-renders the same state and reads as "nothing happened twice".
     // Every caller must gate its `load` on the result.
     const gated = [...CODE.matchAll(/if \(ok\) setTimeout\(load, \d+\)/g)]
-    expect(gated.length, 'callers gating the refetch on success').toBe(4)
+    expect(gated.length, 'callers gating the refetch on success').toBe(5)
     // …and none of them refetch unconditionally right after a reportingWrite.
     expect(CODE).not.toMatch(/await reportingWrite\([\s\S]{0,160}?\)\s*\n\s*setTimeout\(load/)
   })
@@ -133,6 +139,7 @@ describe('a tool toggle that fails tells the user', () => {
     // than enable/disable — "stop X asking you questions" is what the user did, and reusing
     // "disable" here would describe a switch the page does not have.
     expect(CODE).toMatch(/\$\{granted \? 'stop' : 'let'\} "\$\{s\.name\}"/)
+    expect(CODE).toMatch(/\$\{trusted \? 'stop trusting' : 'trust'\} "\$\{s\.name\}"'s read-only labels/)
   })
 
   it('the switches are still DATA-DRIVEN — the premise of the whole finding', () => {

@@ -239,6 +239,9 @@ def _list_tools() -> list[dict[str, Any]]:
             {
                 "name": spec.name,
                 "description": spec.description,
+                # What a call does is the spec's own ``acts`` declaration, in the MCP spec's
+                # words: a tool that changes the desktop is not read-only, so it asks.
+                "annotations": {"readOnlyHint": not spec.acts},
                 "inputSchema": {
                     "type": "object",
                     "properties": dict(spec.parameters),

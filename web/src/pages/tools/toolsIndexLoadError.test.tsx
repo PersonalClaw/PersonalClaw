@@ -39,6 +39,7 @@ function mockApi(over: Record<string, unknown>) {
       // and calling it throws before its own `.catch` can attach — which would fail the
       // page's whole fetcher and read as "the index read broke" on every case below.
       mcpElicitationServers: () => Promise.resolve([] as string[]),
+      mcpReadOnlyServers: () => Promise.resolve([] as string[]),
       ...over,
     },
   }))

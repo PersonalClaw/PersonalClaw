@@ -19,8 +19,10 @@ were approved in an unattended turn with nothing screening the path.
 Three layers answer it, each reading this module:
 
 * **The fence** is the OS sandbox around the agent's shell (``sandbox._build_seatbelt_profile``
-  denies writes; the Linux launcher bind-mounts each one read-only). It holds whatever the command
-  says, because it is the kernel refusing the write, not a reading of the text.
+  denies writes to each path; the Linux launcher makes the home read-only and binds every other
+  entry in it back writable, so a name is fenced whether its file exists yet or not; both pin the
+  home so it cannot be moved aside). It holds whatever the command says, because it is the kernel
+  refusing the write, not a reading of the text.
 * **The tool-call screen** (``hooks.HookManager.on_tool_call``, which every approval path consults
   before a card, an auto-approve or an unattended default) and the native ``bash`` tool refuse a
   call that names one of these paths, and say why. That is defence in depth: a command can

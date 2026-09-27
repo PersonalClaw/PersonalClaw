@@ -25,6 +25,7 @@ def _list_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "prompt_render",
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Load a saved Prompt and render it with variable values filled in, "
                 "returning the final prompt text for you to act on. Saved Prompts are "

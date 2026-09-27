@@ -84,6 +84,9 @@ def test_config_round_trips_security_section(tmp_path: Path, monkeypatch):
         # MBR-1's per-server elicitation allowlist. Empty default = the client never
         # advertises the capability, so a server cannot ask the user anything.
         "mcp_elicitation_servers": [],
+        # The servers whose read-only labels the owner trusts. Empty default = every external MCP
+        # tool is treated as a change, so it asks.
+        "mcp_read_only_servers": [],
         # #3675's places outside the home it may read. Empty default = every read and write
         # stays inside the home.
         "outside_home": [],

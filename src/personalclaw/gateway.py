@@ -21,7 +21,6 @@ import functools
 import json
 import logging
 import os
-import re
 import signal
 import sys
 import time
@@ -94,6 +93,7 @@ from personalclaw.subagent import (
     approval_subagent_id,
     resolve_max_subagents,
 )
+from personalclaw.task_modes import resolve_effective_risk
 from personalclaw.triggers.models import Outcome
 from personalclaw.triggers.nudge import (
     AutoNudgeService,
@@ -202,63 +202,6 @@ _REFUSAL_STATUSES: tuple[str, ...] = (
 )
 
 
-# Tool-name prefixes treated as read-only by the --approval reads flag.
-# Matched against the leading verb token of an event.title (e.g. "Read foo.txt"
-# -> "read"). Conservative list — anything not on it falls through to the
-# standard approval flow.
-_READ_ONLY_TOOL_PREFIXES = (
-    "read",
-    "list",
-    "get",
-    "search",
-    "find",
-    "describe",
-    "show",
-    "view",
-    "fetch",
-    "query",
-    "grep",
-    "ls",
-    "cat",
-    "head",
-    "tail",
-)
-
-# Tokens that disqualify a tool from auto-approval even if its leading
-# verb is in _READ_ONLY_TOOL_PREFIXES. After splitting the title on
-# whitespace/punctuation/underscore/dash, any resulting token that exactly
-# matches one of these entries causes rejection. Catches compound names
-# a third-party MCP author might pick (e.g. read_or_write, find_and_replace,
-# get_or_create) where the read prefix masks a write capability. Fail
-# closed on ambiguity.
-_WRITE_INDICATORS = (
-    "write",
-    "delete",
-    "create",
-    "destroy",
-    "remove",
-    "update",
-    "modify",
-    "replace",
-    "set",
-    "put",
-    "post",
-    "exec",
-    "execute",
-    "run",
-    "rm",
-    "rmdir",
-    "drop",
-    "patch",
-    "send",
-    "publish",
-    "save",
-    "edit",
-    "kill",
-    "terminate",
-)
-
-
 def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
     """The token the gateway hands out at startup: the dashboard link it prints (and opens),
     or the ``--json-ready`` line's token for a test harness.
@@ -288,42 +231,6 @@ def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
         "home": str(home),
     }
     return f"PERSONALCLAW_READY:{json.dumps(payload)}"
-
-
-def _is_read_only_tool(event_title: str) -> bool:
-    """Return True if event_title looks like a read-only tool invocation.
-
-    Used by --approval reads to auto-approve a conservative set of read
-    verbs while still gating writes. Two-stage check:
-
-    1. Leading token (before any whitespace/punctuation) must be in
-       _READ_ONLY_TOOL_PREFIXES.
-    2. After splitting the title on whitespace/punctuation/underscore/dash,
-       no resulting token may exactly match one in _WRITE_INDICATORS — catches
-       compound names like read_or_write, find_and_replace, get_or_create.
-       Exact token equality, not substring containment: ``setter`` does not
-       match ``set``.
-
-    Fails closed on ambiguity.
-    """
-    if not event_title:
-        return False
-    lowered = event_title.strip().lower()
-    if not lowered:
-        return False
-    # Tokenize on whitespace, underscores, dashes, and common punctuation
-    # so compound names like read_or_write break into ["read", "or", "write"].
-    tokens = [t for t in re.split(r"[\s_\-:()/.,]+", lowered) if t]
-    if not tokens:
-        return False
-    leading = tokens[0]
-    if leading not in _READ_ONLY_TOOL_PREFIXES:
-        return False
-    # Reject if any token (other than the leading verb itself) is a known
-    # write indicator. Catches read_or_write, find_and_replace, etc.
-    if any(token in _WRITE_INDICATORS for token in tokens):
-        return False
-    return True
 
 
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
@@ -684,6 +591,7 @@ class GatewayOrchestrator:
                                 # This channel is already asking: the `channel_dm` target
                                 # must not ask a second time.
                                 asked_on_channel=True,
+                                risk_level=event.risk_level,
                             )
                         )
 
@@ -739,6 +647,7 @@ class GatewayOrchestrator:
                     tool_purpose=event.tool_purpose,
                     session=asked_in,
                     trigger=asked_by,
+                    risk_level=event.risk_level,
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and
@@ -782,10 +691,16 @@ class GatewayOrchestrator:
             return approval_grants.SOURCE, None
 
         # CLI --approval flag override (composable test mode).
-        # 'yolo' auto-approves all; 'reads' auto-approves read-only tools;
-        # 'interactive' falls through to the standard flow.
+        # 'yolo' auto-approves all; 'reads' auto-approves a call that only reads — its
+        # effective risk is SAFE, the same answer Trust reads acts on: a tool that DECLARES it
+        # only reads, or a read-only shell command. 'interactive' falls through to the
+        # standard flow.
         if self._approval_mode == "yolo" or (
-            self._approval_mode == "reads" and _is_read_only_tool(event.title or "")
+            self._approval_mode == "reads"
+            and resolve_effective_risk(
+                event.risk_level, event.title or "", event.tool_kind, event.tool_input
+            )
+            == "safe"
         ):
             return approval_grants.CLI, {
                 "caller": f"cli:approval={self._approval_mode}",

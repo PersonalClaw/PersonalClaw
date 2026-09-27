@@ -40,7 +40,8 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _route_app(tmp_path: Path, *, name: str = "demo") -> Path:
-    """A fixture app declaring a mix of routes: safe/mutating/delete + a non-callable one."""
+    """A fixture app declaring a mix of routes: a declared read, a GET that declares nothing,
+    a write, a delete, and a non-callable one."""
     d = tmp_path / "src" / name
     d.mkdir(parents=True)
     (d / "app.json").write_text(
@@ -60,6 +61,7 @@ def _route_app(tmp_path: Path, *, name: str = "demo") -> Path:
                             "path": "/items",
                             "summary": "List items.",
                             "params": {"limit": {"type": "integer"}},
+                            "readOnly": True,
                         },
                         {
                             "op": "create_item",
@@ -117,8 +119,11 @@ async def test_list_tools_generates_only_agent_callable_routes(tmp_path):
     }
     # The non-callable op documents the surface but never becomes a tool.
     assert "app_demo_internal_op" not in tools
-    # Risk is derived from the HTTP verb (advisory approval key).
+    # A route reads only when the app DECLARES it (`readOnly`); a GET that says nothing is a
+    # change as far as every "reads run without asking" posture is concerned, and a DELETE is
+    # a delete whatever it declares.
     assert tools["app_demo_list_items"].risk_level is RiskLevel.SAFE
+    assert tools["app_demo_get_item"].risk_level is RiskLevel.CAUTION
     assert tools["app_demo_create_item"].risk_level is RiskLevel.CAUTION
     assert tools["app_demo_delete_item"].risk_level is RiskLevel.DESTRUCTIVE
     assert tools["app_demo_list_items"].provider == ar.PROVIDER_NAME

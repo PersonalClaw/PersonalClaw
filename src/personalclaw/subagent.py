@@ -2266,13 +2266,14 @@ class SubagentManager:
         # §4.1 read-only research class: resolve ONCE per run. An auto-fired spawn defaults to the
         # research (read-only) class, so its write/execute tools are denied at the approval loop
         # below. Resolved here (not per event) because the class is fixed for the run's lifetime.
+        from functools import partial
+
         from personalclaw.guardrails.policy import (
             TOOL_READ,
             TOOL_READ_WRITE,
-            tool_grant_denial,
+            declared_tool_grant_denial,
             tool_grant_posture,
         )
-        from personalclaw.workflows.batch_compile import is_write_tool
 
         _capability_class = resolve_capability_class(
             capability_class=info.capability_class, approval_mode=info.approval_mode
@@ -2288,8 +2289,9 @@ class SubagentManager:
             TOOL_READ if _research_readonly else TOOL_READ_WRITE,
         )
 
-        def _grant_denial(tool: str) -> str:
-            return tool_grant_denial(_tool_profile, tool, write_class=is_write_tool(tool))
+        # A call is within the grant by what its tool DECLARES, asked as a research leaf's and a
+        # room critic's are (`declared_tool_grant_denial`).
+        _grant_denial = partial(declared_tool_grant_denial, _tool_profile)
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
         # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
@@ -2340,12 +2342,18 @@ class SubagentManager:
                 # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
                 # Placement is load-bearing: an auto-fired research run resolves
                 # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER that
-                # branch would be dead code and the grant would be a label, not a control. Uses
-                # the SAME ``is_write_tool`` policy the workflow research leaf uses
-                # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike —
-                # and the same grant algebra (``tool_grant_denial``), so a ceiling that narrowed
-                # this spawn's tools to an allowlist refuses the rest even for a MUTATING class.
-                _grant_deny = _grant_denial(event.title or "")
+                # branch would be dead code and the grant would be a label, not a control. It is
+                # the check the native runtime is handed, on what the request says its tool
+                # declares; so a ceiling that narrowed this spawn's tools refuses the rest even for
+                # a MUTATING class. An ACP child's own tool declares nothing, so only its read-only
+                # shell commands pass a `read` grant.
+                _grant_deny = _grant_denial(
+                    event.title or "",
+                    event.risk_level,
+                    event.tool_kind,
+                    event.tool_input,
+                    proposes=event.proposes,
+                )
                 if _grant_deny:
                     await self._reject_and_log(
                         client,

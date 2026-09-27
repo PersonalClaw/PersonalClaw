@@ -657,7 +657,12 @@ def test_the_sandbox_denies_a_write_to_mcp_json_at_every_level(agent_home):
     real = os.path.realpath(agent_home)
     for level in ("standard", "cc", "strict"):
         assert f'(deny file-write* (literal "{real}/mcp.json"))' in _build_seatbelt_profile(level)
-    assert f"('{real}/mcp.json', False)" in _build_launcher_script("standard")
+    # The launcher fences the home's names, not one path per file (the fence holds a name that
+    # does not exist yet): `mcp.json` is among them.
+    launcher = _build_launcher_script("standard")
+    assert f'OWNER_HOME = "{real}"' in launcher
+    names = next(line for line in launcher.splitlines() if line.startswith("OWNER_ONLY_NAMES = "))
+    assert "mcp.json" in json.loads(names.split("=", 1)[1])
 
 
 @pytest.mark.parametrize(

@@ -722,34 +722,37 @@ async def test_the_gate_stops_at_destructive(monkeypatch, risk):
 
 
 @pytest.mark.asyncio
-async def test_an_undeclared_tool_inferred_destructive_is_gated_too(monkeypatch):
-    """The gate reads the EFFECTIVE tier, so name inference reaches it as well.
+async def test_the_gate_reads_what_a_tool_declares_never_its_name(monkeypatch):
+    """The gate reads the EFFECTIVE tier, which is the tool's DECLARATION.
 
-    An external MCP tool declares no risk_level; `resolve_effective_risk` infers
-    destructive from the verb. That inference is exactly why the frontend cannot be the
-    only gate — it renders the DECLARED tier and would offer its cheapest ceremony for a
-    call the route resolves as destructive. The FE handles the resulting refusal by
-    escalating (see toolInspectorRiskGate.test.tsx), which is why this 403 must carry the
-    code rather than a bare message.
+    A tool that declares itself destructive — an external MCP server's ``destructiveHint``
+    arrives as ``RiskLevel.DESTRUCTIVE`` — needs the typed confirmation whatever it is
+    called. And no word in a name makes a tool destructive: an undeclared
+    ``delete_everything`` is a change (CAUTION), not a guessed deletion. That is the
+    FE's reason to escalate on the refusal (see toolInspectorRiskGate.test.tsx), so the 403
+    must carry the code rather than a bare message.
     """
     import json
 
-    prov = _RecordingProvider("delete_everything", provider_tag="mcp-thing", risk="safe")
-    # Strip the declaration the way a dict-defined MCP tool arrives: no risk_level at all.
-    # The name is not decoration — `infer_risk_from_name` classifies by VERB, so a tool
-    # called `wipe_everything` infers `safe` and floors at caution while `delete_everything`
-    # infers destructive. The inference is the subject here, so the name has to be one it
-    # actually classifies.
-    prov._defs[0].risk_level = None
-    _install_provider(monkeypatch, prov)
+    declared = _RecordingProvider("wipe_everything", provider_tag="mcp-thing", risk="destructive")
+    _install_provider(monkeypatch, declared)
     _disable(monkeypatch)
-
     resp = await tools_mod.api_tool_invoke(
-        _InvokeRequest({"tool": "delete_everything", "arguments": {}})
+        _InvokeRequest({"tool": "wipe_everything", "arguments": {}})
     )
     assert resp.status == 403
     assert json.loads(resp.body.decode())["error"]["code"] == "risk_confirmation_required"
-    assert prov.invoked == []
+    assert declared.invoked == []
+
+    undeclared = _RecordingProvider("delete_everything", provider_tag="mcp-thing", risk="safe")
+    # Strip the declaration the way a tool that declares nothing arrives.
+    undeclared._defs[0].risk_level = None
+    _install_provider(monkeypatch, undeclared)
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "delete_everything", "arguments": {}})
+    )
+    assert resp.status == 200
+    assert [name for name, _ in undeclared.invoked] == ["delete_everything"]
 
 
 @pytest.mark.asyncio

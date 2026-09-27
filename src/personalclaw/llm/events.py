@@ -125,8 +125,9 @@ class AgentEvent:
     """A neutral event from any agent/model backend's turn stream.
 
     Every ``acp.types.AcpEvent`` field is here under the same name and default,
-    so the chat runner consumes either without change. ``risk_level`` and
-    ``served_model_ref`` have no ACP twin, since an ACP agent reports neither.
+    so the chat runner consumes either without change. ``risk_level``, ``builds``,
+    ``proposes`` and ``served_model_ref`` have no ACP twin, since an ACP agent reports none of
+    them.
     ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
     structured values; ACP passes str).
     """
@@ -139,9 +140,10 @@ class AgentEvent:
     tool_purpose: str = ""
     # Declared risk of the tool behind a TOOL_CALL / PERMISSION_REQUEST — the
     # tool's static ToolDefinition.risk_level ('safe'|'caution'|'destructive'),
-    # or '' when the backend declared none (external ACP/MCP tools). The approval
-    # gate resolves the per-invocation EFFECTIVE risk from this (a read-only bash
-    # call downgrades to safe); it's also surfaced as a user-facing indicator.
+    # or '' when the backend declared none (an ACP CLI's own tools). 'safe' is the
+    # read-only declaration and '' is not one. The approval gate resolves the
+    # per-invocation EFFECTIVE risk from this (a read-only bash call downgrades to
+    # safe); it's also surfaced as a user-facing indicator.
     risk_level: str = ""
     #: Context-window usage the provider actually measured, or ``None`` when it
     #: measured none. A defaulted 0.0 made "unsupplied" and "a genuinely empty
@@ -190,3 +192,10 @@ class AgentEvent:
     #: EVENT_COMPLETE: the fallback when the turn fell back down its chain, so the usage this
     #: event carries is priced by the model that ran. ``""`` from a backend that does not say.
     served_model_ref: str = ""
+    #: The tool behind a PERMISSION_REQUEST declares it builds a Build-mode deliverable
+    #: (``ToolDefinition.builds``), so the dashboard's task-mode gate admits it in Build mode
+    #: exactly as the native runtime's did. False from a backend that declares nothing.
+    builds: bool = False
+    #: ...and whether its only effect is a proposal the owner reviews
+    #: (``ToolDefinition.proposes``), which a research-class run's ``read`` grant admits.
+    proposes: bool = False
