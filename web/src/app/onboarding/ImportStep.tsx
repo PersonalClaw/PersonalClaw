@@ -70,20 +70,18 @@ const CATEGORY_LABEL: Record<string, string> = {
   prompts: 'Prompts',
   conversations: 'Conversations',
   denied_commands: 'Denied commands',
-  settings: 'Settings',
 }
 /** Where each category lands here — the destination in plain words, so ticking a box
  *  is an informed choice rather than a guess at a noun. */
 const CATEGORY_BLURB: Record<string, string> = {
   instructions: 'Your CLAUDE.md / AGENTS.md, rules and project instructions, saved as memories.',
   memories: 'Notes the other tool was already remembering for you.',
-  mcp_servers: 'MCP server definitions, added to your MCP config.',
+  mcp_servers: 'MCP server definitions, added to your MCP config. The values they set go to your credential store.',
   skills: 'Skills, copied in and re-scanned like a Store install.',
   agents: 'Subagents, added to your Agents page.',
   prompts: 'Slash commands and saved prompts, run in chat as @name.',
   conversations: 'Past conversations, listed in Chat under the dates they happened.',
   denied_commands: 'Commands the other tool refused to run, added to your shell denylist in Settings › Security.',
-  settings: 'Staged for you to review — never merged into live config.',
 }
 
 /** Each state's word beside an item. `new` is the only one with a checkbox. */
@@ -116,8 +114,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 /** Whether an item begins ticked: every `new` one, bar what the other tool does not use. */
 const startsTicked = (i: OnboardingImportItem) => i.state === 'new' && i.preselected !== false
 
-/** What was left out of ONE item, value-free. The skipped count covers dropped secret
- *  keys and credential files inside a skill; a redaction is a credential-shaped string
+/** What was left out of ONE item, value-free. The skipped count is the credential files
+ *  inside a skill, which are never installed; a redaction is a credential-shaped string
  *  replaced in text that still comes over. */
 function withheldOf(item: OnboardingImportItem): string {
   const parts: string[] = []
@@ -322,7 +320,7 @@ export function ImportStep({ onDone, onSkip }: {
               <p data-type="body-s" className="text-on-surface-var">
                 {nothingNew
                   ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
-                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, nothing in ${one ? 'it' : 'them'} is changed, and credentials are never imported. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
+                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, and nothing in ${one ? 'it' : 'them'} is changed. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
               </p>
 
               <motion.div className="flex flex-col gap-s" initial="initial" animate="animate"

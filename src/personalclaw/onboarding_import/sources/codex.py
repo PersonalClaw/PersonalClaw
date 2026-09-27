@@ -16,13 +16,12 @@ the layout the Codex CLI writes, and nothing it does not:
 ``rules/*.rules`` → ``forbidden`` rules        ``denied_commands``
 ``sessions/YYYY/MM/DD/rollout-*.jsonl``        ``conversations``, titled from
                                                ``session_index.jsonl``
-``config.toml`` → everything else, or          ``settings`` (review-gated, never live config)
-``config.json`` (the older CLI's config)
 =============================================  ===============================================
 
-Counted and named, not imported: prompt history, rules that ask first or allow, archived and
-compressed conversations, and the files Codex builds its memories from. ``auth.json`` (the Codex
-login, when it is kept in a file) is never opened; it counts as a withheld credential file.
+Counted and named, not imported: Codex's own settings (the rest of ``config.toml``, or the older
+CLI's ``config.json``), prompt history, rules that ask first or allow, archived and compressed
+conversations, and the files Codex builds its memories from. ``auth.json`` (the Codex login, when
+it is kept in a file) is never opened; it counts as a withheld credential file.
 
 **A remote server's token.** Codex never keeps it in its config: it reads it from an environment
 variable when it starts (``bearer_token_env_var``, ``env_http_headers``). :func:`mcp_servers` reads
@@ -42,12 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import (
-    read_text_safely,
-    refuses,
-    safe_text,
-    strip_secrets,
-)
+from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
 from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
@@ -55,15 +49,22 @@ from personalclaw.onboarding_import.model import (
     ScanResult,
 )
 from personalclaw.onboarding_import.sources.common import (
+    RULES_THAT_ALLOW,
+    RULES_THAT_ASK,
     TITLE_CHARS,
     McpServer,
+    and_list,
     conversation_note,
+    denied_command_item,
     display_path,
     markdown_files,
+    mcp_item,
+    not_imported_rows,
     one_line,
     prompt_history,
     recorded_label,
     scan_skills,
+    settings_not_imported,
     slug_name,
     text_item,
 )
@@ -103,8 +104,8 @@ def _read_config(base: Path) -> tuple[dict[str, Any], str, int]:
     """``(document, file name, withheld)``: Codex's config WITH its values (``{}`` when absent or
     unreadable), the file it came from, and 1 when that file was refused unread.
 
-    Values included, for the two readers that must see them — the MCP servers and the settings —
-    which each put what they keep through floor 2.
+    Values included, for the one reader that must see them: an MCP server's, which the MCP
+    writer keeps in the credential store. The settings reader reads only the names.
     """
     for name in (_TOML_CONFIG, _JSON_CONFIG):
         path = base / name
@@ -134,16 +135,11 @@ def _read_toml(path: Path) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _and(words: list[str]) -> str:
-    """``a``, ``a and b``, ``a, b and c``."""
-    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
-
-
 def _settings_left(keys: list[str], *, owner: str, of: str = "") -> str:
     """``"<owner> x and y settings<of> are not carried over."``, agreeing in number."""
     many = len(keys) > 1
     return (
-        f"{owner} {_and(keys)} setting{'s' if many else ''}{of} "
+        f"{owner} {and_list(keys)} setting{'s' if many else ''}{of} "
         f"{'are' if many else 'is'} not carried over."
     )
 
@@ -269,13 +265,13 @@ def _mcp_server(name: str, entry: dict[str, Any], environ: Mapping[str, str]) ->
     if variables.unset:
         one = len(variables.unset) == 1
         notes.append(
-            f"It needs {_and(['$' + v for v in variables.unset])}, which the environment "
+            f"It needs {and_list(['$' + v for v in variables.unset])}, which the environment "
             f"PersonalClaw runs in does not set: add {'it' if one else 'them'} on the Tools page "
             "after importing."
         )
     if variables.own:
         notes.append(
-            f"It names {_and(['$' + v for v in variables.own])}, which "
+            f"It names {and_list(['$' + v for v in variables.own])}, which "
             f"{'is' if len(variables.own) == 1 else 'are'} PersonalClaw's own and never handed "
             "to another tool's server."
         )
@@ -310,9 +306,9 @@ def mcp_servers(
     """Every MCP server Codex has configured (``config.toml`` → ``[mcp_servers.<name>]``), in
     PersonalClaw's form.
 
-    THE reader of Codex's MCP configuration: the onboarding scan (through floor 2) and the Tools
-    page's Import both call it, so the two cannot disagree about what Codex has. Codex's meaning
-    is kept:
+    THE reader of Codex's MCP configuration: the onboarding scan and the Tools page's Import both
+    call it and both write what it returns through the one MCP writer, so the two cannot disagree
+    about what Codex has or where its values go. Codex's meaning is kept:
 
     - a server with a ``url`` speaks Streamable HTTP, Codex's one remote transport, so it is
       ``type: "http"``;
@@ -434,25 +430,10 @@ def _scan_memories(base: Path, result: ScanResult) -> None:
 
 
 def _scan_mcp(servers: list[McpServer], result: ScanResult) -> None:
-    """Each server through floor 2 on its own, so each says how many of its own credentials stay
-    behind — the one a user will re-enter."""
+    """Every server, definition whole: the MCP writer keeps each ``env`` and ``headers`` value in
+    the credential store, as Tools › Import does."""
     for server in servers:
-        clean, withheld = strip_secrets(server.spec)
-        result.secrets_skipped += withheld
-        result.items.append(
-            ImportItem(
-                source=NAME,
-                category=ImportCategory.MCP_SERVERS,
-                key=server.name,
-                title=server.name,
-                name=server.name,
-                payload=clean,
-                origin=server.origin,
-                note=server.note,
-                preselect=server.approved,
-                secrets_skipped=withheld,
-            )
-        )
+        result.items.append(mcp_item(NAME, server, key=server.name))
 
 
 def _skill_roots(base: Path, explicit: Path | None) -> list[tuple[Path, str]]:
@@ -626,10 +607,6 @@ class CommandRule:
     decision: str
     justification: str
 
-    @property
-    def words(self) -> str:
-        return " ".join("|".join(alternatives) for alternatives in self.pattern)
-
 
 def _prefix(value: Any) -> tuple[tuple[str, ...], ...] | None:
     """A ``pattern`` argument: a non-empty list whose items are words or non-empty word lists."""
@@ -690,27 +667,6 @@ def parse_rules(source: str) -> tuple[list[CommandRule], int]:
     return rules, unreadable
 
 
-#: The characters that mean something in a regular expression outside a character class.
-_REGEX_SPECIAL_RE = re.compile(r"([.^$*+?{}\[\]\\|()])")
-
-
-def denied_pattern(pattern: tuple[tuple[str, ...], ...]) -> str:
-    """A Codex command prefix as a shell-denylist pattern: its words in order, each position one
-    of the words Codex accepts there, apart by whitespace, bounded so ``rm -rf`` does not also
-    refuse ``rm -rfv``.
-
-    PersonalClaw matches the pattern anywhere in a command, whatever the case, so it refuses at
-    least every command Codex refused — ``bash -lc "rm -rf build"`` too.
-    """
-    positions = []
-    for alternatives in pattern:
-        words = [_REGEX_SPECIAL_RE.sub(r"\\\1", word) for word in alternatives]
-        positions.append(words[0] if len(words) == 1 else f"(?:{'|'.join(words)})")
-    start = r"\b" if all(re.match(r"\w", w[0]) for w in pattern[0]) else r"(?<!\S)"
-    end = r"\b" if all(re.match(r"\w", w[-1]) for w in pattern[-1]) else r"(?!\S)"
-    return start + r"\s+".join(positions) + end
-
-
 def _scan_rules(base: Path, result: ScanResult) -> None:
     """``rules/*.rules``. A ``forbidden`` rule is a command Codex refuses to run, and becomes one
     PersonalClaw refuses: a shell-denylist pattern. PersonalClaw has no rule that asks before one
@@ -732,48 +688,28 @@ def _scan_rules(base: Path, result: ScanResult) -> None:
         for rule in rules:
             if rule.decision == "prompt":
                 asks += 1
-                continue
-            if rule.decision == "allow":
+            elif rule.decision == "allow":
                 allows += 1
-                continue
-            words, redacted = safe_text(rule.words)
-            if redacted:
-                # A credential in the command itself: the pattern would carry it into config.
-                result.secrets_skipped += 1
-                continue
-            reason, redactions = safe_text(rule.justification)
-            result.redactions += redactions
-            result.items.append(
-                ImportItem(
-                    source=NAME,
-                    category=ImportCategory.DENIED_COMMANDS,
+            else:
+                denied_command_item(
+                    NAME,
+                    result,
                     key=f"{_RULES_DIR}/{path.name}:{json.dumps(rule.pattern)}",
-                    title=words,
-                    payload={"pattern": denied_pattern(rule.pattern)},
-                    note=f"Codex's reason: {reason}" if reason else "",
-                    redactions=redactions,
+                    pattern=rule.pattern,
+                    note=f"Codex's reason: {rule.justification}" if rule.justification else "",
                 )
-            )
-    for count, what, why in (
-        (
-            asks,
-            "Command rules that ask first",
-            "PersonalClaw has no rule that asks before one particular command.",
-        ),
-        (
-            allows,
-            "Command rules that allow without asking",
-            "Letting a command run without asking stays your call in PersonalClaw, so an import "
-            "never makes it.",
-        ),
-        (
-            unreadable,
-            "Command rules",
-            "They are not written as plain lists and strings, so this import cannot read them.",
-        ),
-    ):
-        if count:
-            result.not_imported.append(NotImported(what=what, count=count, why=why))
+    not_imported_rows(
+        result,
+        [
+            (asks, *RULES_THAT_ASK),
+            (allows, *RULES_THAT_ALLOW),
+            (
+                unreadable,
+                "Command rules",
+                "They are not written as plain lists and strings, so this import cannot read them.",
+            ),
+        ],
+    )
 
 
 # ── conversations ─────────────────────────────────────────────────────────────
@@ -875,7 +811,7 @@ def read_rollout(path: Path, titles: Mapping[str, str]) -> tuple[dict[str, Any],
     ``conversation`` is ``{"messages", "title", "created_at", "updated_at", "cwd"}``: each prompt,
     each reply, and each tool call by name and what it was for. Tool OUTPUT is not carried (it is
     where a session is largest and where a printed credential sits), and neither is the model's
-    reasoning. Every text passes floor 3.
+    reasoning. Every text passes floor 2.
 
     The prompts are the ``user_message`` events — what the person typed. The model's input holds
     each one too, with Codex's context around it, so it is read only from a file that has no such
@@ -1022,25 +958,12 @@ def _scan_conversations(base: Path, result: ScanResult) -> None:
 def _scan_settings(
     config: dict[str, Any], config_name: str, withheld: int, result: ScanResult
 ) -> None:
-    """The rest of the config, through floor 2, staged for review. Its MCP servers are items of
-    their own, so they are not in it twice."""
+    """The rest of the config: Codex's own options, named and left where they are. Its MCP
+    servers are items of their own."""
     result.secrets_skipped += withheld
-    rest = {
-        key: value
+    names = [
+        str(key)
         for key, value in config.items()
         if not (config_name == _TOML_CONFIG and key == _MCP_TABLE and isinstance(value, dict))
-    }
-    clean, dropped = strip_secrets(rest)
-    result.secrets_skipped += dropped
-    if not clean:
-        return
-    result.items.append(
-        ImportItem(
-            source=NAME,
-            category=ImportCategory.SETTINGS,
-            key=config_name,
-            title=f"{DISPLAY_NAME} settings",
-            payload=clean,
-            secrets_skipped=dropped,
-        )
-    )
+    ]
+    settings_not_imported(result, DISPLAY_NAME, names)

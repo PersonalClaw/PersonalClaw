@@ -128,10 +128,10 @@ def test_mcp_servers_come_from_claude_json_and_each_projects_mcp_json(noor: Path
     # `${FEEDSMITH_DEV_DATABASE_URL}` expanded from Claude Code's settings.json `env`, as Claude
     # Code expands it: PersonalClaw does not expand variables in a definition.
     assert dev_db.payload["env"]["DATABASE_URI"].startswith("postgresql://feedsmith:")
-    # The current onboarding floor still drops a secret-NAMED value, and says so per server.
-    assert "env" not in servers["github"].payload or not servers["github"].payload["env"]
-    assert servers["github"].secrets_skipped == 1
-    assert grafana.secrets_skipped == 1
+    # Whole, as Tools › Import reads it: the MCP writer stores each value in the credential store.
+    assert servers["github"].payload["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": _GITHUB_PAT}
+    assert grafana.payload["headers"] == {"Authorization": f"Bearer {_GRAFANA_TOKEN}"}
+    assert (servers["github"].secrets_skipped, grafana.secrets_skipped) == (0, 0)
     wire = json.dumps(result.to_dict())
     for secret in (_GITHUB_PAT, _CONTEXT7_KEY, _GRAFANA_TOKEN, _DB_PASSWORD):
         assert secret not in wire
@@ -229,16 +229,20 @@ def test_every_kind_claude_code_keeps_is_an_item_or_named_as_not_imported(noor: 
         "projects/-Users-noor/80aa7bec-27c9-4094-86e2-35fb104eed4f.jsonl",
         "projects/-Users-noor/9616f743-040c-4515-8bdf-701612aa21ba.jsonl",
     ]
-    # Prompt history has no place here, and the scan says so — with its size and its reason.
-    assert [entry.to_dict() for entry in result.not_imported] == [
-        {
-            "what": "Prompt history",
-            "count": 5,
-            "why": "PersonalClaw keeps no separate list of past prompts. The prompts in your "
-            "conversations come over with them.",
-        }
+    # What has no place here is named, with its size and its reason: prompt history, and the
+    # parts of settings.json that are not a command Claude Code refuses.
+    assert [(entry.what, entry.count) for entry in result.not_imported] == [
+        ("Command rules that ask first", 4),
+        ("Command rules that allow without asking", 13),
+        ("Other permission rules", 16),
+        ("Claude Code settings", 8),
+        ("Prompt history", 5),
     ]
-    assert result.to_dict()["not_imported"][0]["count"] == 5
+    assert result.not_imported[-1].why == (
+        "PersonalClaw keeps no separate list of past prompts. The prompts in your "
+        "conversations come over with them."
+    )
+    assert result.to_dict()["not_imported"][-1]["count"] == 5
 
     reviewer = _items(result, ImportCategory.AGENTS)["agents/code-reviewer.md"]
     assert reviewer.target == "code-reviewer"

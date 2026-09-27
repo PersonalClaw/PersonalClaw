@@ -40,8 +40,8 @@ import type {
 const onDone = vi.fn()
 const onSkip = vi.fn()
 
-const ZERO = { instructions: 0, memories: 0, mcp_servers: 0, skills: 0, settings: 0 }
-const CATEGORIES = ['instructions', 'memories', 'mcp_servers', 'skills', 'settings']
+const ZERO = { instructions: 0, memories: 0, mcp_servers: 0, skills: 0, denied_commands: 0 }
+const CATEGORIES = ['instructions', 'memories', 'mcp_servers', 'skills', 'denied_commands']
 
 /** An item shaped like the gateway's, new unless told otherwise. */
 function item(fingerprint: string, category: string, key: string, extra: Partial<OnboardingImportItem> = {}): OnboardingImportItem {
@@ -149,14 +149,17 @@ describe('collapsed by default: a count and a ticked box per group', () => {
       expect(toggle.textContent).toContain('Choose')
       expect(rowText(label)).toContain(`${label}· ${n}`)
     }
-    // Where each group lands is on the row, so a tick is an informed choice.
-    expect(screen.getByText('MCP server definitions, added to your MCP config.')).toBeTruthy()
+    // Where each group lands is on the row, so a tick is an informed choice — the values a
+    // server sets included: they go where the Tools page's Import puts them.
+    expect(screen.getByText(
+      'MCP server definitions, added to your MCP config. The values they set go to your credential store.',
+    )).toBeTruthy()
     // Collapsed means collapsed: no item is rendered until a group is opened.
     expect(screen.queryByRole('checkbox', { name: /^weather/ })).toBeNull()
     expect(screen.queryByRole('list')).toBeNull()
     // Empty categories are not rendered as ticked boxes that would import nothing.
     expect(screen.queryByRole('checkbox', { name: /Memories/ })).toBeNull()
-    expect(screen.queryByRole('checkbox', { name: /Settings/ })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /Denied commands/ })).toBeNull()
     // …and the primary action states the total it will bring over.
     expect(screen.getByRole('button', { name: /Import 4 items/ })).toBeTruthy()
   })
@@ -164,6 +167,14 @@ describe('collapsed by default: a count and a ticked box per group', () => {
   it('names the tools it found, in a sentence that agrees with how many there are', async () => {
     await mounted()
     expect(screen.getByText(/^We found Claude Code on this machine\. Bring its setup over — it is only read/)).toBeTruthy()
+  })
+
+  it('makes no promise about credentials that an MCP server it imports would break', async () => {
+    // A server's key comes over, into the credential store, so "credentials are never imported"
+    // was untrue on the one screen a new user reads first.
+    await mounted()
+    expect(screen.getByText(/it is only read, and nothing in it is changed\. Everything is ticked/)).toBeTruthy()
+    expect(screen.queryByText(/never imported/)).toBeNull()
   })
 
   it('and with two tools, says "their" — not "another agent tool"', async () => {
@@ -221,7 +232,7 @@ describe('expanding a group lists every item, each with its own box', () => {
     expect(box('weather').checked).toBe(true)
     expect(box('github').checked).toBe(true)
     expect(within(list).getAllByText('New')).toHaveLength(2)
-    // Each item says what was left OUT of it — so the user knows which server needs its key again.
+    // Each item says what was left OUT of it, on its own row.
     expect(within(rows[0]).getByText('1 credential left out')).toBeTruthy()
     expect(box('weather').getAttribute('aria-label')).toBe('weather, 1 credential left out')
     fireEvent.click(toggle)

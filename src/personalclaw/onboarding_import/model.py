@@ -13,10 +13,13 @@ Three properties are load-bearing and live here rather than in each scanner:
 - **The fingerprint is the only thing a choice carries.** The step picks items by
   fingerprint and the import re-scans and keeps only the fingerprints ITS scan found, so
   ids travel and content never does: a caller cannot name a path or supply a body.
-- **Secret-free payloads.** An item carries a redacted body and a secret-stripped
-  structured payload. A scanner that finds a credential *counts* it
-  (``ScanResult.secrets_skipped``, and the item's own share of it) and drops it; the
-  value never reaches an item, a note, a log line, or an error message.
+- **One secret policy.** Text an item carries (``text``, a conversation's messages) has every
+  credential the platform's detector finds redacted, and counted. An MCP server's ``env`` and
+  ``headers`` values stay in its ``payload`` because the MCP writer keeps them in the credential
+  store, as Tools › Import does. A file or entry that would carry a credential anywhere else is
+  left out and counted (``ScanResult.secrets_skipped``, and the item's own share of it). A payload
+  never leaves the server: it is not in :meth:`ImportItem.to_dict` or the item's ``repr``, and no
+  value reaches a note, a log line or an error message.
 """
 
 from __future__ import annotations
@@ -44,7 +47,6 @@ class ImportCategory(str, Enum):
     PROMPTS = "prompts"  # slash commands / custom prompts → <home>/prompts/<name>.yaml
     CONVERSATIONS = "conversations"  # session transcripts → <home>/sessions (Chat history)
     DENIED_COMMANDS = "denied_commands"  # commands a tool refuses → config.json shell denylist
-    SETTINGS = "settings"  # foreign settings → the review queue, never live config
 
 
 class WriteOutcome(str, Enum):
@@ -118,9 +120,10 @@ class ImportItem:
     """One importable thing found by a scanner. Pure data — no store, no session.
 
     ``text`` is the redacted body (instructions, memories, an agent's or a prompt's
-    instructions); ``payload`` is the secret-stripped structured value (an MCP server, the
-    settings, an agent's description, a conversation's messages); ``path`` is the source
-    directory for skills.
+    instructions); ``payload`` is the structured value (an MCP server's definition with its
+    values, which the writer stores as credential references; an agent's description; a
+    conversation's redacted messages; a denylist pattern); ``path`` is the source directory for
+    skills.
     """
 
     source: str
@@ -128,7 +131,8 @@ class ImportItem:
     key: str
     title: str = ""
     text: str = ""
-    payload: dict = field(default_factory=dict)
+    #: Out of ``repr`` too: an MCP server's values are in it, bound for the credential store.
+    payload: dict = field(default_factory=dict, repr=False)
     path: str = ""
     #: The name the item takes at its destination — an MCP server's name, an agent's, a
     #: prompt's. Empty means ``key``. Separate from ``key`` because a key must be unique per
@@ -150,10 +154,10 @@ class ImportItem:
     #: How many credential/exfiltration-URL redactions were applied to ``text``.
     #: A count, never the matched value.
     redactions: int = 0
-    #: How many credential values or files were left OUT of this item: a secret-named key
-    #: dropped from ``payload``, or a credential file inside a skill that is never installed.
-    #: This item's share of ``ScanResult.secrets_skipped``, which also counts what belongs
-    #: to no item (a credential file at the root). A count, never the value.
+    #: How many credential files were left OUT of this item: a credential file inside a skill,
+    #: which is never installed. This item's share of ``ScanResult.secrets_skipped``, which also
+    #: counts what belongs to no item (a credential file at the root, a refused command that
+    #: holds a credential). A count, never the value.
     secrets_skipped: int = 0
 
     @property
@@ -269,9 +273,9 @@ class ScanResult:
     root: str
     present: bool
     items: list[ImportItem] = field(default_factory=list)
-    #: Credential-bearing files refused unread + secret config keys dropped. A count
-    #: the user is shown so they learn something was withheld. Each item carries its own
-    #: share; the rest (:meth:`secrets_outside_items`) belongs to no item.
+    #: Credential-bearing files refused unread, and entries left out whole because they hold a
+    #: credential. A count the user is shown so they learn something was withheld. Each item
+    #: carries its own share; the rest (:meth:`secrets_outside_items`) belongs to no item.
     secrets_skipped: int = 0
     #: Redactions applied to text that WAS imported (the body kept, the secret gone).
     redactions: int = 0
@@ -293,8 +297,8 @@ class ScanResult:
         return {item.fingerprint for item in self.items}
 
     def secrets_outside_items(self) -> int:
-        """What was withheld that belongs to no item — a credential file at the root, or an
-        entry dropped whole because its NAME was secret-shaped. Left behind whatever is
+        """What was withheld that belongs to no item — a credential file at the root, or a
+        refused command left out whole because it holds a credential. Left behind whatever is
         picked, so an import from this source always reports it."""
         return self.secrets_skipped - sum(item.secrets_skipped for item in self.items)
 

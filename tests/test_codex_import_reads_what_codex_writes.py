@@ -28,7 +28,6 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.onboarding_import import ImportCategory, WriteOutcome, run_import, scan_source
-from personalclaw.onboarding_import.floors import strip_secrets
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agent_tool_homes" / "noor"
 
@@ -128,8 +127,8 @@ def test_the_bearer_token_is_read_from_the_variable_codex_reads(
     noor: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``bearer_token_env_var`` names a variable, not a credential: unset, the server says to add
-    the token; set, the token is the server's ``Authorization`` header — withheld from the scan's
-    wire form like any secret-named value, and whole for an import to store."""
+    the token; set, the token is the server's ``Authorization`` header — kept out of the scan's
+    wire form, and whole in the definition the MCP writer stores."""
     from personalclaw.onboarding_import.sources import codex
 
     sentry = _items(scan_source("codex"), ImportCategory.MCP_SERVERS)["sentry"]
@@ -148,8 +147,9 @@ def test_the_bearer_token_is_read_from_the_variable_codex_reads(
     result = scan_source("codex")
     sentry = _items(result, ImportCategory.MCP_SERVERS)["sentry"]
     assert sentry.note == ""
-    assert sentry.secrets_skipped == 1 and "Authorization" not in sentry.payload["headers"]
-    assert _SENTRY_TOKEN not in _everything(result)
+    assert sentry.secrets_skipped == 0, "stored, not left out"
+    assert sentry.payload["headers"]["Authorization"] == f"Bearer {_SENTRY_TOKEN}"
+    assert _SENTRY_TOKEN not in json.dumps(result.to_dict()) and _SENTRY_TOKEN not in repr(sentry)
 
 
 def test_a_server_is_never_handed_one_of_personalclaws_own_variables(
@@ -274,7 +274,6 @@ def test_every_kind_codex_keeps_is_an_item_or_named_as_not_imported(noor: Path) 
         "prompts": 2,
         "conversations": 3,
         "denied_commands": 1,
-        "settings": 1,
     }
     assert [entry.to_dict() for entry in result.not_imported] == [
         {
@@ -283,21 +282,30 @@ def test_every_kind_codex_keeps_is_an_item_or_named_as_not_imported(noor: Path) 
             "why": "PersonalClaw has no rule that asks before one particular command.",
         },
         {
+            "what": "Codex settings",
+            "count": 14,
+            "why": "model, model_provider, model_reasoning_effort, approval_policy, sandbox_mode, "
+            "notify and 8 more are Codex's own options. PersonalClaw keeps its own in Settings, "
+            "so they stay in Codex.",
+        },
+        {
             "what": "Prompt history",
             "count": 5,
             "why": "PersonalClaw keeps no separate list of past prompts. The prompts in your "
             "conversations come over with them.",
         },
     ]
-    # Everything the scan hands on has been through floor 2. The browser's copy holds no
-    # credential; the database URL a server's `env` carries stays server-side, for the MCP writer
-    # to store; a secret-named value and the login file are nowhere at all.
-    for item in result.items:
-        assert strip_secrets(item.payload) == (item.payload, 0), item.key
+    # The browser's copy holds no credential. The values a server's `env` sets stay server-side,
+    # in that server's definition alone, for the MCP writer to store; the login file is nowhere.
     wire = json.dumps(result.to_dict())
     for secret in (_GITHUB_PAT, _DB_PASSWORD, *_AUTH_VALUES):
         assert secret not in wire
-    for secret in (_GITHUB_PAT, *_AUTH_VALUES):
+    servers = _items(result, ImportCategory.MCP_SERVERS)
+    assert servers["github"].payload["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": _GITHUB_PAT}
+    others = [item for item in result.items if item.category is not ImportCategory.MCP_SERVERS]
+    for secret in (_GITHUB_PAT, _DB_PASSWORD):
+        assert secret not in "".join(item.text + json.dumps(item.payload) for item in others)
+    for secret in _AUTH_VALUES:
         assert secret not in _everything(result)
 
 
@@ -316,9 +324,9 @@ def test_auth_json_is_counted_and_never_opened(noor: Path, monkeypatch: pytest.M
 
     assert "config.toml" in opened, "positive control: the spy sees the scanner's reads"
     assert "auth.json" not in opened
-    # The only credential that belongs to no item is the login file.
-    assert result.secrets_outside_items() == 1
-    assert result.notes[0] == "2 credential values or files were skipped and not imported."
+    # The only credential left out is the login file, which belongs to no item.
+    assert result.secrets_outside_items() == result.secrets_skipped == 1
+    assert result.notes[0] == "1 credential value or file was skipped and not imported."
 
 
 def test_codex_instructions_prefer_the_override_codex_reads(noor: Path) -> None:
@@ -480,7 +488,8 @@ def test_a_command_codex_refuses_is_one_personalclaw_refuses(noor: Path) -> None
 
 
 def test_a_rules_file_is_read_as_data_and_never_run(tmp_path: Path) -> None:
-    from personalclaw.onboarding_import.sources.codex import denied_pattern, parse_rules
+    from personalclaw.onboarding_import.sources.codex import parse_rules
+    from personalclaw.onboarding_import.sources.common import denied_pattern
 
     marker = tmp_path / "ran"
     source = (
@@ -495,10 +504,10 @@ def test_a_rules_file_is_read_as_data_and_never_run(tmp_path: Path) -> None:
     )
     rules, unreadable = parse_rules(source)
 
-    assert [(r.words, r.decision, r.justification) for r in rules] == [
-        ("git push|fetch", "forbidden", ""),
-        ("ls", "allow", ""),  # Codex's default decision
-        ("curl", "prompt", "Network."),
+    assert [(r.pattern, r.decision, r.justification) for r in rules] == [
+        ((("git",), ("push", "fetch")), "forbidden", ""),
+        ((("ls",),), "allow", ""),  # Codex's default decision
+        ((("curl",),), "prompt", "Network."),
     ]
     assert unreadable == 3
     assert not marker.exists(), "a rules file is parsed, never executed"
