@@ -14,6 +14,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.inbound import caps as caps_mod
 from personalclaw.inbound import clients as clients_mod
@@ -74,7 +75,7 @@ class _State:
 async def _client(state):
     app = web.Application()
     app["state"] = state
-    app.router.add_post("/api/triggers/{id}/fire", T.api_trigger_fire)
+    app.router.add_post("/api/triggers/{id}/fire", trigger_runs.api_trigger_fire)
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
@@ -95,7 +96,7 @@ async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
         captured.update(trigger=trigger, payload=payload, event=event)
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
     )
@@ -122,7 +123,7 @@ async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch)
         captured.update(payload=payload)
         return True, "ran"
 
-    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
     )
@@ -159,7 +160,7 @@ async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_a
         return True, "ran"
 
     audited: list[dict] = []
-    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     monkeypatch.setattr("personalclaw.inbound.audit.audit", lambda *a, **k: audited.append(dict(k)))
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
@@ -272,7 +273,7 @@ async def test_a_paused_webhook_trigger_answers_like_one_that_is_not_there(
         return True, "ran"
 
     audited: list[dict] = []
-    monkeypatch.setattr(T, "_dispatch_store_action", _fake_dispatch)
+    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     monkeypatch.setattr("personalclaw.inbound.audit.audit", lambda *a, **k: audited.append(dict(k)))
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}

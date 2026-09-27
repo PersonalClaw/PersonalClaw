@@ -36,6 +36,7 @@ import personalclaw.action_providers as AP
 import personalclaw.config.loader as loader
 from personalclaw import mcp_automation
 from personalclaw.action_providers.base import ActionResult
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.hooks import ScriptHook, ScriptHookStore, run_script_hook
 from personalclaw.triggers import grants
@@ -150,7 +151,7 @@ def _body(resp: web.Response) -> dict:
 def _run(trigger_id: str) -> dict:
     return _body(
         asyncio.run(
-            T.api_trigger_run(
+            trigger_runs.api_trigger_run(
                 _req(
                     "POST",
                     f"/api/triggers/{trigger_id}/run",

@@ -201,7 +201,7 @@ channel delivery, a subagent) never waits at all. It declines a call that needs 
 once, because nobody is there to ask: `chat_runner`'s fail-fast for a runtime that asks, and
 the native runtime's own decline, which it marks on the tool result (`TOOL_META_AUTO_DENIED`)
 for the chat runner or the subagent manager to see. Either way the call is **denied without an
-answer**, and `dashboard/auto_denials.py` leaves one `system/auto_denied` Inbox item for it.
+answer**, and `auto_denials.py` leaves one `system/auto_denied` Inbox item for it.
 The item says what was denied, who asked, when and why, and that the call did not run. Its refs
 are `auto_denied` (`expired` | `unattended`), `tool` and `session`, plus `chat` when that is a
 chat a person answers in, `trigger` when a trigger's action started the work, and, for an

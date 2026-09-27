@@ -15,6 +15,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.hooks import ScriptHookStore
 
@@ -176,7 +177,7 @@ def test_toggle_and_delete_lifecycle_route_by_id(state):
 
 def test_run_rejects_lifecycle(state):
     req = _req("POST", "/api/triggers/lifecycle:x/run", state, match_info={"id": "lifecycle:x"})
-    resp = _run(T.api_trigger_run(req))
+    resp = _run(trigger_runs.api_trigger_run(req))
     assert resp.status == 400  # lifecycle triggers fire on events, not /run
 
 
@@ -184,7 +185,7 @@ def test_schedule_run_dispatches(state):
     state.crons.is_running.return_value = False
     state._background_tasks = set()
     req = _req("POST", "/api/triggers/schedule:job1/run", state, match_info={"id": "schedule:job1"})
-    resp = _run(T.api_trigger_run(req))
+    resp = _run(trigger_runs.api_trigger_run(req))
     assert resp.status == 200
     assert _body(resp)["name"] == "Nightly"
 
@@ -288,7 +289,7 @@ def test_an_event_trigger_runs_by_hand_and_the_run_does_not_spend_its_budget(sta
     _stub_provider(monkeypatch, calls)
     tid = _event_row(state, gates={"max_fires": 1})
     req = _req("POST", f"/api/triggers/{tid}/run", state, body={}, match_info={"id": tid})
-    resp = _run(T.api_trigger_run(req))
+    resp = _run(trigger_runs.api_trigger_run(req))
     assert resp.status == 200 and _body(resp)["ok"] is True
     assert calls and calls[0]["manual"] is True
     history_req = _req("GET", f"/api/triggers/{tid}/history", state, match_info={"id": tid})
@@ -303,7 +304,7 @@ def test_test_points_an_event_trigger_at_run_and_its_dry_run(state):
     schedule trigger."""
     tid = _event_row(state)
     req = _req("POST", f"/api/triggers/{tid}/test", state, body={}, match_info={"id": tid})
-    resp = _run(T.api_trigger_test(req))
+    resp = _run(trigger_runs.api_trigger_test(req))
     assert resp.status == 400
     error = _body(resp)["error"]
     assert "dry_run" in error and "schedule" not in error
@@ -337,8 +338,8 @@ def test_the_facade_has_no_remaining_parity_gaps(state, monkeypatch):
 
     probes = {
         "toggle": (T.api_trigger_toggle, "POST"),
-        "run": (T.api_trigger_run, "POST"),
-        "test": (T.api_trigger_test, "POST"),
+        "run": (trigger_runs.api_trigger_run, "POST"),
+        "test": (trigger_runs.api_trigger_test, "POST"),
         "history": (T.api_trigger_history, "GET"),
     }
     ids = {"store": event_id, "lifecycle": "lifecycle:x", "schedule": "schedule:job1"}

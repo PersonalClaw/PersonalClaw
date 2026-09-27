@@ -142,7 +142,7 @@ def status_for_result(result: Any) -> str:
     """The `ScheduleRun.status` a finished action records: `failure`, a refinement, or `success`.
 
     ONE answer for both recorders — the autonomous fire (`gateway._record_fire_outcome`) and the
-    Run button (`dashboard/handlers/triggers._record_manual_run`) — so a fire and a hand-run of
+    Run button (`dashboard/handlers/trigger_runs._record_manual_run`) — so a fire and a hand-run of
     the same action cannot record different statuses for the same result. The autonomous one
     recorded every successful result as `success`, so a fire that only launched a workflow read as
     one whose work had succeeded.

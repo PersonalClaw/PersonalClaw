@@ -93,7 +93,7 @@ async def test_the_gateway_records_it_against_the_parent(parent, title, who) -> 
     # A chat's or a workflow step's helper — no trigger started it (`SubagentInfo.trigger_id`).
     info.trigger_id = ""
 
-    with patch("personalclaw.dashboard.auto_denials.note_unattended") as note:
+    with patch("personalclaw.auto_denials.note_unattended") as note:
         await on_event("subagent_auto_denied", info, {"tool": "write_file"})
 
     note.assert_called_once()

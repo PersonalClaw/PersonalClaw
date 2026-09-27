@@ -27,6 +27,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 import personalclaw.config.loader as loader
+from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.triggers import tools as Tools
@@ -504,7 +505,7 @@ def test_a_manual_trigger_fires_once_from_run_now_and_records_the_run(home, stat
     trigger_id = made.data["trigger"]["id"]
 
     async def run_now():
-        resp = await T.api_trigger_run(
+        resp = await trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 f"/api/triggers/store:{trigger_id}/run",
@@ -541,7 +542,7 @@ def test_a_run_trigger_s_list_row_says_when_it_last_ran(home, state):
 
     async def run_now_then_list():
         before = await listed()
-        await T.api_trigger_run(
+        await trigger_runs.api_trigger_run(
             _req(
                 "POST",
                 f"/api/triggers/store:{trigger_id}/run",

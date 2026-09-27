@@ -513,7 +513,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         owner="personalclaw.notification_rules",
     ),
     # A tool call denied with no answer: an approval nobody answered in time, or one an unattended
-    # run could not ask about (F-33, `dashboard/auto_denials.py`). Its durable row is what the
+    # run could not ask about (F-33, `auto_denials.py`). Its durable row is what the
     # morning reads — the approval's own row closes when it ends. WARNING: work the user asked for
     # did not happen. Not a decision: nothing is waiting on an answer any more.
     NotificationKind(
@@ -523,7 +523,7 @@ _KINDS: tuple[NotificationKind, ...] = (
         "immediate",
         SEV_WARNING,
         attention=True,
-        owner="personalclaw.dashboard.auto_denials",
+        owner="personalclaw.auto_denials",
     ),
     # The monthly spend recap (MRT-3). `digest` by DEFAULT, unlike every other kind here: a
     # recap of a month that already closed is the least urgent thing the system emits, and
@@ -806,7 +806,7 @@ RESEARCH_FINDING = "research_finding"
 APPROVAL = "approval"
 #: A task's due date is coming (F-31, `tasks/due_notices.py`).
 TASK_DUE = "task_due"
-#: A tool call denied with no answer (F-33, `dashboard/auto_denials.py`).
+#: A tool call denied with no answer (F-33, `auto_denials.py`).
 AUTO_DENIED = "auto_denied"
 GENERIC = GENERIC_KIND
 
