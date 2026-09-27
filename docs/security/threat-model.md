@@ -240,6 +240,14 @@ Content and requests arriving from outside the owner's trust boundary:
 - **Egress chokepoint** (`net/client.py` + `net/guard.py` + `net/policy.py`): the
   single outbound-HTTP seam with named policies, layered by
   `net/policy.py::egress_policy_for`.
+- **What a channel is handed is masked, once, by core** (`channel_delivery.py::MaskedDelivery`).
+  A channel app sends what it is handed to a service outside the machine, so every channel's
+  delivery handle is registered behind the mask, and every path to a channel (a reply, an owner
+  notification, a rich payload's strings, an automation's result, an approval's title, purpose and
+  input, a chat mirror, a stream's progress) hands it text masked with `redact_for_display`. A new
+  sending method in the `ChannelDelivery` protocol is masked or listed as sending no text, or
+  `tests/test_channels_are_handed_masked_text.py` fails. What an app sends on its own paths, text it
+  builds or relays without core, is the app's to mask.
 
 *Inbound MCP and external remote access (fail-closed inbound, fencing at
 ingestion) are owned by MCP-READONLY-INBOUND and EXTERNAL-ACCESS — not yet

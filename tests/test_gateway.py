@@ -522,12 +522,13 @@ class TestDeliverResult:
     @pytest.mark.asyncio
     async def test_channel_thread_delivery(self):
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
-        orch._channel_delivery = _mock_channel_delivery()
+        delivery = _mock_channel_delivery()
+        orch._channel_delivery = delivery
         orch.dashboard_state = _mock_dashboard_state()
         await orch._deliver_result("Title", "task", "result", "channel:C123:1234.5678")
-        orch._channel_delivery.deliver_notification.assert_awaited_once()
+        delivery.deliver_notification.assert_awaited_once()
         # thread_ts is threaded through as the 4th positional arg
-        call_args = orch._channel_delivery.deliver_notification.call_args
+        call_args = delivery.deliver_notification.call_args
         assert call_args[0][0] == "C123"
         assert call_args[0][3] == "1234.5678"
 
@@ -1701,7 +1702,7 @@ class TestInteractiveApprovalSlack:
         """Channel request_approval returns True → approved."""
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
         orch._channel_delivery = _mock_channel_delivery()
-        orch._channel_delivery.request_approval = AsyncMock(return_value=True)
+        orch._channel_delivery.inner.request_approval = AsyncMock(return_value=True)
         orch.sessions = _mock_sessions()
         orch.sessions.get_channel = MagicMock(return_value=None)
         orch.sessions.get_thread = MagicMock(return_value=None)
@@ -1721,14 +1722,14 @@ class TestInteractiveApprovalSlack:
             result = await callback(event, "")
 
         assert result == ToolDecision(True, "approved", "you")
-        orch._channel_delivery.request_approval.assert_awaited_once()
+        orch._channel_delivery.inner.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_channel_approval_rejects(self):
         """Channel request_approval returns False → rejected."""
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
         orch._channel_delivery = _mock_channel_delivery()
-        orch._channel_delivery.request_approval = AsyncMock(return_value=False)
+        orch._channel_delivery.inner.request_approval = AsyncMock(return_value=False)
         orch.sessions = _mock_sessions()
         orch.sessions.get_channel = MagicMock(return_value=None)
         orch.sessions.get_thread = MagicMock(return_value=None)
@@ -1748,14 +1749,16 @@ class TestInteractiveApprovalSlack:
             result = await callback(event, "")
 
         assert result == ToolDecision(False, "rejected", "you")
-        orch._channel_delivery.request_approval.assert_awaited_once()
+        orch._channel_delivery.inner.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_channel_approval_exception_falls_to_dashboard(self):
         """Channel approval raises → falls back to dashboard approval."""
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
         orch._channel_delivery = _mock_channel_delivery()
-        orch._channel_delivery.request_approval = AsyncMock(side_effect=RuntimeError("slack down"))
+        orch._channel_delivery.inner.request_approval = AsyncMock(
+            side_effect=RuntimeError("slack down")
+        )
         orch.sessions = _mock_sessions()
         ds = _mock_dashboard_state()
         ds._yolo = False

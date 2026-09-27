@@ -17,14 +17,24 @@ handle was the shape until #959: with Discord, Slack and Telegram all connected,
 transport wrote the same slot, so the last registration won (apps load alphabetically, so
 always Telegram) and every outbound reply went to that one provider carrying another
 provider's channel id.
+
+**Every text a channel is handed is masked, here, once** (:class:`MaskedDelivery`). A channel
+sends what it is handed to a service outside this machine, so the registry holds each handle
+behind the mask and every reader of it gets text masked with ``security.redact_for_display``: a
+run's result, a notification's title, a rich message, an automation's name, an approval.
 """
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+import inspect
 import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, runtime_checkable
+
+from personalclaw.security import redact_values_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +42,8 @@ logger = logging.getLogger(__name__)
 @runtime_checkable
 class ChannelDelivery(Protocol):
     """Outbound delivery a channel provides to the gateway. All text is PLAIN
-    markdown — the implementation renders it to the channel's format."""
+    markdown, masked by core before it is handed over (:class:`MaskedDelivery`) — the
+    implementation renders it to the channel's format."""
 
     async def open_dm(self, user_id: str) -> str:
         """Open (or resolve) a DM channel with a user; return its channel id."""
@@ -214,6 +225,157 @@ class ChannelDelivery(Protocol):
         ...
 
 
+# ── the mask: what a channel is handed ───────────────────────────────────────────────────
+#
+# A channel app sends what it is handed to a service outside this machine: Slack, Telegram,
+# Discord, a mail server. So nothing core hands one may carry a key, and the masking is core's,
+# in one place, rather than a copy in every app that each of them can forget. It used to be split
+# between the two, each covering some paths: the apps sent a notification's title, a rich
+# message's fallback or an automation's name as they were handed it, and core handed over a
+# subagent's reply and an approval's title and input as they were, so a text was safe only where
+# one of the two remembered.
+
+#: The parameters of each sending method that carry text a channel shows: masked before the
+#: method is called. Everything else a method takes (a channel id, a thread, a file's path, a
+#: button's id) passes as it is.
+_SENT_TEXT: dict[str, frozenset[str]] = {
+    "deliver_text": frozenset({"text"}),
+    "deliver_rich": frozenset({"payload", "fallback_text"}),
+    "deliver_cron_result": frozenset({"job_name", "text"}),
+    "deliver_notification": frozenset({"title", "text"}),
+    "deliver_chat_mirror": frozenset({"text"}),
+    "deliver_subagent_reply": frozenset({"text"}),
+    "upload_attachment": frozenset({"title", "initial_comment"}),
+    "start_stream": frozenset({"initial_text"}),
+    "append_stream_task": frozenset({"title"}),
+}
+
+#: The fields of an approval request a channel shows the owner: what the call is, why it is
+#: made and what it would run. ``request_id`` and the options stay, so the answer finds its way.
+_APPROVAL_TEXT = frozenset(
+    {"title", "text", "tool_purpose", "tool_input", "tool_input_obj", "tool_meta"}
+)
+
+
+def _positional(method: str) -> tuple[str, ...]:
+    """The names of *method*'s positional parameters, in order, from the protocol."""
+    params = inspect.signature(getattr(ChannelDelivery, method)).parameters.values()
+    return tuple(p.name for p in params if p.name != "self" and p.kind == p.POSITIONAL_OR_KEYWORD)
+
+
+def _masked_event(event: Any) -> Any:
+    """An approval request with what the owner is shown masked (:data:`_APPROVAL_TEXT`).
+
+    A copy when anything was masked, so the caller's own request keeps what it holds; the request
+    itself when nothing was. The gateway raises an ``AgentEvent`` (a dataclass) and the dashboard's
+    ask on a channel a namespace, so both are handled: a dataclass through ``replace``, anything
+    else as a shallow copy with the masked fields set on it.
+    """
+    record = dataclasses.is_dataclass(event) and not isinstance(event, type)
+    if record:
+        names = {f.name for f in dataclasses.fields(event) if f.init} & _APPROVAL_TEXT
+    else:
+        names = {name for name in _APPROVAL_TEXT if hasattr(event, name)}
+    shown = {name: redact_values_for_display(getattr(event, name)) for name in names}
+    shown = {name: value for name, value in shown.items() if value != getattr(event, name)}
+    if not shown:
+        return event
+    if record:
+        return replace(event, **shown)
+    masked = copy.copy(event)
+    for name, value in shown.items():
+        setattr(masked, name, value)
+    return masked
+
+
+class _Masking:
+    """A sending method of the wrapped handle, called with its text masked first.
+
+    Resolved per access, so a channel that has no such method answers ``AttributeError`` through
+    the mask as it did without it, and ``getattr(delivery, name, None)`` still tells.
+    """
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+        self.texts = _SENT_TEXT[name]
+        self.positions = _positional(name)
+
+    def __get__(self, obj: Any, owner: type | None = None) -> Any:
+        if obj is None:
+            return self
+        send = getattr(obj.inner, self.name)
+        texts, positions = self.texts, self.positions
+
+        async def masked(*args: Any, **kwargs: Any) -> Any:
+            args = tuple(
+                redact_values_for_display(a) if i < len(positions) and positions[i] in texts else a
+                for i, a in enumerate(args)
+            )
+            kwargs = {
+                k: redact_values_for_display(v) if k in texts else v for k, v in kwargs.items()
+            }
+            return await send(*args, **kwargs)
+
+        return masked
+
+
+class _MaskingApproval:
+    """``request_approval`` with the request's text masked, when the channel can prompt at all."""
+
+    def __get__(self, obj: Any, owner: type | None = None) -> Any:
+        if obj is None:
+            return self
+        ask = getattr(obj.inner, "request_approval")
+
+        async def masked(event: Any, *args: Any, **kwargs: Any) -> Any:
+            return await ask(_masked_event(event), *args, **kwargs)
+
+        return masked
+
+
+class MaskedDelivery:
+    """A channel's outbound handle as core holds it: every text it is handed masked first.
+
+    The registry stores this, never the app's own handle, so every path to a channel masks the
+    same way: :func:`delivery_for`, :func:`owner_reachable`, :func:`approval_delivery`,
+    :func:`reach_owner` and :func:`deliver_to_owner`. Text is masked with
+    ``security.redact_values_for_display`` (``redact_for_display`` over a string, and over every
+    string of a rich payload); a channel id, a thread, a path or a button's id passes as it is.
+    What the channel adds to the protocol, and every read, reaches the handle unchanged.
+    """
+
+    deliver_text = _Masking()
+    deliver_rich = _Masking()
+    deliver_cron_result = _Masking()
+    deliver_notification = _Masking()
+    deliver_chat_mirror = _Masking()
+    deliver_subagent_reply = _Masking()
+    upload_attachment = _Masking()
+    start_stream = _Masking()
+    append_stream_task = _Masking()
+    request_approval = _MaskingApproval()
+
+    def __init__(self, inner: Any) -> None:
+        object.__setattr__(self, "inner", inner)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The handle has nothing of its own to set: an attribute set on it is set on the channel's
+        # handle, so a sending method assigned here is still called through the mask rather than
+        # standing in for it.
+        setattr(self.inner, name, value)
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for what the class does not define: the protocol's reads and whatever a
+        # channel adds of its own. `inner` itself lands here only on an instance being copied,
+        # before `__init__` set it; answering from it would recurse.
+        if name == "inner":
+            raise AttributeError(name)
+        return getattr(self.inner, name)
+
+    def __repr__(self) -> str:
+        return f"MaskedDelivery({self.inner!r})"
+
+
 # ── the registry: one handle per provider ────────────────────────────────────────────────
 #
 # Process-level, like `inbox_providers.native_source`'s dashboard-state hook and for the same
@@ -227,7 +389,7 @@ class ChannelDelivery(Protocol):
 # A dict rather than a list: the routing key is the provider, because a channel id means nothing
 # without one. `deliver_text("C123", …)` is answerable only by the provider that issued `C123`.
 
-_REGISTRY: dict[str, "ChannelDelivery"] = {}
+_REGISTRY: dict[str, MaskedDelivery] = {}
 
 
 def provider_of(delivery: Any) -> str:
@@ -264,10 +426,11 @@ def register(delivery: "ChannelDelivery | None", provider: str = "") -> str:
             return provider
         _REGISTRY.clear()
         return ""
-    key = provider or provider_of(delivery)
+    inner = delivery.inner if isinstance(delivery, MaskedDelivery) else delivery
+    key = provider or provider_of(inner)
     previous = _REGISTRY.get(key)
-    _REGISTRY[key] = delivery
-    if previous is not None and previous is not delivery:
+    _REGISTRY[key] = MaskedDelivery(inner)
+    if previous is not None and previous.inner is not inner:
         # Same provider re-registering (a reconnect) is normal and quiet at debug. What must
         # never happen silently again is two DIFFERENT providers sharing a key, which is why the
         # log names the key: if a derivation ever collides, this line is the evidence.
@@ -473,8 +636,7 @@ async def deliver_to_owner(
     With no channel connected at all nothing failed: the caller's dashboard delivery is the
     delivery, and the Inbox is left alone.
 
-    ``title`` and ``text`` are what the Inbox item shows, already redacted by the caller as it
-    redacts what it sends.
+    ``title`` and ``text`` are what the Inbox item shows.
     """
     outcome = await reach_owner(send)
     if outcome.delivered or outcome.no_channel:

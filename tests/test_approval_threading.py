@@ -44,7 +44,7 @@ def _make_gateway():
     gateway.sessions.get_pid = MagicMock(return_value=None)
     # Channel delivery seam (replaces the old core `gateway.slack`).
     gateway._channel_delivery = MagicMock()
-    gateway._channel_delivery.request_approval = AsyncMock(return_value=True)
+    gateway._channel_delivery.inner.request_approval = AsyncMock(return_value=True)
     gateway.dashboard_state = MagicMock()
     # Gateway reads global YOLO via personalclaw.trust_mode (patched off per test).
     gateway.dashboard_state.is_yolo_active.return_value = False
@@ -74,15 +74,15 @@ class TestChannelDelegation:
     async def test_delegates_to_channel_and_returns_result(self) -> None:
         """_interactive_approval calls request_approval and returns its bool."""
         gateway = _make_gateway()
-        gateway._channel_delivery.request_approval = AsyncMock(return_value=True)
+        gateway._channel_delivery.inner.request_approval = AsyncMock(return_value=True)
 
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             approve_fn = gateway._interactive_approval("subagent")
             result = await approve_fn(_make_event(), "1775113012.860459")
 
         assert result == ToolDecision(True, "approved", "you")
-        gateway._channel_delivery.request_approval.assert_awaited_once()
-        call = gateway._channel_delivery.request_approval.call_args
+        gateway._channel_delivery.inner.request_approval.assert_awaited_once()
+        call = gateway._channel_delivery.inner.request_approval.call_args
         # event is the first positional; source + routing context ride kwargs.
         assert call.args[0].request_id == "req1"
         assert call.kwargs["source"] == "subagent"
@@ -93,7 +93,7 @@ class TestChannelDelegation:
     async def test_returns_false_when_channel_rejects(self) -> None:
         """A False decision from the channel propagates as False."""
         gateway = _make_gateway()
-        gateway._channel_delivery.request_approval = AsyncMock(return_value=False)
+        gateway._channel_delivery.inner.request_approval = AsyncMock(return_value=False)
 
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             approve_fn = gateway._interactive_approval("subagent")
@@ -119,7 +119,7 @@ class TestChannelDelegation:
     async def test_channel_exception_falls_back_to_dashboard(self) -> None:
         """If the channel raises, core falls back to the dashboard prompt."""
         gateway = _make_gateway()
-        gateway._channel_delivery.request_approval = AsyncMock(
+        gateway._channel_delivery.inner.request_approval = AsyncMock(
             side_effect=RuntimeError("slack down")
         )
         gateway.dashboard_state.request_approval = AsyncMock(return_value=False)
