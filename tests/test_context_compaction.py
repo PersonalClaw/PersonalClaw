@@ -176,7 +176,7 @@ def _runtime():
 def test_maybe_compact_skips_under_threshold():
     rt = _runtime()
     rt._messages = _convo(10)
-    rt._last_context_pct = 50.0  # under 70
+    rt._last_context_pct = 50.0  # under the default Settings threshold, 90
     before = len(rt._messages)
     rt._maybe_compact()
     assert len(rt._messages) == before  # untouched
@@ -185,7 +185,7 @@ def test_maybe_compact_skips_under_threshold():
 def test_maybe_compact_fires_over_threshold():
     rt = _runtime()
     rt._messages = _convo(10)
-    rt._last_context_pct = 85.0  # over 70
+    rt._last_context_pct = 95.0  # over the default Settings threshold, 90
     before = total_chars(rt._messages)
     rt._maybe_compact()
     assert total_chars(rt._messages) < before
@@ -195,7 +195,7 @@ def test_maybe_compact_fires_over_threshold():
 def test_maybe_compact_anti_thrash_blocks_repeat():
     rt = _runtime()
     rt._messages = _convo(10)
-    rt._last_context_pct = 85.0
+    rt._last_context_pct = 95.0  # over the threshold, so only anti-thrash can stop it
     rt._compaction_saves = [0.02, 0.02]  # two prior weak saves
     before = len(rt._messages)
     rt._maybe_compact()

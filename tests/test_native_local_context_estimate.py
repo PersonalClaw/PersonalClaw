@@ -3,7 +3,7 @@
 `_estimated_context_pct` is the compaction trigger for providers that report no usage: an
 OpenAI-compatible endpoint that rejects `stream_options` never delivers a usage chunk, so
 `_last_context_pct` stays `None` forever and the char estimate is the only thing that can
-ever cross `_COMPACT_THRESHOLD_PCT`.
+ever cross the Settings threshold, `session.autocompact_pct`.
 
 🪤 "No usage" is NOT the same as "local", and conflating the two is how this bug survived a
 green suite. Ollama — the runtime the loopback guard is aimed at — reports
@@ -170,8 +170,8 @@ class TestALocalProviderThatDoesReportUsage:
     def test_a_measured_gauge_is_used_instead_of_the_estimate(self):
         rt = _runtime(_Model("http://127.0.0.1:11434/v1"))
         rt._messages = _convo(6)
-        # What a real Ollama turn leaves behind: input tokens over the SERVED window.
-        rt._last_context_pct = 81.43
+        # A real Ollama turn's measurement, over the default Settings threshold (90).
+        rt._last_context_pct = 95.0
         before = total_chars(rt._messages)
         rt._maybe_compact()
         after = total_chars(rt._messages)
@@ -180,7 +180,7 @@ class TestALocalProviderThatDoesReportUsage:
         # documented optimistic reset in `_compact_now`) — it is not replaced by an
         # estimate and it does not fall back to `None`. Asserted as the scaling rule
         # rather than a literal so it cannot be satisfied by an unrelated number.
-        assert rt._last_context_pct == pytest.approx(81.43 * (after / before))
+        assert rt._last_context_pct == pytest.approx(95.0 * (after / before))
         assert rt._last_context_pct is not None
 
     def test_a_fabricated_zero_suppresses_compaction_entirely(self):

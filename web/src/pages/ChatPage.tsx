@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
-import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
+import { failureSentence, reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
 /** Hands-free voice knobs the composer needs (`voice.*`, MULTIMODAL-IO §4.5). */
@@ -38,6 +38,7 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
+import { joinsATurnStartedElsewhere } from './chat/joinTurn'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
 import { chatContextChips } from './chat/ChatContextLine'
@@ -692,6 +693,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // what send() actually branches on, so a `false` here would reopen the window a layer
   // below the button's label.
   const streamingRef = useRef(streaming)
+  // Set by a Stop in this tab and cleared by that turn's `chat_done`. Stop drops the streaming
+  // claim at once, before the turn has sent its last frames, and those frames are not a turn
+  // some other tab started (`chat/joinTurn.ts`).
+  const stoppedTurnRef = useRef(false)
   // Bumped when a turn settles (streaming → false) so the session-skills review
   // (skill-ephemeral-promotion) re-checks for drafts the agent just captured.
   const [sessionSkillsEpoch, setSessionSkillsEpoch] = useState(0)
@@ -1466,6 +1471,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         endTextRun()  // fully reveal any buffered tail before the turn closes
         markStreaming(false); setStatusText(''); setLatestActivity(null)
         replyFinished(sessionRef.current, { last: true })
+        stoppedTurnRef.current = false
         setSteered([])  // steers belong to the turn they were injected into
         // Cancel-and-replace (PLATFORM-RESILIENCE §6.3): this turn was superseded by a
         // rapid follow-up. The replacement was queued server-side and the next turn
@@ -1707,7 +1713,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     readSnapshot(s, (d) => {
       adoptSnapshot(d)
       markStreaming(!!d.running)
-      if (!d.running) setStatusText('')
+      // An idle chat has no stopped turn still sending: its `chat_done` may be what was missed.
+      if (!d.running) { setStatusText(''); stoppedTurnRef.current = false }
       return true
     }).catch(() => {})
   }, [])
@@ -1725,8 +1732,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // replays it), applied now otherwise — and recorded while any read is out, for the late
   // adoption of one that stopped holding (snapshotReplay.ts).
   const onSocketFrame = useCallback((m: WsMessage) => {
+    // A turn this tab did not start: read the chat once so its question and Stop appear. The
+    // read holds this frame and the ones after it, and replays them on top of the snapshot.
+    const following = streamingRef.current || stoppedTurnRef.current
+    if (!snapshots.busy() && joinsATurnStartedElsewhere(m, sessionRef.current, following)) resync()
     if (!snapshots.hold(m)) onWs(m)
-  }, [onWs])
+  }, [onWs, resync])
   useChatSocket(onSocketFrame, resync, onSocketStatus)
 
   // Idle stream-reconciler. A streaming claim can outlive the turn it describes in two
@@ -2276,7 +2287,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // not-found state carries into a new chat — rather than sitting in the transcript as
       // a sent bubble above a one-line refusal.
       if (hasApiCode(e, 'session_not_found')) { setInput(llmText); setMissing(true); return }
-      patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }])
+      // A failure is not something the assistant said, so it is the turn's error strip with the
+      // platform's sentence, not a warning-sign line of prose carrying the raw error (F-40).
+      patchLastAssistant((segs) => [...segs, { kind: 'error', text: failureSentence('send this message', e) }])
     }
   }
 
@@ -2481,27 +2494,59 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
 
   async function stop() {
-    markStreaming(false)
+    stoppedTurnRef.current = true
     // A reply you stopped is not read out, and neither is the rest of a queue it ends.
     if (sessionRef.current) repliesToSpeak.delete(sessionRef.current)
+    markStreaming(false)
     if (sessionRef.current) await api.stopChat(sessionRef.current).catch(reportActionFailure('stop this turn'))
   }
 
   // ── message actions (stage 4) ──
   const [editingTurn, setEditingTurn] = useState<number | null>(null)
+  // The inline editor's failure line: the edit could not be resent, and the editor stays open
+  // with the text the user wrote, beside the button that failed.
+  const [editFailure, setEditFailure] = useState<string | null>(null)
+
+  // Regenerate, Edit & resend and Rewind each REPLACE turns that are on screen, and none of them
+  // touches the page until the server has accepted the request. They used to remove the turns
+  // first, so a refusal (a turn already running, the message gone) left the later turns missing
+  // from the page with only a warning-sign line in the assistant's voice to say why. Now a
+  // refusal leaves the page exactly as it was. Once the server accepts, the page adopts the
+  // transcript the server just cut, instead of cutting its own copy to match: the new reply can
+  // already be streaming by the time the response lands, and the snapshot read holds those
+  // frames and replays them on top (see `readSnapshot`). `cutLocally` is the same cut made on
+  // the page's own copy, for when that read fails.
+  const replacingRef = useRef(false)
+  async function replaceTurns(
+    request: (session: string) => Promise<unknown>,
+    cutLocally: (prev: ChatTurn[]) => ChatTurn[],
+    onFailure: (e: unknown) => void,
+  ): Promise<boolean> {
+    const s = sessionRef.current
+    if (!s || streamingRef.current || replacingRef.current) return false
+    replacingRef.current = true
+    try { await request(s) }
+    catch (e) { onFailure(e); return false }
+    finally { replacingRef.current = false }
+    followNewTurn()
+    // The coalescer still holds the PRIOR answer's run; the new reply must open its own (K44/K45).
+    dropTextRun()
+    markStreaming(true)
+    readSnapshot(s, (d) => {
+      adoptSnapshot(d)
+      markStreaming(!!d.running)
+      return true
+    }).catch(() => setTurns(cutLocally))
+    return true
+  }
 
   async function regenerate() {
-    const s = sessionRef.current
-    if (!s || streaming) return
-    // drop the last assistant turn locally; the fresh reply streams in via WS.
-    followNewTurn()
-    setTurns((prev) => {
-      const i = prev.map((t) => t.role).lastIndexOf('assistant')
-      return i >= 0 ? prev.slice(0, i) : prev
-    })
-    markStreaming(true); dropTextRun()
-    try { await api.regenerate(s) }
-    catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+    await replaceTurns(
+      (s) => api.regenerate(s),
+      // The last answer goes; the fresh reply streams in beneath its question.
+      (prev) => { const i = prev.map((t) => t.role).lastIndexOf('assistant'); return i >= 0 ? prev.slice(0, i) : prev },
+      reportActionFailure('regenerate this reply'),
+    )
   }
 
   // Page to a prior/next regenerated answer. The backend swaps the active variant
@@ -2552,34 +2597,34 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   }
 
   async function editResend(turnIndex: number, content: string, rewind = false) {
-    const s = sessionRef.current
     const t = content.trim()
-    if (!s || !t || streaming) return
+    if (!t) return
     const turn = turns[turnIndex]
-    setEditingTurn(null)
     // Locate the message by the ORIGINAL turn's ts (backend truncates from there),
     // and stamp the re-added turn with a FRESH ts that the backend also stores —
     // so an immediate SECOND edit-resend still has a matching ts (the backend
     // re-appends the edited message, which would otherwise get a new server ts the
     // FE doesn't know). Falls back to the index when the original turn has no ts.
     const newTs = new Date().toISOString()
-    followNewTurn()
-    setTurns((prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)])
-    // dropTextRun: the re-sent turn's fresh reply must open a NEW coalesced run. We truncate
-    // the turns above, but the coalescer core still holds the PRIOR answer's buffer; without
-    // this the incoming chunks append onto that stale run → the new answer renders glued onto
-    // the old one (K44/K45). DISCARD rather than seal — the turn that text belonged to has
-    // just been truncated away.
-    markStreaming(true); dropTextRun()
     // A rewind retains the discarded tail on the edited message and resets the provider so
-    // context rebuilds from the truncated transcript; the chat_rewound WS re-hydrates so the
-    // divider chip + read-only tail disclosure appear. An EARLIER turn is always a rewind —
-    // decided here for both callers (the inline editor and Rewind to here), and enforced by
-    // the server too, because a plain resend of a middle turn used to delete every later
-    // exchange with no trail. Only the latest turn's plain edit replaces just its own reply.
+    // context rebuilds from the truncated transcript; the snapshot the page adopts carries the
+    // divider chip + read-only tail disclosure. An EARLIER turn is always a rewind — decided
+    // here for both callers (the inline editor and Rewind to here), and enforced by the server
+    // too, because a plain resend of a middle turn used to delete every later exchange with no
+    // trail. Only the latest turn's plain edit replaces just its own reply.
     const asRewind = rewind || editReplacesLaterTurns(turns, turnIndex)
-    try { await api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind) }
-    catch (e) { markStreaming(false); patchLastAssistant((segs) => [...segs, { kind: 'text', text: `⚠️ ${(e as Error).message}` }]) }
+    // Named for what the user pressed: Rewind to here, or the editor's Resend.
+    const what = rewind ? 'rewind to this message' : 'resend your edited message'
+    // Opened from the inline editor, the failure is said there, where the text still is. Rewind
+    // to here has no editor open, so it is said the way every other failed action is.
+    const fromEditor = editingTurn === turnIndex
+    setEditFailure(null)
+    const landed = await replaceTurns(
+      (s) => api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind),
+      (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)],
+      (e) => { if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e) },
+    )
+    if (landed) setEditingTurn(null)
   }
 
   // Rewind to an earlier user turn: confirm (it discards the later answers into
@@ -3662,9 +3707,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                         ref={(el) => { const c = markCoordOf(turn, i); if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c) }}>
                         {turn.role === 'user' ? (
                           editingTurn === i ? (
-                            <UserEditor initial={turnTextOf(turn)} onCancel={() => setEditingTurn(null)}
+                            <UserEditor initial={turnTextOf(turn)} onCancel={() => { setEditingTurn(null); setEditFailure(null) }}
                               replacesLater={editReplacesLaterTurns(turns, i)} canFork={memoryMode === 'persistent'}
-                              onSubmit={(v) => editResend(i, v)} />
+                              failure={editFailure} onSubmit={(v) => editResend(i, v)} />
                           ) : (
                             <div className="group/msg">
                               <MessageUser fromComposer={isLast} onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized}
@@ -3675,7 +3720,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               )}
                               {!streaming && <UserActions text={turnTextOf(turn)} canFork={memoryMode === 'persistent'}
                                 canRewind={!isLast} onRewind={() => rewindTo(i)} ts={stampOf(turn)}
-                                onEdit={() => setEditingTurn(i)} onFork={() => forkAt(i)} />}
+                                onEdit={() => { setEditFailure(null); setEditingTurn(i) }} onFork={() => forkAt(i)} />}
                             </div>
                           )
                         ) : (
@@ -4246,9 +4291,12 @@ function RewindDivider({ snapshots, canFork, onFork }: {
  *  That is said while the editor is open — beside the button that does it, and on the button
  *  itself — together with where the replaced turns go, because the old editor resent a middle
  *  turn with no warning and the later turns were simply gone. */
-function UserEditor({ initial, onSubmit, onCancel, replacesLater = false, canFork = false }: {
+function UserEditor({ initial, onSubmit, onCancel, replacesLater = false, canFork = false, failure = null }: {
   initial: string; onSubmit: (v: string) => void; onCancel: () => void
   replacesLater?: boolean; canFork?: boolean
+  /** Why the last Resend did not go through. The editor stays open with the text, and the
+   *  transcript below it is untouched, so the user can try again or cancel. */
+  failure?: string | null
 }) {
   const [v, setV] = useState(initial)
   const noticeId = useId()
@@ -4268,6 +4316,11 @@ function UserEditor({ initial, onSubmit, onCancel, replacesLater = false, canFor
           <Rewind size={12} className="mt-0.5 shrink-0" />
           <span>Resending replaces everything below this message. {replacedTurnsAreKept(canFork)}</span>
         </p>
+      )}
+      {failure && (
+        <div className="w-full" style={{ maxWidth: 452 }}>
+          <InlineError icon multiline>{failure}</InlineError>
+        </div>
       )}
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
@@ -4830,6 +4883,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // transcript-scan fallback), the `source` the endpoint reports and the client now
   // keeps (SM-2). null = no content search has resolved, so the indicator stays hidden.
   const [contentSource, setContentSource] = useState<string | null>(null)
+  // Why the content search failed, or null. It used to fail in silence: the list quietly fell
+  // back to title matches, and a chat the user remembered SAYING something in read as
+  // "no such chat" (F-41). Bumping `contentRetry` runs the same search again.
+  const [contentFailure, setContentFailure] = useState<string | null>(null)
+  const [contentRetry, setContentRetry] = useState(0)
   // List-view drag-to-folder: the chat key being dragged + the folder group hovered
   // (id, or '' for the ungrouped group → clears the folder). Mirrors the Board's
   // tag drag, reusing setFolder as the drop action.
@@ -4837,7 +4895,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const [overFolder, setOverFolder] = useState<string | null>(null)
   useEffect(() => {
     const query = q.trim()
-    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); return }
+    if (query.length < 2) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null); setContentFailure(null); return }
     let alive = true
     const t = window.setTimeout(() => {
       api.sessionsSearch(query).then(({ sessions: rows, source }) => {
@@ -4848,10 +4906,16 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           rows.filter((r) => r.snippet).map((r) => [strip(r.key), r.snippet as string]),
         ))
         setContentSource(source ?? null)
-      }).catch(() => { if (alive) { setContentKeys(null); setContentSnippets(new Map()); setContentSource(null) } })
+        setContentFailure(null)
+      }).catch((e: unknown) => {
+        if (!alive) return
+        setContentKeys(null); setContentSnippets(new Map()); setContentSource(null)
+        const sentence = failureSentence('search inside your chats', e)
+        setContentFailure(/[.!?]$/.test(sentence) ? sentence : `${sentence}.`)
+      })
     }, 300)
     return () => { alive = false; clearTimeout(t) }
-  }, [q])
+  }, [q, contentRetry])
   const matches = useCallback((s: ChatSessionSummary) => {
     const sOrigin = s.origin ?? 'manual'
     // 'all' shows everything; otherwise the row's origin must match the scope
@@ -5212,6 +5276,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
                 <span data-type="caption" className="mt-1 block text-on-surface-low">
                   {searchSourceLabel(contentSource)}
                 </span>
+              )}
+              {contentFailure && (
+                <InlineError icon multiline className="mt-2" onRetry={() => setContentRetry((n) => n + 1)}>
+                  {contentFailure} Only titles and previews are matched below.
+                </InlineError>
               )}
             </div>
             {/* Active / Archived. Archived chats keep their transcript AND stay

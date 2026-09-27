@@ -180,6 +180,27 @@ def should_compact(saves: list[float]) -> bool:
     return True
 
 
+def autocompact_pct() -> float:
+    """The Settings "Auto-compact threshold", ``session.autocompact_pct``, as config.json reads now.
+
+    The ONE compaction threshold. The native loop compacts its own history when the context
+    crosses it, and the session manager restarts, at the same value, a runtime that cannot
+    compact itself. The loop used to carry its own fixed 70% and the manager read the value it
+    was started with, so the setting governed neither the way Settings said it did.
+
+    Read on every call, so a change in Settings applies to an open chat at its next turn.
+    Deferred import: the native loop calls this, and its package keeps a config-free import
+    surface. A config that cannot be read reads as the field's default.
+    """
+    from personalclaw.config.loader import AppConfig, SessionConfig
+
+    try:
+        return float(AppConfig.load().session.autocompact_pct)
+    except Exception:
+        logger.debug("auto-compact threshold unreadable, using the default", exc_info=True)
+        return SessionConfig().autocompact_pct
+
+
 def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
     """Remove tool messages whose matching assistant tool_call isn't present.
 

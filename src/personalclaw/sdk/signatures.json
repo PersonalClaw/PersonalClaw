@@ -1966,6 +1966,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",
@@ -6094,6 +6095,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",
@@ -6452,6 +6454,7 @@
     ],
     "returns": "None"
    },
+   "compacts_automatically": {"kind": "property", "returns": "bool", "settable": false},
    "compacts_in_process": {"kind": "property", "returns": "bool", "settable": false},
    "complete": {
     "kind": "async generator method",

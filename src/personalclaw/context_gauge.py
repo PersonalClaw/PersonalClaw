@@ -176,9 +176,8 @@ class ContextGauge:
         large as one it has already measured (it dropped input), or it reported at least a
         window's worth. Neither is a silent clamp: 100% *is* the honest reading for a
         context that no longer fits, and it is what makes every configured threshold
-        (``runtime._COMPACT_THRESHOLD_PCT``, ``session._BG_RECYCLE_PCT``,
-        ``config.autocompact_pct``) reachable on a truncating provider instead of leaving
-        the gauge parked at 50% while history grows unbounded.
+        (``config.autocompact_pct``, ``session._BG_RECYCLE_PCT``) reachable on a truncating
+        provider instead of leaving the gauge parked at 50% while history grows unbounded.
 
         🪤 A cold gauge has no reference, so the FIRST turn of a binding cannot be caught by
         the ordinal rule — a session whose very first prompt is already over the window

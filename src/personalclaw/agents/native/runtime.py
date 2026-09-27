@@ -1969,9 +1969,9 @@ class NativeAgentRuntime(AgentProvider):
         return True
 
     # ── message shaping (OpenAI wire format; Anthropic provider re-maps) ──
-    # Compact the native loop's history when context crosses this fraction of
-    # the model's window (provider-reported context_usage_pct).
-    _COMPACT_THRESHOLD_PCT = 70.0
+    # The loop compacts its history when context crosses the Settings threshold,
+    # `context_compaction.autocompact_pct()` — see `_maybe_compact`.
+    #
     # The CONSERVATIVE ratio, not the nominal one: this is a compaction TRIGGER, so it has
     # to over-estimate token usage and err toward compacting slightly early — cheap —
     # rather than overflowing the window, which kills the turn. See
@@ -2071,14 +2071,16 @@ class NativeAgentRuntime(AgentProvider):
     def _maybe_compact(self) -> None:
         """Run structured compaction on ``self._messages`` if over the threshold.
 
-        Trigger = provider-reported context usage ≥ threshold, with a char-based
-        estimate as the trigger when the provider reports no usage at all (the
-        local-model path). Anti-thrashing skips it when the last two passes each
-        reclaimed <10%. Uses the no-LLM path (tool-output pruning pre-pass +
-        structured digest) — cheap, safe, and synchronous; an LLM-summarized
-        middle can layer on later. Records the save fraction for the
-        anti-thrashing guard.
+        Trigger = provider-reported context usage ≥ the Settings threshold
+        (``session.autocompact_pct``), with a char-based estimate as the trigger when
+        the provider reports no usage at all (the local-model path). Anti-thrashing
+        skips it when the last two passes each reclaimed <10%. Uses the no-LLM path
+        (tool-output pruning pre-pass + structured digest) — cheap, safe, and
+        synchronous; an LLM-summarized middle can layer on later. Records the save
+        fraction for the anti-thrashing guard.
         """
+        from personalclaw import context_compaction as cc
+
         measured_pct = self._last_context_pct
         if measured_pct is None:
             # No-usage backstop: estimate purely for the trigger decision. The
@@ -2086,10 +2088,8 @@ class NativeAgentRuntime(AgentProvider):
             measured_pct = self._estimated_context_pct()
         # Unmeasured context cannot cross a threshold — an unknown gauge must not
         # trigger compaction any more than it may print a percentage.
-        if measured_pct is None or measured_pct < self._COMPACT_THRESHOLD_PCT:
+        if measured_pct is None or measured_pct < cc.autocompact_pct():
             return
-        from personalclaw import context_compaction as cc
-
         if not cc.should_compact(self._compaction_saves):
             return
         before, after = self._compact_now(measured_pct)
@@ -2158,6 +2158,21 @@ class NativeAgentRuntime(AgentProvider):
         genuinely execute.
         """
         return True
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """True while :meth:`_maybe_compact` will still compact this runtime's history on its
+        own once the context crosses the Settings threshold.
+
+        False once the last two automatic passes each reclaimed under a tenth
+        (``context_compaction.should_compact``): compacting again would not help, so the
+        session manager restarts the session at that threshold instead. While it is True the
+        manager leaves the session alone, because a restart at the same threshold would
+        always come first and throw away the history this loop is about to compact.
+        """
+        from personalclaw import context_compaction as cc
+
+        return cc.should_compact(self._compaction_saves)
 
     @property
     def keeps_cancelled_turns(self) -> bool:
