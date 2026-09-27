@@ -97,7 +97,7 @@ dashboard uses, so a scripted turn is gated exactly like an interactive one.
 | Flag | Effect |
 |---|---|
 | `-p, --prompt TEXT` | **Required.** The prompt for this turn. An empty or whitespace-only value is refused (exit 2). |
-| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes. |
+| `--format {plain,json,streaming-json}` | `plain` (default) = final text only, pipes cleanly; `json` = one `{result, session, turns, tool_calls, tokens, duration_ms}` document; `streaming-json` = NDJSON of the `chat_chunk`/`tool_call`/`chat_done` WS frames the dashboard consumes; the final `chat_done` carries `outcome` (`complete`, `stopped` or `error`). |
 | `--agent NAME` | Agent to run the turn as (default: the configured default agent). |
 | `--model NAME` | Model override for this turn. |
 | `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
@@ -106,8 +106,10 @@ dashboard uses, so a scripted turn is gated exactly like an interactive one.
 | `--timeout SECS` | Ceiling on the turn (default 600). |
 | `--port PORT` | Gateway port (default: resolved like every other client command). |
 
-Exit code is `0` when the turn succeeded, `1` on a failed turn or transport error, and
-`2` on a refused invocation (blank prompt, or a read-only run on an ACP agent).
+Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
+it finished, or the transport failed, and `2` on a refused invocation (blank prompt, or a
+read-only run on an ACP agent). The code follows how the gateway says the turn ended, not the
+error rows along the way: a transient failure the gateway retried and then finished exits `0`.
 
 ### Safety posture
 

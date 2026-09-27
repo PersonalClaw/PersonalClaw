@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.chat_runner import TURN_ERROR, run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 from personalclaw.providers.provider_bridge import ProviderResolutionError
@@ -80,5 +80,6 @@ async def test_no_provider_turn_runs_cleanup_without_unbound_error(tmp_path):
     offer.assert_called_once()
     assert offer.call_args.args[2] == 0
     assert not any(m.get("role") == "done" for m in session.messages)
-    state.broadcast_ws.assert_any_call("chat_done", {"session": session.key})
+    # …and the frame says the turn ended with an error, not that it completed.
+    state.broadcast_ws.assert_any_call("chat_done", {"session": session.key, "outcome": TURN_ERROR})
     assert session.task is None

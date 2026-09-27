@@ -31,7 +31,7 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
     session_key_exists,
 )
-from personalclaw.dashboard.chat_runner import app_conversation_posture, run_chat
+from personalclaw.dashboard.chat_runner import TURN_STOPPED, app_conversation_posture, run_chat
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -506,8 +506,15 @@ async def _maybe_cancel_and_replace(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
         qid = session.queue_append(message)
+        # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
-            "chat_done", {"session": session.key, "superseded": True, "superseded_by": qid}
+            "chat_done",
+            {
+                "session": session.key,
+                "outcome": TURN_STOPPED,
+                "superseded": True,
+                "superseded_by": qid,
+            },
         )
         sel().log_tool_invocation(
             session_key=_history_key_for(session.key),
@@ -926,6 +933,10 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "title": session.title,
             "running": session.running,
             "stopping": session._stopping,
+            # How the latest turn that left the session idle ended — what that turn's
+            # `chat_done` carried — or null when none has. A tab that missed the frame settles
+            # from this and says the same thing the frame would have.
+            "last_turn_outcome": session._last_turn_outcome or None,
             "messages": prepared,
             "queue": [
                 {"id": q["id"], "content": _redact_for_display(q["content"])}
@@ -1173,6 +1184,11 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
 
     First press: soft cancel (cooperative). Second press (?force=true):
     hard kill. Inserts a stop_event message into the session transcript.
+
+    Answers ``{"ok": true, "stopped": <bool>}``: whether THIS press stopped a turn. ``false``
+    when nothing was running, when a stop was already under way, and when the runtime had no
+    turn in flight — a client must not announce a stop then; the turn's own ``chat_done`` says
+    how it ended.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -1194,7 +1210,9 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             session._stop_state = "idle"
             state.push_sessions_update()
 
-        await state.sessions.stop_turn(_history_key_for(name), force=True, on_hard=_on_hard_force)
+        forced = await state.sessions.stop_turn(
+            _history_key_for(name), force=True, on_hard=_on_hard_force
+        )
         sel().log_tool_invocation(
             session_key=_history_key_for(name),
             agent=getattr(session, "agent", "") or "personalclaw",
@@ -1204,13 +1222,13 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             outcome="hard",
             metadata={"session": name, "force": True},
         )
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, "stopped": forced in ("soft", "hard")})
 
     # Already stopping or not running — no-op
     if session._stop_state != "idle" or not session.running:
         if not session.running:
             logger.info("Stop: session %s not running, ignoring", name)
-        return web.json_response({"ok": True})
+        return web.json_response({"ok": True, "stopped": False})
 
     # First press: soft stop
     session._stop_state = "soft_pending"
@@ -1269,7 +1287,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         outcome=outcome,
         metadata={"session": name, "force": False},
     )
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "stopped": outcome in ("soft", "hard")})
 
 
 async def api_chat_screen_state(request: web.Request) -> web.Response:

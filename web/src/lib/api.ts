@@ -7152,7 +7152,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | null; pending_approval?: boolean; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage (CC-7): the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -7287,7 +7287,10 @@ export const api = {
   },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
-  stopChat: (session: string, force = false) => post(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
+  // `stopped`: whether THIS press stopped a turn. False when nothing was running, a stop was
+  // already under way, or the runtime had no turn in flight — the turn's own `chat_done` says how
+  // it ended then.
+  stopChat: (session: string, force = false) => post<{ ok: boolean; stopped: boolean }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
   approve: (session: string, action: string, request_id?: string) =>
     post(`/api/chat/sessions/${session}/approve`, { action, request_id }),
 

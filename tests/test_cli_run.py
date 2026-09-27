@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw import cli_run
+from personalclaw.dashboard.chat_runner import TURN_COMPLETE, TURN_ERROR, TURN_STOPPED
 from personalclaw.guardrails.policy import (
     HEADLESS,
     INTERACTIVE,
@@ -437,11 +438,61 @@ def test_an_error_frame_makes_the_turn_fail(monkeypatch, capsys):
                 "data": {"session": collector.session_key, "role": "error", "content": "boom"},
             }
         )
-        collector.feed({"type": "chat_done", "data": {"session": collector.session_key}})
+        collector.feed(
+            {"type": "chat_done", "data": {"session": collector.session_key, "outcome": TURN_ERROR}}
+        )
 
     monkeypatch.setattr(cli_run, "_consume", _erroring)
     assert cli_run._run_one(_args(prompt="hi")) == 1
     assert "boom" in capsys.readouterr().err
+
+
+def test_a_retried_turn_that_finishes_succeeds(monkeypatch, capsys):
+    """A retry notice is an error row, and the turn goes on: the gateway runs the message again.
+    The exit code follows how the turn ENDED, which only its final ``chat_done`` says."""
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+
+    async def _retried(port, token, collector, prompt, timeout):
+        key = collector.session_key
+        collector.feed(
+            {
+                "type": "chat_message",
+                "data": {
+                    "session": key,
+                    "role": "error",
+                    "content": "⟳ Connection lost — retrying...",
+                },
+            }
+        )
+        collector.feed({"type": "chat_chunk", "data": {"session": key, "content": "PONG"}})
+        collector.feed({"type": "chat_done", "data": {"session": key, "outcome": TURN_COMPLETE}})
+
+    monkeypatch.setattr(cli_run, "_consume", _retried)
+    assert cli_run._run_one(_args(prompt="hi")) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "PONG"
+    assert "turn failed" not in captured.err
+
+
+def test_a_stopped_turn_fails_and_says_it_was_stopped(monkeypatch, capsys):
+    """A turn stopped before it finished (from the dashboard, or by a watchdog) is not a
+    success, and it is not an error either: the CLI says which."""
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+
+    async def _stopped(port, token, collector, prompt, timeout):
+        key = collector.session_key
+        collector.feed({"type": "chat_chunk", "data": {"session": key, "content": "Half an ans"}})
+        collector.feed({"type": "chat_done", "data": {"session": key, "outcome": TURN_STOPPED}})
+
+    monkeypatch.setattr(cli_run, "_consume", _stopped)
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    err = capsys.readouterr().err
+    assert "stopped before it finished" in err
+    assert "turn failed" not in err
 
 
 def test_a_clean_turn_exits_zero(monkeypatch, capsys):
@@ -455,7 +506,12 @@ def test_a_clean_turn_exits_zero(monkeypatch, capsys):
         collector.feed(
             {"type": "chat_chunk", "data": {"session": collector.session_key, "content": "PONG"}}
         )
-        collector.feed({"type": "chat_done", "data": {"session": collector.session_key}})
+        collector.feed(
+            {
+                "type": "chat_done",
+                "data": {"session": collector.session_key, "outcome": TURN_COMPLETE},
+            }
+        )
 
     monkeypatch.setattr(cli_run, "_consume", _clean)
     assert cli_run._run_one(_args(prompt="hi", fmt="json")) == 0
