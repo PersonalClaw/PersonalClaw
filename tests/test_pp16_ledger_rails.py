@@ -6,13 +6,14 @@ PP-16's plan names the seam this file rails:
     `PP-5` ledger, which already carries `step_completed`, `judge_verdict`, `breaker_trip` and
     `watcher_reaped` for both nouns.
 
-Measured on `origin/main` before this change, the run side answered none of it. `service.introspect`
-was the ONLY run-side ledger projection endpoint, and against a ledger holding one event of each of
-those four kinds it surfaced: `step_completed` as a timeline row that drops the step's own
-`output_ref`, and `judge_verdict` / `watcher_reaped` not at all. `breaker_trip` was worse than
-unreachable — **the workflow engine has no producer for it**, so any count the run side reported
-would have been a claim rather than an observation. That is the trap this project has now hit six
-times, and `handlers/apps.py` states the principle: absent and declared false are different facts.
+Measured on `origin/main` before this change, the run side answered none of it.
+`run_cockpit.introspect` was the ONLY run-side ledger projection endpoint, and against a ledger
+holding one event of each of those four kinds it surfaced: `step_completed` as a timeline row that
+drops the step's own `output_ref`, and `judge_verdict` / `watcher_reaped` not at all.
+`breaker_trip` was worse than unreachable — **the workflow engine has no producer for it**, so any
+count the run side reported would have been a claim rather than an observation. That is the trap
+this project has now hit six times, and `handlers/apps.py` states the principle: absent and
+declared false are different facts.
 
 So there are two families of rail here, and both matter:
 
@@ -143,7 +144,7 @@ def test_the_two_rails_reach_every_produced_kinds_own_payload(run_home):
     not reach what it finished with. Each assertion below names a field the timeline row does NOT
     carry, so a rail that merely re-counted events would fail here.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     run_id = _run_with(
         "rails-reach",
@@ -156,7 +157,7 @@ def test_the_two_rails_reach_every_produced_kinds_own_payload(run_home):
             ),
         ],
     )
-    payload = service.ledger_rails(run_id)
+    payload = run_cockpit.ledger_rails(run_id)
     assert payload["ok"] is True
 
     assert len(payload["findings"]) == 1, "vacuity floor: the findings rail found no row to project"
@@ -190,10 +191,10 @@ def test_an_unknown_run_is_a_named_failure_not_empty_rails(run_home):
     `WF_RUN_NOT_FOUND` is the service vocabulary `handlers._fail` already maps to a 404, so this
     reuses the existing code rather than minting one.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
     from personalclaw.workflows.handlers import _STATUS_MAP
 
-    result = service.ledger_rails("no-such-run")
+    result = run_cockpit.ledger_rails("no-such-run")
     assert result["ok"] is False
     assert result["code"] == "WF_RUN_NOT_FOUND"
     # And that code really translates to a 404 — a named failure nothing maps is still a 500.
@@ -431,10 +432,10 @@ def test_the_totals_payload_carries_the_disclosure_keys(run_home):
 def test_the_disclosure_reaches_the_service_payload_on_a_real_mixed_run(run_home):
     """End-to-end floor: the flag survives the route, not just the dataclass.
 
-    `rail_totals` agreeing with itself is worth nothing if `service.ledger_rails` — what the HTTP
-    route and `LedgerRailsPanel` actually see — drops the field on the way out.
+    `rail_totals` agreeing with itself is worth nothing if `run_cockpit.ledger_rails` — what the
+    HTTP route and `LedgerRailsPanel` actually see — drops the field on the way out.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     run_id = _run_with(
         "rails-mixed-tokens",
@@ -443,7 +444,7 @@ def test_the_disclosure_reaches_the_service_payload_on_a_real_mixed_run(run_home
             ("step_completed", _LOOP_STEP),
         ],
     )
-    payload = service.ledger_rails(run_id)
+    payload = run_cockpit.ledger_rails(run_id)
     assert payload["ok"] is True
     totals = payload["totals"]
     assert totals["tokens"] == 100
@@ -651,7 +652,7 @@ def test_a_secret_written_through_the_journal_never_reaches_the_rails(run_home):
     the one that pins that. Keeping both is the point: this one catches a writer that stops
     redacting, that one catches a reader that starts trusting the file.
     """
-    from personalclaw.workflows import service
+    from personalclaw.workflows import run_cockpit
 
     run_id = _run_with(
         "rails-redact",
@@ -662,7 +663,7 @@ def test_a_secret_written_through_the_journal_never_reaches_the_rails(run_home):
             )
         ],
     )
-    payload = service.ledger_rails(run_id)
+    payload = run_cockpit.ledger_rails(run_id)
     assert payload["findings"], "vacuity floor: nothing was projected to redact"
     assert "sk-ABCDEF1234567890abcdef" not in str(payload), "a secret reached the rails payload"
 
@@ -706,7 +707,7 @@ def test_a_raw_row_that_bypassed_the_writer_is_still_redacted_on_read(run_home, 
     """
     from personalclaw.ledger import EVENTS_FILE
     from personalclaw.ledger.redaction import redact
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, store
 
     # Floor for the floor: if the redactor does not recognise this shape, every assertion below
     # would pass on a payload that leaked. Measured here rather than assumed — a shorter token was
@@ -716,7 +717,7 @@ def test_a_raw_row_that_bypassed_the_writer_is_still_redacted_on_read(run_home, 
     run_id = _run_with(f"rails-raw-{rail}", [("step_completed", _RUN_STEP)])
     # BELOW the writer: no `redact`, no `seq`, no `event_id` — the file as a foreign core left it.
     store.append_jsonl(run_id, EVENTS_FILE, {"ts": "2026-09-06T00:00:00Z", **raw_row})
-    payload = service.ledger_rails(run_id)
+    payload = run_cockpit.ledger_rails(run_id)
     planted = [row for row in payload[rail] if row["node_id"] == "raw"]
     assert planted, f"vacuity floor: the planted raw row reached no {rail} row"
     assert _SECRET not in str(

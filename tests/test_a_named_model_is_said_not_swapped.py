@@ -272,7 +272,7 @@ async def _run_one_infer(home, monkeypatch) -> dict[str, Any]:
     """One `infer` step on the reasoning axis, driven by the real engine and the real
     `one_shot_completion` — only the providers are fakes."""
     from personalclaw.ledger.reader import read_journal
-    from personalclaw.workflows import service, store
+    from personalclaw.workflows import run_cockpit, service, store
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import WorkflowRun
 
@@ -295,7 +295,7 @@ async def _run_one_infer(home, monkeypatch) -> dict[str, Any]:
         "completed": [r for r in journal if r.get("kind") == "step_completed"],
         "failed": [r for r in journal if r.get("kind") == "step_failed"],
         "rows": list(service._nodes_of(run.id)),
-        "introspect": service.introspect(run.id),
+        "introspect": run_cockpit.introspect(run.id),
     }
 
 

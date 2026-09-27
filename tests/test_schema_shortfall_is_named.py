@@ -39,7 +39,7 @@ import pytest
 
 from personalclaw.ledger.reader import read_journal
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import service, store
+from personalclaw.workflows import service, stage_settlement, store
 from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -386,9 +386,10 @@ async def _drive_stage(
 ) -> dict[str, Any]:
     """One stage through the REAL `SubagentManager` over the shipped `ScriptedProvider`.
 
-    A stage's output is produced out of band, at `_reconcile_dispatched_stages`, so this is the only
-    kind of drive that reaches the settle the stage notice lives on. Returns what that settle wrote
-    to each surface: the instance, the journal row, the REST row and the live event.
+    A stage's output is produced out of band, at `stage_settlement.reconcile_dispatched_stages`, so
+    this is the only kind of drive that reaches the settle the stage notice lives on. Returns what
+    that settle wrote to each surface: the instance, the journal row, the REST row and the live
+    event.
     """
     from personalclaw.llm.registry import SCRIPTED_PROVIDER_ENV
     from personalclaw.llm.scripted import ScriptedProvider
@@ -910,10 +911,14 @@ def test_every_bundled_stage_is_silent_when_it_conforms_and_named_when_it_does_n
                 run = store.create(WorkflowRun(id="", workflow_name=name))
                 controllers[name] = RunController(run, specs[name])
             controller, schema = controllers[name], node.config["schema"]
-            good = controller._settled_stage_output(node, json.dumps(_conforming_answer(schema)))
+            good = stage_settlement._settled_stage_output(
+                controller, node, json.dumps(_conforming_answer(schema))
+            )
             if good.schema_shortfall:
                 false_alarms.append(f"{name}:{node.id}: {good.schema_shortfall}")
-            prose = controller._settled_stage_output(node, "I did the work and it went well.")
+            prose = stage_settlement._settled_stage_output(
+                controller, node, "I did the work and it went well."
+            )
             if not prose.schema_shortfall:
                 silent.append(f"{name}:{node.id}")
     assert false_alarms == [], false_alarms

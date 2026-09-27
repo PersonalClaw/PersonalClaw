@@ -42,9 +42,9 @@ import json
 import pytest
 
 from personalclaw.config import loader as config_loader
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.learning import LearningConfig
 from personalclaw.config.loader import AppConfig, KnowledgeConfig, WorkflowsConfig
-from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.knowledge import semantics as sem
 from personalclaw.workflows import bindings, longrun
 

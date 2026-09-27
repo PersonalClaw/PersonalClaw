@@ -38,7 +38,7 @@ from personalclaw.http_errors import consent_required
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query, strict_bool
 from personalclaw.sel import sel
-from personalclaw.workflows import service, store
+from personalclaw.workflows import run_cockpit, service, store
 from personalclaw.workflows.review_service import apply_triage, review_findings
 
 logger = logging.getLogger(__name__)
@@ -255,7 +255,7 @@ async def api_template_trajectory(request: web.Request) -> web.Response:
     refusal = await _parent_def_refusal(name)
     if refusal is not None:
         return refusal
-    return _reply(service.template_trajectory(name))
+    return _reply(run_cockpit.template_trajectory(name))
 
 
 async def api_def_save(request: web.Request) -> web.Response:
@@ -982,7 +982,7 @@ async def api_run_introspect(request: web.Request) -> web.Response:
     it can see in full. Five routes would let the cockpit render eight answers and never learn
     that the ninth was missing.
     """
-    return _reply(service.introspect(request.match_info.get("run_id", "")))
+    return _reply(run_cockpit.introspect(request.match_info.get("run_id", "")))
 
 
 async def api_run_ledger_rails(request: web.Request) -> web.Response:
@@ -1001,7 +1001,7 @@ async def api_run_ledger_rails(request: web.Request) -> web.Response:
     404s for an unknown run (`WF_RUN_NOT_FOUND`), so a polled deleted run is distinguishable from
     a warming-up one with empty rails.
     """
-    return _reply(service.ledger_rails(request.match_info.get("run_id", "")))
+    return _reply(run_cockpit.ledger_rails(request.match_info.get("run_id", "")))
 
 
 async def api_run_deliverable(request: web.Request) -> web.Response:
@@ -1026,7 +1026,7 @@ async def api_run_deliverable(request: web.Request) -> web.Response:
     404s for an unknown run (`WF_RUN_NOT_FOUND`), so a client polling a deleted run learns it is
     gone instead of reading "no document yet" forever.
     """
-    return _reply(service.run_deliverable(request.match_info.get("run_id", "")))
+    return _reply(run_cockpit.run_deliverable(request.match_info.get("run_id", "")))
 
 
 async def api_run_output(request: web.Request) -> web.Response:
@@ -1045,12 +1045,12 @@ async def api_run_node_inspect(request: web.Request) -> web.Response:
     is the sole caller today.
 
     SECRETS ABSENT is the contract. The service read returns persisted values verbatim, and
-    the resolved prompt in particular is stored UN-redacted by the JOURNAL (`_store_prompt`
-    writes through `store.write_output`, not the redacting journal path). So every
-    reconstructability field is routed through `journal.redact` — the SAME recursive redactor the
-    journal writer uses, reused rather than re-derived so the two cannot drift — before it leaves
-    the process. A credential that reached this endpoint would be a credential shipped to a
-    browser, a bug report, and (via the drawer) a screenshot.
+    the resolved prompt in particular is stored UN-redacted by the JOURNAL
+    (`node_bindings.store_prompt` writes through `store.write_output`, not the redacting journal
+    path). So every reconstructability field is routed through `journal.redact` — the SAME recursive
+    redactor the journal writer uses, reused rather than re-derived so the two cannot drift — before
+    it leaves the process. A credential that reached this endpoint would be a credential shipped to
+    a browser, a bug report, and (via the drawer) a screenshot.
 
     This stays load-bearing after #3166. That change made the persisted prompt the POST-OUTBOUND-
     SCAN text, which is a different guarantee: the outbound scan only substitutes when the run's

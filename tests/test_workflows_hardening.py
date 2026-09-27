@@ -133,9 +133,9 @@ class TestTimeoutPair:
         trusting it."""
         import inspect
 
-        from personalclaw.workflows import controller as ctrl
+        from personalclaw.workflows import step_dispatch
 
-        source = inspect.getsource(ctrl.RunController._execute)
+        source = inspect.getsource(step_dispatch.execute)
         assert "on_progress" in source, "the dispatcher is not given a progress callback"
 
     async def test_a_zero_stall_knob_disables_the_check(self) -> None:
@@ -203,7 +203,7 @@ class TestDispatcherWaitBudget:
         rather than merely that it is not 60: a reserve applied twice, or applied to the wrong
         side, would still differ from 60 and still be wrong.
         """
-        from personalclaw.workflows.controller import _DISPATCH_WAIT_RESERVE_SECS
+        from personalclaw.workflows.step_dispatch import _DISPATCH_WAIT_RESERVE_SECS
 
         seen: list[int] = []
 

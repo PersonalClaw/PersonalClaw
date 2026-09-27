@@ -727,13 +727,14 @@ def _config_permission_errors(declared: list[str]) -> list[str]:
     editable setting would render on the install screen as a grant that reaches nothing. A
     security setting would render as one the gateway refuses on every request
     (``config/edit_spec.app_write_refusal``), and reading one is no app's business either: the
-    posture is the owner's to see and change. The registry is ``_EDITABLE_CONFIG`` — imported
-    here, lazily, because it lives with its handler (``config/edit_spec.py`` says why).
+    posture is the owner's to see and change. The registry is ``_EDITABLE_CONFIG``
+    (``config/editable.py``), the one table every config write path validates against — imported
+    lazily because only an install needs it.
     """
     if not declared:
         return []
     from personalclaw.config.edit_spec import security_control
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     errors: list[str] = []
     for entry in declared:

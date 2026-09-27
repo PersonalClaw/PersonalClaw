@@ -312,10 +312,10 @@ class TestControllerScopeEnforcement:
             calls["n"] += 1
             return real(roots)
 
-        import personalclaw.workflows.controller as ctrl
+        import personalclaw.workflows.step_dispatch as dispatch_mod
 
-        original = ctrl.scope_snapshot
-        ctrl.scope_snapshot = counting
+        original = dispatch_mod.scope_snapshot
+        dispatch_mod.scope_snapshot = counting
         try:
             spec = _stage_spec({"provider": "writer"})
             run = store.create(WorkflowRun(id="", workflow_name="scoped"))
@@ -330,7 +330,7 @@ class TestControllerScopeEnforcement:
             )
             assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         finally:
-            ctrl.scope_snapshot = original
+            dispatch_mod.scope_snapshot = original
         assert calls["n"] == 0
 
 

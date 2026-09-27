@@ -87,6 +87,7 @@ PLUMBING = (
     "src/personalclaw/config/learning.py",
     "src/personalclaw/config/external_access.py",
     "src/personalclaw/config/coercion.py",
+    "src/personalclaw/config/editable.py",
     "src/personalclaw/dashboard/handlers/core.py",
 )
 
@@ -109,7 +110,7 @@ def _frontend_sources() -> dict[str, str]:
 
 
 def _allowlist() -> dict[str, dict]:
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     return _EDITABLE_CONFIG
 

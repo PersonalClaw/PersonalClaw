@@ -266,6 +266,7 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("gateway.py", "parse_dashboard_url"): "the bind decision; this process then publishes it",
     ("dashboard/state.py", "DASHBOARD_PORT"): "default arg for the bind port; always passed",
     ("dashboard/server.py", "_DEFAULT_PORT"): "same default arg, via dashboard.state",
+    ("dashboard/api_server.py", "_DEFAULT_PORT"): "same default arg, via dashboard.state",
     ("dashboard/token_auth.py", "_DEFAULT_PORT"): "token audience/origin, not an API base",
     ("dashboard/handlers/auth.py", "_DEFAULT_PORT"): "token audience, via token_auth",
     ("cli.py", "DASHBOARD_PORT"): "`--port` default for a human at a terminal",

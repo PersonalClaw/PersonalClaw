@@ -95,42 +95,6 @@ NATIVE_TARGET = "native"
 NATIVE_CAPABILITY = "native_notifications"
 
 
-def dashboard_link(fragment: str) -> str:
-    """An absolute link to ``fragment`` (``#/…``) on this dashboard, or "" when none is known.
-
-    For a message read OUTSIDE the dashboard (a channel DM), where a bare hash route leads
-    nowhere. The base is the declared public URL, else ``dashboard.url`` — the URL an owner sets
-    for links sent to chat channels. With neither, there is no honest link to give."""
-    if not fragment:
-        return ""
-    try:
-        from personalclaw.dashboard.exposure import public_url
-        from personalclaw.dashboard.origin import dashboard_origin
-
-        base = dashboard_origin(
-            public_url() or str(config_loader.AppConfig.load().dashboard.url or "")
-        )
-    except Exception:  # noqa: BLE001 - a link is a courtesy; the message goes without it
-        logger.debug("no dashboard base URL for a link", exc_info=True)
-        return ""
-    return f"{base}/{fragment.lstrip('/')}" if base else ""
-
-
-def channel_dm_text(note: dict[str, Any]) -> str:
-    """What the ``channel_dm`` target sends for ``note``: its title, its body, and its link.
-
-    Redacted here as every outbound channel text is (a channel app redacts again), because this
-    leaves the machine."""
-    from personalclaw.security import redact_credentials, redact_exfiltration_urls
-
-    parts = [str(note.get("title") or "").strip(), str(note.get("body") or "").strip()]
-    text = "\n\n".join(p for p in parts if p)
-    text, _ = redact_exfiltration_urls(text)
-    text, _ = redact_credentials(text)
-    link = dashboard_link(str(note.get("statusUrl") or ""))
-    return f"{text}\n{link}" if link else text
-
-
 #: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
 DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
 

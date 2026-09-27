@@ -484,6 +484,6 @@ def test_the_gate_is_read_by_load():
 def test_the_gate_is_runtime_editable():
     """Point (d). Live-editable because it is the one path that acts on what WORKED — a user
     who finds that presumptuous should be able to stop it without a restart."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["learning.self_model_enabled"] == {"type": "bool"}

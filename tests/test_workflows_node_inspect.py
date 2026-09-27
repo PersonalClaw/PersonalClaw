@@ -6,9 +6,9 @@ The load-bearing claims, each a property this module locks:
   ref), `resolved_inputs`, `output` (or an `artifact_ref`), `attempts`, `ledger_events`,
   `cached`;
 * **secrets are absent** — the resolved prompt is stored UN-redacted on disk (the controller's
-  `_store_prompt` writes through the raw `store.write_output`, not the redacting journal path),
-  so the endpoint's redaction is the ONLY thing standing between a credential on disk and a
-  credential in a browser. This is the security contract and the reason this test exists;
+  `node_bindings.store_prompt` writes through the raw `store.write_output`, not the redacting
+  journal path), so the endpoint's redaction is the ONLY thing standing between a credential on disk
+  and a credential in a browser. This is the security contract and the reason this test exists;
 * an offloaded output returns `{"artifact_ref": ...}` rather than the raw blob;
 * a cache-served node reports `cached: true`;
 * an unknown run / unknown node is a 404, and a node that has not reached a terminal state is a
@@ -103,8 +103,9 @@ def _build_run(
 
     tgt_out = {"answer": "ok"} if target_output is None else target_output
     tgt_ref = store.write_output(run.id, TGT_PATH, tgt_out)
-    # The prompt is written RAW at `<path>::prompt`, mirroring the controller's `_store_prompt`
-    # (which does NOT redact) — this is what makes the secrets-absent test meaningful.
+    # The prompt is written RAW at `<path>::prompt`, mirroring the controller's
+    # `node_bindings.store_prompt` (which does NOT redact) — this is what makes the secrets-absent
+    # test meaningful.
     store.write_output(run.id, f"{TGT_PATH}::prompt", prompt)
 
     store.write_state(

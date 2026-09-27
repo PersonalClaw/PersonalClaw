@@ -413,7 +413,7 @@ def task_list_ids_for_run(run_id: str, tasks: Iterable[Any] | None) -> dict[str,
 
     * A task with no list contributes nothing. Same reading as a phase absent from
       ``Loop.task_list_ids`` — no list holds that work yet. MEASURED: the engine's own write
-      (`controller._write_projected_task`) passes no ``task_list_id``, so a fresh run
+      (`task_projection._write_projected_task`) passes no ``task_list_id``, so a fresh run
       projects ``{}`` until its tasks are FILED into lists — a user move the write façade
       permits, because ``task_list_id`` is deliberately not in `ENGINE_OWNED_FIELDS`.
     * A managed binding wins over a produced one on the same node. A node can both project
@@ -479,7 +479,7 @@ def reject_write(task: Any, fields: dict[str, Any]) -> str:
     ``task_update`` tool. Not at the write FAÇADE, and not by the engine: the contract is an
     actor asymmetry, and ``update_task`` cannot tell who is calling it — see that resolver for
     the full reasoning. Until #390 this function had no production caller at all, so the
-    invariant ``controller._write_projected_task`` asserts in prose was documented and unheld.
+    invariant ``task_projection._write_projected_task`` asserts in prose was documented and unheld.
     """
     if not managed(task):
         return ""

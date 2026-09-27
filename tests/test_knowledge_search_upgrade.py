@@ -188,14 +188,14 @@ class TestSearchForContext:
 
     def test_the_two_fetch_knobs_are_patchable(self):
         """The round-trip contract's write path — the half that was missing entirely."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert _EDITABLE_CONFIG["knowledge.fetch_top_n"]["min"] == 1
         assert _EDITABLE_CONFIG["knowledge.fetch_max_tokens"]["min"] == 1
 
     def test_the_token_budget_ceiling_matches_the_handlers_own_ceiling(self):
         """A PATCH may not accept a budget the handler will silently clamp away."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
         from personalclaw.dashboard.handlers.knowledge import _CONTEXT_MAX_TOKENS_CEILING
 
         assert _EDITABLE_CONFIG["knowledge.fetch_max_tokens"]["max"] == _CONTEXT_MAX_TOKENS_CEILING

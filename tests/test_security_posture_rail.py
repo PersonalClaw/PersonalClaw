@@ -38,8 +38,9 @@ from personalclaw.config.edit_spec import (
     SecurityControl,
     security_control,
 )
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, AppConfig
-from personalclaw.dashboard.handlers.core import _AGENT_PUT_FIELDS, _EDITABLE_CONFIG
+from personalclaw.dashboard.handlers.core import _AGENT_PUT_FIELDS
 
 CONTROLS = sorted(k for k, spec in _EDITABLE_CONFIG.items() if security_control(spec))
 

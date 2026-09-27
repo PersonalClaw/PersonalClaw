@@ -10,7 +10,7 @@ import { TextLink } from '../../ui/TextLink'
  *  round-trip contract, which was the only one missing.
  *
  *  Measured before this: `evals.*` had a dataclass + `_meta`, a `load()`, a `to_dict()` and five
- *  entries in `_EDITABLE_CONFIG` (`dashboard/handlers/core.py`), and **zero** frontend controls —
+ *  entries in `_EDITABLE_CONFIG` (`config/editable.py`), and **zero** frontend controls —
  *  `git grep -in evals -- web/src/pages/settings` returned nothing across 33 subpages. Meanwhile
  *  `#/learning` told four panels' worth of users to turn the substrate on, and the only path that
  *  existed was `personalclaw config set`. A backend allowlist with no control is a feature only its

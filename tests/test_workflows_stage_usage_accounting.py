@@ -9,11 +9,11 @@ Two independent causes, both wiring gaps rather than bad measurements:
 1. **`total_tokens`.** `_apply` books an awaited dispatch's spend
    (``self.run.total_tokens += int(result.tokens)``, ``controller.py:3331``) and a spawned `stage`
    returns at the RUNNING branch far above that line. Its real completion is settled out of band by
-   `_reconcile_dispatched_stages`, which read `error`/`reaped`/`result` off `SubagentInfo` and
-   ignored the `input_tokens`/`output_tokens`/`cost_usd`/`model` sitting beside them. So a template
-   whose only leaves are stages counted nothing. `general-project` is exactly that shape —
-   ``loop[sequence[stage, stage]]``, two leaves, both `kind: stage` — which is why the owner's run
-   could not have reported anything else.
+   `stage_settlement.reconcile_dispatched_stages`, which read `error`/`reaped`/`result` off
+   `SubagentInfo` and ignored the `input_tokens`/`output_tokens`/`cost_usd`/`model` sitting beside
+   them. So a template whose only leaves are stages counted nothing. `general-project` is exactly
+   that shape — ``loop[sequence[stage, stage]]``, two leaves, both `kind: stage` — which is why the
+   owner's run could not have reported anything else.
 2. **`agent_count`.** The field had ONE assignment in the entire tree: `WorkflowRun.from_dict`
    reading back its own persisted zero (``models.py:1146``). A declared dataclass field, a
    `to_dict` key and a ``DEFAULT 0`` SQLite column with no writer anywhere — so every run ever

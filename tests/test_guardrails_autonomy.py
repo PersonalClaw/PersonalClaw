@@ -545,7 +545,7 @@ class TestConfigWiring:
         assert "of 25" in elig.reason
 
     def test_the_thresholds_are_runtime_editable(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         for leaf in (
             "clean_approvals",

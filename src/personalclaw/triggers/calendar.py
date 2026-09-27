@@ -1081,7 +1081,7 @@ def parse_default_window(value: str | None) -> QuietWindow | None:
 
     Anything else raises `ValueError` saying what is wrong and naming the form that works. This is
     the ONE reading of the setting: the Settings write refuses with it
-    (`dashboard/handlers/core.py::_quiet_window_sanitizer`) and the scheduler applies with it
+    (`config/editable.py::_quiet_window_sanitizer`) and the scheduler applies with it
     (:func:`default_quiet_window`). When the write only checked "a string of at most 64
     characters", `10pm-7am` saved with a 200 and then read as no window at all, so the field showed
     quiet hours that held nothing.

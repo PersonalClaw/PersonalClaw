@@ -3,11 +3,11 @@
 `materialize.reject_write` refuses a direct write to `status`/`blocked_kind`/`preview`/
 `done_criterion`/`evidence`/`attempts` on a task a workflow run owns. It was fully implemented,
 unit-tested — and had **zero production callers**. Every reference in the tree was its own
-definition plus a COMMENT in `controller._write_projected_task` asserting the invariant as though
-it held: *"one writer for a managed task's status, and a refusal (naming the alternative) for
-every other path."* Measured against the shipped code, every other path refused nothing:
-`PUT /api/tasks/{id} {"preview": "…"}` on a managed task answered **200** and overwrote the
-engine's projection.
+definition plus a COMMENT in `task_projection._write_projected_task` asserting the invariant as
+though it held: *"one writer for a managed task's status, and a refusal (naming the alternative) for
+every other path."* Measured against the shipped code, every other path refused nothing: `PUT
+/api/tasks/{id} {"preview": "…"}` on a managed task answered **200** and overwrote the engine's
+projection.
 
 Why that is a bug and not dead code to delete. The docstring names the harm precisely — a board
 that disagrees with the run it is showing, while the user believes the board:

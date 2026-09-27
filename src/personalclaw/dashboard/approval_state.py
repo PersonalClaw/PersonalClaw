@@ -778,7 +778,7 @@ class DashboardApprovalState:
     async def _approval_link_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
         """Tell the owner on their channel that an approval is waiting, with where to answer it."""
         from personalclaw.channel_delivery import reach_owner
-        from personalclaw.notification_rules import dashboard_link
+        from personalclaw.dashboard.channel_messages import dashboard_link
 
         what = str(entry.get("tool") or "a tool call")
         why = str(entry.get("tool_purpose") or "")

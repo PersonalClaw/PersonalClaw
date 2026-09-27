@@ -10,7 +10,7 @@ So this file drives the whole chain with REAL code at every link that touches a 
       → LLMEvent(EVENT_COMPLETE, input_tokens=…, output_tokens=…)   ← real adapter event
       → SubagentManager._run_inner  (``subagent.py:2239-2252``)     ← real population
       → SubagentInfo.input_tokens / output_tokens / cost_usd
-      → RunController._reconcile_dispatched_stages                  ← real roll-up
+      → stage_settlement.reconcile_dispatched_stages                  ← real roll-up
       → run.total_tokens  →  store  →  journal.run_totals()
 
 Only the SessionManager is stood in for, and only to hand the real manager the real

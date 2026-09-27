@@ -8,9 +8,10 @@ no answer in the run's own history.
 
 Both halves now fire from the controller, and the placement is the whole design:
 
-* **PENDING rides `_ensure_continuation`**, which already dedups on `(path, epoch)`. The watchdog
-  polls a waiting run repeatedly; a second emission site would put one "awaiting approval" row per
-  poll into the ledger for a single question. Measured below: a re-poll leaves the count at 1.
+* **PENDING rides `gate_answers.ensure_continuation`**, which already dedups on `(path, epoch)`.
+  The watchdog polls a waiting run repeatedly; a second emission site would put one "awaiting
+  approval" row per poll into the ledger for a single question. Measured below: a re-poll leaves the
+  count at 1.
 * **RESOLVED fires AFTER the claim is won and the epoch checked.** Emitting earlier would log an
   approval for a race the caller LOST, and the audit would show two people approving one gate.
 
@@ -25,6 +26,7 @@ import asyncio
 import pytest
 
 from personalclaw.ledger import outcomes
+from personalclaw.workflows import gate_answers
 from personalclaw.workflows.confirmation import ConfirmationType, request_id
 from personalclaw.workflows.journal import CONFIRMATION_PENDING, CONFIRMATION_RESOLVED, ledger
 
@@ -102,14 +104,15 @@ def test_a_parked_gate_EMITS_a_pending_confirmation():
 
 
 def test_a_RE_POLL_does_not_emit_a_second_pending_row():
-    """The watchdog polls a waiting run repeatedly. Riding `_ensure_continuation`'s existing
-    `(path, epoch)` dedup means one row per QUESTION, not one per poll — a separate emission site
+    """The watchdog polls a waiting run repeatedly. Riding `gate_answers.ensure_continuation`'s
+    existing `(path, epoch)` dedup means one row per QUESTION, not one per poll — a separate
+    emission site
     would have had to re-derive that, and would have got it wrong."""
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
         before = len(_rows(CONFIRMATION_PENDING))
-        controller._ensure_continuation(conts[0].instance_path)
+        gate_answers.ensure_continuation(controller, conts[0].instance_path)
         return before, len(_rows(CONFIRMATION_PENDING))
 
     before, after = asyncio.run(go())
@@ -142,7 +145,7 @@ def test_a_DESTRUCTIVE_gate_is_a_different_confirmation_TYPE():
 def test_the_classification_reads_the_AUTHOR_s_declaration():
     """Kept with the author who made it rather than inferred from prompt text at render time — a
     heuristic on the wording would reclassify a gate when someone edited its prose."""
-    from personalclaw.workflows.controller import _confirmation_kind
+    from personalclaw.workflows.gate_answers import _confirmation_kind
 
     assert _confirmation_kind({"risk_category": "irreversible"}) == "destructive_confirm"
     assert _confirmation_kind({"kind": "question"}) == "needs_input"
@@ -152,7 +155,7 @@ def test_the_classification_reads_the_AUTHOR_s_declaration():
 def test_an_UNKNOWN_risk_word_falls_back_to_approval():
     """APPROVAL's expiry policy is HOLD — the run waits for a human rather than auto-resolving
     something this build could not classify."""
-    from personalclaw.workflows.controller import _confirmation_kind
+    from personalclaw.workflows.gate_answers import _confirmation_kind
 
     assert _confirmation_kind({"risk_category": "vibes"}) == "approval"
 
@@ -270,7 +273,7 @@ def test_a_RE_POLL_does_not_open_a_SECOND_escalation_outcome():
 
     async def go():
         controller, conts = await _park_on_gate(APPROVAL)
-        controller._ensure_continuation(conts[0].instance_path)
+        gate_answers.ensure_continuation(controller, conts[0].instance_path)
         return ledger("r-1")
 
     assert len(outcomes.open_questions(asyncio.run(go()))) == 1
@@ -315,23 +318,23 @@ def test_a_DENIED_gate_measures_as_a_LOST_bet_not_an_unreadable_one():
 def test_the_id_comes_from_the_SHIPPED_request_id():
     """Two id schemes for one record is the failure where the halves never pair up, and nobody
     notices until someone asks how long a gate waited."""
-    from personalclaw.workflows.controller import _confirmation_id
+    from personalclaw.workflows.gate_answers import stable_confirmation_id
 
-    assert _confirmation_id("r", "g", 1) == request_id("r", "g", 1)
+    assert stable_confirmation_id("r", "g", 1) == request_id("r", "g", 1)
 
 
 def test_the_id_is_STABLE_across_polls():
-    from personalclaw.workflows.controller import _confirmation_id
+    from personalclaw.workflows.gate_answers import stable_confirmation_id
 
-    assert _confirmation_id("r", "g", 1) == _confirmation_id("r", "g", 1)
+    assert stable_confirmation_id("r", "g", 1) == stable_confirmation_id("r", "g", 1)
 
 
 def test_the_EPOCH_is_in_the_id_so_a_rewind_asks_a_NEW_question():
     """A rewound gate is being asked about different work. Deriving from the resume token instead
     would break this: a token rotates per poll, so the two halves would disagree."""
-    from personalclaw.workflows.controller import _confirmation_id
+    from personalclaw.workflows.gate_answers import stable_confirmation_id
 
-    assert _confirmation_id("r", "g", 1) != _confirmation_id("r", "g", 2)
+    assert stable_confirmation_id("r", "g", 1) != stable_confirmation_id("r", "g", 2)
 
 
 def test_the_id_is_NOT_the_resume_token():
@@ -339,10 +342,10 @@ def test_the_id_is_NOT_the_resume_token():
     never match."""
     import inspect
 
-    from personalclaw.workflows.controller import RunController
+    from personalclaw.workflows import gate_answers
 
-    source = inspect.getsource(RunController._ensure_continuation)
-    assert "_confirmation_id(" in source
+    source = inspect.getsource(gate_answers.ensure_continuation)
+    assert "stable_confirmation_id(" in source
     assert "confirmation_id=cont.token" not in source
 
 

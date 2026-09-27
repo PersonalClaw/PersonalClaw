@@ -676,7 +676,7 @@ class TestConfigRoundTrip:
         assert cl.AppConfig.load().to_dict()["durability"]["sync_encrypt"] == "on"
 
     def test_it_is_in_the_patch_allowlist_with_a_closed_value_set(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         spec = _EDITABLE_CONFIG["durability.sync_encrypt"]
         assert spec["type"] == "str"

@@ -91,8 +91,8 @@ class TestTheBoundIsConfigurable:
 
     def test_the_config_field_round_trips(self):
         """The repo's config contract: dataclass + _meta, load(), to_dict(), PATCH allowlist."""
+        from personalclaw.config.editable import _EDITABLE_CONFIG
         from personalclaw.config.loader import AppConfig
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
         cfg = AppConfig.load()
         assert "self_schedule_max_outstanding" in cfg.to_dict()["workflows"]

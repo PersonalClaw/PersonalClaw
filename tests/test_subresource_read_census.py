@@ -148,11 +148,13 @@ PARENT_READ_EXCLUDE = {
     ),
     "/api/voice/profiles/{id}/audio": "require_profile resolves the profile before serving audio",
     "/api/workflows/runs/{run_id}/continuations": "run store rejects unknown runs first",
-    "/api/workflows/runs/{run_id}/deliverable": "service.run_deliverable rejects an unknown run",
+    "/api/workflows/runs/{run_id}/deliverable": (
+        "run_cockpit.run_deliverable rejects an unknown run"
+    ),
     "/api/workflows/runs/{run_id}/drop": "service.drop_status rejects an unknown run",
     "/api/workflows/runs/{run_id}/events": "run store resolves the run before SSE setup",
-    "/api/workflows/runs/{run_id}/introspect": "service.introspect rejects an unknown run",
-    "/api/workflows/runs/{run_id}/ledger-rails": "service.ledger_rails rejects an unknown run",
+    "/api/workflows/runs/{run_id}/introspect": "run_cockpit.introspect rejects an unknown run",
+    "/api/workflows/runs/{run_id}/ledger-rails": "run_cockpit.ledger_rails rejects an unknown run",
     "/api/workflows/runs/{run_id}/nodes/{node_id}/inspect": (
         "service.inspect_node resolves the run and node; this is child detail"
     ),

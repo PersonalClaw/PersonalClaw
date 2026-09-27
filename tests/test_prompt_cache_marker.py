@@ -515,7 +515,7 @@ async def test_patch_round_trips_through_the_editable_allowlist(cache_switch):
     """Point 4 of the five: the field is PATCHable, the write lands in config.json, and
     a fresh load() reads it back — proving the allowlist entry and load()'s mapping
     agree. Then flip it back, so the round trip is proven in BOTH directions."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG.get("agent.prompt_cache_enabled") == {"type": "bool"}
 

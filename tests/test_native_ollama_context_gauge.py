@@ -226,7 +226,7 @@ class TestTheGaugeReachesTheCompactionGate:
         rather than silently passing the suite the way it did for the whole defect's
         life: 0.0 is below every threshold a user can set AND is not ``None``, so neither
         path fires."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         lowest = _EDITABLE_CONFIG["session.autocompact_pct"]["min"]
         # Bound to a name rather than written as a literal so it is a value the gate

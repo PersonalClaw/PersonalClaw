@@ -26,6 +26,7 @@ from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules as rules
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID
+from personalclaw.dashboard import channel_messages
 
 PROVIDER = "fakechat"
 OWNER = "4242"
@@ -159,7 +160,9 @@ async def test_a_note_carries_its_link_when_the_dashboard_has_an_address(tmp_pat
     channel = _connect()
     state = _state(tmp_path)
     _target(nk.WARNING)
-    monkeypatch.setattr(rules, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}")
+    monkeypatch.setattr(
+        channel_messages, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}"
+    )
 
     state.notify(nk.WARNING, "Run failed", "exit 1", meta={"statusUrl": "#/triggers?open=t1"})
     await _until(lambda: channel.sent, "the note reached the channel")
@@ -236,7 +239,9 @@ async def test_a_channel_with_no_approval_prompt_gets_a_link_instead(tmp_path, m
     channel = _connect(can_prompt=False)
     state = _state(tmp_path)
     _target(nk.APPROVAL)
-    monkeypatch.setattr(rules, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}")
+    monkeypatch.setattr(
+        channel_messages, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}"
+    )
 
     waiter = asyncio.ensure_future(state.request_approval("ap-5", "cron:nightly", "bash"))
     await _until(lambda: channel.sent, "the owner was told")

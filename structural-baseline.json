@@ -258,12 +258,6 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
         ]
       },
-      "src/personalclaw/cli_config.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.core"
-        ]
-      },
       "src/personalclaw/cli_doctor.py": {
         "edges": 1,
         "violations": [
@@ -350,12 +344,6 @@
         "edges": 1,
         "violations": [
           "core-must-not-import-the-http-surface -> personalclaw.dashboard"
-        ]
-      },
-      "src/personalclaw/packs/import_.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.core"
         ]
       },
       "src/personalclaw/providers/routes.py": {
@@ -454,11 +442,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 6,
-        "core-must-not-import-the-http-surface": 53,
+        "core-must-not-import-the-http-surface": 51,
         "ledger-is-a-leaf": 0
       },
-      "edges": 59,
-      "files": 29
+      "edges": 57,
+      "files": 27
     }
   },
   "structural-size": {
@@ -468,7 +456,7 @@
     "over_ceiling": {},
     "rationale": "A module nobody can hold in their head is where every other kind of decay hides: dead branches, a second implementation of something three functions above, a config field read in one place and written in another. Growth is invisible per commit (+40 lines reviews fine) and irreversible in aggregate. TWO rails, and the split between them is the whole design. (1) The CEILING is absolute: no file may reach 6000 lines, so no module can arrive or grow into a step change, and a new worst file reds. It sits one 1000-line step above the measured max of 5447 on purpose — pinned AT the max it would give the repo's most-maintained file zero headroom and turn a boolean config toggle into a mandatory 5,447-line split, which is the gate people route around. (2) The WATCH-BAND POPULATION is the honest decay signal: how MANY files are giant, shrink-only. A file ENTERING the 2800-line band reds (9 -> 10); splitting one is how you go green (9 -> 8). Growth WITHIN the band, below the ceiling, is ordinary maintenance of the files that by construction get maintained most, and is deliberately NOT a violation. Everything below the band is unconstrained except by the ceiling: routine work is untaxed, and the count is what has to come down. WHY 2800 AND NOT A ROUND 2500: the boundary has to sit at a real gap, and this repo proved it within three days — agents/native/builtin_tools.py grew ~233 lines (AG-14 added 122) to 2467, leaving the original 2500 band 33 lines of headroom. 2800 sits in the 225-line gap between engine.py (2583) and chat_handlers.py (2808): 217 lines of headroom, 2.17x the cliff rail's floor. It also leaves engine.py and builtin_tools.py OUTSIDE the band, where crossing 2800 reds them — at 2400 they would be grandfathered members, free to grow to the ceiling unchallenged. The full measured distribution and the accepted 8-line shrink margin on chat_handlers.py are recorded beside SIZE_WATCH_BAND_LINES.",
     "totals": {
-      "watched_files": 9
+      "watched_files": 8
     },
     "watch_band_lines": 2800,
     "watch_band_members": [
@@ -479,8 +467,7 @@
       "src/personalclaw/dashboard/handlers/knowledge.py",
       "src/personalclaw/gateway.py",
       "src/personalclaw/knowledge/store.py",
-      "src/personalclaw/vector_memory.py",
-      "src/personalclaw/workflows/controller.py"
+      "src/personalclaw/vector_memory.py"
     ]
   }
 }

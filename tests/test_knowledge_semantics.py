@@ -315,8 +315,8 @@ def test_knowledge_config_is_wired_through_all_four_points():
     Omitting any one makes the knob silently inert."""
     import dataclasses
 
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import AppConfig, KnowledgeConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     cfg = AppConfig.load()
     assert isinstance(cfg.knowledge, KnowledgeConfig)

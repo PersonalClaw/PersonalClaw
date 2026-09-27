@@ -406,7 +406,7 @@ class TestConfigRoundTrip:
         """Wiring point 4: a write path exists — the PATCH allowlist for `loops`, the
         dedicated chat-prefs endpoint for the dashboard chat surface."""
         if section == "loops":
-            from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+            from personalclaw.config.editable import _EDITABLE_CONFIG
 
             assert _EDITABLE_CONFIG[f"loops.{field_name}"] == {"type": "bool"}
         else:

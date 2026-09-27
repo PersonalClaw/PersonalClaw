@@ -8,12 +8,12 @@ import { EvalsPanel } from './EvalsPanel'
 //
 // `evals.*` had four of the five: the dataclass + `_meta` (`config/learning.py:EvalsConfig`),
 // `load()`, `to_dict()`, and entries in the PATCH allowlist
-// (`dashboard/handlers/core.py:_EDITABLE_CONFIG`). It had no frontend control — measured,
+// (`config/editable.py:_EDITABLE_CONFIG`). It had no frontend control — measured,
 // `git grep -in evals -- web/src/pages/settings` returned **0** across 33 subpages — while
 // `#/learning` rendered four panels telling the user to turn the substrate on.
 //
 // 🔑 THIS RAIL DERIVES BOTH SIDES AND COMPARES THEM. It does not restate a list of five keys: it
-// PARSES the allowlist out of `core.py` and the labels/help/defaults out of `learning.py`, then asks
+// PARSES the allowlist out of `editable.py` and the labels/help/defaults out of `learning.py`, then asks
 // the RENDERED panel whether each one is there, named with that label, described with that help,
 // and bounded by that min/max. So the failure modes it catches are the ones a hand-written
 // expectation cannot:
@@ -53,7 +53,7 @@ interface AllowEntry { type: string; min?: number; max?: number }
 
 /** Every `"evals.<key>": {...}` entry in `_EDITABLE_CONFIG`, with its declared bounds. */
 function allowlist(): Record<string, AllowEntry> {
-  const src = py('dashboard/handlers/core.py')
+  const src = py('config/editable.py')
   const out: Record<string, AllowEntry> = {}
   const re = /^\s*"evals\.([a-z_]+)":\s*\{([^}]*)\},?\s*$/gm
   for (const m of src.matchAll(re)) {
@@ -156,7 +156,7 @@ const isNumeric = (key: string) => roleOf(key) === 'spinbutton'
 
 describe('the derivation reads the real files', () => {
   it('finds the six allowlisted evals keys, and only those', () => {
-    expect(py('dashboard/handlers/core.py').length, 'the handler must be readable').toBeGreaterThan(5000)
+    expect(py('config/editable.py').length, 'the registry must be readable').toBeGreaterThan(5000)
     // Named, not counted: a floor like `> 3` stays green when a key is dropped AND one is added.
     expect(EDITABLE).toEqual([
       'ablation_cadence_days', 'benchmark_model_ref', 'default_budget_usd', 'enabled',
@@ -194,7 +194,7 @@ describe('the derivation reads the real files', () => {
     // Both halves. Deleting the field would make a bare "no bakeoff control" assertion vacuous.
     expect(META.bakeoff_capture_enabled, 'the field must still exist').toBeTruthy()
     expect(ALLOW.bakeoff_capture_enabled, 'and must NOT be one-click PATCHable').toBeUndefined()
-    expect(py('dashboard/handlers/core.py'), 'the exclusion must stay stated, not incidental')
+    expect(py('config/editable.py'), 'the exclusion must stay stated, not incidental')
       .toContain('`evals.bakeoff_capture_enabled`')
   })
 })

@@ -20,7 +20,7 @@ is REFUSED rather than dispatched. Without that second check this endpoint would
 in the one property the atom is built around.
 
 **Dispatch is the run's own steering queue.** `service.steer_run` parks the brief on
-`run.extra["steering_queue"]`, which `RunController._consume_steering` drains at the next iteration
+`run.extra["steering_queue"]`, which `loop_iteration._consume_steering` drains at the next iteration
 boundary and injects into the worker's prompt. That IS "follow-up instructions to the originating
 session" for a workflow run — no new delivery channel, no second dialect. A run that has already
 reached a terminal status has no boundary left to drain at, so the brief is PARKED for the user to

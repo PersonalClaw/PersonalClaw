@@ -590,7 +590,7 @@ def dispatch_accepted(
 
     `deliver(target, brief)` is the seam, not a hard-wired sink, because §7's dispatch target
     depends on the surface: a live workflow run takes `service.steer_run` (drained at the loop
-    boundary by `RunController._consume_steering`, so the next iteration acts on it); a finished
+    boundary by `loop_iteration._consume_steering`, so the next iteration acts on it); a finished
     run has no session to resume and takes a fresh session with the same brief as its handoff.
 
     `deliver` is NOT CALLED AT ALL when nothing was accepted. That is the load-bearing property:
@@ -640,7 +640,7 @@ def calibration_records(result: TriageResult, *, template: str = "") -> list[dic
     The mapping: the reviewer asserted a problem (`judge_verdict="REJECT"`), the human said there
     was none (`human_verdict="PASS"`), so `DivergenceRecord.direction` computes `false_reject` —
     the judge cried wolf. An ACCEPTED finding is agreement and writes nothing, matching
-    `RunController._emit_judge_divergence`'s rule that only disagreement is a divergence.
+    `gate_answers.emit_judge_divergence`'s rule that only disagreement is a divergence.
     """
     from personalclaw.workflows import judge_calibration
 

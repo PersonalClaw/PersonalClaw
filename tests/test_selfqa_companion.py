@@ -1298,8 +1298,8 @@ class TestSelfQaConfigRoundTrip:
         """Point (d): a field absent from `_EDITABLE_CONFIG` cannot be changed from the UI."""
         from dataclasses import fields
 
+        from personalclaw.config.editable import _EDITABLE_CONFIG
         from personalclaw.config.loader import SelfQaConfig
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
         for f in fields(SelfQaConfig):
             assert f"agent.self_qa.{f.name}" in _EDITABLE_CONFIG, f.name
@@ -1392,7 +1392,7 @@ class TestTheSelfQaPanelRowsPatchTheNestedPath:
 
     def test_the_flat_path_each_row_would_have_sent_is_rejected(self):
         """Why a mis-bound row reverts instead of writing the wrong key — the backend half."""
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         for field in self._rows():
             assert f"agent.self_qa.{field}" in _EDITABLE_CONFIG, field

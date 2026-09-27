@@ -847,7 +847,7 @@ class TestConfigWiring:
         assert _guard_flag(None) is True
 
     def test_patch_allowlist_includes_the_toggle(self):
-        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+        from personalclaw.config.editable import _EDITABLE_CONFIG
 
         assert "memory.graph_enabled" in _EDITABLE_CONFIG
 

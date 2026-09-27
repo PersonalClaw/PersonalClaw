@@ -487,7 +487,7 @@ def _sanitize_bot_name(raw: str) -> str:
     characters) and variation selectors.
 
     This is the READ side, for a hand-edited ``config.json``. The write boundary refuses those
-    characters instead of stripping them (``_bot_name_validator``, ``dashboard/handlers/core.py``):
+    characters instead of stripping them (``_bot_name_validator``, ``config/editable.py``):
     stripping there stored a name nobody typed while reporting success.
     """
     if not isinstance(raw, str):

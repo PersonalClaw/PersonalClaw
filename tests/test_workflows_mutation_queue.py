@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import store
+from personalclaw.workflows import mid_flight, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
@@ -158,7 +158,7 @@ class TestDrain:
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "update_node", "node_id": "report", "fields": {"prompt": "new"}}])
         before = c.run.spec_version
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c.run.spec_version == before + 1
         assert c.spec["root"]["children"][2]["config"]["prompt"] == "new"
         # Persisted, so a resumed run sees the edit.
@@ -168,7 +168,7 @@ class TestDrain:
         run = _make_run()
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "update_node", "node_id": "report", "fields": {"prompt": "n"}}])
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         edits = [e for e in J.ledger(run.id) if e.get("kind") == J.USER_EDITED_MID_FLIGHT]
         assert len(edits) == 1 and edits[0]["ops"][0]["op"] == "update_node"
 
@@ -176,7 +176,7 @@ class TestDrain:
         run = _make_run()
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "update_node", "node_id": "report", "fields": {"prompt": "n"}}])
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         path = store.run_dir(run.id) / "spec_history" / f"v{c.run.spec_version:03d}.json"
         assert path.is_file()
 
@@ -191,7 +191,7 @@ class TestDrain:
         assert body["ok"]
         # The node completes while the batch sits in the queue.
         c._instance("root.children[2]").state = InstanceState.DONE
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c.spec["root"]["children"][2]["config"]["prompt"] != "x"
         rejects = [e for e in J.ledger(run.id) if e.get("kind") == J.MUTATION_REJECTED]
         assert len(rejects) == 1
@@ -203,21 +203,21 @@ class TestDrain:
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "update_node", "node_id": "report", "fields": {"prompt": "x"}}])
         c._instance("root.children[2]").state = InstanceState.RUNNING
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert [e for e in J.ledger(run.id) if e.get("kind") == J.MUTATION_REJECTED]
 
     async def test_the_queue_empties_after_a_drain(self) -> None:
         run = _make_run()
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "update_node", "node_id": "report", "fields": {"prompt": "n"}}])
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c._pending_mutations == []
 
     async def test_draining_an_empty_queue_is_a_no_op(self) -> None:
         run = _make_run()
         c = RunController(run, SPEC, services=EngineServices(completion=_echo()))
         before = c.run.spec_version
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c.run.spec_version == before
 
 
@@ -225,7 +225,7 @@ class TestReentry:
     async def test_rewind_resets_the_seed_and_its_consumers(self) -> None:
         c = await _completed_controller()
         c.submit_mutation([{"op": "rewind", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         states = {p: i.state for p, i in c.instances.items()}
         assert states["root.children[0]"] == InstanceState.PENDING  # gather (the seed)
         assert states["root.children[1]"] == InstanceState.PENDING  # analyze
@@ -237,7 +237,7 @@ class TestReentry:
         """The whole distinction: 'redo the synthesis with the SAME gathered data'."""
         c = await _completed_controller()
         c.submit_mutation([{"op": "run_from", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         states = {p: i.state for p, i in c.instances.items()}
         assert states["root.children[0]"] == InstanceState.DONE  # gather survives
         assert states["root.children[1]"] == InstanceState.PENDING
@@ -247,7 +247,7 @@ class TestReentry:
         """A rewind that discarded the prior answer would make the edit irreversible."""
         c = await _completed_controller()
         c.submit_mutation([{"op": "rewind", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         attic = store.run_dir(c.run.id) / "outputs" / "attic"
         assert attic.is_dir()
         assert list(attic.rglob("*.json"))
@@ -256,7 +256,7 @@ class TestReentry:
         c = await _completed_controller()
         assert "gather" in c._outputs
         c.submit_mutation([{"op": "rewind", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert "gather" not in c._outputs
 
     async def test_the_epoch_holds_without_force(self) -> None:
@@ -264,14 +264,14 @@ class TestReentry:
         c = await _completed_controller()
         before = c._instance("root.children[1]").epoch
         c.submit_mutation([{"op": "rewind", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c._instance("root.children[1]").epoch == before
 
     async def test_force_bumps_the_epoch(self) -> None:
         c = await _completed_controller()
         before = c._instance("root.children[1]").epoch
         c.submit_mutation([{"op": "rewind", "node_id": "gather", "force": True}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c._instance("root.children[1]").epoch == before + 1
 
     async def test_a_rewound_run_re_runs_the_closure_and_nothing_else(self) -> None:
@@ -299,7 +299,7 @@ class TestReentry:
         # An update_node on a DONE node is frozen — rewind first, which is the documented
         # workflow and what the error message tells the user to do.
         c.submit_mutation([{"op": "rewind", "node_id": "analyze"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         c.run.status = RunStatus.RUNNING
         assert await c.run_to_completion(timeout=20) == RunStatus.COMPLETE
         # analyze + report re-ran; gather and unrelated did not.
@@ -312,7 +312,7 @@ class TestInputsStale:
         reads it — so `analyze`'s inputs are, in principle, from a different world."""
         c = await _completed_controller()
         c.submit_mutation([{"op": "run_from", "node_id": "gather"}], confirm=True)
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         # Nothing to flag here: every consumer IS being re-run. The flag exists for
         # partial cascades, asserted below.
         stale = [e for e in J.ledger(c.run.id) if e.get("kind") == J.INPUTS_STALE]
@@ -327,7 +327,7 @@ class TestInputsStale:
 
         c = await _completed_controller()
         # A deliberately partial preview: gather re-runs, its consumers do not.
-        c._flag_stale(CascadePreview(rerun=["gather"]))
+        mid_flight._flag_stale(c, CascadePreview(rerun=["gather"]))
         stale = [e for e in J.ledger(c.run.id) if e.get("kind") == J.INPUTS_STALE]
         assert len(stale) == 1
         assert stale[0]["node_id"] == "analyze"
@@ -337,7 +337,7 @@ class TestInputsStale:
         from personalclaw.workflows.mutations import CascadePreview
 
         c = await _completed_controller()
-        c._flag_stale(CascadePreview(rerun=["gather"]))
+        mid_flight._flag_stale(c, CascadePreview(rerun=["gather"]))
         flagged = {e["node_id"] for e in J.ledger(c.run.id) if e.get("kind") == J.INPUTS_STALE}
         assert "unrelated" not in flagged
 
@@ -358,5 +358,5 @@ class TestSetInput:
         store.write_spec(run.id, spec)
         c = RunController(run, spec, services=EngineServices(completion=_echo()))
         c.submit_mutation([{"op": "set_input", "overrides": {"since": "24h"}}])
-        c._drain_mutations()
+        mid_flight.drain_mutations(c)
         assert c.run.inputs["since"] == "24h"

@@ -13,9 +13,9 @@ the usual result is two notifications for one event or an inbox row nobody was t
 Three properties this has to get right:
 
 **Deduped per (run, node, epoch).** The watchdog re-polls a waiting run every few seconds and
-`_ensure_continuation` is idempotent per epoch — so without a dedup key a gate would stack a
-row per poll, each with a valid resume token. Keyed on the EPOCH rather than the token because
-a rewind legitimately re-asks the same question, and that genuinely is a new ask.
+`gate_answers.ensure_continuation` is idempotent per epoch — so without a dedup key a gate would
+stack a row per poll, each with a valid resume token. Keyed on the EPOCH rather than the token
+because a rewind legitimately re-asks the same question, and that genuinely is a new ask.
 
 **Resolved when answered.** An inbox row that stays open after its gate is answered is worse
 than no row: the user clicks it, finds nothing to do, and stops trusting the inbox. The

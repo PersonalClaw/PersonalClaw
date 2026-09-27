@@ -15,8 +15,8 @@ from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_app, _make_state
 
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import AppConfig, VoiceConfig
-from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,

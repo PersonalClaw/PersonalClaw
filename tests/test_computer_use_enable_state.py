@@ -264,7 +264,7 @@ def test_the_refusal_code_is_registered_in_the_error_registry():
 
 def test_the_keystone_has_no_config_patch_surface():
     """§3 floor 1 forbids a config field precisely because the agent can PATCH one."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     flat = json.dumps(_EDITABLE_CONFIG, default=str)
     assert "computer_use" not in flat and "computer-use" not in flat

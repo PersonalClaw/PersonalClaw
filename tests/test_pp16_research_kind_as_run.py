@@ -19,7 +19,7 @@ and escalates.
 
 **The three defects, each pinned below with a control** (a zero that authorises nothing on its own):
 
-1. `_reconcile_dispatched_stages` never advanced the iteration counter.
+1. `stage_settlement.reconcile_dispatched_stages` never advanced the iteration counter.
    :func:`test_a_stage_bodied_loop_advances_its_iteration_counter` — FIXED in this change, with the
    control being the same spec built from `infer` nodes, which always worked.
 2. The double-execution claim is keyed on the NODE ID (`engine.claim_key`) and held for its 900s
@@ -51,7 +51,14 @@ import pytest
 
 from personalclaw.workflows import deliverable as deliverable_mod
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import leases, loop_aliases, service, store, supervisor_policy
+from personalclaw.workflows import (
+    leases,
+    loop_aliases,
+    loop_convergence,
+    service,
+    store,
+    supervisor_policy,
+)
 from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.containers import Claim
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -323,7 +330,7 @@ def _synthetic_loop(body_kind: str) -> dict[str, Any]:
 
     The minimum shape that isolates the settle path: identical everywhere except the body's node
     KIND, which is what decides whether the completion is settled by `_apply` (an awaited dispatch)
-    or by `_reconcile_dispatched_stages` (a spawned subagent).
+    or by `stage_settlement.reconcile_dispatched_stages` (a spawned subagent).
     """
     node = {
         "kind": body_kind,
@@ -372,14 +379,15 @@ def _iterations(run_id: str) -> list[str]:
 def test_a_stage_bodied_loop_advances_its_iteration_counter() -> None:
     """🔴 DEFECT 1, FIXED in this change: the loop counter was never advanced for a spawned stage.
 
-    `_advance_loop` had exactly ONE call site — `_apply` — and `_apply` returns at its `RUNNING`
-    branch for a spawned stage, handing the settle to `_reconcile_dispatched_stages`. That method
-    set the state, journalled `step_completed`, recorded the effect and published — and returned
-    without advancing anything. A loop whose body ENDED in a stage therefore finished round one and
-    stopped, and the tick loop reported `run deadlocked: no runnable nodes and none in flight`.
+    `loop_iteration.advance_loop` had exactly ONE call site — `_apply` — and `_apply` returns at its
+    `RUNNING` branch for a spawned stage, handing the settle to
+    `stage_settlement.reconcile_dispatched_stages`. That method set the state, journalled
+    `step_completed`, recorded the effect and published — and returned without advancing anything. A
+    loop whose body ENDED in a stage therefore finished round one and stopped, and the tick loop
+    reported `run deadlocked: no runnable nodes and none in flight`.
 
-    Same symptom as the container-body bug `_loop_parent`'s docstring records — "deadlock after
-    exactly one iteration" — reached by the other of the two settle paths.
+    Same symptom as the container-body bug `models.loop_parent`'s docstring records — "deadlock
+    after exactly one iteration" — reached by the other of the two settle paths.
 
     The control is the same spec with `infer` bodies, which are settled by `_apply` and always
     worked. Without it, "the stage version now advances" could be a probe that advances everything.
@@ -462,14 +470,15 @@ def test_a_reconciled_stages_output_reaches_its_declared_shape() -> None:
     """🔴 DEFECT 3, FIXED in #3524: a spawned stage's output IS parsed into its declared schema.
 
     This replaces `test_a_reconciled_stages_output_never_reaches_its_declared_shape`, which pinned
-    the defect: `_reconcile_dispatched_stages` stored ``{"result": str(info.result)}`` and put that
-    in the binding namespace, so the declared `schema` was never applied and two shipped mechanisms
-    read nothing off a stage in a loop body — a loop's `progress_field` (so `until_dry` degenerated
-    into `max_iterations`) and a `judge_contract` stage (so the contract validated nothing, on ALL
-    SEVEN judge nodes in the library, every one of which is a stage). It declined the fix as "a
-    contract change for 19 templates rather than a port detail"; measured, zero bundled templates
-    read `output.result` and every stage declares the schema its prompt asks the model for, so the
-    change only ADDS resolvable keys. `RunController._settled_stage_output` carries the argument.
+    the defect: `stage_settlement.reconcile_dispatched_stages` stored ``{"result":
+    str(info.result)}`` and put that in the binding namespace, so the declared `schema` was never
+    applied and two shipped mechanisms read nothing off a stage in a loop body — a loop's
+    `progress_field` (so `until_dry` degenerated into `max_iterations`) and a `judge_contract` stage
+    (so the contract validated nothing, on ALL SEVEN judge nodes in the library, every one of which
+    is a stage). It declined the fix as "a contract change for 19 templates rather than a port
+    detail"; measured, zero bundled templates read `output.result` and every stage declares the
+    schema its prompt asks the model for, so the change only ADDS resolvable keys.
+    `stage_settlement._settled_stage_output` carries the argument.
 
     🔴 **And the old test was VACUOUS, which is why it stayed green through the fix.** It built its
     own run with `inputs={"question": "q"}` rather than going through `_drive`, which supplies every
@@ -789,12 +798,14 @@ def test_the_template_declared_convergence_reaches_the_resolved_policy() -> None
     store.write_spec(run.id, spec)
     controller = RunController(run, spec, services=EngineServices())
 
-    resolved = controller._supervisor_policy(Node.from_dict(raw))
+    resolved = loop_convergence._supervisor_policy(controller, Node.from_dict(raw))
     assert resolved.convergence.signal == DONE_JUDGE_ASSESSMENT
     assert resolved.convergence.ground_truth_deliverable == "RESEARCH.md"
 
     stripped = {k: v for k, v in (raw.get("config") or {}).items() if k != "supervisor"}
-    bare = controller._supervisor_policy(Node.from_dict({**raw, "config": stripped}))
+    bare = loop_convergence._supervisor_policy(
+        controller, Node.from_dict({**raw, "config": stripped})
+    )
     assert bare.convergence.signal == DONE_ORCHESTRATED, (
         "a node declaring no supervisor block resolved to something other than the default — the "
         "control is broken, so the assertion above proves nothing"

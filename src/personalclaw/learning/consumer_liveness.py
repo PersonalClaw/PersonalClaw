@@ -15,8 +15,8 @@ confidently wrong exactly in the case that matters — the deliverable somebody 
 
 **It reads `PP-9`'s outcome record; it counts nothing of its own.** A `publish:` node already
 opens a `pending_outcome{producer: publish, metric: artifact.<slug>.consumed, horizon_secs: 7d,
-baseline: 1.0, slug}` at publish time (`workflows/engine._open_publish_outcome`). That record IS the
-consumption horizon. This module supplies the two halves `PP-9` left open:
+baseline: 1.0, slug}` at publish time (`workflows/publish_seam._open_publish_outcome`). That record
+IS the consumption horizon. This module supplies the two halves `PP-9` left open:
 
 1. :func:`measure_consumption` — the ground truth for a :data:`~personalclaw.ledger.outcomes.
    SOURCE_CONSUMPTION` question, so the ONE resolver grades a publish bet as `measured` 1.0/0.0

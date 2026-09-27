@@ -22,8 +22,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.config.editable import _EDITABLE_CONFIG
 from personalclaw.config.loader import AppConfig, KnowledgeConfig
-from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
 _FIELDS: tuple[tuple[str, object], ...] = (
     ("rerank_enabled", False),

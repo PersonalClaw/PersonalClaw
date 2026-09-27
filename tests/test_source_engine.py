@@ -359,7 +359,7 @@ def test_sources_config_roundtrips(tmp_path, monkeypatch):
 
 
 def test_sources_editable_config_keys_present():
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     for key in (
         "sources.enabled",
@@ -383,8 +383,8 @@ def test_no_rolling_day_request_budget_is_allowlisted_or_declared():
     """
     from dataclasses import fields
 
+    from personalclaw.config.editable import _EDITABLE_CONFIG
     from personalclaw.config.loader import SourcesConfig
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     assert "sources.daily_request_budget" not in _EDITABLE_CONFIG
     assert "daily_request_budget" not in {f.name for f in fields(SourcesConfig)}

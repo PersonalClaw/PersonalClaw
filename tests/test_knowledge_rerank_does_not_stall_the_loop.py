@@ -34,7 +34,7 @@ of them alone leaves the stall in place (or moves it).
    the two agent-tool sites above and the `run_in_executor` already in that module.
 
 `knowledge.rerank_enabled` is in the `_EDITABLE_CONFIG` PATCH allowlist
-(`dashboard/handlers/core.py:1176`) and off by default, so this was one runtime toggle away
+(`config/editable.py:1021`) and off by default, so this was one runtime toggle away
 with no restart — latent, not unreachable.
 
 **Every measurement here carries a POSITIVE CONTROL** that reproduces the deleted shape

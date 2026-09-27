@@ -425,7 +425,7 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
         # `streak` alone is a valid until_dry exit: the engine terminates on N iterations
         # that surfaced nothing, and `progress_field` only chooses WHAT it reads — the
         # declared field when a loop names one, the whole iteration output when it does not
-        # (`controller._iteration_is_dry`). Requiring the field flagged the shipped
+        # (`loop_iteration._iteration_is_dry`). Requiring the field flagged the shipped
         # `audit-sweep` as unbounded when it is not.
         has_exit = bool(
             cfg.get("condition") or cfg.get("progress_field") or cfg.get("streak") or cfg.get("n")

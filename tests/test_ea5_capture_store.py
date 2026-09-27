@@ -868,7 +868,7 @@ def test_both_retention_spellings_resolve_to_one_value(_isolated_home):
 
 def test_the_new_capture_knobs_have_a_patch_write_path():
     """Point 4 of the round-trip contract, which test_config_roundtrip does not cover."""
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert "external_access.capture.retention_days" in _EDITABLE_CONFIG
     assert "external_access.capture.upstream_allowlist" in _EDITABLE_CONFIG
@@ -879,7 +879,7 @@ def test_the_new_capture_knobs_have_a_patch_write_path():
 def test_the_patch_specs_coerce_real_values():
     """The allowlist entry must actually validate, not merely be present."""
     from personalclaw.config.edit_spec import coerce_edit_value
-    from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+    from personalclaw.config.editable import _EDITABLE_CONFIG
 
     key = "external_access.capture.upstream_allowlist"
     assert coerce_edit_value(key, ["api.openai.com"], _EDITABLE_CONFIG[key]) == ["api.openai.com"]
