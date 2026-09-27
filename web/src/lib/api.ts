@@ -8886,7 +8886,8 @@ export const api = {
 
   // upload (multipart — no JSON headers)
   // Extracted text content for an uploaded attachment (what the agent saw) — used
-  // by the chat attachment-chip preview. Awaits the upload-time extraction.
+  // by the chat attachment-chip preview. Awaits the extraction started at upload, or starts it
+  // (an image is read only when this asks).
   /** What extraction got from an uploaded attachment. `read` is false when `text` is only the
    *  file's size and format — nothing could read its content. */
   attachmentExtract: (path: string) => get<AttachmentExtract>(`/api/attachment-extract?path=${encodeURIComponent(path)}`),

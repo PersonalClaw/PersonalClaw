@@ -7,6 +7,9 @@ saved file path. When the chat turn runs, the runner awaits any pending
 extraction for the turn's attached files (so the query blocks on extraction iff
 it isn't done yet) and prepends the extracted text to the prompt context.
 
+An image is the exception: it is read only when something asks for its text (see
+:meth:`AttachmentExtractor.start`).
+
 Singleton, keyed by absolute upload path. Bounded so a long session can't grow
 it without bound.
 """
@@ -32,7 +35,23 @@ class AttachmentExtractor:
         self._tasks: dict[str, asyncio.Task[Extracted]] = {}
 
     def start(self, path: str, mime: str | None = None) -> None:
-        """Begin extracting *path* now (idempotent). Returns immediately."""
+        """Begin reading *path* ahead of its turn (idempotent). Returns immediately.
+
+        Not an image. Reading one is image-model calls (the graph's OCR and description), and
+        whether it reaches the model as pixels or as text is decided by the model serving its
+        turn (``chat_runner._prepare_image_attachments``), which an upload cannot know. A turn
+        that sends it as pixels never uses its text, so an image is read only when something
+        asks for it (:meth:`get`): the composer's note when the chat's model takes no images
+        (it says what the model will get instead), the turn that sends it as text, and the
+        sent turn's preview of it.
+        """
+        from personalclaw.dashboard.attachment_images import is_image_attachment
+
+        if is_image_attachment(path):
+            return
+        self._begin(path, mime)
+
+    def _begin(self, path: str, mime: str | None) -> None:
         if not path or path in self._tasks:
             return
         if len(self._tasks) >= _MAX_ENTRIES:
@@ -50,7 +69,7 @@ class AttachmentExtractor:
         from personalclaw.knowledge.extract import extract_file
 
         try:
-            got = await extract_file(path, mime)
+            got = await extract_file(path, mime, name=display_name(path))
         except Exception:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
             return Extracted("", False)
@@ -58,10 +77,11 @@ class AttachmentExtractor:
 
     async def get(self, path: str, mime: str | None = None) -> Extracted:
         """Await + return what extraction got from *path*. Starts extraction if it
-        wasn't already kicked off at upload (so a late/missed start still works).
-        Blocks until extraction completes — this is the turn-gating point."""
+        wasn't already kicked off at upload (an image never is; a late/missed start
+        works the same way). Blocks until extraction completes — this is the
+        turn-gating point."""
         if path not in self._tasks:
-            self.start(path, mime)
+            self._begin(path, mime)
         task = self._tasks.get(path)
         if task is None:
             # couldn't schedule a task (no loop) → extract inline
@@ -83,7 +103,10 @@ def get_extractor() -> AttachmentExtractor:
 
 
 def display_name(path: str) -> str:
-    """Clean filename for prompt labelling — strips the uuid upload prefix."""
+    """The name an upload was attached with: its stored name without the uuid prefix.
+
+    What the prompt labels the file, and what its extracted text calls it when it can only
+    describe it. The stored name is the upload route's alone and never reaches a user."""
     base = os.path.basename(path)
     # uploads are saved as "<32-hex>_<original>"
     if len(base) > 33 and base[32] == "_" and all(c in "0123456789abcdef" for c in base[:32]):

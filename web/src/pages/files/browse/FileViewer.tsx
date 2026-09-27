@@ -5,7 +5,7 @@ import { api, type FsEntry } from '../../../lib/api'
 import { rebaseText, type Revisioned } from '../../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../../lib/useStaleWriteGuard'
 import { useIsMac } from '../../../app/usePlatform'
-import { fmtBytes, baseName, monacoLang } from '../fileMeta'
+import { fmtBytes, monacoLang } from '../fileMeta'
 import { useFileWatch } from './useFileWatch'
 import { ContentSurface, type ContentSurfaceHandle, type DraftEntry } from '../../../ui/content/ContentSurface'
 import { StaleWriteNotice } from '../../../ui/StaleWriteNotice'
@@ -221,7 +221,9 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
     return guard.save(from, text, rebaseText(from.value, text))
   }
 
-  const fileName = baseName(entry.path)
+  // The entry's own name, not its path's: a host may name a file other than as it is stored (the
+  // chat's file panel names an attachment as it was attached, not `<uuid-hex>_image.png`).
+  const fileName = entry.name
 
   // ── non-content states: loading / load-failure / detected-binary placeholders ──
   if (loading) return <Centered><Loader2 size={20} className="animate-spin text-on-surface-low" /></Centered>

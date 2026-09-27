@@ -47,8 +47,13 @@ class Extracted:
     unread: str = ""
 
 
-async def extract_file(file_path: str, mime: str | None = None) -> Extracted:
+async def extract_file(file_path: str, mime: str | None = None, *, name: str = "") -> Extracted:
     """Run the knowledge EXTRACTION graph for *file_path* and return what it got.
+
+    ``name`` is what the text calls the file when it can only describe it (its size and format),
+    for a caller that stores a file under a name of its own: a chat upload is saved as
+    ``<uuid-hex>_<name>``, and that stored name reached the sent turn's preview and the model.
+    Defaults to the file's own name.
 
     Never raises — an empty, unread result if extraction yields nothing (caller decides how to
     surface that). Pure extraction: no store, no insights/entities/embeddings/tags/title.
@@ -109,12 +114,16 @@ async def extract_file(file_path: str, mime: str | None = None) -> Extracted:
     from personalclaw.providers.image_input import NO_IMAGE_MODEL
 
     unread = UNREAD_NO_IMAGE_MODEL if NO_IMAGE_MODEL in result.unserved.values() else ""
-    return Extracted(_structural_descriptor(file_path, item_type, result, unread), False, unread)
+    descriptor = _structural_descriptor(
+        file_path, item_type, result, unread, name or os.path.basename(file_path)
+    )
+    return Extracted(descriptor, False, unread)
 
 
-def _structural_descriptor(file_path: str, item_type: str, result, unread: str = "") -> str:
+def _structural_descriptor(file_path: str, item_type: str, result, unread: str, name: str) -> str:
     """A one-line 'Image: foo.png (800×600, PNG)' style descriptor from the
-    non-pooled structural metadata, when no text was extracted."""
+    non-pooled structural metadata, when no text was extracted. ``name`` is what it calls
+    the file."""
     meta: dict = {}
     for out in result.outputs.values():
         if out.metadata:
@@ -141,4 +150,4 @@ def _structural_descriptor(file_path: str, item_type: str, result, unread: str =
         if unread == UNREAD_NO_IMAGE_MODEL
         else "no extractable text content."
     )
-    return f"{label}: {os.path.basename(file_path)} ({', '.join(bits)}) — {tail}"
+    return f"{label}: {name} ({', '.join(bits)}) — {tail}"
