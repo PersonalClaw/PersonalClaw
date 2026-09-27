@@ -159,11 +159,13 @@ or clear your Hugging Face token, download, install, delete or unload a model, o
 what you stored. It may not read them either: your providers, your bindings, your routing
 table and your usage are yours. The onboarding wizard's one-click bind of a local model
 (`/api/onboarding/local-model/bind`) is refused for the same reason: it adds a model provider
-and moves your chats onto it.
+and moves your chats onto it. The rest of your first-run setup (`/api/onboarding`) is yours too.
+An app may not read it, since it names the model your chats are bound to, move its progress, or
+have the gateway look for model servers on this machine or sweep your network for them.
 
 Every write route in these families, and every read in your conversation families, your
-notification log, your providers and your models, has to be declared one way or the other: one
-that is not is refused to every app until someone declares it, and
+notification log, your providers, your models and your first-run setup, has to be declared one
+way or the other: one that is not is refused to every app until someone declares it, and
 `tests/test_security_posture_rail.py` fails the build on it.
 
 The security settings that live in `config.json` are refused field by field instead,

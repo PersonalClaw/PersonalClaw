@@ -551,6 +551,15 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: Hugging Face token, a download, a runtime install, a local model. Their reads are declared as
 #: well (:data:`READ_DECLARED_FAMILIES`) and are the owner's too; no shipped app reads them, and
 #: one that needs a read gets an ``AppMay`` row saying why it is safe.
+#:
+#: **And your first-run setup is yours.** Its status read and its model check name the model your
+#: chats are bound to. The local-model probe and the LAN sweep make the gateway look for model
+#: servers on this machine and on your network, and the sweep runs only when you ask for it. The
+#: state write is how far your setup got, which decides what it shows you next. No shipped app
+#: calls any of them, so every route in ``/api/onboarding`` is the owner's, reads included.
+#: Bringing your setup over (``/api/onboarding/import``) and the one-click bind
+#: (``/api/onboarding/local-model/bind``) are :data:`OWNER_ONLY_API_PATHS` subtrees; the rest are
+#: ``OwnerOnly`` rows.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -590,17 +599,22 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
         "your models — which one each use runs on, and the models this machine downloads, "
         "installs and runs"
     ),
+    "/api/onboarding": (
+        "your first-run setup — the model your chats start on, the model servers it looks for on "
+        "your network, and how far you got"
+    ),
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
-#: conversations, what reached you, each app's provider settings, and your models. A read here
-#: answers with a transcript, a list of whose conversations exist, the notifications that reached
-#: you, where a provider connects, or which models your work runs on and how it went, so it is
-#: refused to every app until :data:`ROUTE_AUTHZ` declares it (:func:`undeclared_security_route`):
-#: default-deny, where a read anywhere else is the ordinary allowlist's business. A read that names
-#: one conversation, or one app's provider, carries ``owns`` and reaches only the calling app's own;
-#: a list is ``AppMay`` because its handler answers an app with the app's own conversations (or
-#: notifications, or providers) and nothing else; the rest are the owner's.
+#: conversations, what reached you, each app's provider settings, your models and your first-run
+#: setup. A read here answers with a transcript, a list of whose conversations exist, the
+#: notifications that reached you, where a provider connects, which models your work runs on and
+#: how it went, or what your setup found, so it is refused to every app until :data:`ROUTE_AUTHZ`
+#: declares it (:func:`undeclared_security_route`): default-deny, where a read anywhere else is
+#: the ordinary allowlist's business. A read that names one conversation, or one app's provider,
+#: carries ``owns`` and reaches only the calling app's own; a list is ``AppMay`` because its
+#: handler answers an app with the app's own conversations (or notifications, or providers) and
+#: nothing else; the rest are the owner's.
 READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
     {
         "/api/chat",
@@ -613,6 +627,7 @@ READ_DECLARED_FAMILIES: frozenset[str] = frozenset(
         "/api/providers",
         "/api/model-providers",
         "/api/models",
+        "/api/onboarding",
     }
 )
 
@@ -943,6 +958,25 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "GET /api/models/embedding/reindex/{id}/stream": OwnerOnly(
         "an embedding re-index run's progress"
+    ),
+    # ── your first-run setup (the import and the one-click bind are owner-only subtrees) ──
+    "GET /api/onboarding": OwnerOnly(
+        "your first-run setup — whether chat has a model, the model your chats are bound to, and "
+        "how far you got"
+    ),
+    "POST /api/onboarding/state": OwnerOnly(
+        "your first-run setup's progress — the step it resumes at, and what it counts as set up"
+    ),
+    "GET /api/onboarding/model-check": OwnerOnly(
+        "checking that your chat model builds — it names the model your chats are bound to"
+    ),
+    "GET /api/onboarding/local-model": OwnerOnly(
+        "asking whether a model server answers on this machine — the gateway probes localhost "
+        "for one"
+    ),
+    "POST /api/onboarding/local-model/scan": OwnerOnly(
+        "sweeping your local network for model servers — the opt-in scan that runs only when you "
+        "ask for it, and what it finds"
     ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),
