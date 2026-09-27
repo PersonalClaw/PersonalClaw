@@ -9,8 +9,10 @@ Persists each artifact under ``<root>/<slug>/`` (default root
 
 For file-backed artifacts (``source_path`` set) the live view reads/writes that
 Workspace file directly — the artifact is a *naming + versioning + lifecycle*
-layer over a single on-disk file, not a copy. Every read/write is gated by
-``is_sensitive_path`` and re-checked to stay under the provider root.
+layer over a single on-disk file, not a copy. The pointer is refused when it is set
+unless ``source_files`` admits it, and every read/write of it re-checks it there.
+The artifact's own files are gated by ``is_sensitive_path`` and re-checked to stay
+under the provider root.
 """
 
 from __future__ import annotations
@@ -19,10 +21,11 @@ import json
 import logging
 import re
 import threading
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
-from personalclaw.artifacts import changes
+from personalclaw.artifacts import changes, source_files
 from personalclaw.artifacts.models import (
     ALLOWED_EVENT_TYPES,
     BINARY_KINDS,
@@ -203,24 +206,22 @@ class NativeArtifactProvider(ArtifactProvider):
 
     # ── live-pointer (file-backed source_path) ──
 
-    def _try_read_source_path(self, source_path: str) -> str | None:
+    def _try_read_source_path(
+        self, source_path: str, places: Sequence[str] | None = None
+    ) -> str | None:
         """Read live content from a file-backed artifact's source path.
 
-        Resolves symlinks/.. and refuses sensitive paths BEFORE reading; requires
-        an absolute, existing, regular file; bounds the read at the file level so
-        a huge source can't exhaust memory.
+        Re-checks the pointer BEFORE reading (``source_files.admitted``: symlinks and
+        ``..`` resolved, inside the places an artifact may point, no credential file);
+        requires an existing regular file; bounds the read at the file level so a huge
+        source can't exhaust memory. A refused pointer reads as absent, so the caller
+        falls back to the artifact's own saved copy. *places* are
+        ``source_files.places()`` when the caller already resolved them.
         """
-        if not source_path:
+        admitted = source_files.admitted(source_path, places)
+        if admitted is None:
             return None
-        try:
-            p = Path(source_path)
-            if not p.is_absolute():
-                return None
-            resolved = p.resolve()
-        except (OSError, ValueError):
-            return None
-        if is_sensitive_path(str(resolved)):
-            return None
+        resolved = Path(admitted)
         if not resolved.is_file():
             return None
         try:
@@ -233,20 +234,13 @@ class NativeArtifactProvider(ArtifactProvider):
         """Write back to a file-backed artifact's source path.
 
         Refuses to CREATE a non-existent file (the Save-as-artifact flow always
-        targets an existing file) and refuses sensitive/symlink-to-sensitive
-        paths. Returns False (degrade to snapshot-only) on any failure.
+        targets an existing file) and re-checks the pointer first, as the read does.
+        Returns False (degrade to snapshot-only) on any failure.
         """
-        if not source_path:
+        admitted = source_files.admitted(source_path)
+        if admitted is None:
             return False
-        try:
-            p = Path(source_path)
-            if not p.is_absolute():
-                return False
-            resolved = p.resolve()
-        except (OSError, ValueError):
-            return False
-        if is_sensitive_path(str(resolved)):
-            return False
+        resolved = Path(admitted)
         if not resolved.is_file():
             return False  # never create
         try:
@@ -280,17 +274,18 @@ class NativeArtifactProvider(ArtifactProvider):
     def _current_content(self, slug: str) -> str | None:
         return self._read_text(self._artifact_dir(slug) / "current.html")
 
-    def _live_body(self, art: Artifact) -> str | None:
+    def _live_body(self, art: Artifact, places: Sequence[str] | None = None) -> str | None:
         """The body a live read of *art* shows — what ``get()`` hands out as ``content``.
 
         The raw-URL ref for a binary kind; for a file-backed artifact the file it points at, or
         ``current.html`` when that file cannot be read; else ``current.html``. One definition,
         because a body save's precondition (``update(expect_revision=…)``) must be compared
-        against exactly what the read it was built from showed.
+        against exactly what the read it was built from showed. *places* as
+        :meth:`_try_read_source_path` takes them.
         """
         if is_binary_kind(art.kind):
             return self._raw_ref(art.slug)
-        live = self._try_read_source_path(art.source_path) if art.source_path else None
+        live = self._try_read_source_path(art.source_path, places) if art.source_path else None
         return live if live is not None else self._current_content(art.slug)
 
     def _version_content(self, slug: str, version: int) -> str | None:
@@ -417,6 +412,9 @@ class NativeArtifactProvider(ArtifactProvider):
         with self._lock:
             slugs = [p.name for p in root.iterdir() if p.is_dir()] if root.exists() else []
         needle = q.casefold() if q else ""
+        # Resolved at most once per search: each body read re-checks its pointer against
+        # these, and resolving them per artifact made a search cost a root walk per row.
+        places: Sequence[str] | None = None
         out: list[Artifact] = []
         for slug in slugs:
             art = self._read_meta(slug)
@@ -449,7 +447,9 @@ class NativeArtifactProvider(ArtifactProvider):
                     f"{' '.join(art.tags)}\n{art.collection or ''}"
                 ).casefold()
                 if needle not in metadata:
-                    detail = self.get(art.slug)
+                    if places is None and art.source_path:
+                        places = source_files.places()
+                    detail = self._get(art.slug, places=places)
                     if detail is None or needle not in (detail.content or "").casefold():
                         continue
             art.content = None  # list omits content
@@ -498,6 +498,12 @@ class NativeArtifactProvider(ArtifactProvider):
         return None
 
     def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
+        return self._get(slug, version=version)
+
+    def _get(
+        self, slug: str, *, version: int | None = None, places: Sequence[str] | None = None
+    ) -> Artifact | None:
+        """:meth:`get`, with the places a pointer may name already resolved by the caller."""
         with self._lock:
             art = self._read_meta(slug)
             if art is None:
@@ -524,7 +530,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.live_dirty = False
                 return art
             # Live view: disk for file-backed, else current.html.
-            live = self._live_body(art)
+            live = self._live_body(art, places)
             art.content = live
             nums = self._list_version_numbers(slug)
             latest_snap = self._version_content(slug, nums[-1]) if nums else None
@@ -763,6 +769,11 @@ class NativeArtifactProvider(ArtifactProvider):
         # not text. Refuse here so a text body can't masquerade as an image.
         if is_binary_kind(kind):
             raise ValueError(f"kind {kind!r} is binary — use create_binary()")
+        # Refused here, before anything is written, rather than trusted from the route: the loop
+        # watchdog creates file-backed artifacts through this method too. Stored resolved.
+        pointer = (source_path or "").strip()
+        if pointer:
+            pointer = source_files.admit(pointer)
         with self._lock:
             base = slug.strip() if slug and is_valid_slug(slug.strip()) else slugify(name)
             final_slug = (
@@ -789,7 +800,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 version=1,
                 created_at=ts,
                 updated_at=ts,
-                source_path=source_path or "",
+                source_path=pointer,
                 project_id=project_id or "",
                 collection=(collection or "").strip()[:MAX_NAME_LEN],
                 readonly=bool(readonly),
@@ -799,8 +810,8 @@ class NativeArtifactProvider(ArtifactProvider):
             d.mkdir(parents=True, exist_ok=True)
             self._write_text(d / "current.html", content or "")
             self._snapshot_version(final_slug, 1, content or "")
-            if source_path:
-                self._try_write_source_path(source_path, content or "")
+            if pointer:
+                self._try_write_source_path(pointer, content or "")
             self._write_meta(art)
             # Echo what _write_text actually persisted (sliced to MAX_CONTENT_BYTES), not
             # the raw input: create() returns art in-hand rather than re-reading via get()
@@ -840,6 +851,12 @@ class NativeArtifactProvider(ArtifactProvider):
             raise ValueError("use revert() to restore a version, not update()")
         if event_type is not None and event_type not in ALLOWED_EVENT_TYPES:
             raise ValueError(f"invalid event_type: {event_type!r}")
+        # A new pointer is admitted before any side effect, exactly as in create(); "" detaches.
+        pointer: str | None = None
+        if source_path is not None:
+            pointer = source_path.strip()
+            if pointer:
+                pointer = source_files.admit(pointer)
         with self._lock:
             art = self._read_meta(slug)
             if art is None:
@@ -877,8 +894,8 @@ class NativeArtifactProvider(ArtifactProvider):
             # ADOPTION (#290) — set BEFORE the content write below, so the same call that
             # attaches the pointer also pushes the body through it. Attaching afterwards
             # would leave the file and the artifact one version apart on the first write.
-            if source_path is not None:
-                art.source_path = source_path.strip()
+            if pointer is not None:
+                art.source_path = pointer
                 meta_changed = True
 
             # Track REAL change so the event / version / recency triad follows what

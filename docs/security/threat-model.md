@@ -165,7 +165,7 @@ says what that means.
   names a security setting fails to install (`apps/manifest.py::_config_permission_errors`).
   `/api/apps/{name}/config` reaches only the calling app's own settings, and the file
   explorer hides the PersonalClaw home from an app token
-  (`dashboard/handlers/files.py::_dashboard_roots`), since `config.json` and `mcp.json`
+  (`file_roots.py::dashboard_roots`), since `config.json` and `mcp.json`
   live there. It refuses an app like every other app refusal, `403` with a Security Event
   Log row naming the app and the path (`files.py::_app_path_refusal`).
 - **A provider is its app's.** A provider's settings say where it connects and which of its
@@ -359,6 +359,15 @@ Data leaving the running system:
   `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
+- **A file-backed artifact points only where those surfaces reach** (`artifacts/source_files.py`).
+  Its `source_path` is a live pointer: every read of the artifact reads the file, and every save,
+  snapshot and revert writes it. So the pointer must pass the file explorer's own check
+  (`file_roots.admit`: symlinks and `..` resolved, no credential or secret file) against the
+  explorer's roots, or, for the owner, a loop's own folder, where an unbound loop keeps the
+  deliverable its completion graduates. Anything else is refused when it is set (`400`, or `403`
+  for an app), before the file is opened, so the answer says nothing about what the file holds.
+  Every read and write checks it again, so a pointer recorded earlier, or one whose file was later
+  swapped for a symlink out, touches nothing.
 - **Memory privacy** (`session_restrictions.py`): temporary/incognito sessions
   gate memory reads/writes.
 

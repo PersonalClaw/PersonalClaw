@@ -1567,8 +1567,9 @@ def undeclared_security_route(method: str, route: str) -> str:
 #: The app a request is scoped to, for the seams that decide reach without a request in hand.
 #: Set by the gateway's app-permission middleware around the handler (:func:`scoped_to_app`) and
 #: read by :func:`request_app` — today by the file explorer's root list, which must not hand an
-#: app the PersonalClaw home (``dashboard/handlers/files._dashboard_roots``). ``asyncio.to_thread``
-#: copies it, so a handler's offloaded work sees the same identity.
+#: app the PersonalClaw home (``file_roots.dashboard_roots``), and by the places an artifact may
+#: point (``artifacts/source_files.places``), which give an app no loop folder.
+#: ``asyncio.to_thread`` copies it, so a handler's offloaded work sees the same identity.
 _REQUEST_APP: contextvars.ContextVar[str] = contextvars.ContextVar(
     "personalclaw_request_app", default=""
 )

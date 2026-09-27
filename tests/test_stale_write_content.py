@@ -50,16 +50,16 @@ def _code(body: dict) -> str:
 
 @pytest.fixture
 def explorer(tmp_path):
-    """The dashboard's file roots are exactly *tmp_path* (the file I/O suite's own seam)."""
+    """The dashboard's file roots are exactly *tmp_path* (the file I/O suite's own seam), for the
+    explorer and for the places a file-backed artifact may point (`artifacts/source_files`)."""
     real_realpath = os.path.realpath
+    roots = [("Test", str(tmp_path))]
     with (
         patch("os.path.expanduser", side_effect=lambda p: p.replace("~", str(tmp_path))),
         patch("os.path.realpath", side_effect=real_realpath),
         patch("pathlib.Path.home", return_value=tmp_path),
-        patch(
-            "personalclaw.dashboard.handlers.files._dashboard_roots",
-            return_value=[("Test", str(tmp_path))],
-        ),
+        patch("personalclaw.dashboard.handlers.files._dashboard_roots", return_value=roots),
+        patch("personalclaw.file_roots.dashboard_roots", return_value=roots),
     ):
         yield tmp_path
 

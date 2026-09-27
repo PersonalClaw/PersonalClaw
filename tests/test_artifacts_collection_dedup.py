@@ -146,10 +146,11 @@ async def test_rest_collection_roundtrips(patched_native) -> None:
 
 @pytest.mark.asyncio
 async def test_rest_source_path_save_still_dedups_by_path_not_name(
-    patched_native, tmp_path
+    patched_native, tmp_path, monkeypatch
 ) -> None:
     """A file-backed save (source_path) keeps its own dedup path — the name-similarity
     409 must NOT fire for it (source_path bumps the existing one instead)."""
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
     client = await _client(patched_native)
     try:
         p = str(tmp_path / "widget.html")
