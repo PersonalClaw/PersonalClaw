@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
+from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -31,6 +33,7 @@ from personalclaw.local_models.provider import LocalModel
 
 _MB = 1024 * 1024
 _GB = 1024 * 1024 * 1024
+_UNIT_BYTES = {"B": 1, "KB": 1024, "MB": _MB, "GB": _GB, "TB": 1024 * _GB}
 
 
 @pytest.fixture(autouse=True)
@@ -311,18 +314,86 @@ async def test_download_refused_when_the_weights_cannot_land(_download_env, tmp_
     assert resp.status == 400
     error = json.loads(resp.body.decode())["error"]
     assert error.startswith("insufficient_disk_space:")
-    both = re.search(r"needs ([\d.]+) GB, ([\d.]+) GB free", error)
+    both = re.search(r"needs ([\d.]+) ([KMGT]?B), ([\d.]+) ([KMGT]?B) free", error)
     assert both, error
-    assert float(both.group(1)) > float(both.group(2))
+    need = float(both.group(1)) * _UNIT_BYTES[both.group(2)]
+    free = float(both.group(3)) * _UNIT_BYTES[both.group(4)]
+    assert need > free
     # Refused BEFORE the fetch: no job was created for it.
     assert reg.list() == []
 
 
+def _free_after_the_real_probe(free_bytes: int):
+    """A ``shutil.disk_usage`` that reports ``free_bytes``, but only after the real call ran.
+
+    The real call goes first so a folder that does not exist raises ``FileNotFoundError``
+    exactly as it does in production; a fake that answered for any path would hide the
+    fresh-home defect these tests pin.
+    """
+    real = shutil.disk_usage
+
+    def _disk_usage(path):
+        real(path)
+        return SimpleNamespace(total=free_bytes * 2, used=free_bytes, free=free_bytes)
+
+    return _disk_usage
+
+
+@pytest.mark.asyncio
+async def test_a_first_download_on_a_fresh_home_is_refused_up_front(
+    _download_env, monkeypatch, tmp_path
+):
+    """The folder a first download lands in does not exist yet, and the check still runs.
+
+    It used to read "could not be checked", so a fresh home started a 138 MB download on a
+    disk with 50 MB free and failed it part of the way through.
+    """
+    target = tmp_path / "home" / "models" / "bundled-chat"  # the home exists, models/ does not
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(50 * _MB))
+    _download_env(cache_dir=str(target), models=[LocalModel(name="small", size_mb=138)])
+    reg = M.ModelDownloadRegistry()
+    resp = await H.api_model_download_start(
+        _req("POST", "/api/models/downloads", reg, body={"provider": "ollama", "model": "small"})
+    )
+
+    assert resp.status == 400
+    assert json.loads(resp.body.decode()) == {
+        "error": "insufficient_disk_space: needs 138.0 MB, 50.0 MB free"
+    }
+    assert reg.list() == []
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_first_download_on_a_fresh_home_that_fits_starts_without_a_warning(
+    _download_env, monkeypatch, tmp_path
+):
+    """The check ran and passed, so there is nothing to warn about."""
+    target = tmp_path / "home" / "models" / "bundled-chat"
+    monkeypatch.setattr(shutil, "disk_usage", _free_after_the_real_probe(500 * _GB))
+    _download_env(cache_dir=str(target), models=[LocalModel(name="small", size_mb=138)])
+    reg = M.ModelDownloadRegistry()
+    resp = await H.api_model_download_start(
+        _req("POST", "/api/models/downloads", reg, body={"provider": "ollama", "model": "small"})
+    )
+
+    assert resp.status == 202
+    payload = json.loads(resp.body.decode())
+    assert payload["model"] == "small"
+    assert "warning" not in payload
+    await _settle()
+
+
 @pytest.mark.asyncio
 async def test_unmeasurable_disk_allows_the_download_and_warns(_download_env, tmp_path):
-    """A probe that could not measure the filesystem must not block a good download."""
+    """A probe that could not measure the filesystem must not block a good download.
+
+    Unmeasurable is a link to a drive that is not there. A folder that simply does not exist
+    yet is measurable where it will be created (the two fresh-home tests above).
+    """
+    (tmp_path / "models").symlink_to(tmp_path / "unplugged-drive")
     _download_env(
-        cache_dir=str(tmp_path / "does" / "not" / "exist"),
+        cache_dir=str(tmp_path / "models" / "ollama"),
         models=[LocalModel(name="good", size_mb=10)],
     )
     reg = M.ModelDownloadRegistry()

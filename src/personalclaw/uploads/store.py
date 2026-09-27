@@ -26,6 +26,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from personalclaw.local_models.fit import free_disk_bytes
 from personalclaw.uploads.policy import check_upload
 
 # One part = this many bytes. 8 MB balances request count vs per-request overhead;
@@ -281,8 +282,10 @@ async def _stream_to(part_reader, fh, *, cap: int) -> int:
 
 
 def _free_bytes(path: Path) -> int:
+    """Free bytes on the disk ``path`` is on, or will be remade on: the gateway builds the store
+    once and caches it, so a root removed under it is only remade by ``init``."""
     try:
-        return shutil.disk_usage(str(path)).free
+        return free_disk_bytes(path)
     except OSError:
         return 0
 
