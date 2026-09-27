@@ -421,14 +421,18 @@ class TestYourOwnReadsAreYours:
 
     def test_every_read_in_a_conversation_family_is_driven_here(self) -> None:
         """A read added to one of the families must be given a case in this file. The provider
-        family's reads are driven in ``test_apps_cannot_reconfigure_other_providers.py``."""
+        family's reads are driven in ``test_apps_cannot_reconfigure_other_providers.py``, and your
+        models' in ``test_apps_cannot_change_your_models.py``."""
         from test_security_posture_rail import _family_read_routes
 
         from personalclaw.apps.permissions import security_family
 
+        driven_elsewhere = {"/api/providers", "/api/model-providers", "/api/models"}
         driven = {f"{m} {t}" for m, t in SESSION_READS + OWNER_ONLY_READS + LIST_READS}
         census = {
-            f"{m} {r}" for m, r in _family_read_routes() if security_family(r) != "/api/providers"
+            f"{m} {r}"
+            for m, r in _family_read_routes()
+            if security_family(r) not in driven_elsewhere
         }
         assert census - driven == set(), "reads in a conversation family with no case here"
 
