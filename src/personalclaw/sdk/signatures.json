@@ -8349,6 +8349,11 @@
   "returns": "bool"
  },
  "personalclaw.sdk.sync.sync_egress_policy": {"kind": "alias", "of": "personalclaw.sdk.net.sync_egress_policy"},
+ "personalclaw.sdk.testing.keychain_off": {
+  "kind": "function",
+  "params": [],
+  "returns": "Callable[[], None]"
+ },
  "personalclaw.sdk.tool.AgentError": {"kind": "alias", "of": "personalclaw.sdk.action.AgentError"},
  "personalclaw.sdk.tool.DEFAULT_TOOL_OUTPUT_CAP": {"kind": "value", "type": "int", "value": "60000"},
  "personalclaw.sdk.tool.ProjectionRule": {

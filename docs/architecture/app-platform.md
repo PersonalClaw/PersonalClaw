@@ -370,8 +370,10 @@ backend has no access to the gateway's SecurityEventLog).
   (boundary-lint-enforced by `tests/test_apps_import_boundary.py`). Modules
   cover models, channels, tools, search, memory, knowledge, STT/TTS,
   credentials, settings (`ProviderSettings` — each app's persisted store),
-  security helpers, and `provider_helpers.register_branded_app` for
-  protocol-thin branded model apps.
+  security helpers, `provider_helpers.register_branded_app` for
+  protocol-thin branded model apps, and `testing.keychain_off` for an app's
+  test harness, which keeps the test process out of the machine's OS keychain
+  (one keychain serves every home, so a scratch `PERSONALCLAW_HOME` does not).
 - **Its signatures are a reviewed contract**: every name each `sdk` module publishes
   is recorded in `src/personalclaw/sdk/signatures.json`
   (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`
