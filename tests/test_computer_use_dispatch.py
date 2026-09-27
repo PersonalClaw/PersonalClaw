@@ -866,10 +866,13 @@ def test_the_driver_argv_names_the_child_module_and_this_interpreter():
     assert service.DRIVER_CHILD_MODULE == driver_host.__name__
 
 
-def test_the_real_spawn_answers_in_the_typed_envelope(tmp_path):
+def test_the_real_spawn_answers_in_the_typed_envelope(tmp_path, monkeypatch):
     """The end-to-end proof that the ceilinged spawn is a LIVE path: no driver is monkeypatched
     here, so the dispatch really starts the child through the ceiling helper and really reads
     its answer.
+
+    The child inherits this process's environment, and conftest redirects the home only in
+    process, so ``PERSONALCLAW_HOME`` is set here for the child to resolve a scratch home.
 
     **Re-scoped by `DCU-3`.** This asserted ``ERR_DRIVER_UNAVAILABLE`` specifically, which was
     only true while no platform driver module existed; a macOS driver now does. The clause §3
@@ -879,6 +882,7 @@ def test_the_real_spawn_answers_in_the_typed_envelope(tmp_path):
     on an ungranted machine, a real indexed tree on a granted one) are owned by
     ``test_computer_use_macos_driver.py``, so neither file duplicates the other's clause.
     """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     _arm(tmp_path, ARMED_APP)
     try:
         answer = _run(service.computer_dispatch("computer_snapshot", {"app": ARMED_APP}))
