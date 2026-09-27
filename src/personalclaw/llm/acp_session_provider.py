@@ -239,6 +239,21 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AgentProvider):
         from personalclaw.acp.permission_authority import sanitize_mode
 
         decision = sanitize_mode(mode, unattended=self._unattended)
+        if decision.reason and not decision.downgraded and decision.requested:
+            # Allowed, not clamped (only an unattended session is): written down as the
+            # AcpClient door writes it, so the audit shows every session whose CLI approved its
+            # own calls, whichever door opened it.
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="acp:permission_authority",
+                    operation="mode_change:unattended_auto_approve",
+                    outcome="allowed",
+                    resources=f"pooled mode={decision.mode}",
+                )
+            except Exception:
+                logger.warning("SEL audit failed for pooled unattended ACP mode", exc_info=True)
         if decision.downgraded:
             logger.warning("ACP pooled permission mode clamped: %s", decision.reason)
             try:

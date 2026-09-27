@@ -31,6 +31,7 @@ import pytest
 from personalclaw import channel_delivery
 from personalclaw import notification_kinds as nk
 from personalclaw import notification_rules as rules
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID, AppConfig
 from personalclaw.dashboard import channel_messages
@@ -329,7 +330,7 @@ async def test_a_subagent_approval_asks_the_chosen_channel():
     callback = _orchestrator()._interactive_approval("subagent")
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
-        assert await callback(_event(), "") is True
+        assert await callback(_event(), "") == ToolDecision(True, "approved", "you")
     last.request_approval.assert_awaited_once()
     first.request_approval.assert_not_awaited()
 
@@ -343,7 +344,7 @@ async def test_a_subagent_approval_passes_over_a_channel_that_does_not_know_you(
     callback = _orchestrator()._interactive_approval("subagent")
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
-        assert await callback(_event(), "") is True
+        assert await callback(_event(), "") == ToolDecision(True, "approved", "you")
     last.request_approval.assert_awaited_once()
     first.request_approval.assert_not_awaited()
 
@@ -356,7 +357,8 @@ async def test_a_subagent_approval_with_the_chosen_channel_gone_waits_in_the_das
     callback = orch._interactive_approval("subagent")
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
-        assert await callback(_event(), "") is False  # the dashboard's answer (the mock's)
+        # The dashboard's answer (the mock's), a person's.
+        assert await callback(_event(), "") == ToolDecision(False, "rejected", "you")
     first.request_approval.assert_not_awaited()
     orch.dashboard_state.request_approval.assert_awaited_once()
 
@@ -372,7 +374,7 @@ async def test_a_subagent_of_a_channel_chat_asks_that_channel_first():
     callback = orch._interactive_approval("subagent")
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
-        assert await callback(_event(), "dashboard:chat-7") is True
+        assert await callback(_event(), "dashboard:chat-7") == ToolDecision(True, "approved", "you")
     first.request_approval.assert_awaited_once()
     last.request_approval.assert_not_awaited()
 
@@ -386,6 +388,6 @@ async def test_a_subagent_of_a_dashboard_chat_follows_the_setting():
     callback = orch._interactive_approval("subagent")
 
     with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
-        assert await callback(_event(), "dashboard:chat-8") is True
+        assert await callback(_event(), "dashboard:chat-8") == ToolDecision(True, "approved", "you")
     last.request_approval.assert_awaited_once()
     first.request_approval.assert_not_awaited()

@@ -1450,7 +1450,9 @@ async def dispatch_gate(
     verify: Any = None,
     completion: Any = None,
     tiers: dict[str, str] | None = None,
-    mode: str = "background",
+    #: The run's explicit UNATTENDED grant: who is watching decides how long a park waits for an
+    #: answer (`human_input.gate_timeout_secs`).
+    unattended: bool = False,
     worker_model: str = "",
     judge_model_resolver: Any = None,
     compaction_saves: list[float] | None = None,
@@ -1869,12 +1871,12 @@ async def dispatch_gate(
         }
         if effective == "review" or state is InstanceState.WAITING:
             # Both parks go through the SAME payload as an `approval` gate: the typed ask and the
-            # MODE-DEPENDENT deadline (WF2-R7). Returning WAITING without them would wedge the
-            # node — nothing to answer and no clock to wake it — which is a quieter failure than
-            # any verdict, and the reason a NEEDS_INPUT verdict cannot simply borrow the state.
+            # deadline (WF2-R7). Returning WAITING without them would wedge the node — nothing to
+            # answer and no clock to wake it — which is a quieter failure than any verdict, and
+            # the reason a NEEDS_INPUT verdict cannot simply borrow the state.
             from personalclaw.workflows.human_input import gate_timeout_secs
 
-            timeout = gate_timeout_secs(cfg, mode=mode)
+            timeout = gate_timeout_secs(cfg, unattended=unattended)
             parked = dict(output)
             if effective == "review":
                 parked["actor_note"] = note
@@ -1894,12 +1896,12 @@ async def dispatch_gate(
             **engine_support.journalled_prompt(wire, instruction),
         )
 
-    # approval / event: park for a human or an external signal. The deadline is
-    # MODE-DEPENDENT (WF2-R7): a background run parked forever on an approval nobody is
-    # watching is wedged, not waiting, so background gates time out fast and surface.
+    # approval / event: park for a human or an external signal. The deadline is the owner's
+    # approval window, like every other approval's; a run started unattended has nobody to answer,
+    # so its gate gives up fast and the run says so rather than wedging (WF2-R7).
     from personalclaw.workflows.human_input import gate_timeout_secs
 
-    timeout_secs = gate_timeout_secs(cfg, mode=mode)
+    timeout_secs = gate_timeout_secs(cfg, unattended=unattended)
     wake = now + float(timeout_secs) if timeout_secs > 0 else 0.0
     return NodeResult(
         state=InstanceState.WAITING,
@@ -2305,7 +2307,6 @@ async def dispatch(
     get_provider: Any = None,
     verify: Any = None,
     timeout: int = 60,
-    mode: str = "background",
     #: The run supervisor, for `subworkflow` only — it is the one dispatcher that needs to
     #: CREATE and drive another run. Injected rather than imported so a test can nest without a
     #: gateway, and so the child is driven by the same supervisor that will adopt it on restart.
@@ -2329,7 +2330,8 @@ async def dispatch(
     #: The run's parsed `runtime_hints.judge` (WF2LOO-13). Only the JUDGE gate branch and the
     #: judge-contract seam below read it.
     judge_hints: JudgeHints | None = None,
-    #: The run's explicit UNATTENDED grant. Only the STAGE branch reads it (see `dispatch_stage`).
+    #: The run's explicit UNATTENDED grant. The STAGE branch reads it (see `dispatch_stage`), and
+    #: the GATE branch, whose park waits the owner's approval window unless nobody is watching.
     unattended: bool = False,
     #: The effect's idempotency key (`effects.effect_key`). Only the ACTION branch reads it.
     idempotency_key: str = "",
@@ -2358,7 +2360,6 @@ async def dispatch(
         get_provider=get_provider,
         verify=verify,
         timeout=timeout,
-        mode=mode,
         supervisor=supervisor,
         on_progress=on_progress,
         worker_model=worker_model,
@@ -2424,7 +2425,6 @@ async def _dispatch_inner(
     get_provider: Any = None,
     verify: Any = None,
     timeout: int = 60,
-    mode: str = "background",
     supervisor: Any = None,
     on_progress: Any = None,
     worker_model: str = "",
@@ -2481,7 +2481,7 @@ async def _dispatch_inner(
             verify=verify,
             completion=completion,
             tiers=tiers,
-            mode=mode,
+            unattended=unattended,
             worker_model=worker_model,
             compaction_saves=compaction_saves,
             judge_hints=judge_hints,

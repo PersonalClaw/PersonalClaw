@@ -17,8 +17,10 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
+from personalclaw import approval_grants
+from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, fire_tool_hooks, safe_read_file
@@ -30,7 +32,12 @@ from personalclaw.llm.base import (
     EVENT_TOOL_RESULT,
     LLMEvent,
 )
-from personalclaw.llm.events import TOOL_META_AUTO_DENIED
+from personalclaw.llm.events import (
+    TOOL_META_APPROVAL_WAIVED,
+    TOOL_META_AUTO_DENIED,
+    unasked_outcome,
+    unasked_reason,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
@@ -49,6 +56,9 @@ from personalclaw.subagent_persistence import (
 )
 from personalclaw.textfmt import extract_options
 from personalclaw.validation import _AGENT_NAME_RE
+
+if TYPE_CHECKING:
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -421,16 +431,45 @@ AnnounceCallback = Callable[[list[SubagentInfo]], Awaitable[None]]
 SubagentEventCallback = Callable[[str, "SubagentInfo", dict], Awaitable[None]]
 
 
+def _is_native(client: object) -> "TypeGuard[NativeAgentRuntime]":
+    """Whether *client* is PersonalClaw's own loop, which stamps each result with how it was
+    decided (``llm.events``), rather than an ACP CLI, which decides what to ask about itself."""
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+
+    return isinstance(client, NativeAgentRuntime)
+
+
 class ToolApprovalCallback(Protocol):
-    async def __call__(self, event: LLMEvent, parent_session_key: str = "") -> bool:
+    async def __call__(
+        self, event: LLMEvent, parent_session_key: str = ""
+    ) -> "bool | ToolDecision":
         pass
 
 
 class SpawnApprovalCallback(Protocol):
     async def __call__(
         self, request_id: str, description: str, parent_session_key: str = ""
-    ) -> bool:
+    ) -> "bool | ToolDecision":
         pass
+
+
+@dataclass(frozen=True)
+class SubagentLimits:
+    """The Settings → Agent defaults → Subagents limits, as they read at one decision."""
+
+    max_concurrent: int
+    turn_limit: int
+    timeout: int
+
+
+#: The ``reason`` a spawn's ``auto_approved_spawn`` row has always carried, per grant. Kept so an
+#: auditor's existing queries still match; ``decided_by`` beside it is the grant's own name.
+_SPAWN_GRANT_REASONS = {
+    approval_grants.APPROVAL_MODE: "approval_mode_auto",
+    approval_grants.PARENT_TRUST: "parent_trusted",
+    approval_grants.HOOK_SETTING: "tool_calls_gated",
+    approval_grants.YOLO: "yolo",
+}
 
 
 class SubagentManager:
@@ -455,15 +494,24 @@ class SubagentManager:
         delivery_coalesce_secs: float = 0.05,
         on_done_timeout: float = _ON_DONE_TIMEOUT,
         reset_timeout: float = _RESET_TIMEOUT,
+        *,
+        limits: Callable[[], SubagentLimits] | None = None,
     ):
         self._sessions = sessions
         self._ctx_builder = ctx_builder
         self._on_done = on_done
-        self._max_concurrent = max_concurrent
+        # The three limits are either FIXED (a caller that passes them, like a test) or read from
+        # ``limits`` at each decision — the gateway's, which reads Settings → Agent defaults →
+        # Subagents, so a lowered cap binds the next spawn without a restart (`approval_grants`,
+        # rule 1). A lowered limit must never wait for a restart: it is the looser posture.
+        self._limits = limits
+        self._fixed_max_concurrent = max_concurrent
+        self._fixed_turn_limit = default_turn_limit
+        self._fixed_timeout = default_timeout if default_timeout > 0 else _TIMEOUT_SECS
         # Per-run concurrency lane cap (C1.4). 0 → the global cap (a lone run may use
         # every slot; the lane only bites once TWO fan-outs contend). A caller that
         # wants strict fairness sets it below ``max_concurrent``.
-        self._run_lane_cap = run_lane_cap if run_lane_cap > 0 else max_concurrent
+        self._fixed_run_lane_cap = run_lane_cap
         # Delivery coalescing (C1.1): completions for one parent are buffered for a
         # short window and delivered as ONE batch turn, so a burst of N completions
         # is one parent turn, not N serialized behind the per-session Semaphore(1).
@@ -479,8 +527,6 @@ class SubagentManager:
         self._reset_timeout = reset_timeout
         self._pending_delivery: dict[str, list[SubagentInfo]] = {}
         self._delivery_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
-        self._default_turn_limit = default_turn_limit
-        self._default_timeout = default_timeout if default_timeout > 0 else _TIMEOUT_SECS
         self._on_tool_approval = on_tool_approval  # fallback for non-auto sessions
         self._on_tool_approval_factory = on_tool_approval_factory
         self._on_spawn_approval = on_spawn_approval
@@ -515,16 +561,122 @@ class SubagentManager:
         # them instead of silently dropping them and re-entering the interactive gate.
         self._queue: list[SubagentInfo] = []
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
-        # Cache global approval_mode at init to avoid disk I/O on every
-        # parentless spawn (cron, webhooks).
+        # The grant that last waived an ask in each running agent's runtime (`_policy_source`),
+        # so the audit row of a call its runtime approved without asking names who decided.
+        self._waived_by: dict[str, str] = {}
+
+    # ── Limits, as they read now ─────────────────────────────────────────
+
+    def _limits_now(self) -> SubagentLimits | None:
+        if self._limits is None:
+            return None
         try:
-            self._global_approval_mode = AppConfig.load().agent.approval_mode
-        except Exception:
-            logger.warning(
-                "Failed to load AppConfig for approval_mode; defaulting to interactive",
-                exc_info=True,
-            )
-            self._global_approval_mode = ""
+            return self._limits()
+        except Exception:  # noqa: BLE001 - an unreadable setting keeps the fixed limits
+            logger.warning("subagent limits could not be read; using the fixed ones", exc_info=True)
+            return None
+
+    @property
+    def _max_concurrent(self) -> int:
+        live = self._limits_now()
+        return live.max_concurrent if live is not None else self._fixed_max_concurrent
+
+    @property
+    def _run_lane_cap(self) -> int:
+        return self._fixed_run_lane_cap if self._fixed_run_lane_cap > 0 else self._max_concurrent
+
+    @property
+    def _default_turn_limit(self) -> int:
+        live = self._limits_now()
+        return live.turn_limit if live is not None else self._fixed_turn_limit
+
+    @property
+    def _default_timeout(self) -> int:
+        live = self._limits_now()
+        timeout = live.timeout if live is not None else self._fixed_timeout
+        return timeout if timeout > 0 else _TIMEOUT_SECS
+
+    # ── Who may approve, decided now (`approval_grants`) ──────────────────
+
+    def _spawn_grant(self, info: SubagentInfo) -> str:
+        """The grant that starts *info* without asking, read now, or ``""`` (the spawn asks)."""
+        if self._is_yolo and self._is_yolo():
+            return approval_grants.YOLO
+        if info.approval_mode == "auto":
+            return approval_grants.APPROVAL_MODE
+        if info.parent_session_key and self._sessions.get_approval_policy(
+            info.parent_session_key
+        ) in ("auto", "yolo"):
+            return approval_grants.PARENT_TRUST
+        hooks = self._ctx_builder.hooks if self._ctx_builder else None
+        if hooks is not None and hooks.auto_approve_subagent_spawn is True:
+            return approval_grants.HOOK_SETTING
+        return ""
+
+    def _standing_grant(self, info: SubagentInfo) -> str:
+        """The grant that lets *info*'s agent approve its own tool calls NOW, or ``""``.
+
+        Each one is read at this moment, not at the spawn and not at startup: the chat that started
+        the agent (its Trust or YOLO pushed into its policy), the spawn's own ``approval_mode``,
+        YOLO, the global Auto-approve setting (for an agent no chat started), the hook setting.
+        Not checked against the ceiling: :meth:`_grant_now` is.
+        """
+        if self._sessions.get_approval_policy(info.parent_session_key) in ("auto", "yolo"):
+            return approval_grants.PARENT_TRUST
+        if info.approval_mode == "auto":
+            return approval_grants.APPROVAL_MODE
+        if self._is_yolo and self._is_yolo():
+            return approval_grants.YOLO
+        if not info.parent_session_key and approval_grants.approval_mode_now() == "auto":
+            return approval_grants.SETTING
+        hooks = self._ctx_builder.hooks if self._ctx_builder else None
+        if hooks is not None and hooks.auto_approve_subagent_tools is True:
+            return approval_grants.HOOK_SETTING
+        return ""
+
+    def _grant_now(self, info: SubagentInfo, *, audit: bool) -> str:
+        """:meth:`_standing_grant`, if the operator ceiling lets it stand; else ``""``."""
+        grant = self._standing_grant(info)
+        if grant and approval_grants.stands(
+            grant,
+            caller=info.parent_session_key or f"subagent:{info.id}",
+            subject=f"subagent_id={info.id}",
+            audit=audit,
+        ):
+            return grant
+        return ""
+
+    def _policy_source(self, info: SubagentInfo) -> Callable[[], str]:
+        """What the agent's runtime reads at each decision: ``"auto"`` while a grant stands.
+
+        Handed to the session in place of a fixed policy, so a grant revoked while the agent runs
+        stops waiving its next call. Unaudited here — the runtime asks more than once per call; the
+        refusal was audited when the agent started, and each call's decision is audited where it
+        lands (the permission branch, or the waived call's result).
+        """
+
+        def _now() -> str:
+            grant = self._grant_now(info, audit=False)
+            self._waived_by[info.id] = grant
+            return "auto" if grant else ""
+
+        return _now
+
+    async def _fire_granted(
+        self, info: SubagentInfo, event: LLMEvent, grant: str, call_inputs: dict[str, Any]
+    ) -> None:
+        """Tell the gateway a grant approved one of *info*'s calls without asking anyone.
+
+        The gateway settles the Inbox note a previous, unanswered ask of the same call left
+        (``approval_state.settle_granted``): the call has now been decided, and ran.
+        """
+        stored = call_inputs.pop(event.tool_call_id or "", None)
+        tool_input = event.tool_input if event.kind == EVENT_PERMISSION_REQUEST else stored
+        await self._fire_event(
+            "subagent_tool_granted",
+            info,
+            {"tool": event.title or "", "tool_input": tool_input, "decided_by": grant},
+        )
 
     @staticmethod
     async def _approve_and_log(
@@ -533,17 +685,19 @@ class SubagentManager:
         session_key: str,
         event: LLMEvent,
         *,
+        decided_by: str,
         metadata: dict | None = None,
     ) -> None:
+        """Approve and audit it: ``approved`` when a person did, ``auto_approved`` for a grant."""
         await client.approve_tool(request_id)
         sel().log_tool_invocation(
             session_key=session_key,
             source="subagent",
             tool_name=event.title,
             tool_kind=event.tool_kind,
-            outcome="auto_approved" if metadata and metadata.get("reason") else "approved",
+            outcome="approved" if decided_by == approval_grants.YOU else "auto_approved",
             request_id=request_id,
-            metadata=metadata,
+            metadata={**(metadata or {}), "decided_by": decided_by},
         )
 
     @staticmethod
@@ -553,19 +707,33 @@ class SubagentManager:
         session_key: str,
         event: LLMEvent,
         *,
+        decided_by: str,
+        unanswered: str = "",
         error: str | None = None,
         metadata: dict | None = None,
     ) -> None:
+        """Refuse and audit what happened: a policy's ``denied``, a person's ``rejected``, or
+        nobody's answer — ``unanswered`` is ``expired`` or ``cancelled`` — never one as another."""
         await client.reject_tool(request_id)
         sel().log_tool_invocation(
             session_key=session_key,
             source="subagent",
             tool_name=event.title,
             tool_kind=event.tool_kind,
-            outcome="denied" if error else "rejected",
+            # Each word spelled out, for the outcome census
+            # (`tests/test_audit_outcome_families.py`).
+            outcome=(
+                "expired"
+                if unanswered == "expired"
+                else (
+                    "cancelled"
+                    if unanswered == "cancelled"
+                    else ("denied" if error else "rejected")
+                )
+            ),
             request_id=request_id,
             error=error or "",
-            metadata=metadata,
+            metadata={**(metadata or {}), "decided_by": decided_by},
         )
 
     def start_reaper(self) -> None:
@@ -1077,19 +1245,20 @@ class SubagentManager:
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
-        Approval priority (first match wins):
+        Approval priority (first match wins), read when the spawn is admitted:
 
-        1. YOLO mode → immediate execution
-        2. ``approval_mode="auto"`` from caller → immediate execution
-        3. ``auto_approve_subagent_spawn`` config → auto-approved execution
-        4. ``on_spawn_approval`` callback → interactive approval
-        5. Otherwise → rejected
+        1. A standing grant (:meth:`_spawn_grant`: YOLO, ``approval_mode="auto"`` from the
+           caller, the parent chat's Trust, ``auto_approve_subagent_spawn``) → immediate
+           execution, but only if the operator ceiling lets that grant stand
+           (``approval_grants.stands``). Under ``approval: ask`` none does, and the spawn is
+           asked like any other.
+        2. ``on_spawn_approval`` callback → interactive approval
+        3. Otherwise → rejected
 
-        When ``approval_mode="auto"`` is set, it has two effects:
+        When ``approval_mode="auto"`` is set, it has two effects, both bounded by the ceiling:
         - Skips the spawn approval gate (this method)
-        - Sets the subagent's session-level tool approval policy to
-          "auto" in ``_run_inner()``, meaning all tool calls within
-          the subagent are auto-approved for its entire lifetime.
+        - Lets the subagent's runtime approve its own tool calls while the grant stands
+          (:meth:`_policy_source`, read at each call, not once for the agent's lifetime).
 
         This dual behavior is intentional for headless callers (e.g. a
         background cron/agent) that have no UI to respond to approval prompts.
@@ -1364,26 +1533,16 @@ class SubagentManager:
         info.queued = False
         self._inc_running(info)
 
-        # Check parent session trust (approval_policy="auto") set by dashboard trust toggle.
-        parent_trusted = (
-            info.parent_session_key
-            and self._sessions.get_approval_policy(info.parent_session_key) == "auto"
-        )
-
-        if self._is_yolo and self._is_yolo():
-            self._tasks[agent_id] = asyncio.create_task(self._run(info))
-            self._log_spawned(info)
-        elif info.approval_mode == "auto":
-            self._tasks[agent_id] = asyncio.create_task(self._run(info))
-            self._log_spawned(info)
-            sel().log_tool_invocation(
-                session_key=info.parent_session_key,
-                source="subagent",
-                tool_name="subagent_run",
-                outcome="auto_approved_spawn",
-                metadata={"subagent_id": agent_id, "reason": "approval_mode_auto"},
-            )
-        elif parent_trusted:
+        # A standing grant approves the spawn without asking: read NOW (rule 1 of
+        # `approval_grants`), and only if the operator ceiling lets it stand (rule 2) — an
+        # `approval: ask` ceiling has every spawn asked, whatever the spawn argument, a toggle or
+        # the hook setting says. The audit row names the grant (rule 3); YOLO's had none.
+        grant = self._spawn_grant(info)
+        if grant and approval_grants.stands(
+            grant,
+            caller=info.parent_session_key or f"subagent:{agent_id}",
+            subject=f"subagent_run,subagent_id={agent_id}",
+        ):
             self._tasks[agent_id] = asyncio.create_task(self._run(info))
             self._log_spawned(info)
             sel().log_tool_invocation(
@@ -1391,36 +1550,31 @@ class SubagentManager:
                 source="subagent",
                 tool_name="subagent_run",
                 outcome="auto_approved_spawn",
-                metadata={"subagent_id": agent_id, "reason": "parent_trusted"},
+                metadata={
+                    "subagent_id": agent_id,
+                    "reason": _SPAWN_GRANT_REASONS.get(grant, grant),
+                    "decided_by": grant,
+                },
             )
-        elif self._ctx_builder and self._ctx_builder.hooks:
-            if self._ctx_builder.hooks.auto_approve_subagent_spawn is True:
-                self._tasks[agent_id] = asyncio.create_task(self._run(info))
-                self._log_spawned(info)
-                sel().log_tool_invocation(
-                    session_key=info.parent_session_key,
-                    source="subagent",
-                    tool_name="subagent_run",
-                    outcome="auto_approved_spawn",
-                    metadata={"subagent_id": agent_id, "reason": "tool_calls_gated"},
-                )
-            elif self._on_spawn_approval:
-                self._tasks[agent_id] = asyncio.create_task(self._spawn_with_approval(info))
-            else:
-                info.done = True
-                info.error = "spawn rejected: no approval mechanism configured"
-                self._dec_running(info)
-                self._drain_queue()
-                sel().log_tool_invocation(
-                    session_key=info.parent_session_key,
-                    source="subagent",
-                    tool_name="subagent_run",
-                    outcome="rejected_spawn",
-                    metadata={"subagent_id": agent_id, "reason": "no_approval_mechanism"},
-                )
-                return
         elif self._on_spawn_approval:
             self._tasks[agent_id] = asyncio.create_task(self._spawn_with_approval(info))
+        elif self._ctx_builder and self._ctx_builder.hooks:
+            info.done = True
+            info.error = "spawn rejected: no approval mechanism configured"
+            self._dec_running(info)
+            self._drain_queue()
+            sel().log_tool_invocation(
+                session_key=info.parent_session_key,
+                source="subagent",
+                tool_name="subagent_run",
+                outcome="rejected_spawn",
+                metadata={
+                    "subagent_id": agent_id,
+                    "reason": "no_approval_mechanism",
+                    "decided_by": "no_approval_mechanism",
+                },
+            )
+            return
         else:
             info.done = True
             info.error = "spawn rejected: no approval mechanism configured"
@@ -1431,7 +1585,11 @@ class SubagentManager:
                 source="subagent",
                 tool_name="subagent_run",
                 outcome="rejected",
-                metadata={"subagent_id": agent_id, "reason": "no approval mechanism"},
+                metadata={
+                    "subagent_id": agent_id,
+                    "reason": "no approval mechanism",
+                    "decided_by": "no_approval_mechanism",
+                },
             )
             logger.warning("Subagent %s rejected: no approval callback", agent_id)
             if self._on_done:
@@ -1671,14 +1829,16 @@ class SubagentManager:
             task_safe, _ = redact_exfiltration_urls(info.task)
             task_safe, _ = redact_credentials(task_safe)
             task_preview: str = task_safe[:80]
-            approved: bool = await self._on_spawn_approval(
-                request_id, f"subagent_run({task_preview})", info.parent_session_key
+            decision = decision_of(
+                await self._on_spawn_approval(
+                    request_id, f"subagent_run({task_preview})", info.parent_session_key
+                )
             )
         except Exception:
             logger.exception("Spawn approval failed for %s", info.id)
-            approved = False
+            decision = ToolDecision(False, "rejected", "approval_failed")
 
-        if not approved:
+        if not decision:
             info.done = True
             info.error = "spawn rejected"
             self._dec_running(info)
@@ -1688,14 +1848,26 @@ class SubagentManager:
                 session_key=info.parent_session_key,
                 source="subagent",
                 tool_name="subagent_run",
-                outcome="rejected",
-                metadata={"subagent_id": info.id},
+                # What happened, not a Deny for each: nobody answering in time is `expired`.
+                outcome=(
+                    "expired"
+                    if decision.outcome == "expired"
+                    else ("cancelled" if decision.outcome == "cancelled" else "rejected")
+                ),
+                metadata={"subagent_id": info.id, "decided_by": decision.decided_by},
             )
-            logger.info("Subagent %s spawn rejected", info.id)
+            logger.info("Subagent %s spawn rejected (%s)", info.id, decision.outcome)
             if self._on_done:
                 await self._safe_announce(info)
             return
 
+        sel().log_tool_invocation(
+            session_key=info.parent_session_key,
+            source="subagent",
+            tool_name="subagent_run",
+            outcome="approved" if decision.decided_by == approval_grants.YOU else "auto_approved",
+            metadata={"subagent_id": info.id, "decided_by": decision.decided_by},
+        )
         self._log_spawned(info)
         await self._run(info)
 
@@ -1753,13 +1925,13 @@ class SubagentManager:
     async def _run(self, info: SubagentInfo) -> None:
         """Execute a subagent task in its own session."""
         session_key = f"subagent:{info.id}"
+        # The time limit as Settings reads it when this agent starts (the reaper re-reads it).
+        timeout = self._default_timeout
         try:
-            await asyncio.wait_for(
-                self._run_inner(info, session_key), timeout=self._default_timeout
-            )
+            await asyncio.wait_for(self._run_inner(info, session_key), timeout=timeout)
         except asyncio.TimeoutError:
             if not info.reaped:
-                info.error = f"Timed out after {self._default_timeout // 60} minutes [{_timeout_context(info)}]"  # noqa: E501
+                info.error = f"Timed out after {timeout // 60} minutes [{_timeout_context(info)}]"
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "timeout")
@@ -1779,6 +1951,7 @@ class SubagentManager:
                 self._write_tombstone(info, "error")
             logger.exception("Subagent %s failed", info.id)
         finally:
+            self._waived_by.pop(info.id, None)
             if not info.reaped:
                 # Fire WS event immediately so Activity Viewer updates
                 # before the slow reset + on_done path.
@@ -1963,73 +2136,21 @@ class SubagentManager:
 
     async def _run_inner(self, info: SubagentInfo, session_key: str) -> None:
         """Inner execution — called within timeout wrapper."""
-        # Inherit approval policy from parent session; yolo/trust overrides
-        parent_policy = self._sessions.get_approval_policy(info.parent_session_key)
-        # Explicit approval_mode from spawn caller (e.g. a background cron/agent)
-        if not parent_policy and info.approval_mode == "auto":
-            parent_policy = "auto"
+        # Who may approve this agent's tool calls without asking. Read NOW, and again at every
+        # call it makes (`_policy_source`, handed to its session below): the chat that started it,
+        # the spawn's own `approval_mode`, YOLO, the global Auto-approve setting for an agent no
+        # chat started, the hook setting (`approval_grants`, rule 1). Bounded by the operator
+        # ceiling (rule 2): a refusal is audited here, once, and the calls then ask.
+        grant = self._grant_now(info, audit=True)
+        if grant:
             sel().log_api_access(
                 caller=info.parent_session_key or f"subagent:{info.id}",
-                operation="subagent.approval_mode_auto_policy",
+                operation=f"subagent.approval_grant:{grant}",
                 outcome="ok",
                 source="subagent",
                 resources=f"subagent_id={info.id}",
             )
-        if not parent_policy and self._is_yolo and self._is_yolo():
-            parent_policy = "auto"
-            sel().log_api_access(
-                caller=info.parent_session_key,
-                operation="subagent.yolo_policy_fallback",
-                outcome="ok",
-                source="subagent",
-                resources=f"subagent_id={info.id}",
-            )
-        if not parent_policy and info.parent_session_key == "":
-            if self._global_approval_mode == "auto":
-                parent_policy = "auto"
-                sel().log_api_access(
-                    caller=f"subagent:{info.id}",
-                    operation="subagent.config_policy_fallback",
-                    outcome="ok",
-                    source="subagent",
-                    resources=f"subagent_id={info.id}",
-                )
-        # auto_approve_subagent_tools auto-approves tool calls inside
-        # subagents (separate from the spawn gate, deny-by-default).
-        if not parent_policy and self._ctx_builder and self._ctx_builder.hooks:
-            if self._ctx_builder.hooks.auto_approve_subagent_tools is True:
-                parent_policy = "auto"
-                sel().log_api_access(
-                    caller=info.parent_session_key or f"subagent:{info.id}",
-                    operation="subagent.auto_approve_subagent_tools_policy",
-                    outcome="ok",
-                    source="subagent",
-                    resources=f"subagent_id={info.id}",
-                )
-        # 🔴 THE CEILING BOUNDS THE SPAWN GRANT (PHF-8). Every branch above can only WIDEN
-        # this run to "auto"; none of them consults the operator's governance ceiling. So an
-        # operator who declared `{"scopes": {"approval": {"value": "ask"}}}` still got
-        # auto-approving subagents the moment a toggle, a yolo flag or a config default said
-        # so. `ceiling_permits_approval` resolves the grant through the same tightest-wins
-        # composition every other seam uses, and the refusal is SEL-audited — a silently
-        # downgraded grant would be indistinguishable from the grant never being asked for.
-        if parent_policy == "auto":
-            from personalclaw.guardrails.policy import ceiling_permits_approval
-
-            if not ceiling_permits_approval("auto"):
-                parent_policy = ""
-                logger.warning(
-                    "subagent %s: the governance ceiling refused the auto-approval grant; "
-                    "tool calls stay gated",
-                    info.id,
-                )
-                sel().log_api_access(
-                    caller=info.parent_session_key or f"subagent:{info.id}",
-                    operation="subagent.approval_grant_refused",
-                    outcome="blocked",
-                    source="guardrails",
-                    resources=f"subagent_id={info.id},grant=auto,refused_by=governance_ceiling",
-                )
+        parent_policy = "auto" if grant else ""
         # Inherit agent from parent session when not explicitly specified
         agent = info.agent or self._sessions.get_agent(info.parent_session_key)
         if not info.agent and agent:
@@ -2066,10 +2187,15 @@ class SubagentManager:
         # present and chose to auto-approve — so the subagent must KEEP its tools and
         # let the parent_policy=="auto" branch in _run auto-approve them (mirroring
         # the parent's permission mode), not strip them and auto-decline.
+        #
+        # And it follows only a grant that STANDS. Under an `ask` ceiling a spawn's own
+        # `approval_mode: "auto"` grants nothing (the spawn itself asked you), so its agent is not
+        # headless either: each call it makes reaches the relay and asks you, as an agent no grant
+        # covers does, instead of being declined with nobody asked.
         has_interactive_parent = bool(
             info.parent_session_key and self._sessions.has_session(info.parent_session_key)
         )
-        if info.approval_mode == "auto" or (parent_policy == "auto" and not has_interactive_parent):
+        if grant and (info.approval_mode == "auto" or not has_interactive_parent):
             extra_kwargs["unattended"] = True
         # Dry-run replay (T9): observe-mode — write-capable tools don't execute, so
         # the run previews what WOULD happen with no side effects.
@@ -2085,6 +2211,7 @@ class SubagentManager:
             session_key,
             agent=agent or None,
             approval_policy=parent_policy,
+            approval_source=self._policy_source(info),
             **extra_kwargs,
         )
         # Intentionally check info.agent (not resolved `agent`) so only
@@ -2160,6 +2287,23 @@ class SubagentManager:
             f"spawn_{_capability_class}",
             TOOL_READ if _research_readonly else TOOL_READ_WRITE,
         )
+
+        def _grant_denial(tool: str) -> str:
+            return tool_grant_denial(_tool_profile, tool, write_class=is_write_tool(tool))
+
+        # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
+        # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
+        # source says `auto`), so none of its calls reached that loop and a research run's write
+        # tools ran. It is handed the same check, asked before its own approval.
+        native = _is_native(client)
+        if _is_native(client):
+            client.set_tool_grants(_grant_denial)
+        # Each call's input by its id, from the moment it is made to its result: a call its runtime
+        # approved from the policy is reported with the input it ran with (`_fire_granted`).
+        call_inputs: dict[str, Any] = {}
+        # The calls that were ASKED about. Each is audited where it is answered, below; every
+        # other call is audited once, at its result (`llm.events.unasked_outcome`).
+        asked: set[str] = set()
         async for event in client.stream(full_message):
             if event.kind == EVENT_TEXT_CHUNK:
                 result_text += event.text
@@ -2170,6 +2314,7 @@ class SubagentManager:
                     info.streaming_text = "…(truncated)\n" + info.streaming_text[-40_000:]
                 await self._fire_event("subagent_chunk", info, {"text": redacted})
             elif event.kind == EVENT_PERMISSION_REQUEST:
+                asked.add(event.tool_call_id or "")
                 turns += 1
                 info.turns = turns
                 info.last_tool = event.title or ""
@@ -2200,17 +2345,14 @@ class SubagentManager:
                 # (``leaf_tool_denial``) — a research subagent and a research leaf deny alike —
                 # and the same grant algebra (``tool_grant_denial``), so a ceiling that narrowed
                 # this spawn's tools to an allowlist refuses the rest even for a MUTATING class.
-                _grant_deny = tool_grant_denial(
-                    _tool_profile,
-                    event.title or "",
-                    write_class=is_write_tool(event.title or ""),
-                )
+                _grant_deny = _grant_denial(event.title or "")
                 if _grant_deny:
                     await self._reject_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
+                        decided_by="tool_grants",
                         error="tool_grants_deny",
                         metadata={
                             "subagent_id": info.id,
@@ -2224,62 +2366,59 @@ class SubagentManager:
                 tool_result = self._ctx_builder.hooks.on_tool_call(event.title)
                 if tool_result.action == TOOL_DENY:
                     await self._reject_and_log(
-                        client, event.request_id, session_key, event, error="hook_deny"
+                        client,
+                        event.request_id,
+                        session_key,
+                        event,
+                        decided_by="hook_deny",
+                        error="hook_deny",
+                        metadata={"subagent_id": info.id},
                     )
                     continue
-                if tool_result.action == TOOL_AUTO_APPROVE:
+                # The operator's own hook pattern is a grant too, and "a hook decides" is a level
+                # an `ask` ceiling refuses (`approval_grants.LEVEL_HOOK`). It used to be checked
+                # before, and instead of, the one ceiling check a subagent's calls had.
+                if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
+                    approval_grants.HOOK_PATTERN,
+                    caller=f"subagent:{info.id}",
+                    subject=_redact(event.title or "")[:80],
+                    level=approval_grants.LEVEL_HOOK,
+                ):
                     await self._approve_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
+                        decided_by=approval_grants.HOOK_PATTERN,
                         metadata={"subagent_id": info.id, "reason": "hook_auto_approve"},
                     )
+                    await self._fire_granted(info, event, approval_grants.HOOK_PATTERN, call_inputs)
                     continue
-                if parent_policy == "auto":
+                # A standing grant, read at THIS call (it may have been revoked since the agent
+                # started) and bounded by the ceiling.
+                grant = self._grant_now(info, audit=True)
+                if grant:
                     await self._approve_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
+                        decided_by=grant,
                         metadata={"subagent_id": info.id, "reason": "parent_policy_auto"},
                     )
+                    await self._fire_granted(info, event, grant, call_inputs)
                     continue
                 if self._on_tool_approval_factory:
                     approve_cb = self._on_tool_approval_factory(info)
-                    approved = await approve_cb(event)
-                    if not approved:
-                        await self._reject_and_log(
-                            client,
-                            event.request_id,
-                            session_key,
-                            event,
-                            metadata={"subagent_id": info.id, "reason": "factory_rejected"},
-                        )
-                        continue
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        metadata={"subagent_id": info.id},
-                    )
+                    decision = decision_of(await approve_cb(event))
                 elif self._on_tool_approval:
                     # The callback lists the call under an id that names THIS subagent; the
                     # client is still answered on the agent's own raw id (`event` below).
-                    approved = await self._on_tool_approval(
-                        replace(event, request_id=tool_approval_id(info.id, event.request_id)),
-                        info.parent_session_key,
-                    )
-                    if not approved:
-                        await self._reject_and_log(client, event.request_id, session_key, event)
-                        continue
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        metadata={"subagent_id": info.id},
+                    decision = decision_of(
+                        await self._on_tool_approval(
+                            replace(event, request_id=tool_approval_id(info.id, event.request_id)),
+                            info.parent_session_key,
+                        )
                     )
                 else:
                     # No callback, no auto policy — deny by default
@@ -2288,19 +2427,38 @@ class SubagentManager:
                         event.request_id,
                         session_key,
                         event,
+                        decided_by="no_approval_mechanism",
                         metadata={"subagent_id": info.id, "reason": "no_policy_deny_default"},
                     )
                     continue
-            elif event.kind == EVENT_TOOL_CALL:
-                # Fire PreToolUse hooks for auto-approved tools (informational only)
-                sel().log_tool_invocation(
-                    session_key=session_key,
-                    source="subagent",
-                    tool_name=event.title,
-                    tool_kind=event.tool_kind,
-                    outcome="auto_approved",
+                if not decision:
+                    await self._reject_and_log(
+                        client,
+                        event.request_id,
+                        session_key,
+                        event,
+                        decided_by=decision.decided_by,
+                        unanswered=(
+                            decision.outcome if decision.outcome in ("expired", "cancelled") else ""
+                        ),
+                        metadata={"subagent_id": info.id},
+                    )
+                    continue
+                await self._approve_and_log(
+                    client,
+                    event.request_id,
+                    session_key,
+                    event,
+                    decided_by=decision.decided_by,
                     metadata={"subagent_id": info.id},
                 )
+            elif event.kind == EVENT_TOOL_CALL:
+                # The call is being MADE, and nothing is decided yet: the native loop yields this
+                # card before its own gates run. It is audited where it is decided — the branch
+                # above for an asked call, its result for any other. A row here said
+                # `auto_approved` for every call, a refused one and a person's Allow included.
+                if event.tool_call_id:
+                    call_inputs[event.tool_call_id] = event.tool_input
                 await fire_tool_hooks(
                     self.hook_store,
                     event.title,
@@ -2309,15 +2467,43 @@ class SubagentManager:
                     parent_session_key=info.parent_session_key,
                     agent_role=info.agent,
                 )
-            elif event.kind == EVENT_TOOL_RESULT and (event.tool_meta or {}).get(
-                TOOL_META_AUTO_DENIED
-            ):
-                # The native runtime declined a call that needed an approval: a subagent is
-                # unattended, so nobody could be asked. It told the model; this tells the owner,
-                # through the gateway, which can reach the Inbox (F-33).
-                await self._fire_event(
-                    "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
-                )
+            elif event.kind == EVENT_TOOL_RESULT:
+                meta = event.tool_meta or {}
+                if (event.tool_call_id or "") not in asked:
+                    # Nobody was asked, so this is the call's one audit row, from what its runtime
+                    # stamped: refused by one of its gates, declined with nobody to ask, answered
+                    # from the live policy source (the grant standing at that moment, named), or
+                    # a tool that asks nobody. An ACP CLI stamps nothing: a call it never asked
+                    # the host about ran on the CLI's own say.
+                    waived = bool(meta.get(TOOL_META_APPROVAL_WAIVED))
+                    decided_by = (
+                        self._waived_by.get(info.id) or approval_grants.SESSION_POLICY
+                        if waived
+                        else (unasked_reason(meta) if native else "not_asked_by_cli")
+                    )
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        source="subagent",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome=unasked_outcome(meta),
+                        request_id=event.tool_call_id or "",
+                        metadata={
+                            "subagent_id": info.id,
+                            "reason": decided_by,
+                            "decided_by": decided_by,
+                        },
+                    )
+                    if waived:
+                        await self._fire_granted(info, event, decided_by, call_inputs)
+                if meta.get(TOOL_META_AUTO_DENIED):
+                    # The native runtime declined a call that needed an approval: a subagent is
+                    # unattended, so nobody could be asked. It told the model; this tells the
+                    # owner, through the gateway, which can reach the Inbox (F-33).
+                    await self._fire_event(
+                        "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
+                    )
+                call_inputs.pop(event.tool_call_id or "", None)
             elif event.kind == EVENT_COMPLETE:
                 # Capture the child's token/cost accounting before breaking — S2k
                 # discarded it here (COST-AND-TOKEN-OBSERVABILITY C2, subagent site).

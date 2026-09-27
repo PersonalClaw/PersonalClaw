@@ -223,7 +223,9 @@ asked and can be asked again:
   not allowed to run its action (`needs_grant`) offers **Allow and run it again**, which goes
   through the same Allow consent as its page (#3702). One that is switched off and not allowed,
   or that waits for review, is left to its page, because allowing it would switch it on to run
-  by itself again;
+  by itself again. A lifecycle hook is a trigger too (`refs.trigger` is `lifecycle:<id>`, which
+  `hooks.run_script_hook` hands its action), but it fires on the agent's own events and has no
+  Run now, so its note says when it runs again and opens it;
 - a workflow step (`refs.session` is `workflow:<run>:<node>`): **Run this step again** is the run
   page's Re-run (`web/src/pages/workflows/reentry.ts`), while the run is live. A finished run
   never runs again, so its note says so.
@@ -232,9 +234,12 @@ An `unattended` note offers none of these. The run that declined it had nobody t
 would decline it the same way again, so the note says that instead. An expired note is handled
 (`auto_denials.settle_retried`, from `withdraw_approval`) once the same call (`refs.call`) is
 asked again where it was asked before, its session or its trigger's run, and someone answers it
-either way. The answer goes on `refs.retry` (`approved` | `rejected`), and the note moves through
-`inbox.set_item_status`. Sending the retry does not close it, because nothing has been decided
-yet.
+either way, or once the same call runs again because a standing grant approved it without asking
+(a chat's Trust, YOLO, the agent's own approval mode: `approval_state.settle_granted`). The answer
+goes on `refs.retry` (`approved` | `rejected`) and who gave it on `refs.retry_by` (`you`, or the
+grant's name from `approval_grants`), so a call a grant ran never reads as your Allow. The note
+moves through `inbox.set_item_status`. Sending the retry does not close it, because nothing has
+been decided yet.
 
 There is one item per approval, and one per session and tool for the unattended case (per
 trigger and tool when a trigger ran it, since each fire runs in a new session), so a run that

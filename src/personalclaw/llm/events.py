@@ -62,6 +62,63 @@ TOOL_META_APPROVAL_WAIVED = "approval_waived"
 #: denial there (``dashboard/auto_denials.py``) so the morning can see what did not run.
 TOOL_META_AUTO_DENIED = "auto_denied"
 
+#: The ``tool_meta`` key a TOOL_RESULT carries when the runtime's OWN gate refused the call before
+#: anyone could be asked, naming the gate: ``deny_list``, ``task_mode``, ``tool_grants`` (the host's
+#: grants for this run, ``NativeAgentRuntime.set_tool_grants``), ``hook``, ``loop_breaker``,
+#: ``unknown_tool``, or ``dry_run`` (observe mode, which runs nothing that writes).
+TOOL_META_REFUSED_BY = "refused_by"
+
+#: The ``tool_meta`` key a TOOL_RESULT carries when the call was answered without running, for a
+#: reason that is not a gate's refusal: ``stopped`` (a stop reached it first),
+#: ``unreadable_arguments`` (nothing to run it with), ``failed_predecessor`` (an earlier call on
+#: the same resource failed, so its state is unknown).
+TOOL_META_NOT_RUN = "not_run"
+
+
+# ── The one audit row of a call nobody was asked about ──────────────────────────────────────
+#
+# A tool call is audited ONCE, when it is decided, never at its card. The card (EVENT_TOOL_CALL)
+# arrives before any gate runs: the native loop yields it and only then checks the deny-list, the
+# task mode and the approval, so a row written there — `auto_approved`, even `invoked` — claimed a
+# decision nobody had made, and a refused call read as approved. A call that was ASKED is audited
+# by the host where the answer lands (approved, rejected, expired, cancelled, or the grant that
+# answered it). One that was not asked is audited at its result, from what the runtime stamped:
+
+
+def unasked_outcome(meta: dict[str, Any]) -> str:
+    """The outcome of the one audit row of a call nobody was asked about, from its result's meta.
+
+    ``denied`` when the runtime refused it (its own gate, or an unattended run with nobody to
+    ask); ``cancelled`` when a stop reached it before it ran; ``failed`` when it could not be run
+    at all; ``auto_approved`` when the session's approval policy answered its ask; ``invoked`` for
+    a tool that asks nobody by its own definition — it ran, and no approval decided anything.
+    """
+    not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
+    if not_run == "stopped":
+        return "cancelled"
+    if not_run:
+        return "failed"
+    if meta.get(TOOL_META_AUTO_DENIED) or meta.get(TOOL_META_REFUSED_BY):
+        return "denied"
+    if meta.get(TOOL_META_APPROVAL_WAIVED):
+        return "auto_approved"
+    return "invoked"
+
+
+def unasked_reason(meta: dict[str, Any]) -> str:
+    """Why :func:`unasked_outcome` says what it says: the refusing gate, or what decided."""
+    not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
+    if not_run:
+        return not_run
+    if meta.get(TOOL_META_AUTO_DENIED):
+        return "unattended_no_one_to_ask"
+    refused = str(meta.get(TOOL_META_REFUSED_BY) or "")
+    if refused:
+        return refused
+    if meta.get(TOOL_META_APPROVAL_WAIVED):
+        return "session_policy"
+    return "no_approval_needed"
+
 
 @dataclass
 class AgentEvent:

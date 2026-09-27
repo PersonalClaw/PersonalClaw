@@ -775,12 +775,10 @@ class TestNeedsInputParksRatherThanWedging:
         node = Node.from_dict(
             {"kind": "gate", "id": "g", "config": {"kind": "judge", "prompt": "ok?"}}
         )
-        r = await dispatch_gate(
-            node, BindingContext(), now=1000.0, completion=judge, mode="background"
-        )
+        r = await dispatch_gate(node, BindingContext(), now=1000.0, completion=judge)
         assert r.state == InstanceState.WAITING
         assert r.ask, "a park with nothing to answer is a wedge"
-        assert r.wake_at > 1000.0, "a background park with no clock never surfaces"
+        assert r.wake_at > 1000.0, "a park with no clock never surfaces"
         assert r.output["verdict"] == "NEEDS_INPUT"
 
 

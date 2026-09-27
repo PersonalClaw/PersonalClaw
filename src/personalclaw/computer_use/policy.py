@@ -83,8 +83,11 @@ ERR_UNATTENDED_NOT_GRANTED = "ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED"
 #: field :func:`~personalclaw.guardrails.policy.rung_ceiling_for_profile` reads, and with the
 #: same meanings it documents:
 #:
-#: * ``ask`` — a human is watching this run and sees the result as it lands, so the approval
-#:   prompt the tool layer already raises IS the ``one_tap`` ask. Nothing to add here.
+#: * ``ask`` on a run someone is watching — they see the result as it lands, so the approval
+#:   prompt the tool layer already raises IS the ``one_tap`` ask. Nothing to add here. On an
+#:   UNATTENDED run only the operator ceiling puts ``ask`` (a person decides every action on this
+#:   machine) and nobody is there to decide, so it is not askable: it needs the standing grant,
+#:   like ``hook_based``. Read as askable, the ceiling loosened the drive it was written to bound.
 #: * ``auto`` — the operator pre-approved this posture out loud (the dashboard trust toggle,
 #:   ``--approval yolo``, an explicit ``approval_mode``). The ask was answered in advance.
 #: * ``hook_based`` — the UNATTENDED posture: no human to ask and nobody watching. The ask
@@ -504,7 +507,9 @@ def check_autonomy(tool: str, *, caller_identity: str = "") -> None:
     from personalclaw.guardrails import rungs
 
     profile = guardrails_policy.profile_for_session(caller_identity)
-    if profile.approval in _ASKABLE_APPROVALS:
+    if profile.approval in _ASKABLE_APPROVALS and not (
+        profile.approval == "ask" and guardrails_policy.is_unattended_session(caller_identity)
+    ):
         return
     granted = enable_state.unattended_tools()
     if tool in granted:

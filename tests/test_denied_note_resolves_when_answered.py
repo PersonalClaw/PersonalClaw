@@ -23,6 +23,7 @@ Driven through the real chat runner and the real decision path.
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -84,6 +85,7 @@ async def test_asked_again_and_answered_the_note_is_handled_with_the_answer(
     row = world.store.items[note.id]
     assert row.status == "handled"
     assert row.refs["retry"] == recorded
+    assert row.refs["retry_by"] == "you"
     # Every open surface was told, so the Inbox and Mission Control move it without a reload.
     moved = [d for kind, d in world.frames if kind == "inbox_item_updated" and d["id"] == note.id]
     assert moved and moved[-1]["status"] == "handled"
@@ -154,3 +156,64 @@ async def test_a_retry_nobody_answers_either_leaves_it_open(world, monkeypatch):
     assert world.store.items[note.id].status in OPEN_STATUSES
     assert len([n for n in _notes(world.store) if n.status in OPEN_STATUSES]) == 2
     assert note.refs.get("session") == CHAT
+
+
+# ── A retry nobody was asked about: a standing grant ran it ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_retry_the_chat_s_trust_ran_settles_the_note_saying_so(
+    world, monkeypatch  # noqa: F811
+):
+    """🔴 A retry the chat's Trust approved was never asked, so it never reached the registry, and
+    the note stayed open over a call that had run. It settles, and names the Trust as who ran it
+    (`refs.retry_by`), so the note does not read as your Allow."""
+    note = await _expired_note(world, monkeypatch)
+    world.session._trust = True
+    _set_stream(world.client, _turn(_bash_request("req-2", "rm -rf /tmp/scratch")))
+    await asyncio.wait_for(run_chat(world.state, world.session, "try again"), timeout=5)
+    row = world.store.items[note.id]
+    assert row.status == "handled"
+    assert (row.refs["retry"], row.refs["retry_by"]) == ("approved", "trust")
+
+
+@pytest.mark.asyncio
+async def test_a_background_call_a_grant_approved_settles_its_note_too():
+    """The relay: a subagent's call YOLO approved reaches the registry's settle, naming YOLO."""
+    from test_gateway import _make_orchestrator, _mock_dashboard_state
+
+    orch = _make_orchestrator()
+    orch.dashboard_state = _mock_dashboard_state()
+    orch.dashboard_state._yolo = True
+    ask = _bash_request("subagent:ab12:tc-1")
+    relay = orch._interactive_approval("subagent", session_resolver=lambda _rid: CHAT)
+    assert await relay(ask, "")
+    orch.dashboard_state.settle_granted.assert_called_once_with(
+        tool="bash", tool_input=ask.tool_input, session=CHAT, trigger="", by="yolo"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_subagent_s_call_its_grant_ran_is_reported_with_the_grant():
+    """A subagent's own runtime approves from its grant without asking the relay; the manager
+    reports the call to the gateway (`subagent_tool_granted`), which settles the note."""
+    from test_a_tool_call_is_audited_as_it_was_decided import ASKS, _subagents
+
+    from personalclaw.subagent import SubagentInfo
+
+    manager, tools = _subagents(ASKS)
+    seen: list[tuple[str, dict]] = []
+
+    async def on_event(kind, _info, extra):
+        seen.append((kind, dict(extra)))
+
+    manager._on_event = on_event
+    info = SubagentInfo(id="sa-g", task="t", approval_mode="auto", capability_class="mutating")
+    await asyncio.wait_for(manager._run_inner(info, "subagent:sa-g"), timeout=20)
+    assert tools.ran == [ASKS]
+    granted = [extra for kind, extra in seen if kind == "subagent_tool_granted"]
+    assert [(g["tool"], g["decided_by"]) for g in granted] == [(ASKS, "approval_mode")]
+    # Described as its approval would have been, so the note it settles is the same call's.
+    from personalclaw.task_modes import tool_input_to_str
+
+    assert json.loads(tool_input_to_str(granted[0]["tool_input"])) == {"text": "hello"}

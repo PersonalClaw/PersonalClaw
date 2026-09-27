@@ -37,6 +37,8 @@ describe('Approval wait', () => {
     const field = await screen.findByRole('spinbutton', { name: 'Approval wait' })
     expect((field as HTMLInputElement).value).toBe('120')
     expect(screen.getByText(/Unattended runs never wait/)).toBeInTheDocument()
+    // A workflow's gates wait the same window, and the one exception says why it is short.
+    expect(screen.getByText(/approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds/)).toBeInTheDocument()
 
     fireEvent.change(field, { target: { value: '720' } })
     fireEvent.blur(field)

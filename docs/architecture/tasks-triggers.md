@@ -179,7 +179,8 @@ the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
 **An agent a trigger starts carries the trigger.** Both store-trigger dispatches
-set `ActionContext.trigger_id`, and `invoke-agent` and `run-prompt` spawn their
+set `ActionContext.trigger_id`, and so does a lifecycle hook's fire and its Test
+(`lifecycle:<id>`, `hooks.run_script_hook`); `invoke-agent` and `run-prompt` spawn their
 agent with it (`SubagentInfo.trigger_id`). An approval that agent asks for is
 listed under the trigger ("The trigger “Nightly plan” is waiting for your
 decision on write_file"), and a call nobody answered leaves an Inbox note that

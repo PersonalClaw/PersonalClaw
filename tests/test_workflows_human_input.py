@@ -148,22 +148,18 @@ class TestAskPayload:
 
 
 class TestGateTimeouts:
-    def test_background_gates_time_out_fast(self) -> None:
-        """A background run parked forever on an approval nobody watches is wedged."""
-        assert HI.gate_timeout_secs({}, mode="background") == (
-            HI.DEFAULT_BACKGROUND_GATE_TIMEOUT_SECS
-        )
+    """How long a gate waits: `tests/test_a_gate_waits_the_approval_window.py` owns the window."""
 
-    def test_blocking_gates_wait_long(self) -> None:
-        """A human is right there; timing out under them would discard an answer."""
-        assert HI.gate_timeout_secs({}, mode="blocking") == HI.DEFAULT_BLOCKING_GATE_TIMEOUT_SECS
+    def test_an_unattended_run_s_gate_times_out_fast(self) -> None:
+        """A run nobody watches, parked forever on an approval, is wedged."""
+        assert HI.gate_timeout_secs({}, unattended=True) == HI.UNATTENDED_GATE_TIMEOUT_SECS
 
     def test_an_explicit_timeout_always_wins(self) -> None:
-        for mode in ("background", "blocking"):
-            assert HI.gate_timeout_secs({"timeout_secs": 7}, mode=mode) == 7
+        for unattended in (False, True):
+            assert HI.gate_timeout_secs({"timeout_secs": 7}, unattended=unattended) == 7
 
     def test_zero_means_wait_indefinitely(self) -> None:
-        assert HI.gate_timeout_secs({"timeout_secs": 0}, mode="background") == 0
+        assert HI.gate_timeout_secs({"timeout_secs": 0}) == 0
 
 
 # ── continuations ────────────────────────────────────────────────────────────

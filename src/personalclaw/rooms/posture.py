@@ -468,12 +468,11 @@ def approval_channel(
     ``llm_helpers._resolve_permission`` to "Default: auto-approve". Handing back both makes
     that state unconstructible at the call site.
 
-    The policy is ``HOOK_BASED`` with **no hook manager bound** — which is what the ask
-    posture maps to (``guardrails.policy.approval_policy_for_session``) while keeping the hook
-    branch out of the decision, because a hook verdict of ``TOOL_AUTO_APPROVE`` approves
-    without asking and would remove the human from the one surface whose defining property is
-    that they are in it. With ``hooks=None`` that branch is skipped and the gate below is the
-    whole decision.
+    The policy is ``HOOK_BASED`` with **no hook manager bound**, which keeps the hook branch
+    out of the decision, because a hook verdict of ``TOOL_AUTO_APPROVE`` approves without
+    asking and would remove the human from the one surface whose defining property is that
+    they are in it. With ``hooks=None`` that branch is skipped and the gate below is the whole
+    decision. (A run with NO gate at all is ``guardrails.policy.no_one_to_ask``'s question.)
 
     The gate asks the two questions a solo session asks, in that order:
 

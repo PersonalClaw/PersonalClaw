@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.config.loader import AppConfig
 from personalclaw.gateway import _MAX_INJECT_ATTEMPTS, GatewayOrchestrator
 from personalclaw.triggers.delivery import (
@@ -91,6 +92,9 @@ def _mock_dashboard_state():
     ds.broadcast_ws = MagicMock()
     ds.broadcast_ws_subagent_subscribers = MagicMock()
     ds.request_approval = AsyncMock(return_value=True)
+    # How an asked approval ended, from the registry that held it: "" is one it never held,
+    # which reads the waiter's answer as a person's (`GatewayOrchestrator._asked_decision`).
+    ds.ended_as = MagicMock(return_value="")
     ds.resolve_approval = MagicMock()
     ds.resolve_session = MagicMock(return_value=None)
     ds.get_session = MagicMock(return_value=None)
@@ -234,7 +238,7 @@ class TestInitServices:
                 mock_vm_inst.init = MagicMock()
                 mock_vm.return_value = mock_vm_inst
                 with patch("personalclaw.gateway.SkillsLoader"):
-                    with patch("personalclaw.gateway.HookManager"):
+                    with patch("personalclaw.gateway.live_hook_manager"):
                         with patch("personalclaw.gateway.ContextBuilder"):
                             with patch("personalclaw.gateway.ConversationLog") as mock_cl:
                                 mock_cl_inst = MagicMock()
@@ -274,7 +278,7 @@ class TestInitServices:
                 mock_vm_inst.init = MagicMock()
                 mock_vm.return_value = mock_vm_inst
                 with patch("personalclaw.gateway.SkillsLoader"):
-                    with patch("personalclaw.gateway.HookManager"):
+                    with patch("personalclaw.gateway.live_hook_manager"):
                         with patch("personalclaw.gateway.ContextBuilder"):
                             with patch("personalclaw.gateway.ConversationLog") as mock_cl:
                                 mock_cl_inst = MagicMock()
@@ -320,7 +324,7 @@ class TestInteractiveApproval:
         event.tool_input = ""
         event.tool_purpose = ""
         result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "no_approval_surface")
 
     @pytest.mark.asyncio
     async def test_yolo_mode_approves(self):
@@ -336,7 +340,7 @@ class TestInteractiveApproval:
         event.tool_purpose = ""
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "yolo")
 
     @pytest.mark.asyncio
     async def test_slack_yolo_mode_approves(self):
@@ -351,7 +355,7 @@ class TestInteractiveApproval:
         event.tool_purpose = ""
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=True):
             result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "yolo")
 
     @pytest.mark.asyncio
     async def test_dashboard_only_approval(self):
@@ -369,7 +373,7 @@ class TestInteractiveApproval:
         event.tool_purpose = ""
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
-        assert result is False
+        assert result == ToolDecision(False, "rejected", "you")
         ds.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -394,7 +398,7 @@ class TestInteractiveApproval:
             with patch("personalclaw.sel.sel") as mock_sel:
                 mock_sel.return_value.log_api_access = MagicMock()
                 result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "parent_trust")
 
     @pytest.mark.asyncio
     async def test_all_sessions_trusted_approves(self):
@@ -417,13 +421,22 @@ class TestInteractiveApproval:
             with patch("personalclaw.sel.sel") as mock_sel:
                 mock_sel.return_value.log_api_access = MagicMock()
                 result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "trust")
 
     @pytest.mark.asyncio
     async def test_auto_approve_sources_config(self):
-        """Source in auto_approve_sources config → auto-approve."""
+        """Source in auto_approve_sources config → auto-approve.
+
+        Read from the config as it is when the call is made, not the one the gateway started with
+        (`approval_grants`, rule 1), so the setting is written where Settings writes it."""
+        import json
+
+        from personalclaw.config.loader import config_dir
+
+        (config_dir() / "config.json").write_text(
+            json.dumps({"hooks": {"auto_approve_sources": ["cron"]}})
+        )
         cfg = AppConfig()
-        cfg.hooks = {"auto_approve_sources": ["cron"]}
         with patch.object(cfg, "load_credentials", return_value={}):
             orch = GatewayOrchestrator(cfg)
         orch.dashboard_state = _mock_dashboard_state()
@@ -437,7 +450,7 @@ class TestInteractiveApproval:
         event.tool_purpose = ""
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
-        assert result is True
+        assert result == ToolDecision(True, "auto_approved", "source")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1707,7 +1720,7 @@ class TestInteractiveApprovalSlack:
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
 
-        assert result is True
+        assert result == ToolDecision(True, "approved", "you")
         orch._channel_delivery.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1734,7 +1747,7 @@ class TestInteractiveApprovalSlack:
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
 
-        assert result is False
+        assert result == ToolDecision(False, "rejected", "you")
         orch._channel_delivery.request_approval.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1760,7 +1773,7 @@ class TestInteractiveApprovalSlack:
         with patch("personalclaw.trust_mode.is_yolo_active", return_value=False):
             result = await callback(event, "")
 
-        assert result is True
+        assert result == ToolDecision(True, "approved", "you")
         ds.request_approval.assert_awaited_once()
 
 
@@ -2218,7 +2231,7 @@ class TestApprovalThreadContext:
             with patch("personalclaw.sel.sel") as mock_sel:
                 mock_sel.return_value.log_api_access = MagicMock()
                 result = await callback(event, "")
-        assert result is False
+        assert result == ToolDecision(False, "rejected", "you")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

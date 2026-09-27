@@ -178,15 +178,12 @@ class DashboardApprovalState:
         is there to ask — and ``dashboard/auto_denials.py`` now says so in the Inbox.
 
         Read per approval, so a change in Settings applies to the next one asked. An unreadable
-        config falls back to the default window rather than failing the approval.
+        config falls back to the default window rather than failing the approval
+        (``approval_grants.approval_window_secs``, which a workflow gate reads too).
         """
-        from personalclaw.config.loader import APPROVAL_TIMEOUT_MINUTES_DEFAULT, AppConfig
+        from personalclaw.approval_grants import approval_window_secs
 
-        try:
-            minutes = int(AppConfig.load().agent.approval_timeout_minutes)
-        except Exception:  # noqa: BLE001 - see the docstring
-            minutes = APPROVAL_TIMEOUT_MINUTES_DEFAULT
-        return float(max(1, minutes) * 60)
+        return approval_window_secs()
 
     async def request_approval(
         self,
@@ -280,15 +277,16 @@ class DashboardApprovalState:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             timed_out = True
-            # Fail closed: an unanswered prompt denies. Audit unattended timeouts
-            # so a silently-denied autonomous action is traceable.
+            # Fail closed: an unanswered prompt does not run. Audited as what it was — nobody
+            # answered (`expired`), not a Deny: the audit log's Denied filter must not return a
+            # refusal nobody made (the chat's row says the same, #3716).
             try:
                 from personalclaw.sel import sel
 
                 sel().log_api_access(
                     caller=f"approval_timeout:{source}",
-                    operation="approval_timeout:denied",
-                    outcome="denied",
+                    operation="approval_timeout",
+                    outcome="expired",
                     resources=f"tool={entry['tool'][:80]} after={int(timeout)}s",
                 )
             except Exception:
@@ -485,6 +483,8 @@ class DashboardApprovalState:
         if outcome not in APPROVAL_OUTCOMES:
             raise ValueError(f"unknown approval outcome {outcome!r}")
         entry = self._pending_approvals.pop(approval_id, None) or {}
+        if entry:
+            self._record_ending(approval_id, outcome)
         self.__dict__.get("_channel_asked", set()).discard(approval_id)
         # A prompt still open on the owner's channel is closed with how it ended, so the message
         # there says so instead of offering buttons that answer nothing.
@@ -499,9 +499,10 @@ class DashboardApprovalState:
         except Exception:
             self._log.debug("could not close the inbox row for %s", approval_id, exc_info=True)
         if entry and outcome not in UNANSWERED_OUTCOMES:
+            from personalclaw.approval_grants import YOU
             from personalclaw.dashboard import auto_denials
 
-            auto_denials.settle_retried(self, entry, answer=outcome)
+            auto_denials.settle_retried(self, entry, answer=outcome, by=YOU)
         try:
             self.broadcast_ws(
                 "approval_resolved",
@@ -515,6 +516,50 @@ class DashboardApprovalState:
             )
         except Exception:
             self._log.warning("WS broadcast failed for approval resolution", exc_info=True)
+
+    #: How many ended approvals :meth:`ended_as` remembers. It is read by the waiter the moment
+    #: its wait returns, so it only has to outlive that hop; the bound keeps a long-lived gateway's
+    #: record from growing with every approval it ever asked.
+    _ENDINGS_KEPT = 512
+
+    def _record_ending(self, approval_id: str, outcome: str) -> None:
+        endings: dict[str, str] = self.__dict__.setdefault("_endings", {})
+        endings.pop(approval_id, None)
+        endings[approval_id] = outcome
+        while len(endings) > self._ENDINGS_KEPT:
+            endings.pop(next(iter(endings)))
+
+    def ended_as(self, approval_id: str) -> str:
+        """How an approval this registry held ended — one of :data:`APPROVAL_OUTCOMES` — or ``""``.
+
+        The waiter of :meth:`request_approval` gets a bool, which cannot tell "you denied it" from
+        "nobody answered in time" from "the work stopped first". A relay that reports the decision
+        to its caller (the subagent manager's audit row, ``approval_grants.ToolDecision``) reads it
+        here.
+        """
+        return str(self.__dict__.get("_endings", {}).get(approval_id, ""))
+
+    def settle_granted(
+        self, *, tool: str, tool_input: object = "", session: str = "", trigger: str = "", by: str
+    ) -> int:
+        """A call a GRANT approved without asking (`approval_grants`) settles its note too.
+
+        A "Denied, no answer" note is handled once its call is asked again and answered
+        (:meth:`withdraw_approval`). A retry the chat's Trust, YOLO, a remembered "Always allow" or
+        any other standing grant approved was never asked, so it never reached the registry and the
+        note stayed open over a call that had run. The grant is recorded as who decided
+        (``refs.retry_by``). The call is described exactly as :meth:`_approval_entry` describes an
+        asked one, so the two are compared on the same redacted strings.
+        """
+        from personalclaw.dashboard import auto_denials
+
+        entry = {
+            "tool": redact_field(tool),
+            "tool_input": redact_field(tool_input_to_str(tool_input)),
+            "session": session,
+            "trigger": trigger,
+        }
+        return auto_denials.settle_retried(self, entry, answer="approved", by=by)
 
     def end_approval(self, approval_id: str, *, outcome: str, window_secs: float = 0.0) -> None:
         """An approval its waiter stopped waiting for: ``expired`` or ``cancelled``.
@@ -960,6 +1005,7 @@ class DashboardApprovalState:
         # Trust: auto-approve remaining tools for this session
         if action == "trust":
             session._trust = True
+            session._trust_from_floor = ""  # yours now, not a floor's to withdraw
             self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
             action = "approved"
         # Trust-agent ("Always allow for this agent"): trust THIS chat now (like trust)
@@ -970,6 +1016,7 @@ class DashboardApprovalState:
         # profile) and reserved system agents (their config is fixed).
         elif action == "trust_agent":
             session._trust = True
+            session._trust_from_floor = ""
             self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
             action = "approved"
             from personalclaw.agents.defaults import persistable_grant_target

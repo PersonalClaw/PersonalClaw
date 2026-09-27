@@ -363,13 +363,13 @@ async def test_an_approval_nobody_gave_closes_its_confirmation_saying_why() -> N
     clock = _Clock()
     c = _controller(_spec(_gate(), _transform("publish")), clock=clock)
     (ask,) = await _asking(c)
-    clock.t += 46
+    clock.t += 2 * 3600 + 1  # past the owner's approval window, two hours by default
     c.wake()
     await _ended(c)
 
     (closed,) = _rows(c.run.id, J.CONFIRMATION_RESOLVED)
     assert closed["confirmation_id"] == ask.confirmation_id
-    assert (closed["verb"], closed["reason"]) == ("withdrawn", "no answer within 45 seconds")
+    assert (closed["verb"], closed["reason"]) == ("withdrawn", "no answer within 2 hours")
 
 
 # ── the answer to a parked step lives in memory; a restart asks again ────────
