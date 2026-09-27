@@ -48,7 +48,9 @@ const SOUND_OPTIONS: { value: string; label: string }[] = [
 //
 // `channel_dm` went on that list with issue #343, when nothing was behind it, and came off it
 // once `DashboardState.notify` sent it: the note goes to your DM on the first connected chat
-// channel that knows you, and an approval asks there, with Approve/Deny where the channel has them.
+// channel that knows you. An approval asks on the channel "Send approvals to" names, with
+// Approve/Deny where the channel has them — which is that same first channel only while nothing is
+// chosen there, so the approval row says so (`targetLabel`).
 const TARGET_LABELS: Record<NotificationTarget, string> = {
   dashboard: 'Dashboard',
   channel_dm: 'Channel DM (the first connected chat channel that knows you)',
@@ -56,6 +58,14 @@ const TARGET_LABELS: Record<NotificationTarget, string> = {
   native: 'Desktop notification (when the desktop app is running)',
 }
 const INERT_TARGETS: NotificationTarget[] = ['push']
+
+/** A target's label on one row: the approval row's Channel DM asks where "Send approvals to" says. */
+function targetLabel(t: NotificationTarget, row: NotificationRuleRow): string {
+  if (t === 'channel_dm' && row.source === 'approval' && row.kind === 'requested') {
+    return 'Channel DM (asks on the channel under Send approvals to, above)'
+  }
+  return TARGET_LABELS[t]
+}
 
 /** Per-(source, kind) delivery rules.
  *
@@ -148,7 +158,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                             {doc.targets.map((t) => (
                               <label key={t} data-type="body-s" className="inline-flex items-center gap-2 text-on-surface-var">
                                 <Checkbox checked={r.targets.includes(t)}
-                                  ariaLabel={`Deliver ${r.label} to ${TARGET_LABELS[t]}`}
+                                  ariaLabel={`Deliver ${r.label} to ${targetLabel(t, r)}`}
                                   // 🔴 ONE TARGET IN OR OUT, never this row's copy of the list.
                                   // Sending the whole list put this tab's copy back over what was
                                   // stored — so a tab opened before the phone turned push on
@@ -156,7 +166,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                                   // the edit to the rule as it is stored, and unticking the last
                                   // target leaves Dashboard there, as a rule with none reads back.
                                   onChange={(on) => save(r.key, { targets: on ? { add: t } : { remove: t } })} />
-                                <span className={INERT_TARGETS.includes(t) ? 'text-on-surface-low' : undefined}>{TARGET_LABELS[t]}</span>
+                                <span className={INERT_TARGETS.includes(t) ? 'text-on-surface-low' : undefined}>{targetLabel(t, r)}</span>
                               </label>
                             ))}
                           </div>

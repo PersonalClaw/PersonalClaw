@@ -1665,7 +1665,14 @@ class TestInteractiveApprovalSlack:
     (``_build_approval_blocks``/``_pending_approvals``/``update_message``)
     moved to the slack-channel app's test_delivery — core only sees the
     high-level ``ChannelDelivery.request_approval`` outcome now.
+
+    The channel knows its owner (``PERSONALCLAW_OWNER_ID``): a channel with no owner id is
+    passed over, because it cannot ask anyone (``channel_delivery.approval_delivery``).
     """
+
+    @pytest.fixture(autouse=True)
+    def _channel_knows_its_owner(self, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_OWNER_ID", "U1")
 
     @pytest.mark.asyncio
     async def test_channel_approval_approved(self):

@@ -780,7 +780,9 @@ class DashboardApprovalState:
     async def _approval_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
         """Ask on the first channel that can: Approve/Deny where it has them, else a link.
 
-        Channels are tried in name order, as ``channel_delivery.reach_owner`` tries them. The
+        The channels are ``channel_delivery.approval_providers()``: the owner's "Send approvals
+        to" channel alone when they chose one, else every connected channel in name order, as
+        ``channel_delivery.reach_owner`` tries them. The
         first one with an owner id and a ``request_approval`` prompt asks, and a press there
         answers this approval the way the dashboard's buttons do (:meth:`resolve_approval`). An
         answer given anywhere else closes that prompt (:meth:`withdraw_approval`). A prompt that
@@ -804,7 +806,7 @@ class DashboardApprovalState:
             tool_meta={},
         )
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
-        for provider in channel_delivery.registered_providers():
+        for provider in channel_delivery.approval_providers():
             delivery = channel_delivery.delivery_for(provider)
             ask = getattr(delivery, "request_approval", None)
             if delivery is None or ask is None or not owner_id_for(provider):
@@ -837,8 +839,11 @@ class DashboardApprovalState:
         await self._approval_link_on_a_channel(approval_id, entry)
 
     async def _approval_link_on_a_channel(self, approval_id: str, entry: dict[str, Any]) -> None:
-        """Tell the owner on their channel that an approval is waiting, with where to answer it."""
-        from personalclaw.channel_delivery import reach_owner
+        """Tell the owner on their channel that an approval is waiting, with where to answer it.
+
+        Only on the owner's "Send approvals to" channel when they chose one (``reach_owner``'s
+        ``only``), so the link never lands on a channel they did not choose."""
+        from personalclaw.channel_delivery import approval_channel, reach_owner
         from personalclaw.dashboard.channel_messages import dashboard_link
 
         what = str(entry.get("tool") or "a tool call")
@@ -846,8 +851,18 @@ class DashboardApprovalState:
         link = dashboard_link(f"#/companion?approval={approval_id}")
         text = f"PersonalClaw is waiting for your approval: {what}" + (f", to {why}" if why else "")
         text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
-        outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
-        if not outcome.delivered and not outcome.no_channel:
+        chosen = approval_channel()
+        outcome = await reach_owner(
+            lambda delivery, dm: delivery.deliver_text(dm, text), only=chosen
+        )
+        if outcome.no_channel and chosen:
+            self._log.info(
+                "approval %s: approvals go to %s, which is not connected, so it waits in "
+                "PersonalClaw",
+                approval_id,
+                chosen,
+            )
+        elif not outcome.delivered and not outcome.no_channel:
             self._log.warning(
                 "approval %s: no channel reached the owner: %s", approval_id, outcome.sentence()
             )

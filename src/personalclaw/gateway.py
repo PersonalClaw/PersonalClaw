@@ -692,11 +692,16 @@ class GatewayOrchestrator:
 
             request_id = str(event.request_id)
 
-            # Prompt via the active channel (Slack, …) if one is registered. The
-            # channel owns its approval UI + owner-response wait; core races it
-            # against the dashboard prompt via the on_prompted hook (which hands us
-            # the channel's pending future so a dashboard click resolves both).
-            if self._channel_delivery is not None:
+            # Prompt on the channel that asks the owner approvals: their "Send approvals to"
+            # choice, else the first connected channel that knows them
+            # (`channel_delivery.approval_delivery`). The channel owns its approval UI +
+            # owner-response wait; core races it against the dashboard prompt via the
+            # on_prompted hook (which hands us the channel's pending future so a dashboard
+            # click resolves both).
+            from personalclaw.channel_delivery import approval_delivery
+
+            asker = approval_delivery()
+            if asker is not None:
                 try:
                     dashboard_future = None
                     approved: "bool | None" = None
@@ -741,7 +746,7 @@ class GatewayOrchestrator:
                     # surface; this is data, not rendering.
                     attach_approval_brief(event)
                     try:
-                        approved = await self._channel_delivery.request_approval(
+                        approved = await asker.request_approval(
                             event,
                             source=source,
                             parent_session_key=parent_session_key,
