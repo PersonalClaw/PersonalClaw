@@ -126,16 +126,31 @@ def test_every_manifest_backed_builder_answers_the_ui_question():
     scanned manifest (git scan, local/first-party scan, native scan); a fourth added later
     that forgets ``hasUI`` would ship a card that silently claims an app runs no browser
     code. Counting the two together is what makes this rail non-vacuous: asserting only
-    "some site sets hasUI" would stay green with two of three sites missing."""
+    "some site sets hasUI" would stay green with two of three sites missing.
+
+    Since #3608 no builder spells ``hasUI`` itself: each splats ``disclosure.describe(m)``,
+    the one projection the install dialog reads too. So the count is of that splat, and the
+    UI answer is asserted on ``describe`` for a manifest with a page, one with only a
+    components module, and one with neither."""
+    from personalclaw.apps.disclosure import describe
+    from personalclaw.apps.manifest import AppManifest
+
     src = (_ROOT / "src" / "personalclaw" / "apps" / "catalog.py").read_text()
     known = len(re.findall(r"^\s+consentKnown=True,$", src, re.M))
-    has_ui = len(re.findall(r"^\s+hasUI=bool\(m\.ui\.pages\),$", src, re.M))
-    components = len(re.findall(r"^\s+uiComponents=m\.ui\.components,$", src, re.M))
+    projected = len(re.findall(r"^\s+\*\*describe\(m\),$", src, re.M))
     assert known == 3, f"expected 3 manifest-backed builders, found {known}"
-    assert has_ui == known, f"{known} builders read a manifest, {has_ui} report hasUI"
-    assert (
-        components == known
-    ), f"{known} builders read a manifest, {components} report uiComponents"
+    assert projected == known, f"{known} builders read a manifest, {projected} splat describe(m)"
+    assert not re.search(
+        r"^\s+(hasUI|uiComponents)=", src, re.M
+    ), "a builder sets a UI field by hand beside the projection"
+
+    def ui(manifest: dict) -> tuple[bool, str]:
+        d = describe(AppManifest.from_dict({"name": "a", "version": "1.0.0", **manifest}))
+        return d["hasUI"], d["uiComponents"]
+
+    assert ui({"ui": {"entry": "i.mjs", "pages": [{"route": "a", "label": "A"}]}}) == (True, "")
+    assert ui({"ui": {"components": "c.mjs"}}) == (False, "c.mjs")
+    assert ui({}) == (False, "")
 
 
 # ── 3. the security docs name the carve-out (the issue's actual ask) ─────────
