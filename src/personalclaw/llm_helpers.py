@@ -7,6 +7,7 @@ and history modules.
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -362,12 +363,12 @@ def _enforces_json_schema_natively(model_ref: str) -> bool:
 # exactly this walk, and a second hand-rolled copy of it would be a divergence defect
 # — two answers to "should we try the next model" drifting apart.
 #
-# The INTERACTIVE chat/code_tools stream is deliberately NOT a consumer: it advances at
-# call-start only, via the seam's own resolution-time chain walk (the breaker-OPEN skip
-# in ``provider_bridge.resolve_provider_for_use_case``). See that seam's comment for
-# why — a human-watched turn must not stack N provider timeouts, and its provider is a
-# NativeAgentRuntime holding per-turn tool/transcript state that cannot be rebuilt
-# mid-stream.
+# The INTERACTIVE chat/code_tools stream is deliberately NOT a consumer of this walk: its
+# provider is a NativeAgentRuntime holding per-turn tool/transcript state that cannot be
+# rebuilt mid-stream. It advances at call-start via the seam's resolution-time chain walk
+# (the breaker-OPEN skip in ``provider_bridge.resolve_provider_for_use_case``), and at call
+# time by swapping only the runtime's INNER model (``agents/native/failover.py``): once, per
+# later model, while nothing of the turn has been shown, and said on the turn.
 
 
 def use_case_chain(use_case: str) -> list[str]:
@@ -859,6 +860,16 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       already the sentence (which tool, whose bug, and a workaround that is true on the surface
       that shows it). The raw dump it replaces contains ``400`` and ``permission``-shaped words
       the substring map below would misread.
+    * ``NoModelAnswered`` names every model a turn fell back to and why each failed, which no
+      one provider's error can; and a model app's ``ProviderResolutionError`` (the SDK's) is its
+      own sentence for why a model cannot serve this account, naming the fix only it knows
+      (Bedrock's model access, a data-retention policy). The map would replace either with a
+      generic line.
+
+    A status code in the map matches only as a number of its own: ``401`` inside an account id
+    or an ARN is not an HTTP 401, and read as one it named the API key for a permission error.
+    A permission error is its own class: the provider knew the credentials and would not let
+    them use the model, so the fix is access to that model, not a new key.
 
     **``room_member`` makes the remedies true on a room.** A sentence here is product copy on
     whatever surface shows it, and four of them name a chat-only fix: the composer's model
@@ -867,11 +878,18 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     given the member's name those four say that instead. Every other sentence is surface-neutral
     and is the same words either way; with no member, every word is exactly the chat's.
     """
-    from personalclaw.guardrails.failure import PromptExceedsWindow, request_exceeds_window_sentence
+    from personalclaw.guardrails.failure import (
+        NoModelAnswered,
+        PromptExceedsWindow,
+        request_exceeds_window_sentence,
+    )
+    from personalclaw.llm.registry import ProviderResolutionError
     from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence(room=bool(room_member))
+    if isinstance(exc, (NoModelAnswered, ProviderResolutionError)) and str(exc).strip():
+        return str(exc).strip()
     if isinstance(exc, PromptExceedsWindow):
         if room_member:
             return request_exceeds_window_sentence(
@@ -931,12 +949,26 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
         ),
         (
             (
+                "permission",
+                "forbidden",
+                "403",
+                "access denied",
+                "accessdenied",
+                "not authorized to",
+                "don't have access",
+                "do not have access",
+            ),
+            "The model provider refused this request: the credentials it was sent aren't allowed "
+            "to use this model. Give them access to it with the provider, or pick a different "
+            "model.",
+        ),
+        (
+            (
                 "authentication",
                 "invalid api key",
                 "invalid x-api-key",
                 "401",
                 "unauthorized",
-                "permission",
                 "invalid_api_key",
             ),
             "The model provider rejected the API key (auth failed). Check the key in "
@@ -954,7 +986,40 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
         ),
     ]
     for needles, friendly in _MAP:
-        if any(n in low for n in needles):
+        if any(_mentions(low, n) for n in needles):
             return friendly
     # Unrecognized — return the raw text (trimmed) so no real error is hidden.
     return raw if len(raw) <= 500 else raw[:500] + "…"
+
+
+def _mentions(text: str, needle: str) -> bool:
+    """Whether ``text`` says ``needle``; a status code only as a number of its own.
+
+    Not inside a longer number (an account id, an ARN, a request id) and not as part of a figure
+    ("1,429 tokens", "401.5").
+    """
+    if needle.isdigit():
+        return re.search(rf"(?<![\d.,]){needle}(?!\d|[.,]\d)", text) is not None
+    return needle in text
+
+
+#: The longest failure clause :func:`failure_clause` gives, in characters.
+_CLAUSE_CAP = 160
+
+
+def failure_clause(exc: BaseException) -> str:
+    """A model's failure as a clause for "it failed before it replied (…)".
+
+    The first sentence of what the chat shows for that failure (:func:`humanize_provider_error`),
+    without its closing stop, its first letter lowered when it starts a sentence ("The model
+    provider…" → "the model provider…", while "HTTP 500" stays as it is), and cut at a word past
+    :data:`_CLAUSE_CAP` characters. One reading of a failure, so a fallback's line and the
+    error the same failure shows cannot describe it differently.
+    """
+    text = humanize_provider_error(exc).strip()
+    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].rstrip(".!?")
+    if len(first) > _CLAUSE_CAP:
+        first = first[:_CLAUSE_CAP].rsplit(" ", 1)[0] + "…"
+    if len(first) > 1 and first[0].isupper() and first[1].islower():
+        first = first[0].lower() + first[1:]
+    return first

@@ -28,6 +28,12 @@ EVENT_COMPLETE = "complete"
 EVENT_COMPACTION_STATUS = "compaction_status"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
+# The turn's model failed before it said anything and the next model in its chain answers
+# instead. ``text`` is the sentence that says so ("Ran on X instead of Y: …"), and it arrives
+# before anything that model streams. Only the native loop emits it, and only for a caller
+# that asked it to fail over (``NativeAgentRuntime.announce_failover``), since a caller that
+# drops this event would be showing another model's reply as the chosen one's.
+EVENT_MODEL_SUBSTITUTION = "model_substitution"
 
 #: The ``stop_reason`` of a reply that stopped because it reached the model's OUTPUT cap — the
 #: Anthropic/Bedrock spelling, which a provider that owns its own decoding also emits.

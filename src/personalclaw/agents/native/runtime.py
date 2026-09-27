@@ -33,6 +33,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
+from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
     format_tool_result,
@@ -51,6 +52,7 @@ from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
 from personalclaw.guardrails.failure import (
     FailureMode,
     GuardError,
+    NoModelAnswered,
     correction_note,
     is_retryable,
 )
@@ -68,6 +70,7 @@ from personalclaw.guardrails.loop_breaker import (
 from personalclaw.llm.events import (
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
+    EVENT_MODEL_SUBSTITUTION,
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
@@ -92,6 +95,7 @@ from personalclaw.tool_providers.portable_schema import (
 from personalclaw.workflows.compaction import is_context_overflow
 
 if TYPE_CHECKING:
+    from personalclaw.agents.native.failover import ModelFailover
     from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.llm.base import ModelProvider, ModelSubstitution
     from personalclaw.tool_providers.base import ToolProvider
@@ -308,6 +312,17 @@ class NativeAgentRuntime(AgentProvider):
         # place of a model someone chose — the agent's pin or the chat's own pick could not run —
         # so the chat and a room can say which model answered instead of the one that was chosen.
         self.model_substitution: ModelSubstitution | None = None
+        # The models a turn may fall back to when its model fails before any output — set by the
+        # builder for an interactive runtime (``agents/native/failover.py``). Used only on a turn
+        # whose caller called :meth:`announce_failover`, since a caller that does not show
+        # EVENT_MODEL_SUBSTITUTION would present the fallback's reply as the chosen model's.
+        self.failover: ModelFailover | None = None
+        self._failover_announced = False
+        # Per turn: the models still to try, the (ref, why) of each one that failed, and the
+        # sentence the fallback that answers says before its reply.
+        self._failover_queue: list[str] = []
+        self._turn_failures: list[tuple[str, str]] = []
+        self._pending_substitution = ""
         self._extra_deny = list(extra_deny_patterns or [])
 
         # Conversation history — owned by the loop (complete() is stateless).
@@ -797,8 +812,12 @@ class NativeAgentRuntime(AgentProvider):
         attempt: int,
         started_ms: float,
         passed: bool,
+        fallback: bool = False,
     ) -> None:
         """Record one loop-level inference attempt in the guard's audit shape.
+
+        ``fallback`` marks an attempt on a model the turn fell back to: strategy ``fallback``, and
+        ``degraded`` (a fallback ref served it), which is what the guard's own rows say for it.
 
         Only exceptional attempts are recorded — every failed attempt, plus the
         outcome of a retry — so the audit trail gains the retry story (#252's
@@ -818,7 +837,8 @@ class NativeAgentRuntime(AgentProvider):
                     failure_mode=mode.value,
                     latency_ms=max(0.0, now_ms() - started_ms),
                     passed=passed,
-                    strategy="retry" if attempt > 1 else "direct",
+                    strategy="fallback" if fallback else ("retry" if attempt > 1 else "direct"),
+                    degraded=fallback and passed,
                 )
             )
         except Exception:
@@ -915,6 +935,14 @@ class NativeAgentRuntime(AgentProvider):
         # turn scope, not per-inference: two separate transients in one turn mean
         # the provider is genuinely unhealthy, and the second failure surfaces.
         inference_retried = False
+        # The model this turn starts on, put back when it ends: a turn that fell back must not
+        # leave the next one answering on the fallback with nothing saying so.
+        home = (self._model, self._definition.model)
+        announced = self._failover_announced and self.failover is not None
+        self._failover_queue = list(self.failover.candidates) if announced and self.failover else []
+        self._turn_failures = []
+        self._pending_substitution = ""
+        fallbacks = 0  # how many models this turn fell back to
 
         # end_turn() in a finally, not at each return: a stop arriving in the window
         # between a turn ending and the next beginning must answer "no_turn", and an
@@ -998,6 +1026,12 @@ class NativeAgentRuntime(AgentProvider):
                         ):
                             if self._cancelled:
                                 break
+                            if self._pending_substitution:
+                                # A fallback is answering: said before anything it streams.
+                                yield AgentEvent(
+                                    kind=EVENT_MODEL_SUBSTITUTION, text=self._pending_substitution
+                                )
+                                self._pending_substitution = ""
                             agg_events += 1
                             if ev.kind == EVENT_TEXT_CHUNK:
                                 assistant_text += ev.text
@@ -1083,9 +1117,10 @@ class NativeAgentRuntime(AgentProvider):
                         )
                         self._audit_inference_attempt(
                             fmode,
-                            attempt=2 if inference_retried else 1,
+                            attempt=1 + int(inference_retried) + fallbacks,
                             started_ms=attempt_started,
                             passed=False,
+                            fallback=fallbacks > 0,
                         )
                         # A provider refusing one of THIS request's tool definitions: the
                         # identical request fails identically, so there is no retry, and the
@@ -1106,7 +1141,30 @@ class NativeAgentRuntime(AgentProvider):
                                 can_turn_off=not any(tool_prefs.is_locked(n) for n in rejected),
                             ) from exc
                         if not can_retry:
-                            raise
+                            # The turn's retry is spent: the next model of its chain may answer
+                            # instead, while nothing of the turn has been shown, for a failure
+                            # another model could get past.
+                            if not (
+                                fmode in FAILOVER_MODES
+                                and not overflow
+                                and turns == 1
+                                and not visible_streamed
+                                and not tool_calls
+                                and not self._cancelled
+                                and await self._fail_over(exc, tools=tools_kwarg)
+                            ):
+                                raise
+                            fallbacks += 1
+                            # The fallback's own cache mode, and the history without the
+                            # correction note the failed model's retry was given.
+                            mode = effective_cache_mode(
+                                getattr(self._model, "prompt_cache", PromptCache.NONE),
+                                enabled=self._prompt_cache_enabled(),
+                            )
+                            msgs = self._request_messages(mode)
+                            assistant_text = ""
+                            usage = None
+                            continue
                         inference_retried = True
                         # `%r`, not `%s`: httpx.ReadError and every timeout stringify to "",
                         # which logged "retrying once: " with nothing after it.
@@ -1127,12 +1185,13 @@ class NativeAgentRuntime(AgentProvider):
                         assistant_text = ""
                         usage = None
                         continue
-                    if inference_retried:
+                    if inference_retried or fallbacks:
                         self._audit_inference_attempt(
                             FailureMode.NONE,
-                            attempt=2,
+                            attempt=1 + int(inference_retried) + fallbacks,
                             started_ms=attempt_started,
                             passed=True,
+                            fallback=fallbacks > 0,
                         )
                     break
 
@@ -1228,6 +1287,12 @@ class NativeAgentRuntime(AgentProvider):
                 tool_call_count=agg_tool_calls,
             )
         finally:
+            # A fallback answered THIS turn only: the next one starts on the model it was chosen
+            # for, and asks again whether it may fall back.
+            self._model, self._definition.model = home
+            self._failover_announced = False
+            self._failover_queue = []
+            self._pending_substitution = ""
             self._turn_images = []
             self._turn_message = None
             self._cancel.end_turn()
@@ -2306,6 +2371,63 @@ class NativeAgentRuntime(AgentProvider):
         parts.extend({"type": "image_url", "image_url": {"url": u}} for u in self._turn_images)
         out[idx] = {**target, "content": parts}
         return out
+
+    def announce_failover(self) -> None:
+        """Let the next turn fall back down its model chain, for a caller that shows it.
+
+        Called right before :meth:`stream` by a caller that shows ``EVENT_MODEL_SUBSTITUTION``
+        (the chat runner: a live line, and the reply's meta). That turn may then move to the next
+        model of its chain (:attr:`failover`) when its model fails before any output. Lasts one
+        turn. A caller that never calls this keeps a turn that fails, failing, rather than a
+        reply from another model presented as the chosen one's.
+        """
+        self._failover_announced = True
+
+    async def _fail_over(self, exc: BaseException, *, tools: list | None) -> bool:
+        """Move this turn to the next model of its chain that can take it; True when one was found.
+
+        Called once the turn's model has failed before any output and its retry is spent. A model
+        that cannot be built now, cannot use the tools this turn offers, or does not take images
+        on a turn carrying some (the platform's record, as the turn's own model was asked) is
+        passed over. False when there is nothing to try, and then the failure stands as it is.
+        Raises :class:`NoModelAnswered` when models were tried in its place and failed too,
+        because then no single provider's error says what happened.
+        """
+        failover = self.failover
+        if failover is None or (not self._failover_queue and not self._turn_failures):
+            return False
+        self._turn_failures.append(
+            (self.served_model_ref or failover.requested, failover.describe(exc))
+        )
+        while self._failover_queue:
+            ref = self._failover_queue.pop(0)
+            try:
+                provider, model_id = failover.build(ref)
+            except Exception as build_exc:  # noqa: BLE001 — a fallback that cannot build is passed
+                logger.warning(
+                    "native: fallback %s cannot be built, passed over: %r", ref, build_exc
+                )
+                continue
+            if tools and not getattr(provider, "supports_tools", False):
+                logger.info("native: fallback %s cannot use tools, passed over", ref)
+                continue
+            if self._turn_images and not await failover.takes_images(ref):
+                logger.info("native: fallback %s does not take images, passed over", ref)
+                continue
+            logger.warning(
+                "native: %s failed before any output (%r) — falling back to %s",
+                self._turn_failures[-1][0],
+                exc,
+                ref,
+            )
+            self._model = provider
+            self._definition.model = model_id
+            served = self.served_model_ref or ref
+            self._pending_substitution = failover.substitution(served, self._turn_failures).notice()
+            return True
+        if len(self._turn_failures) > 1:
+            raise NoModelAnswered(self._turn_failures) from exc
+        return False
 
     def drain_tool_outcomes(self) -> list[tuple[str, str]]:
         """Return this run's accumulated ``(tool, outcome)`` pairs and clear them.
