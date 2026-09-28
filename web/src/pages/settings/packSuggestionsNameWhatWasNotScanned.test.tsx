@@ -27,7 +27,7 @@ beforeEach(() => { vi.resetModules() })
 
 describe('pack suggestions say which projects could not be scanned', () => {
   it('names the project and why, and does not claim that nothing matched', async () => {
-    mockApi({ proposals: [], unscanned: [LEDGER] })
+    mockApi({ proposals: [], unscanned: [LEDGER], fingerprinting: true })
     await mount()
     const said = await screen.findByText(/Couldn't scan one project for suggestions/)
     expect(said.closest('[role="status"]')).not.toBeNull()
@@ -36,8 +36,19 @@ describe('pack suggestions say which projects could not be scanned', () => {
     expect(screen.queryByText(/No pack matches any project's workspace/)).toBeNull()
   })
 
+  it('says fingerprinting is off instead of claiming nothing matched', async () => {
+    mockApi({ proposals: [], unscanned: [], fingerprinting: false })
+    await mount()
+    const said = await screen.findByText(/^Project fingerprinting is off, so no project was scanned/)
+    expect(said.textContent).toBe(
+      'Project fingerprinting is off, so no project was scanned for suggestions. Turn it on under Discovery, above, then suggest packs again.',
+    )
+    expect(said.closest('[role="status"]')).not.toBeNull()
+    expect(screen.queryByText(/No pack matches any project's workspace/)).toBeNull()
+  })
+
   it('still says nothing matched when every project was scanned', async () => {
-    mockApi({ proposals: [], unscanned: [] })
+    mockApi({ proposals: [], unscanned: [], fingerprinting: true })
     await mount()
     expect(await screen.findByText(/No pack matches any project's workspace/)).toBeInTheDocument()
     expect(screen.queryByText(/Couldn't scan/)).toBeNull()

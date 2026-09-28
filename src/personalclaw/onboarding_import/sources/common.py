@@ -7,7 +7,8 @@
 - **Skills** (:func:`scan_skills`): a directory with a ``SKILL.md``, whichever tool it came from,
   with the supply-chain scan its install will make (:class:`ImportedSkillMarketplace`).
 - **Prompt history** (:func:`prompt_history`): counted and named, never imported.
-- **A document that does not parse** (:data:`UNPARSABLE`): read as unreadable, never a scan fault.
+- **A file that is there and cannot be read** (:data:`UNPARSABLE`, and one that will not open):
+  named on the scan (:func:`note_unreadable`), never read as empty and never a scan fault.
 - **A conversation file, as the step lists it** (:class:`Transcript`, :data:`READINGS`): read in
   full, or — for the thousands of files a months-long history holds — only as far as its first
   prompt, and remembered until the file changes. Its title and note (:func:`one_line`,
@@ -33,13 +34,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import read_text_safely, refuses, safe_text
+from personalclaw.onboarding_import.floors import (
+    FileUnreadable,
+    read_text_safely,
+    refuses,
+    safe_text,
+)
 from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
     NotImported,
     ScanResult,
     SkillScan,
+    UnreadableFile,
 )
 from personalclaw.skills.marketplace import (
     SkillDetail,
@@ -120,6 +127,18 @@ def slug_name(raw: str, *, lower: bool) -> str:
     return re.sub(pattern, "-", text).strip("-")[:63]
 
 
+def unreadable_file(exc: FileUnreadable) -> UnreadableFile:
+    """The file ``exc`` could not read, as the step names it."""
+    return UnreadableFile(path=display_path(exc.path), why=exc.why)
+
+
+def note_unreadable(result: ScanResult, entry: UnreadableFile) -> None:
+    """Name a file that is there and could not be read on the scan, once however many of the
+    scan's readers asked for it (``settings.json`` is read for its servers and for its rules)."""
+    if all(known.path != entry.path for known in result.unreadable_files):
+        result.unreadable_files.append(entry)
+
+
 def text_item(
     source: str,
     path: Path,
@@ -134,14 +153,18 @@ def text_item(
     seen_files: set[Path] | None = None,
 ) -> bool:
     """One file read through floors 1 and 2 into an item. False when nothing was added: the file
-    is empty, refused, or (``seen_files``) already an item."""
+    is empty, refused, unreadable (named on the scan), or (``seen_files``) already an item."""
     if seen_files is not None:
         # One file, one item: a tool can reach one file by two names.
         resolved = path.resolve()
         if resolved in seen_files:
             return False
         seen_files.add(resolved)
-    text, redactions, skipped = read_text_safely(path)
+    try:
+        text, redactions, skipped = read_text_safely(path)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        return False
     result.secrets_skipped += skipped
     if not text.strip():
         return False
@@ -645,6 +668,21 @@ class McpServer:
         """A stable id for this server in this scope — what a pick names instead of a path."""
         raw = "\0".join((self.source, self.scope, self.project, self.name)).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class McpListing:
+    """What one tool's MCP configuration lists: its servers, and each of its files that is there
+    and could not be read.
+
+    A listing with a file in ``unreadable`` is INCOMPLETE, not empty. The servers that file holds,
+    or whose approval it records, are missing from ``servers``, so both surfaces that read a
+    listing (the onboarding step and the Tools page's Import) name the file instead of showing
+    the gap as "nothing to import".
+    """
+
+    servers: list[McpServer]
+    unreadable: list[UnreadableFile]
 
 
 def mcp_item(source: str, server: McpServer, *, key: str) -> ImportItem:

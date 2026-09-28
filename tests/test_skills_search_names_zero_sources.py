@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -120,22 +121,43 @@ def test_a_named_marketplace_branch_answers_the_same_shape():
 
 
 def test_an_unknown_named_marketplace_is_still_a_404():
-    """The pre-existing refusal is untouched — a typo'd source name is not "no sources"."""
-    resp, _ = _search(_registry("skills.sh"), marketplace="nope")
+    """A typo'd source name is not "no sources", and it is refused in the shared envelope."""
+    resp, body = _search(_registry("skills.sh"), marketplace="nope")
     assert resp.status == 404
+    assert body == {
+        "error": {
+            "code": "skills_marketplace_not_found",
+            "message": "No skill catalogue named 'nope' is set up here.",
+        }
+    }
 
 
-def test_a_missing_query_is_still_a_400():
-    """`sources` must not turn an argument error into an empty result."""
+def _bare_search(query_string: str):
     import asyncio
 
     import personalclaw.dashboard.handlers.skills as H
 
     app = web.Application()
     app["state"] = SimpleNamespace()
-    req = make_mocked_request("GET", "/api/skills/search?q=", app=app)
+    req = make_mocked_request("GET", f"/api/skills/search?{query_string}", app=app)
     resp = asyncio.run(H.api_skills_search(req))
+    return resp, json.loads(resp.body)
+
+
+def test_a_missing_query_is_still_a_400():
+    """`sources` must not turn an argument error into an empty result."""
+    resp, body = _bare_search("q=")
     assert resp.status == 400
+    assert body["error"]["code"] == "bad_request"
+
+
+@pytest.mark.parametrize("limit", ["many", "0", "-3"])
+def test_an_unusable_limit_is_refused_not_a_crash(limit):
+    resp, body = _bare_search(f"q=postgres&limit={limit}")
+    assert resp.status == 400
+    assert body == {
+        "error": {"code": "bad_request", "message": "`limit` is a whole number of 1 or more."}
+    }
 
 
 def test_the_shipped_registry_has_only_native_mirrors():
@@ -186,6 +208,19 @@ def test_a_catalogue_that_could_not_be_searched_is_named():
     assert (
         "did not answer" not in missed["reason"]
     ), "an unexpected fault's own text stays in the log"
+
+
+def test_a_scoped_search_whose_catalogue_fails_says_so_in_the_envelope():
+    """The scoped branch answers one catalogue, so its failure is the whole answer: a coded
+    failure the page can branch on, naming the catalogue, with the fault's own text left in the
+    log."""
+    reg = _registry("packs")
+    reg.register("skills.sh", _UnreachableMarketplace())
+    resp, body = _search(reg, marketplace="skills.sh")
+    assert resp.status == 500
+    assert body["error"]["code"] == "skills_search_failed"
+    assert body["error"]["message"].startswith("Couldn't search skills.sh. ")
+    assert "did not answer" not in body["error"]["message"]
 
 
 def test_a_search_every_catalogue_answered_names_none():

@@ -21,7 +21,10 @@ clock, or set ordering.
 settings store, the local-model registry, the provider registry's declared capabilities) is
 observability-grade, not load-bearing. A missing or corrupt read degrades to the next-weaker
 signal and, at worst, to the original order. A routing decision must never fail because a
-telemetry read did: routing changes *order*, never *resolution semantics*.
+telemetry read did: routing changes *order*, never *resolution semantics*. That rule is for
+DECIDING. The Routing tab, which shows the table, and every write, which saves the whole of it,
+read ``routing_policy.json`` strictly (:func:`read_policy`), so an unreadable table is said, and
+never replaced.
 
 Ordering precedence, strongest first:
 
@@ -89,27 +92,65 @@ def _empty_policy() -> dict[str, Any]:
     return {"version": POLICY_VERSION, "classifier_version": 1, "use_cases": {}}
 
 
-def load_policy(home: Path | None = None) -> dict[str, Any]:
-    """Read ``routing_policy.json``. A missing/corrupt file reads as an empty table (never fatal).
+class PolicyUnreadable(Exception):
+    """``routing_policy.json`` is there and could not be read. The message names the file and why,
+    and never quotes it."""
 
-    ``home`` defaults to the live config dir, resolved lazily so this module stays importable
-    without a configured home (and so tests can point it at ``tmp_path``).
+
+def _unreadable_policy(path: Path, exc: BaseException | None) -> PolicyUnreadable:
+    if isinstance(exc, OSError):
+        why = (
+            f"it could not be opened ({exc.strerror})" if exc.strerror else "it could not be opened"
+        )
+    elif isinstance(exc, json.JSONDecodeError):
+        why = f"it is not valid JSON (line {exc.lineno}, column {exc.colno})"
+    elif exc is not None:
+        why = "it is not valid JSON"
+    else:
+        why = "it is not a JSON object"
+    return PolicyUnreadable(f"Couldn't read your routing table, {path}: {why}.")
+
+
+def read_policy(home: Path | None = None) -> dict[str, Any]:
+    """Read ``routing_policy.json`` strictly: the table, an empty one when there is no file, and
+    :class:`PolicyUnreadable` when the file is there and cannot be read.
+
+    For the readers that must not guess. The Routing tab shows the table, and a table it could not
+    read is not "no recorded order". Every write is the other: it saves the whole table, so a write
+    over a file it could not read replaced a hand-edited table with one holding only its own
+    change, and the other orders were gone. ``home`` defaults to the live config dir, resolved
+    lazily so this module stays importable without a configured home (and so tests can point it
+    at ``tmp_path``).
     """
     if home is None:
         home = _default_home()
     if home is None:
         return _empty_policy()
+    path = _policy_path(home)
     try:
-        data = json.loads(_policy_path(home).read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError, ValueError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return _empty_policy()
+    except (OSError, ValueError, RecursionError) as exc:
+        raise _unreadable_policy(path, exc) from exc
     if not isinstance(data, dict):
-        return _empty_policy()
+        raise _unreadable_policy(path, None)
     data.setdefault("version", POLICY_VERSION)
     data.setdefault("classifier_version", 1)
     if not isinstance(data.get("use_cases"), dict):
         data["use_cases"] = {}
     return data
+
+
+def load_policy(home: Path | None = None) -> dict[str, Any]:
+    """Read ``routing_policy.json`` for a routing DECISION: a missing or unreadable file reads as
+    an empty table, never fatal (the module's fail-open rule). The tab and every write read it
+    with :func:`read_policy` instead, which says when the file could not be read."""
+    try:
+        return read_policy(home)
+    except PolicyUnreadable:
+        logger.debug("routing table unreadable; deciding without it", exc_info=True)
+        return _empty_policy()
 
 
 def save_policy(home: Path, policy: dict[str, Any]) -> None:
@@ -631,12 +672,16 @@ def set_order(
     records ``{"source": "user"}``, which the learned stage may later propose changing but never
     silently overwrite (§6.3). Note ``route_refs`` still treats the stored order as a *ranking*,
     not a filter — a ref that is not in it is ranked last, never dropped.
+
+    The table is read strictly (:func:`read_policy`): one that is there and cannot be read raises
+    :class:`PolicyUnreadable` and nothing is written, because saving would replace it, and every
+    other order in it, with a table holding only this one.
     """
     if home is None:
         home = _default_home()
     if home is None:
         raise RuntimeError("no PersonalClaw home configured; cannot persist routing policy")
-    policy = load_policy(home)
+    policy = read_policy(home)
     use_cases = policy.setdefault("use_cases", {})
     entry = use_cases.setdefault(use_case, {})
     if not isinstance(entry, dict):

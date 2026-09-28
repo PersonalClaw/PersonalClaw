@@ -905,7 +905,11 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // 3 → 2. The proposal-queue read left. Its `null` did say "Couldn't read", but beside "Nothing is
   // pending action", a claim about a queue it had not read; it keeps the gateway's reason now and
   // offers a retry (`routingProposalsSurface.test.tsx`).
-  'pages/settings/RoutingPanel.tsx': 2,
+  // 2 → 1. The routing table read left the same way: the gateway now answers an unreadable table
+  // as a failure, which the section shows with its reason and a retry
+  // (`routingTableUnreadable.test.tsx`). The one left is the telemetry read, a view with its own
+  // "Couldn't read" line.
+  'pages/settings/RoutingPanel.tsx': 1,
   // 3 → 2. The providers read is fixed: a 500 on /api/search/providers told a user with three
   // registered providers "No search providers configured" and pointed them at the Store to install
   // their first one. The two left are the active BINDINGS and the `/api/tools` probe, and both now

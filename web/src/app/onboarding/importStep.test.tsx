@@ -1019,3 +1019,47 @@ describe('the counts of a long history read as numbers', () => {
     expect(rowText('Conversations')).toContain('1,234')
   })
 })
+
+// ── a file the tool keeps that could not be read ─────────────────────────────────────────────
+//
+// The scan read an unreadable `.claude.json` as an empty one, so a Claude Code with a broken config
+// was "nothing to import" — or left off the step altogether. The gateway now names each file that
+// is there and could not be read, and keeps the tool on the step; the card says which file and why,
+// and no sentence on the step claims "everything we found" or "nothing to import" past it.
+
+const BROKEN = { path: '~/.claude.json', why: 'it is not valid JSON (line 1, column 91)' }
+
+describe('a file the tool keeps that could not be read is named, never read as nothing to import', () => {
+  it('names the file on its card, beside what could be read, and scans again on request', async () => {
+    onboardingImportScan.mockResolvedValue(scan(ITEMS(), { unreadable_files: [BROKEN] }))
+    await mounted()
+    const said = screen.getByText(/^Couldn't read ~\/\.claude\.json/)
+    expect(said.textContent).toBe(
+      "Couldn't read ~/.claude.json: it is not valid JSON (line 1, column 91). What it holds is not listed here until it can be read.",
+    )
+    expect(said.closest('[role="status"]'), 'a part of the step, not a step failure').not.toBeNull()
+    expect(screen.getByText('4 things found'), 'what could be read still comes over').toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Scan again' }))
+    await waitFor(() => expect(onboardingImportScan).toHaveBeenCalledTimes(2))
+  })
+
+  it('a tool with nothing readable says so, and moves on without "nothing to import"', async () => {
+    onboardingImportScan.mockResolvedValue(scan([], { counts: { ...ZERO }, unreadable_files: [BROKEN] }))
+    await mounted()
+    expect(screen.getByText(
+      "We found Claude Code on this machine but couldn't read its setup, so there is nothing to bring over until it can be read. What could not be read is named below.",
+    )).toBeTruthy()
+    expect(screen.queryByText('0 things found'), 'a count of nothing beside a file nobody read').toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(onDone).toHaveBeenCalledWith("1 file couldn't be read")
+  })
+
+  it('names each file when more than one could not be read', async () => {
+    const settings = { path: '~/.claude/settings.json', why: 'it could not be opened (Permission denied)' }
+    onboardingImportScan.mockResolvedValue(scan(ITEMS(), { unreadable_files: [BROKEN, settings] }))
+    await mounted()
+    expect(screen.getByText(/^Couldn't read 2 of Claude Code's files/)).toBeTruthy()
+    expect(screen.getByText('~/.claude.json: it is not valid JSON (line 1, column 91).')).toBeTruthy()
+    expect(screen.getByText('~/.claude/settings.json: it could not be opened (Permission denied).')).toBeTruthy()
+  })
+})

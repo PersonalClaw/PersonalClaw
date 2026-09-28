@@ -48,7 +48,7 @@ function mockApi(tools: unknown[]) {
     api: {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve([]),
-      importableMcp: () => Promise.resolve([]),
+      importableMcp: () => Promise.resolve({ servers: [], unreadable: [] }),
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       // The page's sixth read (the per-server elicitation grant). This mock replaces

@@ -92,8 +92,10 @@ def read_unread(
 
 
 def detected(results: Iterable[ScanResult]) -> list[ScanResult]:
-    """Only the sources actually present on this machine, with something to offer."""
-    return [r for r in results if r.present and r.items]
+    """Only the sources actually present on this machine, with something to offer or a file of
+    theirs that could not be read. A tool whose config is unreadable has something to say, and
+    leaving it out would say nothing was found."""
+    return [r for r in results if r.present and (r.items or r.unreadable_files)]
 
 
 def plans(results: Iterable[ScanResult]) -> dict[str, Plan]:

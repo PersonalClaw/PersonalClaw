@@ -95,19 +95,23 @@ def _import_sources() -> tuple[tuple[Path, str], ...]:
     )
 
 
-def _importable_entries() -> list[tuple[str, Any]]:
-    """``(backend label, server)`` for every MCP server another tool has configured, every scope."""
+def _importable_entries() -> tuple[list[tuple[str, Any]], list[dict[str, str]]]:
+    """``(entries, unreadable)``: ``(backend label, server)`` for every MCP server another tool has
+    configured, every scope, and ``{backend, path, why}`` for each of their configuration files
+    that is there and could not be read, whose servers are therefore not among ``entries``."""
     from personalclaw.onboarding_import.sources import claude_code, codex
 
     readers = {
         claude_code.DISPLAY_NAME: lambda path: claude_code.mcp_servers(config_path=path),
         codex.DISPLAY_NAME: codex.mcp_servers,
     }
-    return [
-        (backend, server)
-        for path, backend in _import_sources()
-        for server in readers[backend](path)
-    ]
+    entries: list[tuple[str, Any]] = []
+    unreadable: list[dict[str, str]] = []
+    for path, backend in _import_sources():
+        listing = readers[backend](path)
+        entries.extend((backend, server) for server in listing.servers)
+        unreadable.extend({"backend": backend, **entry.to_dict()} for entry in listing.unreadable)
+    return entries, unreadable
 
 
 # ── transports ──────────────────────────────────────────────────────────────
@@ -929,10 +933,13 @@ def discover_servers_to_sync() -> list[McpServerInfo]:
     return out
 
 
-def discover_importable_servers() -> list[dict[str, Any]]:
-    """Return MCP servers configured in another tool (Claude Code, Codex) that are NOT yet present
-    in any PersonalClaw scope — i.e. candidates the user can *import* into
-    ``~/.personalclaw/mcp.json`` to make them callable by the native loop.
+def discover_importable_servers() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """``(servers, unreadable)``: the MCP servers configured in another tool (Claude Code, Codex)
+    that are NOT yet present in any PersonalClaw scope — i.e. candidates the user can *import*
+    into ``~/.personalclaw/mcp.json`` to make them callable by the native loop — and each of
+    those tools' configuration files that is there and could not be read, as
+    ``{backend, path, why}``. The servers such a file holds are not in the list, so the list
+    beside it is incomplete, never "nothing to import".
 
     PersonalClaw does not silently load these (the native loop can't reach a server only another
     tool has). The UI offers each as an explicit "Import" action backed by ``/api/mcp/apply``,
@@ -958,7 +965,8 @@ def discover_importable_servers() -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for backend, server in _importable_entries():
+    entries, unreadable = _importable_entries()
+    for backend, server in entries:
         spec = server.spec
         if server.name in known or server.id in seen:
             continue
@@ -986,7 +994,7 @@ def discover_importable_servers() -> list[dict[str, Any]]:
                 "headers": _names_with_presence(spec.get("headers")),
             }
         )
-    return out
+    return out, unreadable
 
 
 def importable_spec(server_id: str) -> tuple[str, dict[str, Any]] | None:
@@ -996,7 +1004,8 @@ def importable_spec(server_id: str) -> tuple[str, dict[str, Any]] | None:
     the server the row showed, in the scope it showed it in, and a caller can only ever name a
     row — never a path, a file or a definition of its own.
     """
-    for _backend, server in _importable_entries():
+    entries, _unreadable = _importable_entries()
+    for _backend, server in entries:
         if server.id == server_id:
             return server.name, dict(server.spec)
     return None

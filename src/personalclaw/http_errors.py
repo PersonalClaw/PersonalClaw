@@ -996,6 +996,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 500: the proposal store could not be read — answered in place of an empty queue, which
     # would read as "nothing to review".
     "routing_proposals_unreadable": "The routing proposal queue could not be read.",
+    # ── the routing table (dashboard/handlers/model_telemetry.py —
+    #    GET/PUT /api/models/routing-policy, POST …/routing-proposals/{id}/accept) ──
+    # 500 on the GET: answered in place of `{"enabled": false, "use_cases": []}`, which reads as
+    # "routing is off and nothing is recorded". 409 on a write: saving would replace a table that
+    # could not be read, so nothing was written.
+    "routing_policy_unreadable": (
+        "The routing table could not be read, so it is neither shown nor changed."
+    ),
+    # ── the skill search (dashboard/handlers/skills.py — GET /api/skills/search) ──
+    # 404: the named catalogue is not one PersonalClaw has. 500: the one catalogue a scoped search
+    # asked could not answer; the message is the reason, relayed.
+    "skills_marketplace_not_found": "No skill catalogue of that name is set up here.",
+    "skills_search_failed": "The skill catalogue could not be searched.",
 }
 
 

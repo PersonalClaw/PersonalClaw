@@ -253,21 +253,36 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
     what the pack WOULD install. Already-installed packs and already-rejected (project, pack)
     pairs never appear, so this can be polled by a user without becoming nagware.
 
-    ``unscanned`` names each project whose scan failed, and why. One unscannable workspace must
-    not blank the others' cards, and it must not vanish either: without it a failed scan of every
-    project answered the same empty list as a scan that matched nothing.
+    ``unscanned`` names each project that was not scanned, and why: its folder is a protected
+    location or is not there, or its scan failed. One unscannable workspace must not blank the
+    others' cards, and it must not vanish either: without it a failed scan of every project
+    answered the same empty list as a scan that matched nothing.
+
+    ``fingerprinting`` is ``false`` when project fingerprinting is turned off, and then nothing
+    was scanned at all: the empty list is "off", never "no pack matches".
     """
     from personalclaw.onboarding_import.floors import screened_failure
-    from personalclaw.packs.fingerprint import SCAN_REASON_ON_DEMAND, scan_project
+    from personalclaw.packs.fingerprint import (
+        SCAN_REASON_ON_DEMAND,
+        fingerprinting_enabled,
+        scan_project,
+        unscannable,
+    )
     from personalclaw.tasks.hierarchy import HierarchyStore
 
     wanted = str(request.query.get("project_id", "") or "").strip()
     projects = [p for p in HierarchyStore().list_projects() if not wanted or p.id == wanted]
     if wanted and not projects:
         return json_error("project_not_found", message=f"no project {wanted!r}", status=404)
+    if not fingerprinting_enabled():
+        return web.json_response({"proposals": [], "unscanned": [], "fingerprinting": False})
     out: list[dict] = []
     unscanned: list[dict] = []
     for project in projects:
+        refused = unscannable(project)
+        if refused:
+            unscanned.append({"project_id": project.id, "project": project.name, "reason": refused})
+            continue
         try:
             out.extend(p.to_dict() for p in scan_project(project, reason=SCAN_REASON_ON_DEMAND))
         except Exception as exc:  # noqa: BLE001 - one unscannable workspace must not blank the rest
@@ -275,7 +290,7 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
             unscanned.append(
                 {"project_id": project.id, "project": project.name, "reason": screened_failure(exc)}
             )
-    return web.json_response({"proposals": out, "unscanned": unscanned})
+    return web.json_response({"proposals": out, "unscanned": unscanned, "fingerprinting": True})
 
 
 async def api_pack_proposal_reject(request: web.Request) -> web.Response:

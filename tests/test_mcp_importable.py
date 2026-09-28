@@ -45,7 +45,8 @@ def test_discover_importable_returns_cc_servers_not_in_pclaw(tmp_path, monkeypat
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
-    out = disc.discover_importable_servers()
+    out, unreadable = disc.discover_importable_servers()
+    assert unreadable == []
     by_name = {s["name"]: s for s in out}
     assert set(by_name) == {"cc-only", "remote"}  # bogus dropped (no command/url)
     assert by_name["cc-only"]["backend"] == "Claude Code"
@@ -63,13 +64,14 @@ def test_discover_importable_excludes_already_known(tmp_path, monkeypatch):
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (pclaw,))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
 
-    assert disc.discover_importable_servers() == []
+    assert disc.discover_importable_servers() == ([], [])
 
 
 def test_discover_importable_no_source_file(tmp_path, monkeypatch):
+    """A config that is not there is nothing to import, and no failure either."""
     monkeypatch.setattr(
         disc, "_import_sources", lambda: ((tmp_path / "absent.json", "Claude Code"),)
     )
     monkeypatch.setattr(disc, "_mcp_json_paths", lambda: (tmp_path / "nope.json",))
     monkeypatch.setattr(disc, "_load_agent_config", lambda: {})
-    assert disc.discover_importable_servers() == []
+    assert disc.discover_importable_servers() == ([], [])

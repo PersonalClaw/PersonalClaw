@@ -414,6 +414,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A lookup that fails says so instead of showing an empty list: the Tools page's MCP servers and import list, the network scan for a local model, the routing, learning and pack suggestions, and the skill search.**
 
+- **Another tool's config file that can't be read is named on the onboarding step and in the Tools page's import list, and no longer shows as nothing to import.**
+
+- **The Routing tab says when your routing table can't be read, and a reorder or an accepted proposal no longer writes over it.**
+
+- **Pack suggestions say when project fingerprinting is off, and name each project whose folder is missing or protected.**
+
+- **The skill search answers every refusal in the shared error shape, and an unusable `limit` is refused instead of failing.**
+
 ### Security
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**

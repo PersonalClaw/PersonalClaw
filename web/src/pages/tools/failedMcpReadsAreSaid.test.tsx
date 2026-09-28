@@ -25,7 +25,7 @@ function mockApi(over: Record<string, unknown>) {
     api: {
       toolsIndex: () => Promise.resolve(idx),
       mcpServers: () => Promise.resolve([]),
-      importableMcp: () => Promise.resolve([]),
+      importableMcp: () => Promise.resolve({ servers: [], unreadable: [] }),
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([] as string[]),
@@ -74,6 +74,44 @@ describe('#/tools says a failed MCP read instead of drawing an empty one', () =>
     // With the list unread, `notes` would otherwise be drawn as a native provider group — offering a
     // native provider's switch for an MCP server.
     expect(screen.queryByText('notes'), 'an MCP server drawn as a native provider').toBeNull()
+  })
+
+  it('names another tool\'s settings file that could not be read, and still offers what was read', async () => {
+    const planner = {
+      id: 'srv-planner', name: 'planner', backend: 'Codex', scope: 'user', origin: 'Codex', note: '',
+      transport: 'stdio', command: 'planner-mcp', args: [], url: '', env: [], headers: [],
+    }
+    const importableMcp = vi.fn(() => Promise.resolve({
+      servers: [planner],
+      unreadable: [{ backend: 'Claude Code', path: '~/.claude.json', why: 'it is not valid JSON (line 1, column 91)' }],
+    }))
+    mockApi({ importableMcp })
+    await mount()
+    const said = await screen.findByText(/^Couldn't read Claude Code's ~\/\.claude\.json/)
+    expect(said.textContent).toBe(
+      "Couldn't read Claude Code's ~/.claude.json: it is not valid JSON (line 1, column 91). The MCP servers it holds are not listed until it can be read, and nothing was imported or changed. Fix the file, then try again.",
+    )
+    expect(said.closest('[role="status"]'), 'a part of the page, not a page failure').not.toBeNull()
+    expect(screen.getByText(/Discovered in other tools \(1\)/), 'what was read is still offered').toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(importableMcp).toHaveBeenCalledTimes(2))
+  })
+
+  it('names each file when more than one could not be read', async () => {
+    mockApi({
+      importableMcp: () => Promise.resolve({
+        servers: [],
+        unreadable: [
+          { backend: 'Claude Code', path: '~/.claude.json', why: 'it is not valid JSON (line 1, column 91)' },
+          { backend: 'Codex', path: '~/.codex/config.toml', why: 'it could not be opened (Permission denied)' },
+        ],
+      }),
+    })
+    await mount()
+    expect(await screen.findByText(/^Couldn't read 2 of your other tools' MCP settings files/)).toBeInTheDocument()
+    expect(screen.getByText("Claude Code's ~/.claude.json: it is not valid JSON (line 1, column 91).")).toBeInTheDocument()
+    expect(screen.getByText("Codex's ~/.codex/config.toml: it could not be opened (Permission denied).")).toBeInTheDocument()
+    expect(screen.queryByText(/Discovered in other tools/)).toBeNull()
   })
 
   it('reads that answered say nothing of the kind', async () => {

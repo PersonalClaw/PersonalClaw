@@ -136,7 +136,7 @@ def test_the_bearer_token_is_read_from_the_variable_codex_reads(
     )
 
     monkeypatch.setenv("SENTRY_ACCESS_TOKEN", _SENTRY_TOKEN)
-    spec = {s.name: s for s in codex.mcp_servers()}["sentry"].spec
+    spec = {s.name: s for s in codex.mcp_servers().servers}["sentry"].spec
     assert spec["headers"] == {
         "X-Sentry-Org": "cartwheel",
         "Authorization": f"Bearer {_SENTRY_TOKEN}",
@@ -166,7 +166,7 @@ def test_a_server_is_never_handed_one_of_personalclaws_own_variables(
     monkeypatch.setenv("PERSONALCLAW_APP_SECRET", "fixture-gateway-app-secret")
     monkeypatch.delenv("TEAM_ID", raising=False)
 
-    borrower = {s.name: s for s in codex.mcp_servers()}["borrower"]
+    borrower = {s.name: s for s in codex.mcp_servers().servers}["borrower"]
     assert "headers" not in borrower.spec
     assert borrower.note == (
         "It needs $TEAM_ID, which the environment PersonalClaw runs in does not set: add it on "

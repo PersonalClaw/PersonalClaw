@@ -22,7 +22,7 @@ import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { readableErrText } from '../../lib/errText'
-import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
+import { api, hasApiCode, ApiError, type ToolItem, type McpServer, type McpServerDefinition, type McpTransport, type ImportableMcpServer, type ImportableMcpList, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData, type McpSignInClientNeeded } from '../../lib/api'
 import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
 import { STORED_VALUE_MASK, buildMcpEnv, buildMcpHeaders, definitionForm, formSave, formatArgs, parseArgs, type McpServerForm } from './mcpServerEnv'
@@ -104,6 +104,9 @@ interface ToolsIndexData {
   /** `null` when the other tools could not be looked through, with `importableError` saying why. */
   importable: ImportableMcpServer[] | null
   importableError: string
+  /** The other tools' MCP settings files that are there and could not be read: the servers they
+   *  hold are missing from `importable`. Absent from a copy cached before it existed. */
+  importUnreadable?: ImportableMcpList['unreadable']
   /** `null` when the pool could not be read: the tile is then not drawn at all. */
   poolStats: McpPoolStats | null
   groups: ToolGroupsData | null
@@ -146,7 +149,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     return {
       tools: idx.tools, loadFailures: idx.load_failures ?? [],
       servers: isFailedRead(servers) ? null : servers, serversError: isFailedRead(servers) ? servers.failed : '',
-      importable: isFailedRead(importable) ? null : importable, importableError: isFailedRead(importable) ? importable.failed : '',
+      importable: isFailedRead(importable) ? null : importable.servers, importableError: isFailedRead(importable) ? importable.failed : '',
+      importUnreadable: isFailedRead(importable) ? [] : importable.unreadable,
       poolStats, groups, elicitationServers, readOnlyServers,
     }
   }, { persist: true })
@@ -159,6 +163,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   const importable = data?.importable ?? []
   const importUnread = !!data && data.importable === null
   const importableError = data?.importableError ?? ''
+  const importUnreadable = data?.importUnreadable ?? []
   const poolStats = data?.poolStats ?? null
   /** `null` while unread or unreadable: no grant can be written from it. */
   const elicitationServers = data?.elicitationServers ?? null
@@ -469,6 +474,16 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
   // asked for, and the same `groups` the body renders — so the number can never disagree with
   // what is on screen.
   const shownTools = (groups ?? []).reduce((n, g) => n + g.tools.length, 0)
+  // Where the import list goes, the same in both bodies: the list, each other tool's settings file
+  // that could not be read (its servers are missing from the list), or the failed look itself.
+  const importSection = filtered ? null : importUnread
+    ? <ImportUnread error={importableError} onRetry={load} />
+    : (
+      <>
+        {importUnreadable.length > 0 && <ImportFilesUnread files={importUnreadable} onRetry={load} />}
+        {importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
+      </>
+    )
 
   return (
     <WorkbenchLayout
@@ -519,9 +534,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
             <div className="flex flex-col gap-2xl">
               <EmptyState icon={Wrench} title={filtered ? 'No matching tools' : 'No tools'} hint={filtered ? (risk !== 'all' && !q ? `No ${risk} tools.` : 'Try a different search term.') : 'Tools are the capabilities agents can invoke — built-in actions plus anything from connected MCP servers.'} />
               {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
-              {!filtered && (importUnread
-                ? <ImportUnread error={importableError} onRetry={load} />
-                : importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />)}
+              {importSection}
             </div>
           ) : (
             <div className="flex flex-col gap-2xl">
@@ -530,9 +543,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
               {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} readOnlyTrusted={!g.server ? false : readOnlyServers ? readOnlyServers.includes(g.server.name) : null} onToggleReadOnlyTrust={toggleReadOnlyTrust} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
-              {!filtered && (importUnread
-                ? <ImportUnread error={importableError} onRetry={load} />
-                : importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />)}
+              {importSection}
             </div>
           )}
         </div>
@@ -917,10 +928,20 @@ const asSentence = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`)
 
 /** A read beside the tool list that failed, said where its answer would have been. A status, not an
  *  alert: the page did not fail — one part of it could not be read, and the rest is on screen. */
-function ReadFailed({ children, onRetry }: { children: React.ReactNode; onRetry: () => void }) {
+function ReadFailed({ children, details, onRetry }: {
+  children: React.ReactNode
+  /** One line per thing that failed, under the sentence, when there is more than one. */
+  details?: React.ReactNode[]
+  onRetry: () => void
+}) {
   return (
     <div data-type="body-s" role="status" className="rounded-lg bg-surface-container px-m py-m">
       <p className="text-warn">{children}</p>
+      {details && details.length > 0 && (
+        <ul className="mt-xs flex flex-col gap-xs">
+          {details.map((line, i) => <li key={i} data-type="caption" className="text-on-surface-var">{line}</li>)}
+        </ul>
+      )}
       <Button size="xs" variant="ghost" className="mt-xs" onClick={onRetry}>Try again</Button>
     </div>
   )
@@ -945,6 +966,29 @@ function ImportUnread({ error, onRetry }: { error: string; onRetry: () => void }
       {error
         ? <>{asSentence(error)} Nothing was imported or changed. Fix what it names, then try again.</>
         : <>Couldn't check your other tools for MCP servers to import: the gateway did not answer. Nothing was imported or changed.</>}
+    </ReadFailed>
+  )
+}
+
+/** Another tool's MCP settings file is there and could not be read, so the servers it holds are not
+ *  in the import list — which must not read as "nothing to import" from that tool. Beside the
+ *  list, because the other tools' servers were read and are still offered. */
+function ImportFilesUnread({ files, onRetry }: { files: ImportableMcpList['unreadable']; onRetry: () => void }) {
+  if (files.length === 1) {
+    const [file] = files
+    return (
+      <ReadFailed onRetry={onRetry}>
+        Couldn't read {file.backend}'s {file.path}: {file.why}. The MCP servers it holds are not listed
+        until it can be read, and nothing was imported or changed. Fix the file, then try again.
+      </ReadFailed>
+    )
+  }
+  return (
+    <ReadFailed onRetry={onRetry}
+      details={files.map((file) => `${file.backend}'s ${file.path}: ${file.why}.`)}>
+      Couldn't read {files.length} of your other tools' MCP settings files, so the servers they hold
+      are not listed until they can be read, and nothing was imported or changed. Fix each, then try
+      again.
     </ReadFailed>
   )
 }

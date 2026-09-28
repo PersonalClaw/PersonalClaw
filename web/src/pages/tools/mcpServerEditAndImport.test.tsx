@@ -134,7 +134,7 @@ function mockApi(definition: unknown, rows: unknown[] = importable) {
     api: {
       toolsIndex: () => Promise.resolve({ tools, load_failures: [] }),
       mcpServers: () => Promise.resolve(servers),
-      importableMcp: () => Promise.resolve(rows),
+      importableMcp: () => Promise.resolve({ servers: rows, unreadable: [] }),
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),

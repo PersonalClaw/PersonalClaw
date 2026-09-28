@@ -9,7 +9,8 @@ look cannot give that answer, and two of these reads gave it anyway:
   of the same files screens them.
 * ``GET /api/packs/proposals`` logged a project whose scan failed and went on, so a scan that failed
   for every project answered the same empty list as one that matched nothing. It still shows the
-  other projects' cards, and now names each project it could not scan.
+  other projects' cards, and now names each project it did not scan (its folder is gone or
+  protected, or its scan failed), and says when fingerprinting is turned off.
 
 The routing and learning review queues and the onboarding network scan are pinned beside their own
 routes' tests; the skill search beside the other empty states it must tell apart.
@@ -54,13 +55,13 @@ async def test_a_failed_import_lookup_is_a_failure_not_an_empty_list(monkeypatch
 
 @pytest.mark.asyncio
 async def test_a_lookup_that_worked_still_answers_its_list(monkeypatch):
-    """The control: only a failure changed, so an empty look is still `{"servers": []}`."""
+    """The control: only a failure changed, so an empty look is still an empty list."""
     from personalclaw import mcp_discovery
     from personalclaw.dashboard.handlers.mcp import api_mcp_importable
 
-    monkeypatch.setattr(mcp_discovery, "discover_importable_servers", lambda: [])
+    monkeypatch.setattr(mcp_discovery, "discover_importable_servers", lambda: ([], []))
     resp = await api_mcp_importable(make_mocked_request("GET", "/api/mcp/importable"))
-    assert resp.status == 200 and _body(resp) == {"servers": []}
+    assert resp.status == 200 and _body(resp) == {"servers": [], "unreadable": []}
 
 
 @pytest.mark.asyncio
@@ -94,6 +95,7 @@ async def test_a_project_that_could_not_be_scanned_is_named(monkeypatch):
                 "reason": "[Errno 13] Permission denied: '/srv/ledger'",
             }
         ],
+        "fingerprinting": True,
     }
 
 
@@ -111,4 +113,69 @@ async def test_every_project_scanned_names_none(monkeypatch):
     monkeypatch.setattr(hierarchy, "HierarchyStore", _Store)
     monkeypatch.setattr(fingerprint, "scan_project", lambda project, *, reason: [])
     resp = await api_pack_proposals(make_mocked_request("GET", "/api/packs/proposals"))
-    assert _body(resp) == {"proposals": [], "unscanned": []}
+    assert _body(resp) == {"proposals": [], "unscanned": [], "fingerprinting": True}
+
+
+def _never_scanned(project, *, reason):
+    raise AssertionError(f"{project.name} was scanned")
+
+
+@pytest.mark.asyncio
+async def test_fingerprinting_turned_off_is_said_and_scans_nothing(monkeypatch):
+    """An empty list with fingerprinting off is "off", never "no pack matches"."""
+    from personalclaw.dashboard.handlers.packs import api_pack_proposals
+    from personalclaw.packs import fingerprint
+    from personalclaw.tasks import hierarchy
+
+    class _Store:
+        def list_projects(self):
+            return [SimpleNamespace(id="p-garden", name="Garden")]
+
+    monkeypatch.setattr(hierarchy, "HierarchyStore", _Store)
+    monkeypatch.setattr(fingerprint, "fingerprinting_enabled", lambda config=None: False)
+    monkeypatch.setattr(fingerprint, "scan_project", _never_scanned)
+    resp = await api_pack_proposals(make_mocked_request("GET", "/api/packs/proposals"))
+    assert resp.status == 200
+    assert _body(resp) == {"proposals": [], "unscanned": [], "fingerprinting": False}
+
+
+@pytest.mark.asyncio
+async def test_a_folder_that_is_gone_or_protected_is_named_not_matched(monkeypatch, tmp_path):
+    """A project whose folder was never looked in is listed with why, not read as no match."""
+    from personalclaw import security
+    from personalclaw.dashboard.handlers.packs import api_pack_proposals
+    from personalclaw.packs import fingerprint
+    from personalclaw.tasks import hierarchy
+
+    gone = tmp_path / "moved-away"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    projects = [
+        SimpleNamespace(id="p-old", name="Old notes", workspace_dir=str(gone)),
+        SimpleNamespace(id="p-vault", name="Vault", workspace_dir=str(vault)),
+    ]
+
+    class _Store:
+        def list_projects(self):
+            return projects
+
+    monkeypatch.setattr(hierarchy, "HierarchyStore", _Store)
+    monkeypatch.setattr(security, "is_sensitive_path", lambda path: path == str(vault))
+    monkeypatch.setattr(fingerprint, "scan_project", _never_scanned)
+    resp = await api_pack_proposals(make_mocked_request("GET", "/api/packs/proposals"))
+    assert _body(resp) == {
+        "proposals": [],
+        "unscanned": [
+            {
+                "project_id": "p-old",
+                "project": "Old notes",
+                "reason": f"its folder {gone} is not there",
+            },
+            {
+                "project_id": "p-vault",
+                "project": "Vault",
+                "reason": "its folder is a protected location, which is never scanned",
+            },
+        ],
+        "fingerprinting": True,
+    }

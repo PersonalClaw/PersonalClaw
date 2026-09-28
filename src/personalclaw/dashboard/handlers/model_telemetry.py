@@ -65,18 +65,35 @@ async def api_routing_policy(request: web.Request) -> web.Response:
     One row per routed use case: its mode, its pin, the refs currently bound to it (each flagged
     ``local``), and every recorded per-class order together with the ``basis`` that decided it —
     so the user can always see WHY the table says what it says. Read-only; the writes are the PUT
-    below. Fail-open: an unreadable table renders as "no opinion yet", never a 500 that blanks the
-    tab, because routing being unreadable is not the same as routing being broken.
+    below.
+
+    A table that cannot be read is answered as a failure (``routing_policy_unreadable``), never as
+    ``{"enabled": false, "use_cases": []}``, which says "routing is off and nothing is recorded"
+    about a table nobody read. Routing itself keeps deciding without it (a decision fails open),
+    which is why the tab has to say so: the orders recorded in the file are not being used. The
+    tab's other sections do not depend on this read, so they still render.
 
     A class's order is replaced whole by a reorder, so each row carries ``order_revisions`` — the
     revision of every class's cell, recorded or not — which that write must name
     (`personalclaw/stale_write.py`). Mode and pin are single values and need none.
     """
+    from personalclaw.onboarding_import.floors import screened_failure
+    from personalclaw.routing.policy import PolicyUnreadable
+
     try:
         from personalclaw.providers.use_cases import active_model_refs
         from personalclaw.routing.classifier import QUERY_CLASSES
-        from personalclaw.routing.policy import is_local_ref, master_enabled, order_cell, table_for
+        from personalclaw.routing.policy import (
+            is_local_ref,
+            master_enabled,
+            order_cell,
+            read_policy,
+            table_for,
+        )
 
+        # The decision readers below fail open, so the table is read strictly once first: a file
+        # they would read as empty is said instead.
+        read_policy()
         rows = []
         for use_case in _ROUTED_USE_CASES:
             table = table_for(use_case)
@@ -93,9 +110,20 @@ async def api_routing_policy(request: web.Request) -> web.Response:
             }
             rows.append(table)
         return web.json_response({"enabled": master_enabled(), "use_cases": rows})
-    except Exception:  # noqa: BLE001 — an inspection view must never 500
-        logger.debug("routing policy read failed", exc_info=True)
-        return web.json_response({"enabled": False, "use_cases": []})
+    except PolicyUnreadable as exc:
+        logger.warning("routing table unreadable: %s", exc)
+        return json_error(
+            "routing_policy_unreadable",
+            message=f"{exc} Until it can be read, routing does not use the orders recorded in it.",
+            status=500,
+        )
+    except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty table
+        logger.warning("routing policy read failed", exc_info=True)
+        return json_error(
+            "routing_policy_unreadable",
+            message=f"Couldn't read the routing table: {screened_failure(exc)}",
+            status=500,
+        )
 
 
 async def api_routing_policy_put(request: web.Request) -> web.Response:
@@ -121,7 +149,15 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
     goes out.
     """
     from personalclaw.providers.use_cases import VALID_USE_CASES
-    from personalclaw.routing.policy import MODES, order_cell, set_mode, set_order, set_pin
+    from personalclaw.routing.policy import (
+        MODES,
+        PolicyUnreadable,
+        order_cell,
+        read_policy,
+        set_mode,
+        set_order,
+        set_pin,
+    )
 
     try:
         body = await request.json()
@@ -163,6 +199,20 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
             "bad_request", message="nothing to change: send mode, pin, and/or order", status=400
         )
     if order is not None:
+        # An order is saved as part of the whole table, so a table that cannot be read refuses it
+        # here, before any lever is applied: saving would replace the file and every other order
+        # in it with a table holding only this one.
+        try:
+            read_policy()
+        except PolicyUnreadable as exc:
+            return json_error(
+                "routing_policy_unreadable",
+                message=(
+                    f"{exc} Nothing was changed: saving this order would replace the whole "
+                    "table. Fix or remove the file, then try again."
+                ),
+                status=409,
+            )
         # 🔴 AN ORDER IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The tab's reorder swaps two
         # entries of the order it painted, so after another tab's reorder — or an accepted routing
         # proposal — it put its own stale order back over that change. Refused here, while nothing
@@ -247,14 +297,27 @@ async def api_routing_proposal_accept(request: web.Request) -> web.Response:
     REFUSAL (the cell's order was set by hand — a user decision routing may propose changing but
     never overwrite) is a **200** carrying ``applied: false`` and the recorded reason. A refusal
     is a correct answer to a legitimate request, not a client error, and the surface has to be able
-    to say why rather than appearing to do nothing.
+    to say why rather than appearing to do nothing. A table that cannot be read is a **409**
+    (``routing_policy_unreadable``): applying would replace it whole, so nothing is written and
+    the proposal stays waiting.
     """
+    from personalclaw.routing.policy import PolicyUnreadable
+
     proposal_id = request.match_info.get("id", "")
     try:
         from personalclaw.routing.proposals import accept, find
 
         applied = accept(proposal_id)
         record = find(proposal_id)
+    except PolicyUnreadable as exc:
+        return json_error(
+            "routing_policy_unreadable",
+            message=(
+                f"{exc} The proposal was not applied and is still waiting: applying it would "
+                "replace the whole table. Fix or remove the file, then try again."
+            ),
+            status=409,
+        )
     except Exception:  # noqa: BLE001
         logger.debug("routing proposal accept failed", exc_info=True)
         return web.json_response(

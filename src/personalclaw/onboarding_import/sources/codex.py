@@ -46,7 +46,14 @@ from typing import Any, BinaryIO, TextIO
 
 import zstandard
 
-from personalclaw.onboarding_import.floors import one_walk, read_text_safely, refuses, safe_text
+from personalclaw.onboarding_import.floors import (
+    FileUnreadable,
+    one_walk,
+    read_text_safely,
+    refuses,
+    safe_text,
+    why_unreadable,
+)
 from personalclaw.onboarding_import.model import (
     ImportCategory,
     ImportItem,
@@ -62,6 +69,7 @@ from personalclaw.onboarding_import.sources.common import (
     TITLE_CHARS,
     UNDECIDED,
     UNPARSABLE,
+    McpListing,
     McpServer,
     Reading,
     SessionUnreadable,
@@ -78,6 +86,7 @@ from personalclaw.onboarding_import.sources.common import (
     mcp_item,
     message_count,
     not_imported_rows,
+    note_unreadable,
     one_line,
     prompt_history,
     recorded_label,
@@ -85,6 +94,7 @@ from personalclaw.onboarding_import.sources.common import (
     settings_not_imported,
     slug_name,
     text_item,
+    unreadable_file,
 )
 
 NAME = "codex"
@@ -119,11 +129,15 @@ def resolve_root() -> Path:
 
 
 def _read_config(base: Path) -> tuple[dict[str, Any], str, int]:
-    """``(document, file name, withheld)``: Codex's config WITH its values (``{}`` when absent or
-    unreadable), the file it came from, and 1 when that file was refused unread.
+    """``(document, file name, withheld)``: Codex's config WITH its values (``{}`` when there is
+    none), the file it came from, and 1 when that file was refused unread.
 
     Values included, for the one reader that must see them: an MCP server's, which the MCP
     writer keeps in the credential store. The settings reader reads only the names.
+
+    A config that is there and cannot be read raises :class:`FileUnreadable`. Repairing another
+    tool's half-written file is not our job, but reading it as an empty one said "nothing to
+    import" about a Codex whose servers and settings were simply unknown.
     """
     for name in (_TOML_CONFIG, _JSON_CONFIG):
         path = base / name
@@ -131,26 +145,29 @@ def _read_config(base: Path) -> tuple[dict[str, Any], str, int]:
             continue
         if refuses(path):
             return {}, name, 1
+        kind = "TOML" if name == _TOML_CONFIG else "JSON"
         try:
             if name == _TOML_CONFIG:
                 with path.open("rb") as handle:
                     parsed: Any = tomllib.load(handle)
             else:
                 parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, *UNPARSABLE):
-            # Repairing another tool's half-written file is not our job.
-            return {}, name, 0
-        return (parsed if isinstance(parsed, dict) else {}), name, 0
+        except (OSError, *UNPARSABLE) as exc:
+            raise FileUnreadable(path, why_unreadable(exc, kind=kind)) from exc
+        if not isinstance(parsed, dict):  # only JSON: a TOML document is always a table
+            raise FileUnreadable(path, "it is not a JSON object")
+        return parsed, name, 0
     return {}, "", 0
 
 
-def _read_toml(path: Path) -> dict[str, Any] | None:
+def _read_toml(path: Path) -> dict[str, Any]:
+    """One TOML file as a table. Raises :class:`FileUnreadable` for one that will not open or
+    does not parse, so a broken agent file is named rather than skipped without a word."""
     try:
         with path.open("rb") as handle:
-            parsed = tomllib.load(handle)
-    except (OSError, *UNPARSABLE):
-        return None
-    return parsed if isinstance(parsed, dict) else None
+            return tomllib.load(handle)
+    except (OSError, *UNPARSABLE) as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="TOML")) from exc
 
 
 def _settings_left(keys: list[str], *, owner: str, of: str = "") -> str:
@@ -320,9 +337,9 @@ def _servers_from(config: dict[str, Any], environ: Mapping[str, str]) -> list[Mc
 
 def mcp_servers(
     root: Path | None = None, *, environ: Mapping[str, str] | None = None
-) -> list[McpServer]:
+) -> McpListing:
     """Every MCP server Codex has configured (``config.toml`` → ``[mcp_servers.<name>]``), in
-    PersonalClaw's form.
+    PersonalClaw's form, and the config itself when it is there and could not be read.
 
     THE reader of Codex's MCP configuration: the onboarding scan and the Tools page's Import both
     call it and both write what it returns through the one MCP writer, so the two cannot disagree
@@ -335,13 +352,18 @@ def mcp_servers(
       environment PersonalClaw runs in), and never one of PersonalClaw's own;
     - ``enabled = false`` is ``disabled``, and ``disabled_tools`` is ``disabledTools``.
 
-    Everything else a server holds is named in its note as not carried over.
+    Everything else a server holds is named in its note as not carried over. A config that
+    cannot be read lists no server, and is named in the listing's ``unreadable``.
     """
     base = root if root is not None else resolve_root()
-    config, name, _withheld = _read_config(base)
+    try:
+        config, name, _withheld = _read_config(base)
+    except FileUnreadable as exc:
+        return McpListing(servers=[], unreadable=[unreadable_file(exc)])
     if name != _TOML_CONFIG:
-        return []
-    return _servers_from(config, os.environ if environ is None else environ)
+        return McpListing(servers=[], unreadable=[])
+    environment = os.environ if environ is None else environ
+    return McpListing(servers=_servers_from(config, environment), unreadable=[])
 
 
 # ── the scan ──────────────────────────────────────────────────────────────────
@@ -359,7 +381,12 @@ def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
         return result
 
     with one_walk():
-        config, config_name, withheld = _read_config(base)
+        try:
+            config, config_name, withheld = _read_config(base)
+        except FileUnreadable as exc:
+            # Named; its servers and settings are unknown, so neither is listed or counted.
+            note_unreadable(result, unreadable_file(exc))
+            config, config_name, withheld = {}, "", 0
         _scan_instructions(base, result)
         _scan_memories(base, result)
         if config_name == _TOML_CONFIG:
@@ -486,9 +513,13 @@ def _scan_agents(base: Path, result: ScanResult) -> None:
         if refuses(path):
             result.secrets_skipped += 1
             continue
-        doc = _read_toml(path)
-        instructions = doc.get("developer_instructions") if doc else None
-        if not doc or not isinstance(instructions, str) or not instructions.strip():
+        try:
+            doc = _read_toml(path)
+        except FileUnreadable as exc:
+            note_unreadable(result, unreadable_file(exc))
+            continue
+        instructions = doc.get("developer_instructions")
+        if not isinstance(instructions, str) or not instructions.strip():
             continue
         # The name field names the agent, not the file ("the name field is the source of truth").
         declared = str(doc.get("name") or "").strip() or path.stem
@@ -588,7 +619,11 @@ def _scan_prompts(base: Path, result: ScanResult) -> None:
 
     root = base / _PROMPTS_DIR
     for path in markdown_files(root, recursive=False):
-        text, redactions, skipped = read_text_safely(path)
+        try:
+            text, redactions, skipped = read_text_safely(path)
+        except FileUnreadable as exc:
+            note_unreadable(result, unreadable_file(exc))
+            continue
         result.secrets_skipped += skipped
         if not text.strip():
             continue

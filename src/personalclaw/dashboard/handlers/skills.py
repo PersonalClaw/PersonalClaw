@@ -354,12 +354,26 @@ async def api_skills_search(request: web.Request) -> web.Response:
     ``counts`` carries the per-source matched count computed BEFORE the global cap, so
     the store's source filter can show how many of a large catalog's skills match even
     when the merged, capped result list only shows the top few.
+
+    Every refusal is the shared error envelope: a missing ``q`` or an unusable ``limit``
+    (``bad_request``), a catalogue that is not set up (``skills_marketplace_not_found``) and a
+    scoped search whose one catalogue could not answer (``skills_search_failed``).
     """
     query = request.rel_url.query.get("q", "").strip()
     if not query:
-        return web.json_response({"error": "q parameter required"}, status=400)
+        return json_error(
+            "bad_request", message="Say what to search for: `q` is required.", status=400
+        )
     marketplace_name = request.rel_url.query.get("marketplace", "")
-    limit = min(int(request.rel_url.query.get("limit", "20")), 200)
+    try:
+        limit = int(request.rel_url.query.get("limit", "20"))
+    except ValueError:
+        limit = 0
+    if limit < 1:
+        return json_error(
+            "bad_request", message="`limit` is a whole number of 1 or more.", status=400
+        )
+    limit = min(limit, 200)
 
     from personalclaw.skills.marketplace import get_default_skills_registry
 
@@ -369,8 +383,10 @@ async def api_skills_search(request: web.Request) -> web.Response:
         try:
             mp = registry.get(marketplace_name)
         except KeyError:
-            return web.json_response(
-                {"error": f"Marketplace '{marketplace_name}' not registered"}, status=404
+            return json_error(
+                "skills_marketplace_not_found",
+                message=f"No skill catalogue named {marketplace_name!r} is set up here.",
+                status=404,
             )
         try:
             results = _mark_installed(mp.search(query, limit=limit))
@@ -388,7 +404,11 @@ async def api_skills_search(request: web.Request) -> web.Response:
             )
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", marketplace_name, exc)
-            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
+            return json_error(
+                "skills_search_failed",
+                message=f"Couldn't search {marketplace_name}. {relayed_failure_copy(exc)}",
+                status=500,
+            )
 
     results, counts, unreachable = search_marketplaces_counted(query, limit=limit)
     # 🔴 `installable_sources` is what tells zero MATCHES apart from nothing to install FROM.

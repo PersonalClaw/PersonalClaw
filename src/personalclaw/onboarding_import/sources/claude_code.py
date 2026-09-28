@@ -41,8 +41,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.onboarding_import.floors import one_walk, read_text_safely, refuses, safe_text
-from personalclaw.onboarding_import.model import ImportCategory, ImportItem, ScanResult
+from personalclaw.onboarding_import.floors import (
+    FileUnreadable,
+    one_walk,
+    read_text_safely,
+    refuses,
+    safe_text,
+    why_unreadable,
+)
+from personalclaw.onboarding_import.model import (
+    ImportCategory,
+    ImportItem,
+    ScanResult,
+    UnreadableFile,
+)
 from personalclaw.onboarding_import.sources.common import (
     GIVE_WAY_LINES,
     LOOK_BYTES,
@@ -52,6 +64,7 @@ from personalclaw.onboarding_import.sources.common import (
     TITLE_CHARS,
     UNDECIDED,
     UNPARSABLE,
+    McpListing,
     McpServer,
     Reading,
     Transcript,
@@ -66,6 +79,7 @@ from personalclaw.onboarding_import.sources.common import (
     mcp_item,
     message_count,
     not_imported_rows,
+    note_unreadable,
     on_this_machine,
     one_line,
     prompt_history,
@@ -73,6 +87,7 @@ from personalclaw.onboarding_import.sources.common import (
     settings_not_imported,
     slug_name,
     text_item,
+    unreadable_file,
 )
 
 NAME = "claude_code"
@@ -148,16 +163,23 @@ def config_dir_of(config_path: Path) -> Path:
 
 
 def _read_json_document(path: Path) -> dict[str, Any]:
-    """A Claude Code JSON file as a dict, values INCLUDED — ``{}`` when absent, refused or not a
-    JSON object. For the two readers that must see values (an MCP server's definition, the
-    settings a ``.mcp.json`` expands from); everything else goes through the floors."""
+    """A Claude Code JSON file as a dict, values INCLUDED — ``{}`` when it is not there or is
+    refused. For the readers that must see values (an MCP server's definition, the settings a
+    ``.mcp.json`` expands from); everything else goes through the floors.
+
+    A file that IS there and cannot be read, or is not a JSON object, raises
+    :class:`FileUnreadable`. "Not there" means Claude Code keeps nothing of that kind;
+    "unreadable" means nobody knows what it keeps, and answering both with ``{}`` showed a broken
+    config as "nothing to import"."""
     if not path.is_file() or refuses(path):
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, *UNPARSABLE):
-        return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, *UNPARSABLE) as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="JSON")) from exc
+    if not isinstance(data, dict):
+        raise FileUnreadable(path, "it is not a JSON object")
+    return data
 
 
 # ── projects ──────────────────────────────────────────────────────────────────
@@ -220,12 +242,11 @@ _UNTRUSTED_FOLDER = "Claude Code's trust prompt for this folder was never accept
 _EXPANSION_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
-def settings_env(root: Path | None = None) -> dict[str, str]:
+def _settings_env(settings: dict[str, Any]) -> dict[str, str]:
     """The ``env`` block of Claude Code's ``settings.json`` — the variables every session it
     starts has, and so what a project's ``${VAR}`` expands to. Values included; see
     :func:`_read_json_document`."""
-    base = root if root is not None else resolve_root()
-    env = _read_json_document(base / _SETTINGS_FILE).get("env")
+    env = settings.get("env")
     if not isinstance(env, dict):
         return {}
     return {str(k): str(v) for k, v in env.items() if isinstance(v, (str, int, float))}
@@ -289,8 +310,9 @@ def _project_approvals(project: Project, user_settings: dict[str, Any]) -> tuple
     return approved, turned_off, every
 
 
-def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) -> list[McpServer]:
-    """Every MCP server Claude Code has configured, in all three of its scopes.
+def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) -> McpListing:
+    """Every MCP server Claude Code has configured, in all three of its scopes, and each file of
+    its configuration that is there and could not be read.
 
     THE reader of Claude Code's MCP configuration: the onboarding scan and the Tools page's Import
     both call it and both write what it returns through the one MCP writer, so the two cannot
@@ -304,12 +326,20 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
     - **Project scope** — ``<project>/.mcp.json``: checked into the project, run by Claude Code
       only once approved there, with ``${VAR}`` expanded from the environment — here, from the
       one environment this reader can see, Claude Code's ``settings.json`` ``env``.
+
+    A file that cannot be read leaves out what depends on it, and is named in the listing's
+    ``unreadable``. Without the global config nothing is listed: it holds the user- and
+    local-scope servers and the list of projects. Without ``settings.json`` no project server is
+    listed, because whether each was approved, and what its ``${VAR}`` expands to, are unknown.
+    Without a project's ``.mcp.json`` or ``.claude/settings*.json``, that project's own servers
+    are not listed.
     """
     config_path = config_path or global_config_path(root)
     base = root if root is not None else config_dir_of(config_path)
-    config = _read_json_document(config_path)
-    user_settings = _read_json_document(base / _SETTINGS_FILE)
-    env = settings_env(base)
+    try:
+        config = _read_json_document(config_path)
+    except FileUnreadable as exc:
+        return McpListing(servers=[], unreadable=[unreadable_file(exc)])
     out: list[McpServer] = [
         McpServer(
             source=NAME, name=name, scope=SCOPE_USER, project="", spec=spec, origin="User scope"
@@ -329,14 +359,24 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
                     origin=f"Local scope · {project.recorded}",
                 )
             )
+    try:
+        user_settings = _read_json_document(base / _SETTINGS_FILE)
+    except FileUnreadable as exc:
+        return McpListing(servers=out, unreadable=[unreadable_file(exc)])
+    env = _settings_env(user_settings)
+    unreadable: list[UnreadableFile] = []
     for project in known:
         if project.local is None:
             continue
         mcp_file = project.local / _PROJECT_MCP_FILE
-        doc = _read_json_document(mcp_file)
-        if not doc:
+        try:
+            doc = _read_json_document(mcp_file)
+            if not doc:
+                continue
+            approved, turned_off, every = _project_approvals(project, user_settings)
+        except FileUnreadable as exc:
+            unreadable.append(unreadable_file(exc))
             continue
-        approved, turned_off, every = _project_approvals(project, user_settings)
         for name, spec in _servers_of(doc.get(_MCP_TABLE)):
             missing: set[str] = set()
             expanded = _expand(spec, env, missing)
@@ -360,7 +400,7 @@ def mcp_servers(root: Path | None = None, *, config_path: Path | None = None) ->
                     note=_project_server_note(reason, sorted(missing)),
                 )
             )
-    return out
+    return McpListing(servers=out, unreadable=unreadable)
 
 
 def _project_server_note(reason: str, unresolved: list[str]) -> str:
@@ -392,7 +432,13 @@ def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
         return result
 
     with one_walk():
-        config = _read_json_document(global_config_path(explicit))
+        try:
+            config = _read_json_document(global_config_path(explicit))
+        except FileUnreadable as exc:
+            # Named, and read as holding no projects: each project's own files are then not
+            # found, which the name says, rather than a Claude Code that was never used.
+            note_unreadable(result, unreadable_file(exc))
+            config = {}
         known = projects(config)
         seen_files: set[Path] = set()
         _scan_instructions(base, known, seen_files, result)
@@ -488,7 +534,8 @@ def _memory_index(index: Path) -> tuple[dict[str, str], bool]:
     Claude Code's auto-memory keeps one topic per file and ``MEMORY.md`` as the list of them; an
     older layout kept the notes in ``MEMORY.md`` itself. A file of nothing but index lines is the
     index, and the topic files it links are the memories. One with anything else in it is a
-    memory of its own, and imported as one.
+    memory of its own, and imported as one. Raises :class:`FileUnreadable` for an index that is
+    there and will not open.
     """
     text, _redactions, _skipped = read_text_safely(index)
     titles: dict[str, str] = {}
@@ -533,11 +580,20 @@ def _scan_memories(base: Path, known: list[Project], result: ScanResult) -> None
             continue
         origin = f"Project · {_project_label(project_dir.name, known)}"
         index = mem_dir / _MEMORY_INDEX
-        titles, only_index = _memory_index(index) if index.is_file() else ({}, True)
+        try:
+            titles, only_index = _memory_index(index) if index.is_file() else ({}, True)
+        except FileUnreadable as exc:
+            # Named once; the topic files still come over, under their own names.
+            note_unreadable(result, unreadable_file(exc))
+            titles, only_index = {}, True
         for path in sorted(mem_dir.glob("*.md")):
             if not path.is_file() or (path.name == _MEMORY_INDEX and only_index):
                 continue
-            text, redactions, skipped = read_text_safely(path)
+            try:
+                text, redactions, skipped = read_text_safely(path)
+            except FileUnreadable as exc:
+                note_unreadable(result, unreadable_file(exc))
+                continue
             result.secrets_skipped += skipped
             if not text.strip():
                 continue
@@ -559,8 +615,12 @@ def _scan_memories(base: Path, known: list[Project], result: ScanResult) -> None
 
 def _scan_mcp(base: Path, explicit: Path | None, result: ScanResult) -> None:
     """Every server in every scope (:func:`mcp_servers`), definition whole: the MCP writer keeps
-    each ``env`` and ``headers`` value in the credential store, as Tools › Import does."""
-    for server in mcp_servers(base, config_path=global_config_path(explicit)):
+    each ``env`` and ``headers`` value in the credential store, as Tools › Import does. A file of
+    the configuration that could not be read is named on the scan."""
+    listing = mcp_servers(base, config_path=global_config_path(explicit))
+    for entry in listing.unreadable:
+        note_unreadable(result, entry)
+    for server in listing.servers:
         user = server.scope == SCOPE_USER
         result.items.append(
             mcp_item(
@@ -578,7 +638,11 @@ def _scan_agents(base: Path, result: ScanResult) -> None:
 
     agents_root = base / _AGENTS_DIR
     for path in markdown_files(agents_root):
-        text, redactions, skipped = read_text_safely(path)
+        try:
+            text, redactions, skipped = read_text_safely(path)
+        except FileUnreadable as exc:
+            note_unreadable(result, unreadable_file(exc))
+            continue
         result.secrets_skipped += skipped
         if not text.strip():
             continue
@@ -648,7 +712,11 @@ def _scan_commands(base: Path, result: ScanResult) -> None:
 
     commands_root = base / _COMMANDS_DIR
     for path in markdown_files(commands_root):
-        text, redactions, skipped = read_text_safely(path)
+        try:
+            text, redactions, skipped = read_text_safely(path)
+        except FileUnreadable as exc:
+            note_unreadable(result, unreadable_file(exc))
+            continue
         result.secrets_skipped += skipped
         if not text.strip():
             continue
@@ -957,7 +1025,11 @@ def _scan_settings(base: Path, result: ScanResult) -> None:
     if refuses(path):
         result.secrets_skipped += 1
         return
-    settings = _read_json_document(path)
+    try:
+        settings = _read_json_document(path)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        return
     permissions = settings.get("permissions")
     permissions = permissions if isinstance(permissions, dict) else {}
     counted = {"ask": 0, "allow": 0, "wildcard": 0, "other": 0}

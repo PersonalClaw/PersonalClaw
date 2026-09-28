@@ -410,6 +410,9 @@ function ProposalEvidence({ evidence, promoted, demoted }: {
  *  order shows the basis that decided it, so the table always explains itself. */
 function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryClass: string }) {
   const [rows, setRows] = useState<RoutingPolicyRow[] | null | undefined>(undefined)
+  // Why the table could not be read, in the gateway's words: an unreadable routing_policy.json is
+  // named there, with what that means for routing.
+  const [readErr, setReadErr] = useState('')
   const [enabled, setEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -418,8 +421,8 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
 
   const load = useCallback(() => {
     api.routingPolicy()
-      .then((d) => { setRows(d.use_cases); setEnabled(d.enabled) })
-      .catch(() => setRows(null))
+      .then((d) => { setRows(d.use_cases); setEnabled(d.enabled); setReadErr('') })
+      .catch((e: unknown) => { setRows(null); setReadErr(readableErrText(e)) })
   }, [])
   useEffect(load, [load])
 
@@ -447,8 +450,9 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
     try {
       await api.setRoutingPolicy(body)
       load()
-    } catch {
-      setNote("Couldn't save that — nothing changed.")
+    } catch (e) {
+      // The gateway's sentence when it gave one: a refusal says why, and what to do about it.
+      setNote(readableErrText(e) || "Couldn't save that — nothing changed.")
     } finally {
       setBusy(false)
     }
@@ -461,8 +465,9 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
     return (
       <Section title="Routing policy">
         <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var" role="status">
-          Couldn't read the routing policy right now. Your bound models are unaffected — resolution
-          falls back to the order you bound them in.
+          <p>Couldn't read the routing table, so it is not shown here, and nothing about routing changed.</p>
+          {readErr && <p data-type="caption" className="mt-xs text-on-surface-low">{readErr}</p>}
+          <Button size="xs" variant="ghost" className="mt-xs" onClick={load}>Try again</Button>
         </div>
       </Section>
     )
@@ -488,7 +493,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
     // is announced, because announcing one that did not would be worse than announcing nothing.
     void guard.apply(painted, moveEntry(ref, delta))
       .then((ok) => { if (ok) setMoved(`${ref} moved to position ${target + 1} of ${shown.length}`) })
-      .catch(() => setNote("Couldn't save that — nothing changed."))
+      .catch((e: unknown) => setNote(readableErrText(e) || "Couldn't save that — nothing changed."))
       .finally(() => setBusy(false))
   }
 

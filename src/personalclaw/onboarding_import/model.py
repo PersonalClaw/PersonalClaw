@@ -302,6 +302,26 @@ class NotImported:
         return {"what": self.what, "count": self.count, "why": self.why}
 
 
+@dataclass(frozen=True)
+class UnreadableFile:
+    """A file the tool keeps that IS there and could not be read.
+
+    Never the same answer as a file that is not there. An absent config means the tool keeps
+    nothing of that kind; an unreadable one means nobody knows what it keeps, so whatever it
+    holds is missing from the listing, and the step says which file and why instead of letting
+    the gap read as "nothing to import".
+    """
+
+    #: The file, as the step shows paths (``~/.claude.json``).
+    path: str
+    #: Why it could not be read, in words: the system's reason, or the kind of document it is
+    #: not. Never its contents.
+    why: str
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "why": self.why}
+
+
 @dataclass
 class ScanResult:
     """What one source's scanner found. Serializable, secret-free, comparable.
@@ -334,6 +354,9 @@ class ScanResult:
     #: be read — is not final while any remain. Paths, so never on the wire: :meth:`to_dict` says
     #: how many.
     unread: list[Path] = field(default_factory=list)
+    #: The tool's files that are there and could not be read, once each. Unlike ``unread`` (not
+    #: read YET), these failed: what they hold is not in ``items``.
+    unreadable_files: list[UnreadableFile] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         """Per-category item counts. The step counts from ``items`` instead, because its
@@ -375,6 +398,7 @@ class ScanResult:
             "redactions": self.redactions,
             "notes": list(self.notes),
             "not_imported": [entry.to_dict() for entry in self.not_imported],
+            "unreadable_files": [entry.to_dict() for entry in self.unreadable_files],
             "reading": {
                 "read": self.conversation_files - len(self.unread),
                 "of": self.conversation_files,

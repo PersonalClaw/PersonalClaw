@@ -116,6 +116,8 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
   // The projects whose scan failed, each with why. Named rather than folded into "no match": an
   // empty list only means nothing matched when every project was actually scanned.
   const [unscanned, setUnscanned] = useState<PackUnscannedRec[]>([])
+  // Off, nothing was scanned at all, so an empty list is "off" and never "no pack matches".
+  const [fingerprinting, setFingerprinting] = useState(true)
   const [error, setError] = useState<string>('')
   const [busy, setBusy] = useState(false)
 
@@ -123,7 +125,7 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
     setBusy(true)
     setError('')
     api.packProposals()
-      .then((r) => { setProposals(r.proposals); setUnscanned(r.unscanned) })
+      .then((r) => { setProposals(r.proposals); setUnscanned(r.unscanned); setFingerprinting(r.fingerprinting) })
       .catch((e) => setError(String((e as Error)?.message || e)))
       .finally(() => setBusy(false))
   }, [])
@@ -160,12 +162,18 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
       {error && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-warn">Couldn't scan for suggestions: {error}</div>
       )}
+      {!error && !fingerprinting && (
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-2.5 text-on-surface-var" role="status">
+          Project fingerprinting is off, so no project was scanned for suggestions. Turn it on under
+          Discovery, above, then suggest packs again.
+        </div>
+      )}
       {!error && unscanned.length > 0 && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-2.5 text-warn" role="status">
           <p>
             Couldn't scan {unscanned.length === 1 ? 'one project' : `${unscanned.length} projects`} for
-            suggestions, so {unscanned.length === 1 ? 'it is' : 'they are'} not covered here. Suggest packs
-            to try again.
+            suggestions, so {unscanned.length === 1 ? 'it is' : 'they are'} not covered here. Fix what{' '}
+            {unscanned.length === 1 ? 'it says' : 'each says'}, then suggest packs again.
           </p>
           <ul className="mt-xs flex flex-col gap-xs">
             {unscanned.map((u) => (
@@ -174,7 +182,7 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
           </ul>
         </div>
       )}
-      {!error && proposals !== null && proposals.length === 0 && unscanned.length === 0 && (
+      {!error && fingerprinting && proposals !== null && proposals.length === 0 && unscanned.length === 0 && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           No pack matches any project's workspace. Bind a project to a codebase directory to get suggestions.
         </div>

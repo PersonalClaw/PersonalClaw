@@ -31,7 +31,7 @@ function mockApi(over: Record<string, unknown>) {
     api: {
       toolsIndex: () => Promise.resolve(idx),
       mcpServers: () => Promise.resolve([]),
-      importableMcp: () => Promise.resolve([]),
+      importableMcp: () => Promise.resolve({ servers: [], unreadable: [] }),
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       // The per-server elicitation grant is the sixth read. Stubbed here rather than

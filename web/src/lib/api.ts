@@ -2740,6 +2740,16 @@ export interface ImportableMcpServer {
   transport: McpTransport; command: string; args: string[]; url: string
   env?: McpValuePresence[]; headers?: McpValuePresence[]
 }
+/** A file another tool keeps that is THERE and could not be read: `path` as a person reads it
+ *  (`~/.claude.json`), `why` in words. What it holds is missing from the answer beside it, which is
+ *  therefore incomplete, never "nothing to import". */
+export interface UnreadableToolFile { path: string; why: string }
+/** `GET /api/mcp/importable`: the servers to offer, and each of the other tools' MCP settings files
+ *  that could not be read, with the tool it belongs to. */
+export interface ImportableMcpList {
+  servers: ImportableMcpServer[]
+  unreadable: (UnreadableToolFile & { backend: string })[]
+}
 export interface ToolInvokeResult { ok: boolean; output?: string; error?: string }
 // `blocking` / `enforcement`: whether this hook's EVENT can short-circuit the loop, and
 // whether THIS hook actually does. Both are the server's verdict, not re-derived here: the backend
@@ -5564,8 +5574,9 @@ export interface OnboardingImportSkillScan {
 /** A kind of thing a source holds that is not brought over, with how many and why — so a
  *  tool whose prompt history stays behind reads as having one, not as never having had it. */
 export interface OnboardingImportNotImported { what: string; count: number; why: string }
-/** What one source's scanner found. `detected` is computed server-side (present on
- *  this machine AND holding something), so "did we find it" is decided once. */
+/** What one source's scanner found. `detected` is computed server-side (present on this machine
+ *  AND holding something, or holding a file that could not be read), so "did we find it" is
+ *  decided once. */
 export interface OnboardingImportSource {
   source: string; display_name: string; root: string; present: boolean; detected: boolean
   counts: Record<string, number>
@@ -5573,6 +5584,9 @@ export interface OnboardingImportSource {
   secrets_skipped: number; redactions: number
   notes: string[]
   not_imported: OnboardingImportNotImported[]
+  /** The tool's files that are there and could not be read: what they hold is not in `items`.
+   *  Absent from a scan cached before the field existed, which is read as none. */
+  unreadable_files?: UnreadableToolFile[]
   /** Of this tool's conversation files, how many the scan has read in full. Short of `of`, a
    *  conversation count can still change and an unreadable one is not named yet. */
   reading?: { read: number; of: number }
@@ -6938,7 +6952,8 @@ export const api = {
   // forbids a background loop, so nothing polls this on a timer.
   // `unscanned` names each project whose scan failed, and why: an empty `proposals` is only "no
   // match" when nothing is in it.
-  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[]; unscanned: PackUnscannedRec[] }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  // `fingerprinting` false: project fingerprinting is turned off, so nothing was scanned at all.
+  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[]; unscanned: PackUnscannedRec[]; fingerprinting: boolean }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   // Remember a "no" per (project, pack) — forever. The proposal never reappears for that project.
   packRejectProposal: (projectId: string, pack: string) => post<{ ok: boolean }>('/api/packs/proposals/reject', { project_id: projectId, pack }),
   // The pack_owned update flow. DRY-RUN by default: the interesting output is the SKIP
@@ -8498,7 +8513,7 @@ export const api = {
   // Sign out: the sign-in leaves mcp.json and the agent config, and its tokens the credential store.
   signOutMcp: (name: string) => del(`/api/mcp/servers/${encodeURIComponent(name)}/sign-in`),
   // Servers configured in an external backend (Claude Code) not yet in PClaw.
-  importableMcp: () => get<{ servers: ImportableMcpServer[] }>('/api/mcp/importable').then((r) => r.servers),
+  importableMcp: () => get<ImportableMcpList>('/api/mcp/importable'),
   // Import a discovered server into ~/.personalclaw/mcp.json. The gateway copies it from the other
   // tool's own file, values included (stored in the credential store), and leaves that file as it is.
   // The imported server waits for the owner's Allow on its row before anything starts it.

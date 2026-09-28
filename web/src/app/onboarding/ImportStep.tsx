@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react'
+import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { TextLink } from '../../ui/TextLink'
 import { Checkbox } from '../../ui/forms'
@@ -478,13 +479,25 @@ export function ImportStep({ onDone, onSkip }: {
    *  already here or differs from yours. The list still shows what is where; the step's
    *  action is to move on, not to import nothing. */
   const nothingNew = choosable.length === 0
-  const settledSummary = settledOf(detected.flatMap((s) => s.items)) || 'Nothing to import'
+  /** The tools' files that are there and could not be read. What they hold is not in the list, so
+   *  no sentence here may say "everything we found" or "nothing to import" past them. */
+  const unreadable = detected.reduce((n, s) => n + (s.unreadable_files?.length ?? 0), 0)
+  const anyItems = detected.some((s) => s.items.length > 0)
+  const settledSummary = [
+    settledOf(detected.flatMap((s) => s.items)),
+    unreadable ? plural(unreadable, "file couldn't be read", "files couldn't be read") : '',
+  ].filter(Boolean).join(' · ') || 'Nothing to import'
   /** The tools by name, in one sentence that agrees with how many there are — "another agent
    *  tool" read as one tool on a machine that has two, and "its setup" could only mean one. */
   const found = detected.map((s) => s.display_name).join(' and ')
   const one = detected.length === 1
   /** New items the step leaves unticked, so "everything is ticked" stays true. */
   const unticked = choosable.filter((i) => !startsTicked(i)).length
+  const nothingNewSentence = unreadable === 0
+    ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
+    : anyItems
+      ? `Everything we could read in ${found} is already here, or differs from what you have. Some of ${one ? 'its' : 'their'} files could not be read, and they are named below.`
+      : `We found ${found} on this machine but couldn't read ${one ? 'its' : 'their'} setup, so there is nothing to bring over until it can be read. What could not be read is named below.`
 
   return (
     <div className="flex flex-col gap-l">
@@ -498,7 +511,7 @@ export function ImportStep({ onDone, onSkip }: {
             <>
               <p data-type="body-s" className="text-on-surface-var">
                 {nothingNew
-                  ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
+                  ? nothingNewSentence
                   : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, and nothing in ${one ? 'it' : 'them'} is changed. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
               </p>
 
@@ -510,7 +523,7 @@ export function ImportStep({ onDone, onSkip }: {
                 {detected.map((source) => (
                   <SourceCard key={source.source} source={source}
                     groups={groups.filter((g) => g.source.source === source.source)}
-                    picked={picked} onPick={pick} open={open} onToggle={toggleOpen} />
+                    picked={picked} onPick={pick} open={open} onToggle={toggleOpen} onRescan={load} />
                 ))}
               </motion.div>
 
@@ -624,22 +637,25 @@ function Nothing({ looked, onContinue }: {
  *  tool is the frame the groups sit in rather than a checkbox of its own: every choice is
  *  an item, a group's box is a shortcut over its items, and a third box over the groups
  *  would be one more derived control saying the same thing. */
-function SourceCard({ source, groups, picked, onPick, open, onToggle }: {
+function SourceCard({ source, groups, picked, onPick, open, onToggle, onRescan }: {
   source: OnboardingImportSource
   groups: Group[]
   picked: ReadonlySet<string>
   onPick: (fingerprints: string[], on: boolean) => void
   open: ReadonlySet<string>
   onToggle: (key: string) => void
+  onRescan: () => void
 }) {
   const total = source.items.length
+  // "0 things found" beside files that could not be read would say the tool holds nothing.
+  const counted = total > 0 || !(source.unreadable_files?.length)
   return (
     <motion.section variants={listItemEnter} role="group" aria-label={source.display_name}
       className="flex flex-col gap-m rounded-lg bg-surface-high p-m">
       <div className="min-w-0">
         <div className="flex items-baseline gap-s">
           <span data-type="title-m" className="text-on-surface">{source.display_name}</span>
-          <span data-type="caption" className="text-on-surface-low">{plural(total, 'thing', 'things')} found</span>
+          {counted && <span data-type="caption" className="text-on-surface-low">{plural(total, 'thing', 'things')} found</span>}
         </div>
         <p data-type="caption" className="mt-0.5 break-all font-mono text-on-surface-low">{source.root}</p>
         {source.secrets_skipped > 0 && (
@@ -652,6 +668,7 @@ function SourceCard({ source, groups, picked, onPick, open, onToggle }: {
           </p>
         )}
       </div>
+      <UnreadableFiles source={source} onRescan={onRescan} />
       <div className="flex flex-col gap-m">
         {groups.map((group) => (
           <GroupRow key={group.key} group={group} picked={picked} onPick={onPick}
@@ -660,6 +677,35 @@ function SourceCard({ source, groups, picked, onPick, open, onToggle }: {
       </div>
       <NotImportedList source={source} />
     </motion.section>
+  )
+}
+
+/** The tool's files that are there and could not be read. What they hold is not on this card, so
+ *  the card names each file and why, and offers the scan again, rather than letting the gap read
+ *  as a tool with nothing to bring over. A status, not an alert: the rest of the step works. */
+function UnreadableFiles({ source, onRescan }: { source: OnboardingImportSource; onRescan: () => void }) {
+  const files = source.unreadable_files ?? []
+  if (files.length === 0) return null
+  const one = files.length === 1
+  return (
+    <div role="status" className="flex flex-col gap-xs rounded-md bg-surface-container px-m py-s">
+      <p data-type="body-s" className="text-warn">
+        {one
+          ? `Couldn't read ${files[0].path}: ${files[0].why}. What it holds is not listed here until it can be read.`
+          : `Couldn't read ${files.length} of ${source.display_name}'s files, so what they hold is not listed here until they can be read.`}
+      </p>
+      {!one && (
+        <ul className="flex flex-col gap-xs">
+          {files.map((file) => (
+            <li key={file.path} data-type="caption" className="text-on-surface-var">{file.path}: {file.why}.</li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-s">
+        <span data-type="caption" className="text-on-surface-low">Fix {one ? 'it' : 'them'}, then scan again.</span>
+        <Button size="xs" variant="ghost" onClick={onRescan}>Scan again</Button>
+      </div>
+    </div>
   )
 }
 

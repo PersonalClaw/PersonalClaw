@@ -384,7 +384,9 @@ Data leaving the running system:
   included, inherits another record's value: `AppConfig.load_credentials` and the CLI's `.env`
   loader (`cli.main`) both skip `PCSECRET_` keys. `GET /api/mcp/importable` sends another tool's
   variable and header names, never their values, and each server's command name, arguments and
-  URL with every credential in them masked (`mcp_discovery.masked_args` / `masked_url`);
+  URL with every credential in them masked (`mcp_discovery.masked_args` / `masked_url`). For a
+  settings file of that tool it could not read, it sends the file's path and why, never the file's
+  text (`onboarding_import.floors.why_unreadable`);
   `GET /api/mcp` sends no server's definition at all. A remote server's headers are resolved from
   the store when the native client connects, against the server's own owner (below), and sent on
   each request, never written anywhere.

@@ -471,6 +471,28 @@ def fingerprinting_enabled(config: Any = None) -> bool:
     return bool(getattr(getattr(config, "packs", None), "fingerprint_enabled", True))
 
 
+def unscannable(project: Any) -> str:
+    """Why ``project``'s bound folder is not scanned, in words, or ``""`` when it would be.
+
+    A project that binds no folder has none to scan, which is not a refusal, so it is ``""`` too.
+    The one definition of the folder guards: :func:`scan_project` returns nothing for a project
+    this names, and the Packs panel's suggestions list it with this reason rather than letting it
+    read as a project that matched no pack. These are the same two guards the project-create
+    route applies before storing the binding, plus a folder that is no longer there.
+    """
+    workspace = str(getattr(project, "workspace_dir", "") or "").strip()
+    if not workspace:
+        return ""
+
+    from personalclaw.security import is_sensitive_path, is_system_path
+
+    if is_sensitive_path(workspace) or is_system_path(workspace):
+        return "its folder is a protected location, which is never scanned"
+    if not Path(workspace).expanduser().is_dir():
+        return f"its folder {workspace} is not there"
+    return ""
+
+
 def scan_project(
     project: Any,
     *,
@@ -486,10 +508,9 @@ def scan_project(
     is enforced rather than merely documented.
 
     Returns [] — without touching the filesystem — when fingerprinting is disabled, when the
-    project binds no ``workspace_dir``, or when the bound path is sensitive/system (the same
-    two guards the project-create route applies before storing the binding). Already-installed
-    packs and already-rejected (project, pack) pairs are filtered out, so a second scan after
-    a rejection is silent.
+    project binds no ``workspace_dir``, or when its folder is one :func:`unscannable` names.
+    Already-installed packs and already-rejected (project, pack) pairs are filtered out, so a
+    second scan after a rejection is silent.
     """
     if reason not in SCAN_REASONS:
         raise ValueError(
@@ -501,15 +522,13 @@ def scan_project(
     workspace = str(getattr(project, "workspace_dir", "") or "").strip()
     if not workspace:
         return []
-
-    from personalclaw.security import is_sensitive_path, is_system_path
-
-    if is_sensitive_path(workspace) or is_system_path(workspace):
-        logger.info("fingerprint scan refused for a sensitive/system workspace")
+    refused = unscannable(project)
+    if refused:
+        logger.info(
+            "fingerprint scan skipped for project %s: %s", getattr(project, "id", ""), refused
+        )
         return []
     root = Path(workspace).expanduser()
-    if not root.is_dir():
-        return []
 
     project_id = str(getattr(project, "id", "") or "")
     rejected = set(load_rejections(home).get(project_id, {}))

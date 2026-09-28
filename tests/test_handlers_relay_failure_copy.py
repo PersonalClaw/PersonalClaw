@@ -94,7 +94,13 @@ async def test_skills_search_failure_speaks_guidance(monkeypatch) -> None:
     resp = await skills_h.api_skills_search(req)
 
     assert resp.status == 500
-    _assert_guidance_not_leak(_body(resp))
+    # The shared envelope, with the relayed guidance after the catalogue it names.
+    payload = _body(resp)
+    assert payload["error"] == {
+        "code": "skills_search_failed",
+        "message": f"Couldn't search boom. {UNEXPECTED_FAILURE_COPY}",
+    }
+    assert _SECRET not in json.dumps(payload)
 
 
 # ── mcp.py — POST /api/mcp/toggle, mcp.json write failure ──────────────────────
