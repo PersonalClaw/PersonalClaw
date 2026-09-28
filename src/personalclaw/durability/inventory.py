@@ -125,6 +125,13 @@ class StateEntry:
     # is one home's. Conflict detection and the common ancestors read it (`conflicts.compared`),
     # so a run, a switch or a yes in one home is never an edit to review. `None`: the whole row.
     compared: Callable[[dict], dict] | None = None
+    # What follows in this home from an edit another machine made to a row it has, which a sync
+    # takes in (`reconcile._edited_there`): called with this home's row and the row with the
+    # peer's edit taken in (`merge.forward`: what two homes compare is the peer's, the rest stays
+    # this home's), and returns the row to write. An automation's grant keeps only what its edited
+    # action still runs as it ran here, and a new cadence re-arms its next fire. `None`: the row
+    # with the edit taken in, as it is.
+    edit_arrives: Callable[[dict, dict], dict] | None = None
     # What a row brought in by ``arrives`` is like here, in the words the conflict review shows
     # before and after a person takes the other machine's version.
     arrival: str = ""
@@ -145,6 +152,14 @@ def _trigger_compared(row: dict) -> dict:
     return what_it_is(row)
 
 
+def _trigger_edit_arrives(here: dict, edited: dict) -> dict:
+    """An automation this home has, with another machine's edit taken in
+    (``triggers.store.edit_arrived_from_another_home``)."""
+    from personalclaw.triggers.store import edit_arrived_from_another_home
+
+    return edit_arrived_from_another_home(here, edited)
+
+
 def _hook_arrives(row: dict) -> dict:
     """One hook from a peer's ``hooks.json``, as this home takes it in
     (``hooks.hook_arrived_from_another_home``)."""
@@ -158,6 +173,14 @@ def _hook_compared(row: dict) -> dict:
     from personalclaw.hooks import hook_what_it_is
 
     return hook_what_it_is(row)
+
+
+def _hook_edit_arrives(here: dict, edited: dict) -> dict:
+    """A hook this home has, with another machine's edit taken in
+    (``hooks.hook_edit_arrived_from_another_home``)."""
+    from personalclaw.hooks import hook_edit_arrived_from_another_home
+
+    return hook_edit_arrived_from_another_home(here, edited)
 
 
 def _report_arrives(row: dict) -> dict:
@@ -488,6 +511,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         records=Shape(key="triggers"),
         arrives=_trigger_arrives,
         compared=_trigger_compared,
+        edit_arrives=_trigger_edit_arrives,
         arrival=(
             "An automation from another machine arrives switched off, without what happened to it "
             "there. Switching it on here asks first for what it runs."
@@ -540,6 +564,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         records=Shape(key="hooks"),
         arrives=_hook_arrives,
         compared=_hook_compared,
+        edit_arrives=_hook_edit_arrives,
         arrival=(
             "A hook from another machine arrives switched off, without what happened to it there. "
             "Switching it on here asks first for what it runs."

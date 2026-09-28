@@ -8,12 +8,14 @@ lives in :mod:`durability.conflict_merge`, and the live store is written by nobo
 Three properties this module exists to guarantee:
 
 * **Both-sides-edited is the trigger.** A divergence where only ONE side moved since the
-  common ancestor is a fast-forward the deterministic merge already resolves correctly —
-  recording it would make every ordinary sync produce review noise. So a conflict needs
-  three shas to disagree: ``ancestor != local != remote != ancestor``. No ancestor on
-  record (a family this machine has never agreed on) is likewise NOT a conflict: with no
-  common point there is nothing to say both sides moved *from*, and §4.2 item 1 hands
-  those to the deterministic merge.
+  common ancestor is that side's edit, which the reconcile applies (the peer's is taken in,
+  this home's stays) — recording it would make every ordinary sync produce review noise. So a
+  conflict needs three shas to disagree: ``ancestor != local != remote != ancestor``. The
+  ancestor is the version this home and that peer last agreed on, or a later one this home
+  published that the peer now holds (:mod:`durability.ancestors`). No ancestor on record (a
+  record the two have never agreed on) is likewise NOT a conflict: with no common point there
+  is nothing to say both sides moved *from*, and §4.2 item 1 hands those to the deterministic
+  merge.
 * **The local version stays authoritative.** A recorded conflict HOLDS its id: the caller
   (:func:`reconcile.reconcile_entry`) drops the remote row for that id before merging, so
   the local bytes are untouched until a human resolves. Nothing is lost — the remote
@@ -67,10 +69,11 @@ SURFACE_MEMORY = "memory"
 SURFACE_KNOWLEDGE = "knowledge"
 SURFACE_DURABILITY = "durability"
 
-#: Merge strategies whose same-id collisions can be a conflict. ``append_dedup`` cannot:
-#: a stable event id means "the same append", so a re-import is a no-op, never a divergence.
-#: The DB/tree strategies are not row-merged at all (see :mod:`durability.merge`).
-_ID_KEYED_MERGES = frozenset({inv.MERGE_UNION_BY_ID, inv.MERGE_LWW})
+#: Merge strategies whose same-id collisions can be a conflict, or an edit made on one side.
+#: ``append_dedup`` cannot: a stable event id means "the same append", so a re-import is a
+#: no-op, never a divergence. The DB/tree strategies are not row-merged at all (see
+#: :mod:`durability.merge`).
+ID_KEYED_MERGES = frozenset({inv.MERGE_UNION_BY_ID, inv.MERGE_LWW})
 
 
 def surface_for_domain(domain: str) -> str:
@@ -203,17 +206,16 @@ def detect_conflicts(
 ) -> list[ConflictRecord]:
     """Every both-sides-edited divergence between ``local`` and ``remote`` for ``entry``.
 
-    ``ancestors`` maps ``entity id → the content sha both machines last agreed on`` (from
-    :meth:`registry.Registry.ancestors_for` — the shared registry, per §4.2). An id is a
-    conflict only when all three shas differ:
+    ``ancestors`` maps ``entity id → the content sha this home and the peer last agreed on``
+    (:meth:`ancestors.Ancestors.of`). An id is a conflict only when all three shas differ:
 
-    ==================================  ==========================================
-    ancestor == local, remote differs   remote fast-forward — deterministic merge
-    ancestor == remote, local differs   local fast-forward — deterministic merge
+    ==================================  ===============================================
+    ancestor == local, remote differs   edited there — the reconcile takes the peer's
+    ancestor == remote, local differs   edited here — this home's stays
     local == remote                     converged — nothing to review
     no ancestor recorded                no common point — deterministic merge (§4.2.1)
     all three differ                    **CONFLICT** — a record, local held
-    ==================================  ==========================================
+    ==================================  ===============================================
 
     Rows are compared, and recorded, as :func:`compared` projects them: the part a person makes.
     That is also what the review shows and what a resolution writes, so a record never holds a
@@ -222,7 +224,7 @@ def detect_conflicts(
     Pure: no I/O, no clock (``now`` is passed), deterministic order (sorted by entity id),
     so a re-detection of unchanged state produces byte-identical records.
     """
-    if entry.merge not in _ID_KEYED_MERGES:
+    if entry.merge not in ID_KEYED_MERGES:
         return []
     local_by_id = {row_id(r): r for r in local if row_id(r)}
     remote_by_id = {row_id(r): r for r in remote if row_id(r)}

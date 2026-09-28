@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import record_path
 from personalclaw.tasks import reconcile
@@ -281,8 +282,7 @@ class NativeTaskProvider(TaskProvider):
             return None
 
     def _write_task(self, task: Task) -> None:
-        path = self._task_path(task.id)
-        path.write_text(json.dumps(task.to_dict(), indent=2), encoding="utf-8")
+        atomic_json_write(self._task_path(task.id), task.to_dict())
 
     def _all_tasks(self) -> list[Task]:
         d = self._ensure_dir()
@@ -738,7 +738,7 @@ class NativeTaskProvider(TaskProvider):
                 "created_at": _now_iso(),
             }
             data.append(comment)
-            comments_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            atomic_json_write(comments_file, data)
             return TaskComment(
                 id=comment["id"],
                 task_id=task_id,
@@ -765,7 +765,7 @@ class NativeTaskProvider(TaskProvider):
                 return False
             # The sidecar stays on disk when it empties: `_comment_count` reads its
             # length, and an absent file already means zero, so both spellings agree.
-            comments_file.write_text(json.dumps(kept, indent=2), encoding="utf-8")
+            atomic_json_write(comments_file, kept)
             return True
 
         return await asyncio.to_thread(_delete)

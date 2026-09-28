@@ -153,14 +153,7 @@ def _commit_registry(
         for mid, e in registry.machines.items():
             if mid != self_id and e.seq > merged.seq_of(mid):
                 merged.machines[mid] = e
-        # …and our ancestor shas: the pull we just did is the freshest agreement, so it
-        # wins over the reloaded copy per family/id. Dropping them would silently erase the
-        # ancestry conflict detection compares against, turning the next divergence into an
-        # undetectable LWW coin-flip.
-        for entry_id, rows in registry.ancestors.items():
-            merged.record_ancestors(entry_id, rows)
         registry.machines = merged.machines
-        registry.ancestors = merged.ancestors
         expected = remote.sha()
     report.detail = f"registry CAS lost after {_MAX_CAS_ATTEMPTS} attempts"
     return False

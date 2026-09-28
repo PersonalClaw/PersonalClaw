@@ -24,6 +24,7 @@ from personalclaw.durability import (
     reconcile,
     writeback,
 )
+from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.registry import Registry
 
 _ENTRY = inv.StateEntry(
@@ -169,20 +170,57 @@ class TestQueue:
         assert len(q.items()) == 1
 
 
-# ── the registry's ancestor map ──────────────────────────────────────────────
+# ── what this home agreed on with each peer ─────────────────────────────────
 
 
-class TestAncestorRegistry:
-    def test_ancestors_round_trip_through_the_shared_registry(self):
-        r = Registry.empty()
-        r.record_ancestors("tasks_test", {"t1": "sha1"})
-        reloaded = Registry.loads(r.to_bytes())
-        assert reloaded.ancestors_for("tasks_test") == {"t1": "sha1"}
-        assert reloaded.sha() == r.sha()  # canonical bytes, so CAS still works
+class TestAncestors:
+    def test_agreements_round_trip_per_peer(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.record("peerA", "tasks_test", {"t1": "sha1"})
+        mine.record("peerB", "tasks_test", {"t1": "sha2"})
+        mine.save()
+        reloaded = Ancestors(tmp_path)
+        assert reloaded.of("peerA", "tasks_test") == {"t1": "sha1"}
+        assert reloaded.of("peerB", "tasks_test") == {"t1": "sha2"}
+        assert reloaded.of("peerC", "tasks_test") == {}
 
-    def test_corrupt_ancestors_degrade_to_no_ancestry(self):
-        raw = json.dumps({"machines": {}, "ancestors": {"tasks_test": "nope"}}).encode()
-        assert Registry.loads(raw).ancestors_for("tasks_test") == {}
+    def test_a_corrupt_file_or_family_degrades_to_no_agreement(self, tmp_path):
+        (tmp_path / "ancestors.json").write_text("{not json")
+        assert Ancestors(tmp_path).of("peerA", "tasks_test") == {}
+        (tmp_path / "ancestors.json").write_text(
+            json.dumps({"peers": {"peerA": {"tasks_test": "nope", "other": {"t1": "sha1"}}}})
+        )
+        assert Ancestors(tmp_path).of("peerA", "tasks_test") == {}
+        assert Ancestors(tmp_path).of("peerA", "other") == {"t1": "sha1"}
+
+    def test_an_unchanged_agreement_writes_nothing(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.save()
+        assert not mine.path.exists()
+
+    def test_published_versions_are_kept_newest_last_bounded_and_pruned(self, tmp_path):
+        from personalclaw.durability.ancestors import PUBLISHED_VERSIONS
+
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v0", "t2": "w0"})
+        for n in range(1, PUBLISHED_VERSIONS + 3):
+            mine.publish("tasks_test", {"t1": f"v{n}", "t2": "w0"})
+        mine.save()
+        again = Ancestors(tmp_path).published("tasks_test")
+        last = PUBLISHED_VERSIONS + 2
+        assert again["t1"] == [f"v{n}" for n in range(last - PUBLISHED_VERSIONS + 1, last + 1)]
+        assert again["t2"] == ["w0"], "an unchanged record is one version, not one per export"
+        mine.publish("tasks_test", {"t2": "w0"})
+        assert "t1" not in mine.published("tasks_test"), "a record this home no longer holds"
+
+    def test_the_shared_registry_carries_no_agreement(self):
+        """A registry an older build wrote carries one; it is not read, and the next write
+        leaves it out of the one object an encrypted sync leaves readable."""
+        raw = json.dumps(
+            {"machines": {"A": {"seq": 1}}, "ancestors": {"tasks": {"t1": "sha1"}}}
+        ).encode()
+        written = Registry.loads(raw).to_bytes().decode("utf-8")
+        assert "ancestors" not in written and "t1" not in written
 
 
 # ── reconcile: local stays authoritative ─────────────────────────────────────
@@ -419,9 +457,9 @@ class TestCriterionFive:
     """Two machines, one shared store: the same task edited on both while offline yields a
     conflict-review item and applies NOTHING (DAS-7 acceptance criteria / plan criterion 5).
 
-    Also the wiring proof for this change's new seams: the shared registry's ancestor map is
-    written by the pull and published by the CAS bump, and the queue is fed by the cycle —
-    a call site that merely exists would not produce any of this.
+    Also the wiring proof for this change's new seams: what each machine agreed on with the
+    other is written by its pull, and the queue is fed by the cycle — a call site that merely
+    exists would not produce any of this.
     """
 
     def _write_task(self, home, tid, title, updated):
@@ -434,19 +472,20 @@ class TestCriterionFive:
         )
 
     def test_offline_same_task_edit_yields_a_review_item_and_applies_nothing(self, tmp_path):
-        from personalclaw.durability.sync_cycle import read_registry, run_sync_cycle
+        from personalclaw.durability.sync_cycle import run_sync_cycle
         from tests.test_durability_sync_cycle import SharedStore
 
         store = SharedStore()
         a, b = tmp_path / "A", tmp_path / "B"
         # 1. A creates the task and publishes; B pulls it; A pulls B's echo. Both agree now,
-        #    so the shared registry carries a common ancestor sha for t1.
+        #    so each records a common ancestor sha for t1 with the other.
         self._write_task(a, "t1", "base", "2026-01-01T00:00:00Z")
         assert run_sync_cycle(store, a, self_id="A", now="t1").ok
         assert run_sync_cycle(store, b, self_id="B", now="t2").ok
         assert run_sync_cycle(store, a, self_id="A", now="t3").ok
-        ancestor = read_registry(store).ancestors_for("tasks").get("t1")
-        assert ancestor, "the pull must publish the agreed ancestor sha into the registry"
+        ancestor = Ancestors(b / "sync").of("A", "tasks").get("t1")
+        assert ancestor, "the pull must record the agreed ancestor sha"
+        assert Ancestors(a / "sync").of("B", "tasks").get("t1") == ancestor
 
         # 2. Both edit the same task offline. B's timestamp is NEWER, so plain LWW would
         #    overwrite A's edit — the conflict hold is what prevents that.
@@ -476,7 +515,7 @@ class TestCriterionFive:
 
         # The ancestor is NOT advanced for a held id, so the conflict re-detects rather than
         # self-resolving on the next cycle.
-        assert read_registry(store).ancestors_for("tasks").get("t1") == ancestor
+        assert Ancestors(b / "sync").of("A", "tasks").get("t1") == ancestor
         assert run_sync_cycle(store, b, self_id="B", now="t6").ok
         assert len(conflicts.ConflictQueue(b).items()) == 1
         assert (b / "tasks" / "t1.json").read_bytes() == before

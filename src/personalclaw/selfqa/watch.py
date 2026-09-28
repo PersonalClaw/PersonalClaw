@@ -29,10 +29,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from personalclaw.atomic_write import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,9 @@ def read_state() -> dict:
 
 
 def write_state(repo: str, head: str) -> None:
-    """Record `head` as seen, through a temp file so a killed process cannot truncate it."""
-    path = state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"repo": repo, "last_sha": head}, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    """Record `head` as seen, through the one JSON writer, so a killed process cannot truncate
+    it."""
+    atomic_json_write(state_path(), {"repo": repo, "last_sha": head})
 
 
 def new_commits(repo: Path, last_sha: str, head: str) -> list[str]:

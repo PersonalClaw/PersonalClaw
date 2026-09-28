@@ -26,6 +26,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.local_models.fit import free_disk_bytes
 from personalclaw.uploads.policy import check_upload
 
@@ -258,10 +259,7 @@ class UploadStore:
         return self.root / clean
 
     def _save_meta(self, sess: UploadSession) -> None:
-        meta = self._dir(sess.id) / "meta.json"
-        tmp = meta.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(asdict(sess)))
-        os.replace(tmp, meta)
+        atomic_json_write(self._dir(sess.id) / "meta.json", asdict(sess))
 
     @staticmethod
     def _expected_part_size(sess: UploadSession, index: int) -> int:

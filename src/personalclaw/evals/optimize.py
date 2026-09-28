@@ -54,6 +54,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw.atomic_write import atomic_write
 from personalclaw.guardrails.budgets import Budget, BudgetVerdict, SpendMeter
 from personalclaw.workflows import scope as scope_mod
 
@@ -367,10 +368,9 @@ class LiveWitness:
     def persist(self, sandbox: str | os.PathLike[str]) -> Path:
         """Write the witness into the sandbox for a later process to re-check against."""
         path = Path(sandbox) / WITNESS_FILE
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        atomic_write(
+            path,
             json.dumps({"roots": list(self.roots), "files": self.files}, indent=2, sort_keys=True),
-            encoding="utf-8",
         )
         return path
 
@@ -824,8 +824,9 @@ def run_search(
         gate=gate.to_dict(),
         needs_from_human=_needs_from_human(halt, detail, winner is not None),
     )
-    (sandbox_path / "search.json").write_text(
-        json.dumps(outcome.to_dict(), indent=2, sort_keys=True, default=str), encoding="utf-8"
+    atomic_write(
+        sandbox_path / "search.json",
+        json.dumps(outcome.to_dict(), indent=2, sort_keys=True, default=str),
     )
     return outcome
 
@@ -868,9 +869,7 @@ def write_experience(
     index = [
         {**row.to_dict(), "diff_ref": f"{EXPERIENCE_DIR}/{row.iteration:03d}.diff"} for row in rows
     ]
-    (exp / "index.json").write_text(
-        json.dumps(index, indent=2, sort_keys=True, default=str), encoding="utf-8"
-    )
+    atomic_write(exp / "index.json", json.dumps(index, indent=2, sort_keys=True, default=str))
     return exp
 
 

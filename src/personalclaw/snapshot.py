@@ -764,7 +764,7 @@ def snapshot_main(
                 "skill_count": sk_count,
             },
         }
-        (stage / "MANIFEST.json").write_text(json.dumps(manifest, indent=2))
+        atomic_write(stage / "MANIFEST.json", json.dumps(manifest, indent=2))
 
         # Tarball — write to temp file and rename atomically to avoid corrupt partials
         out.mkdir(parents=True, exist_ok=True)

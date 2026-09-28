@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.triggers.scheduling import CLAIM_MAX_DURATION_SECS, Claim
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def read_claim(
 
 
 def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
-    """Persist a granted claim atomically (tmp→rename).
+    """Persist a granted claim atomically, through the one JSON writer.
 
     Atomic because a half-written claim read back as malformed would read as IDLE, and the whole
     point of the record is that a second fire can see the first one.
@@ -113,7 +114,6 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
     if claim is None or not getattr(claim, "trigger_id", ""):
         return
     path = _claim_path(claim.trigger_id, base_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "trigger_id": claim.trigger_id,
         "holder": getattr(claim, "holder", ""),
@@ -128,9 +128,7 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
         "owner_pid": int(getattr(claim, "owner_pid", 0) or 0),
         "owner_image": str(getattr(claim, "owner_image", "") or ""),
     }
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(path)
+    atomic_json_write(path, payload)
 
 
 def release_claim(trigger_id: str, *, base_dir: Path | str | None = None) -> bool:

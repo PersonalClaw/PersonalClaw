@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
+from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
@@ -895,7 +896,7 @@ async def _run_eval(args: argparse.Namespace) -> None:
         "overall_passed": overall,
         "overall_total": len(results),
     }
-    json_path.write_text(json.dumps(json_data, indent=2) + "\n")
+    atomic_json_write(json_path, json_data)
 
     print(f"\nResults saved to:\n  {report_path}\n  {json_path}")
 
@@ -1666,7 +1667,7 @@ def _memory_cmd(args: argparse.Namespace) -> None:
             output = json.dumps(data, indent=2, default=str)
             out_file = getattr(args, "output", None)
             if out_file:
-                Path(out_file).write_text(output, encoding="utf-8")
+                atomic_write(out_file, output)
                 print(f"Exported to {out_file}")
             else:
                 print(output)

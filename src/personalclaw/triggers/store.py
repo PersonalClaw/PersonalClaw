@@ -33,10 +33,9 @@ like a trigger the user never created — R15's "silently-dead trigger" in its w
 user cannot fix what they cannot see. `enabled` is forced False on an error row instead (that is
 `parse_trigger`'s own rule), so a broken trigger is VISIBLE and INERT rather than absent.
 
-**A write never truncates the store.** Atomic tmp→rename under an exclusive lock, matching the
-shipped
-cron store. A partial write here is worse than a lost write: the next `load()` would report every
-surviving trigger as malformed.
+**A write never truncates the store.** Atomic tmp→rename through the one JSON writer
+(`atomic_write.atomic_json_write`) under an exclusive lock. A partial write here is worse than a
+lost write: the next `load()` would report every surviving trigger as malformed.
 
 **A concurrent writer is not silently overwritten.** MCP tools mutate the store from a separate
 process (the carried-over gotcha), so every mutation re-reads under the lock before writing —
@@ -47,7 +46,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -55,6 +53,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from personalclaw import record_files
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger
 from personalclaw.triggers.provider import TriggerStoreProvider
 
@@ -163,12 +162,16 @@ class TriggerStore(TriggerStoreProvider):
             yield
 
     def _write(self, rows: list[dict[str, Any]]) -> None:
-        """Atomic tmp→rename. A partial write is worse than a lost one."""
-        self._dir.mkdir(parents=True, exist_ok=True)
+        """Through the one JSON writer (``atomic_write.atomic_json_write``): a unique temp file
+        renamed over the store, so a partial write never lands, which is worse than a lost one;
+        0600 in a 0700 directory under the home, as that writer makes every file it writes there;
+        and announced to its post-write subscribers, as every store's write is.
+
+        It wrote a fixed ``triggers.json.tmp`` and renamed it itself, so the store kept the umask's
+        mode (0644 on the usual umask) and no subscriber heard of the write.
+        """
         payload = {"version": STORE_VERSION, "triggers": rows, "saved_at": time.time()}
-        tmp = self._path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_json_write(self._path, payload)
         try:
             self._last_mtime = self._path.stat().st_mtime
         except OSError:
@@ -521,6 +524,35 @@ def arrived_from_another_home(row: dict[str, Any]) -> dict[str, Any]:
     arrived = what_it_is(row)
     arrived["enabled"] = False
     return arrived
+
+
+def edit_arrived_from_another_home(here: dict[str, Any], edited: dict[str, Any]) -> dict[str, Any]:
+    """*edited* — a trigger row this home has (*here*) with the edit another home made to it taken
+    in — as this home writes it: a device sync's rule for an automation only the other home changed
+    since the two last agreed on it (the ``triggers`` inventory entry's ``edit_arrives``).
+
+    *edited* holds what the automation is as the other home made it (:func:`what_it_is`), and this
+    home's own part of it (:data:`RUNTIME_FIELDS`): its switch, what happened to it here, and its
+    grant. What follows here is what an edit made here would do. The grant keeps only what the
+    edited action still runs as it ran here (``grants.narrow``): a yes is given where the owner is
+    shown what runs, so a changed command waits for the owner's yes here, and a renamed automation
+    or a new cadence keeps it. And a new cadence re-arms the next fire, which was armed for the old
+    one — as the editor's save re-arms it (``arm.cadence_fingerprint``).
+    """
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.arm import arm, cadence_fingerprint
+
+    before, _ = parse_trigger(here)
+    after, _ = parse_trigger(edited)
+    grants.narrow(after, before)
+    out = dict(edited)
+    if after.capabilities != before.capabilities:
+        out["capabilities"] = after.capabilities
+    if after.kind != before.kind or cadence_fingerprint(after.spec or {}) != cadence_fingerprint(
+        before.spec or {}
+    ):
+        out["next_fire_at"] = arm(after) if after.enabled and after.kind == "clock" else ""
+    return out
 
 
 #: 🔴 `health(store)` USED TO LIVE HERE, and it was the third place this store's warnings went to

@@ -22,9 +22,9 @@ another event, or under another matcher, runs at another moment, and is another 
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_write_bytes
 from personalclaw.owner_grants import GrantBook, seal
 
 #: Where the owner's yes to each agent hook is kept (`owner_grants`).
@@ -82,13 +82,8 @@ def pinned(event: str, command: str, matcher: str | None, *, write: bool = True)
         return ""
     target = pinned_dir() / seal(data)
     if write and not target.is_file():
-        from personalclaw.atomic_write import ensure_private_dir
-
-        ensure_private_dir(target.parent)
-        tmp = target.with_name(f".{target.name}.tmp")
-        tmp.write_bytes(data)
-        tmp.chmod(0o700)
-        os.replace(tmp, target)
+        # Executable by its owner alone: the CLI runs it, and nobody else may read it.
+        atomic_write_bytes(target, data, mode=0o700)
     return str(target)
 
 

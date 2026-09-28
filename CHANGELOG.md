@@ -240,6 +240,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Memories and knowledge another machine's model embedded are re-embedded when a sync, a merge restore or an import brings them in.**
 
+- **An edit made on one machine reaches the other by sync, whichever machine made it and whatever either clock says; an edit made on both is a conflict to review.**
+
 - **The image and video tools say where to choose a model, and name no vendor.**
 - **Clearing Chat posts one notice, not ten.**
 - **A memory no model embedded is counted everywhere search is described, as one number.**
@@ -529,6 +531,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **A webhook's agent turn runs unattended with read tools only, as every turn nobody watches does, and does not run on an agent CLI.**
+
+- **An automation or hook edited on another machine keeps its switch here, and its yes only for what it still runs as it ran here; a new schedule re-arms its next fire.**
+
+- **Sync's shared registry names none of your records: what each machine last agreed on with another stays on that machine.**
+
+- **Automations, tasks, projects, themes and the other stores PersonalClaw rewrites whole are written 0600, like the configuration, and a crash midway no longer leaves one half-written.**
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
 - **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**

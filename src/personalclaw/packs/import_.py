@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.packs import lint as pack_lint
 from personalclaw.packs import roster as pack_roster
@@ -912,7 +913,9 @@ class _Journal:
         self._home = home
 
     def _flush(self) -> None:
-        self._path.write_text(json.dumps(self._entries, indent=2), encoding="utf-8")
+        # Through the one JSON writer: a crash mid-flush otherwise truncates the very ledger that
+        # was to unwind it.
+        atomic_json_write(self._path, self._entries)
 
     def record_mkdir(self, path: Path) -> None:
         self._entries.append({"op": "mkdir", "path": str(path)})

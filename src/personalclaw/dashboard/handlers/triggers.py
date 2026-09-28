@@ -1583,6 +1583,7 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
     row = store.get(raw)
     if row is not None:
         from personalclaw.triggers import tools as _tools
+        from personalclaw.triggers.arm import cadence_fingerprint
         from personalclaw.triggers.schedule_view import channel_of
 
         before = dict(row.trigger.spec or {})
@@ -1614,7 +1615,7 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         # (it governs jitter at fire time, matching the old code, which never flagged it), so a NEW
         # spec key defaults to "re-arm" — the safe direction, since a stale armed fire is a wrong
         # fire while a redundant re-arm only re-phases a cadence the user just changed anyway.
-        cadence_changed = _cadence_fingerprint(spec) != _cadence_fingerprint(before)
+        cadence_changed = cadence_fingerprint(spec) != cadence_fingerprint(before)
 
         patch: dict[str, Any] = {"spec": spec}
         if "name" in kwargs:
@@ -1663,37 +1664,6 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         return web.json_response({"ok": True, "trigger": _schedule_row_for(state, store.get(raw))})
 
     return web.json_response({"error": "not found"}, status=404)
-
-
-#: Spec keys that do NOT move a trigger's armed instant, and so must not force a re-arm. `strict`
-#: governs jitter at FIRE time (`arm.cadence_next_fire` never reads it when it computes
-#: `next_fire_at`), which is why the pre-issue-531 code already left it out of its flags. Everything
-#: else — `kind`, `expr`, `interval_secs`, `at`, `timezone`, `skip_dates` and any key added later —
-#: changes when the next fire lands, so it belongs on the re-arm side by default.
-_NON_CADENCE_SPEC_KEYS: frozenset[str] = frozenset({"strict"})
-
-
-def _cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
-    """The part of a clock spec that decides WHEN the next fire lands, canonicalized.
-
-    Used to answer "did this edit actually change the cadence?" by comparing before against after,
-    rather than by asking which keys the request body happened to carry (issue 531).
-
-    🔴 AN ABSENT KEY AND ITS EMPTY VALUE ARE THE SAME STATE, and collapsing them is the whole reason
-    this is a function. The edit form posts `timezone: ""` and `skip_dates: []` on every save, so a
-    row stored as `{kind, interval_secs}` comes back as `{kind, interval_secs, timezone: "",
-    skip_dates: []}` — different dicts, identical schedules. A raw `!=` would call that a cadence
-    change and re-arm on every cosmetic edit, which is the defect. Sound because it matches how the
-    ARM path reads them: `arm.cadence_next_fire` resolves the zone through
-    `str(spec.get("timezone", "") or "")` and the skip list through `list(spec.get(...) or [])`, so
-    missing and empty are indistinguishable there too. `0` is deliberately NOT collapsed — an
-    `interval_secs` of 0 is a broken value, not an absent one.
-    """
-    return {
-        key: value
-        for key, value in spec.items()
-        if key not in _NON_CADENCE_SPEC_KEYS and value is not None and value != "" and value != []
-    }
 
 
 def _carried(spec: dict[str, Any]) -> dict[str, Any]:

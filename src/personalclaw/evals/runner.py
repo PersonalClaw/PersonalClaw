@@ -38,6 +38,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_write
 from personalclaw.evals import cell_provider
 from personalclaw.evals import gate as gate_lib
 from personalclaw.evals import overlay as overlay_lib
@@ -223,7 +224,7 @@ def _spawn_cell(
     # a real model or the offline replay. A reader must never have to infer which.
     if provider_binding is not None:
         descriptor["provider_binding"] = provider_binding.to_dict()
-    descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write(descriptor_path, json.dumps(descriptor, indent=2, sort_keys=True))
     artifact_ref = str(cell_dir)
 
     with tempfile.TemporaryDirectory(prefix="pclaw_matrix_cell_") as cell_tmp:
@@ -295,9 +296,7 @@ def _spawn_cell(
 def _write_cell_artifact(cell_dir: Path, payload: dict) -> None:
     """Retain a cell's raw run artifact (best-effort — never breaks the run)."""
     try:
-        (cell_dir / "result.json").write_text(
-            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        atomic_write(cell_dir / "result.json", json.dumps(payload, indent=2, sort_keys=True))
     except OSError:
         logger.debug("cell artifact write failed for %s", cell_dir, exc_info=True)
 

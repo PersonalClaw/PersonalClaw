@@ -28,6 +28,7 @@ from uuid import uuid4
 from snowballstemmer import stemmer as _snowball_stemmer
 
 from personalclaw import memory_holder, memory_slots
+from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
@@ -2655,8 +2656,7 @@ class VectorMemoryStore(MemoryProvider):
             try:
                 # faiss is an untyped optional C-extension; the index is object|None here.
                 faiss.write_index(current.faiss, str(self._faiss_path))  # type: ignore[call-overload]  # noqa: E501
-                id_map_path = self._faiss_path.with_suffix(".ids.json")
-                id_map_path.write_text(json.dumps(current.ids), encoding="utf-8")
+                atomic_write(self._faiss_path.with_suffix(".ids.json"), json.dumps(current.ids))
                 self._faiss_writes_since_save = 0
             except Exception:
                 logger.warning("Failed to save FAISS index", exc_info=True)

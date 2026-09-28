@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.cancellation import kill_timed_out
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,7 @@ def write_spa_build_stamp(repo_root: Path) -> Optional[str]:
     # the stamp ships inside web/dist, so every wheel and sdist differed with it.
     payload = {"inputs_sha256": digest}
     try:
-        (dist / _STAMP_NAME).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_json_write(dist / _STAMP_NAME, payload)
     except OSError as exc:
         logger.warning("Could not write SPA build stamp: %s", exc)
         return None

@@ -790,6 +790,26 @@ def hook_arrived_from_another_home(row: dict) -> dict:
     return arrived
 
 
+def hook_edit_arrived_from_another_home(here: dict, edited: dict) -> dict:
+    """*edited* — a hook this home has (*here*) with the edit another home made to it taken in — as
+    this home writes it: a device sync's rule for a hook only the other home changed since the two
+    last agreed on it (the ``hooks`` inventory entry's ``edit_arrives``).
+
+    *edited* holds what the hook is as the other home made it (:func:`hook_what_it_is`), and this
+    home's switch, runs and grant (:data:`HOOK_RUNTIME_FIELDS`). The grant keeps only what the
+    edited action still runs as it ran here (``triggers.grants.narrow``), as the editor's save keeps
+    it, so a changed command waits for the owner's yes here: a yes is given where the owner is shown
+    what runs."""
+    from personalclaw.triggers import grants
+
+    before, after = ScriptHook.from_dict(here), ScriptHook.from_dict(edited)
+    grants.narrow(after, before)
+    out = dict(edited)
+    if after.capabilities != before.capabilities:
+        out["capabilities"] = after.capabilities
+    return out
+
+
 @dataclass
 class ScriptHookResult:
     """Result of executing a script hook."""

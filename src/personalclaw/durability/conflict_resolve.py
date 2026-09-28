@@ -42,12 +42,13 @@ converges on its own schedule, and it does so differently per choice:
 
 **The other machine's version arrives the way a sync brings anything in.** Taking it, or the
 merge drafted from it, writes a row the other machine wrote, so the row goes through the entry's
-own arrival rule (``StateEntry.arrives``) first — the rule the sync's merge applies to the same
-store. An automation or a hook taken this way is switched off, with no grant and nothing of what
-happened to it on the other machine, exactly as if it had arrived by a pull; writing the peer's
-row as it was put another home's switch, armed fire and yes into this one. Keeping this machine's
-version writes nothing: the row the record holds is a copy from when the divergence was found,
-and writing it back would undo every change this machine has made to the row since.
+own arrival rule (``StateEntry.arrives``) first — the rule the sync's merge applies to a row this
+home does not have. An automation or a hook taken this way is switched off, with no grant and
+nothing of what happened to it on the other machine, exactly as one that arrives new by a pull;
+writing the peer's row as it was put another home's switch, armed fire and yes into this one.
+Keeping this machine's version writes nothing: the row the record holds is a copy from when the
+divergence was found, and writing it back would undo every change this machine has made to the
+row since.
 """
 
 from __future__ import annotations

@@ -130,11 +130,9 @@ def publish(port: int, *, pid: int | None = None) -> None:
     os.environ[PORT_ENV] = str(port)
     record = {"port": port, "pid": int(pid if pid is not None else os.getpid())}
     try:
-        path = _runtime_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(record), encoding="utf-8")
-        os.replace(tmp, path)
+        from personalclaw.atomic_write import atomic_json_write
+
+        atomic_json_write(_runtime_path(), record)
     except OSError:
         # The environment projection already landed, which covers every child the gateway
         # spawns itself. Losing the file narrows the fallback; it does not misdirect.

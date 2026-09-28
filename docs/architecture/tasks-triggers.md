@@ -257,9 +257,24 @@ automation (`StateEntry.compared`), so a fire, a switch or a grant in either is
 never an edit to review; an edit in both is a conflict on that one automation.
 "Keep this machine's" writes nothing: the automation stays as it is now.
 
+An edit made in only one home reaches the other. The sync merges each record
+three ways, against the version the two homes last agreed on (kept on each
+home, per peer: `durability.ancestors`): changed only there, the other home's
+edit is taken in; changed only here, this home's stays, whatever either clock
+says. For an automation or a hook the other home's edit is what the automation
+is (`merge.forward` over `StateEntry.compared`), and this home's own part stays:
+its switch, what happened to it here, and its grant, which keeps only what the
+edited action still runs as it ran here, so a changed command waits for the
+owner's yes here (`triggers.store.edit_arrived_from_another_home`,
+`hooks.hook_edit_arrived_from_another_home`). A new cadence re-arms the next
+fire, as the editor's save does (`arm.cadence_fingerprint`).
+
 Every writer of `triggers.json` holds the trigger store's own lock
 (`.triggers.lock`, `record_files.locked`) and re-reads the file under it: the
-store's mutations, a sync, a restore's merge and an import alike. One that read
+store's mutations, a sync, a restore's merge and an import alike. Each writes it
+through the one JSON writer (`atomic_write.atomic_json_write`), so the file is
+0600 under the home and its write is announced to the post-write subscribers,
+as every store's is (`tests/test_every_store_writer_uses_the_shared_writer.py`). One that read
 the file, merged and wrote it back while the store added an automation used to
 write that automation away. Every other file of user records is written the same
 way — the inbox, the document comments, the research reports, the tags, the tag

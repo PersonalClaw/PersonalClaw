@@ -23,11 +23,18 @@ Strategies (mirror ``inventory.MERGE_*``):
                           handles DBs via the attach-ignore path and skips
                           replace_only entries); calling this module for them is a
                           programming error, raised loudly.
+
+A same-id collision the sync can prove was edited on only the peer's side — this home's row is
+the one the two last agreed on, the peer's is not — does not reach a strategy at all: the peer's
+edit is taken in (:func:`forward`, by ``durability.reconcile``), whatever either row's
+``updated_at`` says. The strategies decide only what that cannot: a row with no agreement to
+measure from.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 # Re-exported strategy names so callers merge against one vocabulary.
 from personalclaw.durability.inventory import (
@@ -163,6 +170,32 @@ def merge_lww_by_updated_at(
     """Union-by-id with last-write-wins on ``field`` (default ``updated_at``) for
     same-id collisions. Tombstones still take precedence when enabled."""
     return merge_union_by_id(local, remote, tombstones=tombstones, lww_field=field)
+
+
+_ABSENT = object()
+
+
+def forward(local: dict, remote: dict, *, compared: Callable[[dict], dict] | None = None) -> dict:
+    """*local* with the edit *remote* holds taken in: what the peer made of the row, over this
+    home's.
+
+    Every key two homes compare (``compared``, the whole row when ``None``) is the peer's — its
+    value where the two differ, gone where the peer's row has none — and every other key stays as
+    this home has it: for a store whose rows also hold what is one home's (an automation's switch
+    and grant, an inbox item's triage), that part is this home's, and the peer's edit does not
+    carry it. Pure; the store's own rule for what follows from the edit is the caller's
+    (``StateEntry.edit_arrives``).
+    """
+    mine, theirs = (compared(local), compared(remote)) if compared is not None else (local, remote)
+    out = dict(local)
+    # This home's keys in its order, then the peer's new ones in the peer's: the same bytes
+    # every time for the same two rows.
+    for key in [*mine, *(k for k in theirs if k not in mine)]:
+        if key not in theirs:
+            out.pop(key, None)
+        elif mine.get(key, _ABSENT) != theirs[key]:
+            out[key] = theirs[key]
+    return out
 
 
 def merge_append_dedup(local: list[dict], remote: list[dict], *, key: str = "id") -> MergeResult:

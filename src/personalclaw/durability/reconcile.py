@@ -31,6 +31,17 @@ same rule (:func:`bring_in`).
 
 A ``replace_only`` entry is restored whole or not at all — the configuration, and the stores
 whose every record is a grant this home's owner gave — so a sync leaves it exactly as it is.
+
+**An edit made on one machine reaches the other** (:func:`_one_side_changed`). A merge keyed by
+id kept this home's copy of every record it already had, so a record edited on one machine stayed
+as it was on the other for good. Each record is now merged three ways, against the version this
+home and that peer last agreed on (``ancestors``, :mod:`durability.ancestors`): as agreed here and
+not there, the peer edited it and its edit is taken in (``merge.forward``, then the store's
+``StateEntry.edit_arrives``); as agreed there and not here, this home edited it and it stays, even
+where the peer's ``updated_at`` reads later; changed on both, it is a conflict for review. A
+peer's copy that is a version this home published after the agreement is this home's own edit
+handed back, so the peer is behind (:func:`_in_common`). A restore's merge and an import have no
+agreement to measure from, so a record this home has stays as it is there.
 """
 
 from __future__ import annotations
@@ -39,14 +50,14 @@ import logging
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from personalclaw import record_files
 from personalclaw.durability import conflicts as conflicts_mod
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
-from personalclaw.durability.merge import MergeResult, _is_tombstone, merge_rows
+from personalclaw.durability.merge import MergeResult, _is_tombstone, forward, merge_rows
 from personalclaw.durability.shards import (
     _json_rows_from_entity_dir,
     _json_rows_from_file,
@@ -80,11 +91,11 @@ class ReconcileResult:
     #: remote rows were HELD — the local rows are byte-identical to before.
     conflicts: int = 0
     #: ``entity id → content sha`` for the ids where the merge landed on the row the PEER
-    #: also holds (converged, or the remote won) — the only shas that are evidence of a
-    #: common ancestor. Excludes every held (conflicted) id, and every id where the LOCAL
-    #: row won: the peer has not seen that row yet, so claiming agreement on it would mask
-    #: the next real divergence as a one-sided fast-forward. The peer records it (as its own
-    #: remote fast-forward) once it pulls our export, and the shared registry hands it back.
+    #: also holds (converged, the peer's edit taken in, or the remote won) — the only shas
+    #: that are evidence of a common ancestor. Excludes every held (conflicted) id, and every
+    #: id where the LOCAL row won: the peer has not seen that row yet, so claiming agreement on
+    #: it would read the peer's older copy as an edit made there. The two agree on it once this
+    #: home pulls a seq of the peer's that holds it.
     new_ancestors: dict[str, str] = dataclass_field(default_factory=dict)
 
 
@@ -271,6 +282,7 @@ def reconcile_entry(
     remote_rows: list[dict],
     *,
     ancestors: Optional[Mapping[str, str]] = None,
+    published: Optional[Mapping[str, Sequence[str]]] = None,
     queue: Optional[conflicts_mod.ConflictQueue] = None,
     now: str = "",
 ) -> ReconcileResult:
@@ -283,14 +295,19 @@ def reconcile_entry(
     kind that throws mid-merge is caught and reported ``payload-bad`` so a single bad entry
     advances the cursor past itself rather than wedging every later seq (§4.1).
 
-    **Conflict handling (DAS-7, §4.2).** With ``ancestors`` (the shared registry's agreed
-    shas for this family) and a ``queue``, every id whose local AND remote row both moved
-    since the ancestor is recorded for review and then **HELD**: its remote row is dropped
-    before the merge, so the local bytes are untouched and the local version stays
-    authoritative until a human resolves. Held ids also keep their old ancestor, so the
-    conflict re-detects next cycle instead of quietly self-resolving. A conflicted entry is
-    still ``consumed`` — the divergence is durably recorded, so re-pulling the same seq
-    forever would add nothing and would wedge the cursor.
+    **Conflict handling (DAS-7, §4.2).** With ``ancestors`` (what this home and the peer last
+    agreed on in this family, :meth:`ancestors.Ancestors.of`) and a ``queue``, every id whose
+    local AND remote row both moved since the ancestor is recorded for review and then
+    **HELD**: its remote row is dropped before the merge, so the local bytes are untouched and
+    the local version stays authoritative until a human resolves. Held ids also keep their old
+    ancestor, so the conflict re-detects next cycle instead of quietly self-resolving. A
+    conflicted entry is still ``consumed`` — the divergence is durably recorded, so re-pulling
+    the same seq forever would add nothing and would wedge the cursor.
+
+    Every other id one side alone moved is that side's edit (:func:`_one_side_changed`): the
+    peer's is taken in, this home's stays. ``published`` is what this home published of each
+    record, oldest first (:meth:`ancestors.Ancestors.published`): a peer's copy that is one of
+    those, newer than the agreement, is this home's own edit handed back (:func:`_in_common`).
     """
     if not handles_kind(entry.kind):
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
@@ -298,21 +315,29 @@ def reconcile_entry(
         return ReconcileResult(entry.id, detail="restored whole or not at all; left as it is")
     dest = Path(home) / entry.path
     remote = entity_rows(entry, remote_rows)
+    bases, handed_back = _in_common(entry, remote, ancestors or {}, published or {})
     outcome: dict[str, Any] = {}
 
     def merge_into(local: list[dict]) -> MergeResult:
-        held, recorded = _record_conflicts(entry, local, remote, ancestors, queue, now)
+        held, recorded = _record_conflicts(entry, local, remote, bases, queue, now)
         effective_remote = (
             [r for r in remote if conflicts_mod.row_id(r) not in held] if held else remote
         )
         outcome.update(held=held, recorded=recorded, effective_remote=effective_remote)
-        return merge_rows(
+        ahead, behind = _one_side_changed(entry, local, effective_remote, bases)
+        decided = ahead.keys() | behind
+        merged = merge_rows(
             entry.merge,
-            local,
-            _as_they_arrive(entry, effective_remote),
+            [ahead.get(conflicts_mod.row_id(r), r) for r in local] if ahead else local,
+            _as_they_arrive(
+                entry, [r for r in effective_remote if conflicts_mod.row_id(r) not in decided]
+            ),
             tombstones=entry.tombstones,
             dedup_key="id",
         )
+        merged.updated += len(ahead)
+        merged.kept -= len(ahead)
+        return merged
 
     try:
         if entry.records is not None:
@@ -346,8 +371,107 @@ def reconcile_entry(
         removed=removed,
         detail=detail,
         conflicts=recorded,
-        new_ancestors=_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),
+        new_ancestors={
+            **{rid: sha for rid, sha in handed_back.items() if rid not in held},
+            **_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),
+        },
     )
+
+
+def _in_common(
+    entry: inv.StateEntry,
+    remote: list[dict],
+    ancestors: Mapping[str, str],
+    published: Mapping[str, Sequence[str]],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The version this home and the peer have in common of each record: ``(bases, handed
+    back)``.
+
+    Their last agreement (``ancestors``), unless the peer's copy is a version this home published
+    after it (``published``, oldest first): the peer took this home's edit and handed it back
+    before this home pulled that, and this home may have edited the record again since. The two
+    have that version in common, which is newer than the agreement: measured from the agreement,
+    the peer's copy read as an edit made there, and every second edit in a row was a conflict.
+    ``handed back`` is those records, ``id → sha``, which the two now agree on.
+    """
+    bases = dict(ancestors)
+    handed_back: dict[str, str] = {}
+    for row in remote:
+        rid = conflicts_mod.row_id(row)
+        agreed = bases.get(rid)
+        versions = list(published.get(rid) or [])
+        if not agreed or agreed not in versions:
+            continue
+        since = versions[len(versions) - versions[::-1].index(agreed) :]
+        sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
+        if sha in since:
+            bases[rid] = handed_back[rid] = sha
+    return bases, handed_back
+
+
+def held_shas(home: Path, entry: inv.StateEntry) -> dict[str, str]:
+    """``entity id → sha`` of what two homes compare of every record this home holds of *entry*
+    (:func:`conflicts.compared`): what it publishes, which the sync records after each export
+    (:meth:`ancestors.Ancestors.publish`)."""
+    rows = entity_rows(entry, read_local_rows(entry, Path(home) / entry.path))
+    return {
+        conflicts_mod.row_id(row): conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
+        for row in rows
+        if conflicts_mod.row_id(row)
+    }
+
+
+def _one_side_changed(
+    entry: inv.StateEntry,
+    local: list[dict],
+    remote: list[dict],
+    ancestors: Mapping[str, str],
+) -> tuple[dict[str, dict], set[str]]:
+    """The records one side alone changed since this home and the peer last agreed on them
+    (``ancestors``): ``(ahead, behind)``.
+
+    ``ahead`` — ``id → row`` for each one the peer edited, as this home writes it with the edit
+    taken in (:func:`_edited_there`). ``behind`` — the ids this home edited, which the peer still
+    holds as agreed: the peer's row is not merged for them, so this home's edit stays, even where
+    the peer's ``updated_at`` reads later — as it does whenever the machine that made the edit
+    has a clock behind the other's.
+
+    Only the records a person edits one at a time: an entity dir's rows and a store of records
+    (``StateEntry.records``). A file that is one row is one machine's own account of itself — what
+    it spent, what it last ran — and another machine's is never taken over it. A tombstone on
+    either side is a deletion, which the merge's tombstone rule decides, and an id held under a
+    conflict is not among ``remote``.
+    """
+    if not ancestors or entry.merge not in conflicts_mod.ID_KEYED_MERGES:
+        return {}, set()
+    if entry.kind == inv.KIND_JSON_FILE and entry.records is None:
+        return {}, set()
+    here = {conflicts_mod.row_id(r): r for r in local if conflicts_mod.row_id(r)}
+    ahead: dict[str, dict] = {}
+    behind: set[str] = set()
+    for there in remote:
+        rid = conflicts_mod.row_id(there)
+        mine = here.get(rid)
+        agreed = ancestors.get(rid)
+        if mine is None or not agreed or _is_tombstone(mine) or _is_tombstone(there):
+            continue
+        mine_sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, mine))
+        there_sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, there))
+        if mine_sha == there_sha:
+            continue
+        if mine_sha == agreed:
+            ahead[rid] = _edited_there(entry, mine, there)
+        elif there_sha == agreed:
+            behind.add(rid)
+    return ahead, behind
+
+
+def _edited_there(entry: inv.StateEntry, here: dict, there: dict) -> dict:
+    """*here* — a row this home has — with the edit the peer made to it (*there*) taken in: the
+    part two homes compare is the peer's, the rest stays this home's (``merge.forward``), and then
+    whatever follows here from the edit, by the store's rule (``StateEntry.edit_arrives``)."""
+    edited = forward(here, there, compared=entry.compared)
+    return edited if entry.edit_arrives is None else entry.edit_arrives(here, edited)
 
 
 def _as_they_arrive(entry: inv.StateEntry, remote_rows: list[dict]) -> list[dict]:

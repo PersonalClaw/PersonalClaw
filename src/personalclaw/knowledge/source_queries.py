@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from personalclaw.atomic_write import atomic_json_write
+
 logger = logging.getLogger(__name__)
 
 #: The registered trigger-source name. The event namespace is derived from it by core, never
@@ -216,10 +218,7 @@ class SavedQueryStore:
         return [SavedSourceQuery.from_dict(r) for r in rows if isinstance(r, dict)]
 
     def save_all(self, queries: Sequence[SavedSourceQuery]) -> None:
-        path = self._file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"queries": [q.to_dict() for q in queries]}
-        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_json_write(self._file(), {"queries": [q.to_dict() for q in queries]})
 
     def add(self, name: str, query: str, *, query_id: str = "") -> SavedSourceQuery:
         import uuid

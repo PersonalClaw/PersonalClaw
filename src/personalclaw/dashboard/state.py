@@ -2443,11 +2443,8 @@ def _rewrite_notifications(notifications: list[dict[str, str]]) -> None:
     which now mirrors the file in full — carries. The cap lives at the
     append seam, where memory and file are trimmed together.
     """
-    path = _notifications_path()
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(n) + "\n" for n in notifications]
-        path.write_text("".join(lines), encoding="utf-8")
+        atomic_write(_notifications_path(), "".join(json.dumps(n) + "\n" for n in notifications))
     except Exception:
         logger.debug("Failed to rewrite notifications file", exc_info=True)
 

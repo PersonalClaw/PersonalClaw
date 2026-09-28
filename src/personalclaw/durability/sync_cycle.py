@@ -5,8 +5,9 @@ The orchestrator that assembles every piece built in 6c-i … 6c-ii-h into the l
 
     registry = read the shared registry.json from the remote     (transport.pull of REGISTRY_KEY)
     pull_from_peers(transport, home, registry, cursor,            # 6c-ii-e + the 6c-ii-h db_merger
-                    db_merger=make_db_merger(home))
+                    db_merger=make_db_merger(home), ancestors=…)  # merged against each peer's base
     export_shards(home, out, include_databases=True)              # 6b + 6c-ii-g (DB copies)
+    ancestors.publish(…) per record store                         # what this home published
     publish_export(transport, out, registry, outbox, …)           # 6c-ii-f (+ CAS registry bump)
 
 Everything below the orchestration was already unit-tested in isolation; this module owns only
@@ -24,7 +25,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from personalclaw.durability.conflicts import ConflictQueue
+from personalclaw.durability import inventory as inv
+from personalclaw.durability import reconcile
+from personalclaw.durability.ancestors import Ancestors
+from personalclaw.durability.conflicts import ID_KEYED_MERGES, ConflictQueue
 from personalclaw.durability.cursor import Cursor
 from personalclaw.durability.db_merge import make_db_merger
 from personalclaw.durability.outbox import Outbox
@@ -48,6 +52,8 @@ class SyncCycleReport:
     skipped: str = ""
     # roll-ups for the service log / doctor
     rows_added: int = 0
+    #: Rows this home had that took in another machine's edit.
+    rows_updated: int = 0
     rows_removed: int = 0
     seq_published: int = 0
     conflicts: int = 0  # both-sides-edited divergences queued for review
@@ -58,8 +64,21 @@ class SyncCycleReport:
             return f"skipped: {self.skipped}"
         if not self.ok:
             return f"error: {self.error}"
-        base = f"+{self.rows_added} -{self.rows_removed} rows; published seq {self.seq_published}"
+        base = (
+            f"+{self.rows_added} ~{self.rows_updated} -{self.rows_removed} rows; "
+            f"published seq {self.seq_published}"
+        )
         return base + (f"; {self.conflicts} conflict(s) queued" if self.conflicts else "")
+
+
+def _record_published(ancestors: Ancestors, home: Path) -> None:
+    """Record each record of every store a sync merges by id, as this home just exported it
+    (:meth:`ancestors.Ancestors.publish`): a peer that takes one of these versions and hands it
+    back is then read as behind, not as having edited it."""
+    for entry in inv.INVENTORY:
+        if reconcile.handles_kind(entry.kind) and entry.merge in ID_KEYED_MERGES:
+            ancestors.publish(entry.id, reconcile.held_shas(home, entry))
+    ancestors.save()
 
 
 def read_registry(transport: SyncTransportProvider) -> Registry:
@@ -102,6 +121,7 @@ def run_sync_cycle(
     cursor = Cursor(sync_root)
     outbox = Outbox(sync_root)
     conflict_queue = ConflictQueue(home)
+    ancestors = Ancestors(sync_root)
 
     # ── ENCRYPTION ──────────────────────────────────────────────────────────
     # Resolved ONCE per cycle, before anything moves: the salt round-trip and the Argon2id
@@ -130,10 +150,12 @@ def run_sync_cycle(
             self_id=self_id,
             db_merger=make_db_merger(home),
             queue=conflict_queue,
+            ancestors=ancestors,
             now=now,
             codec=codec,
         )
         report.rows_added = report.pulled.added
+        report.rows_updated = report.pulled.updated
         report.rows_removed = report.pulled.removed
         report.conflicts = report.pulled.conflicts
     except Exception as exc:  # noqa: BLE001 — a bad cycle must not kill the service loop
@@ -147,6 +169,7 @@ def run_sync_cycle(
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             export_shards(home, out, include_databases=True)
+            _record_published(ancestors, home)
             report.pushed = publish_export(
                 transport,
                 out,

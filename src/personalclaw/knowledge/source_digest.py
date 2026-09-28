@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from personalclaw.atomic_write import atomic_json_write
+
 logger = logging.getLogger(__name__)
 
 #: The digest item's shape. ONE item per run, whatever the window's size — a digest that
@@ -99,9 +101,7 @@ def read_cursor(path: Path | None = None) -> int:
 
 
 def write_cursor(seq: int, path: Path | None = None) -> None:
-    target = path if path is not None else cursor_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"seq": int(seq)}) + "\n", encoding="utf-8")
+    atomic_json_write(path if path is not None else cursor_path(), {"seq": int(seq)})
 
 
 def fence_item(*, source_id: str, title: str, content: str) -> str:

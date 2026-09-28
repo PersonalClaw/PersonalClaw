@@ -30,6 +30,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_write
+
 logger = logging.getLogger(__name__)
 
 #: Two levels of tree, no deeper. A planner needs the SHAPE of a project — its top-level packages
@@ -267,10 +269,7 @@ class BrownfieldCache:
             "stored_at": time.time() if now is None else now,
         }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(
-                json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8"
-            )
+            atomic_write(self.path, json.dumps(data, ensure_ascii=False, sort_keys=True))
         except OSError:
             logger.debug("brownfield cache write failed at %s", self.path, exc_info=True)
 

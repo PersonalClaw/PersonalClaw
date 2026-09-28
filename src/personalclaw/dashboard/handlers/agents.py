@@ -283,7 +283,7 @@ async def api_themes_create(request: web.Request) -> web.Response:
         "dark": _strip_to_allowed_vars(body.get("dark", {})),
         "light": _strip_to_allowed_vars(body.get("light", {})),
     }
-    target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
+    atomic_json_write(target, theme_data)
     # The new theme's revision, so the editor that just saved it can update it in place next.
     return web.json_response(
         {"ok": True, "slug": slug, "theme": theme_data, "revision": revision_of(theme_data)}
@@ -358,7 +358,7 @@ async def api_theme_detail(request: web.Request) -> web.Response:
             "dark": _strip_to_allowed_vars(body.get("dark", {})),
             "light": _strip_to_allowed_vars(body.get("light", {})),
         }
-        target.write_text(json.dumps(theme_data, indent=2) + "\n", encoding="utf-8")
+        atomic_json_write(target, theme_data)
         return web.json_response(
             {"ok": True, "theme": theme_data, "revision": revision_of(theme_data)}
         )

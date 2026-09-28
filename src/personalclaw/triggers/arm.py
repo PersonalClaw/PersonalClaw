@@ -300,6 +300,39 @@ def arm(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> str:
     return to_iso(when) if when > 0 else ""
 
 
+#: Spec keys that do NOT move a trigger's armed instant, and so must not force a re-arm. `strict`
+#: governs jitter at FIRE time (`arm.cadence_next_fire` never reads it when it computes
+#: `next_fire_at`), which is why the pre-issue-531 code already left it out of its flags. Everything
+#: else — `kind`, `expr`, `interval_secs`, `at`, `timezone`, `skip_dates` and any key added later —
+#: changes when the next fire lands, so it belongs on the re-arm side by default.
+NON_CADENCE_SPEC_KEYS: frozenset[str] = frozenset({"strict"})
+
+
+def cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
+    """The part of a clock spec that decides WHEN the next fire lands, canonicalized.
+
+    Used to answer "did this edit actually change the cadence?" by comparing before against after,
+    rather than by asking which keys the request body happened to carry (issue 531) — by the
+    editor's save, and by a sync taking in an edit made on another machine
+    (`triggers.store.edit_arrived_from_another_home`).
+
+    🔴 AN ABSENT KEY AND ITS EMPTY VALUE ARE THE SAME STATE, and collapsing them is the whole reason
+    this is a function. The edit form posts `timezone: ""` and `skip_dates: []` on every save, so a
+    row stored as `{kind, interval_secs}` comes back as `{kind, interval_secs, timezone: "",
+    skip_dates: []}` — different dicts, identical schedules. A raw `!=` would call that a cadence
+    change and re-arm on every cosmetic edit, which is the defect. Sound because it matches how the
+    ARM path reads them: `arm.cadence_next_fire` resolves the zone through
+    `str(spec.get("timezone", "") or "")` and the skip list through `list(spec.get(...) or [])`, so
+    missing and empty are indistinguishable there too. `0` is deliberately NOT collapsed — an
+    `interval_secs` of 0 is a broken value, not an absent one.
+    """
+    return {
+        key: value
+        for key, value in spec.items()
+        if key not in NON_CADENCE_SPEC_KEYS and value is not None and value != "" and value != []
+    }
+
+
 def needs_arming(trigger: Any) -> bool:
     """Whether this trigger is a clock trigger with no next fire recorded.
 

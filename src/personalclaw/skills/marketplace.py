@@ -227,8 +227,9 @@ def _write_lock(
     id, source, tier, verdict, per-file sha256, timestamp. A later integrity lint (S6)
     compares on-disk sha256 vs this to detect a skill mutated after install."""
     import hashlib
-    import json
     import time
+
+    from personalclaw.atomic_write import atomic_json_write
 
     skill_dir = Path(target_dir) / (detail.name or detail.id)
     if not skill_dir.is_dir():
@@ -247,7 +248,7 @@ def _write_lock(
         "installed_at": time.time(),
     }
     try:
-        (skill_dir / ".pclaw-lock.json").write_text(json.dumps(lock, indent=2), encoding="utf-8")
+        atomic_json_write(skill_dir / ".pclaw-lock.json", lock)
     except OSError:
         logger.debug("could not write skill lock file for %s", skill_dir, exc_info=True)
 

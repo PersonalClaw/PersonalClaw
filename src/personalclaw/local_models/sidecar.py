@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import app_code
+from personalclaw.atomic_write import atomic_write
 from personalclaw.periodic_sweep import PeriodicSweep
 from personalclaw.security import mask_child_output
 
@@ -853,8 +854,8 @@ class SidecarInstall:
         )
         if not python.is_file():
             raise RuntimeError(f"venv creation produced no interpreter at {python}")
-        (self.venv / _MARKER).write_text(
-            json.dumps({"app": self.app, "created_by": "personalclaw"}) + "\n", "utf-8"
+        atomic_write(
+            self.venv / _MARKER, json.dumps({"app": self.app, "created_by": "personalclaw"}) + "\n"
         )
         return "done", str(self.venv)
 
@@ -889,7 +890,7 @@ class SidecarInstall:
         )
         # The receipt is written only after pip EXITS ZERO, which is what makes the step
         # resumable: a killed pip leaves no receipt, so the next run redoes it.
-        self._receipt_path().write_text(json.dumps(self.requirements) + "\n", "utf-8")
+        atomic_write(self._receipt_path(), json.dumps(self.requirements) + "\n")
         return "done", f"{len(self.requirements)} requirement(s)"
 
     def _step_weights(self) -> tuple[str, str]:

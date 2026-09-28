@@ -31,6 +31,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.triggers.file_watch import WatchState, changed_files, fire_payload, should_fire
 from personalclaw.triggers.provider import armable
 
@@ -75,16 +76,13 @@ def load_state(trigger_id: str, *, base_dir: Path | str | None = None) -> WatchS
 
 
 def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | None = None) -> None:
-    """Persist a watch's state atomically (tmp→rename), so a crash mid-write cannot corrupt it.
+    """Persist a watch's state atomically, through the one JSON writer, so a crash mid-write
+    cannot corrupt it.
 
-    A half-written hash map read back as unseeded would re-fire the whole directory once; the
-    atomic rename is the same discipline `TriggerStore._write` uses for exactly this reason.
+    A half-written hash map read back as unseeded would re-fire the whole directory once, which
+    is the reason every store writes through that writer.
     """
-    path = _state_path(trigger_id, base_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state.to_dict()), encoding="utf-8")
-    tmp.replace(path)
+    atomic_json_write(_state_path(trigger_id, base_dir), state.to_dict())
 
 
 def file_triggers(store: Any) -> list[Any]:

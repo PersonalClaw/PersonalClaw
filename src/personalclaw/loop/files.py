@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
 from personalclaw.security import redact_for_display, redact_values_for_display
@@ -500,9 +500,7 @@ def task_finding_count(loop_id: str, task_id: str) -> int:
 def write_question(loop_id: str, question: str, **extra: Any) -> None:
     d = loop_dir(loop_id)
     if d is not None:
-        (d / "questions.json").write_text(
-            json.dumps({"question": question, "ts": time.time(), **extra}, indent=2)
-        )
+        atomic_json_write(d / "questions.json", {"question": question, "ts": time.time(), **extra})
 
 
 def pending_question(loop_id: str) -> dict | None:

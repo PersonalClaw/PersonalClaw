@@ -36,6 +36,7 @@ from typing import Callable, Optional
 from personalclaw.atomic_write import atomic_write_bytes
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import reconcile
+from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT, Cursor
 from personalclaw.durability.registry import Registry, shard_prefix
@@ -84,6 +85,10 @@ class PullReport:
         return sum(o.added for o in self.outcomes)
 
     @property
+    def updated(self) -> int:
+        return sum(o.updated for o in self.outcomes)
+
+    @property
     def removed(self) -> int:
         return sum(o.removed for o in self.outcomes)
 
@@ -117,7 +122,7 @@ def _pull_one_seq(
     peer_id: str,
     seq: int,
     db_merger: Optional[DbMerger],
-    registry: Optional[Registry] = None,
+    ancestors: Optional[Ancestors] = None,
     queue: Optional[ConflictQueue] = None,
     now: str = "",
     codec=None,
@@ -183,7 +188,8 @@ def _pull_one_seq(
                     home,
                     entry,
                     rows,
-                    ancestors=registry.ancestors_for(entry.id) if registry else {},
+                    ancestors=ancestors.of(peer_id, entry.id) if ancestors else {},
+                    published=ancestors.published(entry.id) if ancestors else {},
                     queue=queue,
                     now=now,
                 )
@@ -191,10 +197,10 @@ def _pull_one_seq(
                 out.updated += res.updated
                 out.removed += res.removed
                 out.conflicts += res.conflicts
-                if registry is not None:
-                    # The state we merged TO becomes the next divergence's common ancestor —
-                    # published by the same CAS bump that announces our seq.
-                    registry.record_ancestors(entry.id, res.new_ancestors)
+                if ancestors is not None:
+                    # The records this home now holds as the peer does are what the two agree
+                    # on, and the next divergence from this peer is measured from them.
+                    ancestors.record(peer_id, entry.id, res.new_ancestors)
                 if res.verdict == PAYLOAD_BAD:
                     poison = True
             elif db_merger is not None:
@@ -224,6 +230,7 @@ def pull_from_peers(
     self_id: str,
     db_merger: Optional[DbMerger] = None,
     queue: Optional[ConflictQueue] = None,
+    ancestors: Optional[Ancestors] = None,
     now: str = "",
     codec=None,
 ) -> PullReport:
@@ -233,7 +240,9 @@ def pull_from_peers(
     prefix, an unknown entry, or a DB entry with no ``db_merger``) leaves the cursor where it
     is, so it is re-pulled next cycle. ``codec`` is the optional DAS-8 sync codec: when present
     every pulled object is decrypted before it is materialized, and a plaintext one is a
-    permanent skip. Returns a :class:`PullReport` of per-seq outcomes.
+    permanent skip. ``ancestors`` is what this home last agreed on with each peer: each seq is
+    merged against its peer's, and what the merge agrees on is written back before the cursor
+    moves past the seq. Returns a :class:`PullReport` of per-seq outcomes.
     """
     report = PullReport()
     seen = cursor.seen()
@@ -246,11 +255,13 @@ def pull_from_peers(
                 peer.machine_id,
                 seq,
                 db_merger,
-                registry=registry,
+                ancestors=ancestors,
                 queue=queue,
                 now=now,
                 codec=codec,
             )
+            if ancestors is not None:
+                ancestors.save()
             outcome.advanced = cursor.record(peer.machine_id, seq, outcome.verdict)
             report.outcomes.append(outcome)
             if not outcome.advanced:

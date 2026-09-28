@@ -523,6 +523,7 @@ def run_sync_job() -> JobResult:
         duration_secs=time.monotonic() - started,
         extra={
             "rows_added": report.rows_added,
+            "rows_updated": report.rows_updated,
             "rows_removed": report.rows_removed,
             "seq_published": report.seq_published,
         },

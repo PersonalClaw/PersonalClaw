@@ -26,6 +26,7 @@ import time
 import uuid
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import UnsafeRecordId, is_safe_record_id, record_path
 from personalclaw.tasks.models import (
@@ -171,9 +172,7 @@ class HierarchyStore:
         # it immediately). project.json lives inside projects/<id>/.
         self._project_dir(project.id).mkdir(parents=True, exist_ok=True)
         self.context_dir(project.id)
-        self._project_path(project.id).write_text(
-            json.dumps(project.to_dict(), indent=2), encoding="utf-8"
-        )
+        atomic_json_write(self._project_path(project.id), project.to_dict())
 
     def migrate_layout(self) -> None:
         """One-time, idempotent migration to the projects/<id>/ layout.
@@ -498,7 +497,7 @@ class HierarchyStore:
             return None
 
     def _write_list(self, tl: TaskList) -> None:
-        self._list_path(tl.id).write_text(json.dumps(tl.to_dict(), indent=2), encoding="utf-8")
+        atomic_json_write(self._list_path(tl.id), tl.to_dict())
 
     def _all_lists_raw(self) -> list[TaskList]:
         out: list[TaskList] = []

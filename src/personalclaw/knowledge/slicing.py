@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.knowledge.readers import PdfLine, PdfStructure, read_pdf_structure
 
 # ══ THRESHOLDS ═══════════════════════════════════════════════════════════════════
@@ -373,9 +374,8 @@ async def fetch_source(
     path = _original_path(sha256, suffix)
     if not path.is_file():
         path.write_bytes(body)
-    _pointer_path(ref).write_text(
-        json.dumps({"sha256": sha256, "suffix": suffix, "url": ref.url, "kind": ref.kind}),
-        encoding="utf-8",
+    atomic_json_write(
+        _pointer_path(ref), {"sha256": sha256, "suffix": suffix, "url": ref.url, "kind": ref.kind}
     )
     return FetchedSource(path=path, sha256=sha256, from_cache=False, ref=ref)
 

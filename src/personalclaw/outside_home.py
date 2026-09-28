@@ -26,6 +26,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_json_write
+
 logger = logging.getLogger(__name__)
 
 #: The skills folder AI tools share (agentskills.io's cross-client location).
@@ -227,7 +229,7 @@ def settle_previous_locations() -> dict[str, object]:
         done["workspace"] = True
 
     try:
-        record_path.write_text(json.dumps(done, indent=2) + "\n", encoding="utf-8")
+        atomic_json_write(record_path, done)
     except OSError:
         logger.warning("outside_home: could not record the settled locations", exc_info=True)
     return report

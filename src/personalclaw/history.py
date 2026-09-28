@@ -605,7 +605,7 @@ class ConversationLog:
                 meta["agent"] = agent
             if tab_id:
                 meta["tab_id"] = tab_id
-            path.write_text(json.dumps(meta) + "\n", encoding="utf-8")
+            atomic_write(path, json.dumps(meta) + "\n")
 
         msg: dict = {
             "role": role,

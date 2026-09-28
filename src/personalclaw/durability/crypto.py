@@ -13,7 +13,9 @@ so an operator can inspect a remote store. Three things are therefore never encr
 
 * the object **key** itself (``machines/<machine_id>/seq-NNNN/<rel>``) — the machine id, the
   seq and the shard's name are the routing plane; they are what ``list_remote`` sorts on,
-* ``registry.json`` — the machine/seq/ancestor ledger the CAS loop compares shas on,
+* ``registry.json`` — the machine/seq ledger the CAS loop compares shas on (it names no
+  record: what a home last agreed on with each peer stays on that home,
+  :mod:`durability.ancestors`),
 * the **salt object** — a public parameter by construction; a secret salt buys nothing.
 
 Everything else — every shard byte, i.e. every row of the user's tasks, memory, knowledge —
