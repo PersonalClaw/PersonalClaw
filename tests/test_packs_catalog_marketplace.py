@@ -295,10 +295,14 @@ def test_one_unreachable_catalog_does_not_break_the_others(net, monkeypatch, cle
     clean_registry.register("catalog:ok", ok)
     clean_registry.register("catalog:dead", CatalogMarketplace("dead", dead_url, "index"))
 
-    results, counts = search_marketplaces_counted("works", limit=20)
+    results, counts, unreachable = search_marketplaces_counted("works", limit=20)
 
     assert [r.id for r in results] == ["works"]
     assert counts == {"catalog:ok": 1}
+    # And the dead one is NAMED: its skills are missing from the results, and a search that
+    # none of the catalogs answered must not read as one that matched nothing.
+    assert [u["source"] for u in unreachable] == ["catalog:dead"]
+    assert unreachable[0]["reason"]
 
 
 def test_a_large_index_browses_locally_and_stays_out_of_the_agent_budget(net, monkeypatch):
@@ -325,11 +329,12 @@ def test_a_large_index_browses_locally_and_stays_out_of_the_agent_budget(net, mo
     monkeypatch.setattr(
         "personalclaw.skills.marketplace.get_default_skills_registry", lambda: reg, raising=True
     )
-    results, counts = search_marketplaces_counted("widget", limit=5)
+    results, counts, unreachable = search_marketplaces_counted("widget", limit=5)
     # The agent-facing fan-out is bounded by limit, while counts still report the real
     # per-source match total so the store can say "900 matched".
     assert len(results) == 5
     assert counts["catalog:big"] == 5
+    assert unreachable == []
 
 
 def test_a_garbage_index_raises_a_typed_error_rather_than_registering_junk(net):

@@ -3,7 +3,7 @@ import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
+import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw, Upload } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -12,11 +12,12 @@ import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaff
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
 import { useAgentsData, type NativeGroup, type DiscoveredGroup } from './agentsData'
-import { providerMeta, isReservedAgent } from './agentMeta'
+import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
 import { NativeAgentDetail, DiscoveredAgentDetail } from './AgentDetail'
+import { ExportAgentsDialog } from './ExportAgentsDialog'
 import { api, type SavedAgent, type DiscoveredAgent } from '../../lib/api'
 import { useConfigFsWatch } from '../../lib/useConfigFsWatch'
-import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
+import { useQueryParam, useQueryFlag, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
 
 type Open =
@@ -63,6 +64,11 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
 
   const native = groups.find((g): g is NativeGroup => g.kind === 'native')
   const discovered = groups.filter((g): g is DiscoveredGroup => g.kind === 'discovered')
+  // Yours to export: every native agent but the built-ins that run the platform and the default
+  // agent, whose instructions are the prompt bound in Settings. The gateway refuses the same set.
+  const exportable = native?.agents.filter((a) => !isReservedAgent(a) && !isBuiltinDefaultAgent(a)) ?? []
+  // A query flag like the Tools page's dialogs, so an open export survives a reload.
+  const [exporting, setExporting] = useQueryFlag(query, setQuery, 'export')
 
   const n = q.trim().toLowerCase()
   const match = (s: string) => !n || s.toLowerCase().includes(n)
@@ -147,6 +153,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 ranked lowest; it now reconciles the agent file store into the config and is
                 the only control that makes a Store/app/snapshot agent visible (issue 344). */}
             <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} priority="default" onClick={syncAgents} />
+            <HeaderControl icon={Upload} label="Export to Claude Code" priority="low" onClick={() => setExporting(true)} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />
           </HeaderActions>}
         />
@@ -223,6 +230,9 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
               </>
             )}
       </div>
+      {/* Once the list is read: the dialog's choices are the agents on it, so an export opened from
+          a link before they arrived would otherwise start with nothing ticked. */}
+      {exporting && loaded && <ExportAgentsDialog agents={exportable} onClose={() => setExporting(false)} />}
     </WorkbenchLayout>
   )
 }

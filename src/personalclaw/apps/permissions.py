@@ -1116,6 +1116,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "folding the agent files on disk into your agents — their instructions, tools and "
         "approval mode"
     ),
+    # Writes your agents' instructions into another tool's own folder, where that tool runs them.
+    "POST /api/agents/export": OwnerOnly(
+        "writing your agents into another tool's agents folder, where that tool runs them"
+    ),
     "DELETE /api/agents/{name}": OwnerOnly(_REMOVES_AGENTS),
     "DELETE /api/agents/detail/{name}": OwnerOnly(_REMOVES_AGENTS),
     "POST /api/agents/routing/dismiss": AppMay("dismisses a routing suggestion"),

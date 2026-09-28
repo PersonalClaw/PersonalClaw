@@ -382,13 +382,15 @@ async def api_skills_search(request: web.Request) -> web.Response:
                     # "nothing to install from" case. Reported so both branches of this
                     # endpoint answer the same shape.
                     "installable_sources": 1,
+                    # And never a partial one: this search either answered or is the 500 below.
+                    "unreachable": [],
                 }
             )
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", marketplace_name, exc)
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
-    results, counts = search_marketplaces_counted(query, limit=limit)
+    results, counts, unreachable = search_marketplaces_counted(query, limit=limit)
     # 🔴 `installable_sources` is what tells zero MATCHES apart from nothing to install FROM.
     #
     # Two sources register at import (`skills/native.py`): `native` mirrors the bundled
@@ -410,18 +412,25 @@ async def api_skills_search(request: web.Request) -> web.Response:
             "results": [r.to_dict() for r in results],
             "counts": counts,
             "installable_sources": len(catalogues),
+            # The catalogues that could not be searched, each with why. Their skills are missing
+            # from `results`, and without this a search none of them answered read as "no results".
+            "unreachable": unreachable,
         }
     )
 
 
-def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dict[str, int]]":
+def search_marketplaces_counted(
+    query: str, limit: int = 20
+) -> "tuple[list, dict[str, int], list[dict[str, str]]]":
     """Fan a query out to every registered marketplace and return
-    ``(results, per_source_counts)``.
+    ``(results, per_source_counts, unreachable)``.
 
     The counts are taken BEFORE the merged list is capped at *limit*, so a source that
     matched 40 skills reports 40 even though only its top rows survive the cap.
     Never raises — a failing marketplace (an unreachable catalog) is logged and skipped,
-    so one bad source cannot empty the store.
+    so one bad source cannot empty the store — and it is NAMED in ``unreachable``
+    (``[{"source", "reason"}]``, the reason in the same words a search of that one source
+    answers with): a catalogue that could not be searched is not one that matched nothing.
 
     🔴 Already-installed hits are ANNOTATED (``SkillEntry.installed``), never withheld.
     Dropping them read as "no results" for every query a stock install can make (#301):
@@ -439,6 +448,7 @@ def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dic
     registry = get_default_skills_registry()
 
     results = []
+    unreachable: list[dict[str, str]] = []
     for name in registry.list():
         if name == "installed":
             continue
@@ -447,13 +457,14 @@ def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dic
             results.extend(mp.search(query, limit=limit))
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", name, exc)
+            unreachable.append({"source": name, "reason": relayed_failure_copy(exc)})
     _mark_installed(results)
 
     counts: dict[str, int] = {}
     for r in results:
         counts[r.source] = counts.get(r.source, 0) + 1
     results.sort(key=lambda r: r.installs, reverse=True)
-    return results[:limit], counts
+    return results[:limit], counts, unreachable
 
 
 async def api_skills_marketplace_detail(request: web.Request) -> web.Response:

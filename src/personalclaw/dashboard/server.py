@@ -1300,6 +1300,9 @@ async def start_dashboard(
     app.router.add_get("/api/agents", handlers.api_personalclaw_agents)
     app.router.add_post("/api/agents", handlers.api_personalclaw_agents_create)
     app.router.add_post("/api/agents/sync", handlers.api_personalclaw_agents_sync)
+    from personalclaw.dashboard.handlers.agent_export import api_agents_export
+
+    app.router.add_post("/api/agents/export", api_agents_export)
     # Agent routing suppression endpoints — registered BEFORE the
     # /api/agents/{name} CRUD routes so "routing" is never captured as an agent name.
     from personalclaw.dashboard.handlers.routing import (

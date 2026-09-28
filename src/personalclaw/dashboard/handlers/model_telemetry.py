@@ -217,17 +217,24 @@ async def api_routing_proposals(request: web.Request) -> web.Response:
     list because a proposal without it is not reviewable, and there is no second round-trip worth
     saving for a queue capped at 50. ``count`` is the Routing tab's badge.
 
-    Fail-open to an empty queue, exactly like the policy read above: an unreadable proposal store
-    means "nothing to review", never a 500 that blanks the tab.
+    An unreadable proposal store answers ``routing_proposals_unreadable``, never an empty queue:
+    ``{"count": 0}`` reads as "nothing to review" while proposals may be waiting, and the Routing
+    tab has its own line for a queue it could not read, so the rest of the tab still renders.
     """
+    from personalclaw.onboarding_import.floors import screened_failure
+
     try:
         from personalclaw.routing.proposals import pending
 
         props = pending()
         rows = [{**p.summary(), "evidence": p.evidence} for p in props]
-    except Exception:  # noqa: BLE001 — a review queue must never 500 the tab
-        logger.debug("routing proposals read failed", exc_info=True)
-        return web.json_response({"count": 0, "proposals": []})
+    except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty queue
+        logger.warning("routing proposals read failed", exc_info=True)
+        return json_error(
+            "routing_proposals_unreadable",
+            message=f"Couldn't read the routing proposals: {screened_failure(exc)}",
+            status=500,
+        )
     return web.json_response({"count": len(rows), "proposals": rows})
 
 

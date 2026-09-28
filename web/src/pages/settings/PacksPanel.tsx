@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackTriggersDeployRec, type PackUninstallRec, type PackUpdateRec } from '../../lib/api'
+import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackRosterDeployRec, type PackUnscannedRec, type PackTriggersDeployRec, type PackUninstallRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, ToggleRow } from './settingsUI'
@@ -113,6 +113,9 @@ export function PacksPanel() {
  *  nothing here is on a timer. */
 export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
   const [proposals, setProposals] = useState<PackProposalRec[] | null>(null)
+  // The projects whose scan failed, each with why. Named rather than folded into "no match": an
+  // empty list only means nothing matched when every project was actually scanned.
+  const [unscanned, setUnscanned] = useState<PackUnscannedRec[]>([])
   const [error, setError] = useState<string>('')
   const [busy, setBusy] = useState(false)
 
@@ -120,7 +123,7 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
     setBusy(true)
     setError('')
     api.packProposals()
-      .then(setProposals)
+      .then((r) => { setProposals(r.proposals); setUnscanned(r.unscanned) })
       .catch((e) => setError(String((e as Error)?.message || e)))
       .finally(() => setBusy(false))
   }, [])
@@ -157,7 +160,21 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
       {error && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-warn">Couldn't scan for suggestions: {error}</div>
       )}
-      {!error && proposals !== null && proposals.length === 0 && (
+      {!error && unscanned.length > 0 && (
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-2.5 text-warn" role="status">
+          <p>
+            Couldn't scan {unscanned.length === 1 ? 'one project' : `${unscanned.length} projects`} for
+            suggestions, so {unscanned.length === 1 ? 'it is' : 'they are'} not covered here. Suggest packs
+            to try again.
+          </p>
+          <ul className="mt-xs flex flex-col gap-xs">
+            {unscanned.map((u) => (
+              <li key={u.project_id} data-type="caption"><span className="text-on-surface">{u.project}</span> — {u.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!error && proposals !== null && proposals.length === 0 && unscanned.length === 0 && (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           No pack matches any project's workspace. Bind a project to a codebase directory to get suggestions.
         </div>

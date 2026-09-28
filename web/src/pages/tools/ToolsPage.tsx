@@ -87,11 +87,24 @@ interface PendingSignIn { name: string; url: string; since: number }
 /** An authorization server that does not let PersonalClaw register itself: the app to register. */
 interface ClientPrompt extends McpSignInClientNeeded { server: string; message: string }
 
+/** A peripheral read that FAILED, kept apart from an empty answer so the page can say which. `[]`
+ *  for a failure read as "no MCP servers set up" and "nothing to import". The gateway's sentence is
+ *  kept as text, so the cached copy (`persist: true`) still says what failed after a reload. */
+interface FailedRead { failed: string }
+const failedRead = (e: unknown): FailedRead => ({ failed: readableErrText(e) })
+function isFailedRead(v: unknown): v is FailedRead {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && 'failed' in v
+}
+
 interface ToolsIndexData {
   tools: ToolItem[]
   loadFailures: ToolLoadFailure[]
-  servers: McpServer[]
-  importable: ImportableMcpServer[]
+  /** `null` when the list could not be read, with `serversError` saying why. */
+  servers: McpServer[] | null
+  serversError: string
+  /** `null` when the other tools could not be looked through, with `importableError` saying why. */
+  importable: ImportableMcpServer[] | null
+  importableError: string
   /** `null` when the pool could not be read: the tile is then not drawn at all. */
   poolStats: McpPoolStats | null
   groups: ToolGroupsData | null
@@ -113,9 +126,14 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       // its rejection made a failed read render "No tools · Tools are the capabilities agents can
       // invoke…" — the newcomer empty state, on an install whose tools are all present. Same
       // asymmetry `fetchAgentGroups` draws between its native slice and its provider slices.
+      //
+      // 🔑 TOLERATED IS NOT FABRICATED. The server list and the import list keep their catch but
+      // carry the failure (`failedRead`), never `[]`: a failed server read painted "no MCP servers"
+      // and a failed import read painted "nothing to import", and each is said where its answer
+      // would be instead.
       api.toolsIndex(),
-      api.mcpServers().catch(() => [] as McpServer[]),
-      api.importableMcp().catch(() => [] as ImportableMcpServer[]),
+      api.mcpServers().catch(failedRead),
+      api.importableMcp().catch(failedRead),
       api.mcpPoolStats().catch(() => null),
       api.toolGroups().catch(() => null),
       // Tolerated like the four above — an unreadable config must not hide the tool list — but
@@ -126,12 +144,22 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       api.mcpElicitationServers().catch(() => null),
       api.mcpReadOnlyServers().catch(() => null),
     ])
-    return { tools: idx.tools, loadFailures: idx.load_failures ?? [], servers, importable, poolStats, groups, elicitationServers, readOnlyServers }
+    return {
+      tools: idx.tools, loadFailures: idx.load_failures ?? [],
+      servers: isFailedRead(servers) ? null : servers, serversError: isFailedRead(servers) ? servers.failed : '',
+      importable: isFailedRead(importable) ? null : importable, importableError: isFailedRead(importable) ? importable.failed : '',
+      poolStats, groups, elicitationServers, readOnlyServers,
+    }
   }, { persist: true })
   const tools = data?.tools ?? null
   const loadFailures = data?.loadFailures ?? []
+  // A failed read groups like an empty one, but says so: the notices below read these two.
   const servers = data?.servers ?? []
+  const serversUnread = !!data && data.servers === null
+  const serversError = data?.serversError ?? ''
   const importable = data?.importable ?? []
+  const importUnread = !!data && data.importable === null
+  const importableError = data?.importableError ?? ''
   const poolStats = data?.poolStats ?? null
   /** `null` while unread or unreadable: no grant can be written from it. */
   const elicitationServers = data?.elicitationServers ?? null
@@ -405,6 +433,10 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     // native providers (those not backed by an MCP server)
     for (const [p, list] of byProvider) {
       if (serverNames.has(p)) continue
+      // With the server list unread, an MCP server's tools cannot be told from a native provider's
+      // by name, and drawn as one they would offer a native provider's switch for an MCP server.
+      // Their rows still say who they belong to: `serverTool` is set only on an MCP tool.
+      if (serversUnread && list.some((t) => t.serverTool !== undefined)) continue
       const filtered = list.filter(match)
       // a provider is "off" when ALL its tools report providerDisabled (the backend
       // sets that flag per-tool when the whole provider is disabled).
@@ -427,7 +459,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     // With a filter active, drop groups with no matching tools — including MCP
     // groups (an errored/0-tool server is only worth showing in the browse view).
     return out.filter((g) => g.tools.length > 0 || (g.kind === 'mcp' && !active) || !active)
-  }, [tools, servers, q, risk, groupsEnabled])
+  }, [tools, servers, serversUnread, q, risk, groupsEnabled])
 
   const open = tools?.find((t) => t.name === openName) ?? null
   const openServer = open ? servers.find((s) => s.name === open.provider) : undefined
@@ -487,15 +519,21 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
             // so on a genuinely empty install adding a server stays one click away.
             <div className="flex flex-col gap-2xl">
               <EmptyState icon={Wrench} title={filtered ? 'No matching tools' : 'No tools'} hint={filtered ? (risk !== 'all' && !q ? `No ${risk} tools.` : 'Try a different search term.') : 'Tools are the capabilities agents can invoke — built-in actions plus anything from connected MCP servers.'} />
-              {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
+              {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
+              {!filtered && (importUnread
+                ? <ImportUnread error={importableError} onRetry={load} />
+                : importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />)}
             </div>
           ) : (
             <div className="flex flex-col gap-2xl">
               {!filtered && loadFailures.length > 0 && <LoadFailures failures={loadFailures} />}
+              {!filtered && serversUnread && <ServersUnread error={serversError} onRetry={load} />}
               {!filtered && groupsInfo && <ToolGroupsTile data={groupsInfo} onChanged={load} />}
               {!filtered && <McpPoolTile stats={poolStats} />}
               {groups?.map((g) => <GroupBlock key={g.key} g={g} onOpen={setOpenName} onToggleServer={toggleServer} onEditServer={(sv) => setEditing(sv.name)} onRemoveServer={removeServer} onToggleTool={toggleTool} onToggleProvider={toggleProvider} onReconnect={reconnectServer} reconnecting={reconnecting} elicitationGranted={!g.server ? false : elicitationServers ? elicitationServers.includes(g.server.name) : null} onToggleElicitation={toggleElicitation} readOnlyTrusted={!g.server ? false : readOnlyServers ? readOnlyServers.includes(g.server.name) : null} onToggleReadOnlyTrust={toggleReadOnlyTrust} onSignIn={(sv) => { void signIn(sv) }} onSignOut={signOut} pendingSignIn={pendingSignIn?.name === g.server?.name ? pendingSignIn : null} onAllow={(sv) => { void allowServer(sv) }} allowing={allowing} />)}
-              {!filtered && importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />}
+              {!filtered && (importUnread
+                ? <ImportUnread error={importableError} onRetry={load} />
+                : importable.length > 0 && <ImportSuggestions servers={importable} onImported={() => setTimeout(load, 300)} />)}
             </div>
           )}
         </div>
@@ -872,6 +910,43 @@ function RiskBadge({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
       style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
       {label}
     </span>
+  )
+}
+
+/** A sentence that ends like one, whatever the gateway's text ended with. */
+const asSentence = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`)
+
+/** A read beside the tool list that failed, said where its answer would have been. A status, not an
+ *  alert: the page did not fail — one part of it could not be read, and the rest is on screen. */
+function ReadFailed({ children, onRetry }: { children: React.ReactNode; onRetry: () => void }) {
+  return (
+    <div data-type="body-s" role="status" className="rounded-lg bg-surface-container px-m py-m">
+      <p className="text-warn">{children}</p>
+      <Button size="xs" variant="ghost" className="mt-xs" onClick={onRetry}>Try again</Button>
+    </div>
+  )
+}
+
+/** The server list could not be read, so no MCP server is drawn — which must not read as "none set
+ *  up". */
+function ServersUnread({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <ReadFailed onRetry={onRetry}>
+      {asSentence(`Couldn't read your MCP servers${error ? `: ${error}` : ''}`)} Their tools are left out of
+      this list until it loads, and nothing about the servers changed.
+    </ReadFailed>
+  )
+}
+
+/** The other tools could not be looked through, so there is no import list — which must not read
+ *  as "nothing to import". The gateway's sentence names what it could not read. */
+function ImportUnread({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <ReadFailed onRetry={onRetry}>
+      {error
+        ? <>{asSentence(error)} Nothing was imported or changed. Fix what it names, then try again.</>
+        : <>Couldn't check your other tools for MCP servers to import: the gateway did not answer. Nothing was imported or changed.</>}
+    </ReadFailed>
   )
 }
 

@@ -159,3 +159,37 @@ def test_the_shipped_registry_has_only_native_mirrors():
     assert [
         m for m in info if m["type"] != "native"
     ] == [], "a non-native catalogue now ships; the store's empty-state copy needs revisiting"
+
+
+class _UnreachableMarketplace(_StubMarketplace):
+    """A catalogue that cannot be reached: its search raises, as a catalogue behind a dead network
+    does."""
+
+    def search(self, query: str, limit: int = 20):
+        raise RuntimeError("the catalogue did not answer")
+
+
+def test_a_catalogue_that_could_not_be_searched_is_named():
+    """The third empty state. `results: []` with a catalogue registered read as "no results — try a
+    different term" when that catalogue never answered; it is named in `unreachable` instead, and
+    the ones that did answer are still searched."""
+    reg = _registry("packs")
+    reg.register("skills.sh", _UnreachableMarketplace())
+    resp, body = _search(reg)
+
+    assert resp.status == 200
+    assert body["results"] == []
+    assert body["installable_sources"] == 2
+    (missed,) = body["unreachable"]
+    assert missed["source"] == "skills.sh"
+    assert missed["reason"], "why it could not be searched is said"
+    assert (
+        "did not answer" not in missed["reason"]
+    ), "an unexpected fault's own text stays in the log"
+
+
+def test_a_search_every_catalogue_answered_names_none():
+    _, body = _search(_registry("skills.sh"))
+    assert body["unreachable"] == []
+    _, scoped = _search(_registry("skills.sh"), marketplace="skills.sh")
+    assert scoped["unreachable"] == [], "both branches answer the same shape"

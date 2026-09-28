@@ -281,6 +281,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "retrieval_unreadable": "The retrieval benchmark artifacts could not be read.",
     "learning_benchmark_absent": "No skill-impact benchmark report has been produced yet.",
     "learning_benchmark_unreadable": "The skill-impact benchmark report could not be read.",
+    # 500 (handlers/learning.py — GET /api/learning/proposals): the queue's listing failed —
+    # answered in place of an empty queue, which would read as "nothing to review".
+    "learning_proposals_unreadable": "The learning proposal queue could not be read.",
     "store_required": "The request must name one retrieval store (knowledge or memory).",
     "card_unavailable": "That retrieval store could not be read for labelling.",
     "store_mutated": "A read-only harness pass wrote to a store and was refused.",
@@ -771,6 +774,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "local_model_bind_failed": (
         "A reachable local model could not be bound; the detail explains what was missing."
     ),
+    # `local_model_scan_failed` (500) — the opt-in LAN sweep did not finish, answered in place
+    # of an empty list, which would read as "no model server on your network".
+    "local_model_scan_failed": (
+        "The local network scan for a model server could not finish, so it found nothing to "
+        "report."
+    ),
     # ── engine-owned fields on a workflow-managed task (tasks/handlers.py — #390) ──
     # A 409 state refusal, not a 403: the caller is permitted to edit this task, and every
     # field outside the engine-owned set still writes. What refuses is that the workflow run
@@ -830,6 +839,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     "mcp_server_not_editable": (
         "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
+    ),
+    # ── looking for MCP servers to import (dashboard/handlers/mcp.py — GET /api/mcp/importable) ──
+    # 500: the other tools' settings could not be looked through — answered in place of an empty
+    # list, which would read as "nothing to import". The message says why.
+    "mcp_importable_failed": (
+        "Looking through other tools' MCP settings for servers to import failed; the message "
+        "says why."
     ),
     # ── a secret reference to another owner's credential (config/secret_refs.py) ──
     # 400: the settings name a `{{secret:…}}` stored under a different owner (another app, or
@@ -930,6 +946,39 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The sandbox this terminal was asked to open in is not installed or is turned off, so no "
         "terminal was opened."
     ),
+    # ── exporting your agents into Claude Code's agents folder (dashboard/handlers/agent_export.py
+    #    — POST /api/agents/export) ──
+    # 400: `agents` is missing, or names what is not one of your own agents (a built-in or the
+    # default agent included). 400 `agent_export_refused`: an agent's name cannot be a file name
+    # there, or the destination is not a folder. 409 `agent_export_dest_changed`: the confirmation
+    # names another folder than the one the export would write now. 409
+    # `agent_export_would_overwrite`: files PersonalClaw did not write are where agents would go,
+    # each named. 409 `agent_export_blocked`: an agent's text holds what looks like a credential.
+    # 500 `agent_export_write_failed`: a write failed part-way; the message names what was written.
+    "agent_export_agents_invalid": (
+        "The export names no agents, or names what is not one of your own agents; nothing was "
+        "exported."
+    ),
+    "agent_export_refused": "The export cannot be written there; the message says why.",
+    "agent_export_dest_changed": (
+        "The export was confirmed for another folder than the one it would write now; nothing "
+        "was written."
+    ),
+    "agent_export_would_overwrite": (
+        "Files PersonalClaw did not write are where the exported agents would go, so nothing was "
+        "exported."
+    ),
+    "agent_export_blocked": (
+        "An agent's text holds what looks like a credential, so nothing was exported."
+    ),
+    "agent_export_write_failed": (
+        "A write failed part-way through the export; the message names what was written."
+    ),
+    # ── the routing review queue (dashboard/handlers/model_telemetry.py —
+    #    GET /api/models/routing-proposals) ──
+    # 500: the proposal store could not be read — answered in place of an empty queue, which
+    # would read as "nothing to review".
+    "routing_proposals_unreadable": "The routing proposal queue could not be read.",
 }
 
 

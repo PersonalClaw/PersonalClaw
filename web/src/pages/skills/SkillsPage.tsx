@@ -15,7 +15,7 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { SidePanel } from '../../ui/SidePanel'
 import { TextInput, TextArea, FieldError } from '../../ui/forms'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace } from '../../lib/api'
+import { api, type SkillItem, type SkillSearchResult, type SkillMarketplace, type SkillSourceUnreachable } from '../../lib/api'
 import { SOURCE_TONE, sourceLabel, fmtInstalls, provenanceMeta, withFrontmatterName } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { SkillInspector } from './SkillInspector'
@@ -291,6 +291,9 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   // cap), so the source filter shows how many of a large catalog matched — not just how
   // many of its rows survived into this page of results.
   const [counts, setCounts] = useState<Record<string, number>>({})
+  // The catalogues the last search could not reach, each with why. Their skills are missing from
+  // `results`, so "No results" is only true when this is empty.
+  const [unreachable, setUnreachable] = useState<SkillSourceUnreachable[]>([])
   const [loading, setLoading] = useState(false)
   const [searchErr, setSearchErr] = useState<unknown>(null)
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set())
@@ -299,18 +302,19 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
 
   async function search() {
     const query = q.trim()
-    if (!query) { setResults(null); setCounts({}); setInstallableSources(null); setSearchErr(null); return }
+    if (!query) { setResults(null); setCounts({}); setInstallableSources(null); setUnreachable([]); setSearchErr(null); return }
     setLoading(true)
     try {
-      const { results: rows, counts: bySource, installableSources: reached } = await api.searchSkillsCounted(query, marketplace || undefined)
+      const { results: rows, counts: bySource, installableSources: reached, unreachable: missed } = await api.searchSkillsCounted(query, marketplace || undefined)
       setSearchErr(null)
       setResults(rows)
       setInstallableSources(reached)
       setCounts(bySource)
+      setUnreachable(missed)
     }
     // The error is kept, not folded into `[]`: a failed search rendered as "No results — try a
     // different search term", blaming the user's query for an outage.
-    catch (e) { setSearchErr(e); setResults(null); setCounts({}); setInstallableSources(null) }
+    catch (e) { setSearchErr(e); setResults(null); setCounts({}); setInstallableSources(null); setUnreachable([]) }
     finally { setLoading(false) }
   }
   // Live-search as the user types (debounced) and when the marketplace scope changes.
@@ -358,6 +362,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
           : searchErr ? <LoadError what="skill search results" error={searchErr} onRetry={search} />
           : results === null ? <EmptyState icon={Store} title="Browse skills" hint={`Search ${marketplace || 'all marketplaces'} for skills to install — the agent loads them when relevant.`} />
+          : unreachable.length > 0 && results.length === 0 ? <UnreachableCatalogues sources={unreachable} onRetry={search} />
           : results.length === 0 && installableSources === 0
             // Nothing to install FROM. Saying "no results" here blames the query for the
             // absence of any catalogue to query — our own "a failed fetch renders as an empty
@@ -368,6 +373,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
           : results.length === 0 ? <EmptyState icon={Search} title="No results" hint="Try a different search term or marketplace." />
           : (
             <div className="flex flex-col gap-s">
+              {unreachable.length > 0 && <UnreachableCatalogues sources={unreachable} onRetry={search} />}
               {results.map((r, i) => {
                 const installed = installedIds.has(r.id) || !!r.installed
                 // Right-click / long-press → open the marketplace result (install itself
@@ -395,5 +401,25 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
           )}
       </div>
     </WorkbenchLayout>
+  )
+}
+
+/** The catalogues a search could not reach, said above whatever it did find: a search that none of
+ *  them answered is not one that matched nothing. The reason is the gateway's own sentence. */
+function UnreachableCatalogues({ sources, onRetry }: { sources: SkillSourceUnreachable[]; onRetry: () => void }) {
+  const one = sources.length === 1
+  return (
+    <div data-type="body-s" role="status" className="rounded-lg bg-surface-container px-l py-m text-warn">
+      <p>
+        Couldn't search {one ? sources[0].source : `${sources.length} catalogues`}, so{' '}
+        {one ? 'its skills are' : 'their skills are'} missing here.
+      </p>
+      <ul className="mt-xs flex flex-col gap-xs">
+        {sources.map((u) => (
+          <li key={u.source} data-type="caption"><span className="text-on-surface">{u.source}</span> — {u.reason}</li>
+        ))}
+      </ul>
+      <Button size="xs" variant="ghost" className="mt-xs" onClick={onRetry}>Try again</Button>
+    </div>
   )
 }

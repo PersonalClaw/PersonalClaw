@@ -115,10 +115,12 @@ class TestList:
         assert got == {"count": 0, "proposals": []}
 
     @pytest.mark.asyncio
-    async def test_an_unreadable_queue_fails_open_rather_than_500ing_the_tab(
+    async def test_an_unreadable_queue_is_said_rather_than_shown_empty(
         self, home: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """An unreadable proposal store means "nothing to review", not a blanked Routing tab."""
+        """An unreadable proposal store is not an empty queue: `{"count": 0}` said "nothing to
+        review" while proposals may be waiting. The Routing tab has its own line for a queue it
+        could not read, so answering the failure blanks nothing else on the tab."""
 
         def boom(**kw):
             raise OSError("queue unreadable")
@@ -127,8 +129,13 @@ class TestList:
         c = await _client()
         try:
             resp = await c.get("/api/models/routing-proposals")
-            assert resp.status == 200
-            assert await resp.json() == {"count": 0, "proposals": []}
+            assert resp.status == 500
+            assert await resp.json() == {
+                "error": {
+                    "code": "routing_proposals_unreadable",
+                    "message": "Couldn't read the routing proposals: queue unreadable",
+                }
+            }
         finally:
             await c.close()
 

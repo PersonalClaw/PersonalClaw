@@ -9,9 +9,9 @@ Four rails carry this change, and each has a test that fails when the rail is re
   the export, and the canary is then grepped for across every byte under the destination.
 * **containment** — an entity named ``../evil`` is refused by the renderer AND by the path
   resolver, and the export writes nothing.
-* **no clobber** — a file we did not write is never overwritten; one we did write is
-  replaced only with ``overwrite=True``, and the replacement is byte-identical (a
-  re-export is a no-op).
+* **no clobber** — a file we did not write is never overwritten, and every one in the way is
+  named in the one refusal; one we did write is replaced when it differs and left alone when
+  it does not (a re-export is a no-op).
 
 **No external binary is executed here.** "The external tool loads it" is asserted as a
 FORMAT-CONFORMANCE claim: the frontmatter is parsed with a real YAML loader and the keys
@@ -33,10 +33,16 @@ import pytest
 import yaml
 
 from personalclaw.agents.marketplace import AgentDefinition
+from personalclaw.config.loader import AgentProfile
+from personalclaw.packs import external_formats
 from personalclaw.packs.external_formats import (
     CLAUDE_CODE_AGENTS,
     CURSOR_RULES,
     EXTERNAL_FORMATS,
+    FILE_NEW,
+    FILE_REPLACE,
+    FILE_SAME,
+    FILE_THEIRS,
     PROVENANCE_MARKER,
     SKILL_MD,
     DestNotConfirmed,
@@ -45,7 +51,9 @@ from personalclaw.packs.external_formats import (
     ExportPathRefused,
     ExportRefused,
     ExportSkill,
+    ExportWriteFailed,
     _resolve_target,
+    agent_from_profile,
     default_dest_dir,
     export_entities,
     export_preview,
@@ -302,8 +310,12 @@ def test_claude_code_agent_file_conforms_to_the_documented_frontmatter():
         assert front["name"] == defn.name, "the required `name` key must match the file slug"
         assert front["description"], "the required `description` key must be non-empty"
         assert "tools" not in front, "we must not invent a tool allowlist an agent never declared"
+        # `tax-analyst` pins a model. Its name is one of THIS installation's models, which the
+        # recipient cannot resolve, so the key would pin the exported agent to nothing it has.
+        assert "model" not in front, "a model only PersonalClaw can resolve must not be written"
         assert rf.relpath == f"{front['name']}.md"
         assert rf.text.endswith(PROVENANCE_MARKER + "\n")
+        assert rf.entities == (defn.name,), "each file names the agent rendered into it"
     body = files[0].text
     assert "## Skills" in body and "- ledger-read" in body
     assert body.count("- ledger-read") == 1, "duplicate declared skills must collapse"
@@ -319,6 +331,7 @@ def test_cursor_rules_is_one_roster_file_ordered_independently_of_input():
     reversed_render = CURSOR_RULES.render(list(reversed(GOLDEN_AGENTS)))
     assert reversed_render[0].text == files[0].text, "roster order must not depend on input order"
     assert files[0].text.index("## budget-coach") < files[0].text.index("## tax-analyst")
+    assert files[0].entities == ("budget-coach", "tax-analyst"), "a roster names every agent in it"
 
 
 def test_skill_md_ships_a_skill_near_verbatim_and_an_agent_as_a_skill():
@@ -391,15 +404,21 @@ def test_a_credential_blocks_the_whole_batch_not_just_the_leaky_file(tmp_path):
 
 def test_preview_reports_the_block_without_writing(tmp_path):
     leaky = _agent("leaky-agent", system_prompt=f"key {CANARY_AWS}")
-    preview = export_preview(CLAUDE_CODE_AGENTS, [leaky])
+    preview = export_preview(CLAUDE_CODE_AGENTS, [leaky], tmp_path / "dest")
     assert preview["format"] == "claude-code-agents"
-    assert preview["installKind"] == "per-agent"
-    assert preview["blocked"][0]["path"] == "leaky-agent.md"
+    assert preview["blocked"] == [{"path": "leaky-agent.md", "categories": ["credential"]}]
+    # The sentence the write would refuse with, said BEFORE anything is confirmed.
+    assert preview["refusal"] == (
+        "Nothing is exported: leaky-agent.md holds what looks like a credential. Remove it, or "
+        "leave it out to export the rest."
+    )
+    assert CANARY_AWS not in str(preview), "the preview must not carry the credential itself"
     assert list(tmp_path.iterdir()) == []
 
 
-def test_clean_output_is_not_blocked():
-    assert export_preview(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS)["blocked"] == []
+def test_clean_output_is_not_blocked(tmp_path):
+    preview = export_preview(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path)
+    assert preview["blocked"] == [] and preview["refusal"] is None
 
 
 @pytest.mark.parametrize("refusal", ["a credential", "an unsafe name"])
@@ -461,32 +480,131 @@ def test_refuses_to_overwrite_a_file_we_did_not_write(tmp_path):
     foreign = tmp_path / "tax-analyst.md"
     foreign.write_text("---\nname: tax-analyst\n---\n\nThe user's OWN agent.\n")
     original = foreign.read_bytes()
-    with pytest.raises(ExportClobberRefused, match="not written by personalclaw"):
-        export_entities(
-            CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True, overwrite=True
-        )
+    with pytest.raises(ExportClobberRefused) as exc:
+        export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
+    assert str(exc.value) == (
+        f"Refusing to overwrite {foreign.resolve()} (not written by PersonalClaw). Nothing is "
+        "exported while it is there: leave it out to export the rest."
+    )
     assert foreign.read_bytes() == original, "a foreign file was modified"
     assert not (tmp_path / "budget-coach.md").exists(), "the batch must abort before any write"
 
 
-def test_an_existing_file_needs_overwrite_even_when_it_is_ours(tmp_path):
-    export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
-    with pytest.raises(ExportClobberRefused, match="pass overwrite=True"):
+def test_every_file_in_the_way_is_named_in_the_one_refusal(tmp_path):
+    """One refusal per clash would send the user back once for each file in the way."""
+    for defn in GOLDEN_AGENTS:
+        (tmp_path / f"{defn.name}.md").write_text(f"---\nname: {defn.name}\n---\n\nTheirs.\n")
+    with pytest.raises(ExportClobberRefused) as exc:
         export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
+    assert [p.name for p in exc.value.targets] == ["tax-analyst.md", "budget-coach.md"]
+    message = str(exc.value)
+    assert message.startswith("Refusing to overwrite 2 files PersonalClaw did not write: ")
+    assert "tax-analyst.md" in message and "budget-coach.md" in message
+    assert message.endswith(
+        "Nothing is exported while they are there: leave them out to export the rest."
+    )
+
+
+def test_a_file_that_cannot_be_read_is_not_taken_for_ours(tmp_path):
+    """Fail closed: a folder where an agent's file would go cannot be shown to be ours."""
+    (tmp_path / "budget-coach.md").mkdir()
+    preview = export_preview(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS[1:], tmp_path)
+    assert [f["state"] for f in preview["files"]] == [FILE_THEIRS]
+    with pytest.raises(ExportClobberRefused):
+        export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS[1:], tmp_path, confirm_dest=True)
+
+
+def test_the_preview_and_the_write_decide_every_file_the_same_way(tmp_path):
+    """The list a user confirms is the list the write acts on: new, same, replace, theirs."""
+    fresh = _agent("fresh-agent", system_prompt="New here.")
+    kept = _agent("kept-agent", system_prompt="Exported before, unchanged since.")
+    edited = _agent("edited-agent", system_prompt="Exported before, edited since.")
+    mine = _agent("mine-agent", system_prompt="The user's own file is in the way.")
+    export_entities(CLAUDE_CODE_AGENTS, [kept, edited], tmp_path, confirm_dest=True)
+    edited = _agent("edited-agent", system_prompt="The agent's instructions changed here.")
+    (tmp_path / "mine-agent.md").write_text("---\nname: mine-agent\n---\n\nHand-written.\n")
+
+    batch = [fresh, kept, edited, mine]
+    preview = export_preview(CLAUDE_CODE_AGENTS, batch, tmp_path)
+    assert [(f["path"], f["state"], f["entities"]) for f in preview["files"]] == [
+        ("fresh-agent.md", FILE_NEW, ["fresh-agent"]),
+        ("kept-agent.md", FILE_SAME, ["kept-agent"]),
+        ("edited-agent.md", FILE_REPLACE, ["edited-agent"]),
+        ("mine-agent.md", FILE_THEIRS, ["mine-agent"]),
+    ]
+    assert preview["refusal"] and "mine-agent.md" in preview["refusal"]
+    with pytest.raises(ExportClobberRefused):
+        export_entities(CLAUDE_CODE_AGENTS, batch, tmp_path, confirm_dest=True)
+    assert not (tmp_path / "fresh-agent.md").exists(), "a refused batch writes nothing"
+
+    result = export_entities(CLAUDE_CODE_AGENTS, batch[:3], tmp_path, confirm_dest=True)
+    assert [p.name for p in result.written] == ["fresh-agent.md", "edited-agent.md"]
+    assert [p.name for p in result.unchanged] == ["kept-agent.md"]
+    assert "The agent's instructions changed here." in (tmp_path / "edited-agent.md").read_text()
+    assert (tmp_path / "mine-agent.md").read_text().endswith("Hand-written.\n")
 
 
 def test_re_exporting_our_own_file_is_a_byte_identical_no_op(tmp_path):
     export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
     first = (tmp_path / "tax-analyst.md").read_bytes()
-    export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True, overwrite=True)
+    again = export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
+    assert again.written == [], "nothing differs, so nothing is rewritten"
+    assert [p.name for p in again.unchanged] == ["tax-analyst.md", "budget-coach.md"]
     assert (tmp_path / "tax-analyst.md").read_bytes() == first
+
+
+def test_a_write_that_fails_part_way_names_what_it_wrote(tmp_path, monkeypatch):
+    real_write = external_formats.atomic_write
+
+    def full_disk_on_the_second(path, text, **kw):
+        if Path(path).name == "budget-coach.md":
+            raise OSError(28, "No space left on device")
+        real_write(path, text, **kw)
+
+    monkeypatch.setattr(external_formats, "atomic_write", full_disk_on_the_second)
+    with pytest.raises(ExportWriteFailed) as exc:
+        export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, tmp_path, confirm_dest=True)
+    first = (tmp_path / "tax-analyst.md").resolve()
+    assert exc.value.written == [first]
+    assert str(exc.value) == (
+        f"Could not write {(tmp_path / 'budget-coach.md').resolve()}: No space left on device. "
+        f"1 file was written before it stopped: {first}."
+    )
 
 
 def test_destination_that_is_a_file_is_refused(tmp_path):
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("x")
-    with pytest.raises(ExportPathRefused, match="not a directory"):
+    with pytest.raises(ExportPathRefused, match="not a folder"):
         export_entities(CLAUDE_CODE_AGENTS, GOLDEN_AGENTS, blocker, confirm_dest=True)
+
+
+# ── One of the user's agents, as the renderers take it ────────────────────────
+
+
+def test_only_what_renders_travels_from_an_agent_profile():
+    """The model, tools, triggers and approval mode name things only this installation has."""
+    profile = AgentProfile(
+        description="Reviews diffs",
+        system_prompt="Read the diff twice.",
+        voice="Terse.",
+        model="reasoning",
+        tools=["shell"],
+        triggers=["t-1"],
+        approval_mode="auto",
+        skills=["diff-read", 7],  # a hand-edited config can hold anything
+    )
+    defn = agent_from_profile("diff-reviewer", profile)
+    assert (defn.name, defn.description, defn.system_prompt, defn.voice, defn.skills) == (
+        "diff-reviewer",
+        "Reviews diffs",
+        "Read the diff twice.",
+        "Terse.",
+        ["diff-read"],
+    )
+    assert defn.model == "" and defn.mcp_servers == {}
+    text = CLAUDE_CODE_AGENTS.render([defn])[0].text
+    assert "reasoning" not in text and "shell" not in text and "auto" not in text
 
 
 # ── Deliberate golden regeneration (never from inside the run under test) ──────

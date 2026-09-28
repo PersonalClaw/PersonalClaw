@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **884 registrations** over **716 distinct paths** — 877 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **885 registrations** over **717 distinct paths** — 878 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -40,10 +40,10 @@ The 128 families the surface divides into, largest first.
 | `/api/channels` | 16 | 14 |
 | `/api/projects` | 14 | 10 |
 | `/api/sessions` | 14 | 11 |
+| `/api/agents` | 13 | 9 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
-| `/api/agents` | 12 | 8 |
 | `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 877 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 878 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -183,6 +183,7 @@ The 877 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `GET` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `PATCH` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
+| `POST` | `/api/agents/export` | write your agents into Claude Code's agents folder, once confirmed. |
 | `GET` | `/api/agents/installed` | list installed agent provider names. |
 | `POST` | `/api/agents/routing/dismiss` | {agent} — bump the dismissal counter; the |
 | `GET` | `/api/agents/routing/status` | enabled flag + muted/dismissal state. |

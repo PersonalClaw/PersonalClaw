@@ -184,11 +184,20 @@ describe('the routing proposal queue is reviewable in the Routing tab', () => {
     expect(screen.queryByRole('button', { name: /^Apply/ })).toBeNull()
   })
 
-  it('an unreadable queue says so without blanking the section', async () => {
-    routingProposals.mockImplementation(() => Promise.reject(new Error('nope')))
+  it('an unreadable queue says so without blanking the section, and reads it again', async () => {
+    // The gateway answers an unreadable queue as a failure with its reason. An unread queue is not
+    // an empty one, so the section claims neither "nothing proposed" nor "nothing pending".
+    routingProposals.mockImplementation(() =>
+      Promise.reject(new Error("Couldn't read the routing proposals: queue unreadable")),
+    )
     renderPanel()
-    expect(await screen.findByText(/Couldn't read the proposal queue/)).toBeTruthy()
-    expect(screen.getByRole('heading', { name: /Proposed routing changes/ })).toBeTruthy()
+    expect(await screen.findByText(/Couldn't read the proposal queue, so proposals may be waiting/)).toBeTruthy()
+    expect(screen.getByText("Couldn't read the routing proposals: queue unreadable")).toBeTruthy()
+    expect(screen.queryByText(/Nothing proposed|Nothing is pending/)).toBeNull()
+    const section = screen.getByRole('heading', { name: /Proposed routing changes/ }).closest('section')!
+    routingProposals.mockImplementation(() => Promise.resolve({ count: 1, proposals: [PROPOSAL] }))
+    await userEvent.click(within(section).getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText(/1 proposed change waiting on you/)).toBeTruthy()
   })
 
   it('the status region is mounted and empty before any decision', async () => {

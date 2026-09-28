@@ -2608,6 +2608,8 @@ export interface SkillMarketplace { name: string; type: string }
  *  row the search still returns. The fan-out used to withhold installed rows instead, which emptied
  *  the store for every query a stock install can make (#301). */
 export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number; installed?: boolean }
+/** A skill catalogue a search could not reach, with the gateway's words for why. */
+export interface SkillSourceUnreachable { source: string; reason: string }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
 /** `tier` is the PROVENANCE of the provider behind this tool — the same
  *  `supply_chain.TrustTier` string the install dialog discloses ("Unsigned — community
@@ -5642,6 +5644,32 @@ export interface SavedAgent {
   revision: string
 }
 
+/** What writing one exported file would do where it lands (`packs/external_formats.py`): nothing
+ *  is there yet, an earlier export of ours is there unchanged, one that differs is replaced, or a
+ *  file PersonalClaw did not write is in the way — which refuses the whole export. */
+export type AgentExportFileState = 'new' | 'same' | 'replace' | 'theirs'
+/** The dry run of `POST /api/agents/export`: what the export would do, with nothing written. */
+export interface AgentExportPlan {
+  ok: true
+  format: string
+  /** The folder Claude Code reads its agents from, resolved by the gateway — the one a confirm
+   *  must name. */
+  dest: string
+  files: Array<{ path: string; state: AgentExportFileState; entities: string[] }>
+  /** Files the credential check holds back. */
+  blocked: Array<{ path: string; categories: string[] }>
+  /** Why the write would not go ahead, in the gateway's words, or `null` when it would. */
+  refusal: string | null
+}
+/** The confirmed `POST /api/agents/export`: what it wrote, and the sentence to show for it. */
+export interface AgentExportResult {
+  ok: true
+  dest: string
+  written: string[]
+  unchanged: string[]
+  message: string
+}
+
 
 // ── Goal Loop — the unified autonomous goal engine.
 // Lifecycle status is `UnifiedLoopStatus` below — ONE union for one backend enum. A
@@ -6511,6 +6539,9 @@ export interface FingerprintMatchRec {
   evidence: string[]
 }
 
+/** A project the pack-suggestion scan could not read, and why (`GET /api/packs/proposals`). */
+export interface PackUnscannedRec { project_id: string; project: string; reason: string }
+
 // A propose-only pack card. `inspect` is the dry-run report — what the pack
 // WOULD install, computed with no writes. It is null when the scan was asked for without one
 // (project-create keeps its latency independent of pack count) or when the plan failed to
@@ -6896,7 +6927,9 @@ export const api = {
   // The propose-only fingerprint cards. This GET performs the ON-DEMAND scan ("Suggest
   // packs") — one of only two callers of the scanner (the other is project-create); §7
   // forbids a background loop, so nothing polls this on a timer.
-  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[] }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then((d) => d.proposals),
+  // `unscanned` names each project whose scan failed, and why: an empty `proposals` is only "no
+  // match" when nothing is in it.
+  packProposals: (projectId?: string) => get<{ proposals: PackProposalRec[]; unscanned: PackUnscannedRec[] }>(`/api/packs/proposals${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   // Remember a "no" per (project, pack) — forever. The proposal never reappears for that project.
   packRejectProposal: (projectId: string, pack: string) => post<{ ok: boolean }>('/api/packs/proposals/reject', { project_id: projectId, pack }),
   // The pack_owned update flow. DRY-RUN by default: the interesting output is the SKIP
@@ -7258,6 +7291,14 @@ export const api = {
     scanned: number
     message: string
   }>('/api/agents/sync', c ? { confirm: true } : undefined)),
+  /** Export your agents into Claude Code's agents folder. This half writes nothing: it answers the
+   *  plan, including the folder the gateway resolved and the sentence the write would refuse with. */
+  previewAgentExport: (agents: string[]) => post<AgentExportPlan>('/api/agents/export', { agents }),
+  /** The write, confirmed for `dest`, the folder the plan named. A different folder now, a file
+   *  PersonalClaw did not write in the way, or a credential in an agent's text each answer 409 and
+   *  write nothing. */
+  exportAgents: (agents: string[], dest: string) =>
+    post<AgentExportResult>('/api/agents/export', { agents, confirm: true, dest }),
 
   // ── Channels runtime (live connection health + connect/disconnect/test) ──
   channels: () => get<{ channels: ChannelRuntime[] }>('/api/channels').then((d) => d.channels),
@@ -8347,8 +8388,10 @@ export const api = {
   // `native` mirrors of what is already on this machine (bundled + your own skills). Zero of
   // those and zero MATCHES used to look identical, so a fresh install with no catalogue told
   // the user "No results — try a different search term".
+  // `unreachable` names each catalogue the search could not reach, and why: its skills are missing
+  // from `results`, so an empty list is "no match" only when nothing is in it.
   searchSkillsCounted: (q: string, marketplace?: string, limit = 30) =>
-    get<{ results: SkillSearchResult[]; counts?: Record<string, number>; installable_sources?: number }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {}, installableSources: d.installable_sources ?? 0 })),
+    get<{ results: SkillSearchResult[]; counts?: Record<string, number>; installable_sources?: number; unreachable: SkillSourceUnreachable[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {}, installableSources: d.installable_sources ?? 0, unreachable: d.unreachable })),
   searchSkills: (q: string, marketplace?: string, limit = 30) =>
     get<{ results: SkillSearchResult[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => d.results),
   skillMarketplaceDetail: (id: string, marketplace = 'skills.sh') =>

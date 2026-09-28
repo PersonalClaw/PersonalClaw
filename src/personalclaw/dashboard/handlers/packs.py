@@ -252,7 +252,12 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
     Each card carries its confidence, the arithmetic behind it, and the §3.1 inspect report of
     what the pack WOULD install. Already-installed packs and already-rejected (project, pack)
     pairs never appear, so this can be polled by a user without becoming nagware.
+
+    ``unscanned`` names each project whose scan failed, and why. One unscannable workspace must
+    not blank the others' cards, and it must not vanish either: without it a failed scan of every
+    project answered the same empty list as a scan that matched nothing.
     """
+    from personalclaw.onboarding_import.floors import screened_failure
     from personalclaw.packs.fingerprint import SCAN_REASON_ON_DEMAND, scan_project
     from personalclaw.tasks.hierarchy import HierarchyStore
 
@@ -261,12 +266,16 @@ async def api_pack_proposals(request: web.Request) -> web.Response:
     if wanted and not projects:
         return json_error("project_not_found", message=f"no project {wanted!r}", status=404)
     out: list[dict] = []
+    unscanned: list[dict] = []
     for project in projects:
         try:
             out.extend(p.to_dict() for p in scan_project(project, reason=SCAN_REASON_ON_DEMAND))
         except Exception as exc:  # noqa: BLE001 - one unscannable workspace must not blank the rest
             logger.warning("fingerprint scan failed for project %s: %s", project.id, exc)
-    return web.json_response({"proposals": out})
+            unscanned.append(
+                {"project_id": project.id, "project": project.name, "reason": screened_failure(exc)}
+            )
+    return web.json_response({"proposals": out, "unscanned": unscanned})
 
 
 async def api_pack_proposal_reject(request: web.Request) -> web.Response:

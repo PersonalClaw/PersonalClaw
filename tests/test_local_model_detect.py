@@ -8,9 +8,9 @@ Two halves:
   bounded in both host count and wall-clock, and fabricates nothing when the network
   is silent.
 * the route surface (`/api/onboarding/local-model[/scan|/bind]`): the scan is the
-  ONLY trigger that runs the sweep (nothing scans on a GET), a scan fault surfaces no
-  endpoints, and the bind refuses any endpoint that is not loopback / RFC-1918 before
-  it ever reaches the credential-free seed path.
+  ONLY trigger that runs the sweep (nothing scans on a GET), a scan fault is said as a
+  failure and surfaces no endpoints, and the bind refuses any endpoint that is not
+  loopback / RFC-1918 before it ever reaches the credential-free seed path.
 
 The credential-free config.json contract itself is pinned in
 `test_seed_local_model.py::test_no_credential_is_written_anywhere` — the bind route
@@ -20,6 +20,7 @@ re-deriving it here.
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -196,15 +197,35 @@ async def test_scan_is_the_only_scan_trigger(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scan_fault_surfaces_no_endpoints(monkeypatch):
+async def test_a_scan_that_fails_says_so_and_guesses_nothing(monkeypatch, isolated):
+    """A sweep that did not finish is not an empty network. `{"endpoints": []}` told the step "no
+    model server on your network" — the one thing a failed sweep cannot know — and its audit row
+    said `ok`. It still offers no partial guess, and the fault's own text stays in the log."""
+
     def boom(**_):
         raise RuntimeError("interface enumeration blew up")
 
     monkeypatch.setattr(lmd, "scan_local_network", boom)
     async with TestClient(TestServer(_app())) as c:
         resp = await c.post("/api/onboarding/local-model/scan")
-        assert resp.status == 200
-        assert await resp.json() == {"endpoints": []}  # fail closed, never a partial guess
+        body = await resp.json()
+    assert resp.status == 500
+    assert body == {
+        "error": {
+            "code": "local_model_scan_failed",
+            "message": (
+                "The network scan could not finish, so it cannot say whether a model server is "
+                "on your network. The gateway log says why."
+            ),
+        }
+    }
+    rows = [
+        json.loads(line)
+        for line in (isolated / "security_events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    (row,) = [r for r in rows if r.get("operation") == "onboarding.local_model.scan"]
+    assert row["outcome"] == "error"
 
 
 @pytest.mark.asyncio

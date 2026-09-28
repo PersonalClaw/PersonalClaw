@@ -573,14 +573,27 @@ async def api_mcp_importable(request: web.Request) -> web.Response:
     and its arguments, or its URL, each with every credential in it masked, and the names of the
     variables and headers it sets (``mcp_discovery.discover_importable_servers``). The import
     reads the whole definition server-side.
+
+    A look that FAILED is answered as a failure (``mcp_importable_failed``), never as
+    ``{"servers": []}``: an empty list is the answer "there is nothing to import", which a failed
+    read cannot give. The message is the exception's own words, screened the way the onboarding
+    scan of these same files screens them.
     """
     from personalclaw.mcp_discovery import discover_importable_servers
+    from personalclaw.onboarding_import.floors import screened_failure
 
     try:
         servers = await asyncio.to_thread(discover_importable_servers)
-    except Exception as exc:
-        logger.warning("discover_importable_servers failed: %s", exc)
-        servers = []
+    except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty list
+        logger.warning("looking for MCP servers to import failed", exc_info=True)
+        return json_error(
+            "mcp_importable_failed",
+            message=(
+                "Couldn't look through your other tools' MCP settings for servers to import: "
+                f"{screened_failure(exc)}"
+            ),
+            status=500,
+        )
     return web.json_response({"servers": servers})
 
 

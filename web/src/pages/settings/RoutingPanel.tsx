@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Trophy } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { api, type RoutingPolicyRow, type RoutingProposal, type TelemetryRow } from '../../lib/api'
+import { readableErrText } from '../../lib/errText'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
 import type { Rebase, Revisioned } from '../../lib/staleWrite'
@@ -258,14 +259,17 @@ function RouterConfigSection() {
  *  appeared only once there was something to accept would never teach it. */
 function RoutingProposalsSection() {
   const [props_, setProps] = useState<RoutingProposal[] | null | undefined>(undefined)
+  // Why the queue could not be read, in the gateway's words. `null` above is "not read", and the
+  // gateway answers an unreadable store as a failure rather than as an empty queue.
+  const [readErr, setReadErr] = useState('')
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
   const [said, setSaid] = useState('')
 
   const load = useCallback(() => {
     api.routingProposals()
-      .then((d) => setProps(d.proposals))
-      .catch(() => setProps(null))
+      .then((d) => { setProps(d.proposals); setReadErr('') })
+      .catch((e: unknown) => { setProps(null); setReadErr(readableErrText(e)) })
   }, [])
   useEffect(load, [load])
 
@@ -297,8 +301,12 @@ function RoutingProposalsSection() {
     <Section title="Proposed routing changes">
       {props_ === null ? (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var" role="status">
-          Couldn't read the proposal queue right now. Nothing is pending action — your routing
-          table is unchanged either way.
+          <p>
+            Couldn't read the proposal queue, so proposals may be waiting that are not shown here.
+            Your routing table is unchanged either way.
+          </p>
+          {readErr && <p data-type="caption" className="mt-xs text-on-surface-low">{readErr}</p>}
+          <Button size="xs" variant="ghost" className="mt-xs" onClick={load}>Try again</Button>
         </div>
       ) : props_ === undefined ? (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">Loading…</div>

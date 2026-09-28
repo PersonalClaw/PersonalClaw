@@ -87,14 +87,34 @@ async def api_local_model_scan(request: web.Request) -> web.Response:
 
     The only code path that runs the sweep. A first boot that never calls this route
     performs no outbound scan at all.
+
+    A sweep that FAILED answers ``local_model_scan_failed``, never ``{"endpoints": []}``: an empty
+    list says "no model server is on your network", which a sweep that did not finish cannot know.
+    It still offers no partial guess — the endpoints it may have seen are not reported — and the
+    audit row says it failed. Why it failed is the gateway log's. The sentence says nothing about
+    entering an address by hand: the onboarding step adds that itself, only where that route
+    exists.
     """
     from personalclaw.local_model_detect import scan_local_network
 
     try:
         found = await asyncio.to_thread(scan_local_network)
-    except Exception:  # noqa: BLE001 — a scan fault surfaces nothing, never a partial guess
+    except Exception:  # noqa: BLE001 — the failure is the answer, never a partial guess
         logger.warning("onboarding: local-model LAN scan failed", exc_info=True)
-        found = []
+        sel().log_api_access(
+            caller=_caller(request),
+            operation="onboarding.local_model.scan",
+            outcome="error",
+            resources="private subnet sweep did not finish",
+        )
+        return json_error(
+            "local_model_scan_failed",
+            message=(
+                "The network scan could not finish, so it cannot say whether a model server is "
+                "on your network. The gateway log says why."
+            ),
+            status=500,
+        )
     sel().log_api_access(
         caller=_caller(request),
         operation="onboarding.local_model.scan",

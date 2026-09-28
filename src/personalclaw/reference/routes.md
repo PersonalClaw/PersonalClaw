@@ -30,6 +30,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/agents/detail/{name}` — view, delete, or update agent config.
 - `GET /api/agents/detail/{name}` — view, delete, or update agent config.
 - `PATCH /api/agents/detail/{name}` — view, delete, or update agent config.
+- `POST /api/agents/export` — write your agents into Claude Code's agents folder, once confirmed.
 - `GET /api/agents/installed` — list installed agent provider names.
 - `POST /api/agents/routing/dismiss` — {agent} — bump the dismissal counter; the
 - `GET /api/agents/routing/status` — enabled flag + muted/dismissal state.

@@ -18,7 +18,13 @@ load-bearing, and every one of them fails CLOSED:
    someone else's prose and never lands on disk.
 4. **No clobber.** We only ever replace a file we wrote ourselves, identified by the
    :data:`PROVENANCE_MARKER` trailer. A user's own agent definition at the same path is
-   refused, never overwritten.
+   refused, never overwritten — and ONE such file refuses the whole export, naming every
+   file in the way at once.
+
+The preview and the write share one plan (:func:`_plan`): for every file, where it lands and
+what writing it would do there (:data:`FILE_NEW`, :data:`FILE_SAME`, :data:`FILE_REPLACE`,
+:data:`FILE_THEIRS`). So the list a user confirms is the list the write acts on, decided by the
+same rule, and read again from the disk at the moment of writing.
 
 The rendering contract is one-shot: **an export surface, not a sync system**. Drift
 after the write is the recipient tool's problem, which is exactly why the render must be
@@ -34,9 +40,13 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from personalclaw.agents.marketplace import AgentDefinition
+from personalclaw.atomic_write import atomic_write
+
+if TYPE_CHECKING:
+    from personalclaw.config.loader import AgentProfile
 
 # ── Rendering primitives ──────────────────────────────────────────────────────
 
@@ -71,10 +81,16 @@ Entity = Union[AgentDefinition, ExportSkill]
 
 @dataclass(frozen=True)
 class RenderedFile:
-    """One file a renderer produced: a POSIX-relative path under ``dest_dir`` plus text."""
+    """One file a renderer produced: a POSIX-relative path under ``dest_dir`` plus text.
+
+    ``entities`` names what was rendered into it — one agent or skill for a per-entity format,
+    every agent for a roster — so a caller can tie a file back to what the user picked without
+    re-deriving how a format names its files.
+    """
 
     relpath: str
     text: str
+    entities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -109,7 +125,24 @@ class ExportPathRefused(ExportRefused):
 
 
 class ExportClobberRefused(ExportRefused):
-    """The destination holds a file we did not write. We never overwrite one."""
+    """The destination holds files we did not write. We never overwrite one.
+
+    Every such file is named in the one refusal: an export that stopped at the first clash would
+    send the user back for each of the others in turn.
+    """
+
+    def __init__(self, targets: list[Path]):
+        self.targets = targets
+        if len(targets) == 1:
+            what, it, them = f"{targets[0]} (not written by PersonalClaw)", "it is", "it"
+        else:
+            listed = ", ".join(str(t) for t in targets)
+            what = f"{len(targets)} files PersonalClaw did not write: {listed}"
+            it, them = "they are", "them"
+        super().__init__(
+            f"Refusing to overwrite {what}. Nothing is exported while {it} there: leave {them} "
+            "out to export the rest."
+        )
 
 
 @dataclass(frozen=True)
@@ -121,22 +154,57 @@ class BlockedRender:
     categories: tuple[str, ...] = ()
 
 
+#: What each content-scan category is, in the words a refusal uses.
+_BLOCKED_WORDS = {
+    "credential": "what looks like a credential",
+    "exfil_url": "a link that could send data out",
+}
+
+
+def _blocked_phrase(blocked: BlockedRender) -> str:
+    words = [_BLOCKED_WORDS[c] for c in blocked.categories if c in _BLOCKED_WORDS]
+    if words:
+        return f"{blocked.relpath} holds {' and '.join(words)}"
+    return f"{blocked.relpath} could not be checked ({blocked.reason})"
+
+
 class ExportBlocked(ExportRefused):
     """§2.2 content layer found a credential in rendered output. Nothing was written."""
 
     def __init__(self, blocked: list[BlockedRender]):
         self.blocked = blocked
-        detail = "; ".join(f"{b.relpath}: {b.reason}" for b in blocked)
-        super().__init__(f"export blocked by content redaction: {detail}")
+        detail = "; ".join(_blocked_phrase(b) for b in blocked)
+        super().__init__(
+            f"Nothing is exported: {detail}. Remove it, or leave it out to export the rest."
+        )
+
+
+class ExportWriteFailed(Exception):
+    """A write failed part-way. Not an :class:`ExportRefused`: this export DID start, so what it
+    already wrote is named rather than left for the user to discover."""
+
+    def __init__(self, target: Path, written: list[Path], cause: OSError):
+        self.target = target
+        self.written = list(written)
+        reason = cause.strerror or type(cause).__name__
+        if self.written:
+            done = ", ".join(str(p) for p in self.written)
+            count = "1 file was" if len(self.written) == 1 else f"{len(self.written)} files were"
+            tail = f" {count} written before it stopped: {done}."
+        else:
+            tail = " Nothing was written."
+        super().__init__(f"Could not write {target}: {reason}.{tail}")
 
 
 @dataclass
 class ExportResult:
-    """What an export actually did — the absolute paths written, in render order."""
+    """What an export actually did — the absolute paths written, in render order, and the files
+    already there byte-identical, which were left as they were."""
 
     format_name: str
     dest_dir: Path
     written: list[Path] = field(default_factory=list)
+    unchanged: list[Path] = field(default_factory=list)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -207,6 +275,23 @@ def _document(front: list[str], body: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def agent_from_profile(name: str, profile: AgentProfile) -> AgentDefinition:
+    """One of the user's agents (a profile in their config) in the shape the renderers take.
+
+    Only what a renderer writes travels: the name, the description, the instructions, the voice
+    and the skill names. The model, tools, triggers and approval mode stay with PersonalClaw —
+    each names something only this installation can resolve (see
+    :func:`render_claude_code_agents`).
+    """
+    return AgentDefinition(
+        name=name,
+        description=profile.description,
+        system_prompt=profile.system_prompt,
+        voice=profile.voice,
+        skills=[s for s in profile.skills if isinstance(s, str)],
+    )
+
+
 def _agents_only(entities: Sequence[Entity], fmt_name: str) -> list[AgentDefinition]:
     bad = [e for e in entities if not isinstance(e, AgentDefinition)]
     if bad:
@@ -225,22 +310,22 @@ def _agents_only(entities: Sequence[Entity], fmt_name: str) -> list[AgentDefinit
 def render_claude_code_agents(entities: Sequence[Entity]) -> list[RenderedFile]:
     """One markdown file per agent, in the external per-agent agent-definition shape.
 
-    Frontmatter carries ``name`` and ``description`` (the two keys the format requires to
-    load) plus ``model`` when the agent pins one. It deliberately does NOT emit a ``tools:``
-    key: an AgentDefinition has no tool-allowlist field, so any value we wrote there would
-    be invented — and an invented allowlist would silently narrow the exported agent's
-    abilities. Omitting the key is the format's documented "inherit the caller's tools"
-    default. Declared skills go in the body instead, where an unknown key cannot break the
-    recipient's frontmatter parse.
+    Frontmatter carries ``name`` and ``description``, the two keys the format requires to load,
+    and nothing else. It deliberately does NOT emit a ``tools:`` key: PersonalClaw's tool names
+    are not the recipient's, so any value we wrote there would be invented — and an invented
+    allowlist would silently narrow the exported agent's abilities. Omitting the key is the
+    format's documented "inherit the caller's tools" default. Nor a ``model:`` key: an agent's
+    model names one of THIS installation's models, which the recipient resolves against its own
+    model names, so writing ours would pin the exported agent to a model it cannot find. Omitted,
+    the recipient runs it on its own default. Declared skills go in the body instead, where an
+    unknown key cannot break the recipient's frontmatter parse.
     """
     out: list[RenderedFile] = []
     for defn in _agents_only(entities, "claude-code-agents"):
         slug = _slug(defn.name)
         front = [f"name: {_yaml_scalar(defn.name)}"]
         front.append(f"description: {_yaml_scalar(defn.description or defn.name)}")
-        if defn.model.strip():
-            front.append(f"model: {_yaml_scalar(defn.model)}")
-        out.append(RenderedFile(f"{slug}.md", _document(front, _body(defn))))
+        out.append(RenderedFile(f"{slug}.md", _document(front, _body(defn)), (defn.name,)))
     return out
 
 
@@ -266,7 +351,8 @@ def render_cursor_rules(entities: Sequence[Entity]) -> list[RenderedFile]:
             block += [body, ""]
         sections.append("\n".join(block).rstrip())
     body = "\n\n".join(sections)
-    return [RenderedFile("personalclaw-roster.mdc", _document(front, body))]
+    names = tuple(defn.name for defn in agents)
+    return [RenderedFile("personalclaw-roster.mdc", _document(front, body), names)]
 
 
 def render_skill_md(entities: Sequence[Entity]) -> list[RenderedFile]:
@@ -285,14 +371,15 @@ def render_skill_md(entities: Sequence[Entity]) -> list[RenderedFile]:
             text = entity.text if entity.text.endswith("\n") else entity.text + "\n"
             if PROVENANCE_MARKER not in text:
                 text = f"{text}\n{PROVENANCE_MARKER}\n"
-            out.append(RenderedFile(f"skills/{slug}/SKILL.md", text))
+            out.append(RenderedFile(f"skills/{slug}/SKILL.md", text, (entity.slug,)))
         elif isinstance(entity, AgentDefinition):
             slug = _slug(entity.name)
             front = [
                 f"name: {_yaml_scalar(entity.name)}",
                 f"description: {_yaml_scalar(entity.description or entity.name)}",
             ]
-            out.append(RenderedFile(f"skills/{slug}/SKILL.md", _document(front, _body(entity))))
+            text = _document(front, _body(entity))
+            out.append(RenderedFile(f"skills/{slug}/SKILL.md", text, (entity.name,)))
         else:
             raise ExportRefused(f"format 'skill-md': unsupported entity {type(entity).__name__}")
     return out
@@ -392,12 +479,78 @@ def _resolve_target(dest_dir: Path, relpath: str) -> Path:
     return target
 
 
-def _is_ours(path: Path) -> bool:
-    """True when an existing file carries our provenance trailer (so replacing it is safe)."""
+#: What writing one rendered file would do where it lands. Plain strings like the install kinds
+#: above, and every one is produced by :func:`_file_state`.
+FILE_NEW = "new"  # nothing is there yet
+FILE_SAME = "same"  # an earlier export of ours, byte-identical: left as it is
+FILE_REPLACE = "replace"  # an earlier export of ours that differs: replaced
+FILE_THEIRS = "theirs"  # a file PersonalClaw did not write: the whole export is refused
+
+
+def _file_state(target: Path, text: str) -> str:
+    """What writing ``text`` to ``target`` would do there — the one rule the preview and the write
+    share.
+
+    A file is ours when it carries :data:`PROVENANCE_MARKER`. One that cannot be read cannot be
+    shown to be ours, so it is refused like any other file PersonalClaw did not write (fail
+    closed): a directory, an unreadable file, and a user's own agent all land on
+    :data:`FILE_THEIRS`.
+    """
+    if not target.exists() and not target.is_symlink():
+        return FILE_NEW
     try:
-        return PROVENANCE_MARKER in path.read_text(encoding="utf-8", errors="replace")
+        existing = target.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return False
+        return FILE_THEIRS
+    if PROVENANCE_MARKER not in existing:
+        return FILE_THEIRS
+    return FILE_SAME if existing == text else FILE_REPLACE
+
+
+@dataclass(frozen=True)
+class _PlannedFile:
+    relpath: str
+    target: Path
+    text: str
+    state: str
+    entities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ExportPlan:
+    """Everything an export decides before it writes a byte."""
+
+    format_name: str
+    dest_dir: Path
+    files: list[_PlannedFile]
+    blocked: list[BlockedRender]
+
+    def refusal(self) -> ExportRefused | None:
+        """Why this plan may not be written, or ``None``. A credential first — it must never land
+        anywhere — then every file in the way at once."""
+        if self.blocked:
+            return ExportBlocked(self.blocked)
+        theirs = [f.target for f in self.files if f.state == FILE_THEIRS]
+        return ExportClobberRefused(theirs) if theirs else None
+
+
+def _plan(fmt: ExternalFormat, entities: Sequence[Entity], dest_dir: Path | str) -> _ExportPlan:
+    """Render, contain every path, read what is at each target, scan every text. Writes nothing.
+
+    The order is the rails': a rendered path is contained before anything at it is read, and the
+    content scan runs over every file before any refusal is decided.
+    """
+    root = Path(dest_dir).expanduser()
+    if root.exists() and not root.is_dir():
+        raise ExportPathRefused(f"The destination is not a folder: {root}")
+    rendered = fmt.render(entities)
+    files: list[_PlannedFile] = []
+    for rf in rendered:
+        target = _resolve_target(root, rf.relpath)
+        files.append(
+            _PlannedFile(rf.relpath, target, rf.text, _file_state(target, rf.text), rf.entities)
+        )
+    return _ExportPlan(fmt.name, root, files, scan_rendered(rendered))
 
 
 def scan_rendered(files: Sequence[RenderedFile]) -> list[BlockedRender]:
@@ -423,67 +576,66 @@ def export_entities(
     dest_dir: Path | str,
     *,
     confirm_dest: bool = False,
-    overwrite: bool = False,
 ) -> ExportResult:
     """Render ``entities`` through ``fmt`` and write them under ``dest_dir``.
 
     The order is deliberate and all-or-nothing: render → containment-check every path →
-    scan every rendered text → check every clobber → only then write. A blocked credential
-    or one foreign file aborts the whole export, so a partial write can never leave the
-    recipient tool holding half a roster.
+    read what is at every target → scan every rendered text → refuse → only then write. A
+    blocked credential or one foreign file aborts the whole export, so a refusal can never
+    leave the recipient tool holding half a roster.
 
     ``confirm_dest`` must be ``True``: we are writing into a directory another tool owns,
-    and §5 forbids auto-installing there. ``overwrite=False`` refuses any pre-existing
-    target; ``overwrite=True`` replaces only files bearing :data:`PROVENANCE_MARKER` — a
-    file we did not write is refused either way.
+    and §5 forbids auto-installing there. An earlier export of ours (it carries
+    :data:`PROVENANCE_MARKER`) is replaced when it differs and left alone when it does not;
+    a file we did not write is always refused. The plan is made again here rather than taken
+    from a preview, so what is on the disk NOW decides.
+
+    Each file is written atomically (temp file + rename), so the recipient never reads half of
+    one. A write that fails part-way raises :class:`ExportWriteFailed` naming what was written.
     """
     if not confirm_dest:
         raise DestNotConfirmed(
             f"export to {dest_dir} requires explicit destination confirmation "
             "(confirm_dest=True) — an external tool's directory is never written implicitly"
         )
-    root = Path(dest_dir).expanduser()
-    if root.exists() and not root.is_dir():
-        raise ExportPathRefused(f"destination is not a directory: {root}")
-
-    files = fmt.render(entities)
-    targets = [(_resolve_target(root, rf.relpath), rf) for rf in files]
-
-    blocked = scan_rendered(files)
-    if blocked:
-        raise ExportBlocked(blocked)
-
-    for target, rf in targets:
-        if target.exists() and not (overwrite and _is_ours(target)):
-            hint = "not written by personalclaw" if not _is_ours(target) else "pass overwrite=True"
-            raise ExportClobberRefused(f"refusing to overwrite {target} ({hint})")
-
-    # Only now, with every check passed: the destination is another tool's folder, and a
-    # refused export must not leave one there it created.
-    root.mkdir(parents=True, exist_ok=True)
-    result = ExportResult(fmt.name, root)
-    for target, rf in targets:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rf.text, encoding="utf-8")
-        result.written.append(target)
+    plan = _plan(fmt, entities, dest_dir)
+    refusal = plan.refusal()
+    if refusal is not None:
+        raise refusal
+    # Only now, with every check passed, does anything reach the disk: the destination is another
+    # tool's folder, and a refused export must not leave one there it created. `atomic_write`
+    # makes the parent folder with the first file.
+    result = ExportResult(plan.format_name, plan.dest_dir)
+    for planned in plan.files:
+        if planned.state == FILE_SAME:
+            result.unchanged.append(planned.target)
+            continue
+        try:
+            atomic_write(planned.target, planned.text)
+        except OSError as exc:
+            raise ExportWriteFailed(planned.target, result.written, exc) from exc
+        result.written.append(planned.target)
     return result
 
 
-def export_preview(fmt: ExternalFormat, entities: Sequence[Entity]) -> dict[str, Any]:
-    """Look before you write: what an export WOULD produce, without touching the disk.
+def export_preview(
+    fmt: ExternalFormat, entities: Sequence[Entity], dest_dir: Path | str
+) -> dict[str, Any]:
+    """Look before you write: what an export to ``dest_dir`` WOULD do, without writing.
 
-    Same rails as the write path minus the write, so a UI can show the file list and any
-    §2.2 block before asking the user to confirm a destination.
+    The same plan the write makes (:func:`_plan`), so a UI can show where each file lands, what
+    writing it would do there, any file the content scan holds back, and ``refusal`` — the
+    sentence the write would refuse with, or ``None`` — before asking the user to confirm the
+    destination.
     """
-    files = fmt.render(entities)
-    blocked = scan_rendered(files)
+    plan = _plan(fmt, entities, dest_dir)
+    refusal = plan.refusal()
     return {
-        "format": fmt.name,
-        "installKind": fmt.installKind,
-        "dest": fmt.dest,
-        "files": [{"path": rf.relpath, "bytes": len(rf.text.encode("utf-8"))} for rf in files],
-        "blocked": [
-            {"path": b.relpath, "reason": b.reason, "categories": list(b.categories)}
-            for b in blocked
+        "format": plan.format_name,
+        "dest": str(plan.dest_dir),
+        "files": [
+            {"path": f.relpath, "state": f.state, "entities": list(f.entities)} for f in plan.files
         ],
+        "blocked": [{"path": b.relpath, "categories": list(b.categories)} for b in plan.blocked],
+        "refusal": str(refusal) if refusal is not None else None,
     }

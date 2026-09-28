@@ -120,13 +120,29 @@ def test_filters_narrow_the_queue(store):
     assert body["total"] == 1 and body["rows"][0]["kind"] == "skill"
 
 
-def test_a_corrupt_row_does_not_empty_the_queue(store, monkeypatch):
+def test_a_corrupt_row_does_not_empty_the_queue(store, tmp_path):
     """Proposals are per-file; one unreadable file hiding the rest is how a backlog disappears."""
+    _filed(store, "a", kind="skill")
+    _filed(store, "b", kind="retirement")
+    (tmp_path / "c.json").write_text("{not json", encoding="utf-8")
+    body = _body(_run(L.api_learning_proposals(_req("GET", "/api/learning/proposals", user="me"))))
+    assert body["total"] == 2
+
+
+def test_a_listing_that_fails_is_said_never_an_empty_queue(store, monkeypatch):
+    """What a corrupt row cannot do, the listing itself failing can — and answering it with an
+    empty queue said "nothing to review" over a backlog nobody could see."""
     monkeypatch.setattr(
         store, "list_pending", lambda *a, **k: (_ for _ in ()).throw(OSError("boom"))
     )
-    body = _body(_run(L.api_learning_proposals(_req("GET", "/api/learning/proposals", user="me"))))
-    assert body["total"] == 0  # empty, not a 500
+    resp = _run(L.api_learning_proposals(_req("GET", "/api/learning/proposals", user="me")))
+    assert resp.status == 500
+    assert _body(resp) == {
+        "error": {
+            "code": "learning_proposals_unreadable",
+            "message": "Couldn't read the learning proposals: boom",
+        }
+    }
 
 
 def test_one_proposal_returns_its_full_record(store):

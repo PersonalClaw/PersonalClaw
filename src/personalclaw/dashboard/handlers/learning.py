@@ -205,11 +205,18 @@ async def api_learning_proposals(request: web.Request) -> web.Response:
 
     try:
         pending = store.list_pending()
-    except Exception:
-        # A corrupt row must not empty the queue: proposals are per-file, and one unreadable file
-        # hiding the rest is how a backlog silently disappears.
+    except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty queue
+        # A corrupt ROW never gets here: proposals are per-file, and the store skips one it cannot
+        # read. What does is the listing itself failing, and answering that with an empty queue
+        # would say "nothing to review" over a backlog nobody can see — so it is said instead.
+        from personalclaw.onboarding_import.floors import screened_failure
+
         logger.warning("proposal listing failed", exc_info=True)
-        pending = []
+        return json_error(
+            "learning_proposals_unreadable",
+            message=f"Couldn't read the learning proposals: {screened_failure(exc)}",
+            status=500,
+        )
 
     tiers = {str(getattr(p, "id", "")): _tier_for(p) for p in pending}
     view = build_view(

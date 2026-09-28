@@ -52,6 +52,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Validation warns about words on a gate that its kind never shows anyone.**
 
+- **Agents → Export to Claude Code writes your agents into Claude Code's agents folder, after you confirm it, and never over a file PersonalClaw did not write.**
+
 ### Changed
 
 - **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
@@ -386,6 +388,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A stopped run's panel offers Retry or the workflow's editor, and no longer says it needs a decision.**
 
 - **What a run recorded shows under the schedule panel's Run button at full strength.**
+
+- **A lookup that fails says so instead of showing an empty list: the Tools page's MCP servers and import list, the network scan for a local model, the routing, learning and pack suggestions, and the skill search.**
 
 ### Security
 

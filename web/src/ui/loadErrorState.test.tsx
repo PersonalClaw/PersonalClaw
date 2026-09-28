@@ -902,7 +902,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // — and the same open design question, which is why the two move together or not at all.
   'pages/settings/ProviderConfigForm.tsx': 1,
   'pages/settings/ProvidersPanel.tsx': 3,
-  'pages/settings/RoutingPanel.tsx': 3,
+  // 3 → 2. The proposal-queue read left. Its `null` did say "Couldn't read", but beside "Nothing is
+  // pending action", a claim about a queue it had not read; it keeps the gateway's reason now and
+  // offers a retry (`routingProposalsSurface.test.tsx`).
+  'pages/settings/RoutingPanel.tsx': 2,
   // 3 → 2. The providers read is fixed: a 500 on /api/search/providers told a user with three
   // registered providers "No search providers configured" and pointed them at the Store to install
   // their first one. The two left are the active BINDINGS and the `/api/tools` probe, and both now
@@ -957,7 +960,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // 5 → 6: the read of whose read-only labels the owner trusts substitutes `null`, as the elicitation
   // grant's read beside it does, and `null` is a state its row shows: the switch is disabled and says
   // the list could not be read (`mcpReadOnlyTrust.test.tsx`), because which way to flip it is unknown.
-  'pages/tools/ToolsPage.tsx': 6,
+  // 6 → 4: the MCP server list and the import list left. Both substituted `[]`, so a failed read drew
+  // no servers and "nothing to import"; both keep the failure now and the page says which read
+  // failed (`failedMcpReadsAreSaid.test.tsx`).
+  'pages/tools/ToolsPage.tsx': 4,
   'pages/triggers/TriggersListPage.tsx': 1,
   // TWO swallows fixed here, and the second is the reason a line citation is a poor spec: the ledger
   // read (`:150`, the line #532 and #2940 both name) said "No runs recorded yet", and the VERSION read

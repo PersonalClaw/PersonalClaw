@@ -169,6 +169,7 @@ async def test_the_installed_mirror_is_still_not_fanned_out_to(catalogue):
     """The one exclusion that is CORRECT stays. `installed` mirrors the user's own skills
     dir, so fanning out to it would list every skill twice — a different fact from the drop
     filter this change removed, and this asserts the two were not conflated."""
-    results, counts = search_marketplaces_counted("widgets", limit=20)
+    results, counts, unreachable = search_marketplaces_counted("widgets", limit=20)
     assert set(counts) == {"native"}
     assert len(results) == len(BUNDLED)
+    assert unreachable == []
