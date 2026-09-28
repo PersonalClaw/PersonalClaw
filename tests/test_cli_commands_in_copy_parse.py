@@ -139,7 +139,9 @@ def _argv(command: str) -> list[str]:
 
 
 _PARSER = build_parser()
-_INVALID_SAMPLE = re.compile(r"invalid choice: '(sample\d+)' \(choose from '([^']+)'")
+#: argparse names the choices quoted on Python 3.13 (``choose from 'both', 'knowledge'``) and bare
+#: on 3.12 (``choose from both, knowledge``); both name the first one first.
+_INVALID_SAMPLE = re.compile(r"invalid choice: '(sample\d+)' \(choose from '?([^',)]+)")
 
 
 def _parse_error(argv: list[str]) -> str:
@@ -190,6 +192,21 @@ def test_the_parser_refuses_what_this_rail_exists_to_catch():
         _argv("personalclaw restore --replace")
     )
     assert _parse_error(_argv("personalclaw restore <archive> --mode replace")) == ""
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "x: error: argument --store: invalid choice: 'sample1' (choose from 'both', 'memory')",
+        "x: error: argument --store: invalid choice: 'sample1' (choose from both, memory)",
+    ],
+    ids=["quoted", "bare"],
+)
+def test_a_sample_in_a_choices_slot_is_retried_with_the_first_choice(said):
+    """A ``{store}`` hole the copy fills at run time is retried with a value the parser takes,
+    whichever way this Python's argparse prints the choices."""
+    match = _INVALID_SAMPLE.search(said)
+    assert match is not None and match.groups() == ("sample1", "both"), said
 
 
 @pytest.mark.parametrize(("site", "command"), _COMMANDS, ids=[site for site, _ in _COMMANDS])

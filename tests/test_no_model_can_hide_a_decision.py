@@ -27,11 +27,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fakes import wait_for_verdicts
 from test_dashboard_approval import (  # the file's own run_chat harness
     _complete_event,
     _context_builder,
@@ -132,7 +132,7 @@ def store(tmp_path):
 # ── the positive control: the stub and the opt-in really do filter ─────────────────────────────
 
 
-def test_the_refuting_model_still_filters_a_proposal(store, refuting_model):
+def test_the_refuting_model_still_filters_a_proposal(store, refuting_model, monkeypatch):
     """Without this, every assertion below could pass because the opt-in was never read.
 
     A proposal is a claim, so INU-6 keeps checking it: the same stored opt-in and the same
@@ -140,14 +140,11 @@ def test_the_refuting_model_still_filters_a_proposal(store, refuting_model):
     """
     _verify_on("skills/proposal")
     state = MagicMock()
+    settled = wait_for_verdicts(monkeypatch)  # the verdict is fetched on a worker
     item_id = emit_attention_item(
         state, source="skills", kind="proposal", title="Add a skill", store=store
     )
-    # The verdict is fetched on a worker and lands a moment later.
-    for _ in range(1000):
-        if store.items[item_id].refs.get("verify") != "checking":
-            break
-        time.sleep(0.005)
+    settled(store, item_id)
     assert store.items[item_id].status == "filtered"
     assert len(refuting_model) == 1
     state.notify.assert_not_called()

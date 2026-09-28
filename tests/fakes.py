@@ -12,12 +12,16 @@ aggregator, which is where the filters, the sort and the paging it means to chec
 And to the EVENT BUS: a test that wants an event to fire a trigger drives it through the gateway's
 real router with ``with_event_router`` rather than calling a matcher or a dispatch by hand, so the
 event takes the production path — match, the gate walk, the one store dispatch.
+
+And to the SECOND OPINION on an attention row: a test raised with no event loop waits for the
+verdict's whole hand-over with ``wait_for_verdicts``, not for the verdict word to appear.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -292,3 +296,37 @@ def fire_memory_event_trigger(
     row = asyncio.run(_fire())
     status = str(row.get("status") or "")
     return EventFire(ran=status == "success", status=status, reason=str(row.get("error") or ""))
+
+
+def wait_for_verdicts(monkeypatch) -> Callable[[Any, str], Any]:
+    """A wait for the second opinion on an attention row to be handed over, whole.
+
+    With no event loop the verify worker runs ``inbox.apply_verdict`` itself: it writes the
+    verdict on the row, then saves the row and files it or fires its notification. A wait that
+    returned the moment the verdict appeared read the row, its status and the notification count
+    before the rest had run. So this one waits for ``apply_verdict`` to return, and gives back
+    ``wait(store, item_id)``, which returns the row.
+    """
+    from personalclaw import inbox
+
+    handed_over: set[str] = set()
+    done = threading.Condition()
+    real = inbox.apply_verdict
+
+    def apply_verdict(state: Any, store: Any, item: Any, verdict: str) -> None:
+        try:
+            real(state, store, item, verdict)
+        finally:
+            with done:
+                handed_over.add(item.id)
+                done.notify_all()
+
+    monkeypatch.setattr(inbox, "apply_verdict", apply_verdict)
+
+    def wait(store: Any, item_id: str) -> Any:
+        with done:
+            if not done.wait_for(lambda: item_id in handed_over, timeout=5.0):
+                raise AssertionError("the verdict never reached the row")
+        return store.items[item_id]
+
+    return wait

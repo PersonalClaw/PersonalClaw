@@ -21,11 +21,11 @@ suppressed — not zero (a silent drop) and not twice (a double-interrupt on a r
 
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fakes import wait_for_verdicts
 
 from personalclaw import notification_rules
 from personalclaw.inbox import (
@@ -184,7 +184,7 @@ def _opt_in(monkeypatch, verify=True):
 
 def _verdict(monkeypatch, verdict):
     """The second opinion answers *verdict*. It is fetched on a worker, so each emit below is
-    followed by :func:`_verified`, which waits for the verdict to land on the row."""
+    followed by the :func:`verified` wait."""
 
     async def _answer(title, body=""):
         return verdict
@@ -192,45 +192,45 @@ def _verdict(monkeypatch, verdict):
     monkeypatch.setattr("personalclaw.notification_verify.verify_attention_item", _answer)
 
 
-def _verified(store, item_id):
-    for _ in range(1000):
-        if store.items[item_id].refs.get("verify") != "checking":
-            return store.items[item_id]
-        time.sleep(0.005)
-    raise AssertionError("the verdict never reached the row")
+@pytest.fixture()
+def verified(monkeypatch):
+    """``verified(store, item_id)`` returns the row once its verdict is handed over, whole."""
+    return wait_for_verdicts(monkeypatch)
 
 
-def test_a_refuted_verifiable_item_is_filtered_and_not_notified(store, state, monkeypatch):
+def test_a_refuted_verifiable_item_is_filtered_and_not_notified(
+    store, state, monkeypatch, verified
+):
     _opt_in(monkeypatch)
     _verdict(monkeypatch, REFUTED)
     item_id = emit_attention_item(
         state, source="skills", kind="proposal", title="Add a bogus skill", store=store
     )
-    item = _verified(store, item_id)
+    item = verified(store, item_id)
     assert item.status == ItemStatus.FILTERED.value, "a refuted claim is withheld"
     assert item.refs["verify"] == REFUTED
     assert item.refs["verify_withheld"]["title"] == "Add a bogus skill"
     assert state.notify.call_count == 0, "the withheld notification must NOT fire"
 
 
-def test_a_confirmed_verifiable_item_is_delivered(store, state, monkeypatch):
+def test_a_confirmed_verifiable_item_is_delivered(store, state, monkeypatch, verified):
     _opt_in(monkeypatch)
     _verdict(monkeypatch, CONFIRMED)
     item_id = emit_attention_item(
         state, source="skills", kind="proposal", title="A real proposal", store=store
     )
-    assert _verified(store, item_id).status == ItemStatus.PENDING.value
+    assert verified(store, item_id).status == ItemStatus.PENDING.value
     assert store.items[item_id].refs["verify"] == CONFIRMED
     assert state.notify.call_count == 1, "a confirmed claim is delivered normally"
 
 
-def test_a_skipped_verdict_delivers_carrying_the_marker(store, state, monkeypatch):
+def test_a_skipped_verdict_delivers_carrying_the_marker(store, state, monkeypatch, verified):
     _opt_in(monkeypatch)
     _verdict(monkeypatch, SKIPPED)
     item_id = emit_attention_item(
         state, source="skills", kind="proposal", title="Unchecked", store=store
     )
-    assert _verified(store, item_id).status == ItemStatus.PENDING.value
+    assert verified(store, item_id).status == ItemStatus.PENDING.value
     assert store.items[item_id].refs["verify"] == SKIPPED
     assert state.notify.call_count == 1
 
@@ -348,7 +348,7 @@ async def test_restore_missing_item_is_404(store, monkeypatch):
 # ── V6: true + planted-false + unbound model in one flow ─────────────────
 
 
-def test_v6_true_delivers_false_filters_unbound_delivers(store, state, monkeypatch):
+def test_v6_true_delivers_false_filters_unbound_delivers(store, state, monkeypatch, verified):
     """The plan's V6 acceptance: a true proposal is kept, a planted-false one is FILTERED,
     and with no model bound everything degrades to delivered (skipped)."""
     _opt_in(monkeypatch)
@@ -357,17 +357,17 @@ def test_v6_true_delivers_false_filters_unbound_delivers(store, state, monkeypat
     true_id = emit_attention_item(
         state, source="skills", kind="proposal", title="true", store=store
     )
-    _verified(store, true_id)
+    verified(store, true_id)
     _verdict(monkeypatch, REFUTED)
     false_id = emit_attention_item(
         state, source="skills", kind="proposal", title="planted false", store=store
     )
-    _verified(store, false_id)
+    verified(store, false_id)
     _verdict(monkeypatch, SKIPPED)  # unbound model → skipped (fail-open)
     unbound_id = emit_attention_item(
         state, source="skills", kind="proposal", title="unbound", store=store
     )
-    _verified(store, unbound_id)
+    verified(store, unbound_id)
 
     assert store.items[true_id].status == ItemStatus.PENDING.value
     assert store.items[false_id].status == ItemStatus.FILTERED.value

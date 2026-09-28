@@ -29,6 +29,7 @@ import textwrap
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -39,6 +40,21 @@ from personalclaw.dashboard.handlers import model_downloads as H
 from personalclaw.local_models import residency, sidecar
 from personalclaw.local_models.provider import LocalModel, LocalModelProvider
 from personalclaw.local_models.sidecar import SidecarCrashed, SidecarRunner, SidecarWorkerError
+
+
+@pytest.fixture(autouse=True)
+def _no_availability_probe(monkeypatch):
+    """A finished install asks the availability board to measure the app again, and the real
+    board does that by starting a probe process on the test's loop, just as the job reads
+    ``done`` and the test ends. The loop's teardown then cancels that start, and on Python 3.12 a
+    cancel that lands while the process's pipes connect is never woken, so the teardown hangs
+    until the test times out. Nothing here is about what the probe answers."""
+    from personalclaw.providers import availability
+
+    monkeypatch.setattr(
+        availability, "get_availability_board", lambda: SimpleNamespace(recheck=lambda _app: None)
+    )
+
 
 # ── the fixture worker: real app-side code, loaded by path into the child ──
 

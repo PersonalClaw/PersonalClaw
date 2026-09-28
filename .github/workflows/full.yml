@@ -110,10 +110,14 @@ jobs:
     #
     # Each cap must clear the job's OWN measured runtime, and the two jobs are not comparable:
     # `matrix-shard` runs a quarter of the suite per leg, while `coverage` runs all of it in one
-    # process under `--cov` with no xdist split, so coverage is the long pole. MEASURED 2026-09-22
-    # (#3326): coverage's only green run took 47.5 min, and it was separately observed wedged past
-    # 55 min on run 35689470217 — so 40 was below its floor and killed every push to main. Its cap
-    # is 70 (~47% headroom over 47.5); this shard cap stays at 45 for the smaller job.
+    # job under `--cov` (the four xdist workers of `-n auto`, no `--splits`), so coverage is the
+    # long pole. MEASURED 2026-09-22 (#3326): coverage's only green run took 47.5 min, and it was
+    # separately observed wedged past 55 min on run 35689470217 — so 40 was below its floor and
+    # killed every push to main. MEASURED 2026-09-28: the suite's runtime grew by about half in
+    # five days (each platform's four shards together took 41-68% longer than on 2026-09-23), and
+    # run 36427251927's coverage was cancelled at its 70-min cap with 80% of the suite done: about
+    # 90 min for the whole job, against 63.6 min on 2026-09-23. Its cap is 130 (~45% headroom over
+    # 90); this shard cap stays at 45 for the smaller job, whose slowest leg took 25 min.
     timeout-minutes: 45
     # No PERSONALCLAW_HOME — the suite runs under the no-global-home contract; a global
     # value defeats the Path.home()/default-.personalclaw tests (see ci.yml test job).
@@ -288,8 +292,8 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    # Above the job's own 47.5-min measured green runtime — see the cap rationale on matrix-shard.
-    timeout-minutes: 70
+    # Above the job's own ~90-min measured runtime — see the cap rationale on matrix-shard.
+    timeout-minutes: 130
     # No PERSONALCLAW_HOME — see the matrix job / ci.yml test job.
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"

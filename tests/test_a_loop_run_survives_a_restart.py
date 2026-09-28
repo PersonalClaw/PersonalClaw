@@ -128,6 +128,12 @@ def _new_run() -> tuple[WorkflowRun, dict[str, Any]]:
     return run, spec
 
 
+def _recorded(run_id: str, agent_id: str) -> bool:
+    """True once the run's stored state names *agent_id* on an instance. The manager hears of a
+    spawn first: the controller records it when the dispatch returns, a moment later."""
+    return any(i.subagent_id == agent_id for i in store.read_state(run_id).values())
+
+
 def _running_work_paths(run_id: str) -> list[str]:
     return sorted(
         p
@@ -161,7 +167,7 @@ def test_a_run_restarted_mid_second_iteration_carries_on() -> None:
             store.get(run.id), store.read_spec(run.id), services=EngineServices(subagents=second)
         )
         await b.start()
-        await _until(lambda: len(second.spawned) >= 1)
+        await _until(lambda: bool(second.spawned) and _recorded(run.id, second.spawned[0][0]))
         # The re-dispatched step is iteration 1's WORK — not iteration 0 again, and not a judge.
         state = store.read_state(run.id)
         assert state["root.body@1.children[0]"].subagent_id == second.spawned[0][0], state

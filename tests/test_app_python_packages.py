@@ -20,8 +20,13 @@ These tests hold the replacement's contract through the real lifecycle entry poi
 * the boot repair reinstalls what a new interpreter (a new image) finds missing.
 
 The fake pip replaces ``subprocess.run`` on the ``subprocess`` MODULE, so it intercepts the pip
-call wherever the installer makes it. The ``TestRealPip`` cases run the real pip, offline, against
-wheels built in the test, because a fake cannot witness what pip actually does with a prefix.
+call wherever the installer makes it, in every form the installer runs pip: ``python -m pip``, or
+pip straight from the interpreter's bundled wheel when the environment has no pip module (a
+uv-synced environment has none). The fixture also decides which form that is instead of reading
+it from the environment running the suite, so the argv the tests read is the same on every host
+and no install ever reaches a real package index. The ``TestRealPip`` cases run the real pip,
+offline, against wheels built in the test, because a fake cannot witness what pip actually does
+with a prefix.
 """
 
 from __future__ import annotations
@@ -144,6 +149,17 @@ def _fake_dist(name: str, version: str, *, requires: list[str] = (), module: str
     return site / mod
 
 
+def _is_package_install(argv) -> bool:
+    """A package install in any form an installer runs: ``python -m pip install``, ``uv pip
+    install``, or ``python <bundled pip wheel>/pip install``. The last is what a pip-less
+    environment runs, and a fake that missed it handed the install to the real pip."""
+    return (
+        isinstance(argv, list)
+        and "install" in argv
+        and any(Path(str(word)).name == "pip" for word in argv[:4])
+    )
+
+
 class _FakePip:
     """Stands in for ``subprocess.run`` — records each pip install, optionally "installs"."""
 
@@ -155,8 +171,8 @@ class _FakePip:
         self.constraints: list[str] = []
 
     def __call__(self, argv, *args, **kwargs):
-        if not isinstance(argv, list) or "install" not in argv or "pip" not in argv[:4]:
-            return self.real_run(argv, *args, **kwargs)  # not a package install
+        if not _is_package_install(argv):
+            return self.real_run(argv, *args, **kwargs)
         self.calls.append(list(argv))
         if "--constraint" in argv:
             path = Path(argv[argv.index("--constraint") + 1])
@@ -169,6 +185,11 @@ class _FakePip:
 
 @pytest.fixture
 def fake_pip(monkeypatch):
+    """Install the fake, with the environment's pip a module: whether the suite's own environment
+    has one is not what these tests are about (``test_installer_resolution`` covers both forms)."""
+    from personalclaw import _installer
+
+    monkeypatch.setattr(_installer, "_have_pip", lambda: True)
     real_run = subprocess.run
 
     def install(**kwargs) -> _FakePip:
@@ -813,20 +834,20 @@ class TestAnUpdateMovesAPin:
     @pytest.mark.parametrize("old, new, pin", _MOVES)
     def test_the_boot_repair_replaces_a_version_the_pin_no_longer_allows(self, old, new, pin):
         """The same move at boot: the installed apps' pins no longer allow what is here."""
+        from personalclaw import _installer
+
         self._two_versions()
         _write_app("dep-app", [pin])
-        subprocess.run(  # the version an earlier manifest left here
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--quiet",
-                "--prefix",
-                str(_root()),
-                "--no-warn-script-location",
-                f"{SDK}=={old}",
-            ],
+        subprocess.run(  # the version an earlier manifest left here, by the pip this Python has
+            _installer.prefix_install_argv(
+                [
+                    "--quiet",
+                    "--prefix",
+                    str(_root()),
+                    "--no-warn-script-location",
+                    f"{SDK}=={old}",
+                ]
+            ),
             check=True,
             capture_output=True,
         )

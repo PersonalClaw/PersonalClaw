@@ -4,7 +4,8 @@ The three properties that make this primitive worth having (and the three a naiv
 implementation silently loses) each get a test that FAILS on the naive form:
 
 * **concurrency** — an in-flight counter that peaks at N. A sequential ``for`` loop
-  peaks at 1, and the wall-clock assertion catches the N× latency it would cost.
+  peaks at 1, and the order check (every call starts before any answers) catches the N×
+  latency it would cost.
 * **partial tolerance** — one candidate raising must cost that candidate only.
 * **deterministic selection** — the same slate + the same scores ⇒ the same winner,
   regardless of the order the N calls happen to finish in; ties go to the lowest index.
@@ -19,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 
 import pytest
 
@@ -77,7 +77,13 @@ def _judge_factory(scores: dict[str, float]):
 
 
 class _Sampler:
-    """Stubs ``one_shot_completion``, recording temperatures and peak in-flight count."""
+    """Stubs ``one_shot_completion``, recording temperatures, peak in-flight count, and the order
+    the calls started and answered in (``events``).
+
+    ``together`` holds each call until that many are in flight at once, so a concurrency test
+    reads an order rather than a wall clock. The hold is bounded: a call left waiting alone (a
+    sequential loop) stops waiting and answers, and the test reds instead of hanging.
+    """
 
     def __init__(
         self,
@@ -86,26 +92,29 @@ class _Sampler:
         texts: dict[float, str] | None = None,
         fail_at: set[int] | None = None,
         per_temp_delay: dict[float, float] | None = None,
+        together: int = 0,
     ):
         self.delay = delay
         self.texts = texts or {}
         self.fail_at = fail_at or set()
         self.per_temp_delay = per_temp_delay or {}
+        self.together = together
         self.temperatures: list[float] = []
         self.in_flight = 0
         self.peak_in_flight = 0
         self.order: list[float] = []
-        self.first_start = 0.0
-        self.last_end = 0.0
+        self.events: list[str] = []  # "start" / "answer", in the order they happened
+        self._all_in = asyncio.Event()
 
     async def __call__(self, prompt, *, use_case="background", temperature=None, **_kw):
         idx = len(self.temperatures)
         self.temperatures.append(temperature)
-        if not self.first_start:
-            self.first_start = time.monotonic()
         self.in_flight += 1
         self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+        self.events.append("start")
         try:
+            if self.together:
+                await self._wait_for_the_others()
             await asyncio.sleep(self.per_temp_delay.get(temperature, self.delay))
             if idx in self.fail_at:
                 raise RuntimeError(f"provider exploded for temp {temperature}")
@@ -113,7 +122,15 @@ class _Sampler:
             return self.texts.get(temperature, f"candidate@{temperature}")
         finally:
             self.in_flight -= 1
-            self.last_end = time.monotonic()
+            self.events.append("answer")
+
+    async def _wait_for_the_others(self) -> None:
+        if self.in_flight >= self.together:
+            self._all_in.set()
+        try:
+            await asyncio.wait_for(self._all_in.wait(), timeout=2.0)
+        except TimeoutError:
+            self._all_in.set()  # nobody else is coming: let every later call answer at once
 
 
 @pytest.fixture(autouse=True)
@@ -135,12 +152,17 @@ def _stub_samples(monkeypatch, sampler: _Sampler) -> None:
 
 @pytest.mark.asyncio
 async def test_n_calls_run_genuinely_in_parallel(monkeypatch):
-    """Peak in-flight == N, and wall time is ~one call, not N.
+    """Peak in-flight == N, and the fan-out takes one call's time, not N: every call has started
+    before any call answers.
 
-    FALSIFIED BY: replacing the gather with a sequential loop — peak drops to 1 and the
-    elapsed assertion trips (measured: 0.15s → 4 candidates x 50ms).
+    Read as an ORDER, because each stubbed call answers only once all N are in flight. A wall
+    clock measured the machine instead: a loaded runner stretched a parallel fan-out of four 50ms
+    calls to 0.40s against a 0.15s ceiling, with all four in flight at once.
+
+    FALSIFIED BY: replacing the gather with a sequential loop — the first call waits alone, gives
+    up and answers before the second starts, and peak in-flight stays 1.
     """
-    sampler = _Sampler(delay=0.05)
+    sampler = _Sampler(delay=0.05, together=4)
     _stub_samples(monkeypatch, sampler)
     result = await best_of_n(
         "write a haiku", 4, "concise", judge_provider_factory=_judge_factory({})
@@ -148,11 +170,10 @@ async def test_n_calls_run_genuinely_in_parallel(monkeypatch):
 
     assert sampler.peak_in_flight == 4, "N calls were not in flight at once (sequential loop?)"
     assert len(result["candidates"]) == 4
-    # The FAN-OUT span (first call entered → last call left), so the judge pass can't
-    # inflate it. Four 50ms calls: ~50ms concurrent, ~200ms sequential; the 0.15s
-    # ceiling sits clear of both so a slow box can't turn a real pass into a flake.
-    span = sampler.last_end - sampler.first_start
-    assert span < 0.15, f"fan-out spanned {span:.3f}s — that is N x latency, not parallel"
+    assert sampler.events == ["start"] * 4 + ["answer"] * 4, (
+        f"a call answered before the last one started — N x latency, not parallel: "
+        f"{sampler.events}"
+    )
 
 
 @pytest.mark.asyncio

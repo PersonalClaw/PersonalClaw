@@ -49,6 +49,23 @@ def _home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def rechecked(monkeypatch) -> list[str]:
+    """The apps a finished install asked to be measured again, in place of the real measuring.
+
+    The real availability board measures by starting a probe process on the test's loop, just as
+    the job reads ``done`` and the test ends. The loop's teardown then cancels that start, and on
+    Python 3.12 a cancel that lands while the process's pipes connect is never woken, so the
+    teardown hangs until the test times out. Nothing here is about what the probe answers."""
+    from personalclaw.providers import availability
+
+    asked: list[str] = []
+    monkeypatch.setattr(
+        availability, "get_availability_board", lambda: SimpleNamespace(recheck=asked.append)
+    )
+    return asked
+
+
 def _manifest(**extra) -> dict:
     return {
         "name": APP,
@@ -336,16 +353,10 @@ def test_the_install_follows_an_update_that_changes_the_engine():
 
 
 @pytest.mark.asyncio
-async def test_a_finished_install_measures_the_app_again(monkeypatch, tmp_path):
+async def test_a_finished_install_measures_the_app_again(rechecked, tmp_path):
     """The card read "The engine is not installed" until something re-measured it."""
     live = _installed(_manifest(dependencies={"sidecarDependencies": ["omnivoice>=0.2"]}))
     _stub_python(live / "venv", 'echo "Successfully installed omnivoice-0.2.0"\n')
-    rechecked: list[str] = []
-    from personalclaw.providers import availability
-
-    monkeypatch.setattr(
-        availability, "get_availability_board", lambda: SimpleNamespace(recheck=rechecked.append)
-    )
     reg = M.ModelDownloadRegistry()
     reg.start_install(APP)
     await _settle(lambda: reg.install_job(APP).state == "done")

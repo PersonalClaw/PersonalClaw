@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -893,6 +894,16 @@ class TestRoomsTheInboxAndYourAgentsVoice:
 # ── 7. What /api/reveal reaches for an app: the app's own data folder ──────────────────
 
 
+_WHICH = shutil.which
+
+
+def _xdg_open_is_installed(name: str, *args: Any, **kwargs: Any) -> str | None:
+    """``shutil.which`` on a host that has ``xdg-open``, the opener the reveal looks for off macOS.
+    A Linux host without one answers a reveal with the path to copy and starts nothing, so a test
+    of a reveal that is allowed says which host it is on."""
+    return "/usr/bin/xdg-open" if name == "xdg-open" else _WHICH(name, *args, **kwargs)
+
+
 class TestRevealReachesOnlyTheAppsOwnFiles:
     """``reveal`` puts a file on your screen and ``open`` hands it to your default app for its
     type, so an app names only a file in its own data folder."""
@@ -934,7 +945,11 @@ class TestRevealReachesOnlyTheAppsOwnFiles:
     async def test_a_file_in_its_own_data_folder_is_revealed(self, tmp_path, files) -> None:
         _, data = files
         popen = MagicMock()
-        with _home(tmp_path), patch("subprocess.Popen", popen):
+        with (
+            _home(tmp_path),
+            patch("subprocess.Popen", popen),
+            patch("shutil.which", side_effect=_xdg_open_is_installed),
+        ):
             _install(tmp_path, APP, {"api": ["/api/reveal"], "storage": True})
             data.mkdir(parents=True)
             (data / "report.html").write_text("<p>hi</p>", encoding="utf-8")
@@ -962,7 +977,11 @@ class TestRevealReachesOnlyTheAppsOwnFiles:
     async def test_the_owner_reveals_their_own_file(self, tmp_path, files) -> None:
         yours, _ = files
         popen = MagicMock()
-        with _home(tmp_path), patch("subprocess.Popen", popen):
+        with (
+            _home(tmp_path),
+            patch("subprocess.Popen", popen),
+            patch("shutil.which", side_effect=_xdg_open_is_installed),
+        ):
             async with TestClient(TestServer(self._gateway(tmp_path, ""))) as client:
                 resp = await client.post("/api/reveal", json={"path": str(yours)})
                 assert resp.status == 200, await resp.text()

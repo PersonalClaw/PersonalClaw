@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import wait_for_verdicts
 from test_dashboard_approval import _make_state
 
 from personalclaw import notification_rules
@@ -85,19 +86,13 @@ def _frames(state, name: str) -> list:
 
 
 async def _settled(store, item_id: str) -> None:
-    """Wait for the verdict to land on the row, yielding the loop it is handed back to."""
+    """Wait for the verdict to land on the row, yielding the loop it is handed back to. The loop
+    runs the whole hand-over as one callback, so a row that reads settled here is settled; a
+    caller with no loop waits with ``fakes.wait_for_verdicts`` instead."""
     for _ in range(1000):
         if store.items[item_id].refs.get("verify") != "checking":
             return
         await asyncio.sleep(0.005)
-    raise AssertionError("the verdict never reached the row")
-
-
-def _settled_sync(store, item_id: str) -> None:
-    for _ in range(1000):
-        if store.items[item_id].refs.get("verify") != "checking":
-            return
-        time.sleep(0.005)
     raise AssertionError("the verdict never reached the row")
 
 
@@ -153,9 +148,10 @@ async def test_the_row_is_published_before_the_verdict_and_notified_after_it(sto
     assert _frames(state, "inbox_item_updated"), "the verdict reached no open surface"
 
 
-def test_a_caller_with_no_loop_is_not_held_either(store, model):
+def test_a_caller_with_no_loop_is_not_held_either(store, model, monkeypatch):
     """A worker thread or a CLI raised it: it gets the row back at once too."""
     state = MagicMock()
+    settled = wait_for_verdicts(monkeypatch)
     began = time.monotonic()
 
     item_id = _propose(state, store)
@@ -163,7 +159,7 @@ def test_a_caller_with_no_loop_is_not_held_either(store, model):
     assert time.monotonic() - began < LOOP_BUDGET
     assert store.items[item_id].refs.get("verify") == "checking"
     model.release()
-    _settled_sync(store, item_id)
+    settled(store, item_id)
     assert store.items[item_id].refs["verify"] == "confirmed"
     assert state.notify.call_count == 1
 
