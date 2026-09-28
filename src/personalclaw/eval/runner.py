@@ -509,6 +509,9 @@ class EvalRunner:
         # The calls this turn asked about. Each gets its row when it is decided; every other
         # call gets its one row from its result.
         asked: set[str] = set()
+        from personalclaw.usage_ledger import Attribution, recorder
+
+        record = recorder(provider, Attribution(source="eval", session_key=session_key))
 
         async for event in provider.stream(turn_def.user):
             if event.kind == EVENT_TEXT_CHUNK:
@@ -535,6 +538,7 @@ class EvalRunner:
                     metadata={"reason": decided_by, "decided_by": decided_by},
                 )
             elif event.kind == EVENT_COMPLETE:
+                record(event)
                 break
 
         response = "".join(chunks).strip()

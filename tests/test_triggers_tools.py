@@ -444,10 +444,56 @@ def test_a_real_run_calls_the_injected_runner(store):
 
     def runner(payload):
         seen.append(payload["trigger_id"])
-        return {"status": "ok"}
+        return {"ok": True, "result": "launched"}
 
     assert T.run(store, trigger_id="file:notes", runner=runner).ok
     assert seen == ["file:notes"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "line"),
+    [
+        # What the gateway's `/run` answers when a gate stopped the run.
+        (
+            {"ok": False, "name": "Notes", "refused": "“Notes” is not allowed to use that action."},
+            "  refused: “Notes” is not allowed to use that action.",
+        ),
+        # A run that could not start, answered 200 with the reason.
+        ({"ok": False, "result": "no action provider configured"}, "  did not run: no action"),
+        # A request the route could not serve (404, 409), and a gateway it could not reach.
+        ({"error": "already running"}, "  failed: already running"),
+        ("could not dispatch: connection refused", "  failed: could not dispatch"),
+    ],
+)
+def test_a_run_that_did_not_happen_is_not_reported_as_one(store, answer, line):
+    """`run` said `ok` for every answer the runner gave, a refused or failed run included, so the
+    chat's `automation_run` read "not allowed" and "already running" as a run that happened."""
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
+    result = T.run(store, trigger_id="file:notes", runner=lambda _payload: answer)
+    assert result.ok is False
+    assert line in result.text
+    assert result.data["result"] == answer
+
+
+def test_a_run_that_happened_says_what_the_route_said(store):
+    T.create(
+        store,
+        name="Notes",
+        when="when a file in ~/notes changes",
+        message="go",
+        owner_consented=True,
+    )
+    result = T.run(
+        store, trigger_id="file:notes", runner=lambda _payload: {"ok": True, "result": "ran"}
+    )
+    assert result.ok is True
+    assert result.text.endswith("\n  result: ran")
 
 
 def test_a_run_with_no_runner_REFUSES_rather_than_faking_success(store):
@@ -476,7 +522,9 @@ def test_a_PAUSED_automation_can_still_be_run_by_hand(store):
         owner_consented=True,
     )
     T.set_paused(store, trigger_id="file:notes", paused=True)
-    result = T.run(store, trigger_id="file:notes", runner=lambda p: {"status": "ok"})
+    result = T.run(
+        store, trigger_id="file:notes", runner=lambda p: {"ok": True, "result": "launched"}
+    )
     assert result.ok
     assert "does not re-enable" in result.text
     assert store.get("file:notes").trigger.enabled is False

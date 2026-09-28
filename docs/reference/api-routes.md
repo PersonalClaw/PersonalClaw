@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **887 registrations** over **719 distinct paths** — 880 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **888 registrations** over **720 distinct paths** — 881 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -76,6 +76,7 @@ The 128 families the surface divides into, largest first.
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
 | `/api/update` | 4 | 4 |
+| `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
 | `/api/agent-providers` | 3 | 3 |
 | `/api/incident` | 3 | 2 |
@@ -86,7 +87,6 @@ The 128 families the surface divides into, largest first.
 | `/api/search` | 3 | 3 |
 | `/api/secrets` | 3 | 1 |
 | `/api/terminal` | 3 | 2 |
-| `/api/usage` | 3 | 3 |
 | `/api/agent` | 2 | 1 |
 | `/api/agent-hooks` | 2 | 2 |
 | `/api/agent-runners` | 2 | 2 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 880 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 881 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -975,6 +975,7 @@ The 880 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/uploads/{id}/complete` | assemble + scan + hand off to the target. |
 | `PUT` | `/api/uploads/{id}/part` | stream one part to disk (idempotent). |
 | `GET` | `/api/usage` | the per-day spend fold. |
+| `GET` | `/api/usage/budget` | today's metered spend beside the daily cap it is held to. |
 | `GET` | `/api/usage/rollup` | aggregated ledger rows. |
 | `GET` | `/api/usage/totals` | the grand total over the window. |
 | `DELETE` | `/api/voice/bindings` | unbind one surface. |

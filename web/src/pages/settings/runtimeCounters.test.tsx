@@ -93,6 +93,7 @@ describe('the rendered rows', () => {
     vi.doMock('../../lib/api', () => ({
       api: {
         usageTotals: () => Promise.resolve({ totals: null }),
+        usageBudget: () => Promise.resolve(null),
         usageRollup: () => Promise.resolve({ rows: [] }),
         // The spend fold. Rejecting is the honest stub for "this install has no fold yet":
         // the panel catches it and renders nothing, which is what these row assertions assume.

@@ -29,16 +29,9 @@ _KEYS = ("SLACK", "TELEGRAM", "DISCORD", "GOOGLE_CHAT")
 
 
 @pytest.fixture(autouse=True)
-def _no_owner_ids_in_the_environment(monkeypatch):
+def _no_owner_ids_in_the_environment(unset_env):
     """`save_credential` mirrors a named key into os.environ: keep each test's owner ids its own."""
-    monkeypatch.delenv(CRED_OWNER_ID, raising=False)
-    for key in _KEYS:
-        monkeypatch.delenv(f"{CRED_OWNER_ID}_{key}", raising=False)
-    yield
-    import os
-
-    for key in (CRED_OWNER_ID, *(f"{CRED_OWNER_ID}_{k}" for k in _KEYS)):
-        os.environ.pop(key, None)
+    unset_env(CRED_OWNER_ID, *(f"{CRED_OWNER_ID}_{key}" for key in _KEYS))
 
 
 def _delivery(dm: str) -> MagicMock:

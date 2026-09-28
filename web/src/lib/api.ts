@@ -6419,12 +6419,14 @@ export interface UsageFoldRow {
  *
  *  · `uncounted` — guarded model-call spend (`model_calls.jsonl`) that is NOT in any figure above:
  *    the calls no usage row names (a row keeps the `audit_id` of each call it counts, so a loop's
- *    inferences and a room's summaries are counted once, in the rows). Render it as a stated
- *    exclusion; a surface that omits it silently is claiming a completeness the data lacks.
+ *    inferences and a room's summaries are counted once, in the rows). Every call writes its row
+ *    when it finishes, so these are the calls that did not: one that failed writes none. Render
+ *    it as a stated exclusion; a surface that omits it silently is claiming a completeness the
+ *    data lacks.
  *  · `app_sources` — which app names produced `app` turns (a census, not an error).
  *  · `unmapped` — rows that could not be attributed to a day at all; counted, never dropped.
  *  · `reachable_purposes` — the subset of the vocabulary a writer can produce today, so a UI can
- *    skip a permanently-empty row (`eval` has no writer yet). */
+ *    skip a row nothing can fill. */
 export interface UsageFold {
   window: string
   group: string
@@ -6442,6 +6444,20 @@ export interface UsageFold {
     by_use_case: Record<string, number>
   }
   reachable_purposes: string[]
+}
+
+/** `GET /api/usage/budget` — today's spend as the daily cap counts it, and the cap.
+ *
+ *  The spend meter charges the model calls PersonalClaw makes on its own (automations, loops,
+ *  subagents, background work) over the host's local day; chat turns are not metered. A cap of
+ *  0 is unlimited. `cap_unreadable` means the configured cap could not be read, and the caps are
+ *  then `null`. */
+export interface UsageBudget {
+  spent_dollars: number
+  spent_tokens: number
+  max_dollars_per_day: number | null
+  max_tokens_per_day: number | null
+  cap_unreadable: boolean
 }
 
 /** One per-model efficiency row for a (use_case, query_class) bucket
@@ -6816,9 +6832,12 @@ export const api = {
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
   usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
   usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
-  // The per-day spend fold — the ONLY usage read that includes unattended
-  // (reasoning/loop/background) model calls; usageRollup/usageTotals above see the
-  // per-turn ledger only. Read-only, derived on request; a deleted fold self-heals.
+  // Today's spend as the daily cap counts it, beside that cap: the only numbers the Usage page
+  // may set side by side (the ledger totals above include chat turns, which no cap covers).
+  usageBudget: () => get<UsageBudget>('/api/usage/budget'),
+  // The per-day spend fold: the same per-call ledger grouped by purpose and day, plus a
+  // census of the guarded model calls no row counts. Read-only, derived on request; a deleted
+  // fold self-heals.
   usageFold: (opts?: { window?: 'day' | 'week' | 'month'; group?: 'model' | 'provider' | 'purpose' }) => {
     const p = new URLSearchParams()
     if (opts?.window) p.set('window', opts.window)

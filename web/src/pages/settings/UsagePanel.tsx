@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Coins } from 'lucide-react'
-import { api, type UsageAgg, type UsageFold } from '../../lib/api'
+import { api, type UsageAgg, type UsageBudget, type UsageFold } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
@@ -12,11 +12,12 @@ import { BigStat, KVList } from './bento'
 
 /** Account-level cost/token usage.
  *
- *  Reads the per-turn ledger (never SpendMeter's enforcement store — this is
- *  observation only): period totals, by-model, by-provider and by-source tables, the cache
- *  savings line, and a read-only "spent $X of your $Y cap" from the guardrails
- *  config. Honest-partial: a period mixing a model with no price row shows a
- *  "partial — N unpriced" marker, never a confidently-complete dollar figure. */
+ *  Reads the usage ledger, one row per model call: period totals, by-model, by-provider and
+ *  by-source tables, and the cache savings line. The one exception is the "Daily budget" line,
+ *  which sets the spend meter's day total beside the cap, because that total is what the cap is
+ *  held to (`GET /api/usage/budget`); it is read-only. Honest-partial: a period mixing a model
+ *  with no price row shows a "partial — N unpriced" marker, never a confidently-complete dollar
+ *  figure. */
 const PERIODS = [
   { id: 'today', label: 'Today', days: 1 },
   { id: '7d', label: '7 days', days: 7 },
@@ -115,15 +116,12 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
     () => api.usageRollup({ group_by: 'provider', since }).then((d) => d.rows),
     { persist: false },
   )
-  // The configured daily $ cap (read-only; SpendMeter owns enforcement). 0 = unlimited.
-  const { data: cfg } = useQuery(
-    'settings:guardrails-config',
-    () => api.personalclawConfig().then((c) => c?.guardrails?.budgets ?? null).catch(() => null),
-    { persist: false },
-  )
-  const { data: todayTotals } = useQuery(
-    'settings:usage-totals:today',
-    () => api.usageTotals({ since: _sinceIso(1) }).then((d) => d.totals).catch(() => null),
+  // Today's spend as the daily cap counts it, beside the cap (read-only; SpendMeter owns
+  // enforcement). The ledger totals on this page include chat turns, which no cap covers, and
+  // run on UTC days, so they are never the number set beside the cap.
+  const { data: budget } = useQuery(
+    'settings:usage-budget',
+    () => api.usageBudget().catch(() => null),
     { persist: false },
   )
   // Wire the in-memory SystemAgentStats token counters (SystemInfo.stats) — process-
@@ -158,12 +156,11 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   // ever adds a caveat, so withholding it withholds nothing the user could act on — and the table
   // that DID fail says so on its own line below.
   const unpricedModels = (byModel ?? []).filter((r) => !r.priced)
-  const dayCap = Number(cfg?.max_dollars_per_day ?? 0) || 0
 
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Usage"
-        hint="What you've spent — real tokens and real USD from a per-turn ledger: every streamed turn (chat, rooms, subagents, loops, automations), a room's summaries and a chat's history compression. Unattended model calls that write no row of their own are recorded only in a separate log; the 'By day and purpose' section states how much is excluded. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price row is shown honestly as 'unpriced', never $0.00." />
+        hint="What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price row is shown honestly as 'unpriced', never $0.00." />
 
       <div className="mb-l">
         <Segmented
@@ -198,17 +195,8 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
           Placed directly under the tiles so the shape and the exclusion read together. */}
       <ByDayAndPurposeSection fold={fold ?? null} days={days} />
 
-      {/* Cap context — the first time the Guardrails cap input has a corresponding actual. */}
-      {dayCap > 0 && (
-        <Section title="Daily budget">
-          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var">
-            <Coins size={13} className="mr-1.5 inline text-primary" />
-            Spent <span className="tabular-nums text-on-surface">{fmtUsd(todayTotals?.cost_usd ?? 0)}</span>{' '}
-            of your <span className="tabular-nums text-on-surface">${dayCap.toFixed(2)}</span> daily cap
-            <span className="ml-1 text-on-surface-low">(automations only — interactive chat is uncapped)</span>
-          </div>
-        </Section>
-      )}
+      {/* Cap context — the Guardrails cap beside the spend it is actually held to. */}
+      {budget && <DailyBudgetSection budget={budget} />}
 
       {/* `rows` travels undefaulted — `?? []` here would put the swallow back one layer down, where
           it reads as the empty state again. */}
@@ -273,6 +261,49 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
         </Section>
       )}
     </div>
+  )
+}
+
+/** "Daily budget" — the Guardrails cap beside the spend it is held to.
+ *
+ *  Both numbers come from `GET /api/usage/budget`: the spend meter's day total and the cap it is
+ *  compared with. This line used to set the ledger's total for the page's "Today" beside the cap:
+ *  chat turns included (no cap covers them), on a UTC day (the cap resets on the host's), so it
+ *  could read a cap as spent that was not, and the reverse. A cap of 0 is unlimited and not shown. */
+export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
+  const dollarCap = budget.max_dollars_per_day ?? 0
+  const tokenCap = budget.max_tokens_per_day ?? 0
+  if (!budget.cap_unreadable && dollarCap <= 0 && tokenCap <= 0) return null
+  return (
+    <Section title="Daily budget">
+      <div data-type="body-s" className="flex flex-col gap-s rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var">
+        {budget.cap_unreadable ? (
+          <span role="status">The daily cap could not be read.</span>
+        ) : (
+          <>
+            {dollarCap > 0 && (
+              <span>
+                <Coins size={13} className="mr-1.5 inline text-primary" />
+                Unattended spend today:{' '}
+                <span className="tabular-nums text-on-surface">{fmtUsd(budget.spent_dollars)}</span> of your{' '}
+                <span className="tabular-nums text-on-surface">${dollarCap.toFixed(2)}</span> daily cap
+              </span>
+            )}
+            {tokenCap > 0 && (
+              <span>
+                Unattended tokens today:{' '}
+                <span className="tabular-nums text-on-surface">{fmtTokens(budget.spent_tokens)}</span> of your{' '}
+                <span className="tabular-nums text-on-surface">{fmtTokens(tokenCap)}</span> daily cap
+              </span>
+            )}
+          </>
+        )}
+        <span className="text-on-surface-low">
+          The cap counts the model calls automations, loops, subagents and background work make.
+          Your chat turns are not capped.
+        </span>
+      </div>
+    </Section>
   )
 }
 
@@ -368,17 +399,17 @@ function DailySpendChart({ series }: { series: UsageFold['series'] }) {
   )
 }
 
-/** "By day and purpose" — the durable per-day fold of the same per-turn ledger the tiles
+/** "By day and purpose" — the durable per-day fold of the same usage ledger the tiles
  *  above read, grouped into the fixed purpose vocabulary and shaped per day.
  *
  *  Its honesty markers are load-bearing, because this is a money surface:
  *  · a "~" on every figure (each dollar is computed from the price table, not reported by a provider)
  *  · an explicit FLOOR when some model has no price row, instead of a confident total
- *  · the unattended spend that is NOT included, stated with its size — the model calls that wrote
- *    no row of their own (a chat's title, a judge) are only in the model-call log. A call a row
- *    already counts is left out of that figure (the row names it), so nothing is counted twice.
- *    Saying "excluded, ~$X" is honest; silently omitting it would claim a completeness the data
- *    lacks. */
+ *  · the unattended spend that is NOT included, stated with its size — every model call writes
+ *    its row when it finishes, and one that did not finish (it failed) wrote none, so it is only in
+ *    the model-call log. A call a row already counts is left out of that figure (the row names
+ *    it), so nothing is counted twice. Saying "excluded, ~$X" is honest; silently omitting it
+ *    would claim a completeness the data lacks. */
 function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: number }) {
   if (!fold) return null
   const total = fold.total
@@ -390,7 +421,8 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
       <span className="text-on-surface">Not included:</span>{' '}
       {uncounted.calls.toLocaleString()} unattended model{' '}
       {uncounted.calls === 1 ? 'call' : 'calls'} (~{fmtUsd(uncounted.total_dollars_est)} across the
-      whole log). They wrote no usage row, so they are recorded only in the model-call log.
+      whole log). A call that does not finish writes no usage row, so these are recorded only in
+      the model-call log.
     </div>
   )
   if (total.calls === 0) {

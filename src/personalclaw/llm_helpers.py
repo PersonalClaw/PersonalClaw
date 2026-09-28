@@ -193,13 +193,17 @@ async def stream_and_collect_json(
     *,
     approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.AUTO_APPROVE,
     hooks: "HookManager | None" = None,
+    on_complete: Callable[[LLMEvent], None] | None = None,
 ) -> dict | None:
     """Stream a message and parse the response as JSON.
 
-    Combines ``stream_and_collect`` with ``parse_llm_json``.
+    Combines ``stream_and_collect`` with ``parse_llm_json``; ``on_complete`` is passed through,
+    so the call's usage row is written the way ``stream_and_collect`` writes it.
     Returns parsed dict or None on failure.
     """
-    text = await stream_and_collect(provider, message, approval_policy=approval_policy, hooks=hooks)
+    text = await stream_and_collect(
+        provider, message, approval_policy=approval_policy, hooks=hooks, on_complete=on_complete
+    )
     return parse_llm_json(text)
 
 
@@ -648,15 +652,19 @@ async def one_shot_completion(
     wins. No compaction logic is involved: this makes the number available, it does not
     decide what to drop.
 
-    ``usage`` writes the call to the usage ledger, one row per model call it makes, for whom the
-    caller names (:class:`~personalclaw.usage_ledger.Attribution`): through the seam every
-    turn's row takes (``stream_and_collect(on_complete=…)``), priced by the model the resolved
-    provider was built for. ``None`` (the default) writes nothing, and the call is then counted
-    only in the model-call log, which Settings → Usage states as not included.
+    Every model call it makes writes one usage-ledger row, through the seam every turn's row
+    takes (``stream_and_collect(on_complete=…)``), priced by the model the resolved provider was
+    built for. ``usage`` names whose spend it is (:class:`~personalclaw.usage_ledger.Attribution`):
+    the source, and the session and agent it was made for. A caller that names none is recorded
+    as unattended background spend (:data:`~personalclaw.usage_ledger.UNATTENDED`), which every
+    call here is: an interactive turn never comes through this function. A call used to write no
+    row unless its caller asked, and each of those calls was spend Settings → Usage could not show.
     """
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.providers.use_cases import VALID_USE_CASES
-    from personalclaw.usage_ledger import recorder
+    from personalclaw.usage_ledger import UNATTENDED, recorder
+
+    who = usage or UNATTENDED
 
     # Honor a caller that already named a real model-axis use case; the remaining
     # informal label ("ingestion") collapses to the background axis; anything
@@ -726,7 +734,7 @@ async def one_shot_completion(
     async def _run(provider) -> str:
         try:
             await provider.start()
-            on_complete = recorder(provider, usage) if usage is not None else None
+            on_complete = recorder(provider, who)
             text = await stream_and_collect(provider, prompt, on_complete=on_complete)
             if output_type is None:
                 return text

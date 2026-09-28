@@ -482,14 +482,14 @@ async def _llm_proposal(
 ) -> OrganizeProposal | None:
     """Ask the background session to classify an ambiguous chat. Failure ⇒ no proposal.
 
-    Reuses ``chat_title._stream_background_prompt``, the same shared background client the
-    auto-titler uses, so this cannot occupy a user-facing session or spawn a second
-    utility-prompt convention.
+    Reuses ``chat_title._stream_chat_chore``, the same shared background client the auto-titler
+    uses, so this cannot occupy a user-facing session or spawn a second utility-prompt
+    convention; the call is the chat's spend, as its title is.
     """
     try:
-        from personalclaw.dashboard.chat_title import _stream_background_prompt
+        from personalclaw.dashboard.chat_title import _stream_chat_chore
 
-        text = await _stream_background_prompt(state, build_llm_prompt(session, folders, tags))
+        text = await _stream_chat_chore(state, session, build_llm_prompt(session, folders, tags))
     except Exception:
         logger.debug("session-organize: LLM classification failed", exc_info=True)
         return None

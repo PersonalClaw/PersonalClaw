@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -404,14 +405,23 @@ print(json.dumps({"guid": "reached-the-network", "title": "reached the network"}
 
 class _Listener:
     """A real loopback listener. Records accepted connections, so the assertion is about a
-    socket that did or did not happen rather than about an exception's text."""
+    socket that did or did not happen rather than about an exception's text.
+
+    It stops when it is closed, and not a moment later. Closing the socket from another thread
+    does not wake a thread blocked in ``accept()``, so the loop waits in short slices and checks
+    a stop flag between them: a single long ``accept()`` kept the thread alive past the test
+    that owned it, into whichever test ran next.
+    """
+
+    _SLICE_SECS = 0.05
 
     def __init__(self) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(4)
-        self.sock.settimeout(4)
+        self.sock.settimeout(self._SLICE_SECS)
         self.accepted: list[str] = []
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
@@ -420,20 +430,24 @@ class _Listener:
         return int(self.sock.getsockname()[1])
 
     def _serve(self) -> None:
-        try:
-            while True:
+        while not self._stop.is_set():
+            try:
                 conn, addr = self.sock.accept()
-                self.accepted.append(str(addr))
-                conn.close()
-        except OSError:
-            return
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            self.accepted.append(str(addr))
+            conn.close()
 
     def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
         try:
             self.sock.close()
         except OSError:
             pass
-        self._thread.join(timeout=2)
+        assert not self._thread.is_alive(), "the listener thread outlived its test"
 
 
 @pytest.fixture()
@@ -443,6 +457,20 @@ def listener():
         yield lis
     finally:
         lis.close()
+
+
+def test_a_closed_listener_leaves_no_thread_behind():
+    """The listener's thread ends when it is closed, within the test that owned it; and while it
+    is open it accepts, or "accepted nothing" above would hold of a listener that never listened."""
+    lis = _Listener()
+    with socket.create_connection(("127.0.0.1", lis.port), timeout=2):
+        pass
+    deadline = time.monotonic() + 2
+    while not lis.accepted and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(lis.accepted) == 1
+    lis.close()
+    assert not lis._thread.is_alive()
 
 
 def test_a_pack_script_that_tries_to_open_a_socket_reaches_nothing(tmp_path, listener):

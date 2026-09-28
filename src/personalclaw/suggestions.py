@@ -14,7 +14,8 @@ from personalclaw.context import ContextBuilder
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY
+from personalclaw.session import BACKGROUND_KEY, chore_usage
+from personalclaw.usage_ledger import recorder
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState
@@ -244,6 +245,7 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
         return list(_FALLBACK_SUGGESTIONS)
 
     text = ""
+    record = recorder(client, chore_usage())
     try:
 
         async def _stream() -> str:
@@ -266,6 +268,7 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
                         },
                     )
                 elif event.kind == EVENT_COMPLETE:
+                    record(event)
                     break
             return text
 

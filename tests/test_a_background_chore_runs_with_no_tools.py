@@ -150,11 +150,12 @@ async def test_a_title_turn_that_calls_a_tool_runs_nothing(
     """The title chore, on the background session the gateway builds: its model is offered no
     tools, and the ``log_decision`` call it makes anyway records nothing."""
     from personalclaw.dashboard.chat_title import _stream_background_prompt
+    from personalclaw.session import chore_usage
 
     sessions = _gateway_sessions()
     try:
         title = await _stream_background_prompt(
-            _State(sessions), f"Title this chat.\nuser: {_PLANTED}"
+            _State(sessions), f"Title this chat.\nuser: {_PLANTED}", usage=chore_usage()
         )
     finally:
         await sessions.close_all()

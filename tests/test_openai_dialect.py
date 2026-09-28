@@ -902,6 +902,51 @@ async def test_speech_without_a_bound_voice_is_503(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_speech_with_a_voice_its_provider_cannot_speak_is_503_naming_why(monkeypatch):
+    """A bound voice the provider says it cannot speak with now is refused before synthesis, as
+    a configuration answer, and not the "synthesis failed" fault a client would retry."""
+    _enable(monkeypatch)
+    token = _token()
+    asked: list[str] = []
+
+    class _NotReady:
+        name = "fake-voice"
+        display_name = "Fake Voice"
+
+        async def can_synthesize(self, voice: str = "") -> bool:
+            asked.append(voice)
+            return False
+
+        async def synthesize(self, *_a, **_kw):
+            raise AssertionError("a voice that cannot speak was asked to")
+
+    monkeypatch.setattr(
+        dialect,
+        "resolve_voice",
+        lambda name="", **kw: {
+            "provider": _NotReady(),
+            "voice": "bound-voice",
+            "speed": 1.0,
+            "speech_voice": "",
+        },
+    )
+    client, _ = await _client(monkeypatch)
+    try:
+        resp = await client.post(
+            dialect.ROUTE_SPEECH,
+            data=json.dumps({"model": "tts-1", "input": "hi"}),
+            headers=_auth(token),
+        )
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 503
+    assert payload["error"]["code"] == "tts_not_ready"
+    assert "Fake Voice" in payload["error"]["message"]
+    assert asked == ["bound-voice"]
+
+
+@pytest.mark.asyncio
 async def test_transcriptions_uses_the_bound_stt_and_ignores_the_model(monkeypatch):
     """`/v1/audio/transcriptions` is an alias over the bound STT provider."""
     _enable(monkeypatch)

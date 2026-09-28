@@ -84,6 +84,9 @@ class LLMJudge:
             from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
             prompt = render_use_case_prompt("eval_judge", values) or ""
+        from personalclaw.usage_ledger import Attribution, recorder
+
+        record = recorder(self._provider, Attribution(source="eval", session_key="eval_judge"))
         chunks: list[str] = []
         async for event in self._provider.stream(prompt):
             if event.kind == EVENT_TEXT_CHUNK:
@@ -103,6 +106,7 @@ class LLMJudge:
                 if event.request_id:
                     await self._provider.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:
+                record(event)
                 break
         raw = "".join(chunks)
         try:

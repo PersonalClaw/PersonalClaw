@@ -34,6 +34,7 @@ import logging
 import re
 
 from personalclaw.loop.files import file_inside
+from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.workflows.judge_contract import (
     JudgeVerdict,
     clamp_marginal,
@@ -222,6 +223,7 @@ async def assess_cycle(
     finding: dict,
     prior_findings: list[dict],
     *,
+    loop_id: str,
     provider_factory=None,
     verify_command: str = "",
     workspace: str | None = None,
@@ -240,6 +242,8 @@ async def assess_cycle(
     artifact files itself — and weighs that over the worker's reported finding. Absent
     those, it stays transcript-only (unchanged behavior for goals with no runnable/
     readable anchor).
+
+    The verdict's usage row is the loop's (*loop_id*): :func:`_judge_usage`.
     """
     if provider_factory is None:
 
@@ -278,7 +282,7 @@ async def assess_cycle(
         # judge_turn just streams the prompt + parses {score, reason}; we reuse its
         # provider but parse our own richer verdict from the raw stream. Simpler:
         # send via judge_turn's provider directly.
-        raw = await _stream(judge, prompt)
+        raw = await _stream(judge, prompt, _judge_usage(loop_id))
     except Exception:
         logger.warning(
             "loop judge: stream failed — cycle assessed as degraded (no verdict)", exc_info=True
@@ -304,6 +308,7 @@ async def assess_cycle_skeptic(
     finding: dict,
     prior_findings: list[dict],
     *,
+    loop_id: str,
     provider_factory=None,
     verify_command: str = "",
     workspace: str | None = None,
@@ -343,7 +348,7 @@ async def assess_cycle_skeptic(
         return None
     try:
         prompt = _build_skeptic_prompt(goal, success_criteria, finding, prior_findings, observed)
-        raw = await _stream(judge, prompt)
+        raw = await _stream(judge, prompt, _judge_usage(loop_id))
     except Exception:
         logger.warning(
             "loop judge (skeptic): stream failed — no refutation available", exc_info=True
@@ -402,13 +407,23 @@ def _build_skeptic_prompt(
     )
 
 
-async def _stream(judge, prompt: str) -> str:
-    """Stream a prompt through the judge's provider and collect the text."""
+def _judge_usage(loop_id: str) -> Attribution:
+    """Whose spend a judge's verdict is: the loop's, under the key its spend is read by
+    (``loop.manager.session_key``)."""
+    from personalclaw.loop.manager import session_key
+
+    return Attribution(source="loop", session_key=session_key(loop_id))
+
+
+async def _stream(judge, prompt: str, usage: Attribution) -> str:
+    """Stream a prompt through the judge's provider and collect the text, writing the call's
+    usage row for *usage*."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 
     provider = judge._provider
     if provider is None:
         raise RuntimeError("judge provider not started")
+    record = recorder(provider, usage)
     chunks: list[str] = []
     async for event in provider.stream(prompt):
         if event.kind == EVENT_TEXT_CHUNK:
@@ -418,6 +433,7 @@ async def _stream(judge, prompt: str) -> str:
             if event.request_id:
                 await provider.reject_tool(event.request_id)
         elif event.kind == EVENT_COMPLETE:
+            record(event)
             break
     return "".join(chunks)
 

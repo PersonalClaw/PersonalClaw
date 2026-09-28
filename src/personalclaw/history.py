@@ -1575,7 +1575,7 @@ class HistoryConsolidator:
                 or ""
             )
 
-            result = await self._call_llm(prompt)
+            result = await self._call_llm(prompt, key)
             if not result:
                 return
 
@@ -1996,7 +1996,7 @@ class HistoryConsolidator:
             memory_formation.gather(vs, candidates)
             prompt = memory_formation.build_decide_prompt(candidates)
             if prompt:
-                decide_result = await self._call_llm(prompt)
+                decide_result = await self._call_llm(prompt, key)
                 decisions = memory_formation.parse_decisions(decide_result, candidates)
                 degraded = not decisions
         except Exception:
@@ -2316,17 +2316,20 @@ class HistoryConsolidator:
                     metadata={"name": name, "reason": "update_failed"},
                 )
 
-    async def _call_llm(self, prompt: str) -> dict | None:
+    async def _call_llm(self, prompt: str, chat_key: str) -> dict | None:
         """Call LLM for consolidation via the persistent background session.
 
         Uses the shared background ACP agent process (no spawn/teardown cost).
-        Returns parsed JSON dict or None on failure.
+        Returns parsed JSON dict or None on failure. The call's usage row is the consolidated
+        chat's (*chat_key*), as its compression's is.
         """
         if not self._sessions:
             logger.warning("LLM consolidation skipped — no session manager")
             return None
 
         from personalclaw.llm_helpers import stream_and_collect_json
+        from personalclaw.session import chore_usage
+        from personalclaw.usage_ledger import recorder
 
         session_key = BACKGROUND_KEY
         # 🔴 Release only a session we actually took. `get_or_create` can return without
@@ -2342,7 +2345,9 @@ class HistoryConsolidator:
                 session_key, agent="personalclaw-lite"
             )
             acquired = True
-            return await stream_and_collect_json(client, prompt)
+            return await stream_and_collect_json(
+                client, prompt, on_complete=recorder(client, chore_usage(chat_key))
+            )
         except Exception:
             logger.warning("LLM consolidation call failed", exc_info=True)
             return None

@@ -532,8 +532,11 @@ The posture is announced on stderr, so stdout stays pipeable.
     setup_parser.add_argument(
         "--provider",
         default="",
-        metavar="NAME",
-        help="Set the default chat provider by registry entry name",
+        metavar="RUNTIME",
+        help=(
+            "Set the runtime an agent runs on when it names none: native (the built-in loop, "
+            "on the models Settings → Models binds), acp, or acp:<cli> for a connected agent CLI"
+        ),
     )
     setup_parser.add_argument(
         "--credential",

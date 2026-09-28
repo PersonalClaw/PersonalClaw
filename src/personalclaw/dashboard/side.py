@@ -129,11 +129,13 @@ async def _run_side_turn(
     Streams ``chat.side_result`` deltas. A late frame whose run_id no longer
     matches ``side.last_run_id`` (turn superseded or side closed) is dropped.
     """
+    from personalclaw.dashboard.chat_utils import chat_usage
     from personalclaw.llm_helpers import (
         PromptBusyExhaustedError,
         ToolApprovalPolicy,
         stream_and_collect,
     )
+    from personalclaw.usage_ledger import recorder
 
     side_key = f"side:{name}"
 
@@ -166,6 +168,7 @@ async def _run_side_turn(
                 prompt,
                 approval_policy=ToolApprovalPolicy.REJECT_ALL,
                 on_chunk=_on_chunk,
+                on_complete=recorder(provider, chat_usage(session)),
             )
         finally:
             state.sessions.release(side_key)

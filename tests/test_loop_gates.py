@@ -210,7 +210,12 @@ class TestJudgeIndependence:
 
         with caplog.at_level(logging.WARNING, logger="personalclaw.loop.judge"):
             verdict = await judge_mod.assess_cycle(
-                "goal", "dod", {"cycle": 1, "summary": "x"}, [], provider_factory=_boom_factory
+                "goal",
+                "dod",
+                {"cycle": 1, "summary": "x"},
+                [],
+                loop_id="l1",
+                provider_factory=_boom_factory,
             )
         assert verdict is None  # defer — never a false complete
         assert any("degraded" in r.message for r in caplog.records)
@@ -292,6 +297,7 @@ class TestJudgeIndependence:
             "done when OUT.md exists",
             {"cycle": 1, "summary": "worker says done"},
             [],
+            loop_id="l1",
             verify_command="true",
             workspace=str(tmp_path),
             deliverables=["OUT.md"],

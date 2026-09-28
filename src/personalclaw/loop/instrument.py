@@ -141,6 +141,7 @@ async def reproduce_confirm(loop: Loop) -> bool | None:
             loop.success_criteria or "",
             finding,
             findings[:-1],
+            loop_id=loop.id,
             verify_command=verify_command,
             workspace=effective_dir(loop) or None,
             deliverables=deliverables,

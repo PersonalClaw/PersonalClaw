@@ -254,6 +254,37 @@ class CloningUnsupportedError(Exception):
         super().__init__(self.message)
 
 
+class TtsNotReady(Exception):
+    """The bound provider says it cannot speak with the bound voice now (HTTP 503).
+
+    Raised before any audio is asked for, so the answer names the reason (a voice that is not
+    downloaded, a missing runtime or key) instead of a synthesis that ran and produced nothing.
+    Carries its status and the sentence to show. A route that answers it sends the registered
+    ``tts_not_ready`` code as a literal, so the error-code registry check can read it.
+    """
+
+    def __init__(self, provider: object, voice: str):
+        self.status = 503
+        name = str(getattr(provider, "name", "") or "")
+        shown = str(getattr(provider, "display_name", "") or name or "The provider")
+        self.message = (
+            f"{shown} says it cannot speak with {voice or 'the chosen voice'} right now. "
+            "Check the text-to-speech model in Settings → Models."
+        )
+        super().__init__(self.message)
+
+
+async def can_speak(provider: object, voice: str) -> bool:
+    """Whether *provider* says it can produce audio for *voice* now (``can_synthesize``).
+
+    Asked by every synthesis a user hears, before it starts. An adapter that does not subclass
+    :class:`TtsProvider` may leave the method out; it then makes no claim, and its synthesis
+    answers for itself.
+    """
+    check = getattr(provider, "can_synthesize", None)
+    return True if check is None else bool(await check(voice))
+
+
 def is_clone_request(params: Mapping[str, Any]) -> bool:
     """Whether resolved synth *params* ask for voice CLONING — i.e. carry a reference clip.
 
@@ -285,15 +316,19 @@ async def route_synthesis(
     The single chokepoint a synth surface hands the dict :func:`active_voice_params`
     returns: it applies :func:`guard_synthesis_capability` (so a clone-kind request to a
     non-cloning engine raises :class:`CloningUnsupportedError` — HTTP 409 — rather than
-    synthesizing in the wrong voice), then dispatches to ``provider.synthesize`` with the
+    synthesizing in the wrong voice), refuses a voice the provider cannot speak with now
+    (:class:`TtsNotReady`), then dispatches to ``provider.synthesize`` with the
     conditioning set MI-1 threaded into the ABC signature. A backend ignores any knob it
     does not use via ``**opts``, so piper/OpenAI are unchanged.
     """
     provider: TtsProvider = params["provider"]
     guard_synthesis_capability(provider, params)
+    voice = str(params.get("voice", "") or "")
+    if not await can_speak(provider, voice):
+        raise TtsNotReady(provider, voice)
     return await provider.synthesize(
         text,
-        voice=str(params.get("voice", "") or ""),
+        voice=voice,
         output_path=output_path,
         speed=float(params.get("speed", 1.0) or 1.0),
         speech_voice=str(params.get("speech_voice", "") or ""),

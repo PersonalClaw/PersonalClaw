@@ -35,9 +35,12 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     its two distinct WARNING lines. The chain path keeps the "partial text survives a
     total failure" degrade by handing back the LAST attempt's chunks: two models' partial
     answers cannot be concatenated, so each attempt replaces rather than extends.
+
+    Each completed call writes its usage row, as background work: a library ingests unwatched.
     """
-    from personalclaw.llm.base import EVENT_TEXT_CHUNK
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
+    from personalclaw.usage_ledger import UNATTENDED, recorder
 
     messages = _build_messages(prompt, images)
     # The chunks of the most recent FAILED attempt. ``_collect`` must re-raise so the
@@ -47,10 +50,13 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
 
     async def _collect(provider) -> str:
         parts: list[str] = []
+        record = recorder(provider, UNATTENDED)
         try:
             async for ev in provider.complete(messages):
                 if ev.kind == EVENT_TEXT_CHUNK:
                     parts.append(getattr(ev, "text", "") or "")
+                elif ev.kind == EVENT_COMPLETE:
+                    record(ev)
         except Exception:
             partial[:] = parts
             raise

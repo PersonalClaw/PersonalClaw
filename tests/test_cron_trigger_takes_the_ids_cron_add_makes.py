@@ -227,6 +227,6 @@ def test_automation_run_sends_a_job_name_with_a_space(home, gateway, ran):
 
     out = mcp_automation._call_tool_inner("automation_run", {"id": "app:ops-helper:Nightly Sync"})
 
-    assert "'ok': True" in out, out
+    assert "\n  result: ran\n" in out and not out.startswith("Error"), out
     assert len(ran.calls) == 1
     assert _history(gateway, "app:ops-helper:Nightly Sync")["total"] == 1

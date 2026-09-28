@@ -136,7 +136,7 @@ async def _all_criteria_met(loop: Loop, criteria: list[str], findings: list[dict
     )
     if not prompt:
         return None
-    raw = await judge_verdict(prompt)
+    raw = await judge_verdict(prompt, loop_id=loop.id)
     if verdict_is_pass(raw):
         return True
     # A real FAIL → keep cycling. A non-verdict (judge/provider unavailable) → defer (None), NOT a
@@ -176,7 +176,7 @@ async def _judge_assessment_signal(
     if "judge_calibrated" not in cfg0:
 
         async def _probe_assess(goal, dod, fnd, prior):
-            return await judge_mod.assess_cycle(goal, dod, fnd, prior)
+            return await judge_mod.assess_cycle(goal, dod, fnd, prior, loop_id=loop.id)
 
         trustworthy = await instrument.probe_judge(_probe_assess)
         if trustworthy is not None:  # None = probe couldn't run → don't cache, retry next cycle
@@ -214,6 +214,7 @@ async def _judge_assessment_signal(
             loop.success_criteria or "",
             finding,
             findings[:-1],
+            loop_id=loop.id,
             verify_command=verify_command,
             workspace=effective_dir(loop) or None,
             deliverables=gt_deliverables,
@@ -238,6 +239,7 @@ async def _judge_assessment_signal(
                 loop.success_criteria or "",
                 finding,
                 findings[:-1],
+                loop_id=loop.id,
                 verify_command=verify_command,
                 workspace=effective_dir(loop) or None,
                 deliverables=gt_deliverables,

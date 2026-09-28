@@ -268,6 +268,7 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
 
     try:
         from personalclaw.llm_helpers import ToolApprovalPolicy, stream_and_collect
+        from personalclaw.usage_ledger import Attribution, recorder
 
         session_key = f"agent_marketplace_test:{name}"
         client, _is_new, _resumed = await state.sessions.get_or_create(
@@ -275,10 +276,13 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
             agent=defn.provider_entry or None,
         )
         try:
+            # You asked for it and read the answer: a turn of yours with the agent under test.
+            who = Attribution(source="chat", session_key=session_key, agent=name)
             response = await stream_and_collect(
                 client,
                 full_prompt,
                 approval_policy=ToolApprovalPolicy.REJECT_ALL,
+                on_complete=recorder(client, who),
             )
         finally:
             state.sessions.release(session_key)

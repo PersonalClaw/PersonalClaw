@@ -134,9 +134,12 @@ def _sessions():
 async def _title(sessions) -> str:
     """One chat-title chore, through the real path: the shared background session."""
     from personalclaw.dashboard.chat_title import _stream_background_prompt
+    from personalclaw.session import chore_usage
 
     state = types.SimpleNamespace(sessions=sessions)
-    return await _stream_background_prompt(state, "Generate a short title (3-6 words) for: hi")
+    return await _stream_background_prompt(
+        state, "Generate a short title (3-6 words) for: hi", usage=chore_usage()
+    )
 
 
 async def _turn(sessions, key: str, **kwargs: Any) -> object:

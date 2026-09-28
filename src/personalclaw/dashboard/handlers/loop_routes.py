@@ -341,9 +341,13 @@ async def api_loop_classify(request: web.Request) -> web.Response:
         )
     strat = kinds.get(kind)
     from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
 
     async def _ask(prompt: str) -> str:
-        return await one_shot_completion(prompt, use_case="background")
+        # Loop spend, for a loop that has no id yet: the composer asks before it creates one.
+        return await one_shot_completion(
+            prompt, use_case="background", usage=Attribution(source="loop")
+        )
 
     skills_catalog, workflows_catalog = await _installed_capability_catalogs()
     try:
@@ -384,9 +388,12 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
 
     from personalclaw import grill
     from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
+
+    who = Attribution(source="loop", session_key=manager.session_key(cid))
 
     async def _ask(prompt: str) -> str:
-        return await one_shot_completion(prompt, use_case="background")
+        return await one_shot_completion(prompt, use_case="background", usage=who)
 
     # Wire recall to the SAME L3 seam the Memory Studio recall uses (semantic_context),
     # so the decomposition sees the agent's own memory view + can't drift from it.

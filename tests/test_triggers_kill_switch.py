@@ -202,7 +202,11 @@ def test_a_MANUAL_run_is_refused_during_an_incident(store, tmp_path):
 def test_a_manual_run_works_normally_when_there_is_no_incident(store, tmp_path):
     _due(store, tid="clock:x")
     calls = []
-    result = T.run(store, trigger_id="clock:x", runner=lambda p: calls.append(p) or "LAUNCHED")
+    result = T.run(
+        store,
+        trigger_id="clock:x",
+        runner=lambda p: calls.append(p) or {"ok": True, "result": "launched"},
+    )
     assert result.ok is True
     assert len(calls) == 1
 

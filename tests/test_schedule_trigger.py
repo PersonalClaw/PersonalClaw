@@ -117,10 +117,12 @@ def test_the_immediate_fire_tool_posts_to_the_gateway(
     monkeypatch.setattr(
         mcp_automation,
         "_http_runner",
-        lambda payload: posted.append(str(payload.get("trigger_id") or "")) or {"status": "ok"},
+        lambda payload: posted.append(str(payload.get("trigger_id") or ""))
+        or {"ok": True, "result": "ran"},
     )
-    mcp_automation._call_tool_inner("automation_run", {"id": "clock:abc123"})
+    out = mcp_automation._call_tool_inner("automation_run", {"id": "clock:abc123"})
     assert posted == ["clock:abc123"]
+    assert "\n  result: ran\n" in out, out
 
 
 def test_an_unknown_id_is_refused_before_any_post(
@@ -133,7 +135,7 @@ def test_an_unknown_id_is_refused_before_any_post(
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     posted: list[str] = []
     monkeypatch.setattr(
-        mcp_automation, "_http_runner", lambda payload: posted.append("posted") or {"status": "ok"}
+        mcp_automation, "_http_runner", lambda payload: posted.append("posted") or {"ok": True}
     )
     out = mcp_automation._call_tool_inner("automation_run", {"id": "clock:nope"})
     assert "no automation with id" in out

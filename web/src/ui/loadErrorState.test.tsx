@@ -920,13 +920,15 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/SearchPanel.tsx': 2,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
-  // 7 → 5. Both rollups are fixed — the pair the issue's ninth comment singled out, where a failing
+  // 7 → 5 → 4. Both rollups are fixed — the pair the issue's ninth comment singled out, where a failing
   // `/api/usage/rollup` rendered "No model usage recorded this period." and "No usage recorded this
   // period." on a spend page whose own headline tiles, off a different endpoint, could be showing
-  // $11.35 and 412 turns at the same moment. The five left are all `null`-substituting reads whose
-  // surfaces are gated on the value's presence (`{t && …}`, `{sys && hasActivity && …}`, `dayCap > 0`,
-  // `fold ?? null`), so an unread one costs a section rather than composing a sentence.
-  'pages/settings/UsagePanel.tsx': 5,
+  // $11.35 and 412 turns at the same moment. Then the Daily budget line's two reads (the config's cap
+  // and the ledger's total for today) became one read of the spend meter beside its cap, because the
+  // ledger's total held chat turns no cap covers. The four left are all `null`-substituting reads whose
+  // surfaces are gated on the value's presence (`{t && …}`, `{sys && hasActivity && …}`,
+  // `{budget && …}`, `fold ?? null`), so an unread one costs a section rather than composing a sentence.
+  'pages/settings/UsagePanel.tsx': 4,
   // 3 → 1. The two gone were the lexicon reads, which printed "0 in your lexicon", "No terms yet" and
   // "No learned corrections yet" out of a failed fetch. The one left is `modelsActive`, documented at
   // the site: it feeds a readiness CHIP, so losing it degrades a chip rather than inventing a setting.
@@ -1346,17 +1348,18 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/settings/SearchPanel.tsx': 1,
   'pages/settings/SecurityPanel.tsx': 2,
   'pages/settings/UpdatesPanel.tsx': 1,
-  // 🔑 FIVE KEEPS, AND THE ONE ENTRY IN THIS MAP WHOSE REASON IS LOAD-BEARING ENOUGH TO RESTATE.
+  // 🔑 FOUR KEEPS, AND THE ONE ENTRY IN THIS MAP WHOSE REASON IS LOAD-BEARING ENOUGH TO RESTATE.
   // #3394 singles this file out because it is the case where a deliberate empty fallback is right.
-  // All five are `null`-substituting reads whose surfaces are gated on the value's PRESENCE —
-  // `{t && …}`, `{sys && hasActivity && …}`, `dayCap > 0`, `fold ?? null` — so an unread one costs a
-  // section rather than composing a sentence. That is the whole distinction this map runs on: a COUNT
+  // All four are `null`-substituting reads whose surfaces are gated on the value's PRESENCE —
+  // `{t && …}`, `{sys && hasActivity && …}`, `{budget && …}`, `fold ?? null` — so an unread one costs
+  // a section rather than composing a sentence. That is the whole distinction this map runs on: a COUNT
   // or a SENTENCE built from a substitute is a false claim about server state, and an unrendered
   // section is not a claim at all. The two rollups that DID compose sentences ("No model usage
   // recorded this period." on a page whose own tiles could be showing $11.35 at the same moment) were
-  // fixed earlier and are why this reads 5 rather than 7. Converting the remaining five would put an
-  // error banner where the design puts nothing, which is the inverse defect.
-  'pages/settings/UsagePanel.tsx': 5,
+  // fixed earlier and are why this reads 5 rather than 7; the Daily budget line's two reads became one
+  // (the spend meter beside its cap), which is why it reads 4. Converting the remaining four would put
+  // an error banner where the design puts nothing, which is the inverse defect.
+  'pages/settings/UsagePanel.tsx': 4,
   'pages/settings/VoicePanel.tsx': 1,
   'pages/settings/settingsWidgets.tsx': 2,
   'pages/skills/LearningSummaryBlock.tsx': 1,
@@ -1411,7 +1414,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/settings/ProvidersPanel.tsx': 3,
   'pages/settings/RoutingPanel.tsx': 1,
   'pages/settings/SecurityPanel.tsx': 3,
-  'pages/settings/UsagePanel.tsx': 5,
+  'pages/settings/UsagePanel.tsx': 4,
   'pages/skills/LearningSummaryBlock.tsx': 1,
   'pages/skills/SkillInspector.tsx': 1,
   'pages/skills/SkillsPage.tsx': 2,

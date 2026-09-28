@@ -373,10 +373,13 @@ async def _complete(*, data_url: str, description: str) -> str:
     (``text`` + ``image_url``), which every bound provider already understands — the Ollama bundle
     translates it into Ollama's ``images: [<base64>]``, and the hosted providers take it as-is.
     """
-    from personalclaw.llm.base import EVENT_TEXT_CHUNK
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
     from personalclaw.providers.image_input import resolve_image_reader
+    from personalclaw.usage_ledger import UNATTENDED, recorder
 
     provider = await resolve_image_reader()
+    # The step's own model call, which no turn's row carries: recorded as a tool's one-shot is.
+    record = recorder(provider, UNATTENDED)
     messages = [
         {
             "role": "user",
@@ -393,4 +396,6 @@ async def _complete(*, data_url: str, description: str) -> str:
     async for event in provider.complete(messages):
         if event.kind == EVENT_TEXT_CHUNK:
             parts.append(getattr(event, "text", "") or "")
+        elif event.kind == EVENT_COMPLETE:
+            record(event)
     return "".join(parts).strip()

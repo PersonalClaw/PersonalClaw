@@ -273,7 +273,7 @@ def _consolidator():
     )
     consolidator._memory_service = _QuietService()  # type: ignore[assignment]
 
-    async def _fake_llm(_prompt: str):
+    async def _fake_llm(_prompt: str, _chat_key: str):
         return {"history_entry": "one line"}
 
     consolidator._call_llm = _fake_llm  # type: ignore[assignment]

@@ -45,11 +45,9 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 import re
 import shutil
 import subprocess
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -1000,59 +998,80 @@ def test_the_action_provider_passes_the_flag_through_and_defaults_it_off() -> No
     assert inspect.signature(run_browse_loop).parameters["vision_grounding"].default is False
 
 
-# ── the live leg: a REAL pulled vision model ───────────────────────────────────────────────────
-
-_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-#: Only the models BA-10 recommends. A live leg that accepted any vision model could pass against
-#: one this change must not recommend, which would quietly launder the licence constraint.
-_LIVE_MODELS = tuple(m.model_id for m in vision.RECOMMENDED_MODELS)
+# ── the wire leg: a multimodal call over Ollama's wire, to a server this test owns ────────────
 
 
-def _pulled_grounding_model() -> str:
-    """A recommended vision model this host has actually pulled, or ``""``."""
+class _OllamaStub:
+    """Ollama's ``/api/chat`` on a loopback port this test owns, answering with a grounding point.
+
+    This leg used to reach the host's own Ollama whenever it had a recommended model pulled: it
+    loaded that model (8.6 GB) on a shared machine on every suite run, and what it proved depended
+    on what the host had installed. The stub records each request, so the test reads what the
+    chain sent as well as what it did with the answer.
+    """
+
+    #: A normalised point exact in binary, so its viewport coordinate compares exactly.
+    REPLY = "POINT 0.5 0.25"
+
+    def __init__(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        stub = self
+        self.requests: list[dict] = []
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's contract
+                length = int(self.headers.get("Content-Length") or 0)
+                stub.requests.append(json.loads(self.rfile.read(length) or b"{}"))
+                body = json.dumps({"message": {"role": "assistant", "content": stub.REPLY}})
+                self.send_response(200 if self.path == "/api/chat" else 404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body.encode("utf-8"))
+
+            def log_message(self, *_args) -> None:
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+@pytest.fixture
+def ollama_stub():
+    stub = _OllamaStub()
     try:
-        with urllib.request.urlopen(f"{_OLLAMA_HOST}/api/tags", timeout=3) as response:
-            tags = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
-        return ""
-    names = {str(m.get("name") or "") for m in tags.get("models") or []}
-    for wanted in _LIVE_MODELS:
-        for name in names:
-            if name == wanted or name.split(":")[0] == wanted.split(":")[0]:
-                return name
-    return ""
+        yield stub
+    finally:
+        stub.close()
 
 
 @pytest.mark.asyncio
-async def test_a_real_pulled_vision_model_grounds_a_click_on_the_canvas_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_a_multimodal_call_over_ollamas_wire_grounds_a_click_on_the_canvas_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ollama_stub: _OllamaStub
 ) -> None:
-    """The change's end-to-end clause: a REAL pulled model, not a mocked ``decide``.
+    """The chain end to end over a real HTTP hop: the screenshot leaves as the image part of an
+    Ollama ``/api/chat`` call for the first recommended model, the reply comes back as a normalised
+    point, the loop scales it into the viewport, and ``Input.dispatchMouseEvent`` carries it."""
+    import base64
 
-    Skipped when no recommended vision model is pulled on this host — the change's own route is
-    "user-PULLED", so a machine without one genuinely cannot run this leg. It is NOT skipped for
-    convenience: the mocked arms above prove the plumbing, and only this one proves a real
-    multimodal call reaches a local model through the ``image_modality`` seam and comes back as a
-    coordinate the loop actuates.
-
-    The assertion is deliberately weak on WHERE the model points (a 64x64 synthetic target is not a
-    benchmark) and strong on the CHAIN: a real model produced a parseable normalised point, the loop
-    scaled it into the viewport, and ``Input.dispatchMouseEvent`` carried it.
-    """
-    model = _pulled_grounding_model()
-    if not model:
-        pytest.skip(
-            f"no recommended vision model pulled on {_OLLAMA_HOST} "
-            f"(want one of {', '.join(_LIVE_MODELS)}: `{vision.RECOMMENDED_MODELS[0].obtain}`)"
-        )
-
-    provider = _live_provider(model)
     import personalclaw.providers.provider_bridge as bridge
 
+    model = vision.RECOMMENDED_MODELS[0].model_id
+    provider = _wire_provider(ollama_stub.url, model)
     _reader(monkeypatch, reads=True)
     monkeypatch.setattr(bridge, "resolve_provider_for_use_case", lambda uc, **_k: provider)
 
-    page = _Page(CANVAS_PAGE, screenshot=_target_png(tmp_path), viewport=(800.0, 600.0))
+    shot = _target_png(tmp_path)
+    page = _Page(CANVAS_PAGE, screenshot=shot, viewport=(800.0, 600.0))
     result = await _run(
         page,
         _decider("CLICK_VISION the solid red square"),
@@ -1060,20 +1079,22 @@ async def test_a_real_pulled_vision_model_grounds_a_click_on_the_canvas_fixture(
     )
 
     assert not result.parked, f"{result.park_reason}: {result.park_detail}"
-    assert (
-        len(page.coordinate_clicks) == 1
-    ), f"{model} produced no actuated coordinate; steps={[s.note for s in result.steps]}"
-    x, y = page.coordinate_clicks[0]
-    assert 0.0 <= x <= 800.0 and 0.0 <= y <= 600.0, (x, y)
+    assert page.coordinate_clicks == [(400.0, 150.0)], "0.5 × 800 and 0.25 × 600"
+    [sent] = ollama_stub.requests
+    assert sent["model"] == model
+    [message] = sent["messages"]
+    assert "the solid red square" in message["content"]
+    assert message["images"] == [base64.b64encode(Path(shot).read_bytes()).decode("ascii")]
 
 
-def _live_provider(model: str):
-    """A minimal ModelProvider over the REAL local Ollama, using the platform's content blocks.
+def _wire_provider(url: str, model: str):
+    """A minimal ModelProvider speaking Ollama's ``/api/chat`` wire at *url*, from the platform's
+    content blocks.
 
     Deliberately not the bundled ``ollama-models`` app provider: importing an app bundle from a core
-    test would cross the SDK boundary the core is lint-fenced against. This speaks the same wire
-    Ollama does and performs the same content-block split the bundle performs, so what it proves is
-    that a real multimodal call through this message shape returns a groundable answer.
+    test would cross the SDK boundary the core is lint-fenced against. It performs the same
+    content-block split the bundle performs, so what it proves is that this message shape carries
+    the screenshot as an image part and a reply comes back through it.
     """
     from personalclaw.llm.base import EVENT_TEXT_CHUNK
 
@@ -1082,7 +1103,7 @@ def _live_provider(model: str):
             self.kind = EVENT_TEXT_CHUNK
             self.text = text
 
-    class _LiveProvider:
+    class _WireProvider:
         async def complete(self, messages, **_kwargs):
             blocks = messages[0]["content"]
             text = "\n".join(b["text"] for b in blocks if b.get("type") == "text")
@@ -1100,20 +1121,20 @@ def _live_provider(model: str):
                 }
             ).encode("utf-8")
             request = urllib.request.Request(
-                f"{_OLLAMA_HOST}/api/chat",
+                f"{url}/api/chat",
                 data=body,
                 headers={"Content-Type": "application/json"},
             )
             import asyncio
 
             def _post() -> str:
-                with urllib.request.urlopen(request, timeout=300) as response:
+                with urllib.request.urlopen(request, timeout=30) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 return str((payload.get("message") or {}).get("content") or "")
 
             yield _Event(await asyncio.get_running_loop().run_in_executor(None, _post))
 
-    return _LiveProvider()
+    return _WireProvider()
 
 
 def _target_png(tmp_path: Path) -> str:

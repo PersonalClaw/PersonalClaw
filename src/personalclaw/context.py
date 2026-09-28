@@ -862,8 +862,8 @@ async def compress_thread_history(
     from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
     from personalclaw.llm_helpers import stream_and_collect  # circular import
-    from personalclaw.session import BACKGROUND_KEY  # circular import
-    from personalclaw.usage_ledger import Attribution, recorder
+    from personalclaw.session import BACKGROUND_KEY, chore_usage  # circular import
+    from personalclaw.usage_ledger import recorder
 
     # #3599 changed this parameter from a ConversationLog to the turns themselves and kept its
     # place, so an old call still binds and used to fail on the first line below, inside an
@@ -919,8 +919,9 @@ async def compress_thread_history(
         acquired = True
         # One usage row for the compression, under the chat it was made for: a background chore
         # on the Background model, so Settings → Usage counts it and the chat's total holds it.
-        who = Attribution(source="background", session_key=session_key, agent=LITE_AGENT_NAME)
-        result = await stream_and_collect(client, prompt, on_complete=recorder(client, who))
+        result = await stream_and_collect(
+            client, prompt, on_complete=recorder(client, chore_usage(session_key))
+        )
         if not result:
             return None
 

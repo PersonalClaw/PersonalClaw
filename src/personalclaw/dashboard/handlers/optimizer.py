@@ -5,9 +5,11 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.usage_ledger import Attribution, recorder
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +112,14 @@ async def handle_optimize(request: web.Request) -> web.Response:
             """Acquire session, stream, release — all under one timeout."""
             logger.debug("Optimizer: acquiring dedicated session")
             client, _is_new, _resumed = await state.sessions.get_or_create(
-                optimizer_session_key, agent="personalclaw-lite"
+                optimizer_session_key, agent=LITE_AGENT_NAME
             )
             logger.debug("Optimizer: session acquired, streaming")
+            # You asked for it and read the answer in your composer: your spend, not a chore's.
+            who = Attribution(
+                source="chat", session_key=optimizer_session_key, agent=LITE_AGENT_NAME
+            )
+            record = recorder(client, who)
             try:
                 text = ""
                 async for event in client.stream(full_prompt):
@@ -121,6 +128,7 @@ async def handle_optimize(request: web.Request) -> web.Response:
                     elif event.kind == EVENT_PERMISSION_REQUEST:
                         await client.reject_tool(event.request_id)
                     elif event.kind == EVENT_COMPLETE:
+                        record(event)
                         break
                 return text
             finally:

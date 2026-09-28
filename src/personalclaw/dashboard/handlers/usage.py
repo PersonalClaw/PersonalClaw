@@ -1,24 +1,26 @@
-"""Usage read routes — the per-turn ledger plus the per-day spend fold.
+"""Usage read routes — the usage ledger, its per-day spend fold, and the daily cap beside the
+spend it is held to.
 
-Three read-only GETs, deliberately in ONE module because they answer one user question ("what did
+Four read-only GETs, deliberately in ONE module because they answer one user question ("what did
 this cost me?") at different grains, and a second usage handler module would split that answer:
 
-* ``/api/usage/rollup`` + ``/api/usage/totals`` — the per-TURN ledger
-  (``usage_ledger``), filterable by session and an arbitrary ``[since, until)`` window. The
-  session/turn-grain forensic view.
-* ``/api/usage`` — the per-DAY durable fold (``routing/usage.py``) over BOTH recorded
-  stores: the ledger's streamed turns AND ``model_calls.jsonl``'s guarded ``complete()`` attempts,
-  which the two routes above cannot see at all (the ledger has no row for them, so the entire
-  unattended axis was invisible spend). Grouped by model / provider / purpose under the single
-  ``interactive|background|loop|eval|app`` vocabulary.
+* ``/api/usage/rollup`` + ``/api/usage/totals`` — the ledger (``usage_ledger``), one row
+  per model call, filterable by session and an arbitrary ``[since, until)`` window. The
+  session-grain forensic view.
+* ``/api/usage`` — the per-DAY durable fold (``routing/usage.py``) of the same ledger,
+  grouped by model / provider / purpose under the single ``interactive|background|loop|eval|app``
+  vocabulary, with a census of the guarded model calls (``model_calls.jsonl``) no row counts: a
+  call that did not finish writes none.
+* ``/api/usage/budget`` — today's spend as the daily cap counts it (the spend meter), beside that
+  cap. The ledger also holds every chat turn, which no cap counts, so its totals are no figure to
+  set beside the cap.
 
-The overlap is intentional and bounded: the fold is the long-horizon record (both JSONLs are
-capped), the rollup is the recent per-session detail. Neither derives from the other, and only the
-fold claims to cover both axes.
+The overlap is intentional and bounded: the fold is the long-horizon record (the ledger JSONL is
+capped), the rollup is the recent per-session detail.
 
 Read-only throughout — this is observation, never enforcement, so there is no write/mutate route
-here. Errors use the shared ``{error:{code,message}}`` envelope
-(:func:`personalclaw.http_errors.json_error`).
+here: the budget route reads the meter the cap is enforced from and changes nothing. Errors use
+the shared ``{error:{code,message}}`` envelope (:func:`personalclaw.http_errors.json_error`).
 """
 
 from __future__ import annotations
@@ -134,7 +136,48 @@ async def api_usage(request: web.Request) -> web.Response:
     return web.json_response(usage_fold.query(fold, window=window, group=group))
 
 
+async def api_usage_budget(request: web.Request) -> web.Response:
+    """GET /api/usage/budget — today's metered spend beside the daily cap it is held to.
+
+    The two numbers the guardrails compare, from the one place they compare them: the day total
+    the spend meter charges (``guardrails.budgets.SpendMeter``) and the ceiling
+    ``budget_from_config`` builds. The meter counts the model calls PersonalClaw makes on its own
+    (automations, loops, subagents, background work) and no chat turn, over the host's local day.
+    The Usage page used to set the ledger's total beside the cap instead: chat turns included, on
+    a UTC day, so it could show a cap spent that was not, or not show one that was.
+
+    ``cap_unreadable`` is True when the configured ceiling could not be read; the caps are then
+    ``null``, never an unlimited 0 nobody chose.
+    """
+    from personalclaw.guardrails.budgets import (
+        BudgetConfigUnreadable,
+        budget_from_config,
+        get_meter,
+    )
+
+    spent = get_meter().day_totals()
+    max_dollars: float | None = None
+    max_tokens: int | None = None
+    try:
+        budget = budget_from_config()
+    except BudgetConfigUnreadable:
+        unreadable = True
+    else:
+        unreadable = False
+        max_dollars, max_tokens = float(budget.max_dollars), int(budget.max_tokens)
+    return web.json_response(
+        {
+            "spent_dollars": round(float(spent.dollars), 6),
+            "spent_tokens": int(spent.tokens),
+            "max_dollars_per_day": max_dollars,
+            "max_tokens_per_day": max_tokens,
+            "cap_unreadable": unreadable,
+        }
+    )
+
+
 def register_usage_routes(app: web.Application) -> None:
     app.router.add_get("/api/usage", api_usage)
+    app.router.add_get("/api/usage/budget", api_usage_budget)
     app.router.add_get("/api/usage/rollup", api_usage_rollup)
     app.router.add_get("/api/usage/totals", api_usage_totals)

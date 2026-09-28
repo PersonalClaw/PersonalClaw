@@ -56,6 +56,10 @@ class _TtyStdin:
 class TestSetupWorkspaceDir:
     """Tests for _setup_workspace_dir prompt default and label logic."""
 
+    @pytest.fixture(autouse=True)
+    def _no_workspace_from_the_environment(self, monkeypatch):
+        monkeypatch.delenv("PERSONALCLAW_WORKSPACE", raising=False)
+
     def test_uses_saved_path_as_default(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
         ws_file = tmp_path / "workspace_dir"
@@ -91,6 +95,74 @@ class TestSetupWorkspaceDir:
             _setup_workspace_dir()
         output = capsys.readouterr().out
         assert "Default:" in output
+
+    def test_a_workspace_the_environment_sets_is_shown_not_asked(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """``PERSONALCLAW_WORKSPACE`` wins over the folder this step saves, so a folder typed here
+        would be saved, reported as configured, and never used."""
+        from personalclaw.cli_setup import _setup_workspace_dir
+        from personalclaw.config.loader import workspace_root
+
+        monkeypatch.setattr("personalclaw.cli_setup.sys.stdin", _TtyStdin())
+        ws_file = tmp_path / "workspace_dir"
+        monkeypatch.setattr("personalclaw.cli_setup._workspace_dir_file", lambda: ws_file)
+        from_env = tmp_path / "from-env"
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(from_env))
+        with patch("builtins.input", return_value=str(tmp_path / "typed")) as mock_input:
+            assert _setup_workspace_dir() is None
+        mock_input.assert_not_called()
+        output = capsys.readouterr().out
+        assert f"Set by PERSONALCLAW_WORKSPACE: {from_env}" in output
+        assert f"✅ Workspace: {from_env}" in output
+        assert not ws_file.exists(), "no folder saved that sessions would not run in"
+        assert from_env.is_dir() and workspace_root() == from_env
+
+    def test_a_workspace_the_environment_sets_that_cannot_be_made_fails_the_step(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from personalclaw.cli_setup import _setup_workspace_dir
+
+        blocker = tmp_path / "a-file"
+        blocker.write_text("", encoding="utf-8")
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(blocker / "workspace"))
+        with patch("builtins.input", side_effect=AssertionError("the step asked")):
+            reason = _setup_workspace_dir()
+        assert reason and "from PERSONALCLAW_WORKSPACE" in reason
+        assert "from PERSONALCLAW_WORKSPACE" in capsys.readouterr().err
+
+
+class TestSetupAgentRuntime:
+    """``setup --provider`` sets ``agent.provider``, the runtime an agent that names none runs on.
+
+    It used to save any name: a model provider's name was saved, reported as set, and read as
+    ``native`` everywhere, which changed nothing.
+    """
+
+    @pytest.fixture
+    def config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        path = tmp_path / "config.json"
+        path.write_text("{}", encoding="utf-8")
+        return path
+
+    @pytest.mark.parametrize("runtime", ["native", "acp", "acp:claude-code"])
+    def test_a_runtime_is_saved(self, config, runtime, capsys):
+        from personalclaw.cli_setup import _setup_noninteractive
+
+        assert _setup_noninteractive(provider=runtime) is True
+        assert json.loads(config.read_text(encoding="utf-8"))["agent"]["provider"] == runtime
+        assert f"✅ Agent runtime set: {runtime}" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("value", ["openai", "Native", "acp:", "acp: "])
+    def test_anything_else_is_refused_and_not_saved(self, config, value, capsys):
+        from personalclaw.cli_setup import _setup_noninteractive
+
+        assert _setup_noninteractive(provider=value) is False
+        assert json.loads(config.read_text(encoding="utf-8")) == {}
+        out, err = capsys.readouterr()
+        assert f"--provider {value!r} is not an agent runtime" in err
+        assert "✅" not in out
 
 
 class TestCronCli:

@@ -103,7 +103,7 @@ def _stub_keyring(
 
 
 @pytest.fixture
-def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unset_env) -> Path:
     """An isolated credential home. Never the real one — these tests write secrets."""
     cfg = tmp_path / "home"
     cfg.mkdir()
@@ -113,8 +113,7 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("PERSONALCLAW_HOME", str(cfg))
     monkeypatch.setattr(loader, "config_dir", lambda: cfg)
     monkeypatch.delenv(CREDENTIAL_BACKEND_ENV, raising=False)
-    for key in _KEYS:
-        monkeypatch.delenv(key, raising=False)
+    unset_env(*_KEYS)  # a migrated or rolled-back credential is mirrored into the environment
     # 🪤 ASSERT THE REDIRECT, before a single secret is written. A fixture that silently
     # failed to redirect would run this whole file against the developer's real home and
     # every assertion would still pass.
@@ -321,8 +320,9 @@ def test_rollback_restores_env_byte_for_byte_and_clears_the_keychain(
 
 
 def test_rollback_leaves_a_credential_the_user_added_after_migrating(
-    keychain_on, home: Path
+    keychain_on, home: Path, unset_env
 ) -> None:
+    unset_env("SH2_LATER")
     mig.migrate_credentials_to_keychain(confirm=True)
     cred.save_credential("SH2_LATER", "later-secret")
     assert _kc(keychain_on, "SH2_LATER") == "later-secret"

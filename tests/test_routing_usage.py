@@ -330,22 +330,21 @@ def test_a_row_with_no_usable_day_is_counted_not_silently_discarded(tmp_path):
 
 
 def test_reachable_purposes_reports_only_what_a_writer_can_produce():
-    """`eval` alone has no turn-ledger writer; `loop` has one and is reachable.
+    """Every purpose has a writer: `eval` gained its first when the eval runner, its judge and the
+    bench callers wrote their rows, and `loop` has one through the loop worker's session.
 
-    This assertion has now been wrong in BOTH directions. It first claimed `loop` was reachable
-    for no stated reason; it was then "corrected" to exclude `loop` on a census of LITERAL
-    `source=` arguments, which cannot see the loop's spelling because the loop's spelling is a
-    runtime value: `loop/manager.py` names the worker session `app="loop"` and `chat_runner`
-    passes `session._app or "chat"` as the source, so `PURPOSE_BY_SOURCE["loop"]` is hit on the
-    first lookup. `eval` really has none — no call site passes the literal and no session is
-    created with `app="eval"`.
+    This assertion has been wrong in BOTH directions. It first claimed `loop` was reachable for
+    no stated reason; it was then "corrected" to exclude `loop` on a census of LITERAL `source=`
+    arguments, which cannot see the loop's spelling because the loop's spelling is a runtime
+    value: `loop/manager.py` names the worker session `app="loop"` and `chat_runner` passes
+    `session._app or "chat"` as the source, so `PURPOSE_BY_SOURCE["loop"]` is hit on the first
+    lookup.
 
     `test_usage_reachable_purposes.py` censuses the real call sites AND the `app=` literals, so a
     writer appearing (or disappearing) goes red there with the reason rather than here with a bare
     tuple mismatch."""
-    assert U.reachable_purposes() == ("interactive", "background", "loop", "app")
-    assert set(U.PURPOSES) - set(U.reachable_purposes()) == {"eval"}
-    assert U.UNWRITTEN_PURPOSES == {"eval"}
+    assert U.reachable_purposes() == ("interactive", "background", "loop", "eval", "app")
+    assert U.UNWRITTEN_PURPOSES == frozenset()
 
 
 def test_every_mapping_target_is_in_the_fixed_vocabulary():

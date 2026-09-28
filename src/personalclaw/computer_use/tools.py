@@ -272,11 +272,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if not isinstance(response, dict):
         return tool_failure(f"computer use returned {type(response).__name__}, not an object.")
     if response.get("error"):
-        # Both envelopes land here: the gateway's ``{"error": {...}}`` refusal body and
-        # ``_post``'s own ``{"error": "<transport message>"}``. Rendering the refusal's
-        # WHAT/WHY/FIX verbatim is deliberate — the dispatch composed those three lines for a
-        # model to act on, and re-wording them here would give one refusal two voices.
-        return _render_error(response["error"])
+        # Both answers land here: the gateway's refusal, whose ``{"what", "why", "fix", …}``
+        # object ``_post`` keeps as ``error_detail``, and ``_post``'s own ``{"error":
+        # "<transport message>"}``. Rendering the refusal's WHAT/WHY/FIX verbatim is deliberate —
+        # the dispatch composed those three lines for a model to act on, and re-wording them
+        # here would give one refusal two voices.
+        return _render_error(response.get("error_detail") or response["error"])
     result = response.get("result")
     if isinstance(result, str):
         return result

@@ -890,7 +890,7 @@ class GatewayOrchestrator:
         try:
             argv = install_argv(["--quiet", *missing])
         except NoInstallerError as exc:
-            print(f"❌ {exc}")
+            print(f"❌ {exc}", file=sys.stderr)
             logger.error("Dep repair impossible: %s", exc)
             return
 
@@ -906,7 +906,9 @@ class GatewayOrchestrator:
             importlib.invalidate_caches()
             print("✅ Dependencies installed")
         else:
-            print("❌ Dependency install failed — run manually: personalclaw update")
+            print(
+                "❌ Dependency install failed — run manually: personalclaw update", file=sys.stderr
+            )
             logger.error("Dep repair failed: %s", mask_child_output(result.stderr, limit=500))
 
     # ------------------------------------------------------------------

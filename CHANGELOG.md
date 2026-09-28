@@ -175,6 +175,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An agent runtime whose ACP adapter isn't installed offers Retry on its card even when no install of it failed.**
 
+- **Every model call PersonalClaw makes is on the Usage page, chat titles, tags, judges and digests included.**
+
+- **The Usage page's daily budget sets the spend the cap counts beside the cap, not every chat turn.**
+
+- **`personalclaw setup --provider` takes an agent runtime (`native`, `acp`, `acp:<cli>`) and refuses anything else instead of saving it.**
+
+- **`personalclaw setup` shows the workspace `PERSONALCLAW_WORKSPACE` sets, instead of asking for a folder it would not use.**
+
+- **An agent's tool is told why the gateway refused it, not only the HTTP status.**
+
+- **A run the chat's `automation_run` could not start is reported as not run.**
+
+- **The gateway's missing-dependency errors go to stderr.**
+
+- **A masked secret no longer takes the backslash of an escaped quote with it, so masked JSON still parses.**
+
+- **A text-to-speech model that is chosen but cannot speak yet says so, instead of answering with no audio.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**

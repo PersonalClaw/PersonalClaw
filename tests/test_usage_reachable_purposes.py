@@ -31,6 +31,9 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 #: The seam every turn row goes through. Both spellings appear (a direct call and the thin
 #: chat wrapper), so the census keys on the seam name rather than on any one module.
 _SEAM = re.compile(r"record_from_event\s*\(")
+#: The other door into the same seam: the ``Attribution`` a model call's row is written for
+#: (``usage_ledger.recorder``, ``one_shot_completion(usage=…)``), whose ``source`` is the row's.
+_ATTRIBUTION = re.compile(r"\bAttribution\s*\(")
 #: `source=` as passed at a call site: a literal, or an expression we resolve by hand below.
 _SOURCE_ARG = re.compile(r"source\s*=\s*(?:\"([a-z_]+)\"|'([a-z_]+)'|([A-Za-z_][\w.]*))")
 
@@ -96,9 +99,24 @@ def _app_names() -> set[str]:
     return found
 
 
+def _attribution_sources() -> set[str]:
+    """Every literal ``source`` an ``Attribution(...)`` is built with in the tree."""
+    found: set[str] = set()
+    for path in _SRC.rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        text = _code_lines(path.read_text(encoding="utf-8"))
+        for match in _ATTRIBUTION.finditer(text):
+            args = _call_arguments(text, match.end() - 1)
+            for literal_dq, literal_sq, _expression in _SOURCE_ARG.findall(args):
+                if literal_dq or literal_sq:
+                    found.add(literal_dq or literal_sq)
+    return found
+
+
 def _writer_sources() -> set[str]:
     """Every ``source`` value the live turn-ledger call sites can pass."""
-    found: set[str] = set()
+    found: set[str] = _attribution_sources()
     for path in _SRC.rglob("*.py"):
         if "__pycache__" in str(path):
             continue
@@ -141,6 +159,17 @@ def test_the_census_is_scoped_to_the_call_and_not_the_file() -> None:
     watchdog = (_SRC / "loop" / "watchdog.py").read_text(encoding="utf-8")
     assert 'source="loop"' in watchdog, "the innocent inbox line moved; re-derive this guard"
     assert not _SEAM.search(watchdog), "watchdog gained a turn-ledger call; re-scope this guard"
+
+
+def test_the_attribution_census_sees_the_rows_model_calls_write() -> None:
+    """The floor for the second door: the chores' and judges' rows are written for an
+    ``Attribution``, and an empty census of those would hide every one of their purposes."""
+    sources = _attribution_sources()
+    assert {"background", "eval", "loop", "chat"} <= sources, sources
+    # Scoped to the call: the dataclass's own definition, and the prose that names it, are no
+    # writer. `usage_ledger.py` defines the class and builds `UNATTENDED` with it.
+    ledger = (_SRC / "usage_ledger.py").read_text(encoding="utf-8")
+    assert 'UNATTENDED = Attribution(source="background")' in ledger
 
 
 def test_every_unwritten_purpose_really_has_no_writer() -> None:

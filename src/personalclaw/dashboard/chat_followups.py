@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY
+from personalclaw.session import BACKGROUND_KEY, chore_usage
+from personalclaw.usage_ledger import recorder
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -180,9 +181,12 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
     if not prompt:
         return []
 
+    from personalclaw.dashboard.chat_utils import _history_key_for
+
     # No model bound → get_or_create raises at the factory; propagate so the caller
     # emits no event (chips simply don't render).
     client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+    record = recorder(client, chore_usage(_history_key_for(session.key)))
     text = ""
     try:
 
@@ -197,6 +201,7 @@ async def _generate_followups(state: "DashboardState", session: "_ChatSession") 
                 elif event.kind == EVENT_PERMISSION_REQUEST:
                     await client.reject_tool(event.request_id)
                 elif event.kind == EVENT_COMPLETE:
+                    record(event)
                     break
             return text
 

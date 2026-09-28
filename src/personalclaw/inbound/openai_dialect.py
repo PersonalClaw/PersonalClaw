@@ -933,6 +933,7 @@ async def handle_speech(request: web.Request) -> web.StreamResponse:
             status=503,
         )
 
+    from personalclaw.tts.registry import TtsNotReady
     from personalclaw.voice_reply import streaming_voice_reply
 
     chunks: list[bytes] = []
@@ -945,6 +946,19 @@ async def handle_speech(request: web.Request) -> web.StreamResponse:
             speech_voice=params["speech_voice"],
         ):
             chunks.append(wav)
+    except TtsNotReady as refused:
+        # A configuration answer, like `no_bound_voice` above, and not a fault to retry: the
+        # bound voice cannot speak until the owner fixes it in Settings.
+        audit(
+            OPENAI_SURFACE,
+            route=ROUTE_SPEECH,
+            status=refused.status,
+            client_id=client_id,
+            refused="voice not ready",
+        )
+        return openai_error(
+            refused.message, code="tts_not_ready", type_="server_error", status=refused.status
+        )
     except Exception as exc:  # noqa: BLE001 — a synthesis fault is a 502, not a 500 page
         logger.warning("openai dialect: synthesis failed", exc_info=True)
         audit(

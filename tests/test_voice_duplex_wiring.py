@@ -62,7 +62,7 @@ def _stub_synthesis(monkeypatch, sentences):
     monkeypatch.setattr(
         "personalclaw.dashboard.chat_voice.active_voice_params",
         lambda **_kw: {
-            "provider": MagicMock(),
+            "provider": MagicMock(can_synthesize=AsyncMock(return_value=True)),
             "voice": "en_US-lessac-medium",
             "speed": 1.0,
             "speech_voice": "",

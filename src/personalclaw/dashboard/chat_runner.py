@@ -55,6 +55,7 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
+    chat_usage,
     model_substitution_notice,
     stream_slash_command,
     strip_status_sentinel,
@@ -124,6 +125,7 @@ from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.task_modes import REPORTED_READ_KINDS
+from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
 if TYPE_CHECKING:
@@ -1549,8 +1551,9 @@ def _mark_screen_context(session: _ChatSession, value: object) -> None:
             return
 
 
-async def _describe_screen_frame(data_url: str) -> str:
-    """One-shot vision call converting *data_url* to a text description.
+async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
+    """One-shot vision call converting *data_url* to a text description, recorded for *usage*
+    (the chat's, ``chat_utils.chat_usage``).
 
     Resolves the platform's image reader (``providers.image_input.resolve_image_reader``):
     the ``image_modality`` binding (Settings → Models), else a chat model that takes images —
@@ -1570,7 +1573,6 @@ async def _describe_screen_frame(data_url: str) -> str:
     knowledge-pipeline nodes, the loop stage-gate judge) are all unattended, where
     latency buys correctness instead of costing it.
     """
-    from personalclaw.llm.base import EVENT_TEXT_CHUNK
     from personalclaw.providers.image_input import resolve_image_reader
 
     provider = await resolve_image_reader()
@@ -1588,10 +1590,13 @@ async def _describe_screen_frame(data_url: str) -> str:
             ],
         }
     ]
+    record = recorder(provider, usage)
     parts: list[str] = []
     async for ev in provider.complete(messages):
         if ev.kind == EVENT_TEXT_CHUNK:
             parts.append(getattr(ev, "text", "") or "")
+        elif ev.kind == EVENT_COMPLETE:
+            record(ev)
     return "".join(parts).strip()
 
 
@@ -1670,7 +1675,7 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         return message
 
     try:
-        description = await _describe_screen_frame(frame.data_url())
+        description = await _describe_screen_frame(frame.data_url(), usage=chat_usage(session))
     except Exception:  # noqa: BLE001 — a failed describe must not kill the turn
         logger.warning("screen-frame description failed", exc_info=True)
         description = ""

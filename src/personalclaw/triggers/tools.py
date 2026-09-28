@@ -1233,7 +1233,9 @@ def run(
     refused, a row a legacy import brought over and the owner has not switched on included.
 
     `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
-    at all, which is the property that makes observe-mode safe to offer.
+    at all, which is the property that makes observe-mode safe to offer. It answers as the
+    gateway's `/run` does, and `ok` is what that answer says (:func:`_run_outcome`): this reported
+    `ok` for every answer, a refused or failed run included.
     """
     row = store.get(trigger_id)
     if row is None:
@@ -1292,8 +1294,28 @@ def run(
         lines.append("  no runner is wired in this context, so nothing was executed.")
         return AutomationToolResult(False, "\n".join(lines), {"plan": plan})
     result = runner({"trigger_id": trigger.id, "workflow": dict(trigger.workflow)})
-    lines.append(f"  result: {result}")
-    return AutomationToolResult(True, "\n".join(lines), {"plan": plan, "result": result})
+    ran, line = _run_outcome(result)
+    # Masked like the name above: the route's sentence can quote the automation.
+    lines.append(redact_for_display(line))
+    return AutomationToolResult(ran, "\n".join(lines), {"plan": plan, "result": result})
+
+
+def _run_outcome(result: Any) -> tuple[bool, str]:
+    """Whether a runner's answer says the automation ran, and the line that says what happened.
+
+    The runner answers as the gateway's `/run` does: `ok` for whether the action ran, with its
+    `result`; `refused` for a gate that stopped it; `error` for a request it could not serve (and
+    for a gateway it could not reach). Only an answer that says it ran is a run.
+    """
+    if not isinstance(result, dict):
+        return False, f"  failed: {result}"
+    if result.get("error"):
+        return False, f"  failed: {result['error']}"
+    if result.get("refused"):
+        return False, f"  refused: {result['refused']}"
+    if result.get("ok") is True:
+        return True, f"  result: {result.get('result') or 'ran'}"
+    return False, f"  did not run: {result.get('result') or 'the run did not start'}"
 
 
 def _same_trigger(record_id: str, wanted: str) -> bool:

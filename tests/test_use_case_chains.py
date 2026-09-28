@@ -13,6 +13,7 @@ import json
 import pytest
 
 from personalclaw.providers import use_cases as uc
+from personalclaw.usage_ledger import Attribution
 
 
 @pytest.fixture
@@ -663,7 +664,7 @@ class TestDirectConsumerAdvance:
             "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
             side_effect=resolver,
         ):
-            out = await gates.judge_verdict("grade this")
+            out = await gates.judge_verdict("grade this", loop_id="l1")
         assert out == "PASS — criteria met"
         assert gates.verdict_rendered(out) is True
         assert calls == ["p1:m1", "p2:m2"]
@@ -683,7 +684,7 @@ class TestDirectConsumerAdvance:
             "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
             side_effect=_scripted_resolver({"__plain__": "FAIL"}, calls),
         ):
-            out = await gates.judge_verdict("grade this")
+            out = await gates.judge_verdict("grade this", loop_id="l1")
         assert out == "FAIL"
         assert calls == [""]
 
@@ -712,7 +713,9 @@ class TestDirectConsumerAdvance:
             ),
             pytest.raises(RuntimeError, match="vision provider down"),
         ):
-            await chat_runner._describe_screen_frame("data:image/png;base64,AA==")
+            await chat_runner._describe_screen_frame(
+                "data:image/png;base64,AA==", usage=Attribution(source="chat")
+            )
         assert calls == [""]  # resolved once, with NO model_override — no chain walk
 
 

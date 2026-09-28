@@ -1,9 +1,10 @@
 """The per-turn cost/token ledger (C1).
 
 The durable answer to "what did this cost me?" — a fail-open, append-only JSONL of
-one :class:`TurnUsage` row per model turn, with rollups by model / source / agent /
-provider / day. This module owns the STORE only; the write sites that feed it (C2)
-and the surfaces that render it are later changes.
+one :class:`TurnUsage` row per model call (a turn, or a call made around one: a title, a
+judge, a digest), with rollups by model / source / agent / provider / day. This module owns
+the STORE; the write sites feed it through :func:`record_from_event`, or :func:`recorder`
+for a call made for an :class:`Attribution`.
 
 Soul guardrails this module enforces:
 - **Observation only, never enforcement.** A ledger records; it can never block,
@@ -45,7 +46,7 @@ class TurnUsage:
 
     ts: str  # ISO-UTC, matching the SEL timestamp convention
     session_key: str
-    source: str  # chat | room | loop | cron | subagent | channel | cli | background
+    source: str  # chat | room | loop | cron | subagent | channel | cli | background | eval
     agent: str  # "" = the default agent
     # The provider entry the answer came from (``FakeUp`` of ``FakeUp:gpt-4o``); for an ACP agent
     # CLI, which names none, the runtime it ran on (``acp:claude-code``).
@@ -79,24 +80,35 @@ class Attribution:
     agent: str = ""
 
 
+#: Whose spend a model call is when the code that made it names nobody: unattended background
+#: work. A one-shot completion (``llm_helpers.one_shot_completion``) is never an interactive turn,
+#: so that is what such a call is, rather than a guess, and it is counted instead of dropped.
+UNATTENDED = Attribution(source="background")
+
+
 def recorder(provider: object, who: Attribution) -> Callable[[object], None]:
     """The ``on_complete`` that writes one row for a call made through *provider*, for *who*.
 
     The row names the model that answered when the event says (a native runtime's
     ``served_model_ref``), and otherwise the one *provider* was built for: the
     ``"<entry>:<model>"`` its build stamped (``ModelProvider.served_ref``).
+
+    Fail-open, as :func:`record_turn` is: writing the row never breaks the call it records.
     """
     entry, _, model = str(getattr(provider, "served_ref", "") or "").partition(":")
 
     def record(event: object) -> None:
-        record_from_event(
-            event,
-            source=who.source,
-            session_key=who.session_key,
-            agent=who.agent,
-            provider=entry,
-            model=model,
-        )
+        try:
+            record_from_event(
+                event,
+                source=who.source,
+                session_key=who.session_key,
+                agent=who.agent,
+                provider=entry,
+                model=model,
+            )
+        except Exception:  # noqa: BLE001 — the never-raises contract
+            logger.debug("usage row for a %s call not written", who.source, exc_info=True)
 
     return record
 

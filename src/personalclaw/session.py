@@ -89,6 +89,7 @@ from personalclaw.session_pid import (  # noqa: F401
     cleanup_orphaned_sessions as cleanup_orphaned_sessions,
 )
 from personalclaw.stats import Stats
+from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,13 @@ def chore_prompt(session_key: str, message: str) -> str:
     from personalclaw.security import redact_for_model
 
     return redact_for_model(message)
+
+
+def chore_usage(chat_key: str = "") -> Attribution:
+    """Whose spend a chore on the background session is: background work by the lite agent it
+    runs as, for the chat it was made for (*chat_key*, the key that chat's own turns are recorded
+    under) when there is one, so that chat's total holds it."""
+    return Attribution(source="background", session_key=chat_key, agent=LITE_AGENT_NAME)
 
 
 # Type alias for provider factory — accepts optional session key

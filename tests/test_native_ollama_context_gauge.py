@@ -96,7 +96,12 @@ class TestTheGaugeStartsUnmeasured:
 
     @pytest.mark.asyncio
     async def test_zero_input_tokens_stays_unmeasured(self, provider_module):
+        """Even with the served window known: the probe is answered here, not by whatever
+        Ollama the machine running the suite happens to have listening."""
         provider = _provider(provider_module)
+        provider._client.get = _fake_ps(
+            [{"name": "gemma4:12b", "context_length": _MEASURED_SERVED_WINDOW}]
+        )
         assert await provider._context_pct("gemma4:12b", 0, _MESSAGES) is None
 
 

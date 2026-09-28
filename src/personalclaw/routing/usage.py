@@ -29,19 +29,20 @@ ledger row written from that event keeps them (``TurnUsage.audit_ids``). A money
 silently double-counts is worse than one that admits a gap, so nothing is summed across the two.
 
 So: the fold sums the ledger, and :func:`audit_census` counts the attempts NO ledger row names
-(``fold["uncounted"]``): the model calls that wrote no usage row (a chat's title, a judge, a
-digest). The surface says "N unattended calls (~$X) wrote no usage row and are not included here",
-which turns an invisible gap into a stated one. Closing it means giving each of those callers a row
-(``llm_helpers.one_shot_completion(usage=…)``), one caller at a time.
+(``fold["uncounted"]``). Every model call writes its row when it finishes
+(``tests/test_every_model_call_writes_its_usage_row.py``), so what the census holds is the attempts
+that did not finish — a call that failed writes no row — and any whose row could not be written
+(the ledger is fail-open). The surface says "N unattended calls (~$X) wrote no usage row and are
+not included here", which turns an invisible gap into a stated one.
 
 **Purpose is the unifying vocabulary.** The ledger's ``source`` maps into the fixed
 ``interactive | background | loop | eval | app`` vocabulary. A source that is none of the known
 literals is an APP NAME (``chat_runner`` sets ``source = session._app or "chat"``), so it maps to
 ``app`` and the name is recorded in ``fold["app_sources"]`` — a census, not an error. An app name
 that IS a known literal is that literal's purpose, not ``app``: the loop engine names its worker
-session ``app="loop"``, which is why ``loop`` has a live writer. ``eval`` is declared for a first
-writer and has none today; :func:`reachable_purposes` reports what the current
-writers can actually produce so a UI never renders a permanent zero row.
+session ``app="loop"``, which is why ``loop`` has a live writer. Every declared purpose has a writer
+today; :func:`reachable_purposes` reports what the current writers can actually produce, so a
+purpose declared before its writer never renders a permanent zero row.
 
 **A row that cannot be attributed to a day is counted, never dropped** — ``fold["unmapped"]``
 carries it, because a fold that discards rows produces a plausible number for every input.
@@ -184,13 +185,12 @@ def purpose_for_source(source: str) -> tuple[str, str]:
 
 
 #: Purposes declared in :data:`PURPOSE_BY_SOURCE` that NO turn-ledger writer can currently
-#: produce. Measured from the six live ``record_from_event`` call sites, which pass exactly
-#: ``background`` (gateway heartbeat), ``channel``/``cron`` (announce path), ``subagent``,
-#: ``cli`` (cli_chat), ``room`` (a room member's turn) and ``chat``-or-an-app-name (chat_runner,
-#: ``session._app or "chat"``):
+#: produce: none. The writers are the ``record_from_event`` call sites and every
+#: ``Attribution(source=…)`` a model call's row is written for (``usage_ledger.recorder``,
+#: ``one_shot_completion(usage=…)``).
 #:
-#: * ``eval`` — declared for a first writer that does not exist yet. No call site passes the
-#:   literal, and no session is created with ``app="eval"``, so nothing can reach the bucket.
+#: ``eval`` was listed here while nothing wrote it; the eval runner, its judge, and the judge and
+#: model bench callers now write their rows as ``eval``.
 #:
 #: ``loop`` was listed here until the app-name path was resolved properly, and that was wrong.
 #: An app name is only :data:`APP_PURPOSE` when it is NOT already a key of
@@ -205,10 +205,10 @@ def purpose_for_source(source: str) -> tuple[str, str]:
 #: every surface that filters on :func:`reachable_purposes`.
 #:
 #: Kept as an explicit set rather than derived at runtime because the writers are spread across
-#: six modules and an import-time census of them would be a circular dependency. It cannot go
+#: many modules and an import-time census of them would be a circular dependency. It cannot go
 #: stale silently: ``test_usage_reachable_purposes`` censuses the real call sites — including the
 #: ``app=`` literals the chat seam forwards, which is exactly what the ``loop`` miss taught it.
-UNWRITTEN_PURPOSES = frozenset({"eval"})
+UNWRITTEN_PURPOSES: frozenset[str] = frozenset()
 
 
 def reachable_purposes() -> tuple[str, ...]:
@@ -337,10 +337,10 @@ def audit_census(
     """Count the guarded-attempt spend the fold leaves out, so the gap is stated not hidden.
 
     Returns ``{calls, dollars_est, by_use_case, days}``: the attempts no ledger row counts. An
-    attempt whose ``audit_id`` is in *ledgered* is a call a turn's row already carries (the row
-    names it, :func:`ledgered_audit_ids`), so it is in the fold's figures and not in this census.
-    What remains is NOT added to any total: those calls wrote no usage row, so the ledger has
-    nothing to fold for them. See the module docstring.
+    attempt whose ``audit_id`` is in *ledgered* is a call a row already carries (the row names
+    it, :func:`ledgered_audit_ids`), so it is in the fold's figures and not in this census. What
+    remains is NOT added to any total: those calls wrote no usage row (one that did not finish
+    writes none), so the ledger has nothing to fold for them. See the module docstring.
     """
     out: dict[str, Any] = {"calls": 0, "dollars_est": 0.0, "by_use_case": {}, "days": {}}
     for rec in rows:

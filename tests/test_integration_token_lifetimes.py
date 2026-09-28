@@ -42,18 +42,16 @@ _UNIFORM = HTTP_ERROR_CODES["unauthorized"]
 
 
 @pytest.fixture(autouse=True)
-def _isolate(tmp_path, monkeypatch):
+def _isolate(tmp_path, monkeypatch, unset_env):
     """An isolated home per test: this suite mints credentials and writes the stores beside
     them, which must never reach the real home."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    for surface in _SURFACES:
-        monkeypatch.delenv(auth.token_env_key(surface), raising=False)
+    # Registered before the test: `save_credential` mirrors into os.environ behind monkeypatch's
+    # back.
+    unset_env(*(auth.token_env_key(surface) for surface in _SURFACES))
     caps_mod.reset_for_tests()
     clients_mod.reset_for_tests()
     yield
-    # `save_credential` mirrors into os.environ behind monkeypatch's back.
-    for surface in _SURFACES:
-        os.environ.pop(auth.token_env_key(surface), None)
     caps_mod.reset_for_tests()
     clients_mod.reset_for_tests()
 

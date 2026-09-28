@@ -176,7 +176,7 @@ Install agent config and configure credentials (interactive wizard).
 | `--agent-only` | Only install agent config; skip credential prompts. |
 | `--clean` | Fresh install — don't merge MCP servers/tools from existing config. |
 | `--mode {docker,service,none}` | Deployment mode: print the README's one-container `docker run`, the system service (systemd/launchd) install, or nothing. |
-| `--provider NAME` | Set the default chat provider by registry entry name. |
+| `--provider RUNTIME` | Set the runtime an agent runs on when it names none: `native` (the built-in loop, on the models Settings → Models binds), `acp`, or `acp:<cli>` for a connected agent CLI. Any other value is refused. The chat model itself is chosen in Settings → Models. |
 | `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
 | `--app NAME` | Run only the named installed app's setup step. |
 
@@ -185,6 +185,9 @@ next step, then ends on a summary naming each failed step with the command that 
 again (`personalclaw setup`, `personalclaw setup --agent-only`, or
 `personalclaw setup --app NAME` for an app's step), and exits 1. What the other steps did
 stays saved, and running `setup` again is safe: Enter at a prompt keeps its answer.
+
+While `PERSONALCLAW_WORKSPACE` is set, the workspace step shows that folder and asks
+nothing: the variable wins over a folder saved here.
 
 ## `personalclaw doctor`
 

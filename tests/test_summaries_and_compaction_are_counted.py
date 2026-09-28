@@ -314,15 +314,16 @@ async def test_the_idle_chat_pass_names_a_chat_as_its_turns_are_recorded(filed_a
 
 
 async def test_a_call_that_wrote_no_row_is_still_stated_as_not_included(calls):
-    """The control for the census rows above: a guarded call nobody recorded (a chat's title, a
-    judge) is still counted, with its cost, so "0 not included" is a measurement."""
+    """The control for the census rows above: a guarded call nobody recorded is still counted,
+    with its cost, so "0 not included" is a measurement. No caller makes one now (a one-shot call
+    whose caller names nobody is recorded as background work), so the unrecorded call here is the
+    guard driven bare, beside a one-shot call that writes its row."""
+    from personalclaw.guardrails.model_call import ModelCallGuard
     from personalclaw.llm_helpers import one_shot_completion
-    from personalclaw.usage_ledger import Attribution
 
     await one_shot_completion("Title this chat.", use_case="background")
-    await one_shot_completion(
-        "Summarize this.", use_case="background", usage=Attribution(source="background")
-    )
+    bare = ModelCallGuard(_Scripted([]), use_case="background", provider_name=ENTRY, model=MODEL)
+    assert [e.kind async for e in bare.stream("Summarize this.")][-1] == EVENT_COMPLETE
 
     attempts = _attempts()
     assert len(attempts) == 2 and len(_rows()) == 1

@@ -1,6 +1,7 @@
 """Shared pytest configuration and fixtures."""
 
 import asyncio
+import functools
 import importlib
 import os
 import shutil
@@ -35,6 +36,18 @@ PYCACHE_PREFIX = pycache_guard.activate()
 # `~/.personalclaw` is refused — in any thread — and charged to the test that made it, which
 # fails by name. Mechanism, attribution rules and what it cannot see: tests/real_home_guard.py.
 real_home_guard.GUARD.install()
+
+# The environment rail's logic (`_a_test_leaves_the_environment_as_it_found_it` below), imported
+# once the bytecode-cache rail is active so that its own bytecode is under it.
+env_guard = importlib.import_module("env_guard")
+
+# ── Local model port guard ─────────────────────────────────────────────
+# From here on a connection to a local model server's port (Ollama's 11434 among them) is refused
+# before it is made, unless this process is listening on it (a test's own fake), and the test that
+# asked fails by name (`_no_test_reaches_a_real_local_model`). Mechanism and what it cannot see:
+# tests/local_model_port_guard.py.
+local_model_port_guard = importlib.import_module("local_model_port_guard")
+local_model_port_guard.GUARD.install()
 
 # ── Imported-checkout provenance rail (#2634) ──────────────────────────
 # An editable install points at a mutable working tree. In a git worktree, that can make
@@ -106,6 +119,53 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             and item.get_closest_marker("timeout") is None
         ):
             item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
+
+
+@pytest.fixture(autouse=True)
+def _a_test_leaves_the_environment_as_it_found_it(request):
+    """Fail the test that changed a ``PERSONALCLAW_*`` variable and did not give it back, and give
+    it back, so the next test starts from the environment this one did.
+
+    It is set up before ``monkeypatch`` in every test (the ``monkeypatch`` below requests it), and
+    so torn down after ``monkeypatch.undo()`` has run: what it compares is what the test leaves
+    once every registered change is undone. Mechanism and what it cannot see: tests/env_guard.py.
+    """
+    before = env_guard.snapshot()
+    yield
+    leaked = env_guard.give_back(before)
+    if leaked:
+        pytest.fail(env_guard.leak_message(request.node.nodeid, leaked), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_reaches_a_real_local_model():
+    """Fail the test that tried to connect to a local model server's port. The connection itself
+    was refused before it was made: tests/local_model_port_guard.py."""
+    yield
+    refused = local_model_port_guard.GUARD.take()
+    if refused:
+        pytest.fail(local_model_port_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture
+def monkeypatch(_a_test_leaves_the_environment_as_it_found_it, monkeypatch):
+    """pytest's own ``monkeypatch``, set up after the environment rail so it is undone before the
+    rail looks.
+
+    A fixture set up earlier is torn down later. A fixture a ``usefixtures`` mark names is set up
+    ahead of every autouse fixture, so without this one that takes ``monkeypatch`` (the
+    ``vendor_default`` of test_a_media_call_names_its_model.py does) would set it up before the
+    rail, and every ``PERSONALCLAW_*`` variable set through it afterwards, by the test or by the
+    autouse fixtures here, would still be set when the rail compared, and read as a leak.
+    """
+    return monkeypatch
+
+
+@pytest.fixture
+def unset_env(monkeypatch):
+    """``unset_env("KEY", …)``: each key unset for this test, and given back as it was afterwards,
+    even when the code under test sets it (``env_guard.unset``)."""
+    return functools.partial(env_guard.unset, monkeypatch)
 
 
 @pytest.fixture(autouse=True)

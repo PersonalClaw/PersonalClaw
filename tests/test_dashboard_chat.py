@@ -1328,7 +1328,7 @@ class TestTitleGenerationSessionLeak:
     @pytest.mark.asyncio
     async def test_background_session_released_on_stream_error(self, tmp_path):
         from personalclaw.dashboard.chat import _generate_title_via_provider
-        from personalclaw.session import BACKGROUND_KEY
+        from personalclaw.session import BACKGROUND_KEY, chore_usage
 
         state = _make_state(tmp_path)
 
@@ -1346,7 +1346,7 @@ class TestTitleGenerationSessionLeak:
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
 
         with pytest.raises(RuntimeError, match="throttle"):
-            await _generate_title_via_provider(state, messages)
+            await _generate_title_via_provider(state, messages, usage=chore_usage())
 
         # The critical assertion: release MUST be called even though stream() raised
         state.sessions.release.assert_called_once_with(BACKGROUND_KEY)
@@ -1360,7 +1360,7 @@ class TestTitleGenerationSessionLeak:
             EVENT_TEXT_CHUNK,
             LLMEvent,
         )
-        from personalclaw.session import BACKGROUND_KEY
+        from personalclaw.session import BACKGROUND_KEY, chore_usage
 
         state = _make_state(tmp_path)
         mock_client = MagicMock()
@@ -1376,7 +1376,7 @@ class TestTitleGenerationSessionLeak:
         state.sessions.release = MagicMock()
 
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-        title = await _generate_title_via_provider(state, messages)
+        title = await _generate_title_via_provider(state, messages, usage=chore_usage())
 
         mock_client.reject_tool.assert_called_once_with("req-1")
         assert title == "My Title"
@@ -1386,7 +1386,7 @@ class TestTitleGenerationSessionLeak:
     async def test_complete_event_breaks_stream(self, tmp_path):
         from personalclaw.dashboard.chat import _generate_title_via_provider
         from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
-        from personalclaw.session import BACKGROUND_KEY
+        from personalclaw.session import BACKGROUND_KEY, chore_usage
 
         state = _make_state(tmp_path)
         mock_client = MagicMock()
@@ -1401,7 +1401,7 @@ class TestTitleGenerationSessionLeak:
         state.sessions.release = MagicMock()
 
         messages = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-        title = await _generate_title_via_provider(state, messages)
+        title = await _generate_title_via_provider(state, messages, usage=chore_usage())
 
         assert title == "Good"
         state.sessions.release.assert_called_once_with(BACKGROUND_KEY)

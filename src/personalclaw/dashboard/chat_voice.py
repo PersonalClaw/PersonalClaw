@@ -17,7 +17,7 @@ from personalclaw.config import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
-from personalclaw.tts.registry import active_voice_params
+from personalclaw.tts.registry import TtsNotReady, active_voice_params, can_speak
 from personalclaw.voice.duplex import clean_for_speech
 from personalclaw.voice.profiles import VoiceProfileError, append_history
 from personalclaw.voice_reply import stitch_wavs, streaming_voice_reply
@@ -132,6 +132,13 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
             ),
             status=503,
         )
+    # A model is chosen and switched on, and its provider still says it cannot speak with it now
+    # (`can_synthesize`: a voice not downloaded, a runtime or a key missing). Asked here, with the
+    # refusals above and before the text is recorded as ours below; this route used to run the
+    # synthesis anyway and answer that it "produced no audio".
+    if not await can_speak(params["provider"], params["voice"]):
+        refused = TtsNotReady(params["provider"], params["voice"])
+        return json_error("tts_not_ready", message=refused.message, status=refused.status)
 
     # Record what we are about to say so a hands-free transcription can be recognized
     # as our own speaker bleed (see api_stt_transcribe). AFTER the refusals, not before: this
@@ -195,6 +202,9 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
                 status=502,
             )
         return web.json_response({"ok": True, "chunks": len(chunk_paths)})
+    except TtsNotReady as refused:
+        # The provider stopped being able to speak between the check above and the synthesis.
+        return json_error("tts_not_ready", message=refused.message, status=refused.status)
     finally:
         if final_path:
             with contextlib.suppress(OSError):

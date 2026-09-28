@@ -10,7 +10,6 @@ nothing without the channel that issued it (#959).
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,17 +22,15 @@ from personalclaw.channel_transports.base import ChannelTransportProvider
 from personalclaw.config.credentials import owner_id_credential, save_credential
 from personalclaw.config.loader import CRED_OWNER_ID
 
-_PROVIDERS = ("telegram", "discord")
+#: Every channel a test here connects: its owner id, which ``save_credential`` mirrors into the
+#: environment, and its transport are given back after the test, whether it passed or not.
+_PROVIDERS = ("telegram", "discord", "slackish")
 
 
 @pytest.fixture(autouse=True)
-def _owner_ids_are_this_tests_own(monkeypatch):
-    keys = (CRED_OWNER_ID, *(owner_id_credential(p) for p in _PROVIDERS))
-    for key in keys:
-        monkeypatch.delenv(key, raising=False)
+def _owner_ids_are_this_tests_own(unset_env):
+    unset_env(CRED_OWNER_ID, *(owner_id_credential(p) for p in _PROVIDERS))
     yield
-    for key in keys:
-        os.environ.pop(key, None)
     for provider in _PROVIDERS:
         channel_transports.unregister_transport(provider)
         channel_delivery.register(None, provider=provider)
@@ -253,9 +250,6 @@ async def test_a_reply_in_the_thread_continues_it_where_dms_have_threads(real_st
     assert reached is not None and reached.key == "chat-9"
     # The link is persisted where a channel with its own routing (and the next restart) reads it.
     real_state.sessions.set_channel_link.assert_called_with("dashboard:chat-9", "77", "U0OWNER")
-    os.environ.pop(owner_id_credential("slackish"), None)
-    channel_transports.unregister_transport("slackish")
-    channel_delivery.register(None, provider="slackish")
 
 
 @pytest.mark.asyncio

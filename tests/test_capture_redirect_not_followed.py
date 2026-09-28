@@ -25,12 +25,21 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.inbound import capture_proxy as proxy
+from personalclaw.inbound.auth import token_env_key
 from tests.test_capture_proxy import (  # reuse the surface's own harness
     _base_of,
     _enable,
     _proxy_client,
     _token,
 )
+
+
+@pytest.fixture(autouse=True)
+def _the_minted_token_is_given_back(unset_env):
+    """``_token`` mints the capture surface's token, which ``create_surface_token`` mirrors into
+    the environment. The harness module clears it in a fixture of its own, which reaches only its
+    own tests."""
+    unset_env(token_env_key(proxy.CAPTURE_SURFACE))
 
 
 async def _redirect_target() -> tuple[TestClient, dict]:

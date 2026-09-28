@@ -413,11 +413,18 @@ async def _run_hook_inner(
             resumed=resumed,
             window=await resolve_window(serving=client),
         )
+    from personalclaw.usage_ledger import Attribution, recorder
+
+    # Unattended: an outside system asked, and nobody watches the turn.
+    record = recorder(
+        client, Attribution(source="background", session_key=session_key, agent=agent or "")
+    )
     result_text = ""
     async for event in client.stream(full_message):
         if event.kind == EVENT_TEXT_CHUNK:
             result_text += event.text
         elif event.kind == EVENT_COMPLETE:
+            record(event)
             break
     state.sessions.record_success(session_key)  # sync; record_failure is async
     return result_text

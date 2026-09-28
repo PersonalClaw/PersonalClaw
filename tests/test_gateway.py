@@ -954,7 +954,8 @@ class TestInitDashboard:
     """Dashboard initialization."""
 
     @pytest.mark.asyncio
-    async def test_init_dashboard_creates_state(self):
+    async def test_init_dashboard_creates_state(self, unset_env):
+        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
         orch = _make_orchestrator()
         orch.sessions = _mock_sessions()
         orch.cron_svc = MagicMock()
@@ -1348,7 +1349,8 @@ class TestInitApiServer:
     """API-only server initialization."""
 
     @pytest.mark.asyncio
-    async def test_init_api_server(self):
+    async def test_init_api_server(self, unset_env):
+        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
         orch = _make_orchestrator()
         orch.sessions = _mock_sessions()
         orch.cron_svc = MagicMock()
@@ -2504,7 +2506,8 @@ class TestInitDashboardWiring:
     """Dashboard wiring with slack and no_crons."""
 
     @pytest.mark.asyncio
-    async def test_dashboard_wires_slack_client(self):
+    async def test_dashboard_wires_slack_client(self, unset_env):
+        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
         # The gateway no longer wires a live Slack client into the dashboard —
         # the slack-channel app's transport sets dashboard_state.slack_client at
         # start_inbound. Core no longer passes any channel client to start_dashboard; the transport registers channel_delivery at start_inbound.  # noqa: E501
@@ -2529,7 +2532,8 @@ class TestInitDashboardWiring:
         assert ds.no_crons is False
 
     @pytest.mark.asyncio
-    async def test_dashboard_no_crons_flag(self):
+    async def test_dashboard_no_crons_flag(self, unset_env):
+        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
         orch = _make_orchestrator(no_crons=True)
         orch.sessions = _mock_sessions()
         orch.cron_svc = MagicMock()
@@ -2702,9 +2706,10 @@ class TestBgSessionDashboardBranch:
 
 
 class TestCheckMissingDepsPip:
-    """Dep repair via pip install."""
+    """Dep repair via pip install. A failure is reported on stderr, where a failure is looked
+    for; progress stays on stdout."""
 
-    def test_pip_install_on_missing_dep(self):
+    def test_pip_install_on_missing_dep(self, capsys):
         orch = _make_orchestrator()
         with patch("importlib.util.find_spec", return_value=None):
             with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
@@ -2712,14 +2717,35 @@ class TestCheckMissingDepsPip:
                     mock_run.return_value = MagicMock(returncode=0)
                     orch._check_missing_deps()
                 mock_run.assert_called_once()
+        out, err = capsys.readouterr()
+        assert "✅ Dependencies installed" in out
+        assert err == ""
 
-    def test_pip_install_failure(self):
+    def test_pip_install_failure(self, capsys):
         orch = _make_orchestrator()
         with patch("importlib.util.find_spec", return_value=None):
             with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=1, stderr=b"error")
                     orch._check_missing_deps()  # should not raise
+        out, err = capsys.readouterr()
+        assert "❌ Dependency install failed — run manually: personalclaw update" in err
+        assert "❌" not in out
+
+    def test_no_installer_is_reported_on_stderr(self, capsys):
+        from personalclaw._installer import NoInstallerError
+
+        def _no_installer(_args):
+            raise NoInstallerError("no pip, no uv")
+
+        orch = _make_orchestrator()
+        with patch("importlib.util.find_spec", return_value=None):
+            with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
+                with patch("personalclaw._installer.install_argv", _no_installer):
+                    orch._check_missing_deps()
+        out, err = capsys.readouterr()
+        assert "❌ no pip, no uv" in err
+        assert "❌" not in out
 
 
 class TestShutdownReapsAppBackends:
@@ -2803,8 +2829,8 @@ class TestRuntimeBaseIsPublishedForChildren:
     notification store.
     """
 
-    def test_a_bound_port_is_published(self, monkeypatch):
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+    def test_a_bound_port_is_published(self, unset_env):
+        unset_env("PERSONALCLAW_PORT")
         orch = _make_orchestrator()
         orch._dashboard_port = 10051
         orch._publish_runtime_base()
@@ -2815,14 +2841,14 @@ class TestRuntimeBaseIsPublishedForChildren:
         assert os.environ["PERSONALCLAW_PORT"] == "10051"
         assert gateway_base.live_port() == 10051
 
-    def test_an_unbound_port_is_a_loud_failure(self, monkeypatch):
+    def test_an_unbound_port_is_a_loud_failure(self, unset_env):
         """Port 0 means "bound, but cannot say to what" — and that must fail HERE.
 
         This used to be a silent no-op (``if self._dashboard_port:``), which deferred the
         same failure to the first tool call — by which point the request had already been
         delivered to whatever occupied the default port.
         """
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+        unset_env("PERSONALCLAW_PORT")
         orch = _make_orchestrator()
         orch._dashboard_port = 0
         with pytest.raises(ValueError):

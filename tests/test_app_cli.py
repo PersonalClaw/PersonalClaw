@@ -11,6 +11,7 @@ a real module .py) mirroring what ``manager.list_apps()`` + ``app_dir()`` read.
 """
 
 import json
+import threading
 
 import pytest
 
@@ -151,23 +152,41 @@ def test_doctor_probe_renders_lines(_isolate, capsys):
     assert any("workspace" in i for i in issues)  # the fail line became an issue
 
 
-def test_doctor_probe_timeout_does_not_hang(_isolate, capsys):
+def test_doctor_probe_timeout_does_not_hang(_isolate, capsys, monkeypatch):
     # P9: a hung probe becomes a single fail line within the timeout — never hangs.
-    monkey_timeout = 0.3
-    import personalclaw.app_cli as ac
-
-    ac._DOCTOR_TIMEOUT_SECS = monkey_timeout  # shrink for a fast test
+    # The timeout is shrunk through monkeypatch so the next test in the worker gets the real one
+    # back, and the hung probe waits on a file this test creates at its end, so its thread is
+    # gone before the test is: a probe that slept on held a thread into the tests after it.
+    monkeypatch.setattr(app_cli, "_DOCTOR_TIMEOUT_SECS", 0.3)
+    release = _isolate / "release-the-probe"
     _install_app(
         _isolate,
         "hang-app",
         module_file="cli_doctor.py",
-        module_body="import time\ndef probe():\n    time.sleep(5)\n    return []\n",
+        module_body=(
+            "import pathlib, time\n"
+            f"RELEASE = pathlib.Path({str(release)!r})\n"
+            "def probe():\n"
+            "    while not RELEASE.exists():\n"
+            "        time.sleep(0.02)\n"
+            "    return []\n"
+        ),
         cli={"doctor": "cli_doctor:probe"},
     )
+    before = set(threading.enumerate())
     issues = app_cli.run_app_doctor_probes()
     out = capsys.readouterr().out
     assert "hang-app" in out and "probe error" in out
     assert any("hang-app" in i for i in issues)
+    release.touch()
+    for thread in set(threading.enumerate()) - before:
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "the hung probe's thread outlived the test"
+
+
+def test_the_doctor_timeout_is_the_shipped_one():
+    """The test above shrinks it for itself; any other test sees what ships."""
+    assert app_cli._DOCTOR_TIMEOUT_SECS == 5.0
 
 
 def test_doctor_probe_exception_becomes_fail(_isolate, capsys):

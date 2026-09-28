@@ -39,6 +39,12 @@ from personalclaw.evals.matrix import (
 NOW = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _the_cell_environment_is_given_back(unset_env):
+    """``apply_in_child`` sets the environment of the process it runs in: here, this one."""
+    unset_env(overlay_lib.ABLATE_SURFACING_ENV, overlay_lib.SUPPRESSED_SKILLS_ENV)
+
+
 @pytest.fixture()
 def eval_home(tmp_path, monkeypatch):
     """Isolated home. Destructive by design — this change's whole job is toggling config."""

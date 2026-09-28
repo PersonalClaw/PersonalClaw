@@ -130,19 +130,25 @@ def default_workspace_root() -> Path:
     return config_dir() / "workspace"
 
 
+def workspace_override() -> Path | None:
+    """The folder ``PERSONALCLAW_WORKSPACE`` names, which wins over the one ``setup`` saves."""
+    value = os.environ.get("PERSONALCLAW_WORKSPACE")
+    return Path(value) if value else None
+
+
 def workspace_root() -> Path:
     """Return the top-level workspace root for LLM sessions and tasks.
 
     Resolution order:
-    1. ``PERSONALCLAW_WORKSPACE`` env var (used as-is, no subdirectory appended)
+    1. :func:`workspace_override`, the ``PERSONALCLAW_WORKSPACE`` env var (used as-is, no
+       subdirectory appended)
     2. Saved path in ``config_dir()/workspace_dir`` (written by ``personalclaw setup``)
     3. :func:`default_workspace_root`, the ``workspace`` folder in the home
     """
-    override = os.environ.get("PERSONALCLAW_WORKSPACE")
-    if override:
-        root = Path(override)
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+    override = workspace_override()
+    if override is not None:
+        override.mkdir(parents=True, exist_ok=True)
+        return override
     if _workspace_dir_file().is_file():
         try:
             saved = _workspace_dir_file().read_text(encoding="utf-8").strip()

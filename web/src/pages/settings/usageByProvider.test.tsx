@@ -25,6 +25,7 @@ const mount = async (rollup: (o: { group_by: string }) => Promise<unknown>) => {
     ...(await importOriginal<typeof import('../../lib/api')>()),
     api: {
       usageTotals: () => Promise.resolve({ totals: null }),
+      usageBudget: () => Promise.resolve(null),
       usageRollup: rollup,
       usageFold: () => Promise.resolve(null),
       personalclawConfig: () => Promise.resolve(null),

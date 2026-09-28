@@ -87,7 +87,7 @@ class TestSplitSentences:
 class TestSynthesizeSpeech:
     @pytest.mark.asyncio
     async def test_piper_synthesis(self) -> None:
-        prov = MagicMock()
+        prov = MagicMock(can_synthesize=AsyncMock(return_value=True))
         prov.synthesize = AsyncMock(return_value="/tmp/out.wav")
         out = await synthesize_speech(prov, "hello world")
         assert out == "/tmp/out.wav"
@@ -95,7 +95,7 @@ class TestSynthesizeSpeech:
 
     @pytest.mark.asyncio
     async def test_piper_empty_plain_returns_none(self) -> None:
-        prov = MagicMock()
+        prov = MagicMock(can_synthesize=AsyncMock(return_value=True))
         prov.synthesize = AsyncMock(return_value="/tmp/out.wav")
         out = await synthesize_speech(prov, "   ")
         assert out is None
@@ -112,7 +112,7 @@ class TestSynthesizeSpeech:
             captured_text.append(text)
             return "/tmp/out.wav"
 
-        prov = MagicMock()
+        prov = MagicMock(can_synthesize=AsyncMock(return_value=True))
         prov.synthesize = AsyncMock(side_effect=capture)
         await synthesize_speech(prov, raw)
 
@@ -232,7 +232,7 @@ class TestStreamingVoiceReply:
             out.write_bytes(b"x" * 200)
             return str(out)
 
-        prov = MagicMock()
+        prov = MagicMock(can_synthesize=AsyncMock(return_value=True))
         prov.synthesize = AsyncMock(side_effect=fake_synth)
         gen = streaming_voice_reply(prov, "AKIAIOSFODNN7EXAMPLE is secret. Bye.")
         async for _idx, _sent, _bytes in gen:
@@ -256,7 +256,7 @@ class TestStreamingVoiceReply:
             out.write_bytes(b"x" * 200)
             return str(out)
 
-        prov = MagicMock()
+        prov = MagicMock(can_synthesize=AsyncMock(return_value=True))
         prov.synthesize = AsyncMock(side_effect=alternating)
         collected = []
         async for idx, sent, data in streaming_voice_reply(

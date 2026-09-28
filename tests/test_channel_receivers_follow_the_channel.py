@@ -172,13 +172,13 @@ def wire():
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
+def home(tmp_path, monkeypatch, unset_env):
     """An isolated home and a fresh provider registry — the one app installs register into."""
     import personalclaw.config.loader as loader
 
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(manager, "config_dir", lambda: tmp_path)
-    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    unset_env(TOKEN_ENV)  # a secret saved through the gateway is mirrored into the environment
     registry_module.reset_provider_registry()
     yield tmp_path
     # Disabled, not just forgotten: a reset registry deregisters nothing, and a transport left in
@@ -464,7 +464,8 @@ async def test_a_vault_credential_starts_moves_and_stops_the_receiver(home, wire
 
 
 @pytest.mark.asyncio
-async def test_a_credential_change_leaves_a_channel_it_did_not_touch_running(home, wire):
+async def test_a_credential_change_leaves_a_channel_it_did_not_touch_running(home, wire, unset_env):
+    unset_env("SOMETHING_ELSE")
     _installed(home, "probe-channel", "probe", token="tok-a")
     async with _gateway(wire) as gw:
         await gw.boot("probe")

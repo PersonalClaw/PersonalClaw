@@ -140,10 +140,13 @@ async def live_bakeoff_caller(prompt: str, *, model: str, use_case: str) -> Bake
     from the attempt audit the guard writes at the bridge seam.
     """
     from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
 
     started_ts = time.time()
     started = time.monotonic()
-    text = await one_shot_completion(prompt, use_case=use_case, model=model)
+    text = await one_shot_completion(
+        prompt, use_case=use_case, model=model, usage=Attribution(source="eval")
+    )
     elapsed = time.monotonic() - started
     cost, resolved = _audit_cost_since(started_ts, use_case)
     return BakeoffCall(

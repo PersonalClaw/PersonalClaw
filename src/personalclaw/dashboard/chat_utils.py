@@ -29,6 +29,7 @@ from personalclaw.dashboard.state import (
 from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
+from personalclaw.usage_ledger import Attribution
 from personalclaw.validation import MAX_TOOL_NAME_LEN, sanitize_string
 
 logger = logging.getLogger(__name__)
@@ -499,6 +500,16 @@ def _history_key_for(session_name: str) -> str:
     # The file form and the wrapping both live in `constants` — layers below this one name a
     # chat from its file and key off the wrapped form, so each rule must exist once.
     return dashboard_session_key(dashboard_key_from_file_form(session_name))
+
+
+def chat_usage(session: _ChatSession) -> Attribution:
+    """Whose spend a model call made for one of *session*'s turns is: the chat's, recorded as the
+    chat's own turns are (``chat_runner``'s turn row), so the chat's total holds it."""
+    return Attribution(
+        source=getattr(session, "_app", "") or "chat",
+        session_key=_history_key_for(session.key),
+        agent=session.agent or "",
+    )
 
 
 def candidate_history_keys(session_name: str) -> tuple[str, ...]:

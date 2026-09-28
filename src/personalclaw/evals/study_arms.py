@@ -392,8 +392,9 @@ class TemplateArmRunner:
 async def _one_shot_completion(prompt: str, *, use_case: str) -> str:
     """The real model call, behind one name so the runner's default is nameable."""
     from personalclaw.llm_helpers import one_shot_completion
+    from personalclaw.usage_ledger import Attribution
 
-    return await one_shot_completion(prompt, use_case=use_case)
+    return await one_shot_completion(prompt, use_case=use_case, usage=Attribution(source="eval"))
 
 
 def _arm_cost_since(started_ts: float, use_case: str) -> tuple[float | None, str]:

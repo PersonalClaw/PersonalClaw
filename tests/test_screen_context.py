@@ -24,6 +24,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import screen_context
+from personalclaw.usage_ledger import Attribution
 
 
 def _png_bytes(marker: bytes = b"SCREENMARK") -> bytes:
@@ -812,7 +813,9 @@ class TestRunnerDelivery:
         with patch(
             "personalclaw.providers.provider_bridge.resolve_provider_for_use_case", _resolve
         ):
-            out = await chat_runner._describe_screen_frame("data:image/png;base64,AAA")
+            out = await chat_runner._describe_screen_frame(
+                "data:image/png;base64,AAA", usage=Attribution(source="chat")
+            )
         assert out == "a login page"
         assert seen["use_case"] == "image_modality"
         assert seen["messages"][0]["content"][1]["image_url"]["url"] == "data:image/png;base64,AAA"

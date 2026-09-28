@@ -18,6 +18,7 @@ from personalclaw.config.loader import (  # noqa: F401 — re-exported for test 
     _workspace_dir_file,
     default_workspace_root,
     env_path,
+    workspace_override,
 )
 from personalclaw.config.transactions import mutate_config
 from personalclaw.constants import DATA_WARNING
@@ -260,8 +261,10 @@ def _setup_noninteractive(
     ``--mode docker`` prints the README's ``docker run`` quick-start (``container_host``).
     ``--mode service`` prints a ``personalclaw service install`` hint.
     ``--mode none`` skips all deployment hints.
-    ``--provider <name>`` wires a registry entry as the default chat provider
-    in config.json (the entry must already be declared in the config).
+    ``--provider <runtime>`` sets ``agent.provider``, the runtime an agent that names none runs
+    on (:func:`_is_agent_runtime`). Anything else is refused rather than saved: the field reads
+    every value that is not an ``acp`` one as ``native``, so a model provider's name typed here
+    was saved, reported as set, and changed nothing.
     ``--credential <name=value>`` saves a secret under that name in the credential
     store Settings → Secrets lists (:func:`_store_named_credential`).
 
@@ -287,7 +290,15 @@ def _setup_noninteractive(
         print(f"  ❌ Unknown --mode {mode!r}. Valid values: docker, service, none", file=sys.stderr)
         applied = False
 
-    if provider:
+    if provider and not _is_agent_runtime(provider):
+        print(
+            f"  ❌ --provider {provider!r} is not an agent runtime. Valid values: native (the "
+            "built-in loop, on the models Settings → Models binds), acp, or acp:<cli> for a "
+            "connected agent CLI. The chat model itself is chosen in Settings → Models.",
+            file=sys.stderr,
+        )
+        applied = False
+    elif provider:
 
         def _set_provider(data: dict) -> None:
             agent = data.get("agent")
@@ -297,14 +308,23 @@ def _setup_noninteractive(
 
         try:
             mutate_config(_set_provider, path=config_path())
-            print(f"  ✅ Provider set: {provider}")
+            print(f"  ✅ Agent runtime set: {provider}")
         except Exception as exc:
-            print(f"  ❌ Could not set provider: {exc}", file=sys.stderr)
+            print(f"  ❌ Could not set the agent runtime: {exc}", file=sys.stderr)
             applied = False
 
     if credential and not _store_named_credential(credential):
         applied = False
     return applied
+
+
+def _is_agent_runtime(value: str) -> bool:
+    """Whether *value* is one ``agent.provider`` holds: ``native``, ``acp`` or ``acp:<cli>``.
+
+    The ``<cli>`` half is open (a connected agent CLI's entry name, which may be connected after
+    setup runs), so only its presence is checked.
+    """
+    return value in ("native", "acp") or (value.startswith("acp:") and bool(value[4:].strip()))
 
 
 def _store_named_credential(credential: str) -> bool:
@@ -351,7 +371,24 @@ def _setup_workspace_dir() -> str | None:
 
     Returns why it failed, having said so. A typed folder that cannot be made or saved leaves
     the workspace where it was, and says where that is.
+
+    ``PERSONALCLAW_WORKSPACE`` wins over the folder this step saves (``workspace_root``), so while
+    it is set the step shows that folder and asks nothing: a folder typed here would be saved and
+    never used, under a "Configured" line naming a workspace sessions do not run in.
     """
+    print("── Workspace Directory ──\n")
+    override = workspace_override()
+    if override is not None:
+        print(f"  Set by PERSONALCLAW_WORKSPACE: {override}")
+        print("  It wins over a folder chosen here. Unset it to choose one with this step.")
+        try:
+            override.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            reason = _failed(f"cannot use {override}, from PERSONALCLAW_WORKSPACE: {exc}")
+            print()
+            return reason
+        print(f"  ✅ Workspace: {override}\n")
+        return None
     current = default_workspace_root()
     label = "Default"
     if _workspace_dir_file().is_file():
@@ -359,7 +396,6 @@ def _setup_workspace_dir() -> str | None:
         if configured:
             current = Path(configured)
             label = "Configured"
-    print("── Workspace Directory ──\n")
     print("  LLM sessions and task output are stored in a workspace directory.")
     print(f"  {label}: {current}\n")
     answer = _ask(f"  Workspace path [{current}]: ")

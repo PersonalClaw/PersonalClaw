@@ -65,7 +65,7 @@ class TestVoiceSynthesize:
         monkeypatch.setattr(
             "personalclaw.dashboard.chat_voice.active_voice_params",
             lambda **_kw: {
-                "provider": _MM(),
+                "provider": _MM(can_synthesize=AsyncMock(return_value=True)),
                 "voice": "en_US-lessac-medium",
                 "speed": 1.0,
                 "speech_voice": "",

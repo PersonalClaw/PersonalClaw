@@ -669,6 +669,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "No text-to-speech model is set up. Fix: choose one for Text-to-speech in "
         "Settings → Models."
     ),
+    # Speech synthesis refused before any audio was asked for, because the bound provider says it
+    # cannot speak with the bound model now (`TtsProvider.can_synthesize`): a voice that is not
+    # downloaded, a runtime or a key that is missing. Its own code because a model IS chosen, so
+    # `tts_unbound`'s fix would send the user to choose one they already chose.
+    "tts_not_ready": (
+        "The text-to-speech model is chosen but cannot speak yet. Fix: check it in "
+        "Settings → Models."
+    ),
     # ── capture telemetry import (inbound/capture_proxy.py) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.
     # A malformed export is a 200 whose `reasons` name each skipped line (§8's

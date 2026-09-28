@@ -212,9 +212,14 @@ def _asked(resp: web.Response) -> str:
 
 
 def _chat_run(home: Path, tid: str) -> tuple[bool, list[dict]]:
-    """The chat's `automation_run`, with a runner that records instead of posting to `/run`."""
+    """The chat's `automation_run`, with a runner that records instead of posting to `/run`, and
+    answers as `/run` does for a run that started."""
     calls: list[dict] = []
-    result = Tools.run(_store(home), trigger_id=tid, runner=calls.append)
+    result = Tools.run(
+        _store(home),
+        trigger_id=tid,
+        runner=lambda payload: calls.append(payload) or {"ok": True, "result": "launched"},
+    )
     return result.ok, calls
 
 

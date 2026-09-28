@@ -659,12 +659,31 @@ def is_sensitive_bash_command(command: str) -> str | None:
     return None
 
 
+def _escaped_run_unit(stops: str, *, escaped: str | None = None) -> str:
+    """One character of a free-form span a mask replaces, as a regex that reads escapes the way
+    the text does.
+
+    The span ends at whitespace and at any of *stops* (the body of a character class). A backslash
+    is taken together with the character it escapes, and the span ends BEFORE a backslash that
+    escapes one of *escaped* (default: *stops*). In JSON-escaped text ``\\"`` is a quote: a mask
+    that took its backslash and left the quote turned ``\\"`` into ``"`` and closed the string
+    early, so the masked text no longer parsed, and a save or an edit written against it addressed
+    text the stored value does not hold. A backslash before whitespace or at the end of the text is
+    taken like any other character. The three alternatives begin on disjoint characters, so a span
+    is still matched in one linear pass.
+    """
+    escaped = stops if escaped is None else escaped
+    return rf"(?:[^\s{stops}\\]|\\[^\s{escaped}]|\\(?=\s|\Z))"
+
+
 # ── URL Exfiltration Detection ──
 # Detects URLs whose query strings contain credential-like data.
 # Domain-agnostic: we flag the PAYLOAD, not the destination.
 # Any URL with secrets in query params is suspicious regardless of domain.
 
-_URL_RE = re.compile(r"https?://([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})(:\d+)?(/[^\s)\"'>]*)?")
+_URL_RE = re.compile(
+    r"https?://([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})(:\d+)?(/" + _escaped_run_unit(r")\"'>") + r"*)?"
+)
 
 # Query string length threshold — normal URLs rarely exceed this
 _EXFIL_QUERY_MIN_LEN = 200
@@ -836,12 +855,23 @@ def redact_exfiltration_urls(text: str) -> tuple[str, list[str]]:
 # including base64-encoded variants.  Applied on all output paths
 # alongside redact_exfiltration_urls().
 
+#: The value of a named cloud credential: everything up to whitespace, as it always was, except
+#: that it stops at an escaped quote, which is where a JSON-escaped string around it closes. A value
+#: that an escaped quote opens is taken with its closing one, so the text keeps its balance.
+_TOKEN_UNIT = _escaped_run_unit("", escaped="'\"")
+_TOKEN_VALUE = rf"(?:\\['\"]{_TOKEN_UNIT}+(?:\\['\"])?|{_TOKEN_UNIT}+)"
+
+#: A ``name = value`` credential's value: eight or more characters up to whitespace, a comma, a
+#: semicolon or a quote. The lookahead is the length test as it always read, so an escape changes
+#: only where the value ends, never whether it is masked.
+_ASSIGNED_VALUE = r"(?=[^\s,;'\"]{8})" + _escaped_run_unit(r",;'\"") + "+"
+
 _CREDENTIAL_PATTERNS = re.compile(
     r"(?:"
     r"(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key ID
-    r"|(?:SecretAccessKey|aws_secret_access_key)\s*[:=]\s*\S+"
-    r"|(?:SessionToken|aws_session_token)\s*[:=]\s*\S+"
-    r"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*\S+"
+    rf"|(?:SecretAccessKey|aws_secret_access_key)\s*[:=]\s*{_TOKEN_VALUE}"
+    rf"|(?:SessionToken|aws_session_token)\s*[:=]\s*{_TOKEN_VALUE}"
+    rf"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*{_TOKEN_VALUE}"
     r"|BEGIN[\s](?:RSA|DSA|EC|OPENSSH)[\s]PRIVATE[\s]KEY"
     r"|xox[bpas]-[0-9a-zA-Z-]{10,}"  # Slack token
     # LLM provider API keys. These are the credentials THIS project's users actually
@@ -877,7 +907,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     # only alternative here that could match a mask, so a second pass of `redact_credentials`,
     # or of `redact_for_display` and `redact_field` built on it, changes nothing.
     r"|(?i:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret"
-    r"|password|passwd|private[_-]?key)\s*[:=]\s*(?!\[REDACTED:)[^\s,;'\"]{8,}"
+    rf"|password|passwd|private[_-]?key)\s*[:=]\s*(?!\[REDACTED:){_ASSIGNED_VALUE}"
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
     r")",
@@ -1098,7 +1128,8 @@ _WEBHOOK_URL_RE = re.compile(
     r"|[A-Za-z0-9-]+\.webhook\.office\.com/webhookb2"
     r"|outlook\.office(?:365)?\.com/webhook"
     r")"
-    r"/[^\s\"'<>()\[\]{}]{8,}",
+    # The length test is a lookahead, so an escape (`_escaped_run_unit`) moves only the end.
+    r"/(?=[^\s\"'<>()\[\]{}]{8})" + _escaped_run_unit(r"\"'<>()\[\]{}") + "+",
     re.IGNORECASE,
 )
 

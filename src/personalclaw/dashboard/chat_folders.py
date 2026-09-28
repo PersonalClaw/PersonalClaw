@@ -17,7 +17,8 @@ from personalclaw.request_validation import (
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY
+from personalclaw.session import BACKGROUND_KEY, chore_usage
+from personalclaw.usage_ledger import recorder
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +52,14 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
 
     async def _stream(client) -> str:  # type: ignore[no-untyped-def]
         t = ""
+        record = recorder(client, chore_usage())
         async for event in client.stream(prompt):
             if event.kind == EVENT_TEXT_CHUNK:
                 t += event.text
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:
+                record(event)
                 break
         return t
 

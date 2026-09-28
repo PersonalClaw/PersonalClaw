@@ -1001,6 +1001,7 @@ class CodeKind(LoopKindStrategy):
                 "\n".join(str(c) for c in (plan[idx].get("exit_criteria") or [])),
                 stage_findings[-1],
                 stage_findings[:-1],
+                loop_id=loop.id,
                 verify_command=str(cfg.get("verify_command", "")),
                 workspace=effective_dir(loop) or None,
                 deliverables=[deliverable] if deliverable else None,
@@ -1278,7 +1279,7 @@ class CodeKind(LoopKindStrategy):
             )
             or ""
         )
-        raw = await judge_verdict(prompt)
+        raw = await judge_verdict(prompt, loop_id=loop.id)
         if verdict_is_pass(raw):
             return True
         # The judge said no — but distinguish a genuine FAIL from a can't-judge. If the

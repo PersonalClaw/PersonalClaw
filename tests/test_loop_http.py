@@ -636,7 +636,7 @@ class TestValidate:
 class TestClassify:
     def test_classify_dispatches_by_kind(self, state, monkeypatch):
         # General kind returns safe defaults without touching the LLM.
-        async def _fake_one_shot(prompt, use_case="background"):
+        async def _fake_one_shot(prompt, use_case="background", **_kwargs):
             return "{}"
 
         monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", _fake_one_shot)

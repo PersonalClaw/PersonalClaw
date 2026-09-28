@@ -23,6 +23,8 @@ from __future__ import annotations
 import pytest
 
 from personalclaw import session_organize as so
+from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.session import chore_usage
 
 
 class FakeSession:
@@ -173,7 +175,7 @@ async def test_deterministic_path_never_calls_the_model(home, monkeypatch):
     """The load-bearing efficiency claim: the easy cases must not pay for a model."""
     calls = []
 
-    async def spy(state, prompt):
+    async def spy(state, prompt, *, usage):
         calls.append(prompt)
         return "NONE"
 
@@ -186,8 +188,10 @@ async def test_deterministic_path_never_calls_the_model(home, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ambiguous_path_consults_the_model(home, monkeypatch):
-    async def fake(state, prompt):
+    async def fake(state, prompt, *, usage):
         assert "Available folders: Research, Infra" in prompt
+        # The consult is the chat's spend, recorded under the key its own turns are.
+        assert usage == chore_usage(_history_key_for("s1"))
         return "FOLDER: Research  TAGS: bug"
 
     monkeypatch.setattr("personalclaw.dashboard.chat_title._stream_background_prompt", fake)
@@ -201,7 +205,7 @@ async def test_ambiguous_path_consults_the_model(home, monkeypatch):
 async def test_allow_llm_false_stays_deterministic(home, monkeypatch):
     """The list-view caller must be able to refuse a model roundtrip per row."""
 
-    async def boom(state, prompt):
+    async def boom(state, prompt, *, usage):
         raise AssertionError("model called with allow_llm=False")
 
     monkeypatch.setattr("personalclaw.dashboard.chat_title._stream_background_prompt", boom)

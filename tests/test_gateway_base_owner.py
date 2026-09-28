@@ -43,15 +43,16 @@ _DEAD_PID = 2**31 - 1
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
-    """An isolated home with the SHIPPED default: an empty ``dashboard.url``.
+def home(tmp_path, monkeypatch, unset_env):
+    """An isolated home with the SHIPPED default: an empty ``dashboard.url``, and no published
+    port: the one a test publishes is given back after it.
 
     ``monkeypatch.context()`` is not used because the fixture must live for the whole test;
     a bare ``monkeypatch.undo()`` inside a test would revert conftest's autouse ``config_dir``
     isolation along with it.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    monkeypatch.delenv(gateway_base.PORT_ENV, raising=False)
+    unset_env(gateway_base.PORT_ENV)
     (tmp_path / "config.json").write_text('{"dashboard": {"url": ""}}', encoding="utf-8")
     return tmp_path
 

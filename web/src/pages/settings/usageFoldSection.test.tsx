@@ -11,7 +11,7 @@ import { act, render } from '@testing-library/react'
 //     claim a completeness the data does not have
 //   · every dollar carries a "~" — each is a price-table estimate, not a provider charge
 //
-// A purpose the fold did not return is absent rather than a confident 0 (`eval` has no writer yet).
+// A purpose the fold did not return is absent rather than a confident 0.
 
 const FOLD = {
   window: 'week',
@@ -57,7 +57,7 @@ const FOLD = {
     total_dollars_est: 4.0,
     by_use_case: { reasoning: 8, loops: 4 },
   },
-  reachable_purposes: ['interactive', 'background', 'loop', 'app'],
+  reachable_purposes: ['interactive', 'background', 'loop', 'eval', 'app'],
 }
 
 const mount = async (fold: unknown = FOLD) => {
@@ -65,6 +65,7 @@ const mount = async (fold: unknown = FOLD) => {
   vi.doMock('../../lib/api', () => ({
     api: {
       usageTotals: () => Promise.resolve({ totals: null }),
+      usageBudget: () => Promise.resolve(null),
       usageRollup: () => Promise.resolve({ rows: [] }),
       usageFold: () => Promise.resolve(fold),
       personalclawConfig: () => Promise.resolve(null),
@@ -101,7 +102,7 @@ describe('the By day and purpose section', () => {
     expect(labels).toContain('Interactive — turns you watched — share of spend')
     expect(labels).toContain('Loops — share of spend')
     expect(labels).toContain('Apps — share of spend')
-    // A purpose no writer can produce is absent, not a confident zero row.
+    // A purpose the fold did not return is absent, not a confident zero row.
     expect(container.textContent).not.toContain('Evaluations')
   })
 
@@ -111,7 +112,7 @@ describe('the By day and purpose section', () => {
     expect(container.textContent).toContain('12 unattended model calls')
     expect(container.textContent).toContain('~$4.00')
     // Why they are left out, and that it is the whole reason: they are in no usage row.
-    expect(container.textContent).toContain('They wrote no usage row')
+    expect(container.textContent).toContain('A call that does not finish writes no usage row')
     expect(container.textContent).not.toContain('double-counting')
   })
 
@@ -165,6 +166,7 @@ describe('the By day and purpose section', () => {
     vi.doMock('../../lib/api', () => ({
       api: {
         usageTotals: () => Promise.resolve({ totals: null }),
+        usageBudget: () => Promise.resolve(null),
         usageRollup: () => Promise.resolve({ rows: [] }),
         usageFold: () => Promise.reject(new Error('nope')),
         personalclawConfig: () => Promise.resolve(null),

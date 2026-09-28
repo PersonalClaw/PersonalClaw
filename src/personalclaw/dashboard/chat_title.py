@@ -4,13 +4,14 @@ import logging
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_utils import persisted_history_key
+from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
-from personalclaw.session import BACKGROUND_KEY
+from personalclaw.session import BACKGROUND_KEY, chore_usage
 from personalclaw.textfmt import TAGS_LINE_RE, parse_title
+from personalclaw.usage_ledger import Attribution, recorder
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,15 @@ def _build_title_prompt(messages: list[dict[str, str]]) -> str | None:
     return render_use_case_prompt("title", {"transcript": "\n".join(lines)})
 
 
-async def _stream_background_prompt(state: DashboardState, prompt: str) -> str:
-    """Stream *prompt* through the shared background session and collect the text."""
+async def _stream_background_prompt(
+    state: DashboardState, prompt: str, *, usage: Attribution
+) -> str:
+    """Stream *prompt* through the shared background session and collect the text.
+
+    The call writes its usage row for *usage* (``session.chore_usage``): whose spend it is.
+    """
     client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
+    record = recorder(client, usage)
     text = ""
     try:
         # Clear accumulated history so prior utility prompts don't confuse the model
@@ -57,6 +64,7 @@ async def _stream_background_prompt(state: DashboardState, prompt: str) -> str:
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:
+                record(event)
                 break
     finally:
         # Clear again so the title prompt doesn't pollute future calls
@@ -66,10 +74,18 @@ async def _stream_background_prompt(state: DashboardState, prompt: str) -> str:
     return text
 
 
+async def _stream_chat_chore(state: DashboardState, session: _ChatSession, prompt: str) -> str:
+    """:func:`_stream_background_prompt` for a chore made for *session*: the chat's spend, under
+    the key its own turns are recorded by."""
+    return await _stream_background_prompt(
+        state, prompt, usage=chore_usage(_history_key_for(session.key))
+    )
+
+
 async def _generate_title_via_provider(
-    state: DashboardState, messages: list[dict[str, str]]
+    state: DashboardState, messages: list[dict[str, str]], *, usage: Attribution
 ) -> str:
-    """Generate a title using the shared background agent session."""
+    """Generate a title using the shared background agent session, recorded for *usage*."""
 
     prompt = _build_title_prompt(messages)
     if not prompt:
@@ -77,7 +93,7 @@ async def _generate_title_via_provider(
         return ""
 
     logger.debug("Title generation prompt (%d chars): %s", len(prompt), prompt[:120])
-    text = await _stream_background_prompt(state, prompt)
+    text = await _stream_background_prompt(state, prompt, usage=usage)
     return parse_title(text)
 
 
@@ -242,7 +258,7 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
             return
         if want_tags:
             prompt += _build_tags_suffix(state)
-        text = await _stream_background_prompt(state, prompt)
+        text = await _stream_chat_chore(state, session, prompt)
         title = parse_title(text)
         logger.info("Auto-title: agent returned %r for session %s", title, session.key)
         if title:
@@ -263,7 +279,9 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
 
     logger.info("Manual title generation requested for session %s", name)
     try:
-        title = await _generate_title_via_provider(state, session.messages)
+        title = await _generate_title_via_provider(
+            state, session.messages, usage=chore_usage(_history_key_for(session.key))
+        )
     except Exception:
         logger.debug("Title generation failed for session %s", name, exc_info=True)
         user_msgs = [m for m in session.messages if m.get("role") == "user"]

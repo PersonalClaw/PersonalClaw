@@ -111,11 +111,12 @@ async def _drive_judges() -> None:
     from personalclaw.loop import gates as gates_mod
     from personalclaw.loop import judge as judge_mod
 
-    verdict = await judge_mod.assess_cycle("goal", "dod", {"cycle": 1, "summary": "s"}, [])
+    finding = {"cycle": 1, "summary": "s"}
+    verdict = await judge_mod.assess_cycle("goal", "dod", finding, [], loop_id="l1")
     assert verdict is not None, "primary judge did not complete"
-    skeptic = await judge_mod.assess_cycle_skeptic("goal", "dod", {"cycle": 1, "summary": "s"}, [])
+    skeptic = await judge_mod.assess_cycle_skeptic("goal", "dod", finding, [], loop_id="l1")
     assert skeptic is not None, "skeptic judge did not complete"
-    raw = await gates_mod.judge_verdict("PASS or FAIL?")
+    raw = await gates_mod.judge_verdict("PASS or FAIL?", loop_id="l1")
     assert raw, "gate judge produced no text"
 
 
@@ -205,7 +206,9 @@ class TestDegradedPathUnchanged:
         from personalclaw.loop import judge as judge_mod
 
         with caplog.at_level(logging.WARNING, logger="personalclaw.loop.judge"):
-            verdict = await judge_mod.assess_cycle("goal", "dod", {"cycle": 1, "summary": "s"}, [])
+            verdict = await judge_mod.assess_cycle(
+                "goal", "dod", {"cycle": 1, "summary": "s"}, [], loop_id="l1"
+            )
         assert verdict is None  # defer — NEVER a false complete
         msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("degraded" in m for m in msgs), msgs
@@ -218,7 +221,7 @@ class TestDegradedPathUnchanged:
 
         with caplog.at_level(logging.WARNING, logger="personalclaw.loop.judge"):
             verdict = await judge_mod.assess_cycle_skeptic(
-                "goal", "dod", {"cycle": 1, "summary": "s"}, []
+                "goal", "dod", {"cycle": 1, "summary": "s"}, [], loop_id="l1"
             )
         assert verdict is None
         assert any(
@@ -232,7 +235,7 @@ class TestDegradedPathUnchanged:
         from personalclaw.loop import gates as gates_mod
 
         with caplog.at_level(logging.WARNING, logger="personalclaw.loop.gates"):
-            raw = await gates_mod.judge_verdict("PASS or FAIL?")
+            raw = await gates_mod.judge_verdict("PASS or FAIL?", loop_id="l1")
         assert raw == ""
         assert any(
             "judge provider unavailable" in r.getMessage()

@@ -388,3 +388,57 @@ async def test_empty_home_is_an_empty_fold_not_an_error(_home):
         assert body["uncounted"]["calls"] == 0
     finally:
         await c.close()
+
+
+# ── /api/usage/budget: the daily cap beside the spend it is held to ──────────────────────
+
+
+def _cap(home, **budgets) -> None:
+    import json
+
+    (home / "config.json").write_text(
+        json.dumps({"guardrails": {"budgets": budgets}}), encoding="utf-8"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
+    """The cap meters the calls PersonalClaw makes on its own; the ledger holds every chat turn
+    too. The line used to set the ledger's figure beside the cap: $3.50, $3 of it chat, against a
+    $1 cap read as a cap spent three times over while the meter held $0.25."""
+    from personalclaw.guardrails.budgets import get_meter
+
+    _seed()  # $3.50 in the ledger, chat turns included
+    get_meter().charge(1200, 0.25)
+    _cap(_home, max_dollars_per_day=1.0)
+    c = await _client()
+    try:
+        r = await c.get("/api/usage/budget")
+        assert r.status == 200
+        assert await r.json() == {
+            "spent_dollars": 0.25,
+            "spent_tokens": 1200,
+            "max_dollars_per_day": 1.0,
+            "max_tokens_per_day": 0,
+            "cap_unreadable": False,
+        }
+    finally:
+        await c.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cap_that_cannot_be_read_is_said_to_be_unreadable(_home, monkeypatch):
+    """Not an unlimited 0 nobody chose: the caps are null and the answer says why."""
+    from personalclaw.guardrails import budgets
+
+    def _unreadable():
+        raise budgets.BudgetConfigUnreadable(ValueError("config.json is not JSON"))
+
+    monkeypatch.setattr(budgets, "budget_from_config", _unreadable)
+    c = await _client()
+    try:
+        body = await (await c.get("/api/usage/budget")).json()
+        assert body["cap_unreadable"] is True
+        assert body["max_dollars_per_day"] is None and body["max_tokens_per_day"] is None
+    finally:
+        await c.close()

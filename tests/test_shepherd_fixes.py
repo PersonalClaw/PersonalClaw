@@ -58,11 +58,12 @@ class TestExpandedBashPatterns:
 class TestEnvPermissions:
     """Tests for .env chmod enforcement at load time."""
 
-    def test_env_permissions_enforced(self, tmp_path: object) -> None:
+    def test_env_permissions_enforced(self, tmp_path: object, unset_env) -> None:
         from pathlib import Path
 
         from personalclaw.config.loader import AppConfig
 
+        unset_env("SLACK_BOT_TOKEN")  # loading the file seeds the process environment
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
         env_file.write_text("SLACK_BOT_TOKEN=fake-bot-token-test\n")
@@ -176,11 +177,12 @@ class TestObserveModeAuthFilter:
 class TestLoaderChmodWarning:
     """Guard test for loader.py chmod warning on failure (L1219-1222)."""
 
-    def test_chmod_enforced_on_open_permissions(self, tmp_path: object) -> None:
+    def test_chmod_enforced_on_open_permissions(self, tmp_path: object, unset_env) -> None:
         from pathlib import Path
 
         from personalclaw.config.loader import AppConfig
 
+        unset_env("TEST_KEY")  # loading the file seeds the process environment
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"
         env_file.write_text("TEST_KEY=value\n")
@@ -198,15 +200,13 @@ class TestLoadCredentialsEnvPropagation:
     """load_credentials() seeds os.environ so spawned children inherit creds
     even when their view of ~/.personalclaw/.env is bind-mounted empty."""
 
-    def test_env_seeded_from_file(self, tmp_path: object, monkeypatch) -> None:
+    def test_env_seeded_from_file(self, tmp_path: object, unset_env) -> None:
         import os
         from pathlib import Path
 
         from personalclaw.config.loader import AppConfig
 
-        monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
-        monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-        monkeypatch.delenv("PERSONALCLAW_OWNER_ID", raising=False)
+        unset_env("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "PERSONALCLAW_OWNER_ID")
 
         tmp = Path(str(tmp_path))
         env_file = tmp / ".env"

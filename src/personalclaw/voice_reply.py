@@ -19,6 +19,7 @@ from typing import Any
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.provider import TtsProvider
+from personalclaw.tts.registry import TtsNotReady, can_speak
 
 # The voice upload path takes a duck-typed channel client (anything exposing
 # ``upload_file``); the concrete client lives in the channel provider app, so
@@ -138,7 +139,13 @@ async def synthesize_speech(
     synthesis — audio files uploaded to a channel bypass the usual text-path
     redaction, so we apply both filters here to prevent secrets or
     suspicious URLs from being spoken and persisted in the channel.
+
+    A voice the provider says it cannot speak with now (``can_synthesize``) is not asked for:
+    the reason is logged and None returned, the answer this helper gives for any failure.
     """
+    if not await can_speak(provider, voice):
+        logger.warning("voice_reply: %s", TtsNotReady(provider, voice).message)
+        return None
     text, cred_warns = redact_credentials(text)
     text, url_warns = redact_exfiltration_urls(text)
     if cred_warns:
@@ -266,7 +273,13 @@ async def streaming_voice_reply(
     LLM output is redacted for credentials and exfiltration URLs before
     synthesis (same rationale as ``synthesize_speech``) — streaming audio
     to the dashboard bypasses the usual text-path redaction.
+
+    Raises :class:`~personalclaw.tts.registry.TtsNotReady` before the first chunk when the
+    provider says it cannot speak with *voice* now (``can_synthesize``), so the surface names
+    that reason rather than reporting a synthesis that produced no audio.
     """
+    if not await can_speak(provider, voice):
+        raise TtsNotReady(provider, voice)
     response_text, cred_warns = redact_credentials(response_text)
     response_text, url_warns = redact_exfiltration_urls(response_text)
     if cred_warns:

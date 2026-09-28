@@ -31,6 +31,7 @@ import logging
 import os
 import platform
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -836,6 +837,39 @@ def _resolve_session_key() -> str:
     return ""
 
 
+#: How much of an error body that is not the gateway's JSON is kept: a proxy's or a crashed
+#: handler's one line, not a whole page in a tool's result.
+_ERROR_TEXT_CAP = 500
+
+
+def _refused(exc: urllib.error.HTTPError) -> dict:
+    """What a call the gateway answered with an error status returns: the gateway's own answer.
+
+    ``urlopen`` raises on a 4xx or 5xx, and ``str()`` of that is only the status line ("HTTP
+    Error 403: Forbidden"), so the sentence the route wrote, which says why and what to do, never
+    reached the tool that asked. A JSON object body is kept as the route sent it, and ``error`` is
+    its one sentence, the text every tool shows and tests for. A structured refusal (``{"error":
+    {"code", "message", …}}``) also keeps its whole object as ``error_detail``, for the tool that
+    renders it. Any other body is kept as text, capped.
+    """
+    try:
+        raw = exc.read()
+    except Exception:  # noqa: BLE001 — an unreadable body still leaves the status to report
+        raw = b""
+    text = raw.decode("utf-8", "replace").strip()[:_ERROR_TEXT_CAP] if raw else ""
+    try:
+        body = json.loads(raw) if raw else None
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return {"error": f"HTTP {exc.code}: {text or exc.reason}"}
+    error = body.get("error")
+    if isinstance(error, dict):
+        sentence = str(error.get("message") or error.get("code") or f"HTTP {exc.code}")
+        return {**body, "error": sentence, "error_detail": error}
+    return {**body, "error": str(error) if error else f"HTTP {exc.code}: {text}"}
+
+
 # NB: ``_api_base()`` is resolved INSIDE each try below. It refuses (raises
 # ``GatewayBaseUnresolved``) rather than guessing a port, and a refusal must reach the
 # agent as this tool's result text — the named, fail-fast answer. Built outside the try it
@@ -856,6 +890,8 @@ def _post(path: str, body: dict | None = None) -> dict:
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return _refused(exc)
     except Exception as e:
         return {"error": str(e)}
 
@@ -872,6 +908,8 @@ def _get(path: str) -> dict:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return _refused(exc)
     except Exception as e:
         return {"error": str(e)}
 
@@ -893,6 +931,8 @@ def _delete(path: str, body: dict | None = None) -> dict:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return _refused(exc)
     except Exception as e:
         return {"error": str(e)}
 

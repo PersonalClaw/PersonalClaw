@@ -40,9 +40,9 @@ def _wheel(root: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _no_kind_from_the_environment(monkeypatch):
-    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
+def _no_kind_from_the_environment(unset_env):
+    # The CLI's start-up records the checkout it found in PERSONALCLAW_PROJECT_DIR: given back.
+    unset_env("PERSONALCLAW_INSTALL_KIND", "PERSONALCLAW_PROJECT_DIR")
 
 
 def _runs_from(monkeypatch, package_dir: Path) -> None:
