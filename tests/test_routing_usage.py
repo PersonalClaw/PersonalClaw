@@ -151,6 +151,7 @@ EXPECTED_DAYS = {
 EXPECTED_UNCOUNTED = {
     "calls": 12,
     "dollars_est": 4.0,
+    "unpriced_calls": 0,
     "by_use_case": {"reasoning": 8, "loops": 4},
     "days": {DAY2: 12},
 }
@@ -265,8 +266,35 @@ def test_an_attempt_a_turn_names_is_counted_by_the_turn_not_the_census(tmp_path,
 
 def test_the_census_is_empty_when_no_attempts_were_recorded(tmp_path, stub_rates):
     fold = _rebuild(tmp_path, attempts=[])
-    assert fold["uncounted"] == {"calls": 0, "dollars_est": 0.0, "by_use_case": {}, "days": {}}
+    assert fold["uncounted"] == {
+        "calls": 0,
+        "dollars_est": 0.0,
+        "unpriced_calls": 0,
+        "by_use_case": {},
+        "days": {},
+    }
     assert U.query(fold, window="day", today=DAY2)["uncounted"]["calls"] == 0
+
+
+def test_the_census_says_how_many_of_its_calls_nothing_priced(tmp_path, stub_rates):
+    """A call to a model nothing prices adds $0 to the census's dollars, which the Usage page read
+    as all the calls it leaves out cost. How many there were rides beside the figure. A failed or
+    refused attempt added nothing and is not one of them, and a row written before rows said so
+    is read by what it carries."""
+    ts = _fixture_attempts()[0]["ts"]
+    rows = [
+        {"audit_id": "a", "ts": ts, "passed": True, "dollars_est": 0.25, "priced": True},
+        {"audit_id": "b", "ts": ts, "passed": True, "dollars_est": 0.0, "priced": False},
+        {"audit_id": "c", "ts": ts, "passed": False, "dollars_est": 0.0, "priced": True},
+        {"audit_id": "d", "ts": ts, "passed": True, "dollars_est": 0.0},
+        {"audit_id": "e", "ts": ts, "passed": False, "dollars_est": 0.0},
+    ]
+    fold = _rebuild(tmp_path, attempts=rows)
+
+    assert fold["uncounted"]["dollars_est"] == 0.25
+    assert fold["uncounted"].get("unpriced_calls") == 2
+    uncounted = U.query(fold, window="day", today=DAY2)["uncounted"]
+    assert uncounted.get("total_unpriced_calls") == 2
 
 
 # ── reproducible after delete ───────────────────────────────────────────────────────────

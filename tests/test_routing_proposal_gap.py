@@ -74,6 +74,8 @@ def _fold(
             "feedback_n": 0,
             "avg_ms": (latency or {}).get(ref, 100.0),
             "avg_cost_usd": (cost or {}).get(ref, 0.001),
+            # Every call priced: a local ref's $0 is a known zero, not the absence of a price.
+            "priced_n": n,
             "score": stats._score(success_rate, 0.0, 0),
             "updated_at": "2026-08-24T00:00:00Z",
         }

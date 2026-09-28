@@ -431,15 +431,26 @@ async def test_guard_redact_mode_rewrites_prompt(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_local_provider_forced_to_warn(tmp_path, monkeypatch):
-    """A localhost/ollama provider is forced to warn even if config says block —
+    """A provider whose entry sends to localhost is forced to warn even if config says block —
     the content never leaves the machine."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     from personalclaw.guardrails.model_call import wrap_model_call_guard
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
-    local = FakeProvider()
-    local._base_url = "http://localhost:11434"
+    get_default_registry().register_entry(
+        ProviderEntry(
+            name="local-ollama",
+            type="ollama",
+            model="",
+            options={"endpoint": "http://localhost:11434"},
+        )
+    )
     guard = wrap_model_call_guard(
-        local, use_case="reasoning", provider_name="ollama", model="llama3", scan_mode="block"
+        FakeProvider(),
+        use_case="reasoning",
+        provider_name="local-ollama",
+        model="llama3",
+        scan_mode="block",
     )
     await guard.start()
     # block would raise; warn proceeds → returns text

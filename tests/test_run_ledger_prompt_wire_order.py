@@ -112,8 +112,9 @@ def _guarded_completion(provider: _FakeProvider, *, scan_mode: str) -> Any:
     `stream_and_collect`'s consumption of the guarded stream are all production code. Only provider
     RESOLUTION is stood in for, and resolution is not where the defect lived.
 
-    `provider_name` is deliberately not loopback-shaped: `_is_local_provider` forces `warn` for a
-    local provider, which would silently make every redact-mode assertion vacuous.
+    `provider_name` deliberately names no entry on this machine: the guard forces `warn` for a
+    local one (`llm.registry.served_on_this_machine`), which would silently make every redact-mode
+    assertion vacuous.
     """
     guarded = wrap_model_call_guard(
         provider,

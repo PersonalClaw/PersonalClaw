@@ -340,13 +340,25 @@ def audit_census(
 ) -> dict[str, Any]:
     """Count the guarded-attempt spend the fold leaves out, so the gap is stated not hidden.
 
-    Returns ``{calls, dollars_est, by_use_case, days}``: the attempts no ledger row counts. An
-    attempt whose ``audit_id`` is in *ledgered* is a call a row already carries (the row names
-    it, :func:`ledgered_audit_ids`), so it is in the fold's figures and not in this census. What
-    remains is NOT added to any total: those calls wrote no usage row (one that did not finish
+    Returns ``{calls, dollars_est, unpriced_calls, by_use_case, days}``: the attempts no ledger row
+    counts. An attempt whose ``audit_id`` is in *ledgered* is a call a row already carries (the row
+    names it, :func:`ledgered_audit_ids`), so it is in the fold's figures and not in this census.
+    What remains is NOT added to any total: those calls wrote no usage row (one that did not finish
     writes none), so the ledger has nothing to fold for them. See the module docstring.
+
+    ``unpriced_calls`` are the attempts among them whose cost nothing priced
+    (``guardrails.audit.row_priced``): ``dollars_est`` holds nothing for them, so it is a floor
+    whenever one is counted, never the whole of what they cost.
     """
-    out: dict[str, Any] = {"calls": 0, "dollars_est": 0.0, "by_use_case": {}, "days": {}}
+    from personalclaw.guardrails.audit import row_priced
+
+    out: dict[str, Any] = {
+        "calls": 0,
+        "dollars_est": 0.0,
+        "unpriced_calls": 0,
+        "by_use_case": {},
+        "days": {},
+    }
     for rec in rows:
         if str(rec.get("audit_id", "") or "") in ledgered:
             continue
@@ -354,6 +366,8 @@ def audit_census(
         out["dollars_est"] = round(
             float(out["dollars_est"]) + float(rec.get("dollars_est", 0.0) or 0.0), 6
         )
+        if not row_priced(rec):
+            out["unpriced_calls"] += 1
         _count(out["by_use_case"], str(rec.get("use_case", "") or "(blank)"))
         day = _day_from_epoch(rec.get("ts"))
         if day:
@@ -554,7 +568,8 @@ def _uncounted_in_window(fold: dict[str, Any], dates: list[str]) -> dict[str, An
     """The censused (not summed) attempt-audit rows whose day falls in the window.
 
     Per-day dollars are not kept in the census — only counts — so this reports the window's call
-    count and the census-wide dollar figure it belongs to, never a fabricated per-window dollar.
+    count and the census-wide dollar figure it belongs to, never a fabricated per-window dollar,
+    beside how many of the census's calls that figure could not price.
     """
     census = fold.get("uncounted") or {}
     days = census.get("days") or {}
@@ -563,6 +578,7 @@ def _uncounted_in_window(fold: dict[str, Any], dates: list[str]) -> dict[str, An
         "calls": in_window,
         "total_calls": int(census.get("calls", 0) or 0),
         "total_dollars_est": float(census.get("dollars_est", 0.0) or 0.0),
+        "total_unpriced_calls": int(census.get("unpriced_calls", 0) or 0),
         "by_use_case": dict(census.get("by_use_case") or {}),
     }
 

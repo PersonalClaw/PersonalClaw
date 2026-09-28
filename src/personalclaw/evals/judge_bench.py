@@ -499,9 +499,10 @@ def render_bench_prompt(
 class JudgeCall:
     """One judge invocation's raw result and what it cost.
 
-    ``cost_usd`` is ``None`` for "nothing priced this call", never ``0.0``: a model whose
-    price is unknown must not win "cheapest adequate tier" by looking free. ``elapsed_secs``
-    is always real — a clock needs no provider support.
+    ``cost_usd`` is ``None`` for "nothing priced this call", never ``0.0`` in its place: a model
+    whose price is unknown must not win "cheapest adequate tier" by looking free. ``0.0`` is a
+    price, a model on this machine's. ``elapsed_secs`` is always real — a clock needs no provider
+    support.
     """
 
     text: str
@@ -520,13 +521,13 @@ def _audit_cost_since(started_ts: float, use_case: str) -> tuple[float | None, s
 
     The model-call guard already records `dollars_est`/`model` per attempt
     (`guardrails.audit`), so the benchmark reads the audit rather than re-deriving price
-    from a token count it cannot see. A total of exactly zero is returned as ``None``:
-    `_estimate_dollars` documents 0.0 as "an honest unknown" for an unpriced model, and
-    carrying it forward as a real price is precisely what would make an unpriced tier the
-    recommended one.
+    from a token count it cannot see. The cost is ``None`` when any of those attempts is one
+    nothing priced (`guardrails.audit.row_priced`): its $0 is no price, and a sum with it in is a
+    floor, which carried forward as the tier's cost is precisely what would make an unpriced tier
+    the recommended one. A model on this machine is a priced $0, and that zero is its cost.
     """
     try:
-        from personalclaw.guardrails.audit import read_recent
+        from personalclaw.guardrails.audit import read_recent, row_priced
 
         rows = [
             r
@@ -538,9 +539,10 @@ def _audit_cost_since(started_ts: float, use_case: str) -> tuple[float | None, s
         return None, ""
     if not rows:
         return None, ""
-    total = sum(float(r.get("dollars_est") or 0.0) for r in rows)
     model = str(rows[-1].get("model") or "")
-    return (total if total > 0.0 else None), model
+    if not all(row_priced(r) for r in rows):
+        return None, model
+    return round(sum(float(r.get("dollars_est") or 0.0) for r in rows), 6), model
 
 
 async def live_judge_caller(prompt: str, *, use_case: str) -> JudgeCall:

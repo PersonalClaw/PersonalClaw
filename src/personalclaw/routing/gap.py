@@ -120,7 +120,10 @@ def _evidence(
 
     Latency and cost come from ``telemetry.telemetry_rows`` — the existing read model for this exact
     bucket — so the numbers on a proposal are the same numbers the Routing tab shows. The deltas are
-    ``promoted − demoted``, so **negative is better** on both axes.
+    ``promoted − demoted``, so **negative is better** on both axes. The cost delta is there only
+    when something priced both refs' calls: against a ref nothing prices it is no difference in
+    price, and at that ref's $0 it read as the promoted one costing more, or less, than a model
+    with no price.
     """
     audit_rows: list[dict[str, Any]] = []
     try:
@@ -140,19 +143,23 @@ def _evidence(
     def _p50(ref: str) -> float:
         return float(view.get(ref, {}).get("p50_ms", 0.0) or 0.0)
 
-    def _cost(ref: str) -> float:
-        return float(view.get(ref, {}).get("avg_cost_usd", 0.0) or 0.0)
+    def _cost(ref: str) -> float | None:
+        row = view.get(ref, {})
+        return float(row.get("avg_cost_usd", 0.0) or 0.0) if row.get("priced") else None
 
-    return {
+    evidence: dict[str, Any] = {
         "n": {ref: int(view.get(ref, {}).get("n", 0)) for ref in sorted(opinions)},
         "scores": {ref: round(score, 4) for ref, score in sorted(opinions.items())},
         "min_samples": int(knobs["min_samples"]),
         "hysteresis": float(knobs["hysteresis"]),
         "cloud_quality_margin": float(knobs["cloud_quality_margin"]),
         "p50_delta_ms": round(_p50(promoted) - _p50(demoted), 1),
-        "cost_delta_usd": round(_cost(promoted) - _cost(demoted), 6),
         "sample_audit_ids": _sample_ids(audit_rows, use_case, query_class, (promoted, demoted)),
     }
+    promoted_cost, demoted_cost = _cost(promoted), _cost(demoted)
+    if promoted_cost is not None and demoted_cost is not None:
+        evidence["cost_delta_usd"] = round(promoted_cost - demoted_cost, 6)
+    return evidence
 
 
 def detect_gap(

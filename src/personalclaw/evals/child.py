@@ -107,8 +107,14 @@ def spend_from_home() -> dict:
 
     ``dollars_est`` is NOT nulled with them, deliberately. It is a real estimate over a real
     attempt; only the token count is absent. That asymmetry is exactly why #2630 refused to widen
-    ``priced`` to cover token counts, and why ``tokens_recorded`` is its own word."""
-    tokens_in = tokens_out = attempts = unrecorded_attempts = 0
+    ``priced`` to cover token counts, and why ``tokens_recorded`` is its own word.
+
+    ``unpriced_attempts`` is the attempts whose cost nothing priced (``guardrails.audit.
+    row_priced``): a model with no rate adds $0 to ``dollars_est``, so the figure is a floor
+    whenever one is counted, and the gate says how many its figure leaves out."""
+    from personalclaw.guardrails.audit import row_priced
+
+    tokens_in = tokens_out = attempts = unrecorded_attempts = unpriced_attempts = 0
     dollars = 0.0
     estimated = False
     try:
@@ -145,6 +151,8 @@ def spend_from_home() -> dict:
             tokens_in += row_in
             tokens_out += row_out
             dollars += float(row.get("dollars_est") or 0.0)
+            if not row_priced(row):
+                unpriced_attempts += 1
             estimated = estimated or bool(row.get("estimated"))
     except Exception as exc:  # noqa: BLE001 - spend accounting never fails a measured cell
         return {
@@ -166,6 +174,7 @@ def spend_from_home() -> dict:
         "tokens_out": tokens_out if recorded else None,
         "tokens": (tokens_in + tokens_out) if recorded else None,
         "dollars_est": round(dollars, 6),
+        "unpriced_attempts": unpriced_attempts,
         "estimated": estimated,
     }
 

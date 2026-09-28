@@ -26,6 +26,7 @@ const mount = async (rollup: (o: { group_by: string }) => Promise<unknown>) => {
     api: {
       usageTotals: () => Promise.resolve({ totals: null }),
       usageBudget: () => Promise.resolve(null),
+      modelRates: () => Promise.resolve({ rates: [], models: [], unreadable: '' }),
       usageRollup: rollup,
       usageFold: () => Promise.resolve(null),
       personalclawConfig: () => Promise.resolve(null),

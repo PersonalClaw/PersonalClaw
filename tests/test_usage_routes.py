@@ -435,8 +435,8 @@ async def test_the_daily_budget_says_how_many_calls_its_dollars_leave_out(_home)
     from personalclaw.guardrails.budgets import get_meter
 
     get_meter().charge(1200, 0.25)
-    get_meter().charge(800, 0.0, priced=False)
-    get_meter().charge(0, 0.0, priced=False)  # an unpriced call that reported no tokens
+    get_meter().charge(800, 0.0, unpriced=1)
+    get_meter().charge(0, 0.0, unpriced=1)  # an unpriced call that reported no tokens
     _cap(_home, max_dollars_per_day=1.0)
     c = await _client()
     try:

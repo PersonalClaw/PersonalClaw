@@ -10,6 +10,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Settings → Usage → Model prices sets the price a model's calls are counted at, and lists each model you use with its price and where that comes from.**
+
+- **A provider type can say where an instance that names no endpoint sends, and that it runs inside the gateway: `ProviderCapability.default_endpoint` and `in_process` (SDK additions no app has to change for; every branded app declares its default through `register_branded_app`, and `ollama-models` and `bundled-chat` declare theirs).**
+
 - **An app can say why its media features fail: `personalclaw.sdk.stt.SttError`, `unavailable_reason()` on speech-to-text and embedding providers, and `personalclaw.sdk.net.sentence_with_detail` (SDK additions no app has to change for; `bedrock-models` uses all three, and `openrouter-models`, `google-models`, `alibaba-models`, `git-sync`, `dir-sync`, `rsync-sync`, `s3-sync` and `vector-store-qdrant` use `sentence_with_detail`).**
 - **The channel conformance kit checks how each approval ends and what a press after it is told, and every task status a stream is given: `assert_channel_contract(press=…)`, used by `telegram-channel`, `discord-channel`, `slack-channel` and `email-channel`.**
 
@@ -107,6 +111,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The README's coverage badge, so the job that measures coverage no longer holds a token that can write the repository.**
 
 ### Fixed
+
+- **The Routing tab shows a model nothing prices as unpriced, never free, and such a model no longer knocks a priced one off the frontier or reads as cheaper in a proposal.**
+
+- **An evaluation gate's spend and the Usage page's "Not included" figure say how many calls they could not price, and the gate's dollar bound counts them as calls it could not count.**
+
+- **The judge bench and the model bake-off read a model's cost as unknown when any of its calls had no price, and a model on this machine as free.**
+
+- **The bundled offline model, and a provider instance that names no endpoint and relies on its app's default on this machine, are priced at a known $0 and tried first by local-first routing: pricing, routing and the spend guard's outbound scan decide what runs here by one rule.**
 
 - **The spend caps, the Usage page and every turn's cost price a call at the rate you set in `model_rates.json`, and a cap says how many calls it could not price rather than counting them as free.**
 

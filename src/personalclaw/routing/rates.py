@@ -11,9 +11,11 @@ no row for counted as $0 against a cap. Only this module reads that table now
 A call's price is what its provider reported when it reported one, else its tokens at the
 effective rate, which resolves through a **total, explicit precedence**:
 
-1. **overlay** — ``~/.personalclaw/model_rates.json`` (``atomic_write``). Prices drift; a personal
+1. **overlay** — ``~/.personalclaw/model_rates.json`` (``atomic_write``), the prices set in
+   Settings → Usage → Model prices (:func:`set_rate`, :func:`clear_rate`). Prices drift; a personal
    tool must let its owner correct them without shipping a new app. Read fresh on every call
-   (stat-keyed memo), so editing the file changes the answer with **no restart-order dependency**.
+   (stat-keyed memo), so a change is the answer on the very next call with **no restart-order
+   dependency**.
 2. **local** — a provider entry whose endpoint is on this machine prices ``0.0``: its cost axis
    is latency/energy, not dollars. This is a real, known price, NOT an absence. Where the
    endpoint is decides it, never what kind of provider it is
@@ -43,7 +45,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -57,6 +62,18 @@ logger = logging.getLogger(__name__)
 _OVERLAY_FILE = "model_rates.json"
 #: Bump when the overlay's schema changes.
 RATES_VERSION = 1
+#: A rate row's fields, each USD per 1,000,000 tokens of one bucket of a call, and what a person
+#: calls each. The first two are required; a row that names no cache rate bills cached tokens as
+#: plain input.
+RATE_FIELDS: dict[str, str] = {
+    "in_per_mtok": "input",
+    "out_per_mtok": "output",
+    "cache_read_per_mtok": "cache read",
+    "cache_write_per_mtok": "cache write",
+}
+_REQUIRED_RATE_FIELDS = ("in_per_mtok", "out_per_mtok")
+#: The longest key a rate is stored under. A model ref is far shorter; a longer one is no model.
+MAX_KEY_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -185,6 +202,33 @@ def _resolve_home(home: Path | None) -> Path:
 _overlay_cache: tuple[tuple[str, int, int, int], dict[str, Any]] | None = None
 
 
+class RatesUnreadable(Exception):
+    """``model_rates.json`` is there and cannot be read as an overlay: no price in it is in effect,
+    and a save would replace whatever it holds. Says why, as a person reads it."""
+
+
+def _read_overlay_file(path: Path) -> dict[str, Any] | None:
+    """The overlay as the file holds it, or ``None`` when there is no file.
+
+    Raises :class:`RatesUnreadable` for a file that cannot be read, is not JSON, or holds no
+    ``rates`` object. The one reader of the file: the fail-open read the prices come from and the
+    strict read a write starts from ask the same question, so they cannot disagree about a file.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RatesUnreadable(f"{path.name} could not be read ({exc})") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RatesUnreadable(f"{path.name} is not valid JSON (line {exc.lineno})") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("rates"), dict):
+        raise RatesUnreadable(f'{path.name} has no "rates" object')
+    return data
+
+
 def load_overlay(home: Path | None = None) -> dict[str, Any]:
     """Read ``model_rates.json``. Missing/corrupt/foreign-shaped reads as an empty overlay
     (fail-open: the next tier answers), and the failure is logged, not raised."""
@@ -199,17 +243,17 @@ def load_overlay(home: Path | None = None) -> dict[str, Any]:
     if cached is not None and cached[0] == key:
         return cached[1]
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        logger.warning("model_rates.json unreadable — falling back to app defaults", exc_info=True)
+        data = _read_overlay_file(path)
+    except RatesUnreadable as exc:
+        logger.warning("%s — falling back to app defaults", exc)
         return {"version": RATES_VERSION, "rates": {}}
-    if not isinstance(data, dict) or not isinstance(data.get("rates"), dict):
-        logger.warning("model_rates.json has no 'rates' object — falling back to app defaults")
+    if data is None:
         return {"version": RATES_VERSION, "rates": {}}
-    overlay = {
-        "version": int(data.get("version", RATES_VERSION) or RATES_VERSION),
-        "rates": data["rates"],
-    }
+    try:
+        version = int(data.get("version", RATES_VERSION) or RATES_VERSION)
+    except (TypeError, ValueError):
+        version = RATES_VERSION
+    overlay = {"version": version, "rates": data["rates"]}
     _overlay_cache = (key, overlay)
     return overlay
 
@@ -221,6 +265,124 @@ def save_overlay(rates: dict[str, Any], *, home: Path | None = None) -> Path:
     payload = {"version": RATES_VERSION, "rates": rates}
     atomic_write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
+
+
+# ── Setting one rate (Settings → Usage → Model prices) ──────────────────────────────────
+
+#: A change reads the file and writes it back: two in one process must not interleave.
+_WRITE_LOCK = threading.Lock()
+
+
+def rate_entry(body: object) -> tuple[str, dict[str, float]]:
+    """``(key, row)`` from a request to set one rate, or ``ValueError`` saying what is wrong.
+
+    The key is a ``provider:model`` ref, a pattern over refs (``anthropic:claude-*``) or a model
+    spelled alone, which prices that model whoever serves it, this machine included (a price you
+    set comes before this machine's $0). The input and output rates are required; the cache rates
+    are optional, and a row that names neither bills cached tokens as plain input. Each rate is a
+    finite number of USD per 1,000,000 tokens, zero or more, and a field nothing reads is refused
+    rather than stored.
+    """
+    if not isinstance(body, dict):
+        raise ValueError("Send the model's key and its rates as one JSON object.")
+    unknown = sorted(str(k) for k in body if k != "key" and k not in RATE_FIELDS)
+    if unknown:
+        raise ValueError(f"A rate has no field {unknown[0]!r}.")
+    key = body.get("key")
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("Name the model the rate is for, as provider:model or a model name.")
+    key = key.strip()
+    if len(key) > MAX_KEY_CHARS:
+        raise ValueError(f"A model key is at most {MAX_KEY_CHARS} characters.")
+    if any(ch.isspace() or not ch.isprintable() for ch in key):
+        raise ValueError("A model key has no spaces or control characters.")
+    row: dict[str, float] = {}
+    for name, label in RATE_FIELDS.items():
+        value = body.get(name)
+        if value is None:
+            if name in _REQUIRED_RATE_FIELDS:
+                raise ValueError(f"Give the {label} rate, in dollars per 1M tokens.")
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"The {label} rate must be a number of dollars per 1M tokens.")
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"The {label} rate must be zero or more dollars per 1M tokens.")
+        row[name] = float(value)
+    return key, row
+
+
+def _stored_rates(home: Path | None) -> dict[str, Any]:
+    """The overlay's rates as stored, for a change to one of them. Raises
+    :class:`RatesUnreadable` rather than start from nothing: saving would replace the file."""
+    data = _read_overlay_file(_overlay_path(_resolve_home(home)))
+    return dict(data["rates"]) if data is not None else {}
+
+
+def set_rate(key: str, row: dict[str, float], *, home: Path | None = None) -> None:
+    """Price *key* at *row* in the overlay (:func:`rate_entry` validates both), leaving every other
+    rate as it is stored now. Raises :class:`RatesUnreadable` when the file cannot be read."""
+    with _WRITE_LOCK:
+        rates = _stored_rates(home)
+        rates[key] = dict(row)
+        save_overlay(rates, home=home)
+
+
+def clear_rate(key: str, *, home: Path | None = None) -> bool:
+    """Remove the rate set for *key*; whether there was one. Raises :class:`RatesUnreadable` when
+    the file cannot be read."""
+    with _WRITE_LOCK:
+        rates = _stored_rates(home)
+        if key not in rates:
+            return False
+        del rates[key]
+        save_overlay(rates, home=home)
+        return True
+
+
+def _rate_fields(rate: ModelRate) -> dict[str, float | None]:
+    return {
+        "in_per_mtok": rate.in_per_mtok,
+        "out_per_mtok": rate.out_per_mtok,
+        "cache_read_per_mtok": rate.cache_read_per_mtok,
+        "cache_write_per_mtok": rate.cache_write_per_mtok,
+    }
+
+
+def rates_view(refs: Iterable[str], *, home: Path | None = None) -> dict[str, Any]:
+    """What Settings → Usage → Model prices shows.
+
+    ``rates`` — every rate set in the overlay, by key; a row that is no rate is not in effect and
+    not listed. ``models`` — each model *refs* names (the models the uses are bound to) with the
+    rate a call to it is counted at and where that rate comes from (``source``: ``overlay``,
+    ``local``, ``app_default``, ``builtin``), or ``priced: false`` when nothing prices it.
+    ``unreadable`` — why the overlay could not be read, when it could not: no rate in it is then in
+    effect, and a change is refused until it is fixed or removed.
+    """
+    unreadable = ""
+    try:
+        data = _read_overlay_file(_overlay_path(_resolve_home(home)))
+    except RatesUnreadable as exc:
+        unreadable = str(exc)
+        data = None
+    rows: list[dict[str, Any]] = []
+    for key, value in sorted((data or {}).get("rates", {}).items()):
+        rate = ModelRate.from_obj(value, source="overlay")
+        if isinstance(key, str) and rate is not None:
+            rows.append({"key": key, **_rate_fields(rate)})
+    models: list[dict[str, Any]] = []
+    for ref in dict.fromkeys(str(r) for r in refs):
+        provider, _, model = ref.partition(":")
+        if not provider or not model:
+            continue  # a ref that names no model has no model to price
+        rate = _effective_rate(provider, model, home)
+        entry: dict[str, Any] = {
+            "ref": ref,
+            "priced": rate is not None,
+            "source": rate.source if rate is not None else "",
+        }
+        entry.update(_rate_fields(rate) if rate is not None else dict.fromkeys(RATE_FIELDS))
+        models.append(entry)
+    return {"rates": rows, "models": models, "unreadable": unreadable}
 
 
 # ── Resolution ───────────────────────────────────────────────────────────────────────────
@@ -427,14 +589,21 @@ def cache_savings_usd(
 
 
 __all__ = [
+    "MAX_KEY_CHARS",
     "RATES_VERSION",
+    "RATE_FIELDS",
     "CallPrice",
     "ModelRate",
+    "RatesUnreadable",
     "cache_savings_usd",
+    "clear_rate",
     "load_overlay",
     "price_call",
     "price_event",
+    "rate_entry",
     "rate_for",
+    "rates_view",
     "ref_of",
     "save_overlay",
+    "set_rate",
 ]

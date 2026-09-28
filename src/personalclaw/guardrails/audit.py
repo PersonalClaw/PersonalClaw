@@ -183,6 +183,14 @@ class AttemptRecord:
     # one indistinguishable population. Appended AFTER the existing columns so an older
     # reader of this JSONL keeps working (it reads by key, and dicts tolerate a new one).
     caller: str = ""
+    # Whether ``dollars_est`` is what this attempt cost, known: the cost its provider reported,
+    # its tokens at the rate the rate table gives its model (a model served on this machine is a
+    # known $0), or nothing at all for an attempt that sent nothing or failed, which adds nothing
+    # (as ``guardrails.calls.CallLog`` counts a failed call). False for an attempt that completed
+    # and that nothing prices: its cost is unknown, so a sum that includes it is a floor and an
+    # average over it is no price. False unless its writer says otherwise, so a writer that knows
+    # nothing claims nothing (:func:`row_priced` reads a row written before rows said).
+    priced: bool = False
     extra: dict = field(default_factory=dict)
 
     def to_json_line(self) -> str:
@@ -192,6 +200,25 @@ class AttemptRecord:
         extra = d.pop("extra", None) or {}
         d.update(extra)
         return json.dumps(d, separators=(",", ":"), default=str)
+
+
+def row_priced(row: dict) -> bool:
+    """Whether an attempt row's ``dollars_est`` is a known cost (:attr:`AttemptRecord.priced`).
+
+    Every reader that adds attempts' dollars up, or averages them, asks this. A row written before
+    rows said so is read by what it carries: an attempt that did not pass (it failed, or was
+    refused before anything was sent) added nothing, and one that passed is priced only by a
+    positive figure, since nothing on it says its zero is a price.
+    """
+    priced = row.get("priced")
+    if isinstance(priced, bool):
+        return priced
+    if not row.get("passed"):
+        return True
+    try:
+        return float(row.get("dollars_est") or 0.0) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def now_ms() -> float:

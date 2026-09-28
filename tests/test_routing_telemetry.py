@@ -35,20 +35,20 @@ class TestPercentile:
 
 class TestDominance:
     def test_a_better_everywhere_dominates(self):
-        a = {"success": 0.9, "p50_ms": 100.0, "avg_cost_usd": 0.0}
-        b = {"success": 0.8, "p50_ms": 200.0, "avg_cost_usd": 0.01}
+        a = {"success": 0.9, "p50_ms": 100.0, "avg_cost_usd": 0.0, "priced": True}
+        b = {"success": 0.8, "p50_ms": 200.0, "avg_cost_usd": 0.01, "priced": True}
         assert _dominates(a, b) and not _dominates(b, a)
 
     def test_tradeoff_neither_dominates(self):
         # a cheaper+faster but lower quality; b higher quality but slow+costly → both on frontier.
-        a = {"success": 0.7, "p50_ms": 100.0, "avg_cost_usd": 0.0}
-        b = {"success": 0.95, "p50_ms": 500.0, "avg_cost_usd": 0.02}
+        a = {"success": 0.7, "p50_ms": 100.0, "avg_cost_usd": 0.0, "priced": True}
+        b = {"success": 0.95, "p50_ms": 500.0, "avg_cost_usd": 0.02, "priced": True}
         assert not _dominates(a, b) and not _dominates(b, a)
 
     def test_unknown_latency_never_dominates_on_latency(self):
         # a has no latency samples (p50=0 → treated as unknown/inf) — it can't knock b off on speed.
-        a = {"success": 0.9, "p50_ms": 0.0, "avg_cost_usd": 0.0}
-        b = {"success": 0.8, "p50_ms": 50.0, "avg_cost_usd": 0.0}
+        a = {"success": 0.9, "p50_ms": 0.0, "avg_cost_usd": 0.0, "priced": True}
+        b = {"success": 0.8, "p50_ms": 50.0, "avg_cost_usd": 0.0, "priced": True}
         # a still dominates here on success+cost with latency no-better (inf !<= 50 → not no_worse),
         # so a does NOT dominate b (its unknown latency is worse), and b doesn't dominate a either.
         assert not _dominates(a, b)
@@ -57,7 +57,8 @@ class TestDominance:
 class TestRows:
     def _stats(self):
         s = {"use_cases": {}}
-        # Two refs under reasoning/summarize.
+        # Two refs under reasoning/summarize. The local one's $0 is a price (a model served on
+        # this machine is a known zero), which the attempt row says.
         stats.fold_record(
             s,
             {
@@ -68,6 +69,7 @@ class TestRows:
                 "passed": True,
                 "latency_ms": 2000.0,
                 "dollars_est": 0.0,
+                "priced": True,
             },
             now="t",
         )

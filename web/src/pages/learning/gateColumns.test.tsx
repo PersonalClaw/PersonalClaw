@@ -29,13 +29,13 @@ const GATE_UNGATED: LearningGate = {
   state: 'ungated',
   reason: 'no gate run yet — accept on the evidence above, or run the gate first',
   before: null, after: null, delta: null, regressed: false, scenarios: 0,
-  halted: false, dollars_est: 0, spend_observed: false, pin: {}, ran_at: '',
+  halted: false, dollars_est: 0, unpriced_attempts: 0, spend_observed: false, pin: {}, ran_at: '',
 }
 
 const gated = (over: Partial<LearningGate> = {}): LearningGate => ({
   state: 'gated', reason: '',
   before: 0.9, after: 0.4, delta: -0.5, regressed: true, scenarios: 12,
-  halted: false, dollars_est: 0.031, spend_observed: true,
+  halted: false, dollars_est: 0.031, unpriced_attempts: 0, spend_observed: true,
   pin: { model_fp: 'abc123def456', scenario_sha256: 'f00dcafe' },
   ran_at: '2026-08-27T10:00:00+00:00',
   ...over,

@@ -43,7 +43,7 @@ from personalclaw.evals.matrix import (
     aggregate,
 )
 from personalclaw.evals.overlay import OverlayRefusedError
-from personalclaw.guardrails.budgets import SpendMeter
+from personalclaw.guardrails.budgets import Budget, SpendMeter
 
 # ── the isolated, pinnable home every section runs in ─────────────────────────
 
@@ -144,11 +144,13 @@ class _ScoringMatrix:
         dollars_per_cell: float = 0.0,
         tokens_per_cell: int = 0,
         tokens_recorded: bool = True,
+        unpriced_attempts: int = 0,
     ) -> None:
         self.calls: list[tuple[str, str | None]] = []
         self._dollars = dollars_per_cell
         self._tokens = tokens_per_cell
         self._tokens_recorded = tokens_recorded
+        self._unpriced = unpriced_attempts
 
     def __call__(self, spec: MatrixSpec, *, matrix_id: str, artifact_arm=None, **_kw):
         self.calls.append((spec.subject, None if artifact_arm is None else artifact_arm.label))
@@ -187,6 +189,7 @@ class _ScoringMatrix:
                             "unrecorded_attempts": 0 if self._tokens_recorded else 1,
                             "tokens": self._tokens if self._tokens_recorded else None,
                             "dollars_est": self._dollars,
+                            "unpriced_attempts": self._unpriced,
                             "estimated": True,
                         },
                     },
@@ -521,6 +524,51 @@ def test_the_childs_reported_spend_is_charged_to_the_meter(gate_home):
     # Two arms × one scenario × $0.01.
     assert totals.dollars == pytest.approx(0.02)
     assert totals.tokens == 200
+
+
+def test_the_gates_dollars_say_how_many_attempts_nothing_priced(gate_home):
+    """A cell's attempt on a model with no rate added $0 to the gate's `dollars_est`, and the
+    meter its dollar bound is checked against counted it as free. The count rides beside the
+    dollars: into the report, the inbox row's summary, and the meter, whose reasons then say how
+    many calls their figure leaves out."""
+    meter = SpendMeter(config_dir=gate_home)
+    report = gate_mod.run_gate(
+        run_id="r1",
+        arms=_arms({}, {"a": "b"}),
+        run_matrix=_ScoringMatrix(dollars_per_cell=0.30, unpriced_attempts=1),
+        meter=meter,
+        budget_usd=10.0,
+    )
+
+    assert report.spend["dollars_est"] == pytest.approx(0.60)
+    assert report.spend.get("unpriced_attempts") == 2  # two arms × one scenario
+    assert gate_mod.summary(report.to_dict()).get("unpriced_attempts") == 2
+    run_key = f"{gate_mod.GATE_KIND}:r1"
+    assert meter.run_totals(run_key).unpriced == 2
+    _verdict, reason = meter.check_run(run_key, Budget(max_dollars=0.5))
+    assert reason == (
+        "run dollar budget exceeded ($0.6/$0.5, not counting 2 calls that had no price)"
+    )
+
+
+def test_the_cli_says_how_many_calls_the_gates_spend_leaves_out(capsys):
+    from personalclaw.cli_commands import _print_gate_report
+
+    report = gate_mod.GateReport(state=gate_mod.GATE_GATED, run_id="r1")
+    report.spend = {
+        "observed": True,
+        "attempts": 3,
+        "dollars_est": 0.01,
+        "unpriced_attempts": 2,
+        "estimated": True,
+    }
+    _print_gate_report(report)
+
+    out = capsys.readouterr().out
+    assert (
+        "spend:  $0.0100 (estimated) over 3 model call(s), not counting 2 calls that had no price"
+        in out
+    )
 
 
 def test_the_budget_STOPS_the_sweep_and_names_what_did_not_run(gate_home):

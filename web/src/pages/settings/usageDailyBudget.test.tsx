@@ -32,6 +32,7 @@ const mount = async (budget: unknown) => {
       usageRollup: () => Promise.resolve({ rows: [] }),
       usageFold: () => Promise.resolve(null),
       usageBudget: () => Promise.resolve(budget),
+      modelRates: () => Promise.resolve({ rates: [], models: [], unreadable: '' }),
       personalclawConfig: () => Promise.resolve({ guardrails: { budgets: { max_dollars_per_day: 1 } } }),
       system: () => Promise.resolve({ stats: null }),
     },
@@ -62,7 +63,7 @@ describe('Daily budget', () => {
     expect(text).toContain('Unattended spend today: $0.2500 of your $1.00 daily cap')
     expect(text).toContain(
       '3 unattended calls today had no price, so the dollar cap could not count them: '
-      + 'set a rate for their models in ~/.personalclaw/model_rates.json.',
+      + 'give their models a price under Model prices below.',
     )
     const one = (await mount({ ...BUDGET, unpriced_calls: 1 })).container.textContent ?? ''
     expect(one).toContain('1 unattended call today had no price, so the dollar cap could not count it:')

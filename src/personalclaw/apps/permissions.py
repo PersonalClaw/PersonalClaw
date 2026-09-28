@@ -933,6 +933,15 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/models/telemetry": OwnerOnly(
         "how each model did on your work — its cost, its speed and your feedback"
     ),
+    # A price is what the daily and per-run dollar caps count a model's calls at: an app that set
+    # one could make a model read free to them.
+    "GET /api/models/rates": OwnerOnly(
+        "the prices your model calls are counted at, and which models you use"
+    ),
+    "PUT /api/models/rates": OwnerOnly(
+        "setting the price your spend caps and the Usage page count a model's calls at"
+    ),
+    "DELETE /api/models/rates": OwnerOnly("removing a price you set for a model"),
     "GET /api/models/health": OwnerOnly(
         "how your model providers are answering — the failures and latency of your model calls"
     ),

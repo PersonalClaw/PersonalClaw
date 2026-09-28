@@ -103,9 +103,9 @@ class BudgetConfig:
             "Max Dollars / Day",
             "Estimated-dollar ceiling for all unattended spend in a calendar day. "
             "0 = unlimited. A call costs what its provider reports, else its tokens at its "
-            "model's rate: one you set in model_rates.json, $0 on this machine, the rate its "
-            "app declares, or the shipped price list's. A call none of those prices is not in "
-            "the total, and Settings → Usage says how many there were.",
+            "model's rate: one you set in Settings → Usage → Model prices, $0 on this machine, "
+            "the rate its app declares, or the shipped price list's. A call none of those "
+            "prices is not in the total, and Settings → Usage says how many there were.",
         ),
     )
 

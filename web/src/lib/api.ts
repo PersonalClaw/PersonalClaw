@@ -3020,7 +3020,9 @@ export interface LearningGate {
   regressed: boolean
   scenarios: number
   halted: boolean
-  dollars_est: number; spend_observed: boolean
+  // `unpriced_attempts` of the gate's model calls had no price: `dollars_est` holds nothing for
+  // them, so it is a floor whenever one is counted.
+  dollars_est: number; unpriced_attempts: number; spend_observed: boolean
   pin: { model_fp?: string; scenario_sha256?: string }
   ran_at: string
 }
@@ -6433,7 +6435,8 @@ export interface UsageFoldRow {
  *    inferences and a room's summaries are counted once, in the rows). Every call writes its row
  *    when it finishes, so these are the calls that did not: one that failed writes none. Render
  *    it as a stated exclusion; a surface that omits it silently is claiming a completeness the
- *    data lacks.
+ *    data lacks. `total_unpriced_calls` of them had no price, so `total_dollars_est` is a floor
+ *    whenever it is above zero, never the whole of what they cost.
  *  · `app_sources` — which app names produced `app` turns (a census, not an error).
  *  · `unmapped` — rows that could not be attributed to a day at all; counted, never dropped.
  *  · `reachable_purposes` — the subset of the vocabulary a writer can produce today, so a UI can
@@ -6452,6 +6455,7 @@ export interface UsageFold {
     calls: number
     total_calls: number
     total_dollars_est: number
+    total_unpriced_calls: number
     by_use_case: Record<string, number>
   }
   reachable_purposes: string[]
@@ -6473,17 +6477,57 @@ export interface UsageBudget {
   cap_unreadable: boolean
 }
 
+/** A model's rate: USD per 1,000,000 tokens of each bucket of its calls. A cache rate that is
+ *  `null` is not set, and cached tokens are then billed as plain input. */
+export interface ModelRateFields {
+  in_per_mtok: number
+  out_per_mtok: number
+  cache_read_per_mtok: number | null
+  cache_write_per_mtok: number | null
+}
+
+/** Where the rate a model's calls are counted at comes from: a price set in Settings (`overlay`),
+ *  this machine's known $0 (`local`), the provider app's own (`app_default`) or PersonalClaw's
+ *  shipped table (`builtin`). `''` when nothing prices the model. */
+export type ModelRateSource = '' | 'overlay' | 'local' | 'app_default' | 'builtin'
+
+/** `GET /api/models/rates` — Settings → Usage → Model prices.
+ *
+ *  · `rates` — the prices set here, one per key: a `provider:model` ref, a pattern over refs
+ *    (`anthropic:claude-*`) or a model name alone, which prices it whoever serves it.
+ *  · `models` — each model a use is bound to, with the rate its calls are counted at and where it
+ *    comes from. `priced: false` means nothing prices it: its rate fields are `null`, its calls
+ *    count toward no dollar figure, and each figure says how many it leaves out.
+ *  · `unreadable` — why the price file could not be read, when it could not: no price in it is in
+ *    effect, and setting one here is refused until it is fixed or removed. */
+export interface ModelRatesView {
+  rates: Array<{ key: string } & ModelRateFields>
+  models: Array<{
+    ref: string
+    priced: boolean
+    source: ModelRateSource
+    in_per_mtok: number | null
+    out_per_mtok: number | null
+    cache_read_per_mtok: number | null
+    cache_write_per_mtok: number | null
+  }>
+  unreadable: string
+}
+
 /** One per-model efficiency row for a (use_case, query_class) bucket
  *  (MRT-1d/1e). Observation only — the fold supplies
  *  n/success/feedback/cost, the audit tail supplies p50/p95 latency, and
  *  `on_frontier` = this ref is not dominated by another on (success↑, p50_ms↓,
- *  avg_cost_usd↓). `feedback`/latency are 0 when no signal has landed yet. */
+ *  avg_cost_usd↓). `feedback`/latency are 0 when no signal has landed yet.
+ *  `priced: false` means nothing has priced a call this model served: its cost is unknown,
+ *  `avg_cost_usd` is then 0 and is no price — render it as unpriced, never as free. */
 export interface TelemetryRow {
   ref: string
   n: number
   success: number
   feedback: number
   avg_cost_usd: number
+  priced: boolean
   p50_ms: number
   p95_ms: number
   on_frontier: boolean
@@ -6848,6 +6892,13 @@ export const api = {
   // Today's spend as the daily cap counts it, beside that cap: the only numbers the Usage page
   // may set side by side (the ledger totals above include chat turns, which no cap covers).
   usageBudget: () => get<UsageBudget>('/api/usage/budget'),
+  // The prices model calls are counted at (Settings → Usage → Model prices). A price set here is
+  // what the dollar caps, the Usage page and cost-aware routing count the model's calls at, from
+  // the next call on. Each write changes ONE rate, so it names no revision.
+  modelRates: () => get<ModelRatesView>('/api/models/rates'),
+  setModelRate: (rate: { key: string } & ModelRateFields) =>
+    put<ModelRatesView>('/api/models/rates', rate),
+  clearModelRate: (key: string) => del(`/api/models/rates?key=${encodeURIComponent(key)}`),
   // The per-day spend fold: the same per-call ledger grouped by purpose and day, plus a
   // census of the guarded model calls no row counts. Read-only, derived on request; a deleted
   // fold self-heals.

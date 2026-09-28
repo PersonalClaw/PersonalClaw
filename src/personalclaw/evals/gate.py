@@ -538,6 +538,8 @@ def summary(report: dict | None) -> dict[str, Any]:
         "scenarios": len(subset.get("members") or []),
         "halted": bool((data.get("bound") or {}).get("halted")),
         "dollars_est": float((data.get("spend") or {}).get("dollars_est") or 0.0),
+        # How many of the attempts behind ``dollars_est`` nothing priced, which make it a floor.
+        "unpriced_attempts": int((data.get("spend") or {}).get("unpriced_attempts") or 0),
         "spend_observed": bool((data.get("spend") or {}).get("observed")),
         "pin": (
             {
@@ -579,7 +581,8 @@ def cell_spend(matrix_id: str) -> dict[str, Any]:
     summed it here as a measured zero. So one unrecorded cell makes the whole total's token count
     :data:`~personalclaw.evals.provenance.UNRECORDED`: the sum of the cells that DID report is not
     this matrix's token spend. ``dollars_est`` is unaffected — it is a real estimate over real
-    attempts, and only the token count is absent.
+    attempts, and only the token count is absent. ``unpriced_attempts`` is how many of those
+    attempts nothing priced, which ``dollars_est`` holds nothing for.
     """
     total: dict[str, Any] = {
         "observed": False,
@@ -588,6 +591,7 @@ def cell_spend(matrix_id: str) -> dict[str, Any]:
         "tokens_recorded": True,
         "unrecorded_attempts": 0,
         "dollars_est": 0.0,
+        "unpriced_attempts": 0,
         "estimated": False,
     }
     try:
@@ -615,6 +619,7 @@ def cell_spend(matrix_id: str) -> dict[str, Any]:
         total["dollars_est"] = round(
             float(total["dollars_est"]) + float(spend.get("dollars_est") or 0.0), 6
         )
+        total["unpriced_attempts"] += int(spend.get("unpriced_attempts") or 0)
         total["estimated"] = bool(total["estimated"]) or bool(spend.get("estimated"))
     if not total["tokens_recorded"]:
         total["tokens"] = None
@@ -636,6 +641,9 @@ def _accumulate(into: dict[str, Any], one: dict[str, Any]) -> None:
     )
     into["dollars_est"] = round(
         float(into.get("dollars_est") or 0.0) + float(one.get("dollars_est") or 0.0), 6
+    )
+    into["unpriced_attempts"] = int(into.get("unpriced_attempts") or 0) + int(
+        one.get("unpriced_attempts") or 0
     )
     into["estimated"] = bool(into.get("estimated")) or bool(one.get("estimated"))
 
@@ -783,6 +791,7 @@ def run_gate(
         "tokens_recorded": True,
         "unrecorded_attempts": 0,
         "dollars_est": 0.0,
+        "unpriced_attempts": 0,
         "estimated": False,
     }
     halted = ""
@@ -837,11 +846,14 @@ def run_gate(
             # ceiling this gate binds on is DOLLARS (`Budget(max_dollars=budget)` above, and
             # `dollars_est` is recorded for those same attempts), so the bound still bites; the
             # token figure is observability, and an invented one would corrupt it silently.
+            # The attempts nothing priced are charged as calls the dollar bound could not count,
+            # as the spend guard charges one: at their $0 the bound read them as free.
             charged_tokens = 0 if one.get("tokens") is None else int(one.get("tokens") or 0)
             meter.charge(
                 charged_tokens,
                 float(one.get("dollars_est") or 0.0),
                 run_key=run_key,
+                unpriced=int(one.get("unpriced_attempts") or 0),
             )
         scored = [v for v in block["scenarios"].values() if v is not None]
         block["mean_score"] = (sum(scored) / len(scored)) if scored else None

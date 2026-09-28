@@ -55,6 +55,7 @@ const FOLD = {
     calls: 12,
     total_calls: 12,
     total_dollars_est: 4.0,
+    total_unpriced_calls: 0,
     by_use_case: { reasoning: 8, loops: 4 },
   },
   reachable_purposes: ['interactive', 'background', 'loop', 'eval', 'app'],
@@ -66,6 +67,7 @@ const mount = async (fold: unknown = FOLD) => {
     api: {
       usageTotals: () => Promise.resolve({ totals: null }),
       usageBudget: () => Promise.resolve(null),
+      modelRates: () => Promise.resolve({ rates: [], models: [], unreadable: '' }),
       usageRollup: () => Promise.resolve({ rows: [] }),
       usageFold: () => Promise.resolve(fold),
       personalclawConfig: () => Promise.resolve(null),
@@ -114,6 +116,18 @@ describe('the By day and purpose section', () => {
     // Why they are left out, and that it is the whole reason: they are in no usage row.
     expect(container.textContent).toContain('A call that does not finish writes no usage row')
     expect(container.textContent).not.toContain('double-counting')
+    expect(container.textContent).not.toContain('had no price')
+  })
+
+  it('says how many of the calls it leaves out had no price, beside their dollars', async () => {
+    // A call to a model nothing prices adds $0 to that figure, which then read as all they cost.
+    const { container } = await mount({
+      ...FOLD,
+      uncounted: { ...FOLD.uncounted, total_unpriced_calls: 3 },
+    })
+    expect(container.textContent).toContain(
+      '12 unattended model calls (~$4.00 across the whole log, not counting 3 that had no price)',
+    )
   })
 
   it('states that an unpriced model makes the total a floor', async () => {
@@ -167,6 +181,7 @@ describe('the By day and purpose section', () => {
       api: {
         usageTotals: () => Promise.resolve({ totals: null }),
         usageBudget: () => Promise.resolve(null),
+        modelRates: () => Promise.resolve({ rates: [], models: [], unreadable: '' }),
         usageRollup: () => Promise.resolve({ rows: [] }),
         usageFold: () => Promise.reject(new Error('nope')),
         personalclawConfig: () => Promise.resolve(null),

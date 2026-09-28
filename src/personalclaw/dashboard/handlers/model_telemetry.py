@@ -33,8 +33,10 @@ async def api_models_telemetry(request: web.Request) -> web.Response:
 
     Both params are required (a telemetry view is always scoped to one bucket); an empty either
     is a clean 400. Returns ``{use_case, query_class, rows: [...]}`` where each row is
-    ``{ref, n, success, feedback, avg_cost_usd, p50_ms, p95_ms, on_frontier}`` — the fold supplies
-    the aggregates, the JSONL tail supplies p50/p95, and the frontier flag is a dominance check."""
+    ``{ref, n, success, feedback, avg_cost_usd, priced, p50_ms, p95_ms, on_frontier}`` — the fold
+    supplies the aggregates, the JSONL tail supplies p50/p95, and the frontier flag is a dominance
+    check. ``priced`` is False while nothing has priced a call the ref served, and the cost is then
+    unknown, never free."""
     use_case = request.query.get("use_case", "")
     query_class = request.query.get("query_class", "")
     if not use_case:

@@ -121,7 +121,8 @@ class AcpTurnMeter:
         day, run = self._ceilings()
         refused = spent_refusal(meter, day, run)
         if refused is not None:
-            _record(FailureMode.BUDGET_EXCEEDED)
+            # Refused before the prompt was sent: it cost nothing, a known $0.
+            _record(FailureMode.BUDGET_EXCEEDED, priced=True)
             aclose = getattr(events, "aclose", None)
             if aclose is not None:
                 await aclose()
@@ -138,7 +139,7 @@ class AcpTurnMeter:
                     tokens_in + tokens_out,
                     price.dollars,
                     run_key=current_run_key() or None,
-                    priced=price.priced,
+                    unpriced=0 if price.priced else 1,
                 )
                 _record(
                     FailureMode.NONE,
@@ -148,6 +149,7 @@ class AcpTurnMeter:
                     dollars_est=round(price.dollars, 6),
                     estimated=price.source != "reported",
                     passed=True,
+                    priced=price.priced,
                 )
                 charged = True
                 event = naming_the_call(event, audit_id)

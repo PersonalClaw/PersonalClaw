@@ -391,6 +391,8 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         max_context_tokens=0,
         notes=spec.notes or f"{spec.type}: {spec.protocol}-compatible endpoint.",
         prompt_cache=spec.prompt_cache,
+        # Where an instance that names no endpoint sends (``_factory`` above falls back to it).
+        default_endpoint=spec.default_base_url,
     )
     try:
         get_default_registry().register_type(cap, _factory)

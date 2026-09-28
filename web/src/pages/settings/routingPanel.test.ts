@@ -3,7 +3,7 @@ import { fmtPct, fmtFeedback, fmtMs, fmtCost, sortByFrontier } from './RoutingPa
 import type { TelemetryRow } from '../../lib/api'
 
 const R = (ref: string, on_frontier: boolean, extra: Partial<TelemetryRow> = {}): TelemetryRow =>
-  ({ ref, n: 1, success: 1, feedback: 0, avg_cost_usd: 0, p50_ms: 0, p95_ms: 0, on_frontier, ...extra })
+  ({ ref, n: 1, success: 1, feedback: 0, avg_cost_usd: 0, priced: true, p50_ms: 0, p95_ms: 0, on_frontier, ...extra })
 
 describe('fmtPct', () => {
   it('renders a 0..1 fraction as a whole percent', () => {
@@ -36,12 +36,16 @@ describe('fmtMs', () => {
 })
 
 describe('fmtCost', () => {
-  it('renders a local/zero-cost model as "free", never $0.00', () => {
-    expect(fmtCost(0)).toBe('free')
+  it('renders a priced zero-cost model (one on this machine) as "free", never $0.00', () => {
+    expect(fmtCost(0, true)).toBe('free')
+  })
+  it('renders a model nothing has priced as "unpriced", never "free"', () => {
+    // A cloud model with no rate: the fold's 0 is no price, and "free" said it cost nothing.
+    expect(fmtCost(0, false)).toBe('unpriced')
   })
   it('renders sub-dollar cost at 4dp and dollar+ at 2dp', () => {
-    expect(fmtCost(0.0021)).toBe('$0.0021')
-    expect(fmtCost(1.5)).toBe('$1.50')
+    expect(fmtCost(0.0021, true)).toBe('$0.0021')
+    expect(fmtCost(1.5, true)).toBe('$1.50')
   })
 })
 

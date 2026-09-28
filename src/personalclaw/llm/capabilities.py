@@ -69,3 +69,13 @@ class ProviderCapability:
     # it declare it via ``BrandedProviderSpec.prompt_cache`` (a coordinated apps-repo
     # change); the native loop reads the same grade off the provider instance.
     prompt_cache: PromptCache = PromptCache.NONE
+    # Where an entry of this type sends its requests when it names no endpoint of its own: the
+    # URL its factory falls back to (a branded app's ``BrandedProviderSpec.default_base_url``, a
+    # model server's own default port). ``llm.registry.served_on_this_machine`` reads it, so a
+    # hand-written entry that names none is on this machine exactly when this URL is: priced at
+    # a known $0, ordered first by local-first routing and scanned as the prompt never leaves
+    # the machine. ``""`` when the type has no default and an entry must name its endpoint.
+    default_endpoint: str = ""
+    # The type runs its model inside the gateway's own process and sends its requests nowhere,
+    # so an entry of it is on this machine whatever its options say.
+    in_process: bool = False

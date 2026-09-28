@@ -254,10 +254,11 @@ it survives a restart. That is a genuine control. Three things about it are wort
   are sitting in front of, but it means `max_dollars_per_day` is **not** a whole-install
   cap. Goal loops, cron fires and subagents are metered; typing into chat is not.
 - **The dollar ceiling is an estimate, not a bill.** A call costs what its provider reports,
-  else its tokens at its model's rate: one you set in `~/.personalclaw/model_rates.json`, a
-  known $0 for a model server on this machine, the rate its provider app declares, or the
-  shipped price list (`price_call` in `src/personalclaw/routing/rates.py`, which prices every
-  dollar the caps and the Usage page count). A call none of those prices is not in the dollar
+  else its tokens at its model's rate: one you set in **Settings → Usage → Model prices**, a
+  known $0 for a model that runs on this machine (a model server here, or the bundled offline
+  model), the rate its provider app declares, or the shipped price list (`price_call` in
+  `src/personalclaw/routing/rates.py`, which prices every dollar the caps and the Usage page
+  count). A call none of those prices is not in the dollar
   total: the meter counts it as a call the cap could not count, and Settings → Usage, a
   refusal and a warning each say how many there were. PersonalClaw never sees your provider
   invoice, so an estimated ceiling cannot be an authoritative one.
@@ -270,9 +271,15 @@ renders as **unpriced**, never as `$0.00`, and any rollup containing one reports
 incomplete. So you can always answer "what did that cost me", and a model served on this
 machine costs nothing either way.
 
-To price a model the shipped list does not know, or correct one it has wrong, add it to
-`model_rates.json` in your PersonalClaw home. A key is a `provider:model` ref, a bare model
-id, or a glob of either; a rate is USD per million tokens, and may name the cache rates too:
+To price a model the shipped list does not know, or correct one it has wrong, give it a price
+under **Settings → Usage → Model prices**. The section lists every model your uses are bound to
+with the price its calls are counted at and where that comes from, and a model nothing prices
+says so. A price is set for a `provider:model` ref, a pattern of them (`anthropic:claude-*`), or
+a model id alone, which prices that model whoever serves it, this machine included; a rate is
+USD per million tokens for input and output, and optionally for cache reads and writes (unset,
+a cached token costs what an input token does). A price counts from the next call.
+
+The prices are kept in `model_rates.json` in your PersonalClaw home, one row per key:
 
 ```json
 {"version": 1, "rates": {"my-gpu:qwen3:8b": {"in_per_mtok": 0.2, "out_per_mtok": 0.4},
@@ -280,7 +287,8 @@ id, or a glob of either; a rate is USD per million tokens, and may name the cach
                                              "cache_read_per_mtok": 0.3}}}
 ```
 
-It is read on every call, so an edit counts from the next one.
+If that file cannot be read, no price in it is in effect, the section says why, and it refuses
+to save over it until the file is fixed or removed.
 
 **What to do instead, if you stay:** set the ceilings before you leave anything running,
 and set a hard spend limit **at your provider** as the real backstop — that is the only cap

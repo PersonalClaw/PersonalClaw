@@ -68,7 +68,7 @@ export function GuardrailsPanel() {
           <NumberRow label="Max tokens / day" hint="Across every trigger. 0 = unlimited."
             value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000}
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v, 'Max tokens / day') }} />
-          <NumberRow label="Max dollars / day" hint="Estimated from per-model pricing. 0 = unlimited."
+          <NumberRow label="Max dollars / day" hint="Estimated from each model's price, set in Settings → Usage → Model prices. 0 = unlimited."
             value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={1} dollars
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_dollars_per_day: v } })); return patchNum('budgets.max_dollars_per_day', v, 'Max dollars / day') }} />
           <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."

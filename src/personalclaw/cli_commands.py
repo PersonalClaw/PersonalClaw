@@ -1405,10 +1405,13 @@ def _print_gate_report(report) -> None:
     print(f"  delta:  {fmt(report.delta)}{'  ← REGRESSION' if report.regressed else ''}")
     spend = report.spend or {}
     if spend.get("observed"):
+        from personalclaw.guardrails.budgets import unpriced_clause
+
         estimated = " (estimated)" if spend.get("estimated") else ""
+        left_out = unpriced_clause(int(spend.get("unpriced_attempts") or 0))
         print(
             f"  spend:  ${float(spend.get('dollars_est') or 0.0):.4f}{estimated} "
-            f"over {spend.get('attempts')} model call(s)"
+            f"over {spend.get('attempts')} model call(s)" + (f", {left_out}" if left_out else "")
         )
     else:
         print("  spend:  not measured (no cell reported one)")

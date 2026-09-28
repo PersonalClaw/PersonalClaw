@@ -9,6 +9,7 @@ import { Meter } from '../../ui/Meter'
 import { PanelHeader, Section } from './settingsUI'
 import { InlineLoadError, ListSkeleton } from '../../ui/ListScaffold'
 import { BigStat, KVList } from './bento'
+import { ModelPricesSection } from './ModelPricesSection'
 
 /** Account-level cost/token usage.
  *
@@ -160,7 +161,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Usage"
-        hint="What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price row is shown honestly as 'unpriced', never $0.00." />
+        hint="What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price is shown honestly as 'unpriced', never $0.00, until you give it one under Model prices." />
 
       <div className="mb-l">
         <Segmented
@@ -186,7 +187,8 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
           role="status">
           <span className="text-warning">Partial</span> — {unpricedModels.length} unpriced{' '}
           {unpricedModels.length === 1 ? 'model' : 'models'} (no price row); their tokens count but
-          their cost is not included in the total.
+          their cost is not included in the total. Give {unpricedModels.length === 1 ? 'it' : 'them'} a
+          price under Model prices.
         </div>
       )}
 
@@ -197,6 +199,10 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
 
       {/* Cap context — the Guardrails cap beside the spend it is actually held to. */}
       {budget && <DailyBudgetSection budget={budget} />}
+
+      {/* What each model's calls are counted at, and where a price is set: the place every
+          "no price" line on this page sends the owner. */}
+      <ModelPricesSection />
 
       {/* `rows` travels undefaulted — `?? []` here would put the swallow back one layer down, where
           it reads as the empty state again. */}
@@ -280,7 +286,7 @@ function unpricedCallsSentence(n: number): string {
   const one = n === 1
   const calls = one ? '1 unattended call' : `${n.toLocaleString()} unattended calls`
   return `${calls} today had no price, so the dollar cap could not count ${one ? 'it' : 'them'}: `
-    + `set a rate for ${one ? 'its model' : 'their models'} in ~/.personalclaw/model_rates.json.`
+    + `give ${one ? 'its model' : 'their models'} a price under Model prices below.`
 }
 
 export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
@@ -435,7 +441,9 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
       <span className="text-on-surface">Not included:</span>{' '}
       {uncounted.calls.toLocaleString()} unattended model{' '}
       {uncounted.calls === 1 ? 'call' : 'calls'} (~{fmtUsd(uncounted.total_dollars_est)} across the
-      whole log). A call that does not finish writes no usage row, so these are recorded only in
+      whole log{uncounted.total_unpriced_calls > 0
+        ? `, not counting ${uncounted.total_unpriced_calls.toLocaleString()} that had no price`
+        : ''}). A call that does not finish writes no usage row, so these are recorded only in
       the model-call log.
     </div>
   )

@@ -6,16 +6,20 @@ derived ON REQUEST from the O(1) fold (:mod:`routing.stats`) plus a bounded tail
 derived here from the recent rows — the deviation documented in ``routing.stats``).
 
 Per (use_case, query_class) it returns one row per candidate ref:
-``{ref, n, success, feedback, avg_cost_usd, p50_ms, p95_ms, on_frontier}``. ``on_frontier`` = not
-dominated by another ref on (quality↑, latency↓, cost↓) — a small dominance check over ≤ dozens of
-rows, NOT an optimizer. Nothing here routes, scores for a decision, or mutates state: it reads two
-files and shapes a view. Pure given its inputs (the fold dict + the JSONL rows are passed in by the
-route), so it is trivially testable without a running gateway.
+``{ref, n, success, feedback, avg_cost_usd, priced, p50_ms, p95_ms, on_frontier}``. ``priced`` is
+False while nothing has priced a call the ref served: ``avg_cost_usd`` is then no price (0.0, never
+to be read as free). ``on_frontier`` = not dominated by another ref on (quality↑, latency↓, cost↓)
+— a small dominance check over ≤ dozens of rows, NOT an optimizer. Nothing here routes, scores for
+a decision, or mutates state: it reads two files and shapes a view. Pure given its inputs (the fold
+dict + the JSONL rows are passed in by the route), so it is trivially testable without a running
+gateway.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from personalclaw.routing.stats import priced_samples
 
 
 def _percentile(sorted_vals: list[float], pct: float) -> float:
@@ -50,19 +54,24 @@ def _latencies_by_ref(
     return out
 
 
+def _cost(row: dict) -> float:
+    """A row's cost on the cost axis: its average when something priced its calls, else unknown
+    (``inf``), which is treated as latency's unknown is. A model nothing prices must not look
+    free: at $0 it knocked every priced model off the frontier on cost alone."""
+    return float(row["avg_cost_usd"]) if row["priced"] else float("inf")
+
+
 def _dominates(a: dict, b: dict) -> bool:
     """Does row ``a`` DOMINATE row ``b``? — a is no worse on every axis and strictly better on
     at least one. Axes: quality (``success`` ↑ better), latency (``p50_ms`` ↓ better), cost
     (``avg_cost_usd`` ↓ better). A row with no latency samples (p50==0) is treated as unknown
-    latency and can't dominate on that axis, so it never falsely knocks a measured row off."""
+    latency, and a row nothing has priced as unknown cost (:func:`_cost`): it can't dominate on
+    that axis, so it never falsely knocks a measured row off."""
     a_p50 = a["p50_ms"] if a["p50_ms"] > 0 else float("inf")
     b_p50 = b["p50_ms"] if b["p50_ms"] > 0 else float("inf")
-    no_worse = (
-        a["success"] >= b["success"] and a_p50 <= b_p50 and a["avg_cost_usd"] <= b["avg_cost_usd"]
-    )
-    strictly_better = (
-        a["success"] > b["success"] or a_p50 < b_p50 or a["avg_cost_usd"] < b["avg_cost_usd"]
-    )
+    a_cost, b_cost = _cost(a), _cost(b)
+    no_worse = a["success"] >= b["success"] and a_p50 <= b_p50 and a_cost <= b_cost
+    strictly_better = a["success"] > b["success"] or a_p50 < b_p50 or a_cost < b_cost
     return no_worse and strictly_better
 
 
@@ -87,13 +96,17 @@ def telemetry_rows(
     rows: list[dict] = []
     for ref, agg in sorted(by_class.items()):
         samples = sorted(lat.get(ref, []))
+        priced = priced_samples(agg) > 0
         rows.append(
             {
                 "ref": ref,
                 "n": int(agg.get("n", 0)),
                 "success": round(float(agg.get("success_rate", 0.0)), 4),
                 "feedback": round(float(agg.get("feedback", 0.0)), 4),
-                "avg_cost_usd": round(float(agg.get("avg_cost_usd", 0.0)), 6),
+                "avg_cost_usd": (
+                    round(float(agg.get("avg_cost_usd", 0.0) or 0.0), 6) if priced else 0.0
+                ),
+                "priced": priced,
                 "p50_ms": _percentile(samples, 50),
                 "p95_ms": _percentile(samples, 95),
             }

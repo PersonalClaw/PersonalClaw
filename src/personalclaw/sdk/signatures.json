@@ -6761,7 +6761,9 @@
     {"annotation": "int", "kind": "positional_or_keyword", "name": "max_context_tokens"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "notes"},
     {"annotation": "StructuredOutput", "default": "StructuredOutput.NONE", "kind": "positional_or_keyword", "name": "structured_output"},
-    {"annotation": "PromptCache", "default": "PromptCache.NONE", "kind": "positional_or_keyword", "name": "prompt_cache"}
+    {"annotation": "PromptCache", "default": "PromptCache.NONE", "kind": "positional_or_keyword", "name": "prompt_cache"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "default_endpoint"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "in_process"}
    ],
    "returns": "None"
   },

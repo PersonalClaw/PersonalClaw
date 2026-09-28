@@ -1716,6 +1716,9 @@ BUNDLED_CHAT_CAPABILITY = ProviderCapability(
     structured_output=StructuredOutput.NONE,
     prompt_cache=PromptCache.NONE,
     notes=FLOOR_NOTICE,
+    # The weight runs in the gateway's own process: nothing it is sent leaves this machine, and a
+    # call costs nothing (priced at a known $0, never unpriced).
+    in_process=True,
 )
 
 

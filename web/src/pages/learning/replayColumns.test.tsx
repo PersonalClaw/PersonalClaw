@@ -34,7 +34,7 @@ const GATE_UNGATED: LearningGate = {
   state: 'ungated',
   reason: 'no gate run yet — accept on the evidence above, or run the gate first',
   before: null, after: null, delta: null, regressed: false, scenarios: 0,
-  halted: false, dollars_est: 0, spend_observed: false, pin: {}, ran_at: '',
+  halted: false, dollars_est: 0, unpriced_attempts: 0, spend_observed: false, pin: {}, ran_at: '',
 }
 
 const NOT_REPLAYED: LearningReplay = {

@@ -816,6 +816,10 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.model_telemetry import register_model_telemetry_routes
 
     register_model_telemetry_routes(app)
+    # The prices model calls are counted at (Settings → Usage → Model prices): the owner's.
+    from personalclaw.dashboard.handlers.model_rates import register_model_rates_routes
+
+    register_model_rates_routes(app)
     # Learning Flywheel §6.1 — the Proposal Inbox + the staging week panel. Its accept route is the
     # HTTP half of the human-installs invariant: the actor is derived from the request, never the
     # body, so an app-scoped token cannot name itself a reviewer.

@@ -106,6 +106,15 @@ MODEL_ROUTES: list[tuple[str, str, Any]] = [
     ("DELETE", "/api/models/routing-proposals/{id}", None),
     ("GET", "/api/models/telemetry", None),
     ("GET", "/api/models/health", None),
+    # the prices your model calls are counted at: a price of nothing makes your model free to
+    # the dollar caps
+    ("GET", "/api/models/rates", None),
+    (
+        "PUT",
+        "/api/models/rates",
+        {"key": f"{YOURS}:{YOUR_MODEL}", "in_per_mtok": 0, "out_per_mtok": 0},
+    ),
+    ("DELETE", "/api/models/rates", None),
     # your Hugging Face token
     ("GET", "/api/models/hf-token/status", None),
     ("PUT", "/api/models/hf-token", {"token": "fake-hf-token-theirs"}),

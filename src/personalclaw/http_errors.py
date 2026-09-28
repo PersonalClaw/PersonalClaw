@@ -1036,6 +1036,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # asked could not answer; the message is the reason, relayed.
     "skills_marketplace_not_found": "No skill catalogue of that name is set up here.",
     "skills_search_failed": "The skill catalogue could not be searched.",
+    # ── the prices model calls are counted at (dashboard/handlers/model_rates.py —
+    #    PUT/DELETE /api/models/rates) ──
+    # 409: `model_rates.json` could not be read, so saving would replace whatever it holds; nothing
+    # was written. 500: the file could not be written.
+    "model_rates_unreadable": (
+        "Your price file could not be read, so no price in it is in effect and none was changed."
+    ),
+    "model_rate_unsaved": "The price could not be saved.",
 }
 
 

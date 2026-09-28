@@ -882,6 +882,10 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     passed=passed,
                     strategy="fallback" if fallback else ("retry" if attempt > 1 else "direct"),
                     degraded=fallback and passed,
+                    # This row prices nothing and adds nothing: a failed attempt cost nothing,
+                    # and the call a passing one reports is counted where it was made (the
+                    # guard's own row on a metered axis, the turn's usage row otherwise).
+                    priced=True,
                 )
             )
         except Exception:

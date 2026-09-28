@@ -9,8 +9,10 @@ total samples for the downstream confidence floor.
 Per (use_case, query_class, ref) the fold keeps: ``n``, ``success_rate`` (EMA of ``passed``),
 ``feedback`` + ``feedback_n`` (EMA of a [0,1] signal — 0 with feedback_n=0 until the Session-3
 feedback extraction lands; the score then collapses onto success_rate, renormalized), ``avg_ms``
-(EMA latency), ``avg_cost_usd`` (EMA dollars), ``score`` (§4.2: 0.60·success + 0.40·feedback,
-renormalized to success when no feedback yet), and ``updated_at``.
+(EMA latency), ``avg_cost_usd`` + ``priced_n`` (EMA of what a call the ref served cost, over the
+``priced_n`` calls something priced — with none, the ref has no price yet, which is not free),
+``score`` (§4.2: 0.60·success + 0.40·feedback, renormalized to success when no feedback yet), and
+``updated_at``.
 
 **Deviation from the §1.3 JSON example (documented):** the example shows ``p50_ms``/``p95_ms``
 in the fold, but true percentiles can't be maintained incrementally from an EMA. Per §1.5 the
@@ -32,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.guardrails.audit import row_priced
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,25 @@ def load_stats(home: Path) -> dict[str, Any]:
     return data
 
 
+def priced_samples(row: dict[str, Any]) -> int:
+    """How many of a fold row's calls its ``avg_cost_usd`` averages, the calls something priced.
+
+    Zero means the ref has no price yet. A row folded before the fold counted them is read by what
+    it carries: a positive average was folded from priced calls, and a zero one says nothing,
+    since the calls nothing priced were folded in at $0 then.
+    """
+    if "priced_n" in row:
+        try:
+            return max(0, int(row.get("priced_n") or 0))
+        except (TypeError, ValueError):
+            return 0
+    try:
+        positive = float(row.get("avg_cost_usd", 0.0) or 0.0) > 0.0
+    except (TypeError, ValueError):
+        return 0
+    return int(row.get("n", 0) or 0) if positive else 0
+
+
 def save_stats(home: Path, stats: dict[str, Any]) -> None:
     atomic_write(_stats_path(home), json.dumps(stats, indent=2, sort_keys=True) + "\n")
 
@@ -108,6 +130,10 @@ def fold_record(stats: dict[str, Any], rec: dict[str, Any], *, now: str = "") ->
     passed = 1.0 if rec.get("passed") else 0.0
     latency = float(rec.get("latency_ms", 0.0) or 0.0)
     cost = float(rec.get("dollars_est", 0.0) or 0.0)
+    # A price of this ref is what a call it SERVED cost, when something priced it. A refusal or a
+    # failure says nothing about the price of the model's calls, and an unpriced call's $0 is no
+    # price at all: folded in, either made a model nothing prices read as free.
+    priced = bool(passed) and row_priced(rec)
 
     if row is None:
         # First sample seeds the EMAs with the observed values (no prior to blend).
@@ -117,17 +143,26 @@ def fold_record(stats: dict[str, Any], rec: dict[str, Any], *, now: str = "") ->
             "feedback": 0.0,
             "feedback_n": 0,
             "avg_ms": latency,
-            "avg_cost_usd": cost,
+            "avg_cost_usd": 0.0,
+            "priced_n": 0,
         }
+    priced_n = priced_samples(row)
     row["n"] = int(row.get("n", 0)) + 1
     if row["n"] == 1:
         row["success_rate"] = passed
         row["avg_ms"] = latency
-        row["avg_cost_usd"] = cost
     else:
         row["success_rate"] = round(_ema(float(row["success_rate"]), passed), 4)
         row["avg_ms"] = round(_ema(float(row["avg_ms"]), latency), 1)
-        row["avg_cost_usd"] = round(_ema(float(row["avg_cost_usd"]), cost), 6)
+    if priced:
+        priced_n += 1
+        # The first price seeds the cost EMA: a ref with none had no cost to blend with.
+        row["avg_cost_usd"] = (
+            round(cost, 6)
+            if priced_n == 1
+            else round(_ema(float(row.get("avg_cost_usd", 0.0) or 0.0), cost), 6)
+        )
+    row["priced_n"] = priced_n
     row["score"] = _score(
         float(row["success_rate"]), float(row.get("feedback", 0.0)), int(row.get("feedback_n", 0))
     )

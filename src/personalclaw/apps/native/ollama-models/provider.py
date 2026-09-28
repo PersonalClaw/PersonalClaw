@@ -966,6 +966,9 @@ OLLAMA_CAPABILITY = ProviderCapability(
         "Local Ollama server via httpx; tool use degrades per model, vision "
         "model-dependent; native json-schema output via the `format` field."
     ),
+    # Where an instance that names no endpoint sends (the factory's own fallback below), so core
+    # reads such an instance as on this machine exactly as it is.
+    default_endpoint=_DEFAULT_ENDPOINT,
 )
 
 

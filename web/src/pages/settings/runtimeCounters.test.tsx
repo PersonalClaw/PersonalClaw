@@ -94,6 +94,7 @@ describe('the rendered rows', () => {
       api: {
         usageTotals: () => Promise.resolve({ totals: null }),
         usageBudget: () => Promise.resolve(null),
+        modelRates: () => Promise.resolve({ rates: [], models: [], unreadable: '' }),
         usageRollup: () => Promise.resolve({ rows: [] }),
         // The spend fold. Rejecting is the honest stub for "this install has no fold yet":
         // the panel catches it and renders nothing, which is what these row assertions assume.

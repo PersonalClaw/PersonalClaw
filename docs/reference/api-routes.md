@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **890 registrations** over **722 distinct paths** — 883 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **893 registrations** over **723 distinct paths** — 886 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -28,7 +28,7 @@ The 128 families the surface divides into, largest first.
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 49 | 41 |
 | `/api/workflows` | 45 | 40 |
-| `/api/models` | 34 | 28 |
+| `/api/models` | 37 | 29 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/apps` | 23 | 15 |
 | `/api/inbox` | 22 | 21 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 883 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -728,6 +728,9 @@ The 883 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/models/local/{provider}/search` | search a searchable provider's |
 | `POST` | `/api/models/local/{provider}/selftest` | a real per-capability inference (LMMV §6). |
 | `DELETE` | `/api/models/local/{provider}/{model}` | delete a downloaded local model. |
+| `DELETE` | `/api/models/rates` | remove the rate set for one key. Answers the new view. |
+| `GET` | `/api/models/rates` | the rates you set, and what each bound model is counted at. |
+| `PUT` | `/api/models/rates` | set the rate for one key. |
 | `GET` | `/api/models/routing-policy` | the inspectable routing table (§6.1). |
 | `PUT` | `/api/models/routing-policy` | set one of the three user levers (§6.2). |
 | `GET` | `/api/models/routing-proposals` | the propose-don't-write review queue (§6.3). |

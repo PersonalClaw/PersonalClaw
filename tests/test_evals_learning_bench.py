@@ -362,6 +362,25 @@ def test_a_provider_that_reported_no_usage_is_not_a_cell_that_spent_nothing(home
     assert a["dollars_est"] == 0.0 and b["dollars_est"] == 0.0
 
 
+def test_a_cell_says_how_many_of_its_attempts_nothing_priced(home):
+    """An attempt on a model with no rate adds $0 to the cell's `dollars_est`, which then read as
+    all the cell's calls cost. How many there were rides beside the dollars; a failed attempt added
+    nothing and is not one of them."""
+    rows = [
+        {"passed": True, "tokens_in": 100, "tokens_out": 10, "dollars_est": 0.25, "priced": True},
+        {"passed": True, "tokens_in": 100, "tokens_out": 10, "dollars_est": 0.0, "priced": False},
+        {"passed": False, "tokens_in": 0, "tokens_out": 0, "dollars_est": 0.0, "priced": True},
+    ]
+    (home / "model_calls.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
+    )
+
+    spend = child.spend_from_home()
+
+    assert spend["dollars_est"] == 0.25
+    assert spend.get("unpriced_attempts") == 1
+
+
 def test_a_partly_reporting_cell_publishes_no_partial_token_sum(home):
     """One attempt reported 300 tokens and one reported none. The sum is not this cell's spend.
 

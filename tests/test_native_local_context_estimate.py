@@ -22,18 +22,22 @@ rejected the turn outright. (That rejection is the failure the sibling change re
 from; this one keeps the loop from getting there.)
 
 The fix passes local-ness in from the call site, because that is where the provider INSTANCE
-is — `guardrails.model_call._is_local_provider` sniffs a loopback `_base_url`, and reusing it
-keeps one definition of "local" instead of minting a second. A per-binding `context_window`
-(popped out of the provider's options bag) overrides both.
+is — asked of the entry it was built for (its `served_ref`) by the one rule for "local",
+`llm.registry.served_on_this_machine`, which pricing, routing and the spend guard's scan ask
+too, instead of minting a second. A per-binding `context_window` (popped out of the provider's
+options bag) overrides both.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.context_compaction import total_chars
+from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.model_windows import LOCAL_SERVED_CONTEXT_WINDOW, model_context_window
 
 
@@ -42,7 +46,15 @@ class _Model:
 
     def __init__(self, base_url: str = "", *, context_window: int | None = None) -> None:
         self._model = "s"
-        self._base_url = base_url
+        # Built for a configured entry that sends to *base_url*, as the resolution seam builds
+        # every provider and stamps the ref it serves: where that entry sends decides "local".
+        entry = "at-" + re.sub(r"[^a-z0-9]+", "-", base_url.lower()).strip("-")
+        get_default_registry().register_entry(
+            ProviderEntry(
+                name=entry, type="openai_compatible", model="", options={"base_url": base_url}
+            )
+        )
+        self.served_ref = f"{entry}:s"
         if context_window is not None:
             self.context_window = context_window
 
@@ -91,7 +103,7 @@ class TestTheEstimateUsesTheServedWindow:
     )
     def test_every_loopback_form_the_guard_recognises_counts_as_local(self, base_url):
         """Asserted through the runtime rather than by re-listing the patterns, so the two
-        never drift: the guard owns the definition of local."""
+        never drift: the one rule owns the definition of local."""
         rt = _runtime(_Model(base_url))
         rt._messages = _history(_OVER_THE_SERVED_WINDOW)
         assert rt._estimated_context_pct() > 70.0
@@ -155,8 +167,8 @@ class TestALocalProviderThatDoesReportUsage:
     """🪤 The other half, and the one a green Ollama drive cannot prove.
 
     This file's premise — "local means no usage" — is only true of an OpenAI-compatible
-    endpoint that rejects ``stream_options``. Ollama, the local runtime the guard sniffs
-    for, reports ``prompt_eval_count`` on every single turn, so on a real local binding
+    endpoint that rejects ``stream_options``. Ollama, the local runtime the guard relaxes its
+    scan for, reports ``prompt_eval_count`` on every single turn, so on a real local binding
     the gauge is a number and the estimate path above is dead code. Both arms therefore
     have to exist: driving a live Ollama exercises only THIS class, and a green drive is
     not evidence that the backstop works.

@@ -174,17 +174,19 @@ class SpendMeter:
         dollars: float,
         *,
         run_key: str | None = None,
-        priced: bool = True,
+        unpriced: int = 0,
     ) -> None:
         """Record ``tokens`` + ``dollars`` of spend against the day scope (always)
         and a run scope (when ``run_key`` is given). Best-effort; never raises.
 
-        ``priced=False`` is a call nothing priced (``routing.rates.CallPrice``): its dollars are
-        unknown, so it is counted as an unpriced call rather than as free spend, and a call that
-        reported no tokens is still counted. Its tokens count as any call's do."""
+        ``unpriced`` is how many of the calls this charge covers nothing priced
+        (``routing.rates.CallPrice``): one call a guard charges, or the attempts a whole batch
+        made. Their dollars are unknown, so ``dollars`` holds only what the priced ones cost, and
+        they are counted as calls the figure leaves out rather than as free spend, even when they
+        reported no tokens. Their tokens count as any call's do."""
         tokens = max(0, int(tokens or 0))
-        dollars = max(0.0, float(dollars or 0.0)) if priced else 0.0
-        unpriced = 0 if priced else 1
+        dollars = max(0.0, float(dollars or 0.0))
+        unpriced = max(0, int(unpriced or 0))
         if tokens == 0 and dollars == 0.0 and not unpriced:
             return
         with self._lock:

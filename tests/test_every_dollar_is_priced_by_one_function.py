@@ -198,7 +198,7 @@ async def test_a_cap_that_holds_an_unpriced_call_says_its_total_leaves_it_out():
 def test_a_spent_cap_says_how_many_calls_its_total_leaves_out():
     meter = get_meter()
     meter.charge(1_000, 5.0)
-    meter.charge(500, 0.0, priced=False)
+    meter.charge(500, 0.0, unpriced=1)
 
     refusal = spent_refusal(meter, Budget(max_dollars=5.0), Budget())
 
@@ -214,7 +214,7 @@ def test_a_spent_cap_says_how_many_calls_its_total_leaves_out():
 
 def test_a_token_cap_counts_every_call_and_says_nothing_of_prices():
     meter = get_meter()
-    meter.charge(1_000, 0.0, priced=False)
+    meter.charge(1_000, 0.0, unpriced=1)
 
     refusal = spent_refusal(meter, Budget(max_tokens=1_000), Budget())
 
@@ -227,8 +227,8 @@ def test_a_run_s_cap_counts_its_unpriced_calls_too():
     the figure leaves out."""
     meter = get_meter()
     meter.charge(10, 0.9, run_key="run-1")
-    meter.charge(10, 0.0, run_key="run-1", priced=False)
-    meter.charge(10, 0.0, run_key="run-1", priced=False)
+    meter.charge(10, 0.0, run_key="run-1", unpriced=1)
+    meter.charge(10, 0.0, run_key="run-1", unpriced=1)
 
     assert meter.run_totals("run-1").unpriced == 2
     verdict, reason = meter.check_run("run-1", Budget(max_dollars=1.0))

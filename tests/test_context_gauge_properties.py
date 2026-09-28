@@ -390,11 +390,23 @@ class TestEveryThresholdIsReachable:
         """
         from personalclaw.agents.native.runtime import NativeAgentRuntime
         from personalclaw.agents.provider import AgentRuntimeDefinition
+        from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+        # Built for a configured entry on this machine, as the resolution seam builds every
+        # provider and stamps the ref it serves: where that entry sends decides "local".
+        get_default_registry().register_entry(
+            ProviderEntry(
+                name="here-gemma",
+                type="openai_compatible",
+                model="",
+                options={"base_url": "http://127.0.0.1:11434/v1"},
+            )
+        )
 
         class _LocalModel:
             supports_tools = True
             _model = "gemma4:12b"
-            _base_url = "http://127.0.0.1:11434/v1"
+            served_ref = "here-gemma:gemma4:12b"
 
         runtime = NativeAgentRuntime(
             definition=AgentRuntimeDefinition(name="T", provider="native", model="gemma4:12b"),

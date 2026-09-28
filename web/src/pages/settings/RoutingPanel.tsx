@@ -91,9 +91,12 @@ export function fmtMs(ms: number): string {
   return ms > 0 ? Math.round(ms).toLocaleString() : '—'
 }
 
-/** Average cost per call. A local model reports 0 → "free" (honest, not "$0.00");
- *  otherwise 2dp for dollars, 4dp for sub-dollar so a fraction-of-a-cent shows. */
-export function fmtCost(usd: number): string {
+/** Average cost per call. A model nothing has priced reads "unpriced": its 0 is no price, and
+ *  "free" said a cloud model with no rate cost nothing. A priced model at 0 (one running on this
+ *  machine) reads "free" (honest, not "$0.00"); otherwise 2dp for dollars, 4dp for sub-dollar so a
+ *  fraction-of-a-cent shows. */
+export function fmtCost(usd: number, priced: boolean): string {
+  if (!priced) return 'unpriced'
   if (usd <= 0) return 'free'
   return usd >= 1 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`
 }
@@ -390,8 +393,9 @@ function ProposalEvidence({ evidence, promoted, demoted }: {
   if (p50 !== undefined && p50 !== 0) {
     bits.push(`${fmtMs(Math.abs(p50))}ms ${p50 < 0 ? 'faster' : 'slower'}`)
   }
+  // Present only when both models are priced, so the difference is a price.
   if (cost !== undefined && cost !== 0) {
-    bits.push(`${fmtCost(Math.abs(cost))} ${cost < 0 ? 'cheaper' : 'dearer'} per call`)
+    bits.push(`${fmtCost(Math.abs(cost), true)} ${cost < 0 ? 'cheaper' : 'dearer'} per call`)
   }
   if (bits.length === 0) return null
   return <p data-type="caption" className="mt-1 text-on-surface-low">{bits.join(' · ')}.</p>
@@ -676,7 +680,7 @@ function TelemetryTable({ rows }: { rows: TelemetryRow[] }) {
               <td className={`${td} text-right tabular-nums text-on-surface-low`}>{fmtFeedback(r.feedback)}</td>
               <td className={`${td} text-right tabular-nums`}>{fmtMs(r.p50_ms)}</td>
               <td className={`${td} text-right tabular-nums text-on-surface-low`}>{fmtMs(r.p95_ms)}</td>
-              <td className={`${td} text-right tabular-nums`}>{fmtCost(r.avg_cost_usd)}</td>
+              <td className={`${td} text-right tabular-nums`}>{fmtCost(r.avg_cost_usd, r.priced)}</td>
               <td className={`${td} text-right`}>
                 {r.on_frontier ? (
                   <StatusPill tone="ok" sized={false} data-type="caption" className="gap-1 py-0.5"

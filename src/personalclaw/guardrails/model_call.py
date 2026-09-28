@@ -61,6 +61,7 @@ from personalclaw.llm.base import (
     ModelProvider,
     ModelSubstitution,
 )
+from personalclaw.llm.registry import served_on_this_machine
 
 if TYPE_CHECKING:
     from personalclaw.routing.rates import CallPrice
@@ -229,8 +230,9 @@ class ModelCallGuard(ModelProvider):
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
         # Whether this provider's requests stay on this machine: its outbound scan is then
-        # forced to warn, since the prompt never leaves it. Decided once, from where it sends.
-        self._local = _is_local_provider(inner)
+        # forced to warn, since the prompt never leaves it. Decided once, by the one rule the
+        # rate table prices a local model by and routing orders one by: where its entry sends.
+        self._local = served_on_this_machine(provider_name)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row. "" until a call classifies.
@@ -500,13 +502,7 @@ class ModelCallGuard(ModelProvider):
                     # Read from a ContextVar rather than a parameter because the guard is
                     # built by `provider_bridge` from provider config and has no run identity;
                     # threading one in would touch all 33 call sites reaching the bridge.
-                    # An unpriced call is charged as one the dollar caps could not count.
-                    self._meter.charge(
-                        tokens_in + tokens_out,
-                        price.dollars,
-                        run_key=current_run_key() or None,
-                        priced=price.priced,
-                    )
+                    self._charge(tokens_in + tokens_out, price)
                     self._audit(
                         audit_id,
                         1,
@@ -516,8 +512,7 @@ class ModelCallGuard(ModelProvider):
                         tokens_out,
                         True,
                         strategy,
-                        dollars=price.dollars,
-                        estimated=price.source != "reported",
+                        price=price,
                     )
                     self._settle_call(call, tokens_in, tokens_out, price)
                     recorded = True
@@ -567,9 +562,11 @@ class ModelCallGuard(ModelProvider):
 
         # Stream ended via StopAsyncIteration. If no COMPLETE event ever arrived,
         # record the (clean) outcome once here so a provider that omits COMPLETE is
-        # still audited exactly once.
+        # still audited exactly once — and charged, as any call that completed is.
         if not recorded:
+            price = self._price(None)
             self._breaker.record_success()
+            self._charge(tokens_in + tokens_out, price)
             self._audit(
                 audit_id,
                 1,
@@ -579,8 +576,20 @@ class ModelCallGuard(ModelProvider):
                 tokens_out,
                 True,
                 strategy,
+                price=price,
             )
-            self._settle_call(call, tokens_in, tokens_out, self._price(None))
+            self._settle_call(call, tokens_in, tokens_out, price)
+
+    def _charge(self, tokens: int, price: "CallPrice") -> None:
+        """Charge one call that completed to the day's meter, and to the ambient run's when one
+        is bound: a call nothing priced is charged as one the dollar caps could not count, never
+        as a free one."""
+        self._meter.charge(
+            tokens,
+            price.dollars,
+            run_key=current_run_key() or None,
+            unpriced=0 if price.priced else 1,
+        )
 
     def _price(self, event: LLMEvent | None) -> "CallPrice":
         """What this call cost (``routing.rates.price_event``, the one pricing function): the
@@ -622,9 +631,10 @@ class ModelCallGuard(ModelProvider):
         passed: bool,
         strategy: str,
         *,
-        dollars: float = 0.0,
-        estimated: bool = True,
+        price: "CallPrice | None" = None,
     ) -> None:
+        """Record one attempt. ``price`` is what a call that completed cost; ``None`` for an
+        attempt that sent nothing (a refusal) or failed, which added nothing: a known $0."""
         rec = AttemptRecord(
             audit_id=audit_id,
             ts=time.time(),
@@ -636,10 +646,10 @@ class ModelCallGuard(ModelProvider):
             latency_ms=round(latency_ms, 1),
             tokens_in=tokens_in,
             tokens_out=tokens_out,
-            dollars_est=round(dollars, 6),
+            dollars_est=round(price.dollars, 6) if price is not None else 0.0,
             # Estimated unless the provider reported a real cost_usd (which the price
             # prefers); a rate-derived value is flagged.
-            estimated=estimated,
+            estimated=price is None or price.source != "reported",
             passed=passed,
             strategy=strategy,
             query_class=self._query_class,
@@ -649,6 +659,9 @@ class ModelCallGuard(ModelProvider):
             # `current_run_key()` above is: this guard is built by `provider_bridge` from
             # provider config and never sees its caller. "" when nothing bound one.
             caller=current_caller(),
+            # Unknown only for a call that completed and that nothing priced (the routing fold
+            # and every sum over this log leave its cost out rather than read it as $0).
+            priced=price is None or price.priced,
         )
         record_attempt(rec)
         # Fold the same attempt into the rolling routing stats (MODEL-ROUTING-TELEMETRY
@@ -729,36 +742,6 @@ class ModelCallGuard(ModelProvider):
         return getattr(self._inner, item)
 
 
-def _provider_endpoint(provider: ModelProvider) -> str:
-    """The URL *provider* sends its requests to, or ``""`` when it names none.
-
-    Read from the attribute an HTTP provider keeps it in: ``_base_url`` (the OpenAI- and
-    Anthropic-compatible clients, and every provider built on them) or ``_endpoint`` (a provider
-    that talks to a model server's own API). A provider with neither, such as one that runs its
-    model inside the gateway or behind a CLI, names no endpoint."""
-    for attr in ("_base_url", "_endpoint"):
-        value = getattr(provider, attr, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
-
-
-def _is_local_provider(provider: ModelProvider) -> bool:
-    """Whether ``provider`` sends its requests to this machine, so its content never leaves it.
-
-    Decided by WHERE the endpoint is, never by what kind of provider it is: a model server of any
-    kind can run on another machine, and its outbound text is then as far from the gateway as a
-    hosted provider's. Local means the endpoint's host is ``localhost``, a loopback address, or
-    the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine through
-    (``net.guard.reaches_this_machine``, the rule the rate table prices a local model by too). An
-    address on the network, any other name, an endpoint that does not parse and no endpoint at
-    all are not local, so they get the scan mode the setting asks for (§2.2); only a local
-    provider's scan is forced to ``warn``."""
-    from personalclaw.net.guard import reaches_this_machine
-
-    return reaches_this_machine(_provider_endpoint(provider))
-
-
 def wrap_model_call_guard(
     provider: ModelProvider,
     *,
@@ -781,11 +764,14 @@ def wrap_model_call_guard(
 
     Idempotent: an already-guarded provider is returned unchanged (defends against
     double-wrapping if two resolution layers both reach for the guard). A local
-    provider's scan mode is forced to ``warn`` regardless of ``scan_mode``.
+    provider's scan mode is forced to ``warn`` regardless of ``scan_mode``: local is where the
+    entry *provider_name* sends (``llm.registry.served_on_this_machine``, the rule pricing and
+    routing ask too), so a prompt that leaves the machine gets the scan the setting asks for, and
+    one that never does is not redacted for a trip it does not take.
     """
     if isinstance(provider, ModelCallGuard):
         return provider
-    effective_scan = "warn" if _is_local_provider(provider) else scan_mode
+    effective_scan = "warn" if served_on_this_machine(provider_name) else scan_mode
     return ModelCallGuard(
         provider,
         use_case=use_case,
