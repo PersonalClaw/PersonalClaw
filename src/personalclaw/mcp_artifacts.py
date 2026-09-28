@@ -1247,6 +1247,7 @@ def _document_create(
     from personalclaw.documents import available_formats, get_writer
     from personalclaw.documents.from_markup import document_from_html, document_from_markdown
     from personalclaw.documents.model import SheetModel
+    from personalclaw.web.extract import SanitizerUnavailable
 
     _default_fmt = {"sheet_create": "xlsx", "deck_create": "pptx"}.get(name, "docx")
     fmt = str(args.get("format") or _default_fmt).lower()
@@ -1339,7 +1340,13 @@ def _document_create(
         elif markdown.strip():
             model = document_from_markdown(markdown, title=str(args.get("title") or ""))
         elif html.strip():
-            model = document_from_html(html, title=str(args.get("title") or ""))
+            try:
+                model = document_from_html(html, title=str(args.get("title") or ""))
+            except SanitizerUnavailable as exc:
+                # HTML nothing can sanitize makes no document: a failed call in the refusal's
+                # words, like the writer's failure below, and nothing is stored.
+                _audit("error", error=str(exc))
+                return tool_failure(str(exc))
         else:
             _audit("denied", error="no document input")
             return tool_failure("provide markdown, html, or source.")

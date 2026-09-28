@@ -173,6 +173,53 @@ async def test_non_html_kept_as_text(monkeypatch):
     assert "plain text body" in out.content
 
 
+#: A page carrying an event handler, which only a real sanitizer removes.
+_UNCLEAN_PAGE = '<html><body><p>Body.</p><img src=x onerror="alert(1)"></body></html>'
+
+
+@pytest.mark.asyncio
+async def test_a_page_nothing_can_sanitize_is_an_ordinary_failed_fetch(monkeypatch):
+    """Proves a missing sanitizer reaches the caller as a failed fetch, not an exception: with
+    nh3 missing, web_fetch returns ok=False in the refusal's words with a recovery hint, carries
+    none of the page, and does not record the page as one the session has seen."""
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "_nh3", None)
+    _patch_net(monkeypatch, _resp(_UNCLEAN_PAGE, url="https://example.com/page"))
+
+    out = await web_fetch("https://example.com/page", session_key="s3", require_provenance=False)
+
+    assert out.ok is False
+    assert out.error.startswith("HTML cannot be sanitized: nh3"), out.error
+    assert out.recovery_hints == ["Reinstall PersonalClaw, then fetch the page again."]
+    assert (out.content, out.title, out.char_count) == ("", "", 0)
+    assert not url_has_provenance("s3", "https://example.com/page")
+
+
+@pytest.mark.asyncio
+async def test_web_extract_passes_the_refusal_on_and_asks_no_model(monkeypatch):
+    """Proves web_extract, which fetches through web_fetch, returns the same failed result and
+    never hands a page nothing sanitized to the extraction model."""
+    from personalclaw import llm_helpers
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "_nh3", None)
+    _patch_net(monkeypatch, _resp(_UNCLEAN_PAGE))
+    asked: list[str] = []
+
+    async def _model(prompt, **_kw):
+        asked.append(prompt)
+        return "{}"
+
+    monkeypatch.setattr(llm_helpers, "one_shot_completion", _model)
+
+    out = await wf.web_extract("https://example.com/post", "the title", require_provenance=False)
+
+    assert out.ok is False
+    assert out.error.startswith("HTML cannot be sanitized: nh3"), out.error
+    assert asked == []
+
+
 # ── pagination ──────────────────────────────────────────────────────────────
 
 

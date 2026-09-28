@@ -161,6 +161,33 @@ def test_html_is_sanitized_and_credentials_redacted():
     assert "AKIAIOSFODNN7EXAMPLE" not in body, "a credential must not survive into a file"
 
 
+def test_a_document_from_html_nothing_can_sanitize_is_a_failed_call(tmp_path, monkeypatch):
+    """Proves the document tool reports a missing sanitizer as a failed tool call in the
+    refusal's words, audits it and stores nothing, instead of letting the refusal escape."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.mcp_artifacts import _document_create
+    from personalclaw.tool_providers.base import ToolFailure
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "_nh3", None)
+    prov = NativeArtifactProvider(root=tmp_path / "artifacts")
+    audited: list[tuple[str, str]] = []
+
+    reply = _document_create(
+        prov,
+        "document_create",
+        {"name": "Notes", "html": '<p>Notes</p><img src=x onerror="alert(1)">'},
+        "s1",
+        lambda outcome, slug="", error="": audited.append((outcome, error)),
+    )
+
+    assert isinstance(reply, ToolFailure), reply
+    assert reply.reason.startswith("HTML cannot be sanitized: nh3"), reply.reason
+    assert audited == [("error", reply.reason)]
+    assert prov.list() == []
+
+
 # ── round trip: our own readers must read what we write ───────────────────────
 
 

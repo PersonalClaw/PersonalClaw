@@ -23,7 +23,7 @@ from personalclaw.net import STRICT, EgressBlocked, egress_policy_for
 from personalclaw.net import fetch as net_fetch
 from personalclaw.net.policy import EgressPolicy
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
-from personalclaw.web.extract import extract_main_content
+from personalclaw.web.extract import SanitizerUnavailable, extract_main_content
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,17 @@ async def web_fetch(
 
     # ③ extract — HTML through the shared trafilatura/nh3 core; non-HTML kept as text.
     if "html" in ctype.lower():
-        doc = extract_main_content(html_body, url=final_url)
+        try:
+            doc = extract_main_content(html_body, url=final_url)
+        except SanitizerUnavailable as exc:
+            # A page nothing can sanitize is a failed fetch like any other, in the refusal's
+            # words: none of it is returned, and it is not recorded as seen.
+            return FetchOutcome(
+                ok=False,
+                url=final_url,
+                error=str(exc),
+                recovery_hints=["Reinstall PersonalClaw, then fetch the page again."],
+            )
         full_text, title, extractor = doc.text, doc.title, doc.extractor
     else:
         full_text, title, extractor = html_body, "", "raw"
