@@ -738,6 +738,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "no_version": 409,
             "not_a_record": 409,
             "machine_local": 409,
+            "moved": 409,
             "write_failed": 500,
         }.get(outcome.code, 400)
         _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:{outcome.code}")

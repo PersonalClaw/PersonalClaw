@@ -337,6 +337,61 @@ measured it (`agent-metadata/*.runner.json`), which picks the runner a second
 opinion fires, and the template nudges' counters and candidates
 (`workflows/template_nudges.json`, `workflows/template_candidates.json`).
 
+**What ran on a machine stays on it too.** A workflow run's records (the run
+ledger `workflows/runs.db` and each run's folder in `workflows/runs`) and a
+loop's (`loop/loops.db` and its folder in `loop`) are `machine_local`, and not
+`merged_in`: a sync never carries them, a pull never takes another
+machine's in (`durability.db_merge` leaves them even from a peer that still
+sends them), and a merge restore or an archive import leaves the archive's out.
+The workflow watchdog adopts every active run it finds and resumes it from its
+journal, and the loop watchdog's first poll re-arms every running loop, so
+another machine's run or loop used to run a second time here, on this
+machine's files. A backup carries them, and a replace restore brings them back
+with the whole home. Named workspaces (`workflows/workspaces`), the working
+folders runs share, stay on each machine by the same rule.
+
+**Every file of a synced folder is carried.** A backup's export and a sync
+read every file of a folder store, not its JSON files alone
+(`durability.shards.read_entity_dir`): a JSON file as its data, any other file
+as its text or, when it is not text, its bytes. Saved prompts and prompt
+snippets are YAML, and neither reached a backup's export or another machine
+before. A file the export cannot carry (JSON that does not parse, a file over
+36 MiB, one named as another file's row) is named, with why, in the export's
+result and the sync's report, never dropped in silence. The append-only stores
+that are folders of files, one per chat, scheduled job or channel
+(`sessions/`, `cron-history/`, `history/`), are not synced: their rows, read
+as one stream, name no file to go back to, and a pull wrote them into a file
+named for the year beside the store's own.
+
+**A pull writes only what changed, over what it read.** It writes back only
+the files the merge changed, and replaces a file only while it still holds what
+the pull read (`durability.writeback.apply_rows` compares its sha256): a file
+this machine wrote in between is left as it is and is not agreed on, so the
+next pull takes the other machine's version in again against it. A one-file
+append-only store is only appended to. A row another machine names by a path
+that is not a file of the store (outside it, a database, a lock) is never
+written. The conflict review writes the same way, and refuses (`moved`) when
+this machine's file changed while it wrote.
+
+**A merge restore and an import take a folder in by the sync's rule.** A merge
+restore or an archive import brings a folder store's files in the way a sync
+brings another machine's (`durability.reconcile.bring_in_folder`): each file
+this home lacks arrives, a workflow without its steps' `approval_mode: auto`
+and `capability: mutating`; the files it has stay exactly as they are; and
+what stays on each machine (`agents/personalclaw.json`, the runner health, the
+template nudges) never comes in. Copied whole, an archive's workflow ran its
+steps here as its machine's owner had allowed them there, and its agent
+runtime config the tools that machine's agent runs without asking.
+
+**No other machine gives an agent here a tool back.** An agent file's
+`managedToolPolicy.exclude` lists the tools its sessions are kept from, and the
+list is each machine's own (the `agents` inventory entry's `compared` and
+`edit_arrives`): an agent another machine makes arrives with its list, and
+another machine's edit to an agent this home has takes in everything but the
+list, which stays as it is here. Two homes never compare it, so a difference in
+it is never an edit or a conflict. It synced as written, so a tool the owner
+kept from an agent here came back when the other machine's copy dropped it.
+
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.
 When the action IS a dashboard notification (`notify`), a successful fire

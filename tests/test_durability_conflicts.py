@@ -45,7 +45,8 @@ def _row(rid: str, text: str, updated: str = "2026-01-01T00:00:00Z") -> dict:
 def _write_local(home: pathlib.Path, rows: list[dict]) -> None:
     """Seed the local store through the SAME writer the reconcile uses, so a later
     byte-comparison measures content and not formatting drift."""
-    writeback.apply_rows(_ENTRY.kind, home / _ENTRY.path, rows)
+    dest = home / _ENTRY.path
+    writeback.apply_rows(_ENTRY, dest, rows, read=reconcile.read_local(_ENTRY, dest))
 
 
 # ── detection: the both-sides-edited rule ────────────────────────────────────
@@ -465,10 +466,12 @@ class TestCriterionFive:
     def _write_task(self, home, tid, title, updated):
         # Written through the cycle's own writer, so a later byte-comparison measures content
         # rather than JSON formatting the reconcile normalizes.
+        entry = inv.by_id("tasks")
         writeback.apply_rows(
-            inv.KIND_JSON_ENTITY_DIR,
+            entry,
             home / "tasks",
             [{"id": tid, "data": {"id": tid, "title": title, "updated_at": updated}}],
+            read=reconcile.read_local(entry, home / "tasks"),
         )
 
     def test_offline_same_task_edit_yields_a_review_item_and_applies_nothing(self, tmp_path):

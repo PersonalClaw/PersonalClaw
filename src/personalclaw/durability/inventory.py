@@ -97,14 +97,22 @@ class StateEntry:
     credential: bool = False  # holds credential VALUES — not even a snapshot captures it
     derived: bool = False  # rebuildable index/cache — excluded from exports
     # One machine's own account of itself — what it spent, what it last ran, which notices it
-    # sent, the legacy files it imported once. A snapshot, a backup and an export carry it; a sync
-    # never does, and never merges another machine's into it: merged, each machine's counters were
-    # the other's to overwrite, and once both had moved every pull was a conflict to review.
+    # sent, the legacy files it imported once — and what ran on it: its workflow runs and loops.
+    # A snapshot, a backup and an export carry it; a sync never does, and never merges another
+    # machine's into it: merged, each machine's counters were the other's to overwrite, and once
+    # both had moved every pull was a conflict to review.
     machine_local: bool = False
     # Paths inside `path` (globs, relative to it) with the same rule, for an entity directory
     # whose other files do sync: `agents/personalclaw.json`, the agent runtime config this home
-    # rebuilds from its own configuration, which holds what its owner allowed here.
+    # rebuilds from its own configuration, which holds what its owner allowed here. A merge
+    # restore and an import leave these files as they are too (`reconcile.bring_in_folder`): each
+    # is rebuilt or measured again here.
     machine_local_within: tuple[str, ...] = field(default_factory=tuple)
+    # Whether a merge restore or an import takes an archive's copy in. False for the records of
+    # what ran on one machine, a workflow run or an autonomous loop, which a watchdog picks up and
+    # drives: another home's, taken in, was resumed here, a second time and on this machine's
+    # files. A replace restore still brings them back with the whole home.
+    merged_in: bool = True
     tombstones: bool = False  # deletes need markers to survive a sync merge
     # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
     # undeclared-DB audit cannot match them by exact path and must accept the whole subtree. Opt-in
@@ -242,6 +250,40 @@ def _workflow_edit_arrives(here: dict, edited: dict) -> dict:
     if mine is None or theirs is None:
         return edited
     return {**edited, "data": workflow_edit_arrived(mine, theirs)}
+
+
+def _with_exclusions(agent: dict, exclude: Any) -> dict:
+    """*agent*, an agent file's document, with ``managedToolPolicy.exclude`` — the tools its
+    sessions are kept from — set to *exclude*, or taken out when it is ``None``; a policy left
+    empty is taken out with it."""
+    policy = agent.get("managedToolPolicy")
+    policy = {k: v for k, v in policy.items() if k != "exclude"} if isinstance(policy, dict) else {}
+    if exclude is not None:
+        policy["exclude"] = exclude
+    out = {k: v for k, v in agent.items() if k != "managedToolPolicy"}
+    if policy:
+        out["managedToolPolicy"] = policy
+    return out
+
+
+def _agent_compared(row: dict) -> dict:
+    """What two homes compare of an agent file: all of it but the tools its sessions are kept
+    from (``managedToolPolicy.exclude``), which are each machine's own."""
+    data = row.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("managedToolPolicy"), dict):
+        return row
+    return {**row, "data": _with_exclusions(data, None)}
+
+
+def _agent_edit_arrives(here: dict, edited: dict) -> dict:
+    """An agent file this home has, with another machine's edit taken in: the tools it is kept
+    from stay as they are here, so no machine gives an agent here a tool back."""
+    mine, theirs = here.get("data"), edited.get("data")
+    if not isinstance(mine, dict) or not isinstance(theirs, dict):
+        return edited
+    policy = mine.get("managedToolPolicy")
+    held = policy.get("exclude") if isinstance(policy, dict) else None
+    return {**edited, "data": _with_exclusions(theirs, held)}
 
 
 def _inbox_compared(row: dict) -> dict:
@@ -440,6 +482,12 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_WORK,
         merge=MERGE_SQLITE_ATTACH_IGNORE,
         help="autonomous run records",
+        # 🔴 Synced or merged in, another machine's running loop was a row here that the loop
+        # watchdog's first poll re-arms (`loop.watchdog._boot_sweep`): the loop ran a second time,
+        # on this machine, with the workspace and the trust its owner gave it there. A loop's
+        # records stay on the machine that ran it, as a workflow run's do.
+        machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="loop",
@@ -450,6 +498,9 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="autonomous run findings, verdicts, per-run files",
         # loops.db is its own entry (it needs the sqlite backup API, not a copy).
         derived_within=("loops.db",),
+        # Each loop's own files, which stay with its records (`loops_db`).
+        machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="artifacts",
@@ -709,6 +760,15 @@ INVENTORY: tuple[StateEntry, ...] = (
         # adds the agent, which asks first for a looser one
         # (`dashboard.handlers.agents._do_agents_sync`).
         machine_local_within=("personalclaw.json",),
+        # An agent file's `managedToolPolicy.exclude` keeps tools from its sessions, and it synced
+        # as written: another machine that dropped an exclusion gave the agent the tool back here.
+        # The list is each machine's own. An agent another machine makes arrives with its list;
+        # another machine's edit leaves the list here as it is. (Merged as a set that only grows,
+        # an exclusion taken off anywhere came back from the other machine, so none could be; and
+        # compared as written, two machines that disagreed on it never agreed again, so every
+        # later edit was a conflict to review.)
+        compared=_agent_compared,
+        edit_arrives=_agent_edit_arrives,
     ),
     StateEntry(
         id="prompts",
@@ -738,7 +798,9 @@ INVENTORY: tuple[StateEntry, ...] = (
     ),
     StateEntry(
         id="prompt_snippets",
-        kind=KIND_TREE,
+        # A folder of snippet files, one each, as `prompts` is: a folder store, so a backup's export
+        # and a sync carry every file of it. Declared a tree, neither did.
+        kind=KIND_JSON_ENTITY_DIR,
         path="prompt_snippets",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
@@ -1025,6 +1087,37 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_SQLITE_ATTACH_IGNORE,
         help="the workflow run ledger",
+        # 🔴 Synced or merged in, another machine's live run was a row here that the watchdog
+        # adopts within a poll and resumes from its journal (`workflows.watchdog._poll_once`): the
+        # run executed a second time, on this machine's files, with the posture its steps had
+        # there. And the attach-merge never updates a row, so a run the other machine finished
+        # stayed running here. A run's records stay on the machine that ran it.
+        machine_local=True,
+        merged_in=False,
+    ),
+    # Each run's own folder: its spec, state, journal, checkpoints and outputs. Its own entry so it
+    # takes the ledger's rule rather than syncing as files of `workflows/`.
+    StateEntry(
+        id="workflow_runs",
+        kind=KIND_TREE,
+        path="workflows/runs",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="each workflow run's spec, state, journal and outputs",
+        machine_local=True,
+        merged_in=False,
+    ),
+    # A named workspace: a working folder runs share, on this machine. Another machine's files,
+    # merged in, would appear in the folder a run here is working in.
+    StateEntry(
+        id="workflow_workspaces",
+        kind=KIND_TREE,
+        path="workflows/workspaces",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="named workflow workspaces: working folders runs share on this machine",
+        machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="knowledge_root_db",
@@ -2185,11 +2278,22 @@ def backup_entries(*, include_derived: bool = False) -> tuple[StateEntry, ...]:
 
 def stays_here(entry: StateEntry, row_id: str) -> bool:
     """Whether the row *row_id* of *entry* — an entity directory's file, named as its exporter
-    names it, the path under the directory without ``.json`` — is one a sync never carries
-    (``StateEntry.machine_local_within``)."""
+    names it: the path under the directory, without ``.json`` for a JSON file — is one a sync
+    never carries (``StateEntry.machine_local_within``)."""
     from fnmatch import fnmatchcase
 
-    return any(fnmatchcase(f"{row_id}.json", glob) for glob in entry.machine_local_within)
+    return any(
+        fnmatchcase(row_id, glob) or fnmatchcase(f"{row_id}.json", glob)
+        for glob in entry.machine_local_within
+    )
+
+
+def append_only_folder(entry: StateEntry) -> bool:
+    """Whether *entry* is an append-only store that is a folder of files, one per chat, job or
+    channel (``sessions/``, ``cron-history/``, ``history/``). Its rows, read as one stream, name no
+    file to go back to, so a sync neither sends them nor takes another machine's in: a pull wrote
+    them into a file per year beside the store's own, a chat or a job named for the year."""
+    return entry.kind == KIND_JSONL_APPEND and not Path(entry.path).suffix
 
 
 def export_entries() -> tuple[StateEntry, ...]:

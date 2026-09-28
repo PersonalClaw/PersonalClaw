@@ -1197,6 +1197,13 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
+def _entry_at(rel: str) -> "StateEntry | None":
+    """The inventory entry declared at exactly *rel*, or None."""
+    from personalclaw.durability import inventory as inv
+
+    return next((e for e in inv.INVENTORY if e.path == rel), None)
+
+
 def _records_entry(rel: str) -> "StateEntry | None":
     """The inventory entry for *rel* when it is a store of records (``StateEntry.records``) — a
     file of user records another home's arrive in one at a time — or None."""
@@ -1721,8 +1728,9 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     one derivation cannot disagree with itself about which entries participate.
 
     Each row is `{path, strategy, action, detail}`, where `action` is one of `merge` (both sides
-    have it, so rows will be folded), `copy` (only the snapshot has it), or `keep-local` (both have
-    it and local wins).
+    have it, so rows will be folded), `copy` (only the snapshot has it), `keep-local` (both have
+    it and local wins), or `skip` (the snapshot's copy is not taken in: what ran on one machine
+    stays there, `StateEntry.merged_in`).
     """
     from personalclaw.durability import inventory as inv
 
@@ -1788,9 +1796,31 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
             continue
         entry = by_path.get(path)
         strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
+        if entry is not None and not entry.merged_in:
+            if (snap / path).exists():
+                rows.append(
+                    {
+                        "path": path,
+                        "strategy": strategy,
+                        "action": "skip",
+                        "detail": "what ran on a machine stays on it",
+                    }
+                )
+            continue
         if entry is not None and entry.records is not None:
             arrives = "; they arrive switched off" if entry.arrives is not None else ""
             _add(path, strategy, f"by id, one record at a time{arrives}", by_rule=True)
+            continue
+        if entry is not None and entry.kind == inv.KIND_JSON_ENTITY_DIR:
+            # By a rule into a home without the store too when the rule changes what arrives (a
+            # workflow's steps, the files that stay on each machine); a copy otherwise.
+            by_rule = entry.arrives is not None or bool(entry.machine_local_within)
+            _add(
+                path,
+                strategy,
+                "one file at a time, by the rule a sync brings them in",
+                by_rule=by_rule,
+            )
             continue
         _add(path, strategy, "per-file union" if entry and entry.kind else "")
     return rows
@@ -1808,7 +1838,7 @@ def _attach_merge_paths() -> list[str]:
         return [
             e.path
             for e in inv.sqlite_entries()
-            if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db"
+            if e.merge == inv.MERGE_SQLITE_ATTACH_IGNORE and e.path != "memory.db" and e.merged_in
         ]
     except Exception:  # noqa: BLE001 — a restore must work even if this import breaks
         return []
@@ -1984,13 +2014,26 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     # `_store_selected` so `--components projects` merges the projects alone — the same gate the
     # replace path uses, asked once so the two modes cannot answer it differently.
     if any(_store_selected(components, rel) for rel in _extra_restore_paths(snap)):
+        from personalclaw.durability import inventory as inv
+        from personalclaw.durability.reconcile import bring_in_folder
+
         restored = []
         for rel in _extra_restore_paths(snap):
             if not _store_selected(components, rel):
                 continue
             src = snap / rel
             dst = pc / rel
-            if src.is_dir():
+            entry = _entry_at(rel)
+            if entry is not None and not entry.merged_in:
+                # What ran on another machine stays there: its running runs and loops would be
+                # resumed here (`StateEntry.merged_in`).
+                continue
+            if entry is not None and entry.kind == inv.KIND_JSON_ENTITY_DIR and src.is_dir():
+                # A folder of files, each taken in by the rule a sync takes another machine's in:
+                # what its machine's owner allowed there arrives waiting for this one's.
+                if bring_in_folder(pc, entry, src):
+                    restored.append(rel)
+            elif src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
                 _copy_tree_no_overwrite(src, dst, entry_path=rel)
                 restored.append(rel)

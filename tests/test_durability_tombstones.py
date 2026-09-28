@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from personalclaw.durability import inventory as inv
 from personalclaw.durability import shards
 from personalclaw.durability import tombstones as tomb
 
@@ -39,13 +40,16 @@ class TestRecordRead:
         )
         assert tomb.read_tombstones(tmp_path) == [{"id": "ok", "deleted_at": "t"}]
 
-    def test_log_file_is_underscore_jsonl_invisible_to_entity_glob(self, tmp_path):
-        # The store globs *.json; the exporter's entity extraction does too. A _*.jsonl
-        # side-log must not surface as a fake entity.
-        tomb.record_tombstone(tmp_path, "gone", now="t")
-        (tmp_path / "real.json").write_text('{"id": "real"}', encoding="utf-8")
-        extracted = {r["id"] for r in shards._json_rows_from_entity_dir(tmp_path)}
-        assert extracted == {"real"}  # the side-log did not leak in
+    def test_log_file_is_never_read_as_one_of_the_stores_files(self, tmp_path):
+        # The store globs *.json, and the exporter reads every file of the store but its side-log:
+        # the log must not surface as a fake entity, or as a file another machine is sent.
+        store = tmp_path / "tasks"
+        store.mkdir()
+        tomb.record_tombstone(store, "gone", now="t")
+        (store / "real.json").write_text('{"id": "real"}', encoding="utf-8")
+        read = shards.read_entity_dir(inv.by_id("tasks"), store)
+        assert {r["id"] for r in read.rows} == {"real"}  # the side-log did not leak in
+        assert read.left_out == {}
 
 
 class TestMergeIntoRows:

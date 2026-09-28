@@ -120,6 +120,14 @@ stretch's `started_at` (the trust window and deadline are measured from it), and
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.
 
+A loop stays on the machine that ran it. The watchdog's first poll re-arms every loop it finds
+running with no worker (`watchdog._boot_sweep`), so `loop/loops.db` and each loop's folder under
+`loop/` are `machine_local` and not `merged_in` (`durability/inventory.py`): no sync carries them,
+and a merge restore or an archive import leaves the archive's out. Another machine's running loop
+used to arrive and be re-armed here, with the workspace and trust its owner gave it there. A backup
+carries them, and a replace restore brings them back with the whole home. A run-backed loop is a
+workflow run, which stays where it ran by the same rule ([workflows.md](workflows.md)).
+
 ## Stage progression
 
 - **Code loops** walk the canonical SDLC ladder (`loop/sdlc_meta.py`):

@@ -404,7 +404,7 @@ class TestThemes:
 
     @pytest.mark.asyncio
     async def test_a_synced_version_landing_between_read_and_save_is_not_undone(self) -> None:
-        from personalclaw.durability import inventory, writeback
+        from personalclaw.durability import inventory, reconcile, writeback
 
         async with TestClient(TestServer(_themes_app())) as c:
             slug = await _create_theme(c)
@@ -415,8 +415,12 @@ class TestThemes:
             # resolution both make.
             theirs = {**_stored_theme(slug), "name": "Harbor at dusk"}
             themes_dir = config_loader.config_dir() / "themes"
+            entry = inventory.by_id("themes")
             writeback.apply_rows(
-                inventory.KIND_JSON_ENTITY_DIR, themes_dir, [{"id": slug, "data": theirs}]
+                entry,
+                themes_dir,
+                [{"id": slug, "data": theirs}],
+                read=reconcile.read_local(entry, themes_dir),
             )
 
             resp = await c.put(

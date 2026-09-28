@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.durability import inventory as inv
@@ -35,7 +35,7 @@ from personalclaw.durability.outbox import Outbox
 from personalclaw.durability.pull_engine import PullReport, pull_from_peers
 from personalclaw.durability.push_engine import PushReport, publish_export
 from personalclaw.durability.registry import REGISTRY_KEY, Registry
-from personalclaw.durability.shards import export_shards
+from personalclaw.durability.shards import export_shards, left_out_sentence
 from personalclaw.sync_transports.base import RemoteRef, SyncTransportProvider
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ class SyncCycleReport:
     rows_removed: int = 0
     seq_published: int = 0
     conflicts: int = 0  # both-sides-edited divergences queued for review
+    #: This machine's files the export for the other machines could not carry, by path, with why
+    #: (``shards.Read``): said in the report, never dropped in silence.
+    left_out: dict[str, str] = field(default_factory=dict)
 
     @property
     def detail(self) -> str:
@@ -68,7 +71,11 @@ class SyncCycleReport:
             f"+{self.rows_added} ~{self.rows_updated} -{self.rows_removed} rows; "
             f"published seq {self.seq_published}"
         )
-        return base + (f"; {self.conflicts} conflict(s) queued" if self.conflicts else "")
+        if self.conflicts:
+            base += f"; {self.conflicts} conflict(s) queued"
+        if self.left_out:
+            base += f"; {left_out_sentence(self.left_out, what='synced')}"
+        return base
 
 
 def _record_published(ancestors: Ancestors, home: Path) -> None:
@@ -181,7 +188,7 @@ def run_sync_cycle(
     try:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
-            export_shards(home, out, for_sync=True)
+            report.left_out = export_shards(home, out, for_sync=True).left_out
             _record_published(ancestors, home)
             report.pushed = publish_export(
                 transport,

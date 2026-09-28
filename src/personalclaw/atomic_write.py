@@ -225,7 +225,9 @@ _STREAMED_FLAGS: dict[str, int] = {
 
 def open_streamed(path: Path | str, mode: str = "wb") -> Any:
     """Open *path* for a write that streams its content chunk by chunk, too large to hold whole
-    for :func:`atomic_write_bytes`: an upload's parts and the file they are assembled into.
+    for :func:`atomic_write_bytes` (an upload's parts and the file they are assembled into), or
+    that adds to what the file holds without rewriting it (the lines a sync appends to a one-file
+    append-only store, ``durability.writeback``).
 
     The file gets the mode the shared writer gives one there: 0600 in a 0700 directory under the
     home, set on the open descriptor, so a file that existed at a looser mode is tightened too;

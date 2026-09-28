@@ -13,7 +13,7 @@ import json
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import reconcile
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
-from personalclaw.durability.shards import _json_rows_from_entity_dir
+from personalclaw.durability.shards import read_entity_dir
 
 
 def _entity_entry(**kw) -> inv.StateEntry:
@@ -43,7 +43,7 @@ class TestReconcileRowEntry:
         remote = [{"id": "remote1", "data": {"title": "theirs"}}]
         r = reconcile.reconcile_entry(home, entry, remote)
         assert r.handled and r.verdict == CONSUMED and r.added == 1
-        ids = {row["id"] for row in _json_rows_from_entity_dir(home / "tasks")}
+        ids = {row["id"] for row in read_entity_dir(entry, home / "tasks").rows}
         assert ids == {"local1", "remote1"}  # union — nothing lost
 
     def test_empty_local_store_takes_all_remote(self, tmp_path):
@@ -74,13 +74,13 @@ class TestConvergence:
         _write_entity(a_home, entry, "task-a", {"t": "a"})
         _write_entity(b_home, entry, "task-b", {"t": "b"})
         # Each machine's rows as the other would receive them (export shape).
-        a_rows = _json_rows_from_entity_dir(a_home / "tasks")
-        b_rows = _json_rows_from_entity_dir(b_home / "tasks")
+        a_rows = read_entity_dir(entry, a_home / "tasks").rows
+        b_rows = read_entity_dir(entry, b_home / "tasks").rows
         # A pulls B; B pulls A.
         reconcile.reconcile_entry(a_home, entry, b_rows)
         reconcile.reconcile_entry(b_home, entry, a_rows)
-        a_ids = {r["id"] for r in _json_rows_from_entity_dir(a_home / "tasks")}
-        b_ids = {r["id"] for r in _json_rows_from_entity_dir(b_home / "tasks")}
+        a_ids = {r["id"] for r in read_entity_dir(entry, a_home / "tasks").rows}
+        b_ids = {r["id"] for r in read_entity_dir(entry, b_home / "tasks").rows}
         assert a_ids == b_ids == {"task-a", "task-b"}
 
     def test_delete_on_a_stays_deleted_on_b(self, tmp_path):

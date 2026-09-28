@@ -344,6 +344,15 @@ and its live snapshot (`handlers.shown_status`), every live event
 Loops page masks the same run (`loop_view`), and a run's text reads the same on
 both.
 
+**A run stays on the machine that ran it.** The watchdog adopts every active
+run it finds and resumes it from its journal (`watchdog._poll_once`), so the run
+ledger (`workflows/runs.db`) and each run's folder (`workflows/runs/`) are
+`machine_local` and not `merged_in` (`durability/inventory.py`): no sync carries
+them, and a merge restore or an archive import leaves the archive's out.
+Another machine's running run used to arrive and run a second time here, on
+this machine's files. A backup carries them, and a replace restore brings them
+back with the whole home.
+
 ## Mid-flight mutation
 
 A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,

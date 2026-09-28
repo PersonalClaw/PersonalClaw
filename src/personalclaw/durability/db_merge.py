@@ -49,9 +49,16 @@ def make_db_merger(home: Path) -> DbMerger:
     """
 
     def _merge(entry: inv.StateEntry, shard_dir: Path) -> str:
-        # Only sqlite entries carry a mergeable DB copy. A `tree` entry (faiss) is derived and
-        # rebuilt locally — nothing to merge, so treat it as consumed (no data to lose).
+        # Only sqlite entries carry a mergeable DB copy. A `tree` entry's blobs are named by their
+        # content, not by a path, so a sync leaves the tree here as it is: consumed, and nothing
+        # written.
         if entry.kind != inv.KIND_SQLITE:
+            return CONSUMED
+        if entry.machine_local:
+            # What stays on each machine (`StateEntry.machine_local`: a workflow run's records, a
+            # loop's) never takes another machine's in, from a build that still sends it too: the
+            # watchdogs here would resume its running ones.
+            logger.info("db_merge: %s is this machine's own; left as it is", entry.id)
             return CONSUMED
         src = Path(shard_dir) / "db" / f"{entry.id}.db"
         if not src.is_file():

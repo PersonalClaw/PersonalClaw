@@ -5,7 +5,7 @@ store", composing the three pure pieces already built:
 
     local rows  ←  read the entry's on-disk form the same way the exporter extracts it
     merged      ←  merge.merge_rows(entry.merge, local, remote, tombstones=entry.tombstones)
-    live store  →  writeback.apply_rows(entry.kind, dest, merged)
+    live store  →  writeback.apply_rows(entry, dest, merged, read=what was read)
 
 It is deliberately the ROW path only — the kinds whose merge is a deterministic row
 reconciliation (`json_entity_dir`, `json_file`, `jsonl_append`). A `sqlite` entry is merged
@@ -17,7 +17,13 @@ mid-reconcile is caught and reported as a `payload-bad` verdict so one poison en
 abort the whole pull; the caller advances its cursor past it rather than looping.
 
 Reads the local rows exactly as ``shards.export_shards`` would, so the merge sees the same
-row shapes on both sides — the invariant that makes convergence hold (criterion 4).
+row shapes on both sides — the invariant that makes convergence hold (criterion 4). And writes
+back only what the merge changed, over files still as they were read (``writeback.apply_rows``):
+a file the store wrote in between is left for the next pull, and not agreed on until then. A peer
+row that names a file the store does not hold (``shards.store_file`` — a path outside it, a
+database, runtime scratch) is never taken in. An append-only store that is a folder of files
+(``sessions/``, ``cron-history/``) is left as it is: its rows name no file to go back to, and the
+pull wrote them into a file per year beside the store's own, a job or a chat named for the year.
 
 A ``json_file`` that holds user records (``StateEntry.records``: the automations in
 ``triggers.json``, the inbox's items, the tags, …) is exported as one row, the whole file, but
@@ -62,9 +68,12 @@ from personalclaw.durability import writeback
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
 from personalclaw.durability.merge import MergeResult, _is_tombstone, forward, merge_rows
 from personalclaw.durability.shards import (
-    _json_rows_from_entity_dir,
-    _json_rows_from_file,
+    Read,
     _jsonl_rows_by_year,
+    read_entity_dir,
+    read_json_file,
+    row_file,
+    store_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,25 +111,45 @@ class ReconcileResult:
     new_ancestors: dict[str, str] = dataclass_field(default_factory=dict)
 
 
-def read_local_rows(entry: inv.StateEntry, src: Path) -> list[dict]:
-    """The entry's current on-disk rows, read the same way the exporter extracts them, so
-    both sides of the merge speak the same row shape. A missing store is an empty list.
-
-    Public because the conflict resolver reads the same rows for the same reason (DAS-10):
-    a resolution substitutes one row into this exact set, so reading it any other way would
-    let a review write reshape the store."""
+def read_local(entry: inv.StateEntry, src: Path) -> Read:
+    """The entry's current on-disk rows, read the same way the exporter extracts them, so both
+    sides of the merge speak the same row shape, with what each file held when it was read (what
+    a write compares against). A missing store is no rows."""
     if entry.kind == inv.KIND_JSON_ENTITY_DIR:
-        return _json_rows_from_entity_dir(src) if src.is_dir() else []
+        return read_entity_dir(entry, src)
     if entry.kind == inv.KIND_JSON_FILE:
-        return _json_rows_from_file(src) if src.is_file() else []
+        return read_json_file(entry, src)
     if entry.kind == inv.KIND_JSONL_APPEND:
         files = [src] if src.is_file() else (sorted(src.rglob("*.jsonl")) if src.is_dir() else [])
         rows: list[dict] = []
         for path in files:
             for _year, bucket in _jsonl_rows_by_year(path).items():
                 rows.extend(bucket)
+        return Read(rows=rows)
+    return Read()  # non-row kind — never reached (caller checks handles_kind first)
+
+
+def read_local_rows(entry: inv.StateEntry, src: Path) -> list[dict]:
+    """The rows of :func:`read_local`. Public because the conflict review reads the same rows for
+    the same reason: a resolution substitutes one row into this exact set, so reading it any other
+    way would let a review write reshape the store."""
+    return read_local(entry, src).rows
+
+
+def _peer_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
+    """*rows* of a peer, but what this home never takes in by a sync: the files that stay on each
+    machine, and a row of an entity directory that names no file of the store."""
+    rows = _without_what_stays_here(entry, rows)
+    if entry.kind != inv.KIND_JSON_ENTITY_DIR:
         return rows
-    return []  # non-row kind — never reached (caller checks handles_kind first)
+    kept = []
+    for row in rows:
+        rel = f"{row.get('id', '')}.json" if _is_tombstone(row) else row_file(row)
+        if store_file(entry, rel):
+            kept.append(row)
+        else:
+            logger.warning("reconcile: %s: a peer's row names %r, not a file of it", entry.id, rel)
+    return kept
 
 
 def handles_kind(kind: str) -> bool:
@@ -225,7 +254,9 @@ def take_in(
     edit still runs as it ran here. A row this home does not have (or deleted) comes in by the
     store's arrival rule (``StateEntry.arrives``). The conflict review's write: the row this home
     has is read at the write, under the file's lock for a store of records and through the same
-    guard as a sync's (:func:`_here`), never the copy the conflict recorded when it was found.
+    guard as a sync's (:func:`_here`), never the copy the conflict recorded when it was found. In
+    any other store the one file is written only while it is still as it was read: one that
+    changed in between is left as it is, in ``moved``.
     """
 
     def taken(here: dict | None) -> tuple[dict, bool]:
@@ -234,12 +265,13 @@ def take_in(
         return _edited_there(entry, here, there), True
 
     if entry.records is None:
-        rows = read_local_rows(entry, dest)
-        row, edited = taken(next((r for r in rows if conflicts_mod.row_id(r) == entity_id), None))
-        # Whole-entry, as the sync writes it: handed one row, `apply_rows` would write that set.
-        out = [r for r in rows if conflicts_mod.row_id(r) != entity_id]
+        read = read_local(entry, dest)
+        here = next((r for r in read.rows if conflicts_mod.row_id(r) == entity_id), None)
+        row, edited = taken(here)
+        # The store's rows with this one in place of this home's; the write is only what changed.
+        out = [r for r in read.rows if conflicts_mod.row_id(r) != entity_id]
         out.append(row)
-        return writeback.apply_rows(entry.kind, dest, out), edited
+        return writeback.apply_rows(entry, dest, out, read=read), edited
     shape = entry.records
     edited = False
 
@@ -262,6 +294,33 @@ def take_in(
 
     wrote = record_files.rewrite(dest, change)
     return writeback.ApplyResult(written=1 if wrote else 0), edited
+
+
+def bring_in_folder(home: Path, entry: inv.StateEntry, archived: Path) -> int:
+    """Bring the files of *archived* — *entry*'s folder in an archive: a snapshot, an export — into
+    this home's store, by the rule a sync brings another machine's in. Returns how many came.
+
+    Each file of the store (``shards.store_file``) this home does not have arrives, a JSON row by
+    the store's arrival rule (``StateEntry.arrives``), written only where this home still has none;
+    the ones it has stay exactly as they are, as a merge only fills in what the home lacks. The
+    files that stay on each machine (``StateEntry.machine_local_within``) never come in. Copied
+    whole, an archive's workflow brought the steps its machine's owner allowed there to run here
+    unasked, and its agent runtime config the tools that machine's agent runs without asking.
+    """
+    read = read_local(entry, Path(home) / entry.path)
+    held = {conflicts_mod.row_id(r) for r in read.rows}
+    arriving = _as_they_arrive(
+        entry,
+        [
+            row
+            for row in _peer_rows(entry, read_entity_dir(entry, archived).rows)
+            if conflicts_mod.row_id(row) not in held
+        ],
+    )
+    if not arriving:
+        return 0
+    applied = writeback.apply_rows(entry, Path(home) / entry.path, arriving, read=read)
+    return applied.written
 
 
 def holds(entry: inv.StateEntry, dest: Path, entity_id: str) -> bool:
@@ -349,9 +408,12 @@ def reconcile_entry(
         return ReconcileResult(entry.id, detail="restored whole or not at all; left as it is")
     if entry.machine_local:
         return ReconcileResult(entry.id, detail="this machine's own; left as it is")
+    if inv.append_only_folder(entry):
+        return ReconcileResult(
+            entry.id, detail="a folder of append-only files; left as it is (rows name no file)"
+        )
     dest = Path(home) / entry.path
-    if entry.machine_local_within:
-        remote_rows = _without_what_stays_here(entry, remote_rows)
+    remote_rows = _peer_rows(entry, remote_rows)
     remote = entity_rows(entry, remote_rows)
     bases, handed_back = _in_common(entry, remote, ancestors or {}, published or {})
     outcome: dict[str, Any] = {}
@@ -388,13 +450,16 @@ def reconcile_entry(
                 return _merged_document(entry, document, peer_document, arrived_order, merged.rows)
 
             record_files.rewrite(dest, change)
-            removed = 0
+            removed, moved = 0, []
         else:
             # This machine's own files of the folder are not the merge's: left out of what it
-            # writes back, so the pull never touches them (a write of theirs made meanwhile stays).
-            merged = merge_into(_without_what_stays_here(entry, read_local_rows(entry, dest)))
+            # writes back, so the pull never touches them. The write is only what the merge
+            # changed, over files still as they were read.
+            read = read_local(entry, dest)
+            merged = merge_into(_without_what_stays_here(entry, read.rows))
             outcome["merged"] = merged
-            removed = writeback.apply_rows(entry.kind, dest, merged.rows).removed
+            applied = writeback.apply_rows(entry, dest, merged.rows, read=read)
+            removed, moved = applied.removed, applied.moved
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
         logger.warning("reconcile: %s failed (%s) — advancing past it", entry.id, exc)
         return ReconcileResult(entry.id, verdict=PAYLOAD_BAD, detail=str(exc))
@@ -403,6 +468,11 @@ def reconcile_entry(
     detail = f"+{merged.added} ~{merged.updated} -{removed}"
     if recorded or held:
         detail += f" !{recorded} conflict(s), {len(held)} id(s) held local"
+    if moved:
+        # Changed here while the pull merged it: left as it is now, and not agreed on, so the
+        # next pull takes the peer's in again against it.
+        detail += f" {len(moved)} left for the next pull (changed here meanwhile)"
+        held = held | set(moved)
     return ReconcileResult(
         entry.id,
         verdict=CONSUMED,

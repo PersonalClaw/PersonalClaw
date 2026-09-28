@@ -1725,19 +1725,20 @@ def test_a_MERGE_recovers_every_declared_sqlite_store(tmp_path: Path) -> None:
     """
     from personalclaw.snapshot import _do_merge
 
-    dbs = [
+    merged = [
         "learning.db",
         "knowledge/knowledge.db",
-        "loop/loops.db",
-        "workflows/runs.db",
         "workspace/knowledge/knowledge.db",
         "workspace/lexicon/lexicon.db",
     ]
+    # A workflow run's ledger and a loop's records stay on the machine that ran them: a merge
+    # leaves the snapshot's out and this home's as it is (`StateEntry.merged_in`).
+    kept = ["loop/loops.db", "workflows/runs.db"]
     snap, pc = tmp_path / "snap", tmp_path / "home"
     for root, tag in ((snap, "FROM-SNAPSHOT"), (pc, "LIVE")):
         root.mkdir(exist_ok=True)
         (root / "config.json").write_text("{}", encoding="utf-8")
-        for rel in dbs:
+        for rel in merged + kept:
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(root / rel))
             conn.execute("CREATE TABLE rows(id TEXT PRIMARY KEY, v TEXT)")
@@ -1747,11 +1748,12 @@ def test_a_MERGE_recovers_every_declared_sqlite_store(tmp_path: Path) -> None:
 
     _do_merge(snap, pc, None)
 
-    for rel in dbs:
+    for rel in merged + kept:
         conn = sqlite3.connect(str(pc / rel))
         ids = sorted(r[0] for r in conn.execute("SELECT id FROM rows"))
         conn.close()
-        assert ids == ["FROM-SNAPSHOT", "LIVE"], f"{rel} did not merge: {ids}"
+        expected = ["LIVE"] if rel in kept else ["FROM-SNAPSHOT", "LIVE"]
+        assert ids == expected, f"{rel}: {ids}"
 
 
 def test_the_FTS_index_is_REBUILT_not_merged(tmp_path: Path) -> None:
@@ -1991,7 +1993,12 @@ def test_one_UNREADABLE_store_does_not_cost_the_others(tmp_path: Path) -> None:
     """
     from personalclaw.snapshot import _do_merge
 
-    dbs = ["learning.db", "knowledge/knowledge.db", "loop/loops.db", "workflows/runs.db"]
+    dbs = [
+        "learning.db",
+        "knowledge/knowledge.db",
+        "workspace/knowledge/knowledge.db",
+        "workspace/lexicon/lexicon.db",
+    ]
     snap, pc = tmp_path / "snap", tmp_path / "home"
     for root, tag in ((snap, "SNAP"), (pc, "LIVE")):
         root.mkdir(exist_ok=True)
@@ -2009,7 +2016,7 @@ def test_one_UNREADABLE_store_does_not_cost_the_others(tmp_path: Path) -> None:
 
     _do_merge(snap, pc, None)
 
-    for rel in ("learning.db", "loop/loops.db", "workflows/runs.db"):
+    for rel in ("learning.db", "workspace/knowledge/knowledge.db", "workspace/lexicon/lexicon.db"):
         conn = sqlite3.connect(str(pc / rel))
         assert sorted(r[0] for r in conn.execute("SELECT id FROM r")) == ["LIVE", "SNAP"], rel
         conn.close()

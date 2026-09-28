@@ -44,6 +44,7 @@ from personalclaw.security import is_sensitive_path
 from personalclaw.snapshot import (
     _copy_tree_no_overwrite,
     _do_replace,
+    _entry_at,
     _merge_crons,
     _merge_event_triggers,
     _merge_memory,
@@ -1050,13 +1051,30 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # the tags, the comments, … — takes each record it lacks, by the rule a sync takes
             # another machine's by (`snapshot._merge_records`), so an archive's records arrive in
             # a home that has the store too, not only in one without it.
+            from personalclaw.durability import inventory as inv
+            from personalclaw.durability.reconcile import bring_in_folder
+
             imported_stores = 0
             for entry in _remaining_export_paths(snap):
                 sp, dp = snap / entry, pc / entry
+                declared = _entry_at(entry)
+                if declared is not None and not declared.merged_in:
+                    # What ran on another machine stays there: its running runs and loops would
+                    # be resumed here (`StateEntry.merged_in`).
+                    continue
                 if _records_entry(entry) is not None:
                     said = _merge_records(snap, pc, entry)
                     if said:
                         summary["items"].append(said)
+                elif (
+                    declared is not None
+                    and declared.kind == inv.KIND_JSON_ENTITY_DIR
+                    and sp.is_dir()
+                ):
+                    # Each file taken in by the rule a sync takes another machine's in: what its
+                    # machine's owner allowed there arrives waiting for this one's.
+                    if bring_in_folder(pc, declared, sp):
+                        imported_stores += 1
                 elif sp.is_dir():
                     dp.mkdir(parents=True, exist_ok=True)
                     # What an export leaves out an import never plants, from an older archive

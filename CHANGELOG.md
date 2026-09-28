@@ -192,6 +192,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Sync leaves each machine's own counters, model spend, scheduler state and runner health on it: two machines' copies no longer turn every pull into a conflict to review.**
 
+- **Backups and sync carry saved prompts, prompt snippets and every other file in a store's folder, and name any file they cannot carry.**
+
+- **A sync pull writes only what it changed, and never over a file this machine wrote while it merged.**
+
+- **A workflow run or a loop stays on the machine that ran it: another machine's, synced or merged in, used to run again here.**
+
+- **Sync no longer writes chat sessions, scheduled-run history or channel history into a file named for the year: those folders stay on each machine.**
+
 - **An import in Settings → Import / Export merges; a replace, which rewrites what the running gateway holds open, runs from `personalclaw restore <archive> --mode replace` with the gateway stopped.**
 
 - **Merging a snapshot in Settings → Backups runs, where the gateway it runs in used to refuse it.**
@@ -601,6 +609,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A runner definition runs its CLI only once you allow what it runs on this machine: one from another machine, or changed since you allowed it, waits for Allow in Settings → Agent defaults.**
 
 - **Sync never brings another machine's agent CLI runtime config: the tools it runs without asking and the servers it starts are this machine's.**
+
+- **A merge restore or an import brings another machine's workflows in with every step asking before it acts, and never its agent CLI runtime config.**
+
+- **Another machine never gives an agent here a tool you kept from it: which tools an agent is kept from is each machine's own.**
 
 - **What you upload is written 0600, in folders only you can open, like every other file PersonalClaw keeps in its home.**
 

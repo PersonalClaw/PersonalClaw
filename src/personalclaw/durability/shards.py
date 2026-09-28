@@ -29,6 +29,7 @@ allowlist in ``snapshot._merge_memory`` names two tables (``knowledge_facts``,
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -42,7 +43,7 @@ import uuid
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
@@ -142,33 +143,196 @@ class ExportResult:
     skipped: dict[str, str] = field(default_factory=dict)  # entry id -> reason
     blobs: int = 0
     databases: list[DbCopy] = field(default_factory=list)  # sync-only whole-DB copies
+    #: A store's files this export could not carry, by home-relative path, with why (:class:`Read`).
+    left_out: dict[str, str] = field(default_factory=dict)
 
     @property
     def rows(self) -> int:
         return sum(s.rows for s in self.shards)
 
 
-def _json_rows_from_entity_dir(root: Path) -> list[dict]:
-    """One row per entity JSON file, id = filename stem, sorted by id."""
-    rows: list[dict] = []
-    for path in sorted(root.rglob("*.json")):
-        rel = path.relative_to(root).as_posix()
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            logger.debug("shards: unreadable entity file %s — skipped", path, exc_info=True)
-            continue
-        rows.append({"id": rel[:-5] if rel.endswith(".json") else rel, "data": data})
-    rows.sort(key=lambda r: r["id"])
-    return rows
+# ── a store's files, as rows ──────────────────────────────────────────────────
+#
+# A row of an entity directory, or of a ``json_file``, is one file of the store: a JSON file as
+# its parsed ``data`` (an entity directory names it by its path without ``.json``), any other file
+# as its ``text`` when it is UTF-8 and as ``base64`` otherwise (named by its path). A tombstone is
+# ``{"id", "deleted_at"}`` for a JSON entity.
+
+#: The largest file a row carries. A row is never split across the parts of a shard, and a file
+#: carried as ``base64`` is 4/3 its size, so a file this size still fits one part.
+LARGEST_FILE_BYTES = PART_SPLIT_BYTES * 3 // 4
 
 
-def _json_rows_from_file(path: Path) -> list[dict]:
+@dataclass
+class Read:
+    """What a store's files held when they were read: its rows; the sha256 of each row's file as
+    it was then, by row id, which a write compares against before it replaces the file
+    (:mod:`durability.writeback`); and the files it could not carry, by home-relative path with
+    why, which an export names rather than dropping."""
+
+    rows: list[dict] = field(default_factory=list)
+    shas: dict[str, str] = field(default_factory=dict)
+    left_out: dict[str, str] = field(default_factory=dict)
+
+
+def _outside_the_store(entry: inv.StateEntry, rel: str) -> bool:
+    """Whether *rel*, a path inside *entry*'s directory, is not the store's to carry: runtime
+    scratch the inventory ignores (a lock, a temp file, a sqlite sidecar), what *entry* declares
+    derived, or a store another entry claims (``workflows/runs``). True of every path under one
+    that is."""
+    from personalclaw.portability import _is_derived_within
+
+    if inv.is_ignored(f"{entry.path}/{rel}") or _is_derived_within(entry.path, rel):
+        return True
+    owner = inv.claim_for(f"{entry.path}/{rel}")
+    return owner is not None and owner.path.startswith(f"{entry.path}/")
+
+
+def store_file(entry: inv.StateEntry, rel: str) -> bool:
+    """Whether *rel*, a path inside *entry*'s directory, names a file of that store: a plain
+    relative path that stays inside it, not a database, not the tombstone side-log, and not
+    outside the store (:func:`_outside_the_store`). The exporter reads these files and no others,
+    and a sync writes no others: a row another machine names by any other path is not one of the
+    store's."""
+    from personalclaw.durability.tombstones import TOMBSTONE_FILE
+
+    path = PurePosixPath(rel)
+    if not rel or "\\" in rel or "\x00" in rel or path.is_absolute():
+        return False
+    if any(part in ("", ".", "..") for part in rel.split("/")):
+        return False
+    if rel == TOMBSTONE_FILE or path.suffix in (".db", ".db-journal"):
+        return False
+    return not _outside_the_store(entry, rel)
+
+
+def row_file(row: dict) -> str:
+    """The path, inside its store's directory, of the file *row* stands for."""
+    rid = str(row.get("id", ""))
+    return rid if ("text" in row or "base64" in row) else f"{rid}.json"
+
+
+def row_bytes(row: dict) -> bytes:
+    """The content of the file *row* stands for, as the sync and a restore write it."""
+    if "text" in row:
+        return str(row["text"]).encode("utf-8")
+    if "base64" in row:
+        return base64.b64decode(str(row["base64"]))
+    return (canonical_json(row.get("data", {})) + "\n").encode("utf-8")
+
+
+def _json_of(raw: bytes) -> Any:
+    """*raw* parsed as JSON, or :data:`_NOT_JSON`."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return [{"id": path.name, "data": data}]
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _NOT_JSON
+
+
+_NOT_JSON = object()
+
+
+def _file_row(rid: str, raw: bytes) -> dict:
+    """A row that carries a file as it is: its ``text`` when it is UTF-8, its ``base64`` else."""
+    try:
+        return {"id": rid, "text": raw.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {"id": rid, "base64": base64.b64encode(raw).decode("ascii")}
+
+
+def _file_bytes(path: Path) -> tuple[bytes | None, str]:
+    """*path*'s content, or ``None`` with why a row cannot carry it."""
+    try:
+        if path.stat().st_size > LARGEST_FILE_BYTES:
+            mib = 1024 * 1024
+            limit = (
+                f"{LARGEST_FILE_BYTES // mib} MiB"
+                if LARGEST_FILE_BYTES >= mib
+                else f"{LARGEST_FILE_BYTES} bytes"
+            )
+            return None, f"larger than {limit}"
+        return path.read_bytes(), ""
+    except OSError as exc:
+        return None, f"unreadable ({exc.strerror or exc})"
+
+
+def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
+    """One row per file of *entry*'s directory at *root* (:func:`store_file`), sorted by id.
+
+    🔴 This read ``*.json`` and nothing else, so a backup and a sync carried none of a store's
+    other files, and said nothing: saved prompts and prompt snippets are YAML, an agent's prompt
+    assets Markdown, a voice profile's reference clip and consent recording audio. A file it cannot
+    carry — JSON that does not parse, one too large for a row, or one named as another's row would
+    be — is in ``left_out``, with why. Symlinks are not followed, and a folder that is not the
+    store's is not walked.
+    """
+    out = Read()
+    if not root.is_dir():
+        return out
+    found: list[tuple[str, Path]] = []
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        here = Path(directory).relative_to(root)
+        dirs[:] = sorted(d for d in dirs if not _outside_the_store(entry, (here / d).as_posix()))
+        for name in files:
+            path = Path(directory) / name
+            if not path.is_symlink():
+                found.append(((here / name).as_posix(), path))
+    rows: dict[str, dict] = {}
+    for rel, path in sorted(found):
+        if not store_file(entry, rel):
+            continue
+        raw, why = _file_bytes(path)
+        row: dict | None = None
+        if raw is not None and rel.endswith(".json"):
+            data = _json_of(raw)
+            row = {"id": rel[:-5], "data": data} if data is not _NOT_JSON else None
+            why = "" if row is not None else "not valid JSON"
+        elif raw is not None:
+            row = _file_row(rel, raw)
+        if row is not None and row["id"] in rows:
+            why = f"named as the row of {row_file(rows[row['id']])}"
+            row = None
+        if row is None or raw is None:
+            logger.warning("shards: %s/%s could not be carried: %s", entry.path, rel, why)
+            out.left_out[f"{entry.path}/{rel}"] = why
+            continue
+        rows[row["id"]] = row
+        out.shas[row["id"]] = _sha256(raw)
+    out.rows = [rows[rid] for rid in sorted(rows)]
+    return out
+
+
+def read_json_file(entry: inv.StateEntry, path: Path) -> Read:
+    """The one row of a ``json_file`` store at *path*: its JSON ``data``.
+
+    A store restored whole or not at all (``replace_only``), which a sync never merges, is carried
+    whatever it holds, as its ``text`` or ``base64`` when that is not JSON: the workspace pointer
+    is a bare path, and a backup did not hold it. Any other store's file that does not parse is
+    left out and named (``left_out``): taken in by a sync, it would be written over the other
+    machine's store as an edit.
+    """
+    out = Read()
+    if not path.is_file() or path.is_symlink():
+        return out
+    raw, why = _file_bytes(path)
+    data = _NOT_JSON if raw is None else _json_of(raw)
+    if raw is not None and data is _NOT_JSON and entry.merge != inv.MERGE_REPLACE_ONLY:
+        why = "not valid JSON"
+    if raw is None or why:
+        logger.warning("shards: %s could not be carried: %s", entry.path, why)
+        out.left_out[entry.path] = why
+        return out
+    out.rows = [_file_row(path.name, raw) if data is _NOT_JSON else {"id": path.name, "data": data}]
+    out.shas[path.name] = _sha256(raw)
+    return out
+
+
+def left_out_sentence(left_out: dict[str, str], *, what: str = "exported") -> str:
+    """The words that name the files an export could not carry (:class:`Read`): how many, and the
+    first few with why."""
+    shown = ", ".join(f"{path} ({why})" for path, why in sorted(left_out.items())[:3])
+    more = f" and {len(left_out) - 3} more" if len(left_out) > 3 else ""
+    return f"{len(left_out)} file(s) could not be {what}: {shown}{more}"
 
 
 def _year_of(row: dict) -> str:
@@ -423,7 +587,8 @@ def export_shards(
     never exported.
 
     ``for_sync`` is a sync's export, for another machine. It leaves out what stays on this one
-    (``StateEntry.machine_local`` and ``machine_local_within``), and additionally stages a
+    (``StateEntry.machine_local`` and ``machine_local_within``) and the append-only stores that are
+    folders of files, which a sync does not carry (``inventory.append_only_folder``), and stages a
     consistent whole-DB copy for each ``KIND_SQLITE`` entry under ``db/<entry_id>.db``, because
     the diffable row shards store embedding/byte columns as placeholders and can't rebuild a DB
     losslessly. A backup leaves it False, so it carries this machine's own stores, and its
@@ -439,7 +604,7 @@ def export_shards(
         for entry in inv.export_entries():  # excludes secret + derived
             if wanted is not None and entry.id not in wanted:
                 continue
-            if for_sync and entry.machine_local:
+            if for_sync and (entry.machine_local or inv.append_only_folder(entry)):
                 continue
             src = home / entry.path
             if not src.exists():
@@ -464,7 +629,9 @@ def export_shards(
                     if staged is not None:
                         result.databases.append(staged)
             elif entry.kind == inv.KIND_JSON_ENTITY_DIR:
-                rows = _json_rows_from_entity_dir(src) if src.is_dir() else []
+                read = read_entity_dir(entry, src)
+                result.left_out.update(read.left_out)
+                rows = read.rows
                 if for_sync and entry.machine_local_within:
                     rows = [r for r in rows if not inv.stays_here(entry, str(r.get("id", "")))]
                 if entry.tombstones and src.is_dir():
@@ -475,8 +642,9 @@ def export_shards(
                     rows = merge_into_rows(src, rows)
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/entities.jsonl", rows))
             elif entry.kind == inv.KIND_JSON_FILE:
-                rows = _json_rows_from_file(src) if src.is_file() else []
-                result.shards.extend(_write_shard(out_dir, f"{entry.id}/value.jsonl", rows))
+                read = read_json_file(entry, src)
+                result.left_out.update(read.left_out)
+                result.shards.extend(_write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows))
             elif entry.kind == inv.KIND_JSONL_APPEND:
                 files = [src] if src.is_file() else sorted(src.rglob("*.jsonl"))
                 buckets: dict[str, list[dict]] = {}

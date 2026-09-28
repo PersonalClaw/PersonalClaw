@@ -1400,16 +1400,17 @@ class TestImportReadsTheWidenedExport:
 
     def test_a_nested_database_arrives_INTACT_through_the_round_trip(self, tmp_path, monkeypatch):
         """The export stages it through the backup API; the import must actually place it. Asserted
-        on
-        ROWS read back from the imported file, not on the filename."""
+        on ROWS read back from the imported file, not on the filename. (The workflow run ledger,
+        the database this used to carry, stays on the machine that ran its runs.)"""
         src = _seeded_home(tmp_path / "src")
         monkeypatch.setenv("PERSONALCLAW_HOME", str(src))
         monkeypatch.setattr("personalclaw.portability.config_dir", lambda: src)
-        live = sqlite3.connect(str(src / "workflows" / "runs.db"))
+        (src / "workspace" / "lexicon").mkdir(parents=True, exist_ok=True)
+        live = sqlite3.connect(str(src / "workspace" / "lexicon" / "lexicon.db"))
         live.execute("PRAGMA journal_mode=WAL")
-        live.execute("CREATE TABLE runs(id INTEGER PRIMARY KEY)")
+        live.execute("CREATE TABLE terms(id INTEGER PRIMARY KEY)")
         for i in range(500):
-            live.execute("INSERT INTO runs VALUES(?)", (i,))
+            live.execute("INSERT INTO terms VALUES(?)", (i,))
         live.commit()
         try:
             zip_bytes, _ = create_export_zip()
@@ -1424,10 +1425,10 @@ class TestImportReadsTheWidenedExport:
         monkeypatch.setattr("personalclaw.portability.config_dir", lambda: dst)
         apply_import_zip(archive, mode="merge")
 
-        imported = dst / "workflows" / "runs.db"
+        imported = dst / "workspace" / "lexicon" / "lexicon.db"
         assert imported.is_file(), "the nested database never arrived"
         conn = sqlite3.connect(f"file:{imported}?mode=ro", uri=True)
-        assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 500
+        assert conn.execute("SELECT count(*) FROM terms").fetchone()[0] == 500
         conn.close()
 
 

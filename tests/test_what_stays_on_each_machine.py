@@ -31,7 +31,12 @@ from personalclaw.durability.shards import export_shards
 from personalclaw.durability.sync_cycle import run_sync_cycle
 from tests.test_durability_sync_cycle import SharedStore
 
-MACHINE_LOCAL = sorted(e.id for e in inv.INVENTORY if e.machine_local)
+#: The one-row files of a machine's own account. What ran on a machine — its workflow runs and
+#: loops, databases and folders — stays on it by the same flag, and has its own file
+#: (``test_what_ran_on_a_machine_stays_on_it.py``).
+MACHINE_LOCAL = sorted(
+    e.id for e in inv.INVENTORY if e.machine_local and e.kind == inv.KIND_JSON_FILE
+)
 
 #: A small document of each machine-local store's own shape, keyed by entry id.
 _ONE_MACHINES = {
@@ -219,7 +224,10 @@ def test_an_old_conflict_on_the_agent_runtime_config_closes_only_by_keeping_this
 
 
 _SYNC_DOC = Path(__file__).resolve().parents[1] / "docs" / "architecture" / "tasks-triggers.md"
-_LEAD = "**What is one machine's own stays on it.**"
+_LEADS = (
+    "**What is one machine's own stays on it.**",
+    "**What ran on a machine stays on it too.**",
+)
 
 
 def _paragraph(doc: str, lead: str) -> str:
@@ -231,7 +239,8 @@ def _paragraph(doc: str, lead: str) -> str:
 
 
 def test_the_sync_docs_name_everything_that_stays_on_each_machine():
-    named = set(re.findall(r"`([^`]+)`", _paragraph(_SYNC_DOC.read_text(), _LEAD)))
+    doc = _SYNC_DOC.read_text()
+    named = {name for lead in _LEADS for name in re.findall(r"`([^`]+)`", _paragraph(doc, lead))}
     staying = {e.path for e in inv.INVENTORY if e.machine_local} | {
         f"{e.path}/{glob}" for e in inv.INVENTORY for glob in e.machine_local_within
     }

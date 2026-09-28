@@ -226,6 +226,7 @@ def run_incremental_export() -> JobResult:
                 default_shard_dir,
                 dirty_entries,
                 export_shards,
+                left_out_sentence,
             )
 
             home = active_home()
@@ -260,12 +261,23 @@ def run_incremental_export() -> JobResult:
     # its length would make an idle hour look like a full backup.
     exported = int(getattr(result, "entries", 0) or 0)
     manifest_shards = len(getattr(result, "shards", ()) or ())
+    left_out = dict(getattr(result, "left_out", {}) or {})
     _audit("durability_export", f"entries={exported} manifest_shards={manifest_shards}")
+    detail = f"{exported} store(s) re-exported"
+    if left_out:
+        # A file the export could not carry is said, never dropped in silence: an export that
+        # lacks it is not the backup it reads as.
+        detail += f"; {left_out_sentence(left_out)}"
     return JobResult(
         "incremental_export",
-        detail=f"{exported} store(s) re-exported",
+        ok=not left_out,
+        detail=detail,
         duration_secs=time.monotonic() - started,
-        extra={"entries_exported": exported, "manifest_shards": manifest_shards},
+        extra={
+            "entries_exported": exported,
+            "manifest_shards": manifest_shards,
+            "left_out": left_out,
+        },
     )
 
 

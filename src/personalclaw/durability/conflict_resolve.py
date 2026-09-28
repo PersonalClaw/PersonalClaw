@@ -10,13 +10,12 @@ caller must confirm it.
 half made and stated. There is no cross-store transaction to be had here, so the ordering is
 picked so that every failure leaves a state a repeat of the same request fixes:
 
-1. The store write goes first, as a WHOLE-ENTRY rewrite through
-   :func:`durability.writeback.apply_rows` — the same path the sync cycle itself uses. Every
-   local row is read, the one reviewed row is substituted by entity id, and the full set is
-   written back atomically (temp file + rename). A single-row ``apply_rows`` would truncate a
-   ``jsonl_append`` stream to one event, so the substitution is not an optimisation to skip. A
-   store of records (``StateEntry.records``) has the one record substituted in its document,
-   under the file's lock (``reconcile.take_in``).
+1. The store write goes first, through :func:`durability.writeback.apply_rows` — the same path
+   the sync cycle itself uses. The store is read, the one reviewed row is substituted by entity
+   id, and only what that changed is written, atomically (temp file + rename), and only over a
+   file still as it was read: one this machine wrote in between is left as it is and the review
+   refuses (``moved``). A store of records (``StateEntry.records``) has the one record
+   substituted in its document, under the file's lock (``reconcile.take_in``).
 2. The queue record flips to ``resolved`` only AFTER that write returns.
 
 So a failed write leaves the record ``needs-review`` and the store untouched (the caller sees
@@ -137,6 +136,8 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
     ``machine_local``   the store, or this file of it, is one machine's own and never takes
                         another machine's (``StateEntry.machine_local``); a conflict recorded
                         before it was declared so closes by keeping this machine's
+    ``moved``           this machine's file changed while the version was being written, so
+                        nothing was written over it; the record stays needs-review
     ``write_failed``    the store write raised; the record stays needs-review
     ==================  ==========================================================
     """
@@ -222,6 +223,16 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             return _refuse(
                 "write_failed",
                 f"nothing was applied: {exc}",
+                choice=choice,
+                record_id=record_id,
+            )
+        if applied.moved:
+            return _refuse(
+                "moved",
+                (
+                    f"this machine's {rec.entity_id} changed while it was being written, so "
+                    "nothing was written over it; look at it again, then choose"
+                ),
                 choice=choice,
                 record_id=record_id,
             )

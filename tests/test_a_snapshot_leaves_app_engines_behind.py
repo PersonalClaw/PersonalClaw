@@ -256,10 +256,11 @@ def test_a_merge_keeps_the_engine_this_home_already_has_and_says_nothing(
     assert "engine" not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("mode", ["replace", "merge"])
-def test_a_store_another_entry_owns_inside_a_tree_still_comes_back(tmp_path, monkeypatch, mode):
+def test_a_store_another_entry_owns_inside_a_tree_still_comes_back(tmp_path, monkeypatch):
     """`loop` declares `loops.db` within it because the database is its own entry, restored by its
-    own pass. Leaving what capture leaves out must not leave that out."""
+    own pass. Leaving what capture leaves out must not leave that out. A replace restore: a merge
+    leaves a loop's records out altogether, as what ran on a machine stays on it
+    (`test_what_ran_on_a_machine_stays_on_it.py`)."""
     home = _home(tmp_path, monkeypatch, "home")
     (home / "loop" / "run-1").mkdir(parents=True)
     (home / "loop" / "run-1" / "finding.md").write_text("found", encoding="utf-8")
@@ -272,7 +273,7 @@ def test_a_store_another_entry_owns_inside_a_tree_still_comes_back(tmp_path, mon
     archive = _snapshot(tmp_path)
 
     fresh = _home(tmp_path, monkeypatch, "fresh")
-    assert restore_main([str(archive), "--mode", mode]) == 0
+    assert restore_main([str(archive), "--mode", "replace"]) == 0
 
     assert (fresh / "loop" / "run-1" / "finding.md").read_text(encoding="utf-8") == "found"
     conn = sqlite3.connect(str(fresh / "loop" / "loops.db"))
