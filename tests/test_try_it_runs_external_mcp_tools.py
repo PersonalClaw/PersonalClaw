@@ -20,15 +20,14 @@ provider, which serves every configured server, is built once. There is one way 
 external tool, and no second lookup into the client registry.
 
 Every call here reaches a real MCP server: the SDK's ``FastMCP``, over stdio and over Streamable
-HTTP. The ``mcp-tools`` app is a stand-in (core's tests cannot import the apps repository) with the
-real app's manifest shape and the real provider's names, tag and routing into the client registry.
+HTTP. The ``mcp-tools`` app is the one PersonalClaw ships (``apps/native/mcp-tools``), registered
+the way the gateway registers it, and a spy on its provider's ``invoke`` records what it was asked
+to run.
 """
 
 from __future__ import annotations
 
 import contextlib
-import importlib.util
-import json
 import subprocess
 import sys
 import textwrap
@@ -44,6 +43,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from mcp_owner_allowed import allow_configured
 
 from personalclaw import mcp_client
+from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
 from personalclaw.config.secret_refs import write_mcp_document
 from personalclaw.tool_providers import registry as tool_registry
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
@@ -93,74 +93,8 @@ _FIXTURE = textwrap.dedent("""
         uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on")).run(sockets=[sock])
     """)
 
-# The MCP Tool Servers app, as far as core can tell: the real manifest's provider block
-# (`multiInstance`, the factory path) and a provider with the real one's names, tag and routing.
-_APP_MANIFEST = {
-    "name": "mcp-tools",
-    "version": "0.1.0",
-    "displayName": "MCP Tool Servers",
-    "description": "Connect Model Context Protocol (MCP) servers to provide tools.",
-    "license": "MIT",
-    "tags": ["tool"],
-    "provider": {
-        "type": "tool",
-        "implementation": "provider:create_mcp_provider",
-        "capabilities": ["tool_execution", "tool_discovery"],
-        "multiInstance": True,
-        "settingsSchema": {
-            "type": "object",
-            "properties": {"transport": {"type": "string", "default": "stdio"}},
-        },
-    },
-}
-_APP_PROVIDER = textwrap.dedent("""
-    from personalclaw.sdk.mcp import (
-        declared_risk,
-        get_current_session_key,
-        get_mcp_client_registry,
-    )
-    from personalclaw.sdk.tool import ToolDefinition, ToolProvider, ToolResult
-
-
-    def create_mcp_provider(config=None):
-        return McpToolProvider()
-
-
-    class McpToolProvider(ToolProvider):
-        def __init__(self):
-            self.invoked = []
-
-        @property
-        def name(self):
-            return "mcp"
-
-        @property
-        def display_name(self):
-            return "MCP Servers"
-
-        async def list_tools(self):
-            tools = []
-            for server, conn in get_mcp_client_registry().items():
-                for tool in await conn.list_tools():
-                    tools.append(
-                        ToolDefinition(
-                            name=f"mcp/{server}/{tool.name}",
-                            description=tool.description,
-                            provider="mcp",
-                            parameters=tool.input_schema,
-                            requires_approval=True,
-                            risk_level=declared_risk(server, tool),
-                        )
-                    )
-            return tools
-
-        async def invoke(self, tool_name, arguments):
-            self.invoked.append(tool_name)
-            _, server, tool = tool_name.split("/", 2)
-            conn = get_mcp_client_registry().get(server, get_current_session_key())
-            ok, output = await conn.call_tool(tool, arguments)
-            return ToolResult(success=ok, output=output if ok else "", error="" if ok else output)
-    """)
+# The MCP Tool Servers app PersonalClaw ships: its own manifest and its own provider.
+_BUNDLE = NATIVE_DIR / "mcp-tools"
 
 
 @dataclass
@@ -212,21 +146,9 @@ def fixture_server(request, tmp_path):
             proc.wait(timeout=10)
 
 
-def _install_app(home: Path) -> Path:
-    """The stand-in app's files, where an installed app lives."""
-    app_dir = home / "apps" / "mcp-tools"
-    app_dir.mkdir(parents=True)
-    (app_dir / "app.json").write_text(json.dumps(_APP_MANIFEST), encoding="utf-8")
-    (app_dir / "provider.py").write_text(_APP_PROVIDER, encoding="utf-8")
-    return app_dir
-
-
 def register_directly(app_dir: Path) -> None:
     """Register the app's provider without the enable path: the route is the subject."""
-    spec = importlib.util.spec_from_file_location("stand_in_mcp_tools", app_dir / "provider.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_bundle_module(app_dir, "mcp-tools", "provider")
     tool_registry.register_provider(module.create_mcp_provider({}), app="mcp-tools")
 
 
@@ -289,12 +211,12 @@ class World:
     other: _OtherProvider
     sel: _Sel
     server: Fixture
+    invoked: list[str]
 
     @property
     def mcp_invoked(self) -> list[str]:
         """What the app's provider was asked to run (empty when it was never registered)."""
-        provider = tool_registry.get_provider("mcp")
-        return list(getattr(provider, "invoked", []))
+        return list(self.invoked)
 
 
 @contextlib.asynccontextmanager
@@ -323,7 +245,18 @@ async def _world(
     monkeypatch.setattr(tool_registry, "_provider_app", {})
     other = _OtherProvider()
     tool_registry.register_provider(other)
-    register(_install_app(home))
+    register(_BUNDLE)
+    # A spy on the provider the registration put on the surface: what it was asked to run.
+    invoked: list[str] = []
+    provider = tool_registry.get_provider("mcp")
+    if provider is not None:
+        real_invoke = provider.invoke
+
+        async def recording_invoke(tool_name: str, arguments: dict[str, Any]) -> Any:
+            invoked.append(tool_name)
+            return await real_invoke(tool_name, arguments)
+
+        monkeypatch.setattr(provider, "invoke", recording_invoke)
     sel = _Sel()
     monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: sel)
 
@@ -332,7 +265,7 @@ async def _world(
     app.router.add_post("/api/tools/invoke", api_tool_invoke)
     try:
         async with TestClient(TestServer(app)) as http:
-            yield World(http, other, sel, server)
+            yield World(http, other, sel, server, invoked)
     finally:
         registry = mcp_client._registry
         if registry is not None:

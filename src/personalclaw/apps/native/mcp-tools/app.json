@@ -1,0 +1,65 @@
+{
+  "name": "mcp-tools",
+  "version": "0.1.0",
+  "displayName": "MCP Tool Servers",
+  "description": "Connect Model Context Protocol (MCP) servers to provide tools via stdio or SSE transport.",
+  "icon": "Plug",
+  "author": "PersonalClaw",
+  "license": "MIT",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "provider:create_mcp_provider",
+    "capabilities": [
+      "tool_execution",
+      "tool_discovery"
+    ],
+    "multiInstance": true,
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "type": "string",
+          "default": "stdio",
+          "enum": [
+            "stdio",
+            "sse"
+          ],
+          "x-meta": {
+            "label": "Transport",
+            "help": "How to connect to the MCP server."
+          }
+        },
+        "command": {
+          "type": "string",
+          "x-meta": {
+            "label": "Command",
+            "help": "Command to start the MCP server (stdio transport)."
+          }
+        },
+        "args": {
+          "type": "string",
+          "default": "",
+          "x-meta": {
+            "label": "Arguments",
+            "help": "Space-separated arguments for the command."
+          }
+        },
+        "endpoint": {
+          "type": "string",
+          "x-meta": {
+            "label": "SSE Endpoint",
+            "help": "URL for SSE transport (e.g. http://localhost:8080/sse).",
+            "tags": [
+              "advanced"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}

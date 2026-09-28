@@ -1666,7 +1666,14 @@ def seed_builtin_apps() -> list[str]:
         changed = True
         dest = app_dir(name)
         if dest.exists():
-            # Already present (e.g. a prior partial run) — just mark it seeded.
+            # Already on disk: an app installed from a store before this release bundled
+            # it, or a seed a crash interrupted. Either way the packaged files own it from
+            # now on, so they replace what is there on THIS boot, and the install record
+            # says it is built in. Marking it seeded and nothing else left the old copy's
+            # manifest and code on disk until the next boot's re-sync, and left a store
+            # record describing a separately updatable app that the new manifest locks.
+            _resync_native_bundle(name, entry)
+            _adopt_as_builtin(name, manifest)
             newly.append(name)
             continue
         try:
@@ -1706,6 +1713,34 @@ def seed_builtin_apps() -> list[str]:
     retire_orphaned_builtins(seeded, _bundled_native_names())
 
     return newly
+
+
+def _adopt_as_builtin(name: str, manifest: AppManifest) -> None:
+    """Record an app already on disk as the built-in it now is.
+
+    Keeps the user's own state: ``data/`` is never touched and ``enabled`` is kept as the user
+    left it. What changes is where the record says the app came from, so it reads as the
+    platform's (``origin``/``source``/``tier``), and a missing record is written, which a crash
+    between the copy and the record left behind.
+    """
+    (app_dir(name) / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
+    meta = _read_installed(name)
+    now = _now_iso()
+    if meta is None:
+        meta = InstalledApp(
+            name=name,
+            version=manifest.version,
+            displayName=manifest.displayName or name,
+            enabled=True,
+            installedAt=now,
+        )
+    meta.version = manifest.version
+    meta.source = "builtin"
+    meta.origin = "builtin"
+    meta.tier = TrustTier.BUILTIN.value
+    meta.updatedAt = now
+    _write_installed(name, meta)
+    _audit("seed", "adopted", name)
 
 
 def _bundled_native_names() -> set[str]:

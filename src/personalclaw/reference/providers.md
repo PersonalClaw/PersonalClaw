@@ -47,6 +47,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **native-prompts** — type `prompt` / ``; capabilities: list, read, write, render
 - **native-skills** — type `skills` / ``; capabilities: crud, triggers, auto_generation
 - **native-tasks** — type `task` / ``; capabilities: crud, comments, labels, dependencies
+- **mcp-tools** — type `tool` / ``; capabilities: tool_execution, tool_discovery
 - **personalclaw-artifacts** — type `tool` / ``; capabilities: artifacts
 - **personalclaw-automation-tools** — type `tool` / ``; capabilities: automation_management
 - **personalclaw-code-map** — type `tool` / ``; capabilities: code_map

@@ -555,11 +555,26 @@ could not:
   third-party imports, `httpx` and `aiohttp`, are already core runtime dependencies.
   `tests/test_native_ollama_bundle.py` rails both halves across **every** bundle.
 
+**The third: `apps/native/mcp-tools/`** — the adapter that hands agents the tools of the MCP
+servers in `mcp.json`, moved in from the Store. The gateway already connects to every one of
+those servers, and this provider is the only surface through which an agent can call them
+(`mcp/<server>/<tool>`, rule 2 of `tool_providers/registry.py`), so as a Store install it
+left a server the user added or imported running and useless until they found a second thing
+to install. It meets the bundling bar the other two set: SDK imports only, no dependencies
+(`mcp` is a core one), and no vendor logic, since MCP is a protocol. It also adds no outbound
+reach to an install. With no server configured it serves no tools, and every tool it does
+serve is one the user connected, asking before it runs at the risk the server declares.
+`tests/test_native_mcp_tools_bundle.py` pins all three claims.
+
 Note also that the packaged files of a bundled app are re-synced into an existing install on
 every boot (`app_manager._resync_native_bundle`), not just its `app.json`: seeding is
 once-only and a native app is locked against the `POST /api/apps/{name}/update` push path,
 so without that resync a provider fix shipped in a new wheel would reach a fresh home and
-never an upgraded one. `data/` and `installed.json` are never touched.
+never an upgraded one. `data/` and `installed.json` are never touched. The same holds on
+the boot where an app a user installed from the Store becomes a bundled one: the packaged
+files replace the store copy then, not a boot later, and the install record is rewritten
+to say the app is built in (`app_manager._adopt_as_builtin`), keeping the user's `data/`
+and on/off state.
 
 ## Crons
 

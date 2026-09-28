@@ -332,8 +332,9 @@ def test_a_bundled_apps_provider_module_is_declared_package_data():
     pyproject = (_SRC_DIR.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert '"apps/native/*/*.py",' in pyproject, (
         "pyproject.toml's [tool.setuptools.package-data] lost the apps/native/*/*.py glob. "
-        "Two bundled apps own their provider code (personalclaw-ui-docs, ollama-models); "
-        "without the glob their inclusion in the wheel is setuptools' choice, not ours."
+        "Bundled apps own their provider code (ollama-models, mcp-tools, personalclaw-ui-docs, "
+        "bundled-chat); without the glob their inclusion in the wheel is setuptools' choice, "
+        "not ours."
     )
 
 

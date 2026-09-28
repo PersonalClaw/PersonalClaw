@@ -1,7 +1,8 @@
 """Tool providers — pluggable tool execution backends.
 
-The external tool ADAPTERS (MCP server client, OpenAI-tool-schema adapter) ship as
-apps now (apps/mcp-tools, apps/openai-tools) and import ``personalclaw.sdk.tool``.
+The external tool ADAPTERS ship as apps and import ``personalclaw.sdk.tool``: the MCP
+server adapter as the built-in ``mcp-tools`` app (bundled, because the gateway already runs
+the servers it serves), the OpenAI-tool-schema adapter as the ``openai-tools`` Store app.
 Core keeps the ABC + the native in-process tool machinery (registry, projection,
 result_store, tool_prefs, and ``agents.native.tools.InProcessMcpToolProvider``).
 """

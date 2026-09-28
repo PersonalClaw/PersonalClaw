@@ -280,3 +280,71 @@ def test_de_bundled_app_is_demoted_from_builtin_to_local(tmp_path):
 
     # Confirm it is no longer native-locked
     assert not app_manager._is_native("retired-models")
+
+
+def test_an_app_installed_from_a_store_is_adopted_on_the_boot_that_bundles_it(tmp_path):
+    """A release can bundle an app users already installed from a store (``mcp-tools`` was
+    one). On that first boot its packaged files replace the store copy, and its record says it
+    is built in, so the lock the new manifest declares and the record agree at once, instead of
+    the old copy's code running until the next boot's re-sync reached it.
+
+    The user's own state is kept: ``data/`` untouched, and ``enabled`` left as they set it.
+    """
+    _native_manifest(tmp_path, "brave-search", native=True)
+    src = tmp_path / "native" / "brave-search"
+    (src / "provider.py").write_text("VERSION = 'bundled'\n", encoding="utf-8")
+
+    # The same app, installed earlier from a store: its own files and a store record.
+    installed = manager.app_dir("brave-search")
+    installed.mkdir(parents=True)
+    store_manifest = {
+        "name": "brave-search",
+        "version": "0.1.0",
+        "displayName": "Brave",
+        "description": "the store copy",
+    }
+    (installed / "app.json").write_text(json.dumps(store_manifest), encoding="utf-8")
+    (installed / "provider.py").write_text("VERSION = 'store'\n", encoding="utf-8")
+    (installed / "data").mkdir()
+    (installed / "data" / "config.json").write_text('{"kept": true}', encoding="utf-8")
+    manager._write_installed(
+        "brave-search",
+        manager.InstalledApp(
+            name="brave-search",
+            version="0.1.0",
+            enabled=False,
+            source="https://example.invalid/apps.git#brave-search",
+            origin="registry",
+            tier="community",
+        ),
+    )
+    assert not app_manager._is_native("brave-search"), "the store copy is not locked yet"
+
+    assert app_manager.seed_builtin_apps() == ["brave-search"]
+
+    assert (installed / "provider.py").read_text(encoding="utf-8") == "VERSION = 'bundled'\n"
+    assert json.loads((installed / "app.json").read_text(encoding="utf-8"))["native"] is True
+    meta = manager._read_installed("brave-search")
+    assert meta is not None
+    assert (meta.origin, meta.source, meta.tier) == ("builtin", "builtin", "builtin")
+    assert meta.enabled is False, "the user's own on/off choice is not the seed's to change"
+    assert json.loads((installed / "data" / "config.json").read_text(encoding="utf-8")) == {
+        "kept": True
+    }
+    assert app_manager._is_native("brave-search")
+
+
+def test_a_seed_a_crash_interrupted_is_completed_not_abandoned(tmp_path):
+    """A copy with no install record (the process died between the copy and the record) used
+    to be marked seeded and never installed, so the built-in never appeared. It is finished."""
+    _native_manifest(tmp_path, "brave-search", native=True)
+    partial = manager.app_dir("brave-search")
+    partial.mkdir(parents=True)
+    assert manager._read_installed("brave-search") is None
+
+    assert app_manager.seed_builtin_apps() == ["brave-search"]
+
+    meta = manager._read_installed("brave-search")
+    assert meta is not None and meta.origin == "builtin" and meta.enabled is True
+    assert (partial / "app.json").is_file()
+    assert (partial / "data").is_dir()

@@ -202,14 +202,6 @@
         "sdk_export:AppManifest"
       ]
     },
-    "src/personalclaw/sdk/mcp.py": {
-      "inert": 3,
-      "surfaces": [
-        "sdk_export:declared_risk",
-        "sdk_export:get_current_session_key",
-        "sdk_export:get_mcp_client_registry"
-      ]
-    },
     "src/personalclaw/sdk/memory.py": {
       "inert": 1,
       "surfaces": [
@@ -283,11 +275,9 @@
       ]
     },
     "src/personalclaw/sdk/tool.py": {
-      "inert": 3,
+      "inert": 1,
       "surfaces": [
-        "sdk_export:DEFAULT_TOOL_OUTPUT_CAP",
-        "sdk_export:ProjectionRule",
-        "sdk_export:project_and_retain"
+        "sdk_export:ProjectionRule"
       ]
     },
     "src/personalclaw/sdk/tts.py": {
@@ -348,9 +338,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 146,
+      "sdk_export": 141,
       "trigger_kind": 0
     },
-    "inert": 160
+    "inert": 155
   }
 }

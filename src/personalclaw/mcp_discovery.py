@@ -206,19 +206,19 @@ def stdio_spawn_env(server_env: Mapping[str, str], *, server: str) -> dict[str, 
 #
 # A server PersonalClaw connects to is not therefore one an agent can use. Every external server's
 # tools reach an agent through ONE registered tool provider
-# (`tool_providers.registry.EXTERNAL_MCP_PROVIDER`, which the MCP Tool Servers app registers), and
-# without it the native loop has none of them. So "ok", which the Tools page draws as a green
-# "ready", is said only while that provider is on an agent's surface. It is applied where a status
-# is SHOWN, not where it is probed: the probe's result is cached, and the provider comes and goes
-# with its app.
+# (`tool_providers.registry.EXTERNAL_MCP_PROVIDER`, which the built-in MCP Tool Servers app
+# registers), and without it the native loop has none of them. So "ok", which the Tools page draws
+# as a green "ready", is said only while that provider is on an agent's surface. It is applied
+# where a status is SHOWN, not where it is probed: the probe's result is cached, and the provider
+# can be switched off, or can fail to load, after the probe ran.
 
 #: A server PersonalClaw connected to whose tools no agent can call.
 UNSERVED = "unserved"
 
 #: Why, as the Tools page says it. The app is named here, in copy, and nowhere in the predicate.
 UNSERVED_REASON = (
-    "Connected, but no agent can call its tools yet. They reach an agent through the MCP Tool "
-    "Servers app: install it from the Store, or turn it on if it is installed."
+    "Connected, but no agent can call its tools: the built-in MCP Tool Servers provider is "
+    "switched off, or it failed to load. The Tools page shows its load error if it has one."
 )
 
 

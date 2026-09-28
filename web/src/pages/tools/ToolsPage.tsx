@@ -58,12 +58,11 @@ interface Group {
   tier?: string
 }
 
-/** The app that carries every external MCP server's tools to an agent — named in COPY and in a Store
- *  deep link only. Whether an agent can call a server is the gateway's answer (`status: 'unserved'`
- *  when nothing serves those tools), never a check of this name; an unknown `open=` degrades to the
- *  plain Store grid, so a renamed bundle cannot strand anyone. */
-const MCP_TOOLS_APP = { name: 'mcp-tools', label: 'MCP Tool Servers' }
-const MCP_TOOLS_APP_HREF = `#/apps?view=store&open=${MCP_TOOLS_APP.name}`
+/** The built-in app that carries every external MCP server's tools to an agent — named in COPY
+ *  only. Whether an agent can call a server is the gateway's answer (`status: 'unserved'` when
+ *  nothing serves those tools), never a check of this name. It ships with PersonalClaw, so there
+ *  is nothing to install: the only ways it is not serving are a switch-off or a failed load. */
+const MCP_TOOLS_LABEL = 'MCP Tool Servers'
 
 /** Exported for test: which words a server's state comes out as is only observable by rendering. */
 export function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
@@ -795,7 +794,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
         <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} className="shrink-0" />
           <span>
-            No agent can call these tools yet. They reach an agent through the <span className="text-on-surface">{MCP_TOOLS_APP.label}</span> app — <TextLink href={MCP_TOOLS_APP_HREF} ink="emphasis" className="underline">install it from the Store</TextLink>, or turn it on if it is installed.
+            No agent can call these tools right now. They reach an agent through the built-in <span className="text-on-surface">{MCP_TOOLS_LABEL}</span> provider, which is switched off or failed to load. A load error, if there is one, is listed on this page.
           </span>
         </div>
       )}

@@ -58,6 +58,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **MCP Tool Servers ships with PersonalClaw: an MCP server you add or import is one every agent can call, with nothing to install from the Store.**
+
 - **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
 
 - **A subagent works in the workspace unless you add another folder: `agent.subagent_cwd_allowed_roots` is empty by default.**
