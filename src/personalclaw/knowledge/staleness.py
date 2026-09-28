@@ -50,12 +50,12 @@ honest.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 
 from personalclaw.knowledge.semantics import SYNTHESIZED_KINDS, _parse
 from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 

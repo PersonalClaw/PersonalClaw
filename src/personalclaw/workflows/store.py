@@ -18,13 +18,13 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.sqlite_compat import sqlite3
 from personalclaw.workflows.models import (
     NodeInstance,
     RunStatus,

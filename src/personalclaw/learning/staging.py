@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -46,6 +45,7 @@ from typing import Any, Iterator
 
 from personalclaw.config import loader as config_loader
 from personalclaw.learning.hygiene import fingerprint
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 

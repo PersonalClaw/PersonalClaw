@@ -36,7 +36,6 @@ import logging
 import os
 import re
 import shutil
-import sqlite3
 import sys
 import tempfile
 import uuid
@@ -48,6 +47,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.durability import inventory as inv
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 

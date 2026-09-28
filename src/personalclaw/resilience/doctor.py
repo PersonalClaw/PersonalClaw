@@ -31,7 +31,6 @@ import asyncio
 import contextlib
 import enum
 import socket
-import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -40,6 +39,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
 from personalclaw.security import redact_or_withhold
+from personalclaw.sqlite_compat import sqlite3
 
 
 def config_dir() -> Path:
@@ -1292,7 +1292,6 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
     from personalclaw.knowledge.store import knowledge_db_path
     from personalclaw.knowledge.vector_index import VEC_REMEDY, ChunkVectorIndex
     from personalclaw.knowledge.vector_index import probe as vec_probe
-    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
 
     # Through the one helper that owns this path (a second copy of it once split the store's
     # brain), and with `create=False` so a health check never leaves a directory behind.
@@ -1310,7 +1309,7 @@ async def _probe_knowledge_vector_index(ctx: DoctorContext) -> ProbeResult:
             ev["reason"] = cap.reason
         if not (cap.available and db_path.exists()):
             return ev
-        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
         try:
             ev.update(ChunkVectorIndex(conn).coverage())
         finally:
@@ -1692,7 +1691,6 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         rows_from,
     )
     from personalclaw.knowledge.store import knowledge_db_path
-    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
 
     db_path = knowledge_db_path(ctx.home, create=False)
 
@@ -1700,7 +1698,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         ev: dict[str, Any] = {"db_present": db_path.exists()}
         if not db_path.exists():
             return ev
-        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
         stale: list = []
         try:
             has = conn.execute(
@@ -1803,7 +1801,6 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
     on an install that has never used knowledge creates nothing and reports "no projection".
     """
     from personalclaw.knowledge.store import knowledge_db_path
-    from personalclaw.sqlite_compat import sqlite3 as store_sqlite3
 
     db_path = knowledge_db_path(ctx.home, create=False)
 
@@ -1811,7 +1808,7 @@ async def _probe_knowledge_vault(ctx: DoctorContext) -> ProbeResult:
         ev: dict[str, Any] = {"db_present": db_path.exists()}
         if not db_path.exists():
             return ev
-        conn = store_sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
         try:
             has = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vault_projections'"

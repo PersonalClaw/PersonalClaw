@@ -248,7 +248,7 @@ def seed_from_knowledge(graph: MemoryGraph, knowledge_db_path=None) -> int:
     independently rebuildable, so a missing counterpart degrades to a dangling
     label, never a constraint violation.
     """
-    import sqlite3
+    from personalclaw.sqlite_compat import sqlite3
 
     if knowledge_db_path is None:
         try:

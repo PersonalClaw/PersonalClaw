@@ -1,8 +1,8 @@
 """One SQLite binding + capability probe.
 
 Covers the probe against the REAL resolved driver (whatever CI ships) and the
-capability logic against faked drivers, so the doctor line + the six consumers
-that now import ``sqlite3`` from here all share one honest answer.
+capability logic against faked drivers, so the doctor line and every consumer,
+each of which imports ``sqlite3`` from here, share one honest answer.
 """
 
 from __future__ import annotations
@@ -13,13 +13,35 @@ from personalclaw import sqlite_compat
 
 
 def test_all_consumers_share_this_binding():
-    """The six former per-module imports now resolve to this module's driver, so a
-    test that patches SQLite has ONE bind point instead of seven."""
+    """Every module-level binding resolves to this module's driver, so a test that patches
+    SQLite has ONE bind point, and no module opens a store through a second copy of SQLite
+    (``test_every_database_opens_through_one_sqlite.py`` holds the imports themselves)."""
     from personalclaw import memory, portability, snapshot, vector_memory
-    from personalclaw.knowledge import retrieval
+    from personalclaw.codegraph import index
+    from personalclaw.durability import footprint, shards
+    from personalclaw.knowledge import retrieval, staleness
+    from personalclaw.learning import staging
+    from personalclaw.lexicon import store as lexicon_store
     from personalclaw.loop import store
+    from personalclaw.resilience import doctor
+    from personalclaw.workflows import store as workflows_store
 
-    for mod in (snapshot, memory, portability, vector_memory, retrieval, store):
+    for mod in (
+        snapshot,
+        memory,
+        portability,
+        vector_memory,
+        retrieval,
+        store,
+        index,
+        footprint,
+        shards,
+        staleness,
+        staging,
+        lexicon_store,
+        doctor,
+        workflows_store,
+    ):
         assert mod.sqlite3 is sqlite_compat.sqlite3, f"{mod.__name__} bound a different sqlite3"
 
 

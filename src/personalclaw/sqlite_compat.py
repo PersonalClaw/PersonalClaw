@@ -6,6 +6,15 @@ driver choice was decided seven times and a test that patched the stdlib module
 missed the modules that had bound ``pysqlite3``. This module makes that choice
 ONCE: import :data:`sqlite3` from here and every caller shares the same driver.
 
+Every module that opens a database does, and none imports the stdlib's
+(``tests/test_every_database_opens_through_one_sqlite.py`` holds that). Where
+``pysqlite3`` is installed it is a second copy of SQLite in the process, and two
+copies on one database corrupt it: each keeps track of the process's locks on the
+file for its own connections only, so a connection one copy closes takes itself
+for the last one, checkpoints the WAL and deletes it under the other copy's live
+connection. The store's next commit then fails, or goes where no new connection
+reads it.
+
 ``pysqlite3`` (the ``pysqlite3-binary`` wheel) ships a newer SQLite than some
 platforms' bundled stdlib build — notably one WITH FTS5 + JSON1 — which the
 knowledge/memory search paths need. Preferring it when present, falling back to

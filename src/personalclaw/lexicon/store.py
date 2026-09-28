@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
 from dataclasses import dataclass
+
+from personalclaw.sqlite_compat import sqlite3
 
 
 def lexicon_db_path() -> str:

@@ -27,11 +27,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sqlite3
 
 import pytest
 
 from personalclaw.durability import footprint
+
+# The stores' own driver. A test that plays a store on the stdlib's copy of SQLite while the
+# code under test opens the file through the stores' has two copies on one database.
+from personalclaw.sqlite_compat import sqlite3
 
 
 @pytest.fixture

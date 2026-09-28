@@ -29,12 +29,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.durability import inventory
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 

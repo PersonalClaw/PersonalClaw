@@ -8,7 +8,6 @@ on a corrupt archive, and no job can take down the loop that runs it.
 
 import json
 import os
-import sqlite3
 import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +15,10 @@ from pathlib import Path
 import pytest
 
 from personalclaw.durability import retention, service
+
+# The stores' own driver. A test that plays a store on the stdlib's copy of SQLite while the
+# code under test opens the file through the stores' has two copies on one database.
+from personalclaw.sqlite_compat import sqlite3
 
 
 def _snap(directory: Path, when: datetime, *, size: int = 100) -> Path:

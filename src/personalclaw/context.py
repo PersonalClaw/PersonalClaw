@@ -73,7 +73,7 @@ def _attach_vector_store(store: MemoryStore, ws_path) -> None:
 
 def _holds_memory(db: Path) -> bool:
     """Whether the partition database ``db`` holds any memory a vector store wrote."""
-    import sqlite3
+    from personalclaw.sqlite_compat import sqlite3
 
     try:
         # as_uri() percent-encodes the path: a raw "file:" URI reads a "%", "?" or "#" in the

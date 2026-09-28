@@ -119,6 +119,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The judge bench and the model bake-off read a model's cost as unknown when any of its calls had no price, and a model on this machine as free.**
 
 - **The bundled offline model, and a provider instance that names no endpoint and relies on its app's default on this machine, are priced at a known $0 and tried first by local-first routing: pricing, routing and the spend guard's outbound scan decide what runs here by one rule.**
+- **On Linux x86_64, the hourly export, the daily reclaim and every other job that reads a store open it through the same SQLite as the store, so the store's next writes no longer fail or vanish after them.**
 
 - **The spend caps, the Usage page and every turn's cost price a call at the rate you set in `model_rates.json`, and a cap says how many calls it could not price rather than counting them as free.**
 

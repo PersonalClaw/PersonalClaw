@@ -405,12 +405,12 @@ def run_restore_drill(*, notifier=None) -> JobResult:
     reads the archive and writes to its own temp dir.
     """
     import shutil
-    import sqlite3
     import tarfile
     import tempfile
 
     from personalclaw.concurrency import single_flight
     from personalclaw.durability import retention
+    from personalclaw.sqlite_compat import sqlite3
 
     started = time.monotonic()
     with single_flight("durability:drill") as acquired:

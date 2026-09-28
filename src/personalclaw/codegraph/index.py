@@ -15,12 +15,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.codegraph.parse import language_for, parse_source
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 
