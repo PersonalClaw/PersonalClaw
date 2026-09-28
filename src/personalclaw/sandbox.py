@@ -168,6 +168,11 @@ CHILD_ENV_BASE_NAMES: frozenset[str] = frozenset(
         "XDG_DATA_HOME",
         "XDG_RUNTIME_DIR",
         "XDG_STATE_HOME",
+        # What huggingface_hub is told in the gateway (``local_models.hub_env``): send only a
+        # token it is handed, and keep its transfer cache in the home. A model engine a child runs
+        # reads the same two, so it finds no token file outside the home and writes nothing there.
+        "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+        "HF_XET_CACHE",
         # How the network works HERE. Absent on the host this was measured on, but a
         # corporate install has them, and a script that curls or pip-installs without them
         # fails SILENTLY (a hang, then a timeout) — the worst diagnostic shape there is.

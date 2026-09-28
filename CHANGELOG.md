@@ -142,6 +142,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Git over ssh signs in through your SSH agent, and the service install keeps git's own certificate settings.**
 - **The Agents page says why an agent runtime's agents couldn't be listed, instead of "No agents discovered."**
 
+- **An agent runtime on the Agents page that isn't ready says why, instead of a count of 0.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**
@@ -447,6 +449,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **PersonalClaw never starts an agent CLI on its own: a gateway start, the Providers page and `personalclaw doctor` only check that it is installed, and the Test on its card is what starts it.**
 
 - **A Hugging Face download sends only the token PersonalClaw resolved: the library no longer reads `huggingface-cli login`'s token from outside the home by itself.**
+
+- **An agent app's ACP adapter installs from npm only when you install or enable the app, never at a gateway start; a failed install says why on its card, with Retry.**
+
+- **Hugging Face's transfer cache stays in the PersonalClaw home, for the gateway and every process it starts.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

@@ -263,7 +263,8 @@ def test_an_acp_adapter_install_runs_without_the_gateways_secrets(tmp_path, monk
     monkeypatch.setattr(cli_resolve, "resolve_node_ge", lambda *a, **k: str(node_dir / "node"))
     monkeypatch.setattr(cli_resolve, "_managed_bin_dir", lambda: prefix)
 
-    assert cli_resolve.provision_acp_adapter("@fake/acp", ["fake-acp"])
+    with cli_resolve.adapter_installs_allowed():  # installs happen only as an app is enabled
+        assert cli_resolve.provision_acp_adapter("@fake/acp", ["fake-acp"])
 
     seen = _seen(record)
     assert _leaked(seen) == [], "an npm install script read the gateway's secrets"

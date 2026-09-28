@@ -1510,12 +1510,6 @@ def main() -> None:
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
 
-    # Before an app can import huggingface_hub: it sends only a token a caller handed it, never
-    # one it found outside the home by itself.
-    from personalclaw.local_models.hf_token import keep_the_hub_from_finding_tokens
-
-    keep_the_hub_from_finding_tokens()
-
     # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
@@ -1541,6 +1535,13 @@ def main() -> None:
     _home_env = config_dir() / ".env"
     if _home_env.is_file() and _home_env != _cwd_env:
         _load_named_credentials(_home_env)
+
+    # Before an app can import huggingface_hub, and after a `.env` above may have named the home:
+    # the library sends only a token a caller handed it, never one it found outside the home by
+    # itself, and keeps its transfer cache in this home.
+    from personalclaw.local_models.hub_env import keep_the_hub_in_the_home
+
+    keep_the_hub_in_the_home()
 
     # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
     _raw_port = os.environ.get("PERSONALCLAW_PORT")

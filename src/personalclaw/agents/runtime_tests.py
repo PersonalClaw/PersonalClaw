@@ -39,6 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "adapter_install_failed",
     "discovery_failure",
     "last_test",
     "readiness",
@@ -149,6 +150,16 @@ def tested_agents(entry: Any) -> list[dict[str, Any]] | None:
         return None
     agents = last.get("agents")
     return [a for a in agents if isinstance(a, dict)] if isinstance(agents, list) else None
+
+
+def adapter_install_failed(entry: Any) -> dict[str, str] | None:
+    """``{"error", "at"}`` when installing *entry*'s ACP adapter failed as its app was enabled and
+    the runtime still runs through ``npx`` for want of it, else ``None``. Starts nothing, and
+    installs nothing: enabling the app again is what tries once more."""
+    from personalclaw.acp.cli_resolve import adapter_install_failure, npx_package
+
+    package = npx_package(_command_of(entry))
+    return adapter_install_failure(package) if package else None
 
 
 def discovery_failure(entry: Any) -> str | None:

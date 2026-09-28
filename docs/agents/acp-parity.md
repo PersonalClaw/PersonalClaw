@@ -99,9 +99,10 @@ So **both** shipped adapters had moved substantially by 2026-09-19 (`0.60.0 → 
 pin shapes is withdrawn: the pins did not govern either one.
 
 **The adapters are installed per-home — but they are not necessarily *run* from there.** PersonalClaw
-provisions them into `<PERSONALCLAW_HOME>/acp-adapters/node_modules/.bin/`, and on a host with no
-global copy that is the only place they exist, so a reader who checks only `PATH` can wrongly conclude
-they are missing. **The converse is the trap that actually bit a sweep:** where a global or
+provisions them into `<PERSONALCLAW_HOME>/acp-adapters/node_modules/.bin/` as you install or enable
+the app, never at a gateway start (a failed install is kept with its reason, shown on the runtime's
+card with Retry, and reported by `personalclaw doctor`). On a host with no global copy that is the
+only place they exist, so a reader who checks only `PATH` can wrongly conclude they are missing. **The converse is the trap that actually bit a sweep:** where a global or
 node-manager copy *does* resolve (mise shims, `npm -g`), the resolver prefers it, the per-home
 provisioning never runs, and the pinned per-home version is inert. On the 2026-09-19 drive both
 adapters ran from the global mise node install — `claude-agent-acp 0.74.0` while the per-home prefix
@@ -203,7 +204,7 @@ and the adapters in the per-home `npm --prefix` root.
 | **CLI/adapter notices rendered as assistant prose** (codex, DIVERGED) | **STILL DIVERGED.** codex's first assistant chunk is again its own `Warning: Skill descriptions were shortened…`, persisted as assistant text ahead of the answer — reproduced on `codex 0.154.0.488` + adapter `1.12.0`, i.e. 8 CLI minors and 11 adapter minors beyond the build that first measured it (`C4`, `C7`). This is the one cell in this re-drive carried to a verdict, and the finding is that **neither upgrade fixed it** |
 | kiro's advertised runtime id | **Defect found, then FIXED the same day** — the catalog published `acp:kiro`, which no bundle registers, so the id handed to the user could not be bound. The row is now `kiro-cli`/`acp:kiro-cli` and re-driven green. See the kiro section |
 | Adapter actually in use | **`claude-agent-acp 0.74.0`** and **`codex-acp 1.12.0`**, both resolved from the **global** node install — not from the per-home prefix, which held a pinned `0.60.0` that never ran. Read the running process, not the pin |
-| Adapter provenance | Both rows read `state: "unverified"`. That string is the *tell* for the line above: provisioning (and therefore the integrity digest) only runs when the resolver's last resort would be the `npx -y` fallback, so `unverified` means the pin is probably not what is executing |
+| Adapter provenance | Both rows read `state: "unverified"`. That string is the *tell* for the line above: provisioning (and therefore the integrity digest) only runs when the resolver's last resort would be the `npx -y` fallback, and only as the app is installed or enabled, so `unverified` means the pin is probably not what is executing |
 | Host model provider | **None bound.** A plain ACP turn needs none — the external CLI owns the model call — but the background axis refuses with `no model provider resolves for use case 'background'`, the same shape as `C16` |
 
 **Second pass, same day, on a separate isolated home (port `10157`, `398e6b7a6`): four more cells,

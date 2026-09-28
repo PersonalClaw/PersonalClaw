@@ -5101,6 +5101,9 @@ export interface AgentRuntime {
   ready: boolean; state: string; detail: string; login_command: string[] | null
   /** When the user's last Test of it ran (ISO-8601), or `null` when nobody has tested it. */
   tested_at: string | null
+  /** Why installing its ACP adapter failed when its app was enabled — nothing tries again until
+   *  the app is enabled again (the card's Retry) — or `null`. */
+  adapter_install_failed?: { error: string; at: string } | null
 }
 // One BYO-runner catalog row. `health` is MEASURED
 // evidence or `null` for "never probed" — and inside it, `version`/`latency_ms` are

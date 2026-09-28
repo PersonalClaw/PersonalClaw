@@ -25,6 +25,7 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
 }) {
   const [busy, setBusy] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   // Set once Sign in opened the terminal: the card then says how to find out whether it worked.
   const [signingIn, setSigningIn] = useState(false)
   const [measuring, setMeasuring] = useState(false)
@@ -148,6 +149,25 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
       )}
       {signingIn && runtime && runtime.state === 'needs_login' && (
         <div role="status" data-type="caption" className="mt-1 text-on-surface-low">When the sign-in in the terminal finishes, press Test to check it.</div>
+      )}
+      {/* Its ACP adapter installs when the app is enabled and never behind the user's back, so a
+          failed install stays failed until they say again: Retry enables the app again, which is
+          that moment. */}
+      {runtime?.adapter_install_failed && !unavailable && (
+        <div className="mt-2 flex items-start gap-2">
+          <p data-type="caption" className="flex flex-1 items-start gap-1.5" style={{ color: 'var(--color-danger)' }}>
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" /> Its ACP adapter didn't install when you enabled it: {runtime.adapter_install_failed.error}
+          </p>
+          <Button size="xs" variant="secondary" className="shrink-0" loading={retrying} loadingLabel="Installing…"
+            ariaLabel={`Retry installing the adapter: ${who}`} title={`Enables ${who} again, which installs its ACP adapter`}
+            onClick={async () => {
+              setRetrying(true)
+              try { if (await reportingWrite(`install the adapter for ${who}`, () => api.enableApp(ext.name))) onChanged() }
+              finally { setRetrying(false) }
+            }}>
+            Retry
+          </Button>
+        </div>
       )}
       {ext.error && <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
 

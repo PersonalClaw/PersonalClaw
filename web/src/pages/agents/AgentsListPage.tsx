@@ -210,10 +210,17 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                 {discovered.map((g) => {
                   const pm = providerMeta(g.providerId)
                   const items = g.agents.filter(agentMatch)
+                  // Its agents are known only when the runtime is ready and its last Test listed
+                  // them. Otherwise the group says what is wrong, and shows no count: "0" would say
+                  // it offers none.
+                  const known = g.ready && !g.failure
                   return (
-                    <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={items.length}
-                      subtitle={g.ready ? 'Provided by the runtime — read-only.' : g.state === 'untested' ? g.detail : `Unavailable — ${g.detail || 'runtime not ready'}`} ready={g.ready}>
-                      {!g.ready ? null : g.failure ? (
+                    <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={known ? items.length : undefined}
+                      subtitle="Provided by the runtime — read-only."
+                      badge={g.ready ? undefined : g.state === 'untested' ? 'not tried yet' : 'unavailable'}>
+                      {!g.ready ? (
+                        <p className="text-on-surface-low text-[0.8125rem]">{g.detail || 'This runtime is not ready.'}</p>
+                      ) : g.failure ? (
                         // The agents are unknown, so this says why rather than "No agents discovered".
                         <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{g.failure}</p>
                       ) : items.length === 0 ? (
@@ -240,16 +247,18 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
   )
 }
 
-function GroupSection({ title, icon: Icon, tone, subtitle, count, ready = true, children }: {
-  title: string; icon: typeof Users; tone: string; subtitle: string; count: number; ready?: boolean; children: React.ReactNode
+/** A group of agents. `count` is how many it shows — left out when they are not known, since a
+ *  number there would claim one — and `badge` names a state that keeps them from being listed. */
+function GroupSection({ title, icon: Icon, tone, subtitle, count, badge, children }: {
+  title: string; icon: typeof Users; tone: string; subtitle: string; count?: number; badge?: string; children: React.ReactNode
 }) {
   return (
     <section>
       <div className="mb-m flex items-center gap-s">
         <Icon size={16} style={{ color: tone }} />
         <span className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</span>
-        <span className="text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
-        {!ready && <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={11} /> unavailable</span>}
+        {count !== undefined && <span className="text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>}
+        {badge && <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><Lock size={11} /> {badge}</span>}
         <span className="ml-auto text-on-surface-low text-[0.75rem]">{subtitle}</span>
       </div>
       {children}

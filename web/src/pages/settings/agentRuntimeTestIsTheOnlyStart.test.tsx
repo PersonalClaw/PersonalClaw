@@ -75,3 +75,31 @@ describe("an agent runtime's card", () => {
     expect(screen.queryByRole('button', { name: /^Test:/ })).toBeNull()
   })
 })
+
+// ── Its ACP adapter installs when you enable the app, and a failed install waits for you ────────
+//
+// The adapter used to be npm-installed at every gateway start while it was missing, silently, and
+// a failure left no trace. It now installs only as the app is enabled; a failure is kept with its
+// reason, the card says it, and Retry — enabling the app again, the same moment — is what tries
+// once more.
+
+describe("an agent runtime whose ACP adapter did not install", () => {
+  const failed = { error: 'npm install exited 1: npm ERR! 404 Not Found', at: '2026-09-28T10:00:00+00:00' }
+
+  it('says why, and offers a Retry that enables the app again', async () => {
+    const { api } = await import('../../lib/api')
+    const enable = vi.spyOn(api, 'enableApp').mockResolvedValue({ ok: true, providerErrors: [] })
+    mount(runtime({ adapter_install_failed: failed }))
+    expect(screen.getByText(/didn't install when you enabled it: npm install exited 1: npm ERR! 404 Not Found/)).toBeTruthy()
+    const retry = screen.getByRole('button', { name: 'Retry installing the adapter: Demo CLI' })
+    expect(retry.getAttribute('title')).toBe('Enables Demo CLI again, which installs its ACP adapter')
+    expect(enable, 'nothing retries it by itself').not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(retry) })
+    expect(enable).toHaveBeenCalledWith('demo-cli-agent')
+  })
+
+  it('offers no Retry when nothing failed', () => {
+    mount(runtime())
+    expect(screen.queryByRole('button', { name: /^Retry installing the adapter/ })).toBeNull()
+  })
+})

@@ -985,8 +985,13 @@ def install(
         _write_installed(name, meta)
         # Start what the app runs — its providers, prompts, skills (through the supply-chain
         # chokepoint at the origin just recorded), MCP servers, proposal kinds, backend and
-        # worker — from these files: the same load an enable and an update use.
-        app_runtime.load(manifest)
+        # worker — from these files: the same load an enable and an update use. Installing it
+        # enables it, the moment the user said yes, so its providers may install the ACP adapter
+        # they need here, and at no later start.
+        from personalclaw.acp.cli_resolve import adapter_installs_allowed
+
+        with adapter_installs_allowed():
+            app_runtime.load(manifest)
         if replaced:
             app_runtime.note_restart(name, [_replaced_packages(replaced)])
         # Record this app against each shared dependency it declares (A3 ledger),
@@ -2017,13 +2022,19 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
     meta.updatedAt = _now_iso()
     _write_installed(name, meta)
     if manifest is not None:
-        if was_enabled:
-            # Already running — a provider whose start failed is switched on again from Settings →
-            # Providers. Reloaded from its files, not retried on the code that failed: a second
-            # load on top of the first would leave the first load's instances running.
-            app_runtime.reload(name, manifest)
-        else:
-            app_runtime.load(manifest)
+        # Enabling is the moment the user said yes, so the app's providers may install the ACP
+        # adapter they need here — and only here and at install: a gateway start never does.
+        from personalclaw.acp.cli_resolve import adapter_installs_allowed
+
+        with adapter_installs_allowed():
+            if was_enabled:
+                # Already running — a provider whose start failed (or whose adapter did not
+                # install) is switched on again from Settings → Providers. Reloaded from its
+                # files, not retried on the code that failed: a second load on top of the first
+                # would leave the first load's instances running.
+                app_runtime.reload(name, manifest)
+            else:
+                app_runtime.load(manifest)
     _audit("enable", "ok", name, caller=caller)
     return True
 

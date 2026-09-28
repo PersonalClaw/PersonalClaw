@@ -98,6 +98,38 @@ describe("a runtime's agents that could not be listed are said to be unknown, wi
   })
 })
 
+describe("a runtime whose agents are not known shows no count, and says why", () => {
+  // Its header used to read "0" — for a runtime nobody had tried, one that needs a sign-in, and
+  // one whose agents could not be listed alike — which says the runtime offers none.
+  const runtime = (over: Record<string, unknown>) => ({ name: 'acp:demo-cli', provider_id: 'acp:demo-cli', type: 'acp_agent', extension: 'demo-cli-agent', ready: false, state: 'untested', detail: '', login_command: null, tested_at: null, ...over })
+  const header = async (title: string) => (await screen.findByText(title, { selector: 'span' })).parentElement as HTMLElement
+  const countIn = (row: HTMLElement) => row.querySelector('.tabular-nums')?.textContent ?? null
+  // providerMeta's label for an `acp:<cli>` runtime it has no brand for: the cli name, title-cased.
+  const title = 'Demo Cli'
+
+  it.each([
+    ['untested', "Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers).", 'not tried yet'],
+    ['needs_login', 'demo-cli: sign in first', 'unavailable'],
+  ])('%s: the reason in place of a count', async (state, detail, badge) => {
+    mockApi({ agentProviders: () => Promise.resolve([runtime({ state, detail })]) })
+    await mount()
+    await waitFor(() => expect(screen.getByText(detail)).toBeInTheDocument())
+    const row = await header(title)
+    expect(countIn(row), 'no count for agents nobody listed').toBeNull()
+    expect(row.textContent).toContain(badge)
+  })
+
+  it('a ready runtime whose agents were listed still shows how many', async () => {
+    mockApi({
+      agentProviders: () => Promise.resolve([runtime({ ready: true, state: 'ready', tested_at: '2026-09-28T10:00:00+00:00' })]),
+      agentProviderAgents: () => Promise.resolve({ agents: [], permission_modes: [], tested_at: '2026-09-28T10:00:00+00:00' }),
+    })
+    await mount()
+    await waitFor(() => expect(screen.getByText('No agents discovered.')).toBeInTheDocument())
+    expect(countIn(await header(title))).toBe('0')
+  })
+})
+
 describe('the adapter no longer swallows, and neither does its fetcher', () => {
   const src = readFileSync(join(process.cwd(), 'src/pages/agents/agentsData.ts'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

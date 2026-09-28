@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 #: The credential-store key the managed token is written under: ``HF_TOKEN``, the name the Hugging
 #: Face tools use for it. A set here unblocks a gated download without a restart, because every
 #: download passes :func:`resolve_token`'s answer, which reads the store each time; the library's
-#: own lookup is off (:func:`keep_the_hub_from_finding_tokens`).
+#: own lookup is off (``local_models.hub_env``).
 CREDENTIAL_NAME = "HF_TOKEN"
 
 #: Environment variables read as source 2 (the current name first, then the legacy one HF
@@ -105,26 +105,6 @@ class HfTokenResolution:
     source: str
     username: str
     valid: bool
-
-
-#: ``huggingface_hub``'s switch for a call that passes no token. Off, the library looks one up
-#: itself — the environment, then ``huggingface-cli login``'s token file in the Hugging Face folder
-#: other tools share — and sends it. That file is outside the home, and PersonalClaw reads it only
-#: once the owner allows that folder; the library's lookup does not ask. Every app passes the
-#: token :func:`resolve_token` answers, or ``False``, but libraries built on the hub make calls of
-#: their own that pass none (a tokenizer listing a model's files, a model card asking about its
-#: base model), and no app can reach those.
-HUB_IMPLICIT_TOKEN_SWITCH = "HF_HUB_DISABLE_IMPLICIT_TOKEN"
-
-
-def keep_the_hub_from_finding_tokens() -> None:
-    """Make ``huggingface_hub``, in this process, send only a token a caller handed it.
-
-    Called first thing by every ``personalclaw`` command, the gateway included, so it is set
-    before any app imports the library (which reads it once, at import) and the setting of the
-    process that started this one is overridden rather than trusted.
-    """
-    os.environ[HUB_IMPLICIT_TOKEN_SWITCH] = "1"
 
 
 def mask_token(token: str) -> str:

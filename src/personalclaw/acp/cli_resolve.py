@@ -27,10 +27,15 @@ may not be on the daemon PATH.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import json
 import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 
@@ -38,8 +43,11 @@ __all__ = [
     "resolve_acp_cli",
     "node_argv_for_script",
     "is_npx_fallback",
+    "npx_package",
     "resolve_node_ge",
     "provision_acp_adapter",
+    "adapter_installs_allowed",
+    "adapter_install_failure",
 ]
 
 logger = logging.getLogger(__name__)
@@ -234,6 +242,13 @@ def resolve_acp_cli(
     return None
 
 
+def npx_package(argv: list[str] | None) -> str:
+    """The npm package an ``npx -y <pkg>`` argv fetches, or ``""`` for any other argv."""
+    if not is_npx_fallback(argv):
+        return ""
+    return next((str(part) for part in (argv or [])[1:] if not str(part).startswith("-")), "")
+
+
 def is_npx_fallback(argv: list[str] | None) -> bool:
     """True when *argv* is the ``npx -y <pkg>`` last-resort, not a real adapter.
 
@@ -296,6 +311,80 @@ def _managed_bin_dir() -> Path:
     return config_dir() / "acp-adapters"
 
 
+#: Whether the user is installing or enabling an app right now — the one moment an ACP adapter
+#: may be installed (:func:`adapter_installs_allowed`). Off everywhere else, a gateway start
+#: included, so an adapter whose install failed is never tried again behind the user's back.
+_INSTALLS_ALLOWED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "pclaw_acp_adapter_installs_allowed", default=False
+)
+
+#: Beside the provenance lock in the managed prefix: why the last install of each adapter failed.
+INSTALL_FAILURES_NAME = ".pclaw-install-failures.json"
+
+
+@contextlib.contextmanager
+def adapter_installs_allowed() -> Iterator[None]:
+    """While the user installs or enables an app, let its providers install the ACP adapter they
+    need (:func:`provision_acp_adapter`). ``app_manager`` holds this around the load an install
+    and an enable end with, and nothing else does: that is the moment the user said yes."""
+    token = _INSTALLS_ALLOWED.set(True)
+    try:
+        yield
+    finally:
+        _INSTALLS_ALLOWED.reset(token)
+
+
+def _install_failures_path() -> Path:
+    return _managed_bin_dir() / INSTALL_FAILURES_NAME
+
+
+def _read_install_failures() -> dict:
+    try:
+        raw = json.loads(_install_failures_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_install_failures(failures: dict) -> None:
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        _managed_bin_dir().mkdir(parents=True, exist_ok=True)
+        atomic_write(
+            _install_failures_path(), json.dumps(failures, indent=2, sort_keys=True) + "\n"
+        )
+    except Exception:  # noqa: BLE001 - the install's answer still reaches the caller
+        logger.warning("acp adapter install failures could not be recorded", exc_info=True)
+
+
+def _install_failed(npm_pkg: str, reason: str) -> None:
+    """Remember why installing *npm_pkg* failed, so its app's card can say so and offer Retry."""
+    logger.warning("acp adapter %s: install failed — %s", npm_pkg, reason)
+    failures = _read_install_failures()
+    failures[npm_pkg] = {
+        "error": reason,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    _write_install_failures(failures)
+
+
+def _install_succeeded(npm_pkg: str) -> None:
+    failures = _read_install_failures()
+    if failures.pop(npm_pkg, None) is not None:
+        _write_install_failures(failures)
+
+
+def adapter_install_failure(npm_pkg: str) -> dict | None:
+    """``{"error", "at"}`` for the last failed install of *npm_pkg*, or ``None``.
+
+    Kept until an install of it succeeds. A read: it installs and retries nothing."""
+    found = _read_install_failures().get(npm_pkg) if npm_pkg else None
+    if not isinstance(found, dict) or not found.get("error"):
+        return None
+    return {"error": str(found["error"]), "at": str(found.get("at") or "")}
+
+
 def provision_acp_adapter(
     npm_pkg: str,
     bin_names: list[str],
@@ -303,30 +392,31 @@ def provision_acp_adapter(
     pin_version: str = "",
     expected_integrity: str = "",
 ) -> str | None:
-    """Install *npm_pkg* under a Node ≥20 interpreter into the managed prefix.
+    """The adapter *npm_pkg* installed in the managed prefix, installing it under a Node ≥20
+    when the user is installing or enabling its app. Returns its binary's path, else None.
 
-    Returns the resolved adapter binary path on success, else None. Idempotent:
-    if the adapter is already present in the managed prefix it is returned without
-    re-installing. The install runs ``npm install --prefix <managed>`` with a
-    Node ≥20 on PATH (:func:`resolve_node_ge`) so it never trips ``EBADENGINE``,
-    and writes to a private prefix so a wedged global/npx cache can't block it.
+    Idempotent: an adapter already in the managed prefix is returned without re-installing. An
+    install happens only inside :func:`adapter_installs_allowed` — the consent moment; at any
+    other time (a gateway start, an update) this returns the installed adapter or None, so a
+    failed install is never retried behind the user's back. A failure is remembered with its
+    reason (:func:`adapter_install_failure`) until an install succeeds; the app's card says so
+    and offers Retry, which enables the app again.
 
-    This is the "an adapter provisions its own dependency" path: a bundle whose
-    only resolution would be the npx fallback calls this once to turn the transient
-    fetch-and-run into a durable on-disk install. Best-effort; never raises.
+    The install runs ``npm install --prefix <managed>`` with a Node ≥20 on PATH
+    (:func:`resolve_node_ge`) so it never trips ``EBADENGINE``, and writes to a private prefix
+    so a wedged global/npx cache can't block it. Best-effort; never raises.
 
     Set ``PERSONALCLAW_ACP_NO_PROVISION=1`` to disable — for tests/CI (no network
     installs as a side effect) and frozen/desktop builds (a locked environment
     where a runtime ``npm install`` is undesirable). When disabled, an already-
     provisioned adapter is still returned (idempotent read), but nothing installs.
 
-    ``pin_version`` / ``expected_integrity`` carry a catalog row's adapter pin
-    (EXECUTION-ISOLATION §3.1(4)). A pinned version is installed as
-    ``<pkg>@<version>`` rather than the floating latest, and the install's provenance
-    is recorded into the managed prefix's ``.pclaw-lock.json`` afterwards so
-    :func:`personalclaw.agents.runners.verify_adapter` can prove later that the
-    adapter on disk is still the one that was installed. A pin MISMATCH records
-    nothing — the adapter stays unverified rather than being blessed by the recording.
+    ``pin_version`` / ``expected_integrity`` carry a catalog row's adapter pin. A pinned
+    version is installed as ``<pkg>@<version>`` rather than the floating latest, and the
+    install's provenance is recorded into the managed prefix's ``.pclaw-lock.json`` afterwards
+    so :func:`personalclaw.agents.runners.verify_adapter` can prove later that the adapter on
+    disk is still the one that was installed. A pin MISMATCH records nothing — the adapter
+    stays unverified rather than being blessed by the recording.
     """
     prefix = _managed_bin_dir()
     bin_dir = prefix / "node_modules" / ".bin"
@@ -343,20 +433,26 @@ def provision_acp_adapter(
         )
         return None
 
+    if not _INSTALLS_ALLOWED.get():
+        logger.debug(
+            "acp adapter %s: not installing — an adapter installs only when you enable its app",
+            npm_pkg,
+        )
+        return None
+
     node = resolve_node_ge()
     if not node:
-        logger.warning(
-            "acp adapter %s: cannot auto-provision — no Node >= %d found "
-            "(install a newer Node or set the adapter's *_ACP_BIN override)",
+        _install_failed(
             npm_pkg,
-            _MIN_NODE_MAJOR,
+            f"no Node {_MIN_NODE_MAJOR} or newer was found, and the adapter needs it: install "
+            "a newer Node, or set the app's adapter path",
         )
         return None
     npm = shutil.which(
         "npm", path=os.pathsep.join([str(Path(node).parent), os.environ.get("PATH", "")])
     )
     if not npm:
-        logger.warning("acp adapter %s: npm not found alongside %s", npm_pkg, node)
+        _install_failed(npm_pkg, f"npm was not found beside {node}")
         return None
 
     try:
@@ -389,15 +485,28 @@ def provision_acp_adapter(
         if proc.returncode != 0:
             from personalclaw.security import mask_child_output
 
-            logger.warning(
-                "acp adapter %s: provisioning failed (rc=%d): %s",
+            # What npm printed is not PersonalClaw's text: masked before it is kept, shown on
+            # the app's card and printed by doctor, and its lines joined into one to read there.
+            said = " ".join(
+                line.strip()
+                for line in mask_child_output(
+                    proc.stderr or proc.stdout, limit=400, tail=True, one_line=False
+                ).split("\n")
+                if line.strip()
+            )
+            _install_failed(
                 npm_pkg,
-                proc.returncode,
-                mask_child_output(proc.stderr, limit=400, tail=True),
+                f"npm install exited {proc.returncode}" + (f": {said}" if said else ""),
             )
             return None
-    except Exception:
-        logger.warning("acp adapter %s: provisioning errored", npm_pkg, exc_info=True)
+    except subprocess.TimeoutExpired:
+        _install_failed(npm_pkg, "npm install ran past 180 seconds and was stopped")
+        return None
+    except Exception as exc:  # noqa: BLE001 - the failure is remembered and said
+        from personalclaw.security import mask_child_output
+
+        logger.debug("acp adapter %s: provisioning errored", npm_pkg, exc_info=True)
+        _install_failed(npm_pkg, f"npm install could not run: {mask_child_output(str(exc))}")
         return None
 
     # Record what npm actually installed BEFORE returning the path, so the very first
@@ -422,6 +531,9 @@ def provision_acp_adapter(
         cand = bin_dir / name
         if cand.exists() and os.access(cand, os.X_OK):
             logger.info("acp adapter %s: provisioned → %s", npm_pkg, cand)
+            _install_succeeded(npm_pkg)
             return str(cand)
-    logger.warning("acp adapter %s: installed but no bin found in %s", npm_pkg, bin_dir)
+    _install_failed(
+        npm_pkg, f"npm installed it, but no {' or '.join(bin_names)} command came with it"
+    )
     return None

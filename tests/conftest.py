@@ -700,6 +700,18 @@ def _disable_live_writes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hub_env_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ``personalclaw`` command sets what huggingface_hub is told (``local_models.hub_env``)
+    in ``os.environ``, and a test that drives ``cli.main()`` would leave it set for every test after
+    it in the worker — the transfer cache pointed at that test's home. Unset here, so teardown puts
+    back what the process had, whatever the test set."""
+    from personalclaw.local_models.hub_env import HUB_ENV_NAMES
+
+    for name in HUB_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_acp_provision(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never auto-provision (npm-install) ACP adapters during tests — provisioning
     is a real network + filesystem side effect (writes to the managed prefix under
