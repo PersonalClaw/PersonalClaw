@@ -23,7 +23,9 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -175,20 +177,67 @@ def _reads_its_config(fn: ast.FunctionDef) -> bool:
     return bool(params & used)
 
 
+def _leaves(node: Any) -> Iterator[Any]:
+    """Every scalar in a JSON document, however deep."""
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _leaves(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _leaves(value)
+    else:
+        yield node
+
+
+def _mcp_card_fields_its_store_drops(properties: dict[str, Any]) -> list[str]:
+    """The MCP Tool Servers card's fields whose value never reaches the server entry it saves.
+
+    That card's settings are not factory config. Its instance routes save them through
+    `providers/mcp_instances` into `mcp.json`, the file the MCP client starts servers from, and
+    the tool handler builds its one provider over every configured server without them. So each
+    field is saved alone through that store, set to a value its schema allows other than the
+    default, and the value must be in the entry that lands in the file.
+    """
+    from personalclaw.config import loader as config_loader
+    from personalclaw.providers import mcp_instances
+
+    dropped: list[str] = []
+    for field, schema in sorted(properties.items()):
+        others = [v for v in schema.get("enum") or [] if v != schema.get("default")]
+        # Saving starts nothing, and a value no command, path or host resolves keeps it so.
+        value = others[0] if others else f"/nonexistent/rail-{field}"
+        mcp_instances.create_instance(f"rail-{field}", {field: value})
+        saved = json.loads((config_loader.config_dir() / "mcp.json").read_text(encoding="utf-8"))
+        if value not in list(_leaves(saved["mcpServers"][f"rail-{field}"])):
+            dropped.append(field)
+    return dropped
+
+
 def _audit(native_root: Path) -> tuple[list[str], list[str], list[str]]:
-    """``(read, discarded, unresolved)`` — apps whose declared settings reach their factory,
-    apps whose factory ignores them, and apps whose factory could not be found."""
+    """``(read, discarded, unresolved)`` — apps whose declared settings reach their reader,
+    apps whose reader ignores them, and apps whose reader could not be found."""
+    from personalclaw.providers.mcp_instances import MCP_TOOLS_EXTENSION
+
     read: list[str] = []
     discarded: list[str] = []
     unresolved: list[str] = []
     for manifest_path in sorted(native_root.glob("*/app.json")):
-        provider = json.loads(manifest_path.read_text(encoding="utf-8")).get("provider") or {}
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        provider = manifest.get("provider") or {}
         properties = (provider.get("settingsSchema") or {}).get("properties") or {}
         # An ACTION provider's settingsSchema is not factory config: it is the per-fire action
         # config a trigger stores and hands to `execute(config, …)` on every fire.
         if not properties or provider.get("type") == "action":
             continue
         name = manifest_path.parent.name
+        # Keyed on the name the instance routes and the tool handler route this card by.
+        if manifest.get("name") == MCP_TOOLS_EXTENSION:
+            dropped = _mcp_card_fields_its_store_drops(properties)
+            if dropped:
+                discarded.append(f"{name}: {dropped}")
+            else:
+                read.append(name)
+            continue
         fn = _factory(manifest_path.parent, str(provider.get("implementation") or ""))
         if fn is None:
             unresolved.append(name)
@@ -200,20 +249,24 @@ def _audit(native_root: Path) -> tuple[list[str], list[str], list[str]]:
 
 
 def test_no_core_app_declares_a_setting_its_factory_discards():
-    """The registry hands an app's saved provider settings to its factory and to nothing else
+    """The registry hands an app's saved provider settings to its factory
     (`providers/registry.py`: `factory(config)`), so a factory that never reads its argument
-    turns every declared field into a control that saves and does nothing."""
+    turns every declared field into a control that saves and does nothing. One card saves
+    somewhere else: MCP Tool Servers, whose routes write its fields into `mcp.json`
+    (`providers/mcp_instances`). That store is its reader, and the rail measures it field by
+    field."""
     read, discarded, unresolved = _audit(_NATIVE)
     assert (
         not unresolved
     ), f"factories this census could not find, so it measured nothing: {unresolved}"
-    # VACUITY FLOOR: the providers whose settings ARE read must be seen as reading them.
-    assert {"bundled-chat", "ollama-models"} <= set(read), read
     assert not discarded, (
-        f"these core apps declare settings their factory never reads: {discarded}. Wire the "
+        f"these core apps declare settings that never reach a reader: {discarded}. Wire the "
         "field to its reader or delete it — a saved value nothing reads is a promise the code "
         "ignores."
     )
+    # VACUITY FLOOR: the providers whose settings ARE read must be seen as reading them, the
+    # MCP card's fields included, each found in the entry it saved.
+    assert {"bundled-chat", "ollama-models", "mcp-tools"} <= set(read), read
 
 
 def test_the_family_rail_catches_a_factory_that_discards_its_settings(tmp_path):
@@ -238,3 +291,20 @@ def test_the_family_rail_catches_a_factory_that_discards_its_settings(tmp_path):
     )
     read, discarded, unresolved = _audit(tmp_path)
     assert discarded == ["planted-app: ['threshold']"] and not read and not unresolved
+
+
+def test_the_family_rail_catches_an_mcp_card_field_its_store_drops(tmp_path):
+    """The MCP card's positive control: its real fields plus a planted one the store never
+    writes. The rail passes the real ones and names only the planted one, so following the card
+    to `mcp.json` measures each field rather than passing the card."""
+    real = json.loads((_NATIVE / "mcp-tools" / "app.json").read_text(encoding="utf-8"))
+    schema = real["provider"]["settingsSchema"]
+    planted = {**schema, "properties": {**schema["properties"], "cwd": {"type": "string"}}}
+    app = tmp_path / "mcp-tools"
+    app.mkdir()
+    (app / "app.json").write_text(
+        json.dumps({**real, "provider": {**real["provider"], "settingsSchema": planted}}),
+        encoding="utf-8",
+    )
+    read, discarded, unresolved = _audit(tmp_path)
+    assert discarded == ["mcp-tools: ['cwd']"] and not read and not unresolved
