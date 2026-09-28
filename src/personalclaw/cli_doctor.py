@@ -901,10 +901,10 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     # STT resolves through the typed registry: enabled lives in
     # use_case_settings/stt.json, the active model in active_models.json.
     print("\nSpeech-to-Text")
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.stt.registry import active_stt
 
-    stt_active = bool(load_use_case_settings("stt").get("enabled", True))
+    stt_active = use_case_enabled("stt", load_use_case_settings("stt"))
     stt_resolved = active_stt()
 
     if not stt_active:

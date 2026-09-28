@@ -43,11 +43,11 @@ def ensure_ffmpeg_in_path() -> None:
 
 def _bound_provider():
     """The active STT provider, when STT is enabled and a model is bound; else ``None``."""
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.stt.registry import active_stt
 
     settings = load_use_case_settings("stt")
-    if not settings.get("enabled", True):
+    if not use_case_enabled("stt", settings):
         return None
     resolved = active_stt()
     return resolved[0] if resolved is not None else None
@@ -95,7 +95,7 @@ async def unavailable_sentence() -> str:
     reason = await unavailable_reason()
     if reason:
         return reason
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.stt.registry import active_stt
 
     if active_stt() is None:
@@ -103,7 +103,7 @@ async def unavailable_sentence() -> str:
             "No speech-to-text model is chosen, so nothing can be transcribed. Choose one under "
             "Speech-to-text in Settings → Models."
         )
-    if not load_use_case_settings("stt").get("enabled", True):
+    if not use_case_enabled("stt", load_use_case_settings("stt")):
         return (
             "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → Speech & "
             "Transcription."
@@ -127,11 +127,11 @@ async def transcribe_audio(audio_path: str) -> str | None:
     :class:`~personalclaw.stt.provider.SttError`, and it reaches the caller unchanged: the
     caller shows the reason instead of reading the failure as a recording with no speech.
     """
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.stt.registry import active_stt
 
     settings = load_use_case_settings("stt")
-    if not settings.get("enabled", True):
+    if not use_case_enabled("stt", settings):
         logger.debug("STT disabled in settings")
         return None
 
@@ -179,11 +179,11 @@ async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | 
     the segmented path OFFSETS each chunk's segment/word times by the chunk's start so the
     merged timeline is continuous. ``bias_terms`` is the Lexicon pre-decode hint (L2).
     Like :func:`transcribe_audio`, a provider's ``SttError`` reaches the caller unchanged."""
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.stt.registry import active_stt
 
     settings = load_use_case_settings("stt")
-    if not settings.get("enabled", True):
+    if not use_case_enabled("stt", settings):
         logger.debug("STT disabled in settings")
         return None
 

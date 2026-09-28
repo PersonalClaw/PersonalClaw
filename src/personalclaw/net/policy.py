@@ -308,6 +308,23 @@ LISTING = EgressPolicy(
     timeout_s=120.0,
 )
 
+# A generated image or video a provider's answer points at, fetched once so the artifact outlives
+# the URL (`mcp_artifacts._materialize_image` / `_materialize_video`). The URL is the provider's
+# data, not the owner's, so this is STRICT's public-only stance, with the metadata service refused
+# by name as for LISTING. Its ceilings are sized for a generated clip, which a page cap cuts off:
+#   * `max_bytes=200_000_000` — a generated video runs to tens of megabytes. Under CONNECTOR's
+#     10 MB a longer clip was cut short, and the cut file was saved as though it were the video.
+#     What passes this cap is refused whole, never kept in part (the materializers check
+#     `FetchResponse.truncated`).
+#   * `timeout_s=180.0` — the download is one file of that size, not a page; 20 s failed a clip
+#     over a slow connection that 180 s carries.
+MEDIA = EgressPolicy(
+    name="media",
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_bytes=200_000_000,
+    timeout_s=180.0,
+)
+
 # A remote MCP server's OAuth SIGN-IN (`mcp_oauth`): the challenge sent to the server, the metadata
 # it and its authorization server publish, the client registration and every token request, at
 # sign-in and at each refresh. Apart from the server itself, every URL here is one the server's
@@ -344,6 +361,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         BROWSE,
         FETCH_ACTION,
         LISTING,
+        MEDIA,
         MCP_SIGN_IN,
     )
 }

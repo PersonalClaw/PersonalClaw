@@ -163,7 +163,7 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
     a reference clip to a non-cloning engine would be the silent wrong-voice
     synthesis the plan forbids.
     """
-    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
     from personalclaw.voice.bindings import resolve_profile_id
     from personalclaw.voice.profiles import artifact_path, get_profile
 
@@ -197,7 +197,7 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
         "voice": voice_id,
         "speed": speed,
         "speech_voice": str(settings.get("speech_voice", "") or ""),
-        "enabled": bool(settings.get("enabled", False)),
+        "enabled": use_case_enabled("tts", settings),
         "auto_speak": bool(settings.get("auto_speak", False)),
     }
     if profile is None:

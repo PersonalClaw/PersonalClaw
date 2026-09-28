@@ -502,7 +502,9 @@ chokepoint:
   base list, so an unconfigured instance reaches nowhere), `LISTING` (git
   fetching an app from where a registry listing says it lives — public hosts
   only, plus the owner's allow-list and the host of the registry source they
-  added).
+  added), `MEDIA` (a generated image or video a provider's answer points at —
+  public hosts only, sized for a clip at 200 MB and 180 s; a larger file is
+  refused whole, never saved cut off).
 - `net/git.py` is the same chokepoint for `git`, which owns its sockets: it
   resolves names itself and follows redirects, so a check made before
   `git clone` checks a name, not the connection. `run_git_guarded` points git

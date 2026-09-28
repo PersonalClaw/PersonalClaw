@@ -561,12 +561,82 @@ def _run_async(coro: Any) -> Any:
         return pool.submit(asyncio.run, coro).result()
 
 
+class _MediaNotSaved(Exception):
+    """A generated image or video that was made and could not be saved; its text is the sentence
+    saying why, which the materializers' callers answer with."""
+
+
+_EGRESS_SETTINGS = "Settings → Security → Network egress"
+
+
+def _fetch_generated(url: str, *, what: str, smaller: str) -> tuple[bytes, str]:
+    """The whole file at ``url``, the address a provider's answer gave for the ``what`` it made,
+    and the content type it came with.
+
+    Fetched through the egress guard under :data:`~personalclaw.net.policy.MEDIA`, the operator's
+    own egress settings layered on. A file larger than that cap is refused, never kept in part:
+    under CONNECTOR's 10 MB a longer clip was cut short and the cut file saved as the video.
+    ``smaller`` is the next step for one over the cap. Raises :class:`_MediaNotSaved`.
+    """
+    from urllib.parse import urlsplit
+
+    from personalclaw.net import EgressBlocked, fetch
+    from personalclaw.net.policy import MEDIA, egress_policy_for
+    from personalclaw.providers.failure_copy import sentence_with_detail
+
+    policy = egress_policy_for(MEDIA)
+    host = urlsplit(url).hostname or "its address"
+    try:
+        resp = _run_async(fetch(url, policy=policy))
+    except EgressBlocked as e:
+        if e.decision.category == "unresolvable":
+            sentence = (
+                f"The {what} was made, but its host {host} couldn't be found, so it was not "
+                f"saved. Check this computer's internet connection, then generate the {what} "
+                "again."
+            )
+        else:
+            sentence = (
+                f"The {what} was made, but PersonalClaw's network settings refused its download "
+                f"from {host}, so it was not saved. Check Allowed hosts and Denied hosts in "
+                f"{_EGRESS_SETTINGS}, then generate the {what} again."
+            )
+        raise _MediaNotSaved(sentence_with_detail(sentence, e)) from e
+    except Exception as e:  # noqa: BLE001 — a transport failure is said, with its words
+        raise _MediaNotSaved(
+            sentence_with_detail(
+                f"The {what} was made, but downloading it from {host} failed, so it was not "
+                f"saved. Check this computer's internet connection, then generate the {what} "
+                "again.",
+                e,
+            )
+        ) from e
+    if resp.truncated:
+        raise _MediaNotSaved(
+            f"The {what} is larger than {policy.max_bytes // 1_000_000} MB, the most PersonalClaw "
+            f"saves from a generation, so it was not saved. {smaller}"
+        )
+    if resp.status != 200:
+        raise _MediaNotSaved(
+            f"The {what} was made, but its download from {host} answered HTTP {resp.status}, so "
+            f"it was not saved. Generate the {what} again: the address a provider hands back can "
+            "expire."
+        )
+    if not resp.body:
+        raise _MediaNotSaved(
+            f"The {what}'s download from {host} came back empty, so nothing was saved. Generate "
+            f"the {what} again."
+        )
+    return resp.body, resp.headers.get("Content-Type", "").split(";")[0].strip()
+
+
 def _materialize_image(result: Any) -> tuple[bytes, str] | None:
     """Turn an ImageResult into ``(bytes, mime)``, fetching/decoding as needed.
 
     A provider returns one of: inline b64 (decode), a (possibly expiring) url
     (fetch through the egress chokepoint immediately so delivery survives expiry),
-    or a local_path (read). Returns None if nothing resolved.
+    or a local_path (read). Returns None if nothing resolved; a download that failed raises
+    :class:`_MediaNotSaved` saying why.
     """
     import base64
     from pathlib import Path
@@ -580,13 +650,8 @@ def _materialize_image(result: Any) -> tuple[bytes, str] | None:
             return None
     url = getattr(result, "url", "") or ""
     if url:
-        from personalclaw.net import CONNECTOR, fetch
-
-        resp = _run_async(fetch(url, policy=CONNECTOR))
-        if resp.status == 200 and resp.body:
-            ct = resp.headers.get("Content-Type", "").split(";")[0].strip()
-            return resp.body, (ct or mime)
-        return None
+        data, ct = _fetch_generated(url, what="image", smaller="Generate a smaller image.")
+        return data, (ct or mime)
     local = getattr(result, "local_path", "") or ""
     if local:
         try:
@@ -852,7 +917,11 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         _audit("error", edit_slug, "no image returned")
         return tool_failure("the image provider returned no image.")
 
-    materialized = _materialize_image(results[0])
+    try:
+        materialized = _materialize_image(results[0])
+    except _MediaNotSaved as e:
+        _audit("error", edit_slug, str(e))
+        return tool_failure(f"{e}")
     if materialized is None:
         _audit("error", edit_slug, "could not materialize image")
         return tool_failure("generated image could not be saved (no resolvable bytes).")
@@ -904,20 +973,17 @@ def _materialize_video(result: Any) -> tuple[bytes, str] | None:
 
     A provider returns a (possibly expiring) url or a local_path. Fetch through
     the egress chokepoint immediately so delivery survives expiry. Returns None if
-    nothing resolved.
+    nothing resolved; a download that failed raises :class:`_MediaNotSaved` saying why.
     """
     from pathlib import Path
 
     mime = getattr(result, "mime", "") or "video/mp4"
     url = getattr(result, "url", "") or ""
     if url:
-        from personalclaw.net import CONNECTOR, fetch
-
-        resp = _run_async(fetch(url, policy=CONNECTOR))
-        if resp.status == 200 and resp.body:
-            ct = resp.headers.get("Content-Type", "").split(";")[0].strip()
-            return resp.body, (ct or mime)
-        return None
+        data, ct = _fetch_generated(
+            url, what="video", smaller="Generate a shorter or lower-resolution video."
+        )
+        return data, (ct or mime)
     local = getattr(result, "local_path", "") or ""
     if local:
         try:
@@ -969,7 +1035,11 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         _audit("error", "", "no video returned")
         return tool_failure("the video provider returned no video.")
 
-    materialized = _materialize_video(results[0])
+    try:
+        materialized = _materialize_video(results[0])
+    except _MediaNotSaved as e:
+        _audit("error", "", str(e))
+        return tool_failure(f"{e}")
     if materialized is None:
         _audit("error", "", "could not materialize video")
         return tool_failure("generated video could not be saved (no resolvable bytes).")
@@ -1029,7 +1099,10 @@ def regenerate_image_at_slug(
         return False, str(e)
     if not results:
         return False, "the image provider returned no image"
-    materialized = _materialize_image(results[0])
+    try:
+        materialized = _materialize_image(results[0])
+    except _MediaNotSaved as e:
+        return False, str(e)
     if materialized is None:
         return False, "generated image could not be saved (no resolvable bytes)"
     data, mime = materialized

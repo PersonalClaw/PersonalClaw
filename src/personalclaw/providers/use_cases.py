@@ -350,8 +350,24 @@ def _settings_dir() -> Path:
     return config_dir() / "extensions" / "use_case_settings"
 
 
+#: Whether a use case with an on/off switch (Settings → Speech & Transcription) is on when its
+#: settings don't say. One table: :func:`load_use_case_settings` serves it, so the Voice panel
+#: shows what the gateway does, and :func:`use_case_enabled` reads it. Speech-to-text is on until
+#: turned off, so voice input works as soon as a model is bound; text-to-speech is off until turned
+#: on. The gateway read a missing speech-to-text ``enabled`` as on and the panel read it as off, so
+#: the panel showed voice input switched off while the microphone transcribed.
+_ENABLED_BY_DEFAULT: dict[str, bool] = {"stt": True, "tts": False}
+
+
+def use_case_enabled(use_case: str, settings: dict[str, Any]) -> bool:
+    """Whether ``use_case`` is switched on, given its ``settings``: their ``enabled``, else the
+    default in :data:`_ENABLED_BY_DEFAULT` (on, for a use case with no switch)."""
+    return bool(settings.get("enabled", _ENABLED_BY_DEFAULT.get(use_case, True)))
+
+
 def load_use_case_settings(use_case: str) -> dict[str, Any]:
-    """Load provider-agnostic settings for a use case (e.g. auto-speak for tts).
+    """Load provider-agnostic settings for a use case (e.g. auto-speak for tts), with the
+    defaults of the keys they leave out (:data:`_ENABLED_BY_DEFAULT`) filled in.
 
     The closed-set check mirrors :func:`save_use_case_settings`, which has always had
     it. Load having none was the create-vs-update asymmetry that turns an id into a
@@ -361,14 +377,17 @@ def load_use_case_settings(use_case: str) -> dict[str, Any]:
     """
     if use_case not in VALID_USE_CASES:
         return {}
+    defaults: dict[str, Any] = (
+        {"enabled": _ENABLED_BY_DEFAULT[use_case]} if use_case in _ENABLED_BY_DEFAULT else {}
+    )
     path = _settings_dir() / f"{use_case}.json"
     if not path.is_file():
-        return {}
+        return defaults
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
-        return {}
+        return defaults
+    return {**defaults, **data} if isinstance(data, dict) else defaults
 
 
 def save_use_case_settings(use_case: str, settings: dict[str, Any]) -> None:

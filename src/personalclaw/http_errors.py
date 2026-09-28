@@ -422,6 +422,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "synthesis_failed": "Speech synthesis was attempted and raised.",
     "synthesis_empty": "Speech synthesis completed but produced no audio.",
     "missing_input": "The synthesis request carried no input text.",
+    # `stt_unavailable` answers more than its meaning names, and the meaning stays as released
+    # (append-only): it is sent whenever speech-to-text can't run at all — no model chosen,
+    # speech-to-text turned off in Settings, or a bound provider that can't run (its sign-in
+    # failed, a setting it needs is empty) — with the message saying which
+    # (`transcribe.unavailable_sentence`). The microphone's own route, `/api/stt/transcribe`, sends
+    # it beside that sentence too, so a composer keys on the code and shows the words as they are.
     "stt_unavailable": "No speech-to-text model is installed on this instance.",
     "transcription_failed": "Transcription was attempted and raised.",
     "missing_file": "The upload carried no file field.",
