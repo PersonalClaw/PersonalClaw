@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.security import fence_untrusted, redact_credentials
+from personalclaw.security import WITHHELD_TEXT, fence_untrusted, redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,9 @@ def _screen(text: str) -> tuple[str, list[str]]:
     """Screen ONE source string. Call at every field boundary, never on a whole record.
 
     See the module docstring: screening a composed ``field=value`` line destroys the
-    field name, and re-screening scrubbed text reports an empty ``found``.
+    field name, and re-screening scrubbed text reports an empty ``found``. It screens with the
+    credential pass alone, not ``security.redact_or_withhold``, because the record counts what
+    that pass found.
     """
     if not text:
         return "", []
@@ -111,8 +113,8 @@ def _screen(text: str) -> tuple[str, list[str]]:
         logger.debug("capture: redaction failed; dropping content", exc_info=True)
         # Fail CLOSED on content: if we cannot prove the text is scrubbed, we do not
         # persist it. An unscreened prompt on disk is the one outcome this module
-        # exists to prevent.
-        return "[REDACTED: unscreenable]", ["redaction failed"]
+        # exists to prevent. Said in the words every masker uses.
+        return WITHHELD_TEXT, ["redaction failed"]
 
 
 def _fence(text: str, client_id: str) -> str:

@@ -714,15 +714,12 @@ def _screened(exc: BaseException) -> str:
     Screened at the boundary where an exception BECOMES a user-visible string, and
     screened *before* composition rather than after: ``redact_credentials`` is not
     idempotent over a composed ``field: value`` line — screening the assembled sentence
-    is what eats the field name it was never shown.
+    is what eats the field name it was never shown. A message it cannot screen is withheld
+    in the words every masker uses (``security.redact_or_withhold``), after its type.
     """
-    try:
-        from personalclaw.security import redact_credentials
+    from personalclaw.security import redact_or_withhold
 
-        cleaned, _found = redact_credentials(str(exc))
-    except Exception:  # noqa: BLE001 — an unscreenable message is reported as its type
-        return type(exc).__name__
-    return f"{type(exc).__name__}: {cleaned}"[:200]
+    return f"{type(exc).__name__}: {redact_or_withhold(str(exc))}"[:200]
 
 
 async def handle_import(request: web.Request) -> web.StreamResponse:

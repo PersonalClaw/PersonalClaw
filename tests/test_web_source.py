@@ -666,6 +666,66 @@ async def test_sanitize_html_is_on_by_default_for_the_html_extractor(store):
     assert "alert(1)" in off.items[0].content
 
 
+#: What stands in for a field whose markup the sanitizer failed on.
+_UNSANITIZED = "[sanitizing failed; content withheld]"
+
+
+def _broken_sanitizer(_html):
+    raise RuntimeError("the sanitizer broke")
+
+
+@pytest.mark.asyncio
+async def test_markup_the_sanitizer_fails_on_is_withheld_never_stored(store, monkeypatch):
+    """🔴 A sanitizer that raised left the field as the page sent it, script and all: every other
+    step of the chain costs only its field when it fails, by leaving the value as it was, and the
+    sanitizer's failure was handled the same way. Markup it could not clean is withheld."""
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "sanitize_html", _broken_sanitizer)
+
+    got = await WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_SCRIPTY_PAGE))).preview(
+        {"url": PAGE_URL, "extraction": _HTML_EXTRACTION}
+    )
+
+    assert len(got.items) == 1, "the item stays: its title was never markup"
+    content = got.items[0].content
+    assert "alert(" not in content and "onerror" not in content and "<script" not in content
+    assert content == _UNSANITIZED
+    assert got.items[0].title == "A perfectly good headline"
+
+
+def test_the_steps_after_a_failed_sanitize_have_nothing_to_work_on(monkeypatch):
+    from personalclaw.knowledge_providers.web_source import apply_post_process
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "sanitize_html", _broken_sanitizer)
+
+    out = apply_post_process(
+        "<p>Notes</p><script>alert(1)</script>",
+        [{"name": "sanitize_html"}, {"name": "template", "string": "Release: {value}"}],
+        page_url=PAGE_URL,
+    )
+
+    assert out == _UNSANITIZED
+
+
+def test_a_failing_step_other_than_the_sanitizer_still_costs_only_itself():
+    """The rule the sanitizer no longer follows, kept for the rest: a gsub whose pattern does not
+    compile leaves the value as it was, and the next step runs."""
+    from personalclaw.knowledge_providers.web_source import apply_post_process
+
+    out = apply_post_process(
+        "Notes",
+        [
+            {"name": "gsub", "pattern": "(", "replacement": ""},
+            {"name": "template", "string": "[{value}]"},
+        ],
+        page_url=PAGE_URL,
+    )
+
+    assert out == "[Notes]"
+
+
 @pytest.mark.asyncio
 async def test_the_static_and_attribute_extractors_are_wired(store):
     page = (

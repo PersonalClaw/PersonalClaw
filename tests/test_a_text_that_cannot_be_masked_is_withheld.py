@@ -13,7 +13,8 @@ did the same.
 A masker that raised proves nothing about what the text holds, so none of it goes on: each of
 these says ``[redaction failed; text withheld]`` in its place, a log record it cannot mask is
 written as its time, level and logger with the words withheld, and a record a sink cannot write
-is named without its words.
+is named without its words. The maskers that already withheld (a confirmation preview, a batch's
+recall view, the capture store and the capture proxy) say it in those words too.
 
 Every masker raises in these tests (``broken_masker``): the credential pass and the
 exfiltration-URL pass, which every mask PersonalClaw applies is made of. The controls show the same
@@ -44,18 +45,19 @@ LOGIN_URL = f"https://ada:{SECRET}@git.example.com/r.git"
 WITHHELD = "[redaction failed; text withheld]"
 
 
+def _broken(*_args, **_kwargs):
+    raise RuntimeError("the masker broke")
+
+
 @pytest.fixture
 def broken_masker(monkeypatch):
     from personalclaw import security
 
-    def broken(*_args, **_kwargs):
-        raise RuntimeError("the masker broke")
-
-    monkeypatch.setattr(security, "redact_credentials", broken)
-    monkeypatch.setattr(security, "redact_exfiltration_urls", broken)
+    monkeypatch.setattr(security, "redact_credentials", _broken)
+    monkeypatch.setattr(security, "redact_exfiltration_urls", _broken)
 
 
-# ── the local model health message and selftest detail (#527) ───────────────────────────────
+# ── the local model health message and selftest detail ──────────────────────────────────────
 
 
 @pytest.fixture
@@ -270,6 +272,79 @@ def test_a_refinement_quotes_no_words_it_could_not_mask(broken_masker) -> None:
     assert f"> {WITHHELD}" in body
 
 
+# ── the family's own placeholders, in one wording ──────────────────────────────────────────
+
+
+def test_a_confirmation_preview_it_could_not_mask_is_withheld_in_the_familys_words(
+    broken_masker,
+) -> None:
+    from personalclaw.workflows.confirmation import redact_preview
+
+    assert redact_preview(f"deploy with {LOGIN_URL}") == WITHHELD
+
+
+def test_a_confirmation_preview_is_masked_when_it_can_be() -> None:
+    from personalclaw.workflows.confirmation import redact_preview
+
+    preview = redact_preview(f"deploy with {LOGIN_URL}")
+
+    assert SECRET not in preview and preview.startswith("deploy with https://")
+
+
+def test_a_batch_recall_view_it_could_not_mask_is_withheld_in_the_familys_words(
+    broken_masker,
+) -> None:
+    from personalclaw.workflows.batch_compile import recall_view
+
+    view = recall_view(f"cloned {LOGIN_URL}")
+
+    assert (view["text"], view["redacted"], view["error"]) == ("", True, WITHHELD)
+
+
+def test_a_captured_turn_it_could_not_screen_is_withheld_in_the_familys_words(
+    broken_masker, monkeypatch
+) -> None:
+    """The capture store screens with the credential pass alone, bound where it imports it, and
+    counts what that pass found; a field it could not screen says so in the family's words."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.inbound import capture_store
+
+    monkeypatch.setattr(capture_store, "redact_credentials", _broken)
+
+    session_id = capture_store.record_turn(
+        client_id="agent",
+        dialect="anthropic",
+        model_requested="model",
+        request_body={"messages": [{"role": "user", "content": f"deploy with {LOGIN_URL}"}]},
+        response_body={"content": [{"type": "text", "text": "done"}]},
+    )
+
+    assert session_id, "the turn was not recorded"
+    capture = config_dir() / "capture"
+    sidecar = (capture / f"{session_id}.content.jsonl").read_text(encoding="utf-8")
+    record = (capture / f"{session_id}.jsonl").read_text(encoding="utf-8")
+    assert SECRET not in sidecar + record
+    assert WITHHELD in sidecar and "[REDACTED: unscreenable]" not in sidecar
+
+
+def test_a_capture_failure_it_could_not_screen_names_its_type_in_the_familys_words(
+    broken_masker,
+) -> None:
+    from personalclaw.inbound.capture_proxy import _screened
+
+    said = _screened(RuntimeError(f"the store at {LOGIN_URL} failed"))
+
+    assert said == f"RuntimeError: {WITHHELD}"
+
+
+def test_a_capture_failure_is_screened_when_it_can_be() -> None:
+    from personalclaw.inbound.capture_proxy import _screened
+
+    said = _screened(RuntimeError(f"the store at {LOGIN_URL} failed"))
+
+    assert SECRET not in said and said.startswith("RuntimeError: the store at https://")
+
+
 # ── the log sinks ──────────────────────────────────────────────────────────────────────────
 
 
@@ -389,6 +464,9 @@ _MASKERS = frozenset(
         "redact_and_truncate",
         "redact_values_for_display",
         "mask_child_output",
+        # A sanitizer is held to the same rule: markup it failed on is not kept.
+        "sanitize_html",
+        "sanitize_markup",
     }
 )
 
@@ -457,19 +535,30 @@ def _reads(value: ast.AST, names: set[str]) -> bool:
     return any(_reads(child, names) for child in ast.iter_child_nodes(value))
 
 
-def _fail_open_maskers(tree: ast.AST) -> tuple[list[int], int]:
+def _fail_open_maskers(tree: ast.AST) -> tuple[list[int], list[str]]:
     """``(lines, seen)``: each handler of a try that exists to mask a text and, when the masker
     raises, goes on with that text (returns it, assigns it, or falls through to the code after,
-    which reads it); and how many such tries there are."""
+    which reads it); and the functions such tries are in."""
     hits: list[int] = []
-    seen = 0
+    seen: list[str] = []
+    within: dict[int, str] = {}
+    for scope in ast.walk(tree):
+        if isinstance(scope, ast.ClassDef):
+            for fn in scope.body:
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for n in ast.walk(fn):
+                        within[id(n)] = f"{scope.name}.{fn.name}"
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in ast.walk(fn):
+                within.setdefault(id(n), fn.name)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Try):
             continue
         calls = _masker_calls(ast.Module(body=node.body, type_ignores=[]))
         if not calls or not all(_masks_only(s) for s in node.body):
             continue
-        seen += 1
+        seen.append(within.get(id(node), "<module>"))
         handed = set().union(*(_handed(c.args[0]) for c in calls if c.args))
         for handler in node.handlers:
             last = handler.body[-1]
@@ -487,20 +576,26 @@ def _fail_open_maskers(tree: ast.AST) -> tuple[list[int], int]:
 
 def test_no_masker_in_the_tree_falls_back_to_the_text_it_could_not_mask() -> None:
     found: dict[str, list[int]] = {}
-    seen = 0
+    seen: set[str] = set()
     for path in sorted(_SRC.rglob("*.py")):
-        hits, n = _fail_open_maskers(ast.parse(path.read_text(encoding="utf-8")))
-        seen += n
+        rel = path.relative_to(_SRC).as_posix()
+        hits, where = _fail_open_maskers(ast.parse(path.read_text(encoding="utf-8")))
+        seen |= {f"{rel}::{fn}" for fn in where}
         if hits:
-            found[path.relative_to(_SRC).as_posix()] = hits
+            found[rel] = hits
     assert not found, (
         "a try that masks a text goes on with the text when the masker raises. Use "
         f"`security.redact_or_withhold`, or return a fixed placeholder: {found}"
     )
-    # The fail-closed maskers the tree has (`redact_or_withhold` itself, the log formatter, the
-    # capture store's, the capture proxy's, a confirmation preview's, a batch's recall view): a
-    # rail that saw none of them would pass on any tree.
-    assert seen >= 5, f"the rail saw only {seen} masking tries: it would pass vacuously"
+    # The fail-closed masking tries the rest of the family is built on: a rail that did not see
+    # them would pass on any tree.
+    for control in (
+        "security.py::redact_or_withhold",
+        "security.py::MaskingFormatter.format",
+        "inbound/capture_store.py::_screen",
+        "knowledge_providers/web_source.py::_sanitized",
+    ):
+        assert control in seen, f"the rail no longer sees {control}: it would pass vacuously"
 
 
 def test_the_rail_sees_the_shapes_it_is_for() -> None:
@@ -547,4 +642,11 @@ def test_the_rail_sees_the_shapes_it_is_for() -> None:
     )
     hits, seen = _fail_open_maskers(ast.parse(src))
     assert hits == [4, 9, 15], hits
-    assert seen == 6, seen
+    assert seen == [
+        "returns_it",
+        "assigns_it",
+        "falls_through",
+        "withholds",
+        "names_its_type",
+        "raises",
+    ], seen

@@ -434,6 +434,24 @@ def sanitize_markup(html: str) -> str:
     return _sanitize(html)
 
 
+#: What stands in for a field whose markup the sanitizer failed on: none of that markup.
+UNSANITIZED = "[sanitizing failed; content withheld]"
+
+
+def _sanitized(markup: str) -> str | None:
+    """*markup* through the sanitizer, or ``None`` when the sanitizer fails. Markup it could not
+    clean is the page's own, script and all, so the caller withholds it (:data:`UNSANITIZED`);
+    the failure is logged by its type only."""
+    try:
+        return sanitize_markup(markup)
+    except Exception as exc:  # noqa: BLE001 - markup it could not clean is withheld, never kept
+        logger.warning(
+            "web source: a field's markup could not be sanitized, so it is withheld (%s)",
+            type(exc).__name__,
+        )
+        return None
+
+
 def _html_to_markdown(html: str) -> str:
     from personalclaw.knowledge.connectors.base import html_to_text
 
@@ -472,11 +490,19 @@ def apply_post_process(value: str, steps: list[dict], *, page_url: str) -> str:
     Each step is data validated by :data:`POST_PROCESS_SCHEMA`, so an unknown name never
     reaches here; a step that raises on pathological input (a catastrophic ``gsub`` pattern)
     leaves the value as it was rather than failing the whole item, because one bad rule in a
-    six-field config should cost that field, not the poll.
+    six-field config should cost that field, not the poll. Except the sanitizer: markup it
+    failed on is withheld (:data:`UNSANITIZED`), never kept as the page sent it, and the steps
+    after it have nothing left to work on.
     """
     out = value
     for step in steps or []:
         name = str(step.get("name") or "")
+        if name == "sanitize_html":
+            cleaned = _sanitized(out)
+            if cleaned is None:
+                return UNSANITIZED
+            out = cleaned
+            continue
         try:
             if name == "gsub":
                 out = re.sub(
@@ -488,8 +514,6 @@ def apply_post_process(value: str, steps: list[dict], *, page_url: str) -> str:
                 out = _parse_time(out)
             elif name == "parse_uri":
                 out = urljoin(page_url, out.strip()) if out.strip() else ""
-            elif name == "sanitize_html":
-                out = sanitize_markup(out)
             elif name == "substring":
                 start = int(step.get("start") or 0)
                 end = step.get("end")

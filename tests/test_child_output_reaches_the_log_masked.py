@@ -281,7 +281,7 @@ def _unmasked_terminal_errors_and_records(tree: ast.AST, rel: str) -> list[str]:
 def test_no_printed_line_error_or_record_in_the_tree_carries_a_childs_raw_output():
     """What sudo, systemctl, launchctl or git printed reaches the owner's terminal through
     ``print`` and ``raise``, and what an evaluation cell's child printed reached its artifact,
-    both as printed (#486, #485)."""
+    both as printed."""
     found = {}
     scanned = 0
     for path in sorted(_SRC.rglob("*.py")):
@@ -318,7 +318,7 @@ def test_the_terminal_and_record_rail_sees_the_shapes_it_is_for():
 
 #: The standard library's stream and file handlers. Each writes a record it could not emit to
 #: stderr as it came, message and arguments unmasked (``logging.Handler.handleError``), so a sink
-#: is made of ``security``'s withholding ones instead (#527).
+#: is made of ``security``'s withholding ones instead.
 _FAILS_OPEN_HANDLERS = {
     "StreamHandler",
     "FileHandler",
@@ -407,7 +407,7 @@ def _sink_problems(tree: ast.AST, handler_classes: set[str]) -> tuple[list[str],
 def test_every_log_sink_the_tree_makes_masks_what_it_writes():
     """``gateway.log``, the console stream a service manager keeps, and the Logs page's buffer
     and live stream: a record reaches each through a handler, and the handler's formatter is
-    what masks it (#485)."""
+    what masks it."""
     trees = {
         path.relative_to(_SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
         for path in sorted(_SRC.rglob("*.py"))
@@ -513,7 +513,7 @@ def test_the_console_the_service_manager_keeps_masks_too():
 
 def test_an_evaluation_cells_artifact_keeps_its_childs_output_masked(tmp_path, monkeypatch):
     """🔴 Before, a cell's ``result.json`` kept the last 2000 characters its child printed on
-    stdout and stderr as they were (#485)."""
+    stdout and stderr as they were."""
     import json
     import types
 

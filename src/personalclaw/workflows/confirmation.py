@@ -217,9 +217,9 @@ def redact_preview(payload: Any) -> str:
     redactor drifts from the maintained one, and the drift surfaces as a credential in an inbox row.
     Redacting here rather than at render means a surface cannot forget.
 
-    Fails CLOSED: if redaction is unavailable the preview is withheld, because a preview is
-    the field
-    most likely to carry a fetched credential and an unredacted one is worse than none.
+    Fails CLOSED: if redaction is unavailable the preview is withheld, in the words every masker
+    uses (`security.redact_or_withhold`), because a preview is the field most likely to carry a
+    fetched credential and an unredacted one is worse than none.
     """
     # `None` is checked BEFORE stringifying. `str(None)` is `"None"`, which is not empty,
     # so an absent payload previewed as the literal word "None" in an inbox row — a value the user
@@ -229,13 +229,9 @@ def redact_preview(payload: Any) -> str:
     text = payload if isinstance(payload, str) else str(payload)
     if not text.strip():
         return ""
-    try:
-        from personalclaw.security import redact
+    from personalclaw.security import redact_or_withhold
 
-        cleaned = redact(text)
-    except Exception:
-        return "[preview withheld: redaction unavailable]"
-    return cleaned[:MAX_PREVIEW_CHARS]
+    return redact_or_withhold(text)[:MAX_PREVIEW_CHARS]
 
 
 def build_request(

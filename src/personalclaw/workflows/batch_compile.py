@@ -857,19 +857,18 @@ def recall_view(transcript: str, *, limit: int = MAX_RECALL_CHARS) -> dict[str, 
         stripped = pattern.sub("", stripped)
     control_stripped = stripped != text
 
-    try:
-        from personalclaw.security import redact
+    from personalclaw.security import WITHHELD_TEXT, redact_or_withhold
 
-        redacted_text = redact(stripped)
-    except Exception:
+    redacted_text = redact_or_withhold(stripped)
+    if redacted_text == WITHHELD_TEXT and stripped != WITHHELD_TEXT:
         # A redactor that failed must not produce an UNREDACTED view. Failing closed costs the
-        # projection; failing open costs a credential.
+        # projection; failing open costs a credential. The view says so in the family's words.
         return {
             "text": "",
             "truncated": False,
             "redacted": True,
             "control_stripped": control_stripped,
-            "error": "redaction unavailable — view withheld rather than shown unredacted",
+            "error": WITHHELD_TEXT,
         }
     was_redacted = redacted_text != stripped
 

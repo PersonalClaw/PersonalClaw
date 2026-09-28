@@ -699,8 +699,12 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
   its message) as its time, level and logger with its words withheld, and the sinks' handlers
   (`WithholdingHandler`) name a record they cannot write without its words, where the standard
   library's handlers write its message and arguments to stderr as they came.
+  The maskers that withheld before these did (a confirmation preview, a batch's recall view, the
+  capture store and the capture proxy's failure line) say it in the same words. A web source's
+  sanitizer is held to the same rule: markup it fails on is withheld as
+  `[sanitizing failed; content withheld]` and never stored as the page sent it.
   `tests/test_a_text_that_cannot_be_masked_is_withheld.py` holds every try in the tree that masks
-  a text to returning a placeholder or raising when the masker does.
+  or sanitizes a text to returning a placeholder or raising when the masker does.
 - Portability export (`portability.py`) always excludes credentials: `.env`,
   `sel_hmac.key`, `session_map.json` are on the exclusion list.
 - **Download filenames are redacted, in one place** (`http_download.py`). A
