@@ -180,17 +180,12 @@ def _redact(text: str) -> str:
     `journal.redact` follows.
 
     Delegates to the platform redactors; a private pattern copy would drift exactly when it
-    mattered.
+    mattered. A reason the redactor fails on is withheld (``security.redact_or_withhold``): the
+    row stays in the feed, saying so, rather than showing what it could not mask.
     """
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.security import redact_or_withhold
 
-        out, _ = redact_exfiltration_urls(text or "")
-        out, _ = redact_credentials(out)
-        return out
-    except Exception:  # noqa: BLE001 - redaction must never empty the feed
-        logger.debug("history redaction unavailable", exc_info=True)
-        return text or ""
+    return redact_or_withhold(text or "")
 
 
 def _iso(ts: Any) -> str:

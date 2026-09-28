@@ -696,18 +696,11 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
     if not steps or not slug:
         return None
     # Redact before the steps reach the gate: an accepted candidate becomes a proposal body, and the
-    # same posture the skill branches use applies to a template's text.
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    # same posture the skill branches use applies to a template's text. A step the redactor fails
+    # on is withheld.
+    from personalclaw.security import redact_or_withhold
 
-        cleaned: list[str] = []
-        for step in steps:
-            step, _ = redact_exfiltration_urls(step)
-            step, _ = redact_credentials(step)
-            cleaned.append(step)
-        steps = cleaned
-    except Exception:
-        pass
+    steps = [redact_or_withhold(step) for step in steps]
 
     candidate = Candidate(
         run_id=session_key,
@@ -907,14 +900,11 @@ async def _ladder_pass(
     target = str(decision.get("target", "")).strip()
     if not slug or not description or not procedure_md:
         return "incomplete_decision", f"action={action}", None
-    # Redact before it touches the queue (same posture as consolidation).
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    # Redact before it touches the queue (same posture as consolidation); a procedure the
+    # redactor fails on is withheld.
+    from personalclaw.security import redact_or_withhold
 
-        procedure_md, _ = redact_exfiltration_urls(procedure_md)
-        procedure_md, _ = redact_credentials(procedure_md)
-    except Exception:
-        pass
+    procedure_md = redact_or_withhold(procedure_md)
 
     # Everything routes through the propose-only queue — never a live write. The
     # ladder tier + target ride along as provenance for the reviewer.

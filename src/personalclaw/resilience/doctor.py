@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
-from personalclaw.security import redact
+from personalclaw.security import redact_or_withhold
 
 
 def config_dir() -> Path:
@@ -150,11 +150,9 @@ def all_probes() -> list[Probe]:
 
 
 def _mask(text: str) -> str:
-    """Redact secrets from a human/evidence string (the framework invariant)."""
-    try:
-        return redact(str(text))
-    except Exception:
-        return str(text)
+    """Redact secrets from a human/evidence string (the framework invariant); a string the
+    redactor fails on is withheld (``security.redact_or_withhold``), never shown as it came."""
+    return redact_or_withhold(str(text))
 
 
 #: The remedy for a check that could not run at all: its own exception, not a finding.

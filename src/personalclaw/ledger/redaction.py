@@ -8,10 +8,7 @@ already paid for it.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 def redact(value: Any) -> Any:
@@ -19,18 +16,14 @@ def redact(value: Any) -> Any:
 
     Delegates to the platform's existing redactors rather than re-deriving patterns:
     they are already maintained, already cover the exfiltration-URL case, and a second
-    private copy of the rules would drift out of date exactly when it mattered.
+    private copy of the rules would drift out of date exactly when it mattered. A text the
+    redactor fails on is withheld (``security.redact_or_withhold``): the write still happens, and
+    the journal, which cannot be edited later, keeps nothing that was not masked.
     """
     if isinstance(value, str):
-        try:
-            from personalclaw.security import redact_credentials, redact_exfiltration_urls
+        from personalclaw.security import redact_or_withhold
 
-            text, _ = redact_exfiltration_urls(value)
-            text, _ = redact_credentials(text)
-            return text
-        except Exception:  # pragma: no cover — redaction must never break a write
-            logger.debug("redaction unavailable", exc_info=True)
-            return value
+        return redact_or_withhold(value)
     if isinstance(value, dict):
         return {k: redact(v) for k, v in value.items()}
     if isinstance(value, list):

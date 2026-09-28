@@ -316,14 +316,19 @@ def test_the_terminal_and_record_rail_sees_the_shapes_it_is_for():
 
 # ── the rail: every sink the log records reach masks what it writes ────────────────────────
 
-#: The logging handler classes a sink can be made of; the tree's own subclasses join them.
-_HANDLER_CLASSES = {
+#: The standard library's stream and file handlers. Each writes a record it could not emit to
+#: stderr as it came, message and arguments unmasked (``logging.Handler.handleError``), so a sink
+#: is made of ``security``'s withholding ones instead (#527).
+_FAILS_OPEN_HANDLERS = {
     "StreamHandler",
     "FileHandler",
     "RotatingFileHandler",
     "TimedRotatingFileHandler",
     "WatchedFileHandler",
 }
+
+#: The logging handler classes a sink can be made of; the tree's own subclasses join them.
+_HANDLER_CLASSES = _FAILS_OPEN_HANDLERS | {"MaskedStreamHandler", "MaskedRotatingFileHandler"}
 
 
 def _tail_name(node: ast.AST) -> str:
@@ -333,14 +338,19 @@ def _tail_name(node: ast.AST) -> str:
 
 
 def _sink_problems(tree: ast.AST, handler_classes: set[str]) -> tuple[list[str], list[str]]:
-    """``(problems, sinks)``: each log handler made in *tree* without the masking formatter, a
-    formatter that is not it and a ``basicConfig`` that builds its own; and the functions that
-    make a handler and give it the masking formatter."""
+    """``(problems, sinks)``: each log handler made in *tree* without the masking formatter, or
+    of a class whose failure path writes the record as it came, a formatter that is not the
+    masking one and a ``basicConfig`` that builds its own; and the functions that make a handler
+    and give it the masking formatter."""
     problems: list[str] = []
     sinks: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = _tail_name(node.func)
+            if name in _FAILS_OPEN_HANDLERS:
+                problems.append(
+                    f"{node.lineno}: a {name}, whose failure path writes the record as it came"
+                )
             # A class, so capitalised: `setFormatter` is the call that attaches one.
             if name.endswith("Formatter") and name[:1].isupper() and name != "MaskingFormatter":
                 problems.append(f"{node.lineno}: a {name}, which masks nothing")
@@ -403,12 +413,18 @@ def test_every_log_sink_the_tree_makes_masks_what_it_writes():
         for path in sorted(_SRC.rglob("*.py"))
     }
     handler_classes = set(_HANDLER_CLASSES)
-    for tree in trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and any(
-                _tail_name(base) == "Handler" for base in node.bases
-            ):
-                handler_classes.add(node.name)
+    classes = [
+        node for tree in trees.values() for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    ]
+    grew = True
+    while grew:  # a subclass of a handler class is one too
+        before = len(handler_classes)
+        handler_classes |= {
+            node.name
+            for node in classes
+            if any(_tail_name(base) in handler_classes | {"Handler"} for base in node.bases)
+        }
+        grew = len(handler_classes) > before
     found: dict[str, list[str]] = {}
     sinks: set[str] = set()
     for rel, tree in trees.items():
@@ -430,17 +446,21 @@ def test_every_log_sink_the_tree_makes_masks_what_it_writes():
 def test_the_sink_rail_sees_the_shapes_it_is_for():
     src = (
         "def plain(path):\n"
-        "    handler = RotatingFileHandler(path)\n"
+        "    handler = MaskedRotatingFileHandler(path)\n"
         "    handler.setFormatter(logging.Formatter('%(message)s'))\n"
         "def masked(path):\n"
-        "    handler = RotatingFileHandler(path)\n"
+        "    handler = MaskedRotatingFileHandler(path)\n"
         "    handler.setFormatter(MaskingFormatter('%(message)s'))\n"
         "logging.basicConfig(format='%(message)s')\n"
-        "logging.getLogger().addHandler(logging.StreamHandler())\n"
+        "logging.getLogger().addHandler(MaskedStreamHandler())\n"
+        "def fails_open(path):\n"
+        "    handler = RotatingFileHandler(path)\n"
+        "    handler.setFormatter(MaskingFormatter('%(message)s'))\n"
     )
     problems, sinks = _sink_problems(ast.parse(src), set(_HANDLER_CLASSES))
-    assert sorted(p.split(":")[0] for p in problems) == ["2", "3", "7", "8"], problems
-    assert sinks == ["masked"], sinks
+    assert sorted(p.split(":")[0] for p in problems) == ["10", "2", "3", "7", "8"], problems
+    assert "failure path" in next(p for p in problems if p.startswith("10:")), problems
+    assert sinks == ["masked", "fails_open"], sinks
 
 
 # ── the sinks themselves ───────────────────────────────────────────────────────────────────

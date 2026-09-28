@@ -100,9 +100,9 @@ def main(names: list[str]) -> int:
     channel = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8")
     sys.stdout = sys.stderr
     # Masked like every log sink (`security.MaskingFormatter`): the board reads this stream.
-    from personalclaw.security import MaskingFormatter
+    from personalclaw.security import MaskedStreamHandler, MaskingFormatter
 
-    handler = logging.StreamHandler(sys.stderr)
+    handler = MaskedStreamHandler(sys.stderr)
     handler.setFormatter(MaskingFormatter("%(levelname)s %(name)s: %(message)s"))
     logging.basicConfig(level=logging.WARNING, handlers=[handler])
     records, missing = _records(names)

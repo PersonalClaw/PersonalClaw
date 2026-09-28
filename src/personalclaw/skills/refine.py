@@ -101,14 +101,10 @@ def _blockquote(text: str) -> str:
     flat = re.sub(r"\s+", " ", text or "").strip()[:_QUOTE_MAX]
     if not flat:
         return "> (the correction was empty)"
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    # A quote the redactor fails on is withheld: the proposal still goes, without it.
+    from personalclaw.security import redact_or_withhold
 
-        flat, _ = redact_exfiltration_urls(flat)
-        flat, _ = redact_credentials(flat)
-    except Exception:  # pragma: no cover - redaction must never block the proposal
-        logger.debug("refine: redaction failed", exc_info=True)
-    return f"> {flat}"
+    return f"> {redact_or_withhold(flat)}"
 
 
 def proposed_body(skill: str, *, description: str, procedure_md: str, trigger: str, at: str) -> str:

@@ -424,13 +424,12 @@ def _mask(text: str) -> str:
     The health/selftest bodies echo provider messages and exception strings, which could in
     principle carry a token; the SEL redactor is the ONE definition of "safe to surface", so
     a masked message can never leak an HF token through an error string (Success Criterion 4).
+    A message the redactor fails on is withheld (``security.redact_or_withhold``): the reply still
+    answers, and says nothing it could not mask.
     """
-    try:
-        from personalclaw.security import redact
+    from personalclaw.security import redact_or_withhold
 
-        return redact(text or "")
-    except Exception:  # noqa: BLE001 — redaction must never itself break a health/selftest reply
-        return text or ""
+    return redact_or_withhold(text or "")
 
 
 def _sel_caller(request: web.Request) -> str:

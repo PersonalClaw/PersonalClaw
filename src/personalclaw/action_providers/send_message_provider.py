@@ -22,7 +22,6 @@ falls back to a dashboard notification so the action still surfaces. Text is red
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from personalclaw import notification_kinds
@@ -33,8 +32,6 @@ from personalclaw.action_providers.base import (
 )
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
-
-logger = logging.getLogger(__name__)
 
 
 class SendMessageActionProvider(ActionProvider):
@@ -64,14 +61,10 @@ class SendMessageActionProvider(ActionProvider):
             )
         state = services.state
 
-        # Redact before anything leaves the process.
-        try:
-            from personalclaw.security import redact_credentials, redact_exfiltration_urls
+        # Redact before anything leaves the process; a text the redactor fails on is withheld.
+        from personalclaw.security import redact_or_withhold
 
-            text, _ = redact_exfiltration_urls(text)
-            text, _ = redact_credentials(text)
-        except Exception:
-            logger.debug("send-message: redaction unavailable", exc_info=True)
+        text = redact_or_withhold(text)
 
         body = f"*{title}*\n{text}" if title else text
         channel = (action_config.get("channel") or "").strip()

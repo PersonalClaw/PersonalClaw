@@ -177,18 +177,14 @@ def _redact_stored(text: str | None) -> str:
 
     Reuses `security.redact_credentials`, the same matcher the read path and the SEL already use,
     so a pattern added there covers this too. Composed with `redact_exfiltration_urls` because
-    a resolved token most often escapes inside a URL a command printed.
+    a resolved token most often escapes inside a URL a command printed. Both, and the withholding,
+    are `security.redact_or_withhold`'s.
     """
     if not text:
         return ""
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.security import redact_or_withhold
 
-        cleaned, _urls = redact_exfiltration_urls(str(text))
-        cleaned, _creds = redact_credentials(cleaned)
-        return cleaned
-    except Exception:  # noqa: BLE001 - see the docstring: drop rather than store raw
-        return "[redaction failed; text withheld]"
+    return redact_or_withhold(str(text))
 
 
 class ScheduleRunStore:

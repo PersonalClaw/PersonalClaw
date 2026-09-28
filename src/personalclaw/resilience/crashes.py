@@ -20,7 +20,7 @@ from typing import Any, Literal, Optional
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.security import redact
+from personalclaw.security import redact_or_withhold
 
 
 def config_dir() -> Path:
@@ -45,11 +45,9 @@ def _crashes_dir() -> Path:
 
 
 def _clip(text: str, limit: int = 2000) -> str:
-    """Redact then clip a free-text field for a crash artifact."""
-    try:
-        red = redact(str(text))
-    except Exception:
-        red = str(text)
+    """Redact then clip a free-text field for a crash artifact; a field the redactor fails on is
+    withheld (``security.redact_or_withhold``), never written as it came."""
+    red = redact_or_withhold(str(text))
     return red if len(red) <= limit else red[:limit] + "…"
 
 

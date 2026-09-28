@@ -567,6 +567,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **`personalclaw service install`, `service status` and `update` show what sudo, systemctl, launchctl or git said masked, and a failure keeps its end, where the reason is.**
 
+- **A text PersonalClaw cannot mask is withheld instead of shown, sent or stored as it came: the local-model health message, run notifications, send-message hooks, the run ledger, crash records, the doctor, the trigger history, skill drafts and proposals, and every log sink.**
+
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 
 - **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**

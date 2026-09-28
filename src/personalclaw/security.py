@@ -4,9 +4,11 @@ import fnmatch
 import hashlib
 import json
 import logging
+import logging.handlers
 import os
 import re
 import stat
+import sys
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -1309,10 +1311,67 @@ class MaskingFormatter(logging.Formatter):
     line. A call site that writes what a child printed still passes it through
     :func:`mask_child_output`, which also keeps it on one line; this is the floor under every
     record, not a replacement for that.
+
+    A record it cannot mask (the masker raised, or the record's arguments do not fit its message)
+    is written as its time, level and logger with its words withheld. It is never written as it
+    came, and never left to the handler's error path, which writes a failing record's message and
+    arguments to stderr unmasked; the sinks' handlers withhold on their own failures too
+    (:class:`WithholdingHandler`).
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_for_display(super().format(record))
+        try:
+            return redact_for_display(super().format(record))
+        except Exception as exc:  # noqa: BLE001 - a record it cannot mask is withheld
+            return self._withheld(record, exc)
+
+    def _withheld(self, record: logging.LogRecord, exc: Exception) -> str:
+        """*record*'s time, level and logger, which are PersonalClaw's own, and why the rest is
+        not shown."""
+        stand_in = logging.makeLogRecord(
+            {
+                **record.__dict__,
+                "msg": f"[log record withheld: it could not be masked ({type(exc).__name__})]",
+                "args": None,
+                "exc_info": None,
+                "exc_text": None,
+                "stack_info": None,
+            }
+        )
+        try:
+            return super().format(stand_in)
+        except Exception:  # noqa: BLE001 - not even the record's own fields could be read
+            return str(stand_in.msg)
+
+
+class WithholdingHandler(logging.Handler):
+    """A log handler whose failure path writes none of the record's words.
+
+    ``logging.Handler.handleError`` writes a record it could not emit to stderr as it came: its
+    message and its arguments, unmasked. For the gateway, stderr is the console its service
+    manager keeps, so a ``gateway.log`` on a full disk would put each record it could not take
+    there raw. This names the record that could not be written and why, and nothing it said.
+    """
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        if not (logging.raiseExceptions and sys.stderr):
+            return
+        failure = sys.exc_info()[1]
+        try:
+            sys.stderr.write(
+                f"--- a log record from {record.name} ({record.filename}:{record.lineno}) could "
+                f"not be written ({type(failure).__name__}); its words are withheld ---\n"
+            )
+        except Exception:  # noqa: BLE001 - nowhere is left to say it
+            pass
+
+
+class MaskedStreamHandler(WithholdingHandler, logging.StreamHandler):
+    """The console of a masked sink. Give it :class:`MaskingFormatter`."""
+
+
+class MaskedRotatingFileHandler(WithholdingHandler, logging.handlers.RotatingFileHandler):
+    """The ``gateway.log`` of a masked sink. Give it :class:`MaskingFormatter`."""
 
 
 #: What stands in for a value a tool handed to the code it ran, in that code's output. The same
@@ -2034,6 +2093,24 @@ def redact(text: str) -> str:
     text = redact_exfiltration_urls(text)[0]
     text = redact_credentials(text)[0]
     return text
+
+
+#: What stands in for a text its masker failed on: fixed words, and none of the text.
+WITHHELD_TEXT = "[redaction failed; text withheld]"
+
+
+def redact_or_withhold(text: str) -> str:
+    """*text* through :func:`redact`, or :data:`WITHHELD_TEXT` when the masker itself fails.
+
+    For each text PersonalClaw masks before it shows, sends or stores it: a health message, a
+    notification, a journal or crash record, a proposal. A masker that raised proves nothing
+    about what the text holds, so none of it goes on, and the failure is logged by its type only.
+    """
+    try:
+        return redact(text)
+    except Exception as exc:  # noqa: BLE001 - any failure to mask withholds the text
+        logger.warning("a text was withheld: it could not be masked (%s)", type(exc).__name__)
+        return WITHHELD_TEXT
 
 
 # The fence markers. The system prompt tells the model that anything between these is

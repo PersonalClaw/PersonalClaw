@@ -82,14 +82,11 @@ def remember(
     body = (body or "").strip()[:_MAX_BODY]
     if not title or not body:
         return None
-    # Redact secrets before anything touches disk (same posture as auto-extraction).
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    # Redact secrets before anything touches disk (same posture as auto-extraction); a body the
+    # redactor fails on is withheld.
+    from personalclaw.security import redact_or_withhold
 
-        body, _ = redact_exfiltration_urls(body)
-        body, _ = redact_credentials(body)
-    except Exception:
-        logger.debug("ephemeral remember redaction skipped", exc_info=True)
+    body = redact_or_withhold(body)
     sdir = _session_dir(session_key)
     # Cap the per-session draft count (anti-runaway).
     if sdir.is_dir() and len(list(sdir.glob("*.json"))) >= _MAX_DRAFTS_PER_SESSION:

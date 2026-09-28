@@ -680,6 +680,17 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
 
 - Session-archive reads are redacted (`history.py` via
   `redact_credentials` / `redact_exfiltration_urls`).
+- **A text its masker fails on is withheld, never passed on as it came**
+  (`security.redact_or_withhold`). A masker that raised proves nothing about what the text holds,
+  so the local-model health message, a run notification, a send-message hook's text, the run
+  ledger's and a crash record's fields, the doctor's evidence, the trigger history, a skill draft
+  and a proposal's text say `[redaction failed; text withheld]` in its place. The log sinks do
+  the same: `MaskingFormatter` writes a record it cannot mask (or one whose arguments do not fit
+  its message) as its time, level and logger with its words withheld, and the sinks' handlers
+  (`WithholdingHandler`) name a record they cannot write without its words, where the standard
+  library's handlers write its message and arguments to stderr as they came.
+  `tests/test_a_text_that_cannot_be_masked_is_withheld.py` holds every try in the tree that masks
+  a text to returning a placeholder or raising when the masker does.
 - Portability export (`portability.py`) always excludes credentials: `.env`,
   `sel_hmac.key`, `session_map.json` are on the exclusion list.
 - **Download filenames are redacted, in one place** (`http_download.py`). A

@@ -107,17 +107,12 @@ def _redact(text: str) -> str:
 
     A run summary is whatever the run produced: it can contain a URL the run fetched or a token a
     tool printed. Redacting at the delivery boundary rather than at each emitter is what makes the
-    guarantee hold for an emitter nobody has written yet.
+    guarantee hold for an emitter nobody has written yet. A text the redactor fails on is withheld
+    (``security.redact_or_withhold``): the notification still goes, without what it could not mask.
     """
-    try:
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.security import redact_or_withhold
 
-        out, _ = redact_exfiltration_urls(text or "")
-        out, _ = redact_credentials(out)
-        return out
-    except Exception:  # noqa: BLE001 - redaction must never drop the notification
-        logger.debug("delivery redaction failed; sending the untouched text", exc_info=True)
-        return text or ""
+    return redact_or_withhold(text or "")
 
 
 @dataclass

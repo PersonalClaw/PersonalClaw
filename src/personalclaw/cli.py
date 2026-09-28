@@ -1511,20 +1511,23 @@ _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 def _console_log_handler() -> logging.Handler:
     """The handler for the console: the stream a service manager keeps as the gateway's log
     (launchd's log files, the systemd journal), masked like every view
-    (``security.MaskingFormatter``)."""
-    from personalclaw.security import MaskingFormatter
+    (``security.MaskingFormatter``), and saying none of a record's words when it cannot write
+    it (``security.WithholdingHandler``)."""
+    from personalclaw.security import MaskedStreamHandler, MaskingFormatter
 
-    handler = logging.StreamHandler()
+    handler = MaskedStreamHandler()
     handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
     return handler
 
 
 def _gateway_log_handler(log_file: Path, level: int) -> RotatingFileHandler:
     """The handler that writes ``gateway.log``: rotated, at *level*, and masked like every view
-    (``security.MaskingFormatter``), so a credential in any record never reaches the file."""
-    from personalclaw.security import MaskingFormatter
+    (``security.MaskingFormatter``), so a credential in any record never reaches the file; a
+    record the file cannot take is named on the console without its words
+    (``security.WithholdingHandler``)."""
+    from personalclaw.security import MaskedRotatingFileHandler, MaskingFormatter
 
-    handler = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
+    handler = MaskedRotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
     handler.setLevel(level)
     handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
     return handler
