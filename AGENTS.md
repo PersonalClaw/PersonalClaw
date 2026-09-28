@@ -118,12 +118,17 @@ stays true.
 - **Clean break.** No backward-compat shims, dual paths, dead code, or
   TODO/FIXME/commented-out blocks. Replace a mechanism → delete the old one in
   the same change. Unfinished work lives in a plan file, not in code.
-- **No planning ids in comments or docs.** A work-item id, a plan's name, a
-  session or task number or a section of a plan points into private planning
-  state this repository does not hold; say what the code does or why instead.
-  `tests/test_planning_id_baseline.py` ratchets the ones the tree still has: a new
-  one reds, and removing one means re-running
-  `python scripts/generate_planning_id_baseline.py` in the same commit.
+- **Nothing published names what is private.** Code, comments, tests, fixtures,
+  docs, the CHANGELOG, commit messages and PR text are all published. Never write
+  an employer's or any organisation's internal names, hosts, tools, documents,
+  people or ticket ids into them, nor a reference to private planning (a plan's
+  name, a work-item id, a ledger row, a ruling); describe the behaviour and its
+  reason in product terms instead. Fixtures use invented names and the domains
+  RFC 2606 reserves (`example.com`, `.test`, `.invalid`), never a real person,
+  account, workspace or id, and a binary fixture carries no identity metadata.
+  This is a practice, not a check: a list of names to catch, even as digests,
+  publishes the names and is never complete, so none exists and none is added.
+  Re-read your diff for it before you commit.
 - **Breaking changes are the maintainer's call, not yours.** During 0.x the
   maintainer lands backward-incompatible clean breaks with **no migrations**
   (the migration-backed lifecycle regime is deliberately deferred until the

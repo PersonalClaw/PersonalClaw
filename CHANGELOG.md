@@ -345,7 +345,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
-- **The repository no longer publishes the names its publication check keeps out, not even as digests.**
+- **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 
 - **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**
 

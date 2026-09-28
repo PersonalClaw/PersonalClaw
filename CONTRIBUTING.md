@@ -80,13 +80,22 @@ to them.
 - **Judge by code truth, not banners** — status text in plans and docs goes
   stale; verify against the actual code before deciding something is or isn't
   done.
-- **Comments and docs name no planning ids** — the roadmap is private planning
-  state kept outside this repository, so a work-item id, a plan's name, a session
-  or task number or a section of a plan points at nothing a reader can open. Say
-  what the code does, or why, instead. `tests/test_planning_id_baseline.py` holds
-  the ones the tree still carries to a per-file census that may only shrink: a
-  new one reds; after removing one, run
-  `python scripts/generate_planning_id_baseline.py` in the same commit.
+- **Nothing published names what is private** — this repository is public, and
+  so is everything that reaches it: code, comments, tests, fixtures, docs, the
+  CHANGELOG, commit messages and PR text. Never write an employer's or any
+  organisation's internal names, hosts, tools, documents, people or ticket ids
+  into any of it, nor a reference to private planning (a plan's name, a work-item
+  id, a ledger row, a ruling). A reader can open none of them, and each says
+  where the work came from, which the code never needs to say. Describe the
+  behaviour and its reason in product terms instead: "never trust an upload's
+  declared type; cap what it can make us decode", not the title of the document
+  that taught it. Fixtures use invented names and the domains RFC 2606 reserves
+  (`example.com`, `.test`, `.invalid`), never a real person, account, workspace
+  or id, and a binary fixture carries no identity metadata (no author, company or
+  account in a document's or an image's properties). This is a practice, not a
+  check: a list of names to catch, even as digests, would publish every name on
+  it and still never be complete, so none exists and none should be added.
+  Re-read your diff for it before you commit.
 
 ## <a name="breaking-changes"></a>Breaking changes: who makes them, and what you should do
 
