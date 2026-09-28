@@ -499,11 +499,11 @@ def grant_digest(text: str) -> str:
 def check_every_licence_file_carries_the_real_grant(root: Path) -> None:
     """RED if ANY licence file in *root* is not the pinned MIT grant, verbatim.
 
-    Every one of these files is this project's own grant — the root `LICENSE`, the bundled
-    Ollama app's, the template the scaffolder propagates, the registry's validation fixtures
-    — so "MIT" has to mean the same bytes in all of them. The identifier sweep above cannot
-    see this: its "licence file title" pattern reads the first line, so a file whose title
-    still says `MIT License` over a *paraphrased* or narrowed grant is invisible to it.
+    Every one of these files is this project's own grant — the root `LICENSE` and each
+    bundled app's — so "MIT" has to mean the same bytes in all of them. The identifier
+    sweep above cannot see this: its "licence file title" pattern reads the first line, so
+    a file whose title still says `MIT License` over a *paraphrased* or narrowed grant is
+    invisible to it.
     Proven by arm (d) of :func:`test_the_rail_reds_on_a_fake_spdx_change`, where the
     identifier check passes on exactly that mutation.
 
@@ -653,16 +653,16 @@ def test_the_licence_file_sweep_is_not_vacuous() -> None:
     empty set every time.
     """
     files = licence_files(_ROOT)
-    assert len(files) >= 5, (
+    assert len(files) >= 3, (
         f"the licence-file sweep found only {len(files)} file(s) — it is not reading. "
-        "This tree carries the root LICENSE, the bundled ollama-models app's, the app "
-        f"template's, and the registry fixtures': {[str(f) for f in files]}"
+        "This tree carries the root LICENSE and one beside each code-owning bundled app "
+        f"(bundled-chat, ollama-models): {[str(f) for f in files]}"
     )
     assert any(
         f.name == "LICENSE" and f.parent == _ROOT for f in files
     ), "the sweep did not even find the root LICENSE file"
     with_bundle = [f for f in files if artefact_names_beside(f)]
-    assert len(with_bundle) >= 3, (
+    assert len(with_bundle) >= 2, (
         f"only {len(with_bundle)} licence file(s) sit beside an app.json, so the artefact-"
         "holder rail is comparing against the empty set almost everywhere. Either the bundled "
         "apps moved or `artefact_names_beside` stopped resolving a manifest."

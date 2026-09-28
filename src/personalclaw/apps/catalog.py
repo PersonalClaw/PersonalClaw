@@ -660,7 +660,7 @@ def listing_repo_refusal(repo: str) -> str:
     It must name a remote repository, never a folder on this machine (a path, ``~``, ``file://``,
     or a ``.git``-suffixed path git would clone off the disk). A folder installs only as the owner's
     own act: Install from URL, or adding it as a source. The form is the published registry's own
-    contract (``staged-repos/registry/validate_registry.py`` ``check_repo_url``): a plain
+    contract (``validate_registry.py`` ``check_repo_url`` in the registry repository): a plain
     ``https://`` URL with a host, no credentials and no explicit port."""
     if any(c.isspace() or not c.isprintable() for c in repo):
         return (

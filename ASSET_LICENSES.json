@@ -341,35 +341,6 @@
       ]
     },
     {
-      "id": "registry-validation-fixtures",
-      "source": "Project-authored registry entries and apps exercised by tests/test_registry_validation.py",
-      "version": "repository-revision",
-      "license": "MIT",
-      "ownership": "project-owned",
-      "required_notice": "LICENSE",
-      "files": [
-        "staged-repos/registry/fixtures/README.md",
-        "staged-repos/registry/fixtures/apps/clean-app/LICENSE",
-        "staged-repos/registry/fixtures/apps/clean-app/README.md",
-        "staged-repos/registry/fixtures/apps/clean-app/app.json",
-        "staged-repos/registry/fixtures/apps/clean-app/provider.py",
-        "staged-repos/registry/fixtures/apps/dangerous-app/LICENSE",
-        "staged-repos/registry/fixtures/apps/dangerous-app/README.md",
-        "staged-repos/registry/fixtures/apps/dangerous-app/app.json",
-        "staged-repos/registry/fixtures/apps/dangerous-app/provider.py",
-        "staged-repos/registry/fixtures/apps/dangerous-app/scripts/install.sh",
-        "staged-repos/registry/fixtures/apps/warning-app/LICENSE",
-        "staged-repos/registry/fixtures/apps/warning-app/README.md",
-        "staged-repos/registry/fixtures/apps/warning-app/app.json",
-        "staged-repos/registry/fixtures/apps/warning-app/provider.py",
-        "staged-repos/registry/fixtures/apps/warning-app/scripts/setup.sh",
-        "staged-repos/registry/fixtures/registries/dangerous.json",
-        "staged-repos/registry/fixtures/registries/malformed-row.json",
-        "staged-repos/registry/fixtures/registries/valid.json",
-        "staged-repos/registry/fixtures/registries/warning.json"
-      ]
-    },
-    {
       "id": "agent-tool-home-fixture",
       "source": "Project-authored: a persona's Claude Code and Codex homes (noor), laid out as those tools write them, with one Codex session compressed as Codex compresses it (zstd level 3, by the zstd 1.5.7 command line) and its plain twin in codex_rollouts/, for tests/test_claude_code_import_reads_what_claude_code_writes.py, tests/test_codex_import_reads_what_codex_writes.py and tests/test_imports_share_one_secret_policy.py; the tools named are test targets only",
       "version": "repository-revision",

@@ -15,7 +15,8 @@ What this suite guards, measured on ``origin/main`` before the publication-hygie
 * ``scratch/`` — 38 files whose CONTENT is load-bearing (the app template is pinned
   byte-for-byte by ``test_app_from_template.py``; the registry is validated by a ``full.yml``
   job) under a directory name that tells a public reader to ignore it. Renamed to
-  ``staged-repos/``, not deleted.
+  ``staged-repos/``, not deleted, and later removed outright once both repositories it
+  staged were published: a second copy of a published repository only drifts from it.
 * ``.worktrees/`` and ``.local/`` — absent from ``.gitignore``, so a plain ``git add -A``
   staged 25 paths including 20 linked worktrees as **embedded git repositories**: gitlinks
   pointing at local absolute paths that exist on no other machine (#3413).
@@ -852,11 +853,12 @@ def test_the_removed_paths_are_gone_and_the_kept_ones_remain():
     tracked = set(hygiene.tracked_files())
     assert not [p for p in tracked if p.startswith("temp-screenshots/")]
     assert not [p for p in tracked if p.startswith("scratch/")]
+    # The app template and the community registry are published repositories, and each is
+    # the one copy of itself. A staged duplicate here drifted from both of them.
+    assert not [p for p in tracked if p.startswith("staged-repos/")]
     assert "AGENT.md" not in tracked, "AGENT.md is one character from AGENTS.md — a trap"
     # …and the deliberate keeps, so "hygiene" never becomes an excuse to delete these.
     assert "docs/screenshots/light/01-dashboard.png" in tracked
     assert "docs/screenshots/dark/01-dashboard.png" in tracked
-    assert "staged-repos/app-template/app.json" in tracked
-    assert "staged-repos/registry/app-registry.json" in tracked
     assert ".env.example" in tracked
     assert "AGENTS.md" in tracked and "CLAUDE.md" in tracked

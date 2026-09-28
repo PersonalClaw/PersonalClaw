@@ -297,10 +297,13 @@ re-invents a shape another touches:
 - `docs/` — `reference/` (as-built), `guides/` (user), `architecture/`. The
   maintainer's roadmap plans are **not in this repo** (see *What gets your PR
   rejected*).
-- `staged-repos/` — sibling repositories' content staged here until the maintainer
-  publishes it (the app template, the community registry). Not imported by core, but
-  pinned by tests and a `full.yml` job — see `staged-repos/README.md`.
 - `tests/` — pytest suite (isolate destructive tests via `config_dir`/`tmp_path`).
+
+The app template and the community registry are repositories of their own
+([`PersonalClaw/app-template`](https://github.com/PersonalClaw/app-template),
+[`PersonalClaw/registry`](https://github.com/PersonalClaw/registry)), and this repo keeps
+no copy of either: `app new --from-template` and the Store's registry source fetch them
+from there.
 
 ## What gets your PR rejected
 

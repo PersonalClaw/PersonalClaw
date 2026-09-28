@@ -786,13 +786,13 @@ def test_local_source_registry_surfaces_remote_apps_without_dirscan(tmp_path):
     assert e["pointer"] == "https://github.com/acme/cool.git#apps/cool"
 
 
-# A registry index is untrusted text from whichever source published it, and a listing's
-# `repo` is where an install then fetches the bytes. So it must name a remote repository, in
-# the form the published registry itself requires (`staged-repos/registry/validate_registry.py`
-# `check_repo_url`): a plain https:// URL, no credentials, no port. A folder on this machine is
+# A registry index is untrusted text from whichever source published it, and a listing's `repo` is
+# where an install then fetches the bytes. So it must name a remote repository, in the form the
+# published registry itself requires (`validate_registry.py` `check_repo_url`, in the registry
+# repository): a plain https:// URL, no credentials, no port. A folder on this machine is
 # installed only as the owner's own act — Install from URL, or adding it as a source — never
-# because an index named it. A listing that breaks the rule is kept, refused, so the Store can
-# say why (`tests/test_registry_listings_cannot_reach_local_hosts.py` owns the host half).
+# because an index named it. A listing that breaks the rule is kept, refused, so the Store can say
+# why (`tests/test_registry_listings_cannot_reach_local_hosts.py` owns the host half).
 
 
 @pytest.mark.parametrize(
@@ -1175,10 +1175,10 @@ def _registry_fixture_repo(root: Path, *, app_name: str = "fixture-registry-app"
     """A real local git repo publishing an ``app-registry.json`` index — the POSITIVE
     CONTROL for "the seeded source is actually consulted".
 
-    The shipped registry (`staged-repos/registry/app-registry.json`) is EMPTY, so a
-    test that asserted "zero listings from the registry" would pass with the source
-    skipped entirely. This fixture publishes one listing, so the assertion below can
-    only pass if the seeded source was fetched and parsed."""
+    The published registry can be empty, so a test that asserted "zero listings from the
+    registry" would pass with the source skipped entirely. This fixture publishes one
+    listing, so the assertion below can only pass if the seeded source was fetched and
+    parsed."""
     repo = root / "registry-fixture-repo"
     repo.mkdir()
     (repo / "app-registry.json").write_text(
@@ -1517,41 +1517,26 @@ def test_the_install_scanner_gate_has_exactly_three_call_sites():
     assert _scanner_gate_call_sites("default_scanner.scan_every_registry_app(") == set()
 
 
-# --- ET-4 listing clause: the seeded source's index has ONE accepted filename -------
-# "a fresh dev home lists registry apps in the Store" is the change's one clause that
-# cannot be closed from inside core, and the reasons are outside it: the seeded URL
-# `https://github.com/PersonalClaw/registry.git` does not exist yet (`git ls-remote` →
-# "Repository not found"), and the staged index is `{"apps": []}` until ET-6 lists
-# something.
+# --- The seeded registry source lists apps from exactly one index filename ---------------
+# Core enumerates a source's apps from an index named `catalog._REGISTRY_FILENAME` at the
+# source root: the same contract for every git and local source, and the file the published
+# registry repository serves. That filename was once the gap. The registry's index was first
+# published as `registry.json` while core read `app-registry.json`, so a well-formed listing
+# reached no Store at all.
 #
-# What IS reachable is the CONTRACT between the two halves, and it is one filename and
-# nothing else. Core enumerates a source's apps from an index named
-# `catalog._REGISTRY_FILENAME` at the source root — the same contract for every git and
-# local source. That filename USED to be the gap: ET-3 staged its index as
-# `registry.json` while core reads `app-registry.json`, and a schema-valid row
-# measured one listing under core's name and none. `ET-4a` closed it by
-# renaming the staged file, so the two halves now agree by construction — no parser
-# change was needed, and ET-5 (which owns reading the richer `maintainer`/
-# `last_validated` fields) inherits an index core can already see.
-#
-# The rail below keeps them agreeing, in BOTH directions: the positive leg proves an
-# ET-3-shaped row lists with no core change, and the negative leg proves core still
-# accepts exactly one filename — so a parser that quietly widens the accepted name, or
-# stops reading an ET-3-shaped row, reds here instead of in a user's empty Store.
-
-_STAGED_REGISTRY = Path(__file__).resolve().parent.parent / "staged-repos" / "registry"
+# The rail below keeps the two agreeing in BOTH directions: the positive leg proves a
+# registry-shaped row lists with no core change, and the negative leg proves core still
+# accepts exactly one filename, so a parser that quietly widens the accepted name, or stops
+# reading a registry-shaped row, reds here instead of in a user's empty Store.
 
 
-def _et3_shaped_row(name: str) -> dict:
-    """One listing row carrying every key the row schema marks required.
+def _registry_shaped_row(name: str) -> dict:
+    """One listing row carrying every field the published registry requires of a listing.
 
-    Built against the schema rather than copied from it, so a new required field in
-    `app-registry.schema.json` reds this instead of drifting silently.
+    The registry repository's own schema is the authority for the row; its CI refuses a
+    listing that lacks any of these, so this is the row shape every Store actually reads.
     """
-    schema = json.loads((_STAGED_REGISTRY / "app-registry.schema.json").read_text(encoding="utf-8"))
-    required = schema["properties"]["apps"]["items"]["required"]
-    assert required, "the row schema declares no required fields — fixture is vacuous"
-    row = {
+    return {
         "name": name,
         "repo": f"https://github.com/acme/{name}.git",
         "types": ["tool"],
@@ -1560,13 +1545,10 @@ def _et3_shaped_row(name: str) -> dict:
         "maintainer": "acme",
         "added": "2026-08-25",
     }
-    missing = set(required) - set(row)
-    assert not missing, f"ET-3's row schema now requires {sorted(missing)} — widen the fixture"
-    return row
 
 
 def _seed_registry_publishing(index_name: str, tmp_path, monkeypatch) -> list[str]:
-    """Publish one ET-3-shaped row under ``index_name`` in a local git repo, seed it as
+    """Publish one registry-shaped row under ``index_name`` in a local git repo, seed it as
     the default registry source, and return the app names the Store lists."""
     monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
     monkeypatch.setenv("PERSONALCLAW_FIRST_PARTY_APPS_DIR", str(tmp_path / "nope"))
@@ -1576,7 +1558,7 @@ def _seed_registry_publishing(index_name: str, tmp_path, monkeypatch) -> list[st
     repo = tmp_path / f"registry-{index_name}"
     repo.mkdir()
     (repo / index_name).write_text(
-        json.dumps({"apps": [_et3_shaped_row("probe-app")]}), encoding="utf-8"
+        json.dumps({"apps": [_registry_shaped_row("probe-app")]}), encoding="utf-8"
     )
     git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
@@ -1592,14 +1574,14 @@ def _seed_registry_publishing(index_name: str, tmp_path, monkeypatch) -> list[st
 
 
 def test_the_seeded_registry_lists_only_under_cores_index_filename(tmp_path, monkeypatch):
-    """The seeded default lists an ET-3-shaped row — and only when the index is named
+    """The seeded default lists a registry-shaped row, and only when the index is named
     what core reads. The negative half is the measured gap; the positive half is what
     stops it being a rail that matches nothing.
     """
     assert _seed_registry_publishing(catalog._REGISTRY_FILENAME, tmp_path, monkeypatch) == [
         "probe-app"
     ]
-    # Any OTHER name. Same bytes, same row, same seeded source — no listing. This is the
-    # name ET-3 published under before `ET-4a` renamed it, so the leg pins the rename
-    # too: re-publishing the index under the old name lists nothing.
+    # Any OTHER name. Same bytes, same row, same seeded source: no listing. This is the
+    # name the registry first published under, so the leg pins the rename too:
+    # re-publishing the index under the old name lists nothing.
     assert _seed_registry_publishing("registry.json", tmp_path, monkeypatch) == []

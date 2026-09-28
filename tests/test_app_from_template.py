@@ -1,28 +1,23 @@
-"""The template repo content staged under ``staged-repos/`` and ``app new --from-template``.
+"""``app new --from-template``: fetch the published template repository, treating it as hostile.
 
-Two things are asserted here, and they fail for opposite reasons:
+The template repository (``github.com/PersonalClaw/app-template``) is the one copy of the
+template, so its own CI is what keeps it in step with the scaffold it was generated from. What
+this module proves is the other half: ``--from-template`` is the only network surface in
+``cli_app_new``, and everything downstream of the socket (member names, member types, member
+sizes, the response status) is metadata a malicious host controls. Every refusal in the module
+has a named negative test below: non-https scheme, non-allowlisted host, userinfo credentials, a
+redirect, a non-200, a traversal member, an absolute member, a symlink member, a hardlink member,
+an oversized member, too many members, an empty archive, and an existing non-empty target.
 
-1. **The staged template does not rot.** ``staged-repos/app-template/`` is the content the owner
-   pushes to ``github.com/PersonalClaw/app-template``. Its four generated files are compared
-   BYTE-FOR-BYTE against a fresh ``app new app-template --type tool`` run, so a scaffold
-   change that the template didn't follow reds here instead of shipping a template that
-   contradicts the generator. (``README.md`` and ``LICENSE`` are deliberately excluded: the
-   template's README is the clone-to-installed walkthrough, and the LICENSE carries the
-   generation year.)
+The archive the positive tests serve is built the way the template repository is: a fresh
+``app new app-template --type tool`` scaffold, plus the CI workflow a root-level app carries,
+packed the way GitHub packs a repository tarball.
 
-2. **``--from-template`` treats its input as hostile.** It is the only network surface in
-   ``cli_app_new``, and everything downstream of the socket — member names, member types,
-   member sizes, the response status — is metadata a malicious host controls. Every refusal
-   in the module has a named negative test below: non-https scheme, non-allowlisted host,
-   userinfo credentials, a redirect, a non-200, a traversal member, an absolute member, a
-   symlink member, a hardlink member, an oversized member, too many members, an empty
-   archive, and an existing non-empty target.
-
-The live fetch of the real repo is NOT proven here and cannot be until the owner pushes it:
+The live fetch of the real repository is not exercised here, because the suite is offline:
 ``test_the_default_archive_url_names_the_documented_repo`` pins the URL, and the transport is
-proven against a local HTTP server with the scheme/host allowlists monkeypatched (their
-shipped values are pinned by ``test_the_shipped_template_allowlists_are_narrow``, so a
-widened default cannot reach a release).
+proven against a local HTTP server with the scheme and host allowlists monkeypatched (their
+shipped values are pinned by ``test_the_shipped_template_allowlists_are_narrow``, so a widened
+default cannot reach a release).
 """
 
 from __future__ import annotations
@@ -30,14 +25,12 @@ from __future__ import annotations
 import argparse
 import http.server
 import io
-import json
 import tarfile
 import threading
 from pathlib import Path
 
 import pytest
 
-from personalclaw.apps.manifest import AppManifest
 from personalclaw.cli_app_new import (
     MAX_MEMBERS,
     TEMPLATE_ARCHIVE_URL,
@@ -51,13 +44,6 @@ from personalclaw.cli_app_new import (
     from_template,
     scaffold,
 )
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-STAGED = REPO_ROOT / "staged-repos" / "app-template"
-
-#: The files the template MUST match byte-for-byte against a fresh scaffold run.
-GENERATED_VERBATIM = ("app.json", "provider.py", "app_cli.py", "test_provider.py")
-
 
 # ---------------------------------------------------------------------------
 # Archive fixtures
@@ -92,23 +78,32 @@ def _dir_member(name: str) -> tarfile.TarInfo:
     return info
 
 
-def _no_build_junk(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    """Keep the fixture hermetic: a stray ``__pycache__``/``.coverage`` must not ride along.
+@pytest.fixture(scope="module")
+def template_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The template repository's shape: a fresh tool scaffold plus its root-level CI workflow."""
+    app = scaffold(
+        "app-template",
+        "tool",
+        dest=tmp_path_factory.mktemp("template-repo"),
+        display_name="App Template",
+        description="The PersonalClaw app template: clone it, rename it, ship it.",
+        author="PersonalClaw contributors",
+    )
+    workflow = app.path / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: ci\non: [push]\n", encoding="utf-8")
+    # Vacuity: every positive test below extracts this tree, so it must hold the files the
+    # platform leg installs from.
+    for rel in ("app.json", "provider.py", ".github/workflows/ci.yml"):
+        assert (app.path / rel).is_file(), f"the template fixture is missing {rel}"
+    return app.path
 
-    A previous local ``pytest`` run inside ``staged-repos/app-template`` leaves both behind, and a
-    fixture that packs them silently changes what every extraction test below asserts.
-    """
-    parts = Path(info.name).parts
-    if "__pycache__" in parts or info.name.endswith((".pyc", ".coverage")):
-        return None
-    return info
 
-
-def _staged_tarball(root: str = "app-template-main") -> bytes:
-    """The staged template, packed the way GitHub packs a repo tarball (one wrapper dir)."""
+def _template_tarball(tree: Path, root: str = "app-template-main") -> bytes:
+    """*tree*, packed the way GitHub packs a repo tarball (one wrapper dir)."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(STAGED, arcname=root, recursive=True, filter=_no_build_junk)
+        tar.add(tree, arcname=root, recursive=True)
     return buf.getvalue()
 
 
@@ -145,79 +140,9 @@ def local_archive_server(monkeypatch: pytest.MonkeyPatch):
         thread.join(timeout=5)
 
 
-# ---------------------------------------------------------------------------
-# The staged template content (staged-repos/app-template — owner pushes this)
-# ---------------------------------------------------------------------------
-
-
-def test_the_staged_template_exists() -> None:
-    """Vacuity floor: every staged-template assertion below is over zero files without it."""
-    assert STAGED.is_dir(), f"{STAGED} is missing — ET-2 stages the template repo content there"
-    for rel in (*GENERATED_VERBATIM, "README.md", "LICENSE", ".github/workflows/ci.yml"):
-        assert (STAGED / rel).is_file(), f"staged template is missing {rel}"
-
-
-@pytest.mark.parametrize("rel", GENERATED_VERBATIM)
-def test_the_staged_template_is_byte_identical_to_a_fresh_scaffold(
-    rel: str, tmp_path: Path
-) -> None:
-    """Scaffold drift the template didn't follow = red, not a silently stale template."""
-    fresh = scaffold(
-        "app-template",
-        "tool",
-        dest=tmp_path,
-        display_name="App Template",
-        description="The PersonalClaw app template: clone it, rename it, ship it.",
-        author="PersonalClaw contributors",
-    )
-    expected = (fresh.path / rel).read_text(encoding="utf-8")
-    actual = (STAGED / rel).read_text(encoding="utf-8")
-    assert actual == expected, (
-        f"staged-repos/app-template/{rel} no longer matches `app new app-template --type tool`. "
-        "Regenerate the staged template in the same commit as the scaffold change."
-    )
-
-
-def test_the_staged_template_manifest_passes_cores_own_validator() -> None:
-    """The apps-repo `manifest-validate` job, run against the staged content."""
-    manifest = AppManifest.from_dict(json.loads((STAGED / "app.json").read_text(encoding="utf-8")))
-    assert manifest.validate() == []
-    assert AppManifest.from_dict(manifest.to_dict()).to_dict() == manifest.to_dict()
-    assert manifest.name == "app-template"
-
-
-def test_the_staged_ci_runs_the_four_apps_repo_jobs() -> None:
-    ci = (STAGED / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    for job in ("manifest-validate:", "tests:", "boundary:", "dco:"):
-        assert job in ci, f"staged CI is missing the {job} job"
-    # A root-level app, so the checks must read the root — NOT the apps repo's per-subdir
-    # globs. (Asserted on the executable shapes; the header comment names the apps-repo
-    # globs on purpose, to say what diverged.)
-    assert 'glob("*/app.json")' not in ci
-    assert 'pathlib.Path("app.json")' in ci
-    assert "python -m pytest . -q" in ci
-    assert "Signed-off-by" in ci
-
-
-def test_the_staged_readme_sends_the_owner_token_in_the_header_not_the_url() -> None:
-    """Every curl in the walkthrough authenticates with ``Authorization: Bearer``; none puts
-    the token in a URL, where it lands in the reader's shell history and any proxy log."""
-    readme = (STAGED / "README.md").read_text(encoding="utf-8")
-    assert "token=$PERSONALCLAW_TOKEN" not in readme
-    curls = [line for line in readme.splitlines() if line.lstrip().startswith(("curl", "review="))]
-    assert len(curls) >= 4, f"the walkthrough lost its API calls: {curls}"
-    assert readme.count('-H "Authorization: Bearer $PERSONALCLAW_TOKEN"') == len(
-        curls
-    ), "every API call in the walkthrough must carry the owner token as a Bearer header"
-    # Clone-to-installed: the four beats a stranger needs, in the text.
-    for beat in ("--from-template", "pytest", "/api/apps/preview", "/enable"):
-        assert beat in readme, f"staged README does not walk the reader through {beat}"
-
-
 def test_the_scaffold_readme_sends_the_owner_token_in_the_header_not_the_url(tmp_path) -> None:
-    """``personalclaw app new``'s README teaches the same install as the staged template."""
-    from personalclaw.cli_app_new import scaffold
-
+    """``personalclaw app new``'s README authenticates every API call with a Bearer header;
+    none puts the token in a URL, where it lands in shell history and any proxy log."""
     app = scaffold("header-probe", "channel", dest=tmp_path, year=2026)
     readme = (app.path / "README.md").read_text(encoding="utf-8")
     assert "token=$PERSONALCLAW_TOKEN" not in readme
@@ -295,10 +220,12 @@ def test_a_redirect_is_refused(local_archive_server) -> None:
     assert "redirect" in str(exc.value).lower()
 
 
-def test_a_200_tarball_is_fetched_and_extracted(local_archive_server, tmp_path: Path) -> None:
+def test_a_200_tarball_is_fetched_and_extracted(
+    local_archive_server, template_tree: Path, tmp_path: Path
+) -> None:
     """The whole default path — validate, fetch, extract — over a real socket."""
     server, url = local_archive_server
-    server.reply = (200, {"Content-Type": "application/gzip"}, _staged_tarball())
+    server.reply = (200, {"Content-Type": "application/gzip"}, _template_tarball(template_tree))
     result = from_template(dest=tmp_path, url=url)
     assert result.source == url
     assert result.path == tmp_path / "app-template"
@@ -434,8 +361,10 @@ def test_a_non_tarball_body_is_refused(tmp_path: Path, monkeypatch: pytest.Monke
 # ---------------------------------------------------------------------------
 
 
-def test_an_existing_non_empty_target_is_refused_unless_forced(tmp_path: Path) -> None:
-    data = _staged_tarball()
+def test_an_existing_non_empty_target_is_refused_unless_forced(
+    template_tree: Path, tmp_path: Path
+) -> None:
+    data = _template_tarball(template_tree)
     first = from_template(dest=tmp_path, archive=_write(tmp_path, data))
     assert first.files
     with pytest.raises(ScaffoldError) as exc:
@@ -445,13 +374,15 @@ def test_an_existing_non_empty_target_is_refused_unless_forced(tmp_path: Path) -
     assert again.path == first.path
 
 
-def test_a_symlinked_target_is_refused(tmp_path: Path) -> None:
+def test_a_symlinked_target_is_refused(template_tree: Path, tmp_path: Path) -> None:
     real = tmp_path / "elsewhere"
     real.mkdir()
     (tmp_path / "dst").mkdir()
     (tmp_path / "dst" / "app-template").symlink_to(real, target_is_directory=True)
     with pytest.raises(ScaffoldError) as exc:
-        from_template(dest=tmp_path / "dst", archive=_write(tmp_path, _staged_tarball()))
+        from_template(
+            dest=tmp_path / "dst", archive=_write(tmp_path, _template_tarball(template_tree))
+        )
     assert "symlink" in str(exc.value)
 
 
@@ -472,10 +403,10 @@ def _write(tmp_path: Path, data: bytes) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_the_github_wrapper_directory_is_stripped(tmp_path: Path) -> None:
+def test_the_github_wrapper_directory_is_stripped(template_tree: Path, tmp_path: Path) -> None:
     """A GitHub tarball wraps the repo in ``<repo>-<ref>/``; the app must land at the root."""
     result = from_template(
-        dest=tmp_path, archive=_write(tmp_path, _staged_tarball("app-template-v9"))
+        dest=tmp_path, archive=_write(tmp_path, _template_tarball(template_tree, "app-template-v9"))
     )
     assert (result.path / "app.json").is_file()
     assert not (result.path / "app-template-v9").exists()
@@ -483,7 +414,7 @@ def test_the_github_wrapper_directory_is_stripped(tmp_path: Path) -> None:
 
 
 def test_the_fetched_template_installs_and_registers_its_provider(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    template_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The clone-to-installed claim, driven through the real install path in a fake home."""
     import personalclaw.config.loader as loader
@@ -495,7 +426,9 @@ def test_the_fetched_template_installs_and_registers_its_provider(
     monkeypatch.setattr(loader, "config_dir", lambda: home)
     monkeypatch.setattr(manager, "config_dir", lambda: home)
 
-    result = from_template(dest=tmp_path / "dst", archive=_write(tmp_path, _staged_tarball()))
+    result = from_template(
+        dest=tmp_path / "dst", archive=_write(tmp_path, _template_tarball(template_tree))
+    )
     registry = get_provider_registry()
     try:
         installed = app_manager.install(result.path, origin="local", confirm=True)
@@ -535,9 +468,9 @@ def _args(**kwargs: object) -> argparse.Namespace:
 
 
 def test_the_cli_fetches_from_a_local_archive(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    template_tree: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    archive = _write(tmp_path, _staged_tarball())
+    archive = _write(tmp_path, _template_tarball(template_tree))
     code = app_cmd(
         _args(from_template=True, dest=str(tmp_path / "dst"), template_archive=str(archive))
     )

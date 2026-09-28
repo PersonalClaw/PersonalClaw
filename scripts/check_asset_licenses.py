@@ -122,7 +122,6 @@ _ASSET_SUFFIXES = frozenset(
 #: outputs and fixture-local notices included — so every one of them needs an owner.
 _FIXTURE_PREFIXES = (
     "src/personalclaw/tests_fixtures/",
-    "staged-repos/registry/fixtures/",
     "tests/fixtures/",
     "web/e2e/fixtures/",
 )
