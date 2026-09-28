@@ -71,12 +71,19 @@ rots:
   CI, which the scaffold output passes as generated. Say which bar applies in the
   issue; do not imply a kit that does not exist.
 
-A fork-and-go starting point exists for four types — the exemplars, each a
-small real app in its own public repo:
-[channel-null](https://github.com/PersonalClaw/channel-null),
-[inbox-github-notifications](https://github.com/PersonalClaw/inbox-github-notifications),
-[watched-source-github](https://github.com/PersonalClaw/watched-source-github),
-[action-home-assistant](https://github.com/PersonalClaw/action-home-assistant).
+Every row starts from the scaffold, `personalclaw app new <name> --type <type>`, which
+generates a starting app for every provider type; a `channel` one comes with tests that
+run the conformance contract above. Three types also have a small first-party app to
+read first, in the
+[first-party apps repository](https://github.com/PersonalClaw/PersonalClawApps):
+[inbox-github-notifications](https://github.com/PersonalClaw/PersonalClawApps/tree/main/inbox-github-notifications)
+for an `inbox` source,
+[watched-source-github](https://github.com/PersonalClaw/PersonalClawApps/tree/main/watched-source-github)
+for a `trigger_source` that owns its poll loop, and
+[webhook-action](https://github.com/PersonalClaw/PersonalClawApps/tree/main/webhook-action)
+for an `action`, whose README shows it firing a Home Assistant automation. For a
+`channel`, the smallest real one there is
+[telegram-channel](https://github.com/PersonalClaw/PersonalClawApps/tree/main/telegram-channel).
 
 ## The list
 

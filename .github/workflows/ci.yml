@@ -1074,11 +1074,12 @@ jobs:
         run: uv run python -m harness scan --diff
 
   client:
-    # personalclaw-client (packages/personalclaw-client-py) is versioned + published
-    # independently (release.yml → PyPI env release-client). It has its own deps
-    # (aiohttp, py3.9+) and is NOT part of the core uv workspace, so it gets its own
-    # job: build the wheel and run its test suite so a break is caught pre-merge
-    # (plan 34 T2.3). No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
+    # personalclaw-client (packages/personalclaw-client-py) is a package of its own,
+    # published by its own release job (release.yml → PyPI env release-client) at
+    # core's version: lockstep, enforced by tests/test_version_consistency.py. It has
+    # its own deps (aiohttp, py3.9+) and is NOT part of the core uv workspace, so it
+    # gets its own job: build the wheel and run its test suite so a break is caught
+    # pre-merge. No PERSONALCLAW_HOME — the runner's $HOME is ephemeral, so the
     # data-dir test resolves ~/.personalclaw as intended.
     runs-on: ubuntu-latest
     steps:
