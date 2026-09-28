@@ -36,25 +36,16 @@ from personalclaw.workflows import store
 from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import Node, NodeKind, RunStatus, WorkflowRun
+from personalclaw.workflows.validator import GATE_TEXT_KEYS, GATE_TEXT_READ
 
 pytestmark = pytest.mark.anyio
 
-#: The words each gate kind is shown or graded by — the keys the engine reads for it. An
-#: approval's and an event's are its ask (`engine._ask_payload`: `prompt`, else `message`); a
-#: judge's `prompt` is the rubric its model is sent; an expression's `message` is its failure. A
-#: verifier or a ladder reads no words at all.
-READ_TEXT: dict[str, frozenset[str]] = {
-    "approval": frozenset({"prompt", "message"}),
-    "event": frozenset({"prompt", "message"}),
-    "judge": frozenset({"prompt"}),
-    "expression": frozenset({"message"}),
-    "verify_command": frozenset(),
-    "verify_script": frozenset(),
-    "ladder": frozenset(),
-}
+#: The words each gate kind is shown or graded by, as the validator reads them to warn an author
+#: (`validator.GATE_TEXT_READ`, keyed here by the kind a spec spells).
+READ_TEXT: dict[str, frozenset[str]] = {kind.value: keys for kind, keys in GATE_TEXT_READ.items()}
 
 #: Keys that hold words meant for someone, on any gate.
-TEXT_KEYS = ("prompt", "message")
+TEXT_KEYS = GATE_TEXT_KEYS
 
 
 @pytest.fixture

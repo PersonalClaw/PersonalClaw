@@ -384,11 +384,14 @@ def _unfilled_reference(missing: UnresolvedSecret) -> str:
 
 
 def _environment_credentials() -> list[str]:
-    """The credential values a command's environment can carry, to mask out of what it prints.
+    """The credential values the gateway's environment holds, to mask out of what a command prints.
 
     Every variable named like a stored credential (Settings → Secrets mirrors those into the
-    gateway's environment) or read as one by the one hint list (``matches_secret_hint``). Taken
-    from the environment the command inherits, so the store's values are never read for this.
+    gateway's environment) or read as one by the one hint list (``matches_secret_hint``), so the
+    store's values are never read for this. The command itself gets only the child allowlist
+    (``sandbox.build_child_env``): a credential reaches its environment only when the owner passes
+    it through by name (``sandbox.env_passthrough``). Masking every one the gateway holds, not
+    only those, also covers a value the command reached another way.
     """
     from personalclaw.config.credentials import credential_names
     from personalclaw.workflows.secrets import matches_secret_hint

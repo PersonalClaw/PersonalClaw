@@ -245,17 +245,23 @@ def _memory_index_preview() -> str:
     ev = memory_index_gaps(config_dir())
     if not ev.get("db_present"):
         return "There is no memory.db yet, so there is nothing to index."
+    waiting = ev["other_model"] + ev["unembedded"]
     if not ev.get("faiss_available"):
+        if waiting:
+            return (
+                f"Would embed the {waiting} memor{'y' if waiting == 1 else 'ies'} the model bound "
+                "now has not embedded, with that model (one embedding each). faiss is not "
+                "installed, so there is no index to rebuild."
+            )
         return "faiss is not installed, so there is no index to rebuild."
-    other = ev["other_model"]
     preview = (
         f"Would rebuild the search index from the memories embedded by the current model; it "
         f"holds {ev['faiss_ids']} of {ev['embedded_count']} now."
     )
-    if other:
+    if waiting:
         preview = (
-            f"Would first re-embed the {other} memor{'y' if other == 1 else 'ies'} a different "
-            "embedding model wrote, with the model bound now (one embedding each), then rebuild "
+            f"Would first embed the {waiting} memor{'y' if waiting == 1 else 'ies'} the model "
+            "bound now has not embedded, with that model (one embedding each), then rebuild "
             f"the search index; it holds {ev['faiss_ids']} of {ev['embedded_count']} now."
         )
     return preview
@@ -268,15 +274,17 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
     Doctor page repairs the running gateway's recall, not a copy of it; with no live store in this
     process (the CLI) it opens the home's database, whose open rebuilds and saves the file.
 
-    ``reembed`` (the Doctor's Fix, which the user confirms) first re-embeds, with the model bound
-    now, the memories it has not embedded — another model's, or at another width — which a
-    rebuild alone can never index; the maintenance job passes False, so an unattended pass never
-    spends an embedding call and only rebuilds the derived index.
+    ``reembed`` (the Doctor's Fix, which the user confirms) first embeds, with the model bound
+    now, the memories it has not embedded — another model's, at another width, or none at all —
+    which a rebuild alone can never index; the maintenance job passes False, so an unattended
+    pass never spends an embedding call and only rebuilds the derived index. Without faiss there is
+    no index: semantic recall searches the stored vectors directly, so the embedding is the whole
+    Fix, and the job has nothing to do.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.vector_memory import VectorMemoryStore, faiss_available, recall_store
 
-    if not faiss_available():
+    if not reembed and not faiss_available():
         raise RuntimeError("faiss is not installed, so there is no index to rebuild")
     db = config_dir() / "memory.db"
     store = recall_store(db)
@@ -286,16 +294,23 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
         store.init()
     try:
         redone = store.reembed_stale() if reembed else None
-        res = store.rebuild_faiss_index()
+        res = store.rebuild_faiss_index() if faiss_available() else None
     finally:
         if opened:
             store.close()
+    if res is None:
+        embedded = redone["reembedded"] if redone else 0
+        return (
+            f"Embedded {embedded} memor{'y' if embedded == 1 else 'ies'} with the model bound "
+            "now. faiss is not installed, so semantic recall searches the stored vectors directly."
+        )
     msg = (
         f"Rebuilt the memory search index: {res['indexed']} of {res['embedded']} embedded "
         "memories indexed."
     )
     if redone and redone["reembedded"]:
-        msg = f"Re-embedded {redone['reembedded']} memories with the model bound now. " + msg
+        n = redone["reembedded"]
+        msg = f"Embedded {n} memor{'y' if n == 1 else 'ies'} with the model bound now. " + msg
     if res["other_model"]:
         why = (
             "no embedding model answered, so they could not be re-embedded — bind one in "
@@ -348,8 +363,8 @@ def _register_builtin_fixes() -> None:
             title="Rebuild the memory search index",
             impact="Rebuilds the faiss index semantic recall reads from the vectors already "
             "stored in memory.db, at the width the current embedding model produces, and saves "
-            "it. Memories a different embedding model wrote are re-embedded first with the model "
-            "bound now. What your memories say is not changed.",
+            "it. Memories the model bound now has not embedded (a different model's, or none at "
+            "all) are embedded first with it. What your memories say is not changed.",
             dry_preview=_memory_index_preview,
             apply=_rebuild_memory_index_fix,
         )

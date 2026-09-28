@@ -47,10 +47,32 @@ def dashboard_session_key(session_name: str) -> str:
     """Wrap a dashboard chat session's own key into its ``dashboard:`` namespace.
 
     Idempotent: an already-wrapped key is returned unchanged, so a caller that cannot
-    tell which form it holds is still safe. ``dashboard/chat_utils._history_key_for`` is
-    the richer variant (it also normalizes the legacy ``dashboard_`` filename form) and
-    delegates here for the wrapping itself.
+    tell which form it holds is still safe. A name in its transcript's file form
+    (``dashboard_<name>``) is read by :func:`dashboard_key_from_file_form`;
+    ``dashboard/chat_utils._history_key_for`` applies both rules.
     """
     if session_name.startswith(DASHBOARD_SESSION_PREFIX):
         return session_name
     return f"{DASHBOARD_SESSION_PREFIX}{session_name}"
+
+
+#: A dashboard chat's FILE form: its transcript is filed as ``dashboard_<name>``
+#: (``history._safe_key`` turns the ``:`` into ``_``), and resume round-trips once stacked the
+#: prefix (``dashboard_dashboard_<name>``).
+DASHBOARD_FILE_PREFIX = "dashboard_"
+
+
+def dashboard_key_from_file_form(name: str) -> str:
+    """``dashboard:<name>`` for a chat named in its file form, however stacked; *name* itself
+    for any other chat, which is filed under its own key.
+
+    Here rather than in ``dashboard/chat_utils`` for the reason :data:`DASHBOARD_SESSION_PREFIX`
+    is: code below the HTTP surface names a chat from its transcript's file (the idle-chat
+    compression pass records its usage under the key the chat's turns are recorded by), and
+    ``chat_utils._history_key_for`` normalizes a session name with this same rule.
+    """
+    if not name.startswith(DASHBOARD_FILE_PREFIX):
+        return name
+    while name.startswith(DASHBOARD_FILE_PREFIX):
+        name = name[len(DASHBOARD_FILE_PREFIX) :]
+    return dashboard_session_key(name)

@@ -28,6 +28,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsAvailable: () => modelsAvailable(),
       activeChains: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
       // The panel reads the download list once, so a row can re-attach to a running download.

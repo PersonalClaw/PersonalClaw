@@ -344,11 +344,12 @@ def test_the_fix_reembeds_memories_another_model_wrote(home, monkeypatch):
 
     before = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
     assert before.ok is False and before.fix_id == MEMORY_INDEX_FIX, before
-    assert "re-embed the 2 memories" in fixes.get_fix(MEMORY_INDEX_FIX).dry_preview()
+    preview = fixes.get_fix(MEMORY_INDEX_FIX).dry_preview()
+    assert "embed the 2 memories the model bound now has not embedded" in preview
 
     applied = fixes.apply_fix(MEMORY_INDEX_FIX)
     assert applied["ok"], applied
-    assert applied["result"].startswith("Re-embedded 2 memories"), applied
+    assert applied["result"].startswith("Embedded 2 memories"), applied
     # One probe embedding for the width, then one per stale row — never one per memory.
     assert len(calls) == 3, calls
     assert asyncio.run(doctor._probe_memory(DoctorContext(home=home))).ok is True
@@ -367,7 +368,10 @@ def test_other_model_memories_with_no_embedder_bound_say_what_to_do(home, monkey
 
     res = asyncio.run(doctor._probe_memory(DoctorContext(home=home)))
     assert res.ok is False and res.fix_id is None, res
-    assert "different model" in res.detail
+    assert res.detail == (
+        "2 memories embedded by another embedding model are read by keyword until the re-index "
+        "in Settings → Models re-embeds them."
+    ), "the recall disclosure's sentence for the same count"
     assert "Settings → Models" in res.remedy and res.remedy.startswith("No automatic fix")
     store.close()
 

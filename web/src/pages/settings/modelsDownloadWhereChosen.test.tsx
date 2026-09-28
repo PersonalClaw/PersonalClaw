@@ -35,6 +35,7 @@ vi.mock('../../lib/api', async (orig) => {
       modelDownloads: () => modelDownloads(),
       downloadStreamUrl: (id: string) => `/api/models/downloads/${id}/stream`,
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
       hfTokenStatus: () => Promise.resolve({ sources: [] }),

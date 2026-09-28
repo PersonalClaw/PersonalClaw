@@ -58,7 +58,7 @@ afterEach(() => cleanup())
 describe('the panel', () => {
   it('names the reason, the node, and the engine’s suggested fix', () => {
     render(<EscalationPanel reads={[read()]} runStatus="failed" />)
-    expect(screen.getByText(/needs a decision/i)).toBeTruthy()
+    expect(screen.getByRole('heading').textContent).toBe('This run stopped')
     expect(screen.getByText(/every retry was spent and the step still failed/i)).toBeTruthy()
     expect(screen.getByText('consume')).toBeTruthy()
     expect(screen.getAllByText(/check connectivity/i)).toHaveLength(2)
@@ -124,7 +124,9 @@ describe('the panel', () => {
   })
 
   it('does not say "stopped" over a run that finished with failed items skipped', () => {
-    expect(escalationHeading('failed', 1)).toBe('This run stopped and needs a decision')
+    // A stopped run waits on nobody, so its heading claims no decision.
+    expect(escalationHeading('failed', 1)).toBe('This run stopped')
+    expect(escalationHeading('escalated', 2)).toBe('This run stopped')
     expect(escalationHeading('complete', 2)).toBe('This run finished, but 2 steps failed')
     expect(escalationHeading('complete', 1)).toBe('This run finished, but 1 step failed')
     expect(escalationHeading('running', 1)).toBe('1 step failed so far')

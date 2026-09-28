@@ -31,6 +31,7 @@ vi.mock('../../lib/api', async (orig) => {
       setActiveModel: (u: string, m: string[], base: string) => setActiveModel(u, m, base),
       modelDownloads: () => Promise.resolve([]),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       judgeBench: () => Promise.reject(new actual.ApiError('none', 404, 'judge_bench_absent')),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
       hfTokenStatus: () => Promise.resolve({ sources: [] }),

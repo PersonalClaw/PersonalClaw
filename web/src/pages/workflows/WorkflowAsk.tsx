@@ -29,11 +29,13 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  same resume path the typed controls use — the run advances instead of the answer landing
  *  in a chat. `runId` is required rather than optional precisely so a caller cannot render
  *  an interactive gate widget whose submit has nowhere to go. */
-export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption }: {
+export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption, stepName = '' }: {
   continuation: WorkflowContinuation
   runId: string
   busy: boolean
   onAnswer: (c: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => void | Promise<void>
+  /** What the asking step is called where the caller knows it (the run page: its label). */
+  stepName?: string
   /** What Approve and Deny do for a step that parked (`ask.rerun`), when its owner is not a run —
    *  a trigger's park runs again from the trigger, and Deny leaves it for its next run. */
   rerunCaption?: string
@@ -68,7 +70,9 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption 
           <TriangleAlert size={14} /> This request expired before it was answered.
         </span>
         <p data-type="caption" className="text-on-surface-low">
-          Re-run the workflow from <span className="font-mono">{continuation.node_id}</span> to ask again.
+          Re-run the workflow from {stepName && stepName !== continuation.node_id
+            ? <>“{stepName}”</>
+            : <span className="font-mono">{continuation.node_id}</span>} to ask again.
         </p>
       </div>
     )

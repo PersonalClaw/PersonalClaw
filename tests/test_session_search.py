@@ -472,7 +472,8 @@ class TestTheIndexFollowsTheTranscript:
         assert home_log.is_home_log()
         self._save(self._state(home_log), "chat-9-9")
 
-        assert [r["key"] for r in ss.search_sessions("watermelon")] == ["dashboard:chat-9-9"]
+        # Under its transcript's name, the key the chat list uses (test_the_chat_index_keys_…).
+        assert [r["key"] for r in ss.search_sessions("watermelon")] == ["dashboard_chat-9-9"]
         assert ss.stats()["indexed_chars"] > 0
 
     def test_a_log_rooted_elsewhere_is_not_the_home_s(self, tmp_path):

@@ -15,8 +15,10 @@ from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 from .embedding_fingerprint import (
     FINGERPRINT_COLUMNS,
+    ITEM_FRESH_PREDICATE,
     ITEM_STALE_PREDICATE,
     STALE_PREDICATE,
+    EmbeddingFingerprint,
     active_fingerprint,
     count_stale_chunks,
 )
@@ -1874,21 +1876,30 @@ class KnowledgeStore:
         dicts carrying the fields the resolver reads (id/title/file_path/summary/item_type/
         word_count/processing_status/created_at) PLUS the DECODED embedding vector (the normal
         serializer strips it — the resolver needs the raw floats for cosine). Cheap SQL narrows
-        by type so the Python cosine loop stays bounded; ordered newest-first, capped."""
+        by type so the Python cosine loop stays bounded; ordered newest-first, capped.
+
+        Only items whose vector the model that wrote ``item_id``'s wrote too: two models'
+        vectors at one width compare and score a cosine that means nothing, and this cosine
+        decides which copy the ingest archives. (One that records no model is compared only with
+        others that record none: :meth:`EmbeddingFingerprint.recorded`.)"""
         from personalclaw.knowledge.embedder import bytes_to_floats
 
-        anchor = self.db.execute("SELECT item_type FROM items WHERE id = ?", (item_id,)).fetchone()
+        anchor = self.db.execute(
+            "SELECT item_type, embedding_model_id, embedding_provider FROM items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
         if anchor is None:
             return []
-        item_type = anchor["item_type"] if not isinstance(anchor, tuple) else anchor[0]
+        item_type, model_id, provider = tuple(anchor)
+        fp = EmbeddingFingerprint.recorded(model_id, provider)
         rows = self.db.execute(
             "SELECT id, title, file_path, summary, item_type, word_count, "
             "LENGTH(content) AS content_len, "
             "processing_status, created_at, embedding "
             "FROM items WHERE status = 'active' AND COALESCE(is_archived, 0) = 0 "
-            "AND item_type = ? AND embedding IS NOT NULL AND id != ? "
+            f"AND item_type = ? AND embedding IS NOT NULL AND id != ? AND {ITEM_FRESH_PREDICATE} "
             "ORDER BY created_at DESC LIMIT ?",
-            (item_type, item_id, max(1, int(limit))),
+            (item_type, item_id, *fp.params, max(1, int(limit))),
         ).fetchall()
         out: list[dict] = []
         for r in rows:
@@ -1934,13 +1945,11 @@ class KnowledgeStore:
         `similarity`, `title_similarity`) — never the embedding, which is megabytes of floats no
         caller needs. Items without an embedding are simply absent: an un-embedded item cannot be
         scored, and guessing from titles alone is how a merge UI proposes destroying two unrelated
-        documents.
+        documents. So are the items whose vector another model wrote: their cosine with
+        this one means nothing. :meth:`duplicates_not_compared` counts those, and the panel says
+        how many.
         """
-        from personalclaw.knowledge.dedup import (
-            FILENAME_SIM_MIN,
-            filename_similarity,
-            resolve_duplicate,
-        )
+        from personalclaw.knowledge.dedup import resolve_duplicate
         from personalclaw.knowledge.embedder import bytes_to_floats
 
         _COLS = (
@@ -1956,22 +1965,11 @@ class KnowledgeStore:
         anchor["embedding"] = bytes_to_floats(anchor.get("embedding") or b"")
         if not anchor["embedding"]:
             return []
-        anchor_name = anchor.get("title") or anchor.get("file_path") or ""
 
-        # Phase 1 — the free leg, over everything. Same eligibility as the ingest prefilter
-        # (active, unarchived, same type, embedded, not the anchor) so the two paths agree on
+        # Phase 1 — the free leg, over everything, and only the candidates holding a vector the
+        # anchor's model wrote (the ingest prefilter's rule), so the two paths agree on
         # WHICH items are comparable; they differ only in how many they are willing to score.
-        gated = [
-            r["id"]
-            for r in self.db.execute(
-                "SELECT id, title, file_path FROM items "
-                "WHERE status = 'active' AND COALESCE(is_archived, 0) = 0 "
-                "AND item_type = ? AND embedding IS NOT NULL AND id != ?",
-                (anchor["item_type"], item_id),
-            ).fetchall()
-            if filename_similarity(r["title"] or r["file_path"] or "", anchor_name)
-            >= FILENAME_SIM_MIN
-        ]
+        gated, _elsewhere = self._title_matches(item_id)
         if not gated:
             return []
 
@@ -2037,6 +2035,48 @@ class KnowledgeStore:
         # from a rewrite), filename similarity breaks ties, then id for a stable total order.
         scored.sort(key=lambda t: (-t[0], -t[1], t[2]["id"]))
         return [d for _, _, d in scored[: max(1, int(limit))]]
+
+    def _title_matches(self, item_id: str) -> tuple[list[str], list[str]]:
+        """``(comparable, not comparable)`` ids of the items a duplicate of *item_id* could be by
+        its title: active, unarchived, the same type, holding a vector, and titled within
+        ``dedup.FILENAME_SIM_MIN`` of it — split by whether their vector can be compared with
+        *item_id*'s. It can when both record the same model (recording none is a space of its
+        own); another model's cannot, since no cosine between the two means anything.
+        """
+        from personalclaw.knowledge.dedup import FILENAME_SIM_MIN, filename_similarity
+
+        anchor = self.db.execute(
+            "SELECT title, file_path, item_type, embedding_model_id, embedding_provider "
+            "FROM items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if anchor is None:
+            return [], []
+        title, file_path, item_type, model_id, provider = tuple(anchor)
+        name = title or file_path or ""
+        mine = EmbeddingFingerprint.recorded(model_id, provider)
+        comparable: list[str] = []
+        elsewhere: list[str] = []
+        for r in self.db.execute(
+            "SELECT id, title, file_path, embedding_model_id, embedding_provider FROM items "
+            "WHERE status = 'active' AND COALESCE(is_archived, 0) = 0 "
+            "AND item_type = ? AND embedding IS NOT NULL AND id != ?",
+            (item_type, item_id),
+        ).fetchall():
+            if filename_similarity(r["title"] or r["file_path"] or "", name) < FILENAME_SIM_MIN:
+                continue
+            theirs = EmbeddingFingerprint.recorded(r["embedding_model_id"], r["embedding_provider"])
+            (comparable if theirs == mine else elsewhere).append(r["id"])
+        return comparable, elsewhere
+
+    def duplicates_not_compared(self, item_id: str) -> int:
+        """How many items titled like *item_id* :meth:`find_duplicates` could not compare with it,
+        because the model that embedded one did not embed the other. The duplicates panel says
+        so, so its "no duplicates" is not read as "none exists"."""
+        has_vector = self.db.execute(
+            "SELECT 1 FROM items WHERE id = ? AND embedding IS NOT NULL", (item_id,)
+        ).fetchone()
+        return len(self._title_matches(item_id)[1]) if has_vector else 0
 
     def merge_items(self, keep_id: str, merge_id: str, *, relink_citations: bool = True) -> dict:
         """Fold *merge_id* into *keep_id*, then delete it. Returns what moved.
@@ -2722,9 +2762,14 @@ class KnowledgeStore:
 
     def get_chunks(self, item_id: str, *, with_embedding: bool = False) -> list[dict]:
         """An item's chunks in order. The raw embedding BLOB is an internal detail, so it
-        is decoded to a float list only when *with_embedding* is set (the retrieval path);
-        otherwise a lightweight ``has_embedding`` flag is returned instead."""
-        cols = "id, item_id, chunk_index, text, section, line_start, line_end, embedding"
+        is decoded to a float list only when *with_embedding* is set (the retrieval path), with
+        the model that wrote it (``embedding_model_id`` / ``embedding_provider``) so a
+        caller comparing two chunks can tell whether one model wrote both; otherwise a
+        lightweight ``has_embedding`` flag is returned instead."""
+        cols = (
+            "id, item_id, chunk_index, text, section, line_start, line_end, embedding, "
+            "embedding_model_id, embedding_provider"
+        )
         rows = self.db.execute(
             f"SELECT {cols} FROM chunks WHERE item_id = ? ORDER BY chunk_index",
             (item_id,),
@@ -2738,6 +2783,8 @@ class KnowledgeStore:
 
                 d["embedding"] = bytes_to_floats(raw) if raw else []
             else:
+                d.pop("embedding_model_id", None)
+                d.pop("embedding_provider", None)
                 d["has_embedding"] = bool(raw)
             out.append(d)
         return out
@@ -4053,8 +4100,9 @@ class KnowledgeStore:
         return int(row["n"]) if row else 0
 
     def chunk_vectors_by_ids(self, chunk_ids) -> list[dict]:
-        """``{id, item_id, chunk_index, embedding}`` for the given chunk ids, embeddings
-        decoded, unembedded rows dropped.
+        """``{id, item_id, chunk_index, embedding, embedding_model_id, embedding_provider}`` for
+        the given chunk ids, embeddings decoded, unembedded rows dropped. The model that wrote
+        each vector rides along, so a comparison can keep to one model's.
 
         Serves the ANN arm: ``candidate_chunk_ids`` returns ids, and scoring needs the
         vector plus which item and which chunk position it belongs to. Ids are inlined as
@@ -4067,8 +4115,8 @@ class KnowledgeStore:
 
         marks = ",".join("?" * len(ids))
         rows = self.db.execute(
-            "SELECT id, item_id, chunk_index, embedding FROM chunks "  # noqa: S608 — placeholders
-            f"WHERE id IN ({marks}) AND embedding IS NOT NULL",
+            "SELECT id, item_id, chunk_index, embedding, embedding_model_id, "  # noqa: S608
+            f"embedding_provider FROM chunks WHERE id IN ({marks}) AND embedding IS NOT NULL",
             tuple(ids),
         ).fetchall()
         out = []
@@ -4081,13 +4129,15 @@ class KnowledgeStore:
                         "item_id": r["item_id"],
                         "chunk_index": r["chunk_index"],
                         "embedding": vec,
+                        "embedding_model_id": r["embedding_model_id"],
+                        "embedding_provider": r["embedding_provider"],
                     }
                 )
         return out
 
     def iter_embedded_chunks(self, exclude_item_id: str | None = None):
-        """Stream ``{item_id, chunk_index, embedding}`` for every embedded chunk, optionally
-        skipping one item's own chunks.
+        """Stream ``{item_id, chunk_index, embedding, embedding_model_id, embedding_provider}`` for
+        every embedded chunk, optionally skipping one item's own chunks.
 
         The exact-scan fallback for when the ANN index cannot serve a query. STREAMED rather
         than ``fetchall``-ed, exactly as the retrieval vector arm does, so peak memory stays
@@ -4095,7 +4145,10 @@ class KnowledgeStore:
         """
         from personalclaw.knowledge.embedder import bytes_to_floats
 
-        sql = "SELECT item_id, chunk_index, embedding FROM chunks WHERE embedding IS NOT NULL"
+        sql = (
+            "SELECT item_id, chunk_index, embedding, embedding_model_id, embedding_provider "
+            "FROM chunks WHERE embedding IS NOT NULL"
+        )
         params: tuple = ()
         if exclude_item_id:
             sql += " AND item_id != ?"
@@ -4103,7 +4156,13 @@ class KnowledgeStore:
         for r in self.db.execute(sql, params):
             vec = bytes_to_floats(r["embedding"]) if r["embedding"] else []
             if vec:
-                yield {"item_id": r["item_id"], "chunk_index": r["chunk_index"], "embedding": vec}
+                yield {
+                    "item_id": r["item_id"],
+                    "chunk_index": r["chunk_index"],
+                    "embedding": vec,
+                    "embedding_model_id": r["embedding_model_id"],
+                    "embedding_provider": r["embedding_provider"],
+                }
 
     def count_items_with_embedded_chunks(self) -> int:
         """How many items have at least one embedded chunk.
@@ -4232,14 +4291,16 @@ class KnowledgeStore:
             return 0
         return count_stale_chunks(self.db, fp)
 
-    def stale_chunk_item_rows(self, *, include_archived: bool = False) -> list:
-        """RET-2-shaped attention rows for the items holding stale chunk vectors."""
+    def stale_vector_item_rows(self, *, include_archived: bool = False) -> list:
+        """RET-2-shaped attention rows for the items holding a stale vector — a passage's, or the
+        whole-item one — which search skips. ``[]`` with no model bound, where nothing is
+        compared at all."""
         fp = active_fingerprint()
         if fp is None:
             return []
-        from .embedding_fingerprint import stale_chunk_items, stale_rows
+        from .embedding_fingerprint import stale_rows, stale_vector_items
 
-        return stale_rows(stale_chunk_items(self.db, fp, include_archived=include_archived))
+        return stale_rows(stale_vector_items(self.db, fp, include_archived=include_archived))
 
     def reembed_stale_chunks(
         self,

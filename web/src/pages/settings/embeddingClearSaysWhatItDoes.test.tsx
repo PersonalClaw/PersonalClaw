@@ -29,6 +29,7 @@ vi.mock('../../lib/api', async (orig) => {
         Object.fromEntries(Object.entries(c).map(([u, chain]) => [u, chain.value]))),
       setActiveModel: (u: string, m: string[], base: string) => setActiveModel(u, m, base),
       startEmbeddingReindex: () => startEmbeddingReindex(),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       embeddingReindexStreamUrl: (id: string) => `/api/models/embedding/reindex/${id}/stream`,
       modelDownloads: () => Promise.resolve([]),
       modelsHealth: () => Promise.resolve({ providers: [] }),

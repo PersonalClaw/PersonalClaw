@@ -32,7 +32,7 @@ from personalclaw.durability import conflicts as conflicts_mod
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
-from personalclaw.durability.merge import merge_rows
+from personalclaw.durability.merge import _is_tombstone, merge_rows
 from personalclaw.durability.shards import (
     _json_rows_from_entity_dir,
     _json_rows_from_file,
@@ -138,7 +138,7 @@ def reconcile_entry(
         merged = merge_rows(
             entry.merge,
             local,
-            effective_remote,
+            _as_they_arrive(entry, effective_remote),
             tombstones=entry.tombstones,
             dedup_key="id",
         )
@@ -159,6 +159,17 @@ def reconcile_entry(
         conflicts=recorded,
         new_ancestors=_agreed_shas(effective_remote, merged.rows, held),
     )
+
+
+def _as_they_arrive(entry: inv.StateEntry, remote_rows: list[dict]) -> list[dict]:
+    """The peer's rows as this home's store takes them in (``StateEntry.arrives``). A tombstone is
+    a deletion rather than a row, and passes as it is.
+
+    Only the merge sees them: the conflict check and :func:`_agreed_shas` read the rows the peer
+    published, so a row brought in changed is never recorded as one the two homes agree on."""
+    if entry.arrives is None:
+        return remote_rows
+    return [row if _is_tombstone(row) else entry.arrives(row) for row in remote_rows]
 
 
 def _agreed_shas(

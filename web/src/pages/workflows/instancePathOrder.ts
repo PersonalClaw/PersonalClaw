@@ -7,7 +7,7 @@
  *  or loop iteration. Nine items look perfect, which is why no short test and no seeded run
  *  ever caught it.
  *
- *  The engine already sorts numerically (`_natural_key` in `workflows/node_bindings.py`, whose
+ *  The engine already sorts numerically (`instance_order` in `workflows/models.py`, whose
  *  docstring documents this exact tenth-iteration failure). These are the views onto that
  *  engine's output, so they order paths the same way — a view that disagrees with the engine
  *  about which item is "next" is showing the user a different run than the one executing. */

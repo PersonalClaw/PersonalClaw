@@ -99,9 +99,9 @@ _GATEWAY_ENV: dict[str, str] = {
     # PersonalClaw itself: the gateway, its CLI and its own modules.
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": "the gateway itself",
     "cli_run.py::start_transient_gateway::subprocess.Popen": "the gateway itself (`run`)",
-    "dashboard/handlers/updates.py::_graceful_reexec::os.execve": "the gateway re-execing itself",
-    "gateway.py::GatewayOrchestrator._auto_apply_update::os.execv": (
-        "the gateway re-execing itself after an update"
+    "restart_request.py::start::os.execve": (
+        "the gateway starting itself again once its own stop is done (a Restart, an applied "
+        "update, a staged auto-update)"
     ),
     "cli_server.py::_refresh_agent_config::subprocess.run": (
         "PersonalClaw's own `setup --agent-only`"

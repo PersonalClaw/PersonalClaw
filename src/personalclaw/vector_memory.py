@@ -629,6 +629,68 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
 #: pinned-function space ``''``, never a bound model.
 _OF_MODEL = "COALESCE(embedding_model, '') = ?"
 
+
+@dataclass(frozen=True)
+class EmbeddingCoverage:
+    """How much of one store's episodic memory a semantic search compares, from one read.
+
+    ``comparable`` memories hold a vector of the model compared under, at the width it writes now
+    (its newest vector's). ``other_model`` ones hold another model's vector, or this model's at
+    another width; ``unembedded`` ones hold none at all, written while no model was bound or when
+    it failed. A search reads those two by keyword beside its vector results until the re-index
+    embeds them (``VectorMemoryStore._fts5_episodic_search``'s ``beside``), so every surface that
+    counts them — the recall disclosure, the Memory page, the Doctor, the gateway's start — reads
+    :attr:`read_by_keyword` from here.
+    """
+
+    comparable: int
+    other_model: int
+    unembedded: int
+
+    @property
+    def read_by_keyword(self) -> int:
+        """The memories a semantic search reads by keyword: the model compared under has not
+        embedded them."""
+        return self.other_model + self.unembedded
+
+
+def embedding_coverage(conn: sqlite3.Connection, space: str, *, bound: bool) -> EmbeddingCoverage:
+    """:class:`EmbeddingCoverage` of ``conn``'s live episodic memories under ``space``'s model.
+
+    ``bound`` says a model is bound for ``space`` to be. Without one nothing is compared, so there
+    is no other model and nothing waiting to be embedded; only a vector of ``''`` at another width
+    than its newest is counted, which is what the index of ``''``'s vectors cannot hold. Read-only,
+    and tolerant of a database the store has not migrated yet (the Doctor opens it ``mode=ro``):
+    with no model column, every vector is one that records no model, and with no text column no
+    row has anything to embed.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)").fetchall()}
+    model = "COALESCE(embedding_model, '')" if "embedding_model" in cols else "''"
+    # A row with no text has nothing to embed, and a table with no text column holds none.
+    has_text = "COALESCE(text, '') != ''" if "text" in cols else "0"
+    live = "is_deleted = 0 AND embedding IS NOT NULL"
+    newest = conn.execute(
+        f"SELECT length(embedding) FROM episodic_memories WHERE {live} "  # noqa: S608
+        f"AND {model} = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+        (space,),
+    ).fetchone()
+    width = int(newest[0]) if newest else 0
+    row = conn.execute(
+        f"SELECT COALESCE(SUM({live} AND {model} = ? AND length(embedding) = ?), 0), "  # noqa: S608
+        f"COALESCE(SUM({live} AND {model} = ? AND length(embedding) != ?), 0), "
+        f"COALESCE(SUM({live} AND {model} != ?), 0), "
+        f"COALESCE(SUM(is_deleted = 0 AND embedding IS NULL AND {has_text}), 0) "
+        "FROM episodic_memories",
+        (space, width, space, width, space),
+    ).fetchone()
+    comparable, other_width, other_models, unembedded = (int(v) for v in row)
+    if not bound:
+        return EmbeddingCoverage(comparable=comparable, other_model=other_width, unembedded=0)
+    return EmbeddingCoverage(
+        comparable=comparable, other_model=other_width + other_models, unembedded=unembedded
+    )
+
+
 #: What a store embeds with until a function is pinned on it: the model bound in Settings →
 #: Models, read at each call (``embedding_providers.registry.bound_embedding``).
 _FOLLOW_BINDING: Any = object()
@@ -2386,16 +2448,11 @@ class VectorMemoryStore(MemoryProvider):
             "embedding_model": current.ref,
         }
 
-    def _count_vectors(self, space: str | None = None, *, other: bool = False) -> int:
-        """Live episodic vectors: all of them, ``space``'s model's, or (``other``) every other."""
-        sql = (
+    def _count_vectors(self) -> int:
+        """Live episodic memories holding a vector, whichever model wrote it."""
+        row = self.db.execute(
             "SELECT COUNT(*) FROM episodic_memories WHERE is_deleted = 0 AND embedding IS NOT NULL"
-        )
-        params: tuple[str, ...] = ()
-        if space is not None:
-            sql += f" AND {'NOT ' if other else ''}{_OF_MODEL}"
-            params = (space,)
-        row = self.db.execute(sql, params).fetchone()
+        ).fetchone()
         return int(row[0]) if row else 0
 
     def _to_reembed(
@@ -3102,21 +3159,20 @@ class VectorMemoryStore(MemoryProvider):
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0) AS ep_active, "
             "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=1) AS ep_deleted, "
             "(SELECT COUNT(*) FROM memory_events) AS events_count, "
-            "(SELECT COUNT(*) FROM semantic_memory WHERE source='user_explicit') AS user_curated, "
-            "(SELECT COUNT(*) FROM episodic_memories WHERE is_deleted=0 AND embedding IS NULL "
-            "AND text IS NOT NULL AND text != '') AS unembedded"
+            "(SELECT COUNT(*) FROM semantic_memory WHERE source='user_explicit') AS user_curated"
         ).fetchone()
         faiss_size = len(self._index.ids)
-        # Embedded = searchable by meaning now: the vectors of the model bound now. The others
-        # were written by another model (or before models were recorded) and are read by keyword
-        # until the re-index re-embeds them — counted, so the Memory page can say so. With no
-        # model bound nothing is compared at all, which is not staleness.
+        # Embedded = searchable by meaning now: the vectors of the model bound now, at its width.
+        # The others, and the memories no model embedded, are read by keyword until the re-index
+        # embeds them — counted by the ONE reader every surface uses (`embedding_coverage`), so the
+        # recall disclosure, the Memory page and the Doctor say the same number. With no model
+        # bound nothing is compared at all, which is not staleness: every vector is kept for when
+        # one is chosen again.
         ref = self._embedding_ref()
         if ref is None:
-            embedded, stale = self._count_vectors(), 0
+            coverage = EmbeddingCoverage(self._count_vectors(), 0, 0)
         else:
-            embedded = self._count_vectors(ref)
-            stale = self._count_vectors(ref, other=True)
+            coverage = embedding_coverage(self.db, ref, bound=True)
         return {
             "semantic_active": row[0],
             "semantic_deleted": row[1],
@@ -3124,11 +3180,10 @@ class VectorMemoryStore(MemoryProvider):
             "episodic_deleted": row[3],
             "events_count": row[4],
             "faiss_index_size": faiss_size,
-            "embedded_count": embedded,
-            "embedded_stale": stale,
-            # Memories no model embedded: written while none was bound, or when it failed. Read
-            # by keyword beside the vector results until the re-index embeds them.
-            "unembedded": row[6],
+            "embedded_count": coverage.comparable,
+            "embedded_stale": coverage.other_model,
+            "unembedded": coverage.unembedded,
+            "read_by_keyword": coverage.read_by_keyword,
             # Rows the human explicitly wrote or tombstoned through the memory
             # editor — deleted rows INCLUDED, since curating away is curation.
             # The Discover engagement probe reads this.

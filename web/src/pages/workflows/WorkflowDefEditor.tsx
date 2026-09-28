@@ -394,12 +394,23 @@ function Outcome({ issues, errors, advice, unplaced, topError }: {
       )}
       {advice.length > 0 && (
         <p data-type="caption" className="text-on-surface-low">
-          {advice.length === 1 ? '1 suggestion' : `${advice.length} suggestions`} from the workflow conventions — advice, not a reason it cannot save.
+          {adviceLine(advice.filter((i) => i.source !== 'lint').length, advice.filter((i) => i.source === 'lint').length)}
         </p>
       )}
       {unplaced.length > 0 && <IssueList issues={unplaced} />}
     </div>
   )
+}
+
+/** The line under the outcome that counts what is not a reason it cannot save: the validator's
+ *  warnings, and the workflow conventions' suggestions — two sources, each named as itself. */
+export function adviceLine(warnings: number, suggestions: number): string {
+  const parts: string[] = []
+  if (warnings > 0) parts.push(warnings === 1 ? '1 warning' : `${warnings} warnings`)
+  if (suggestions > 0) {
+    parts.push(`${suggestions === 1 ? '1 suggestion' : `${suggestions} suggestions`} from the workflow conventions`)
+  }
+  return `${parts.join(' and ')} — advice, not a reason it cannot save.`
 }
 
 function IssueList({ issues }: { issues: EditIssue[] }) {

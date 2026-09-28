@@ -81,6 +81,8 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
   // panel therefore mounts the section when there are candidates OR the lookup failed.
   const [duplicates, setDuplicates] = useState<KnowledgeDuplicate[]>([])
   const [duplicatesErr, setDuplicatesErr] = useState<unknown>(null)
+  // The server's sentence about the items titled like this one it could not compare (`""` = none).
+  const [duplicatesNote, setDuplicatesNote] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   // The detail's title-wand + action cluster, lifted into THIS page's header bar so
   // there's a single header (no stacked page-header + in-body title row). The wand sits
@@ -136,8 +138,8 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
     let alive = true
     // 🔴 NO `.catch(() => [])`. The rejection is STORED, not substituted: see `duplicatesErr`.
     api.knowledgeDuplicates(id)
-      .then((d) => { if (alive) { setDuplicates(d); setDuplicatesErr(null) } })
-      .catch((e) => { if (alive) { setDuplicates([]); setDuplicatesErr(e) } })
+      .then((d) => { if (alive) { setDuplicates(d.duplicates); setDuplicatesNote(d.not_compared_note); setDuplicatesErr(null) } })
+      .catch((e) => { if (alive) { setDuplicates([]); setDuplicatesNote(''); setDuplicatesErr(e) } })
     return () => { alive = false }
   }, [id, duplicateKey])
 
@@ -214,7 +216,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           <SidePanel fillHeight storeKey="knowledge-extras-w" icon={<Layers size={18} className="text-primary" />} title="More details" onClose={() => setShowDetails(false)}>
             <KnowledgeExtras item={item} pool={pool} related={related} onOpenItem={onOpenItem}
               annotations={annotations} onRemoveAnnotation={removeAnnotation}
-              duplicates={duplicates} duplicatesError={duplicatesErr}
+              duplicates={duplicates} duplicatesError={duplicatesErr} duplicatesNote={duplicatesNote}
               onRetryDuplicates={reloadDuplicates} onMerged={afterMerge} />
           </SidePanel>
         ) : undefined
@@ -267,7 +269,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
 /** The per-item "more details" content: full content, the extracted-content pool,
  *  entities, relations, and related items — the dedicated page's side-panel body. */
 function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemoveAnnotation,
-  duplicates, duplicatesError, onRetryDuplicates, onMerged }: {
+  duplicates, duplicatesError, duplicatesNote, onRetryDuplicates, onMerged }: {
   item: KnowledgeItem
   pool: ExtractedContent[]
   related: KnowledgeItem[]
@@ -276,6 +278,9 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
   onRemoveAnnotation: (id: string) => void
   duplicates: KnowledgeDuplicate[]
   duplicatesError: unknown
+  /** What the lookup could not compare (`""` = nothing), which keeps the section up on its own:
+   *  "no duplicates" is not the answer when copies embedded by another model were never compared. */
+  duplicatesNote: string
   onRetryDuplicates: () => void
   onMerged: () => void
 }) {
@@ -283,7 +288,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
   const relations = item.relations ?? []
   // A FAILED duplicates lookup is content: it has to keep the panel out of its "nothing here
   // yet" state, or the one surface that knows the check broke is the one that renders instead.
-  const showDuplicates = duplicates.length > 0 || !!duplicatesError
+  const showDuplicates = duplicates.length > 0 || !!duplicatesError || !!duplicatesNote
   if (pool.length === 0 && entities.length === 0 && relations.length === 0 && related.length === 0
     && annotations.length === 0 && !showDuplicates && !item.content) {
     return <p data-type="body-s" className="text-on-surface-low">No extracted content, entities, or related items yet.</p>
@@ -299,7 +304,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           beside an error would assert exactly the thing the error says is unknown. */}
       {showDuplicates && (
         <Section label={`Possible duplicates${duplicates.length ? ` · ${duplicates.length}` : ''}`} icon={Copy}>
-          <DuplicateList item={item} duplicates={duplicates} error={duplicatesError}
+          <DuplicateList item={item} duplicates={duplicates} error={duplicatesError} note={duplicatesNote}
             onRetry={onRetryDuplicates} onOpenItem={onOpenItem} onMerged={onMerged} />
         </Section>
       )}

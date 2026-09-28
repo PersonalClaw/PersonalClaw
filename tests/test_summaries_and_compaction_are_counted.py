@@ -289,6 +289,27 @@ async def test_background_compression_of_an_idle_chat_writes_one_row(calls, tmp_
     assert _census()["calls"] == 0
 
 
+@pytest.mark.parametrize(
+    ("filed_as", "recorded_as"),
+    [
+        ("dashboard_chat-idle", "dashboard:chat-idle"),
+        ("dashboard_dashboard_chat-idle", "dashboard:chat-idle"),
+        ("slack_C1_1712.3", "slack_C1_1712.3"),
+    ],
+    ids=["a dashboard chat", "a resume-stacked file name", "a chat of another kind"],
+)
+async def test_the_idle_chat_pass_names_a_chat_as_its_turns_are_recorded(filed_as, recorded_as):
+    """The pass reads a chat by the name its transcript is filed under, and the key rule it
+    records the row by lives below the HTTP surface (the structural rail refuses the upward
+    import of ``dashboard.chat_utils`` it used to take)."""
+    from personalclaw.constants import dashboard_key_from_file_form
+    from personalclaw.dashboard.chat_utils import _history_key_for
+
+    assert dashboard_key_from_file_form(filed_as) == recorded_as
+    if filed_as.startswith("dashboard_"):
+        assert _history_key_for(filed_as) == recorded_as, "the dashboard reads it the same way"
+
+
 # ── the census counts what no row counts, and nothing else ──
 
 

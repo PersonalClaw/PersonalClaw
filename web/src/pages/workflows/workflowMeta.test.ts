@@ -78,7 +78,14 @@ describe('isTerminal', () => {
 })
 
 describe('nodeLabel', () => {
-  it('prefers the node id', () => {
+  it('names a step by its label, the name the run’s own sentences give it', () => {
+    expect(nodeLabel({ node_id: 'gather', label: 'Gather the sources', instance_path: 'root.children[0]' }))
+      .toBe('Gather the sources')
+    expect(nodeLabel({ node_id: 'one', label: 'Read one source', instance_path: 'root.body#3' }))
+      .toBe('Read one source #3')
+  })
+
+  it('names a step with no label by its id', () => {
     expect(nodeLabel({ node_id: 'gather', instance_path: 'root.children[0]' })).toBe('gather')
   })
 

@@ -1,26 +1,24 @@
 import type { MemoryStats } from '../../lib/api'
 
 /** The Memory panel's "Embedded" stat: how many memories the bound embedding model embedded
- *  (searchable by meaning), and — when some were embedded by another model — how many of those.
+ *  (searchable by meaning), and — when it has not embedded some — how many memory search reads by
+ *  keyword instead.
  *
  *  An Embedding rebind leaves the old model's vectors in place until the re-index Settings →
- *  Models starts re-embeds them, and they are never compared with the new model's: memory search
- *  reads them by keyword. Counting them as "Embedded" said they were searchable by meaning.
+ *  Models starts re-embeds them, and a memory written while no model was bound has none: memory
+ *  search reads both by keyword. The count and its sentence are the server's (`read_by_keyword`,
+ *  `read_by_keyword_note`), the same the recall disclosure and the Doctor's memory row say, so the
+ *  page composes neither. It used to count only another model's vectors.
  *
- *  With no model bound (`embedding_provider` is `'none'`) nothing is compared, so nothing is
- *  stale: the count is every memory holding a vector, kept for when a model is chosen again, and
- *  the stat says that search matches by keyword meanwhile. */
-export function memoryEmbeddedStat(stats: Pick<MemoryStats, 'embedded_count' | 'embedded_stale' | 'embedding_provider'>): {
+ *  With no model bound (`embedding_provider` is `'none'`) nothing is compared, so nothing waits:
+ *  the count is every memory holding a vector, kept for when a model is chosen, and the stat says
+ *  that search matches by keyword meanwhile. */
+export function memoryEmbeddedStat(stats: Pick<MemoryStats, 'embedded_count' | 'read_by_keyword' | 'read_by_keyword_note' | 'embedding_provider'>): {
   value: number; sub?: string; title?: string
 } {
-  const stale = stats.embedded_stale ?? 0
-  if (stale > 0) {
-    const one = stale === 1
-    return {
-      value: stats.embedded_count,
-      sub: `${stale} by another model`,
-      title: `${stale} ${one ? 'memory was' : 'memories were'} embedded by another embedding model. Memory search reads ${one ? 'it' : 'them'} by keyword until the re-index in Settings → Models re-embeds ${one ? 'it' : 'them'}.`,
-    }
+  const waiting = stats.read_by_keyword ?? 0
+  if (waiting > 0) {
+    return { value: stats.embedded_count, sub: `${waiting} read by keyword`, title: stats.read_by_keyword_note }
   }
   if (stats.embedding_provider === 'none') {
     return {

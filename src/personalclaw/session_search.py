@@ -6,7 +6,7 @@ finding things once history outgrows that window. This module is the FTS5 index 
 replaces it — one query against a real inverted index, with a highlighted snippet
 showing *why* each session matched.
 
-Two rules are load-bearing:
+Three rules are load-bearing:
 
 * **Restricted sessions are never indexed.** A temporary or incognito session that
   became searchable would defeat the entire point of the mode. Exclusion happens at
@@ -16,13 +16,18 @@ Two rules are load-bearing:
   from the JSONL transcripts, so a corrupt or missing database is repaired by
   rebuilding rather than restored. Any failure degrades to the linear scan, which
   is why nothing here raises into a caller.
+* **A chat is one entry, under its transcript's file name** (:func:`_file_key`, the key the
+  chat list uses), whichever spelling of its key a caller hands in: ``dashboard:chat-7`` and
+  ``dashboard_chat-7`` are one chat. A chat's save and the indexer each kept their own
+  spelling, so one chat answered a search twice, a forget under one spelling left the other
+  findable, and every check read the chat again (:func:`_key_by_file`).
 
 And one rule about what a search SAYS: **a partial answer never reads as a complete one.**
 The index is kept caught up in the background (:class:`SessionIndexer`), and until it has
 caught up with every chat — after a rebuild, or a history arriving in bulk — some chats are
-not in it; and it holds only the beginning of a chat longer than it keeps. :func:`search`
-therefore answers with how many chats it looked in whole, of how many, and reads the rest
-directly when asked to.
+not in it; and it holds only the beginning of a chat longer than it keeps, which a search
+reads directly within a bound (:data:`LONG_READ_BYTES`). :func:`search` therefore answers
+with how many chats it looked in whole, of how many, and reads the rest directly when asked to.
 """
 
 from __future__ import annotations
@@ -53,7 +58,8 @@ MIN_QUERY_CHARS = 2
 
 # Per-session indexed-text ceiling. A session is searchable by its content, not
 # archivable through the index — the transcript is still the record. A longer session is
-# indexed as far as this, and a search says it looked in only its beginning (`search`).
+# indexed as far as this; a search reads it directly within `LONG_READ_BYTES`, and past that
+# says it looked in only its beginning (`search`).
 _MAX_SESSION_CHARS = 200_000
 
 #: 🔑 A session's FTS row has the ROWID of its ``indexed`` row. ``session_key`` is an UNINDEXED
@@ -147,6 +153,7 @@ def _open() -> "sqlite3.Connection | None":
             conn.executescript(_SCHEMA)
             conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.executescript(_SCHEMA)
+        _key_by_file(conn)
     except sqlite3.OperationalError:
         # FTS5 presence was already settled by the probe above; a failure here is an
         # unwritable/locked index. The caller falls back to the linear scan.
@@ -158,6 +165,70 @@ def _open() -> "sqlite3.Connection | None":
     _db = conn
     _db_path_cache = path
     return _db
+
+
+def _key_by_file(conn) -> int:
+    """Backfill: every entry under its transcript's file name (:func:`_file_key`).
+
+    Before, a chat's save indexed it under the key it was handed (``dashboard:chat-7``) and the
+    indexer under the file's name (``dashboard_chat-7``). An entry under another spelling moves
+    to the file's name, keeping its text and stamp, so the indexer has nothing to read again;
+    where the file's name already has an entry, or the entry's text row is missing, it is
+    dropped, and the indexer reads the chat in again if the name has none. A text row with no
+    entry, under another spelling, is drift from an older forget and is dropped too. Keyed on
+    the data, so it runs whenever the index is opened and changes nothing the second time.
+    Returns how many rows it moved or dropped.
+    """
+    changed = 0
+    try:
+        entries = conn.execute("SELECT rowid, session_key FROM indexed").fetchall()
+        for rowid, key in entries:
+            name = _file_key(key)
+            if name == key:
+                continue
+            conn.execute("BEGIN")
+            try:
+                taken = conn.execute(
+                    "SELECT 1 FROM indexed WHERE session_key = ?", (name,)
+                ).fetchone()
+                paired = conn.execute(
+                    "SELECT 1 FROM sessions_fts WHERE rowid = ?", (rowid,)
+                ).fetchone()
+                if taken is None and paired is not None:
+                    conn.execute(
+                        "UPDATE indexed SET session_key = ? WHERE rowid = ?", (name, rowid)
+                    )
+                    conn.execute(
+                        "UPDATE sessions_fts SET session_key = ? WHERE rowid = ?", (name, rowid)
+                    )
+                else:
+                    conn.execute("DELETE FROM sessions_fts WHERE rowid = ?", (rowid,))
+                    conn.execute("DELETE FROM indexed WHERE rowid = ?", (rowid,))
+                conn.execute("COMMIT")
+                changed += 1
+            except sqlite3.Error:
+                conn.execute("ROLLBACK")
+                raise
+        texts = conn.execute("SELECT rowid, session_key FROM sessions_fts").fetchall()
+        drift = [rowid for rowid, key in texts if _file_key(key) != key]
+        if drift:
+            conn.execute("BEGIN")
+            try:
+                for rowid in drift:
+                    conn.execute("DELETE FROM sessions_fts WHERE rowid = ?", (rowid,))
+                    conn.execute("DELETE FROM indexed WHERE rowid = ?", (rowid,))
+                conn.execute("COMMIT")
+            except sqlite3.Error:
+                conn.execute("ROLLBACK")
+                raise
+            changed += len(drift)
+    except sqlite3.Error:
+        # What it did not finish, the next open does: the index works either way, and the
+        # indexer reads again a chat whose entry it cannot find.
+        logger.debug("session_search: keying entries by file name stopped", exc_info=True)
+    if changed:
+        logger.info("session_search: %d index row(s) moved to their transcript's name", changed)
+    return changed
 
 
 def reset_for_tests() -> None:
@@ -219,6 +290,9 @@ def index_session(
     skipped forever. Caught by CI, where the filesystem has second-granularity mtimes;
     macOS's finer timestamps hid it. ``size`` is the source file's byte size, which a pass
     compares with the file's (``-1``, unknown, never matches one).
+
+    The entry is under the transcript's file name, whichever spelling of the key is handed in;
+    the restriction is checked on the key as handed in, the one the registry marks.
     """
     key = (session_key or "").strip()
     if not key:
@@ -230,11 +304,12 @@ def index_session(
     conn = _connect()
     if conn is None:
         return False
+    name = _file_key(key)
     text = (body or "")[:_MAX_SESSION_CHARS]
     with _LOCK:
-        written = _write_entry(conn, key, title, text, mtime=mtime, size=size)
+        written = _write_entry(conn, name, title, text, mtime=mtime, size=size)
     if written:
-        INDEXER.indexed(key, (float(mtime or 0.0), int(size)), len(text))
+        INDEXER.indexed(name, (float(mtime or 0.0), int(size)), len(text))
     return written
 
 
@@ -311,7 +386,8 @@ def index_turn(session_key: str, role: str, text: str, *, memory_mode: str = "",
 
 
 def forget_session(session_key: str) -> None:
-    """Remove a session from the index (deleted, or newly restricted).
+    """Remove a session from the index (deleted, or newly restricted), by any spelling of its
+    key: the entry is its transcript's file name's.
 
     Both tables are dropped in one transaction so a failure cannot leave a
     searchable FTS row whose bookkeeping row is gone (or vice versa). A session with a
@@ -319,8 +395,12 @@ def forget_session(session_key: str) -> None:
     left by drift, or a key never indexed — is looked for by key, which reads the table.
     """
     key = (session_key or "").strip()
-    if not key:
-        return
+    if key:
+        _forget_entry(_file_key(key))
+
+
+def _forget_entry(key: str) -> None:
+    """Remove the entry stored under exactly *key*: what a sweep of the stored keys forgets."""
     INDEXER.forgotten(key)
     conn = _connect()
     if conn is None:
@@ -380,7 +460,7 @@ def purge_orphans(log=None) -> int:
         except Exception:  # noqa: BLE001
             continue  # unknown ⇒ keep: never purge a row we cannot verify
         if not exists:
-            forget_session(key)
+            _forget_entry(key)
             purged += 1
     if purged:
         logger.info("session_search: purged %d orphaned index row(s)", purged)
@@ -533,7 +613,7 @@ def _check(log, conn, *, force: bool = False) -> _Census:
     # purge_orphans reads the union of both tables, so an FTS-only drift row (invisible to
     # `known`, which reads only `indexed`) is swept too.
     for key in set(known) - set(census.chats):
-        forget_session(key)
+        _forget_entry(key)
     purge_orphans(log)
     return census
 
@@ -672,12 +752,11 @@ class SessionIndexer:
             self._fresh[key] = self._writes
         self._wake.set()
 
-    def indexed(self, key: str, stamp: tuple[float, int], chars: int) -> None:
-        """The index now holds *chars* characters of *key*'s transcript as it was at *stamp*
-        (``(mtime, size)``): it answers for the chat while the transcript is still that file.
-        Checked under the lock :meth:`note_changed` takes, so a write that lands meanwhile keeps
-        the chat waiting."""
-        name = _file_key(key)
+    def indexed(self, name: str, stamp: tuple[float, int], chars: int) -> None:
+        """The index now holds *chars* characters of the transcript named *name* as it was at
+        *stamp* (``(mtime, size)``): it answers for the chat while the transcript is still that
+        file. Checked under the lock :meth:`note_changed` takes, so a write that lands meanwhile
+        keeps the chat waiting."""
         with self._lock:
             file = _file_stamp(name)
             if file is None or not _is_current(stamp, file):
@@ -690,9 +769,8 @@ class SessionIndexer:
             else:
                 self._long.discard(name)
 
-    def forgotten(self, key: str) -> None:
-        """*key* left the index: deleted, or restricted."""
-        name = _file_key(key)
+    def forgotten(self, name: str) -> None:
+        """The transcript named *name* left the index: deleted, or restricted."""
         with self._lock:
             self._chats.discard(name)
             self._stale.pop(name, None)
@@ -959,8 +1037,9 @@ class Answer:
 
     ``searched`` of ``of`` chats: those looked in whole, by the index or read directly. Short of
     all of them the answer is not ``complete`` — the index is still being built, or it holds
-    only the beginning of a chat longer than it keeps, or it is unavailable and only the newest
-    were read — and asking for the rest reads the others directly. ``index`` is the index's own
+    only the beginning of a chat longer than it keeps that is past what a search reads directly
+    (:data:`LONG_READ_BYTES`), or it is unavailable and only the newest were read — and asking
+    for the rest reads the others directly. ``index`` is the index's own
     count (``indexed`` of ``of``, and the ``long`` chats it holds only the beginning of), or
     ``None`` when it is unavailable.
     """
@@ -1000,20 +1079,23 @@ def search(
     """Search every chat *visible* (all, by default) for *query*, and say how much it covered.
 
     The index answers for the chats it holds as they are now, and for no more of a chat than
-    its first :data:`_MAX_SESSION_CHARS` characters. The answer counts the chats it could not
-    look in whole — those not in the index yet, and those longer than it keeps — and ``rest``
-    reads exactly those directly: the one way a search is complete while the index is still
-    being built, or when a chat is that long. When the index finds nothing, the newest
-    :data:`SCAN_WINDOW` chats are read directly as well, which also matches inside words; with
-    no index at all, that window is all a search reads unless ``rest`` asks for every chat.
+    its first :data:`_MAX_SESSION_CHARS` characters. The chats longer than that are read
+    directly, whole, as far as :data:`LONG_READ_BYTES` goes (:func:`_read_whole`). The answer
+    counts the chats it could not look in whole — those not in the index yet, and the long ones
+    past that bound — and ``rest`` reads exactly those directly: the one way a search is
+    complete while the index is still being built, or past the bound. When nothing is found,
+    the newest :data:`SCAN_WINDOW` chats are read directly as well, which also matches inside
+    words; with no index at all, that window is all a search reads unless ``rest`` asks for
+    every chat.
     """
     text = (query or "").strip()
-    chats = [
-        entry["key"]
+    listed = [
+        entry
         for entry in log.list_sessions()
         if not is_restricted(entry["key"], memory_mode=str(entry.get("memory_mode", "") or ""))
         and (visible is None or visible(entry["key"]))
     ]
+    chats = [entry["key"] for entry in listed]
     of = len(chats)
     # The index is the home's: a log rooted anywhere else is only ever read directly.
     home = len(text) >= MIN_QUERY_CHARS and log.is_home_log()
@@ -1036,7 +1118,14 @@ def search(
     unread = {*waiting, *long}
     uncovered = [key for key in chats if key in unread]
     covered = of - len(uncovered)
-    hits = search_sessions(text, limit=limit)
+    # Named as the chat list names them. The index keeps the title a transcript recorded when it
+    # was read, and none for most chats, which the list names by their first prompt: a hit said
+    # its chat's key instead, beside chats a direct read named the list's way.
+    titles = {entry["key"]: entry.get("title") for entry in listed}
+    hits = [
+        {**hit, "title": titles.get(hit["key"]) or hit["title"]}
+        for hit in search_sessions(text, limit=limit)
+    ]
     if visible is not None:
         hits = [hit for hit in hits if visible(hit["key"])]
     found = _matching(conn, text) & set(chats)
@@ -1044,13 +1133,43 @@ def search(
         read = log.search_sessions(text, _EVERY, keys=uncovered)
         found |= {meta["key"] for meta in read}
         return Answer(_merged(hits, read, limit), "index+scan", of, of, index, len(found))
-    if hits:
-        return Answer(hits, "index", covered, of, index, len(found))
-    window = chats[:SCAN_WINDOW]
+    # What was said past the index's ceiling: the chats longer than it keeps, read whole as far
+    # as the bound goes.
+    whole = _read_whole(log, [key for key in chats if key in set(long)])
+    read = log.search_sessions(text, _EVERY, keys=whole) if whole else []
+    found |= {meta["key"] for meta in read}
+    covered += len(whole)
+    if hits or read:
+        source = "index+scan" if hits and read else "scan" if read else "index"
+        return Answer(_merged(hits, read, limit), source, covered, of, index, len(found))
+    window = [key for key in chats[:SCAN_WINDOW] if key not in set(whole)]
     read = log.search_sessions(text, _EVERY, keys=window)
     found |= {meta["key"] for meta in read}
     covered += len(set(window) & unread)
     return Answer(read[:limit], "scan" if read else "index", covered, of, index, len(found))
+
+
+#: How much of the chats longer than the index keeps a search reads directly, by the size of
+#: their transcripts, so what was said past the index's ceiling is found while typing. A direct
+#: read costs 5 to 7 ms a megabyte (measured), so this is about 50 ms a search. The index's
+#: ceiling (:data:`_MAX_SESSION_CHARS`) stays: it bounds the index's size and what a save
+#: re-reads, and these chats are few.
+LONG_READ_BYTES = 8_000_000
+
+
+def _read_whole(log, keys: list[str]) -> list[str]:
+    """Those of *keys* (newest first) a search reads whole: newest first, each that still fits in
+    :data:`LONG_READ_BYTES`. One that does not is left to the index, which holds its beginning,
+    and the answer counts it as not searched whole."""
+    chosen: list[str] = []
+    spent = 0
+    for key in keys:
+        size = _source_stamp(log, key)[1]
+        if size < 0 or spent + size > LONG_READ_BYTES:
+            continue
+        chosen.append(key)
+        spent += size
+    return chosen
 
 
 #: As many matches as a direct read finds: it ranks every chat it reads anyway.
@@ -1058,7 +1177,7 @@ _EVERY = 1_000_000_000
 
 
 def _matching(conn, text: str) -> set[str]:
-    """Every chat the index finds *text* in, by its transcript's key — to count, not to list."""
+    """Every chat the index finds *text* in, by its transcript's name — to count, not to list."""
     match = _fts_query(text)
     if not match:
         return set()
@@ -1069,7 +1188,7 @@ def _matching(conn, text: str) -> set[str]:
             ).fetchall()
     except sqlite3.Error:
         return set()
-    return {_file_key(row["session_key"]) for row in rows if not is_restricted(row["session_key"])}
+    return {row["session_key"] for row in rows if not is_restricted(row["session_key"])}
 
 
 def _merged(first: list[dict], then: list[dict], limit: int) -> list[dict]:

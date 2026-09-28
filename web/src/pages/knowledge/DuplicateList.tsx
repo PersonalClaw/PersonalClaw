@@ -27,12 +27,16 @@ import { fvs } from '../../design/fontWeight'
  *  and this component renders it as a failure with a retry. The section is mounted by its host
  *  whenever there are candidates OR the lookup failed, so the failure cannot hide behind absence.
  */
-export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, onMerged }: {
+export function DuplicateList({ item, duplicates, error, note, onRetry, onOpenItem, onMerged }: {
   /** The SURVIVOR — the item this panel belongs to. Its title names the keeper in the dialog. */
   item: { id: string; title?: string }
   duplicates: KnowledgeDuplicate[]
   /** The duplicates lookup's rejection, when it failed. `null`/undefined = it answered. */
   error?: unknown
+  /** The server's sentence about the items titled like this one that another embedding model
+   *  embedded, which no score could compare with it (`""`/undefined = none). Said under the list,
+   *  or on its own, so "no duplicates" never stands for copies that were never compared. */
+  note?: string
   onRetry: () => void
   onOpenItem: (id: string) => void
   /** A merge landed — the host re-reads the item (it just inherited rows) and this list. */
@@ -125,7 +129,7 @@ export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, on
     }
   }
 
-  return (
+  const list = (
     <ul className="flex flex-col gap-1.5">
       {duplicates.map((dup) => (
         <li key={dup.id} className="rounded-md bg-surface-container px-m py-2">
@@ -175,5 +179,14 @@ export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, on
         </li>
       ))}
     </ul>
+  )
+  if (!note) return list
+  // The note stands under the list, or alone when every item titled like this one was embedded
+  // by another model: then the section says why it holds no candidate, instead of vanishing.
+  return (
+    <div className="flex flex-col gap-1.5">
+      {duplicates.length > 0 && list}
+      <p data-type="caption" className="text-on-surface-low">{note}</p>
+    </div>
   )
 }

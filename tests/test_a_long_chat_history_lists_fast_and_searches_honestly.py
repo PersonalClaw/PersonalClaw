@@ -379,6 +379,9 @@ async def test_a_chat_longer_than_the_index_keeps_is_not_counted_as_searched_who
     from personalclaw.inbound import tools
 
     monkeypatch.setattr(session_search, "_MAX_SESSION_CHARS", 5000)
+    # Past what a search reads of such chats directly (within it, the chat is read whole:
+    # test_a_search_reads_a_long_chat_whole).
+    monkeypatch.setattr(session_search, "LONG_READ_BYTES", 0)
     keys = _history(marked=60)
     log = ConversationLog()
     for _ in range(10):

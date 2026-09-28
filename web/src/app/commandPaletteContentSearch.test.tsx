@@ -102,7 +102,7 @@ describe('⌘K content search', () => {
     expect(screen.queryByRole('group', { name: 'Knowledge' })).toBeNull()
   })
 
-  it('lists a chat once when the search answers it under both spellings of its key', async () => {
+  it('lists a chat once when two of its hits open the same chat', async () => {
     h.sessionsSearch.mockResolvedValue({
       sessions: [
         { key: 'dashboard:chat-7', title: 'Budget planning' },

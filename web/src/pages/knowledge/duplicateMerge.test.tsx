@@ -257,7 +257,7 @@ describe('a failed lookup is not an empty one', () => {
     const page = read('pages/knowledge/KnowledgeDetailPage.tsx')
     expect(page).toMatch(/api\.knowledgeDuplicates\(id\)/)
     expect(page, 'the rejection is stored, not swallowed')
-      .toMatch(/\.catch\(\(e\) => \{ if \(alive\) \{ setDuplicates\(\[\]\); setDuplicatesErr\(e\) \} \}\)/)
+      .toMatch(/\.catch\(\(e\) => \{ if \(alive\) \{ setDuplicates\(\[\]\); setDuplicatesNote\(''\); setDuplicatesErr\(e\) \} \}\)/)
     expect(page, 'and a failed lookup must mount the section')
       .toMatch(/const showDuplicates = duplicates\.length > 0 \|\| !!duplicatesError/)
   })
@@ -269,5 +269,37 @@ describe('a failed lookup is not an empty one', () => {
     const after = page.slice(page.indexOf('const afterMerge'))
     expect(after.slice(0, 400)).toMatch(/setReloadKey/)
     expect(after.slice(0, 400)).toMatch(/reloadDuplicates\(\)/)
+  })
+})
+
+describe('what the lookup could not compare is said, not hidden', () => {
+  // Two embedding models' vectors are never compared (a cosine between them means nothing), so a
+  // copy another model embedded is not a candidate. The panel says so in the server's sentence:
+  // otherwise its empty state reads as "there is no second copy" when one was simply never scored.
+  const NOTE = '1 item titled like this one was not compared with it: a different embedding model '
+    + 'embedded it, so no score between the two would mean anything.'
+
+  it('says it under the candidates it did compare', () => {
+    mount({ note: NOTE })
+    expect(screen.getByText('Rust async book (1)')).toBeTruthy()
+    expect(screen.getByText(NOTE)).toBeTruthy()
+  })
+
+  it('says it on its own when nothing could be compared, with no merge offered', () => {
+    mount({ duplicates: [], note: NOTE })
+    expect(screen.getByText(NOTE)).toBeTruthy()
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('button', { name: /merge into this item/i })).toBeNull()
+  })
+
+  it('adds nothing when everything titled like it was compared', () => {
+    const { container } = mount({ note: '' })
+    expect(container.querySelector('ul')).toBeTruthy()
+    expect(screen.queryByText(/not compared/)).toBeNull()
+  })
+
+  it('the page keeps the section up for the note alone', () => {
+    const page = read('pages/knowledge/KnowledgeDetailPage.tsx')
+    expect(page).toMatch(/const showDuplicates = duplicates\.length > 0 \|\| !!duplicatesError \|\| !!duplicatesNote/)
   })
 })

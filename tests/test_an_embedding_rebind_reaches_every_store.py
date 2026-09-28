@@ -727,6 +727,113 @@ def test_the_reindex_re_embeds_only_the_knowledge_the_model_has_not(recorded, tm
     assert [text for _m, _e, text in recorded if "Osprey nesting" in text] == []
 
 
+def _knowledge_with_passages(state, tmp_path, texts: tuple[str, ...]) -> tuple[Any, str]:
+    """One knowledge item embedded, with one passage per text, by the model bound now."""
+    from personalclaw.knowledge.chunking import Chunk
+    from personalclaw.knowledge.embedder import create_embedder_from_config, floats_to_bytes
+    from personalclaw.knowledge.embedding_fingerprint import active_fingerprint
+    from personalclaw.knowledge.pipeline.runner import _embed
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    state.knowledge_store = ks = KnowledgeStore(str(tmp_path / "knowledge.db"))
+    item = ks.create_typed_item(item_type="note", title="Osprey nesting", content=" ".join(texts))
+    assert _embed(ks, item, create_embedder_from_config({})) == "done"
+    model = active_fingerprint()
+    assert model is not None
+    chunks = [
+        Chunk(text=t, section=None, line_start=1, line_end=1, chunk_index=i)
+        for i, t in enumerate(texts)
+    ]
+    for chunk in chunks:
+        chunk.embedding = floats_to_bytes(_vector(model.model_id, chunk.text))
+    assert ks.replace_chunks(item, chunks) == len(texts)
+    return ks, item
+
+
+def test_the_gateway_start_finishes_a_reindex_a_stop_left_in_its_passage_phase(recorded, tmp_path):
+    """🔴 Red before: the re-index re-embeds the items first and their passages after, and the
+    start counted the items alone. A stop in the passage phase left every item current, so the
+    start found nothing to do, and the passages kept the previous model's vectors, skipped by
+    search, until someone re-indexed by hand."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+    from personalclaw.knowledge.embedder import create_embedder_from_config
+
+    state = _main_state(config_dir())
+    _bind(A)
+    ks, _item = _knowledge_with_passages(state, tmp_path, (OSPREY, KESTREL))
+    _bind(C)
+    # The items phase ran to its end with C; the stop came before the passages.
+    ks.clear_stale_embeddings()
+    assert ks.reembed_all(create_embedder_from_config({}), only_missing=True)["reembedded"] == 1
+    assert (ks.count_items_to_reembed(2), ks.count_stale_chunk_vectors()) == (0, 2)
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+
+    async def _start() -> dict[str, Any]:
+        job = resume_interrupted_reindex({"state": state})
+        assert job is not None, "the start resumes the re-index"
+        for _ in range(500):
+            if job.status != "running":
+                return job.to_dict()
+            await asyncio.sleep(0.01)
+        raise AssertionError("the re-index did not finish")
+
+    done = asyncio.run(_start())
+
+    assert (done["status"], done["chunks"], done["chunks_stale"]) == ("done", 2, 0), done
+    assert ks.count_stale_chunk_vectors() == 0
+
+
+def test_the_reindex_re_embeds_what_the_start_counts_at_another_width(recorded, tmp_path):
+    """🔴 Red before: the start counted an item whose vector the bound model wrote at a width it
+    no longer writes, and the job it started cleared and re-embedded without the width, so it
+    left the item as it was: every start counted it again and started a job that did nothing."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.knowledge.embedder import floats_to_bytes
+
+    state = _main_state(config_dir())
+    _bind(A)
+    ks, item = _knowledge_with_passages(state, tmp_path, (OSPREY,))
+    ks.db.execute(  # the model's own record, at a width it no longer writes
+        "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes([1.0, 2.0, 3.0]), item)
+    )
+    assert ks.count_items_to_reembed(2) == 1
+
+    job = _reindex(state)
+
+    assert (job["status"], job["knowledge"]) == ("done", 1), job
+    assert ks.count_items_to_reembed(2) == 0
+
+
+def test_the_reindex_bar_moves_through_the_passages(recorded, tmp_path, monkeypatch):
+    """🔴 Red before: the job's total counted the items and the memories, and the passages were
+    re-embedded with no progress, so on a library of long documents the bar stood still through
+    the longest phase."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+    frames: list[tuple[str, int, int]] = []
+    publish = ReindexRegistry._publish
+
+    def _recording(self, job, event: str) -> None:
+        frames.append((job.phase, job.done, job.total))
+        publish(self, job, event)
+
+    monkeypatch.setattr(ReindexRegistry, "_publish", _recording)
+    state = _main_state(config_dir())
+    _bind(A)
+    _knowledge_with_passages(state, tmp_path, (OSPREY, KESTREL))
+    _bind(C)
+
+    job = _reindex(state)
+
+    assert (job["status"], job["knowledge"], job["chunks"]) == ("done", 1, 2), job
+    passages = [(done, total) for phase, done, total in frames if phase == "reindexing passages"]
+    assert (2, 3) in passages and passages[-1] == (3, 3), passages
+
+
 def test_a_rebuild_on_another_thread_never_pairs_its_ids_with_the_index_a_search_read(
     tmp_path, monkeypatch
 ):

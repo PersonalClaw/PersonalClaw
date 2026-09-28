@@ -455,8 +455,9 @@ class TriggerStore(TriggerStoreProvider):
 
 
 #: Fields that belong to what has HAPPENED to a trigger in one home, not to what it IS — the
-#: fields a snapshot merge drops from a row it brings in from another home (`snapshot.py`), so an
-#: armed fire or a run count from elsewhere never arrives here as if it had happened here.
+#: fields a snapshot merge and a device sync drop from a row they bring in from another home
+#: (:func:`arrived_from_another_home`), so an armed fire or a run count from elsewhere never
+#: arrives here as if it had happened here.
 #:
 #: Every `Trigger` field is either here or part of what the trigger is, and
 #: `test_trigger_runtime_fields.py` fails on a field that is neither, so a new stamp cannot ride a
@@ -484,6 +485,35 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     # person turned it on or off — and another home's switch is not this one's (#461).
     "enabled",
 )
+
+
+def arrived_from_another_home(row: dict[str, Any]) -> dict[str, Any]:
+    """A trigger row from another home, as it is brought into this one: the rule a snapshot merge
+    (``snapshot._merge_triggers``) and a device sync (:func:`store_arrived_from_another_home`)
+    both apply.
+
+    Without :data:`RUNTIME_FIELDS`, so an armed fire, a run count, a park or an alert dedupe from
+    elsewhere never arrives as if it had happened here; and switched off, so it does not fire
+    until someone here switches it on (the boot sweep arms it then). Both halves are needed:
+    dropping the fields discards what the OTHER home said, and ``enabled: False`` states what THIS
+    home means. With the field merely absent, ``parse_trigger``'s default (on) would decide.
+    """
+    arrived = {name: value for name, value in row.items() if name not in RUNTIME_FIELDS}
+    arrived["enabled"] = False
+    return arrived
+
+
+def store_arrived_from_another_home(document: dict[str, Any]) -> dict[str, Any]:
+    """Another home's whole ``triggers.json``, as a device sync brings it in: every automation in
+    it as :func:`arrived_from_another_home` brings one. A document that is not a trigger store is
+    returned as it is, for the store's own load to report."""
+    rows = document.get("triggers")
+    if not isinstance(rows, list):
+        return document
+    return {
+        **document,
+        "triggers": [arrived_from_another_home(r) if isinstance(r, dict) else r for r in rows],
+    }
 
 
 #: 🔴 `health(store)` USED TO LIVE HERE, and it was the third place this store's warnings went to

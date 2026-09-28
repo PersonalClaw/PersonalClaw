@@ -89,8 +89,8 @@ async function searchChats(q: string): Promise<SourceAnswer> {
   const answer = await api.sessionsSearch(q)
   const { sessions } = answer
   const reach = searchCoverage(answer)
-  // One chat can answer under both spellings of its history key (`dashboard:` and `dashboard_`),
-  // the way the chat list dedupes it: by the key the chat routes use.
+  // One row per chat the palette opens: hits are keyed as the chat routes spell them, the way the
+  // chat list keys what the same search finds.
   const seen = new Set<string>()
   const hits: ContentHit[] = []
   for (const s of sessions) {

@@ -3,6 +3,7 @@ import { ScanSearch, Link2, Package, ShieldAlert } from 'lucide-react'
 import { SidePanel } from '../../ui/SidePanel'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
+import { Button } from '../../ui/Button'
 import { api, ApiError, type NodeInspect } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { ledgerRowDetail, ledgerRowKey } from './ledgerRowDetail'
@@ -21,49 +22,63 @@ import { ledgerRowDetail, ledgerRowKey } from './ledgerRowDetail'
  *  as a monospace label, NOT dereferenced: fetching the raw blob would be the reconstructability
  *  path the redaction deliberately closed.
  *
- *  A non-terminal node has nothing to reconstruct yet — the endpoint 409s — so the run view gates
- *  the affordance on `isNodeTerminal`. The drawer still handles the 409 (and a 404) gracefully as a
- *  defence in depth: a node that flipped state between the click and the fetch renders an inline
- *  message, never a crash or a blank panel. */
-export function NodeInspectorDrawer({ runId, nodeId, onClose }: {
+ *  A non-terminal node has nothing to reconstruct yet — the endpoint 409s. A row's Inspect is gated
+ *  on `isNodeTerminal`, but a chat card deep-links its ACTIVE node (`?node=`), so the drawer opens on
+ *  a running node as a matter of course. 🔑 IT FOLLOWS THE NODE: `nodeVersion` is what the run view
+ *  last saw of it (its latest instance and that instance's state), and the drawer reads again
+ *  whenever it changes. It read once, on open, so a drawer opened on a running node said "not
+ *  finished yet" for good, after the node and the run were done, until a reload. A re-read keeps the
+ *  content it has on screen until the new one lands. A 404 and any other failure render an inline
+ *  message, never a crash or a blank panel, and a failure that is not the node's state offers a
+ *  retry: a terminal run changes no more, so nothing else would read again. */
+export function NodeInspectorDrawer({ runId, nodeId, name = '', nodeVersion = '', onClose }: {
   runId: string
   nodeId: string
+  /** What the step is called — its label, as the run page names it. Its id rides beside it. */
+  name?: string
+  /** What the run view last saw of this node — its latest instance and that instance's state. The
+   *  drawer reads again whenever it changes, so it follows the node to its final state. */
+  nodeVersion?: string
   onClose: () => void
 }) {
   const [data, setData] = useState<NodeInspect | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ text: string; retry: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let live = true
-    setLoading(true)
-    setError(null)
-    setData(null)
     api.workflowRunNodeInspect(runId, nodeId)
-      .then((d) => { if (live) setData(d) })
+      .then((d) => { if (live) { setData(d); setError(null) } })
       .catch((e) => {
         if (!live) return
-        // 409 = the node is not terminal yet (its state changed since the row was drawn); 404 = the
-        // run or node is gone. Both are expected, actionable states — surfaced as a calm inline note
-        // rather than a thrown error that would blank the drawer.
+        setData(null)
+        // 409 = the node is not terminal yet; the drawer reads again when it is. 404 = the run or
+        // node is gone. Both are expected states — surfaced as a calm inline note rather than a
+        // thrown error that would blank the drawer — and neither is helped by a retry.
         if (e instanceof ApiError && e.status === 409) {
-          setError('This node has not finished yet — there is nothing to reconstruct until it reaches a terminal state.')
+          setError({ text: 'This node has not finished yet. Its prompt, inputs and output show here when it does.', retry: false })
         } else if (e instanceof ApiError && e.status === 404) {
-          setError('This node could not be found. The run may have been deleted.')
+          setError({ text: 'This node could not be found. The run may have been deleted.', retry: false })
         } else {
-          setError(e instanceof Error ? e.message : 'Could not load this node.')
+          setError({ text: e instanceof Error ? e.message : 'Could not load this node.', retry: true })
         }
       })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [runId, nodeId])
+  }, [runId, nodeId, nodeVersion, attempt])
 
   return (
     <SidePanel
       fillHeight
       storeKey="wf-node-inspect-w"
       icon={<ScanSearch size={18} className="text-primary" />}
-      title={<span className="font-mono text-[1.0625rem]">{nodeId}</span>}
+      title={name && name !== nodeId ? (
+        <span className="flex min-w-0 items-baseline gap-s">
+          <span className="truncate">{name}</span>
+          <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{nodeId}</span>
+        </span>
+      ) : <span className="font-mono text-[1.0625rem]">{nodeId}</span>}
       onClose={onClose}
     >
       <div data-testid="node-inspector-body" className="flex flex-col gap-l">
@@ -75,7 +90,14 @@ export function NodeInspectorDrawer({ runId, nodeId, onClose }: {
             <Skeleton className="h-16 w-full" />
           </div>
         ) : error ? (
-          <InlineError icon multiline>{error}</InlineError>
+          <div className="flex flex-col items-start gap-s">
+            <InlineError icon multiline>{error.text}</InlineError>
+            {error.retry && (
+              <Button variant="secondary" size="xs" onClick={() => { setLoading(true); setAttempt((n) => n + 1) }}>
+                Try again
+              </Button>
+            )}
+          </div>
         ) : data ? (
           <NodeInspectBody data={data} />
         ) : null}

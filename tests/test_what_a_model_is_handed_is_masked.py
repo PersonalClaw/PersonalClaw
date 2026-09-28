@@ -836,15 +836,45 @@ def test_a_reference_to_nothing_stored_runs_nothing(tmp_path, stored_secrets, mo
 
 
 def test_bash_masks_a_credential_its_environment_carries(tmp_path, stored_secrets, monkeypatch):
+    """A credential the command's environment does carry is masked out of what it prints.
+
+    The command runs with the child allowlist (``sandbox.build_child_env``), not a copy of the
+    gateway's environment, so a credential reaches its environment only by name, through the
+    owner's ``sandbox.env_passthrough`` (a ``gh`` that reads ``GITHUB_TOKEN``). Those two are
+    passed through here; the third is not, and never reaches the command at all."""
+    from personalclaw.config.loader import config_path
+
+    config_path().write_text(
+        json.dumps({"sandbox": {"env_passthrough": ["GITHUB_TOKEN", "SERVICE_AUTH_TOKEN"]}})
+    )
     monkeypatch.setenv("GITHUB_TOKEN", "plainword-with-no-shape-4821")
     monkeypatch.setenv("SERVICE_AUTH_TOKEN", "another-plain-value-9913")
+    monkeypatch.setenv("BILLING_API_TOKEN", "never-passed-through-5530")
     tools = NativeBuiltinToolProvider(tmp_path, sandbox_mode="off")
-    ran = _call(tools, "bash", {"command": 'echo "$GITHUB_TOKEN $SERVICE_AUTH_TOKEN"'})
+    command = 'echo "$GITHUB_TOKEN $SERVICE_AUTH_TOKEN [$BILLING_API_TOKEN]"'
+    ran = _call(tools, "bash", {"command": command})
     assert ran.success, ran.error
     handed = _handed(ran)
     assert "plainword-with-no-shape-4821" not in handed
     assert "another-plain-value-9913" not in handed
     assert handed.count(MASK) == 2
+    assert "[]" in handed, "a credential the owner did not pass through reached the command"
+
+
+def test_bash_masks_a_gateway_credential_it_reached_another_way(
+    tmp_path, stored_secrets, monkeypatch
+):
+    """What is masked is every credential the gateway holds, not only the ones the command was
+    given: one it never received but printed anyway (read back from a file in its folder) is
+    masked the same way."""
+    monkeypatch.setenv("BILLING_API_TOKEN", "never-passed-through-5530")
+    (tmp_path / "copied.txt").write_text("billing: never-passed-through-5530\n")
+    tools = NativeBuiltinToolProvider(tmp_path, sandbox_mode="off")
+    ran = _call(tools, "bash", {"command": 'printf "[%s]" "$BILLING_API_TOKEN"; cat copied.txt'})
+    assert ran.success, ran.error
+    handed = _handed(ran)
+    assert handed.startswith("[]"), "the command's environment never carried it"
+    assert "never-passed-through-5530" not in handed and f"billing: {MASK}" in handed, handed
 
 
 def test_a_native_turn_asks_with_the_name_and_runs_with_the_value(tmp_path, stored_secrets):

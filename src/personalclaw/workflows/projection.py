@@ -54,6 +54,8 @@ RUN_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
 NODE_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
     ("instance_path", (str,), True),
     ("node_id", (str,), True),
+    # The author's name for the step, which the page shows; absent on a step without one.
+    ("label", (str,), False),
     ("state", (str,), True),
     ("attempt", (int, type(None)), False),
     ("degraded_reason", (str,), False),

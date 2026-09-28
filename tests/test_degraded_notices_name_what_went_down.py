@@ -8,7 +8,8 @@ the names were the registry's slugs.
 
 So a recovery is announced only after a degradation the user was told about, and every notice,
 like the degraded chip, names the surface by its contract's `label` and the model by the name the
-Models page gives it. Driven through the real built-in contract set.
+Models page gives it. Driven through the real built-in contract set, whose surfaces all change
+together here, so each change is ONE notice naming every one of them.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def test_binding_the_first_model_is_not_a_recovery(models):
 
 
 def test_an_outage_the_user_was_told_about_is_announced_when_it_ends(models):
-    """Control, on both trees: up, down (announced), up again is a real recovery."""
+    """Control: up, down (announced), up again is a real recovery — one notice each way."""
     models["value"] = True
     bell = _Bell()
     degraded.evaluate(notify=True, state=bell)
@@ -63,8 +64,11 @@ def test_an_outage_the_user_was_told_about_is_announced_when_it_ends(models):
     degraded.evaluate(notify=True, state=bell)
     models["value"] = True
     degraded.evaluate(notify=True, state=bell)
-    chat = [(kind, title) for kind, title, _body in bell.notes if title.lower().startswith("chat ")]
-    assert [kind for kind, _title in chat] == ["warning", "info"]
+    n = len(degraded.all_contracts())
+    assert [(kind, title) for kind, title, _body in bell.notes] == [
+        ("warning", f"{n} surfaces degraded"),
+        ("info", f"{n} surfaces recovered"),
+    ]
 
 
 def test_every_notice_names_the_surface_and_the_model_as_the_user_knows_them(models):
@@ -85,8 +89,9 @@ def test_every_notice_names_the_surface_and_the_model_as_the_user_knows_them(mod
         leaked = sorted(w for w in words if w in slugs and "_" in w)
         assert not leaked, f"{title!r} / {body!r} names a slug: {leaked}"
         assert "_" not in title, title
-    titles = {title for _kind, title, _body in bell.notes}
-    assert "Inbox triage degraded" in titles and "Background tasks recovered" in titles
+    (_, _, down), (_, _, back) = bell.notes
+    for contract in degraded.all_contracts():
+        assert contract.label in down and contract.label in back, contract.label
 
 
 def test_every_contract_declares_a_name_and_every_model_it_needs_has_one():

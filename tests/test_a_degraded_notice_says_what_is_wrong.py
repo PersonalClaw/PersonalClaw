@@ -28,19 +28,6 @@ class _Bell:
     def notify(self, kind, title, body, *, meta=None):
         self.notes.append((kind, title, body))
 
-    def about(self, label: str) -> list[tuple[str, str, str]]:
-        return [
-            n
-            for n in self.notes
-            if n[1]
-            in {
-                f"{label} degraded",
-                f"{label} recovered",
-                f"{label} is ready",
-                f"Choose a model for {label}",
-            }
-        ]
-
 
 @pytest.fixture
 def instance():
@@ -95,45 +82,73 @@ def _evaluate(bell: _Bell) -> dict[str, dict]:
     return {row["surface"]: row for row in degraded.evaluate(notify=True, state=bell)}
 
 
+def _labels(rows: dict[str, dict], surfaces: list[str]) -> str:
+    """The surfaces' names as a notice lists them: "A, B and C"."""
+    names = [rows[s]["label"] for s in surfaces]
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def test_a_surface_left_with_no_model_chosen_is_told_to_choose_one(instance):
-    """🔴 Red on main: "Chat degraded" / "No Chat model — …", a warning, for a choice to make."""
+    """🔴 Red on main: ten notices, and before #3762 each read "Chat degraded" / "No Chat model — …",
+    a warning, for a choice to make. Clearing the instance's Default Model takes every surface that
+    needs Chat, Background or Reasoning down, since the last two resolve through Chat."""
     bell = _Bell()
     instance({"default_model": "alpha:1b"})  # Chat runs on the instance's Default Model
-    _evaluate(bell)
+    up = _evaluate(bell)
     instance()  # its Default Model is cleared: nothing is chosen now
     rows = _evaluate(bell)
+    went_down = [s for s in rows if up[s]["available"] and not rows[s]["available"]]
+    assert len(went_down) >= 10, went_down
 
-    [(kind, title, body)] = bell.about("Chat")
-    assert (kind, title) == ("info", "Choose a model for Chat")
-    assert body == f"No model chosen for Chat. {rows['chat']['floor']}"
+    assert bell.notes == [
+        (
+            "info",
+            f"Choose a model for {len(went_down)} surfaces",
+            "No model chosen for Chat, Background and Reasoning. Until one is, "
+            f"{_labels(rows, went_down)} do only what works without a model.",
+        )
+    ]
     assert rows["chat"]["problem"] == "No model chosen for Chat.", "the chip's row says it too"
 
     instance({"default_model": "alpha:1b"})
     _evaluate(bell)
-    assert bell.about("Chat")[1] == ("info", "Chat is ready", "A Chat model is chosen.")
+    assert bell.notes[1:] == [
+        (
+            "info",
+            f"{len(went_down)} surfaces are ready",
+            "A model is chosen for Chat, Background and Reasoning, so "
+            f"{_labels(rows, went_down)} can run now.",
+        )
+    ]
 
 
 def test_a_chosen_model_that_cannot_serve_says_why(instance):
-    """🔴 Red on main: "No Chat model — …", about a Chat model that is chosen."""
+    """🔴 Red on main: one "<surface> degraded" per surface. Before #3762 each said "No Chat model —
+    …", about a Chat model that is chosen."""
     from personalclaw.providers.use_cases import save_active_models
 
     bell = _Bell()
     instance()
     save_active_models({"chat": [f"{ENTRY}:alpha:1b"]})
-    _evaluate(bell)
+    up = _evaluate(bell)
     instance(serves=False)  # the model it is bound to stops serving
     rows = _evaluate(bell)
+    went_down = [s for s in rows if up[s]["available"] and not rows[s]["available"]]
+    assert len(went_down) >= 10, went_down
 
-    [(kind, title, body)] = bell.about("Chat")
-    assert (kind, title) == ("warning", "Chat degraded")
-    assert body.startswith(
-        "The model alpha:1b is not downloaded yet. Download it in Settings → Models. "
-    ), body
+    [(kind, title, body)] = bell.notes
+    assert (kind, title) == ("warning", f"{len(went_down)} surfaces degraded")
+    assert body == (
+        "The model alpha:1b is not downloaded yet. Download it in Settings → Models. Until then "
+        f"{_labels(rows, went_down)} do only what works without a model."
+    )
     assert body.startswith(rows["chat"]["problem"] + " "), "the chip's row says it too"
 
     instance()
     _evaluate(bell)
-    assert bell.about("Chat")[1][:2] == ("info", "Chat recovered")
+    assert [(kind, title) for kind, title, _body in bell.notes[1:]] == [
+        ("info", f"{len(went_down)} surfaces recovered")
+    ]
 
 
 def test_an_available_surface_has_no_problem(instance):

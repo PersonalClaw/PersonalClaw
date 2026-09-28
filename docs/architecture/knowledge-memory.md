@@ -100,6 +100,17 @@ and the ones never embedded (`KnowledgeStore.clear_stale_embeddings` +
 embedded before items recorded their model names none and is stale, so the first
 start after that update re-embeds each once.
 
+It is the one re-index, and every surface reaches it the same way. The gateway's
+start runs it for what the bound model has not embedded: items, and the passages
+a stop left after the items (`_pending_reembed` counts both), each at the width the
+model writes. Settings → Models and the Knowledge page's embedding chip read the
+running job (`GET /api/models/embedding/reindex`) and follow its progress through
+`web/src/lib/useEmbeddingReindex.ts`, and the chip's re-embed starts or joins it
+(`POST /api/models/embedding/reindex` answers the running job rather than a second).
+Its knowledge half is resumable because its backlog is derived from the rows: a
+cleared item holds no vector and a stale passage records another model, so the
+next start finds both.
+
 ### Search
 
 `knowledge/retrieval.py` — `HybridRetriever`: FTS5 keyword + graph traversal +
@@ -125,7 +136,8 @@ item vector).
   search cannot.
 - **The typed reasons** are closed: `no_extractable_text`,
   `no_embedding_provider`, `not_indexed`, plus the read-time `stale_index`
-  (vectors from a different embedding model than the one bound now).
+  (vectors from a different embedding model than the one bound now, or with no
+  model recorded — a passage's or the whole-item one).
 - **One sentence per reason, minted once.** `Degradation.summary` is the
   count-bearing claim ("2 items and 1 artifact have no embeddings because no
   embedding model is bound — keyword search finds them, semantic search
@@ -172,9 +184,12 @@ item vector).
     the vector results (`search_episodic` merges the two by score — a keyword hit
     scores the share of the query's words it holds, weighted as a similarity is — so a
     memory the re-index has not reached yet stays findable, and Recall's ranking does
-    not put it last), counted (`embedded_stale` and `unembedded` in
-    `/api/memory/stats`; the Doctor's `memory.store` row and the recall disclosure below
-    count the stale ones), and embedded by the re-index (`dashboard/embedding_reindex.py`), which visits every
+    not put it last), counted by one reader (`vector_memory.embedding_coverage`: a vector
+    of another model or of this one at another width is stale, one of neither is
+    unembedded, and `read_by_keyword` is both), which `/api/memory/stats`, the recall
+    disclosure, the Memory page's Embedded stat, the Doctor's `memory.store` row and the
+    gateway's start all read and state in one sentence (`memory_ranking.keyword_read_note`),
+    and embedded by the re-index (`dashboard/embedding_reindex.py`), which visits every
     memory store, open or not. Binding Embedding starts it
     (`PUT /api/models/active/embedding` → `reindex_after_binding`, whoever calls it),
     and so does the gateway's start when any store holds what the bound model has not
@@ -195,9 +210,11 @@ item vector).
   `/api/memory/recall`, `/api/memory/context-preview`, `/api/memory/episodic/search`
   and `/api/memory/entities`; `null` on a recall a temporary session blocked, because
   no recall ran. It also reads the one piece of store state a capability cannot show:
-  how many memories hold another embedding model's vector (`stale`) and how many the
-  model bound now can compare (`comparable`). With none comparable the recall is
-  keyword-ranked and says so; with some stale it says how many were read by keyword.
+  how many memories hold another embedding model's vector (`stale`), how many hold none
+  (`unembedded`) and how many the model bound now can compare (`comparable`). With none
+  comparable the recall is keyword-ranked and says so; with some waiting it says how many
+  were read by keyword, in `keyword_read_note`'s words, which the Memory page and the
+  Doctor print too.
   Adding a capability is forced to declare what it means for recall —
   `tests/test_recall_ranking_disclosure.py` censuses the dataclass fields, and a
   second census requires every handler calling a ranking scorer to serve the

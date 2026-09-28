@@ -807,9 +807,8 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     if resolved is None:
         _audit("denied", error="no image_gen model configured")
         return tool_failure(
-            "no image-generation model is configured. Bind one to the "
-            "'image_gen' use-case in Settings → Models (e.g. an OpenAI gpt-image-1 "
-            "or a FAL model)."
+            "no image-generation model is configured. Choose one under Image · Generation "
+            "in Settings → Models."
         )
     provider, model_id = resolved
     prompt = str(args.get("prompt", "")).strip()
@@ -942,9 +941,8 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     if resolved is None:
         _audit("denied", error="no video_gen model configured")
         return tool_failure(
-            "no video-generation model is configured. Bind one to the "
-            "'video_gen' use-case in Settings → Models (e.g. a FAL Kling or Veo "
-            "model)."
+            "no video-generation model is configured. Choose one under Video · Generation "
+            "in Settings → Models."
         )
     provider, model_id = resolved
     prompt = str(args.get("prompt", "")).strip()

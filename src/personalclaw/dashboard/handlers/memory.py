@@ -51,7 +51,8 @@ def _ranking_payload(capable: Any) -> dict[str, Any]:
     ``capable`` is anything with ``capabilities()`` and ``memory_stats()`` (a
     ``MemoryService`` or a ``VectorMemoryStore``); the stats say how much of the store a
     semantic recall can compare (``embedded_count``) and how much it reads by keyword
-    because another embedding model wrote it (``embedded_stale``). Fail-OPEN on a
+    because another embedding model wrote it (``embedded_stale``) or none did
+    (``unembedded``). Fail-OPEN on a
     provider that cannot answer: a broken capability probe must not take the whole
     recall down, and the disclosure that comes back then says nothing ranked — which is
     the safe direction to be wrong in, because it under-claims rather than over-claims.
@@ -68,6 +69,7 @@ def _ranking_payload(capable: Any) -> dict[str, Any]:
         return ranking_payload(
             capable.capabilities(),
             stale=_count("embedded_stale"),
+            unembedded=_count("unembedded"),
             comparable=_count("embedded_count"),
         )
     except Exception:
@@ -859,6 +861,13 @@ async def api_memory_stats(request: web.Request) -> web.Response:
     # Add embedding status
     from personalclaw.config.loader import AppConfig  # noqa: F811
     from personalclaw.embedding_providers.registry import _active_embedding_spec
+    from personalclaw.memory_ranking import keyword_read_note
+
+    # The Embedded stat's sentence about what search reads by keyword: the recall disclosure's
+    # own words for the same count, from the one owner, so the page never composes a second one.
+    stats["read_by_keyword_note"] = keyword_read_note(
+        int(stats.get("embedded_stale") or 0), int(stats.get("unembedded") or 0)
+    )
 
     cfg = AppConfig.load()
     spec = _active_embedding_spec()

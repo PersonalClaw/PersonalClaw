@@ -11,7 +11,7 @@ import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
-import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook, stepName } from './workflowMeta'
 import { PolicyOverridesPanel, overlayOf } from './PolicyOverridesPanel'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
@@ -137,6 +137,15 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
     }
   }, [refetch])
 
+  // What each step is called, by its id, for the surfaces that are handed only an id — the
+  // dialogs, the inspector, the escalation panel, an expired ask. Every one names a step the way
+  // the run's own ending and failure lines do: by its label (`stepName`).
+  const nameOf = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const n of run?.nodes ?? []) if (n.node_id && !names.has(n.node_id)) names.set(n.node_id, stepName(n))
+    return (nodeId: string) => names.get(nodeId) || nodeId
+  }, [run])
+
   const answer = useCallback(async (cont: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => {
     await act('Answer', () => api.resumeWorkflowRun(runId, {
       answer: value, resume_token: cont.resume_token, always_allow: alwaysAllow,
@@ -156,7 +165,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         const preview = confirmationPreview(error)
         if (preview === null) throw error
         const ok = await confirm({
-          title: `Run from "${nodeId}"?`,
+          title: `Run from “${nameOf(nodeId)}”?`,
           body: reentrySummary('run-from', preview),
           confirmLabel: 'Run from',
         })
@@ -164,7 +173,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         await api.workflowRunFrom(runId, { node_id: nodeId, confirm_cascade: true })
       }
     })
-  }, [act, runId])
+  }, [act, nameOf, runId])
 
   // Mid-flight edit of a node's prompt (WF2-R10 / criterion 9). The user pauses a running
   // workflow, edits a stage's instruction, and resumes. The edit is a real spec mutation
@@ -175,7 +184,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // rubric the run no longer matches.
   const editNodePrompt = useCallback(async (nodeId: string) => {
     const answers = await promptForm({
-      title: `Edit "${nodeId}"`,
+      title: `Edit “${nameOf(nodeId)}”`,
       body: revalidateNotice,
       fields: [{
         name: 'prompt',
@@ -199,7 +208,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
       }
       notify(revalidateSummary(res.preview))
     })
-  }, [act, runId])
+  }, [act, nameOf, runId])
 
   const cancel = useCallback(async () => {
     const ok = await confirm({
@@ -287,6 +296,14 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // matching the engine: a string sort puts item 10 ahead of item 2 (issue #568).
   const nodes = useMemo(() => [...(run?.nodes ?? [])].sort(byInstancePath), [run])
 
+  // What the run last showed of the inspected node: its latest instance (the one the inspector
+  // reads) and that instance's state. The drawer reads again whenever it changes, so a drawer opened
+  // on a running node (a chat card's deep link) follows it to its final state.
+  const inspectedVersion = useMemo(() => {
+    const latest = nodes.filter((n) => n.node_id === inspectNodeId).at(-1)
+    return latest ? `${latest.instance_path}:${latest.state}` : ''
+  }, [nodes, inspectNodeId])
+
   // Collapsible containers (WF2 Slice 10b). The `deep-research` template expands to 21 rows and 18
   // of them are one untaken subgraph — the three that matter are buried in the ones that did not
   // run.
@@ -335,7 +352,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   const dag = useMemo(
     () => layoutRunDag(nodes, {
       continuations: conts,
-      label: (n) => (n.item_label ? `${n.node_id} · ${n.item_label}` : n.node_id),
+      label: (n) => (n.item_label ? `${stepName(n)} · ${n.item_label}` : stepName(n)),
     }),
     [nodes, conts],
   )
@@ -513,7 +530,8 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
             {/* Pending asks come FIRST: they are the only thing here a user can act on. */}
             {conts.map((c) => (
-              <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer} />
+              <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer}
+                stepName={nameOf(c.node_id)} />
             ))}
 
             {/* …and beside them, the run's pending TOOL approvals (issue 258). A stage that
@@ -541,6 +559,8 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 runStatus={run.status}
                 runError={run.error ?? ''}
                 retry={retryable ? { onRetry: retry, busy, waitSecs: retryWaitSecs } : undefined}
+                editHref={run.workflow ? `#/workflows/defs/${encodeURIComponent(run.workflow)}/edit` : undefined}
+                nameOf={nameOf}
               />
             )}
 
@@ -639,7 +659,8 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                     <NIcon size={14} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-s">
-                        <span data-type="body-s" className="truncate text-on-surface">{nodeLabel(n)}</span>
+                        <span data-type="body-s" className="truncate text-on-surface"
+                          title={n.label ? `${nodeLabel(n)} (${n.node_id})` : undefined}>{nodeLabel(n)}</span>
                         {/* The per-item label: what makes one row of a twelve-item
                             fan-out identifiable. Dimmed — it is which, not what. */}
                         {itemProgress(n) && (
@@ -776,9 +797,14 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
       {/* The node-inspector drawer, docked to the right and pushing the run body narrower.
           Keyed on the node id so switching nodes remounts and refetches rather than showing the
-          previous node's data. Only a terminal node's row exposes the Inspect trigger. */}
-      {inspectNodeId && (
-        <NodeInspectorDrawer runId={runId} nodeId={inspectNodeId} onClose={() => setInspectNodeId(null)} />
+          previous node's data, and handed what the run shows of that node so it follows it. A
+          terminal node's row exposes the Inspect trigger; a chat card's deep link opens any node.
+          Mounted once the run has loaded: before it, the view knows nothing of the node, and a
+          drawer that read then would read again the moment the run arrived. */}
+      {run && inspectNodeId && (
+        <NodeInspectorDrawer key={inspectNodeId} runId={runId} nodeId={inspectNodeId}
+          name={nameOf(inspectNodeId)} nodeVersion={inspectedVersion}
+          onClose={() => setInspectNodeId(null)} />
       )}
 
       {/* The workspace review drawer (§4.1 / criterion 7), docked right. Keyed on the run id so

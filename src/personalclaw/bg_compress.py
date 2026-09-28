@@ -40,6 +40,7 @@ import re
 import time
 from datetime import datetime
 
+from personalclaw.constants import dashboard_key_from_file_form
 from personalclaw.context_segmentation import segment_messages
 from personalclaw.history import (
     TURN_ROLES,
@@ -116,25 +117,14 @@ def _rows_of_first_turns(messages: list[dict], count: int) -> list[dict]:
     return messages
 
 
-def _recorded_key(log_key: str) -> str:
-    """The key the chat filed as *log_key* has its turns recorded under in the usage ledger.
-
-    A dashboard chat is filed as ``dashboard_<id>`` and recorded as ``dashboard:<id>``
-    (``chat_utils._history_key_for``); a chat of any other kind keeps the key it is filed under.
-    """
-    if not log_key.startswith("dashboard_"):
-        return log_key
-    from personalclaw.dashboard.chat_utils import _history_key_for
-
-    return _history_key_for(log_key)
-
-
 async def _summarize_oldest(rows: list[dict], *, key: str) -> str:
     """The oldest tier as ONE summary the model reads in its place ("" when it has no turns).
 
     Written from the tier's turns; every ``tool_result_get`` handle in the tier's rows —
     tool rows included, which the model is never handed as history — is named after it.
-    The model call writes one usage row, a background chore on the chat *key* names.
+    The model call writes one usage row, a background chore on the chat *key* names, under the
+    key that chat's turns are recorded by: a dashboard chat is filed as ``dashboard_<id>`` and
+    recorded as ``dashboard:<id>``.
     """
     turns = [m for m in rows if m.get("role") in TURN_ROLES]
     body = "\n".join(f"{m['role']}: {str(m.get('content', '')).strip()}" for m in turns)
@@ -143,7 +133,7 @@ async def _summarize_oldest(rows: list[dict], *, key: str) -> str:
     from personalclaw.tool_providers.prose_compress import compress_prose
     from personalclaw.usage_ledger import Attribution
 
-    who = Attribution(source="background", session_key=_recorded_key(key))
+    who = Attribution(source="background", session_key=dashboard_key_from_file_form(key))
     summary = await compress_prose(body, raw_ref="", usage=who)
     raw_refs = _collect_raw_refs(rows)
     refs_line = ""

@@ -33,6 +33,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
+from personalclaw.agents.native.compaction import InProcessCompaction
 from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
@@ -89,7 +90,6 @@ from personalclaw.llm.prompt_cache import (
     effective_cache_mode,
     mark_cacheable_prefix,
 )
-from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
 from personalclaw.tool_providers.base import RiskLevel
 from personalclaw.tool_providers.portable_schema import (
     ToolSchemaRejected,
@@ -247,7 +247,7 @@ class _PreparedCall:
 # a notice's wording is defined once and cannot drift between the two runtimes.
 
 
-class NativeAgentRuntime(AgentProvider):
+class NativeAgentRuntime(InProcessCompaction, AgentProvider):
     """In-process agent runtime for one session."""
 
     def __init__(
@@ -2154,135 +2154,6 @@ class NativeAgentRuntime(AgentProvider):
         return True
 
     # ── message shaping (OpenAI wire format; Anthropic provider re-maps) ──
-    # The loop compacts its history when context crosses the Settings threshold,
-    # `context_compaction.autocompact_pct()` — see `_maybe_compact`.
-    #
-    # The CONSERVATIVE ratio, not the nominal one: this is a compaction TRIGGER, so it has
-    # to over-estimate token usage and err toward compacting slightly early — cheap —
-    # rather than overflowing the window, which kills the turn. See
-    # `personalclaw.token_estimate` for why the repo keeps two ratios and not one.
-    _EST_CHARS_PER_TOKEN = CONSERVATIVE_CHARS_PER_TOKEN
-
-    def _estimated_context_pct(self) -> float | None:
-        """Char-based context estimate for providers that report no usage.
-
-        Endpoints that reject ``stream_options`` never deliver a usage chunk, so
-        ``_last_context_pct`` stays ``None`` and threshold compaction would never
-        fire — history then grows without bound until the model breaks. This
-        estimate (total chars over the model window at a conservative
-        chars-per-token) is the backstop trigger for exactly that case. It feeds
-        COMPACTION ONLY and is never written to ``_last_context_pct``: an
-        estimate must not be displayed as a measurement.
-
-        The window this divides by has to be the window the provider SERVES. A local
-        runtime is exactly the case that reaches here (a loopback endpoint that rejects
-        ``stream_options`` reports no usage), and it is also the case the shared table
-        answers with an architectural maximum — so resolving it as any other model would
-        divide by a number up to ~31x too large and produce an estimate that can never
-        cross the threshold this backstop exists to cross. The local-ness signal is the
-        guard's own sniffer, not a second one; the per-binding ``context_window``
-        override the provider popped out of its options overrides both.
-        """
-        from personalclaw import context_compaction as cc
-        from personalclaw.guardrails.model_call import _is_local_provider
-        from personalclaw.model_windows import model_context_window
-
-        chars = cc.total_chars(self._messages)
-        if chars <= 0:
-            return None
-        window_tokens = model_context_window(
-            self.agent_model or None,
-            local=_is_local_provider(self._model),
-            override=getattr(self._model, "context_window", None),
-        )
-        if window_tokens <= 0:
-            return None
-        return (chars / self._EST_CHARS_PER_TOKEN) / window_tokens * 100.0
-
-    def _compact_now(self, measured_pct: float | None) -> tuple[int, int]:
-        """Run the structured compaction pass on ``self._messages``. Returns ``(before, after)``.
-
-        THE compaction, with no trigger policy in it: the threshold gate, the anti-thrashing
-        gate AND the ``_compaction_saves`` bookkeeping that feeds it all live in
-        :meth:`_maybe_compact`, and are deliberately absent from the explicit path
-        (:meth:`compact`) — a person who typed ``/compact`` has already decided.
-
-        🪤 THE SAVES LIST MUST NOT BE APPENDED HERE. ``should_compact`` refuses when the last
-        two entries each reclaimed <10%, and it is the *automatic* path that appends, so a
-        list polluted by explicit presses would latch: two ``/compact`` clicks on a short
-        chat (0% reclaimed, truthfully) would disable threshold compaction for the rest of
-        the session, and because the skipped pass never appends, nothing could ever clear it
-        — history would then grow unbounded until the model broke.
-
-        ``after == before`` means the pass found nothing to reclaim — a truthful outcome, not
-        a failure, and the caller reports it as such.
-
-        *measured_pct* is the gauge the trigger read, or ``None`` when the gauge is
-        unmeasured; it only scales the optimistic post-compaction gauge reset.
-        """
-        from personalclaw import context_compaction as cc
-
-        before = cc.total_chars(self._messages)
-        if before <= 0:
-            return 0, 0
-        compacted = cc.compact(self._messages)
-        after = cc.total_chars(compacted)
-        saved = (before - after) / before if before else 0.0
-        if after < before:
-            self._messages = compacted
-            # Compaction rewrote history → any cached prompt prefix is now stale. Bump
-            # the generation so an EXPLICIT-cache provider's next marker reads fresh.
-            self._cache_generation += 1
-            logger.debug("native: cache prefix invalidated → generation %d", self._cache_generation)
-            # A compaction shrank context; the next provider turn re-measures, so
-            # reset our gauge optimistically to avoid re-triggering immediately.
-            # Only when the gauge was MEASURED: in the estimate-triggered path
-            # _last_context_pct is None and must stay None — scaling the estimate
-            # into it would display a number the provider never reported.
-            if self._last_context_pct is not None and measured_pct is not None:
-                self._last_context_pct = measured_pct * (after / before)
-            # Post-compaction guard (E3.1): re-arm structural detection so a loop
-            # that resumes identically after the history was compacted is caught
-            # fresh, instead of its pre-compaction signatures aging out silently.
-            self._breaker.reset_structural()
-            logger.info(
-                "native: compacted context %d→%d chars (saved %.0f%%)",
-                before,
-                after,
-                saved * 100,
-            )
-        return before, after
-
-    def _maybe_compact(self) -> None:
-        """Run structured compaction on ``self._messages`` if over the threshold.
-
-        Trigger = provider-reported context usage ≥ the Settings threshold
-        (``session.autocompact_pct``), with a char-based estimate as the trigger when
-        the provider reports no usage at all (the local-model path). Anti-thrashing
-        skips it when the last two passes each reclaimed <10%. Uses the no-LLM path
-        (tool-output pruning pre-pass + structured digest) — cheap, safe, and
-        synchronous; an LLM-summarized middle can layer on later. Records the save
-        fraction for the anti-thrashing guard.
-        """
-        from personalclaw import context_compaction as cc
-
-        measured_pct = self._last_context_pct
-        if measured_pct is None:
-            # No-usage backstop: estimate purely for the trigger decision. The
-            # displayed gauge stays unmeasured — see _estimated_context_pct.
-            measured_pct = self._estimated_context_pct()
-        # Unmeasured context cannot cross a threshold — an unknown gauge must not
-        # trigger compaction any more than it may print a percentage.
-        if measured_pct is None or measured_pct < cc.autocompact_pct():
-            return
-        if not cc.should_compact(self._compaction_saves):
-            return
-        before, after = self._compact_now(measured_pct)
-        if before > 0:
-            # The anti-thrashing record is the AUTOMATIC trigger's own bookkeeping — see
-            # `_compact_now`'s note on why an explicit `/compact` must never write to it.
-            self._compaction_saves.append((before - after) / before)
-
     @staticmethod
     def _assistant_msg(text: str, tool_calls: list[AgentEvent]) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": text or ""}
@@ -2331,34 +2202,6 @@ class NativeAgentRuntime(AgentProvider):
     def context_usage_pct(self) -> float | None:
         return self._last_context_pct
 
-    # ── compaction: the native loop owns its history, so it compacts it itself (#470) ──
-    @property
-    def compacts_in_process(self) -> bool:
-        """True — ``self._messages`` is this runtime's own list, and
-        :meth:`_compact_now` rewrites it synchronously.
-
-        ``supports_native_commands`` stays False and must: there is no backend to hand a
-        slash command to, so every OTHER ``/…`` word is still honestly reported as a plain
-        message. This property is the narrow exception for the one command the runtime can
-        genuinely execute.
-        """
-        return True
-
-    @property
-    def compacts_automatically(self) -> bool:
-        """True while :meth:`_maybe_compact` will still compact this runtime's history on its
-        own once the context crosses the Settings threshold.
-
-        False once the last two automatic passes each reclaimed under a tenth
-        (``context_compaction.should_compact``): compacting again would not help, so the
-        session manager restarts the session at that threshold instead. While it is True the
-        manager leaves the session alone, because a restart at the same threshold would
-        always come first and throw away the history this loop is about to compact.
-        """
-        from personalclaw import context_compaction as cc
-
-        return cc.should_compact(self._compaction_saves)
-
     @property
     def keeps_cancelled_turns(self) -> bool:
         """True — a stopped turn stays in ``self._messages``: :meth:`stream` appends the
@@ -2366,17 +2209,6 @@ class NativeAgentRuntime(AgentProvider):
         the same assistant-record path, so whatever was answered is kept too. Re-injecting
         the turn as a "[PREVIOUS TURN WAS CANCELLED]" preamble would send it twice."""
         return True
-
-    async def compact(self, context: str = "") -> None:
-        """Compact this session's history NOW, unconditionally.
-
-        The explicit counterpart to :meth:`_maybe_compact`'s automatic trigger — same pass,
-        no threshold and no anti-thrashing gate, because the caller asked. *context* is
-        accepted for interface compatibility (the ACP provider folds it into a prompt for
-        the backend's summariser) and ignored here: the no-LLM structured digest derives its
-        summary from the history itself, so there is nothing to seed.
-        """
-        self._compact_now(self._last_context_pct)
 
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:
         """Execute ``/compact`` as a real command; anything else is the base's plain prompt.

@@ -51,6 +51,15 @@ describe('searchCoverage (a partial answer is never shown as a complete one)', (
     })
   })
 
+  it('says one chat in the singular', () => {
+    // Driven in the chat list: "the other 1 are longer than the search index keeps, so only their
+    // beginnings were searched."
+    expect(searchCoverage({ complete: false, searched: { chats: 2, of: 3 }, index: { indexed: 3, of: 3, building: false, long: 1 } })?.detail)
+      .toBe('the other one is longer than the search index keeps, so only its beginning was searched.')
+    expect(searchCoverage({ complete: false, searched: { chats: 2, of: 3 }, index: { indexed: 2, of: 3, building: true, long: 0 } })?.detail)
+      .toBe('the search index is still being built, so matches in the other one are not listed yet.')
+  })
+
   it('names the missing index when only the newest chats were read', () => {
     expect(searchCoverage({ complete: false, searched: { chats: 500, of: 12005 }, index: null })?.detail)
       .toBe('there is no search index, so only the most recent were read.')

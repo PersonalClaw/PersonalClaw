@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -102,6 +103,22 @@ class StateEntry:
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
     derived_within: tuple[str, ...] = field(default_factory=tuple)
+    # How a device sync brings a peer's row into this store, for a store whose rows also record
+    # what happened to them in ONE home (`reconcile.reconcile_entry` applies it to every peer row
+    # but a tombstone, before the merge). `None`: a peer's row arrives as the peer wrote it.
+    arrives: Callable[[dict], dict] | None = None
+
+
+def _trigger_store_arrives(row: dict) -> dict:
+    """A peer's ``triggers.json`` row, as this home takes it in: every automation without the
+    peer's runtime state and switched off (``triggers.store.arrived_from_another_home``, the rule a
+    snapshot merge applies too)."""
+    from personalclaw.triggers.store import store_arrived_from_another_home
+
+    data = row.get("data")
+    if not isinstance(data, dict):
+        return row
+    return {**row, "data": store_arrived_from_another_home(data)}
 
 
 # ── the manifest ────────────────────────────────────────────────────────────
@@ -355,6 +372,9 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
         help="the one trigger store (automations, event triggers, hooks)",
+        # A peer's automations arrive switched off and with nothing of what happened to them there:
+        # its armed fires, run counts, health and alert dedupe are the peer's, not this home's.
+        arrives=_trigger_store_arrives,
     ),
     StateEntry(
         id="crons",

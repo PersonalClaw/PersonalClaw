@@ -59,7 +59,7 @@ beforeEach(() => {
     sections: [{ offset: 15, line: 3, title: 'Eviction policy', level: 2, chars: 40 }],
     length: BODY.length,
   })
-  duplicates = vi.spyOn(api, 'knowledgeDuplicates').mockResolvedValue([])
+  duplicates = vi.spyOn(api, 'knowledgeDuplicates').mockResolvedValue({ duplicates: [], not_compared: 0, not_compared_note: '' })
   preview = vi.spyOn(api, 'knowledgeRestructurePreview').mockResolvedValue({
     confirmed: false, token: 'tok-abc', plan: plan(),
   })
@@ -296,6 +296,22 @@ describe('a verb whose precondition is missing explains itself', () => {
     // No picker AT ALL, not a disabled one: `Select` cannot carry a `disabledReason`, so a
     // greyed-out dropdown is a control whose unavailability nothing states.
     expect(screen.queryByRole('combobox', { name: /item to fold into this one/i })).toBeNull()
+  })
+
+  it('says which copies it could not compare, rather than that none exists', async () => {
+    const note = '1 item titled like this one was not compared with it: a different embedding '
+      + 'model embedded it, so no score between the two would mean anything.'
+    duplicates.mockResolvedValue({ duplicates: [], not_compared: 1, not_compared_note: note })
+    await openPanel()
+
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: /restructure verb/i }), {
+        target: { value: 'merge' },
+      })
+    })
+
+    const said = screen.getByText(/no near-duplicates were found among the items it could be compared with/i)
+    expect(said.textContent).toContain(note)
   })
 
   it('says a headingless item cannot be split instead of offering an empty list', async () => {

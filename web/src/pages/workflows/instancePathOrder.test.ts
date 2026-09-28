@@ -5,7 +5,7 @@ import { byInstancePath, compareInstancePaths } from './instancePathOrder'
 // ── Numeric ordering of instance paths (issue #568) ─────────────────────────
 //
 // The bug these pin: five view sorts used `localeCompare`, which orders paths by digit
-// CHARACTER while the engine (`_natural_key` in `workflows/node_bindings.py`) orders them by
+// CHARACTER while the engine (`instance_order` in `workflows/models.py`) orders them by
 // VALUE. The two agree for nine items and diverge at the tenth — late enough that no seeded
 // run and no short test ever showed it.
 //
@@ -13,7 +13,7 @@ import { byInstancePath, compareInstancePaths } from './instancePathOrder'
 //
 //   paths:          n[1] n[2] n[9] n[10] n[11] n[20]
 //   localeCompare:  n[1] n[10] n[11] n[2] n[20] n[9]
-//   _natural_key:   n[1] n[2] n[9] n[10] n[11] n[20]
+//   instance_order: n[1] n[2] n[9] n[10] n[11] n[20]
 
 const sortPaths = (paths: string[]) => [...paths].sort(compareInstancePaths)
 
@@ -96,7 +96,7 @@ describe('compareInstancePaths', () => {
   })
 
   it('treats equal values spelled differently as equal, like the engine', () => {
-    // Both key to the int 2 in `_natural_key`, so neither precedes the other.
+    // Both key to the int 2 in `instance_order`, so neither precedes the other.
     expect(compareInstancePaths('n[02]', 'n[2]')).toBe(0)
   })
 

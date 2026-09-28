@@ -865,15 +865,16 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // judge-benchmark tier recommendation whose absence is an honest "no chip" (the Learning page owns
   // reporting WHY), and a per-provider local-model health read. None of them is the panel.
   //
-  // The RECORDS veto's other blind edge (see `ChatPage` above) also lives in this file: the reindex
-  // failure IS recorded — `setReindex({ status: 'error', message })` — but into a FIELD of a state
-  // object, and the veto keys off the SETTER's name. The surface tells the user the reindex failed;
-  // only the scanner cannot see it.
+  // 5 → 4: the reindex start's refusal left. It was the RECORDS veto's other blind edge (see
+  // `ChatPage` above): recorded into a FIELD of a state object, `{ status: 'error', error }`, which
+  // the veto could not see because it keys off the setter's name. The start now lives in
+  // `lib/useEmbeddingReindex.ts`, shared with the Knowledge page, and captures the refusal by
+  // reference (`.catch(refused)`), the capture form this census already reads as correct.
   // 7th (SCALAR widening): the reclaim button's `setTotalBytes(0)`. A zero here reads as "nothing to
   // reclaim" and the button disables itself, so an unreadable candidates list hides a real cleanup
   // rather than inventing one — the conservative direction, and the button is a decoration on a panel
   // whose own model reads have error branches.
-  'pages/settings/ModelsPanel.tsx': 5,
+  'pages/settings/ModelsPanel.tsx': 4,
   // 2 → 1, and the halving is the interesting part: this entry USED to read "Both read a provider's
   // JSON SCHEMA", and only one of the two ever did. The remaining site is the schema read, whose
   // substitute is `{ properties: {} }` — every caller turns that into `props.length === 0` → `return

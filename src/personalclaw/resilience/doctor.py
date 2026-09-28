@@ -387,8 +387,11 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
     model's at the width it produces and a rebuild indexes them; ``other_model`` rows were
     embedded by a different model (each vector records its model; one with none recorded is
     another model's once a model is bound) or at another width, and only a re-embed can make them
-    searchable. With no model bound, only the width tells. A deleted row still in the index is
-    not counted — search skips it.
+    searchable. ``unembedded`` memories hold no vector at all (written while no model was bound,
+    or when it failed), and only an embed can. With no model bound, only the width tells. A
+    deleted row still in the index is not counted — search skips it. ``other_model`` and
+    ``unembedded`` are ``vector_memory.embedding_coverage``'s, the counts the recall disclosure
+    and the Memory page read, so the three say one number.
 
     Shared by the ``memory.store`` probe and its Fix preview, so the row and the Fix cannot
     disagree about what is broken.
@@ -396,11 +399,16 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
     import json
 
     from personalclaw import vector_memory as vm
+    from personalclaw.embedding_providers.registry import bound_embedding
 
     db_path = home / "memory.db"
     ev: dict[str, Any] = {"db_present": db_path.exists(), "faiss_available": vm.faiss_available()}
     if not db_path.exists():
         return ev
+    # The model recall compares under: the one bound now, or with none bound the vectors that
+    # name no model (the store's own rule, `VectorMemoryStore._comparison_space`).
+    bound = bound_embedding().ref()
+    space = bound or ""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
     try:
         ev["journal_mode"] = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
@@ -413,6 +421,7 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
             f"SELECT id, length(embedding), {model_col} FROM episodic_memories "  # noqa: S608
             "WHERE is_deleted=0 AND embedding IS NOT NULL ORDER BY created_at, id"
         ).fetchall()
+        coverage = vm.embedding_coverage(conn, space, bound=bound is not None)
     finally:
         conn.close()
     ev["embedded_count"] = len(rows)
@@ -428,30 +437,25 @@ def memory_index_gaps(home: Path) -> dict[str, Any]:
             ids = []
         indexed = set(ids) if isinstance(ids, list) else set()
         ev["index_source"] = "file"
-    from personalclaw.embedding_providers.registry import bound_embedding
-
-    # The model recall compares under: the one bound now, or with none bound the vectors that
-    # name no model (the store's own rule, `VectorMemoryStore._comparison_space`).
-    bound = bound_embedding().ref()
-    space = bound or ""
     ours = [r for r in rows if (r[2] or "") == space]
     current = ours[-1][1] if ours else 0  # its newest vector's byte width: its width now
     ev["faiss_ids"] = sum(1 for r in rows if r[0] in indexed)
     ev["missing"] = sum(1 for r in ours if r[1] == current and r[0] not in indexed)
-    other = sum(1 for r in ours if r[1] != current)
-    if bound is not None:
-        other += len(rows) - len(ours)
-    ev["other_model"] = other
+    ev["other_model"] = coverage.other_model
+    ev["unembedded"] = coverage.unembedded
     ev["dim"] = current // 4
     ev["embedding_model"] = space
     return ev
 
 
 async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
-    """memory — memory.db opens + WAL, and the index recall reads holds every embedded row.
+    """memory — memory.db opens + WAL, the index recall reads holds every embedded row, and the
+    model bound now has embedded every memory.
 
     Read-only; the measurement is :func:`memory_index_gaps`. Without faiss there is no index to
     hold anything — recall searches the SQLite vectors directly — so that is a note, not a desync.
+    The memories the model has not embedded are counted with or without it: search reads them by
+    keyword either way, and the desktop build ships without faiss.
     """
     ev = await asyncio.to_thread(memory_index_gaps, ctx.home)
     if not ev.get("db_present"):
@@ -466,30 +470,23 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
                 "Durability, or copy the file aside before anything writes to it again."
             ),
         )
-    if not ev.get("faiss_available"):
-        return ProbeResult(
-            ok=True,
-            detail="faiss is not installed — semantic recall searches the stored vectors directly",
-            evidence=ev,
-        )
-    embedded, missing, other = ev["embedded_count"], ev["missing"], ev["other_model"]
-    if missing:
+    embedded, missing = ev["embedded_count"], ev["missing"]
+    other, unembedded = ev["other_model"], ev["unembedded"]
+    if missing and ev.get("faiss_available"):
         return ProbeResult(
             ok=False,
             detail=f"faiss index desync: {ev['faiss_ids']} indexed vs {embedded} embedded rows",
             evidence=ev,
             fix_id=MEMORY_INDEX_FIX,
         )
-    if other:
-        detail = (
-            f"{other} of {embedded} embedded memor{'y was' if other == 1 else 'ies were'} "
-            "embedded by a different model — semantic recall cannot search "
-            f"{'it' if other == 1 else 'them'}"
-        )
+    if other or unembedded:
+        from personalclaw.memory_ranking import keyword_read_note
         from personalclaw.providers.provider_bridge import can_resolve_use_case
 
+        # The recall disclosure's own sentence for the same count: what search reads by keyword.
+        detail = keyword_read_note(other, unembedded)
         if await asyncio.to_thread(can_resolve_use_case, "embedding"):
-            # The Fix re-embeds exactly these rows with the model bound now, then rebuilds.
+            # The Fix embeds exactly these memories with the model bound now, then rebuilds.
             return ProbeResult(ok=False, detail=detail, evidence=ev, fix_id=MEMORY_INDEX_FIX)
         return ProbeResult(
             ok=False,
@@ -500,6 +497,12 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
                 "Bind one in Settings → Models: that re-embeds every memory. Keyword recall still "
                 "finds them meanwhile."
             ),
+        )
+    if not ev.get("faiss_available"):
+        return ProbeResult(
+            ok=True,
+            detail="faiss is not installed — semantic recall searches the stored vectors directly",
+            evidence=ev,
         )
     return ProbeResult(ok=True, detail="memory.db healthy", evidence=ev)
 
@@ -1680,8 +1683,8 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         active_fingerprint,
         count_stale_chunks,
         has_fingerprint_columns,
-        stale_chunk_items,
         stale_rows,
+        stale_vector_items,
     )
     from personalclaw.knowledge.searchability import (
         LIBRARY_SHELF,
@@ -1723,16 +1726,17 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
                     (UNSEARCHABLE,),
                 ).fetchall()
             ]
-            # Items whose PASSAGE vectors came from a different embedding model.
-            # Read here, on the same read-only connection, so one probe answers "what in my
-            # library cannot be found" completely. `has_fingerprint_columns` is the guard a
-            # ``mode=ro`` reader needs: it cannot run the store's migration, so a database
-            # written by an older build must report "cannot tell" instead of raising.
+            # Items holding a vector (a passage's, or the whole-item one) the model
+            # bound now did not write, which search skips. Read here, on the same read-only
+            # connection, so one probe answers "what in my library cannot be found" completely.
+            # `has_fingerprint_columns` is the guard a ``mode=ro`` reader needs: it cannot run
+            # the store's migration, so a database written by an older build must report
+            # "cannot tell" instead of raising.
             fp = active_fingerprint()
             if fp is not None and has_fingerprint_columns(conn):
                 ev["active_embedding_model"] = str(fp)
                 ev["stale_chunk_vectors"] = count_stale_chunks(conn, fp)
-                stale = stale_rows(stale_chunk_items(conn, fp))
+                stale = stale_rows(stale_vector_items(conn, fp))
         finally:
             conn.close()
         rows = rows_from(records) + stale
@@ -1775,7 +1779,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
             "to add semantic search. `no_extractable_text`: the file is a scan, so add a text "
             "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the "
             "item is fine and its vectors are not — they came from a different embedding model, "
-            "so run the embedding re-index; nothing needs re-ingesting. Rows under "
+            "or record none, so run the embedding re-index; nothing needs re-ingesting. Rows under "
             "`unlisted_items` are search copies the library does not list (an artifact's mirror, "
             "a report's finding) and take the same fix."
         ),

@@ -43,6 +43,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Each room member now reads only what it has not seen.**
 
+- **Validation warns about words on a gate that its kind never shows anyone.**
+
 ### Changed
 
 - **`note_unknown_sender` loses its unused `silent` argument.**
@@ -63,6 +65,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The per-site browse "profile key", which nothing used; a key an earlier release stored is deleted at start.**
 
 ### Fixed
+
+- **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
+
+- **Knowledge compares two embeddings only when one model wrote both, as memory does.**
+
+- **The image and video tools say where to choose a model, and name no vendor.**
+- **Clearing Chat posts one notice, not ten.**
+- **A memory no model embedded is counted everywhere search is described, as one number.**
+- **A step you open from a chat's workflow card shows its result once it finishes, and a loop or fan-out of more than ten items shows its real last one.**
+- **A chat found by a search is named as the chat list names it, not by its internal key.**
+
+- **Searching your chats as you type finds what was said late in a long chat.**
+
+- **Searching your chats lists each chat once, with its latest words, instead of sometimes twice.**
 
 - **A replace restore keeps the engine each returning app has here, instead of moving it into `pre-restore-<ts>/` and asking for Install engine again, and says which engines it kept or set aside.**
 
@@ -319,7 +335,17 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An installed app's panel says what it needs that PersonalClaw doesn't install.**
 
+- **Device sync brings another machine's automations in switched off, without its runs, fire times or alerts.**
+
+- **The run page names each step by its label, as the run's own error line does.**
+
+- **A stopped run's panel offers Retry or the workflow's editor, and no longer says it needs a decision.**
+
+- **What a run recorded shows under the schedule panel's Run button at full strength.**
+
 ### Security
+
+- **The repository no longer publishes the names its publication check keeps out, not even as digests.**
 
 - **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**
 

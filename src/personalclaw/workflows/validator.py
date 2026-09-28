@@ -127,6 +127,45 @@ _HANDROLLED_FENCE_MARKERS = ("<untrusted_content", "</untrusted_content")
 _MAX_DEPTH = 12
 _MAX_NODES = 500
 
+#: The config keys that hold a gate's words for someone.
+GATE_TEXT_KEYS: tuple[str, ...] = ("prompt", "message")
+
+#: The words each gate kind is shown or graded by: the keys the engine reads for it. An approval's
+#: and an event's are its ask (`engine._ask_payload`: `prompt`, else `message`); a judge's `prompt`
+#: is the rubric its model is sent; an expression's `message` is what its failure says. A verifier
+#: and a ladder read no words at all.
+GATE_TEXT_READ: dict[GateKind, frozenset[str]] = {
+    GateKind.APPROVAL: frozenset({"prompt", "message"}),
+    GateKind.EVENT: frozenset({"prompt", "message"}),
+    GateKind.JUDGE: frozenset({"prompt"}),
+    GateKind.EXPRESSION: frozenset({"message"}),
+    GateKind.VERIFY_COMMAND: frozenset(),
+    GateKind.VERIFY_SCRIPT: frozenset(),
+    GateKind.LADDER: frozenset(),
+}
+
+#: Why each kind does not show a key it does not read, the second sentence of the warning.
+_GATE_WORDS_GO: dict[GateKind, str] = {
+    GateKind.JUDGE: "A judge's model is sent its `prompt`, and nothing else.",
+    GateKind.EXPRESSION: (
+        "An expression gate asks nobody: the engine decides it, and what its failure says is its "
+        "`message`. To ask a person, make it an approval."
+    ),
+}
+
+
+def _unshown_gate_text(gate: GateKind, cfg: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(key, why)`` for each of the gate's words its kind never shows."""
+    carried = [key for key in GATE_TEXT_KEYS if str(cfg.get(key) or "").strip()]
+    read = GATE_TEXT_READ[gate]
+    if not read:
+        return [(key, f"A {gate.value} gate reads no words.") for key in carried]
+    unshown = [(key, _GATE_WORDS_GO[gate]) for key in carried if key not in read]
+    if read == {"prompt", "message"} and {"prompt", "message"} <= set(carried):
+        # The ask shows its `prompt`, and its `message` only when it has no `prompt`.
+        unshown.append(("message", "The ask shows its `message` only when it has no `prompt`."))
+    return unshown
+
 
 def _add(res: ValidationResult, code: str, msg: str, path: str = "", sev: str = SEVERITY_ERROR):
     res.issues.append(Issue(code=code, message=msg, path=path, severity=sev))
@@ -456,6 +495,14 @@ def _validate_shape(
                 _add(res, "WF_MISSING_PROMPT", "judge gate needs a non-empty `prompt`", path)
         if gate == GateKind.EXPRESSION and not cfg.get("expr"):
             _add(res, "WF_MISSING_EXPR", "expression gate needs an `expr`", path)
+        for key, why in _unshown_gate_text(gate, cfg) if gate is not None else ():
+            _add(
+                res,
+                "WF_GATE_TEXT_UNSHOWN",
+                f"This gate's `{key}` is never shown to anyone. {why}",
+                path,
+                SEVERITY_WARNING,
+            )
 
     elif kind == NodeKind.SUBWORKFLOW:
         ref = str(cfg.get("ref", "") or "")

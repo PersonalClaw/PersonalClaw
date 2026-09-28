@@ -20,6 +20,7 @@ from personalclaw.workflows.models import (
     LoopMode,
     Node,
     NodeKind,
+    instance_order,
     loop_parent,
     spec_path,
     walk,
@@ -194,7 +195,7 @@ def _accumulated_outputs(ctl: RunController, subtree: str) -> list[Any]:
     acc: list[Any] = []
     for spath in sorted(
         (p for p in ctl.instances if p == subtree or p.startswith(f"{subtree}.")),
-        key=_natural_key,
+        key=instance_order,
     ):
         inst = ctl.instances[spath]
         if inst.state not in SUCCESS_STATES or not inst.output_ref:
@@ -340,17 +341,6 @@ def _enclosing_parallel(path: str, tree: dict[str, Node]) -> str | None:
         if node is not None and node.kind == NodeKind.PARALLEL:
             return candidate
     return None
-
-
-def _natural_key(path: str) -> list[Any]:
-    """Sort instance paths NUMERICALLY on their indices.
-
-    A plain string sort puts `children[10]` before `children[2]` and `body@10` before `body@2`,
-    so "oldest first" silently became wrong at the tenth iteration — the window would keep the
-    wrong items and `previous.output` would return the wrong cycle. Ten cycles in is late enough
-    that no short test would ever see it.
-    """
-    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", path)]
 
 
 def _secret_resolver(key: str) -> str:

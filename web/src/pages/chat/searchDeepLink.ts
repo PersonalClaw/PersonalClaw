@@ -41,11 +41,13 @@ export function searchCoverage(answer: Pick<SessionSearchAnswer, 'searched' | 'c
   if (answer.complete !== false || !answer.searched) return null
   const { chats, of } = answer.searched
   const rest = Math.max(0, of - chats)
-  const others = rest.toLocaleString()
+  const others = rest === 1 ? 'one' : rest.toLocaleString()
   const detail = !answer.index
     ? 'there is no search index, so only the most recent were read.'
     : answer.index.indexed < answer.index.of
       ? `the search index is still being built, so matches in the other ${others} are not listed yet.`
-      : `the other ${others} are longer than the search index keeps, so only their beginnings were searched.`
+      : rest === 1
+        ? 'the other one is longer than the search index keeps, so only its beginning was searched.'
+        : `the other ${others} are longer than the search index keeps, so only their beginnings were searched.`
   return { shown: chats, total: of, rest, detail }
 }

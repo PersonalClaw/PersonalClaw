@@ -1,9 +1,10 @@
 """No-model degraded-contract tests.
 
 Pins the contract registry, the availability derivation (every needed use-case must
-resolve), the read-only/fail-safe backlog + availability probes, and the
-one-notification-per-transition rule (silent baseline on first sight → warning on
-down → info on recovery).
+resolve), the read-only/fail-safe backlog + availability probes, and the transition
+notifications (silent baseline on first sight → warning on down → info on recovery). How several
+surfaces changing at once make ONE notification is pinned in
+``test_one_model_change_posts_one_notice.py``.
 """
 
 from __future__ import annotations
@@ -175,6 +176,15 @@ def test_degraded_surfaces_lists_only_unavailable(monkeypatch):
 # ── transition notifications (one per change; silent baseline) ───────────────
 
 
+def _only(contract: DegradedContract) -> None:
+    """Make *contract* the only one registered (the autouse fixture restores the rest), so a test
+    of one surface's transitions is not a test of the built-ins flipping beside it: the probes
+    these tests patch answer for every use case, and surfaces that change together share one
+    notice."""
+    degraded._CONTRACTS.clear()
+    degraded.register_contract(contract)
+
+
 class _RecordingState:
     def __init__(self):
         self.notes: list[tuple[str, str, str]] = []
@@ -204,26 +214,23 @@ def test_down_then_recovery_emits_warning_then_info(monkeypatch):
         lambda uc: available["value"],
     )
     monkeypatch.setattr("personalclaw.providers.provider_bridge.model_chosen", lambda uc: True)
-    degraded.register_contract(
+    _only(
         DegradedContract(surface="t_flap", label="T flap", use_cases=("chat",), floor="the floor")
     )
     state = _RecordingState()
-    # Filter to THIS surface's notes — the built-in contracts share the monkeypatched
-    # probe and transition alongside t_flap, which is not what this test measures.
-    flap = lambda: [n for n in state.notes if "T flap" in n[1]]  # noqa: E731
 
     degraded.evaluate(notify=True, state=state)  # baseline: available
-    assert flap() == []
+    assert state.notes == []
 
     available["value"] = False
     degraded.evaluate(notify=True, state=state)  # went down → warning
-    assert len(flap()) == 1
-    assert flap()[0][0] == "warning" and "T flap" in flap()[0][1]
+    assert [(kind, title) for kind, title, _body in state.notes] == [("warning", "T flap degraded")]
 
     available["value"] = True
     degraded.evaluate(notify=True, state=state)  # recovered → info
-    assert len(flap()) == 2
-    assert flap()[1][0] == "info" and "recovered" in flap()[1][1]
+    assert [(kind, title) for kind, title, _body in state.notes[1:]] == [
+        ("info", "T flap recovered")
+    ]
 
 
 def test_no_change_emits_nothing(monkeypatch):
@@ -374,7 +381,7 @@ def _recover(monkeypatch, contract) -> "_RecordingState":
     available = {"value": True}
     _flip(monkeypatch, available)
     monkeypatch.setattr("personalclaw.providers.provider_bridge.model_chosen", lambda uc: True)
-    degraded.register_contract(contract)
+    _only(contract)
     state = _RecordingState()
     degraded.evaluate(notify=True, state=state)  # baseline: up
     available["value"] = False

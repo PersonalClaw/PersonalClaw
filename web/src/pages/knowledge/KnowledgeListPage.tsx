@@ -16,7 +16,8 @@ import { SidePanel } from '../../ui/SidePanel'
 import { ListControls } from '../../ui/ListControls'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
-import { api, type KnowledgeIntent, type KnowledgeIntentRecord, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp } from '../../lib/api'
+import { api, type KnowledgeIntent, type KnowledgeIntentRecord, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp, type ReindexJob } from '../../lib/api'
+import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -53,9 +54,23 @@ function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: 
   )
 }
 
-/** Embedding-coverage chip: surfaces semantic-search readiness. Off → muted hint;
- *  on with stragglers → a one-click backfill button; fully covered → quiet status. */
-function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/api').KnowledgeStats; busy: boolean; onBackfill: (rebuild?: boolean) => void }) {
+/** Embedding-coverage chip: surfaces semantic-search readiness. Off → muted hint; a re-index
+ *  running → its progress; on with stragglers → one click to embed them; fully covered → quiet
+ *  status.
+ *
+ *  🔑 ITS ACTION IS THE ONE RE-INDEX (`POST /api/models/embedding/reindex`), the one Settings →
+ *  Models and the gateway's own start run: it re-embeds the item vectors and the passage vectors
+ *  the bound model did not write, records that model on each, and resumes where a stop left it.
+ *  The chip used to run a second embed loop of its own, which re-embedded the items and never
+ *  their passages, and raced the re-index when one was already running, as it is through the
+ *  first start after an update. A click while one runs joins it. */
+function EmbeddingChip({ stats, reindex, starting, onReindex }: {
+  stats: import('../../lib/api').KnowledgeStats
+  reindex: ReindexJob | null
+  /** A start was sent and the route has not answered yet (it probes the model first). */
+  starting: boolean
+  onReindex: () => void
+}) {
   const e = stats.embeddings
   if (!e?.enabled) {
     return (
@@ -65,30 +80,45 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
       </div>
     )
   }
+  if (reindex?.status === 'running') {
+    return (
+      <div role="status" className="flex items-center gap-s rounded-lg bg-surface-container px-m py-s"
+        title={`Re-embedding with ${reindex.model || e.model}: ${reindex.phase}. Until an item is re-embedded, search finds it by keyword.`}>
+        <Boxes size={15} className="shrink-0 animate-pulse text-primary" />
+        <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>
+          {reindex.total > 0 ? `${reindex.done}/${reindex.total}` : '…'}
+        </span>
+        <span data-type="caption" className="text-on-surface-low">re-embedding</span>
+      </div>
+    )
+  }
   const embedded = e.embedded_items ?? 0
   const stale = e.stale_items ?? 0
   const behind = Math.max(0, stats.items - embedded)
-  // Stale vectors (embedded under a previous model — now vector-dead) need a full
-  // re-embed (rebuild=true), so they take priority over plain stragglers.
+  // Why the last re-index this page followed stopped, said on the control that runs it again.
+  const stopped = reindex?.status === 'error' ? `The last re-index stopped: ${reindex.error} ` : ''
+  // Stale vectors (another model's, or ones that record none: semantic search skips them) come
+  // first, over plain stragglers. One re-index embeds both, with the model bound now.
   if (stale > 0) {
+    const one = stale === 1
     return (
-      <button type="button" onClick={() => onBackfill(true)} disabled={busy}
-        title={`${stale} item${stale === 1 ? '' : 's'} embedded with a previous model — click to re-embed all with ${e.model} (semantic search ignores stale vectors until then)`}
+      <button type="button" onClick={onReindex} disabled={starting} aria-busy={starting || undefined}
+        title={`${stopped}${stale} item${one ? ' holds an embedding' : 's hold embeddings'} ${e.model} did not write — click to re-embed ${one ? 'it' : 'them'} with it (semantic search skips ${one ? 'it' : 'them'} until then)`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
-        <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
+        <Boxes size={15} className={`shrink-0 ${starting ? 'animate-pulse text-primary' : 'text-warning'}`} />
         <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{stale}</span>
-        <span data-type="caption" className="text-on-surface-low">{busy ? 'embedding…' : 'stale — re-embed'}</span>
+        <span data-type="caption" className="text-on-surface-low">{starting ? 'starting…' : stopped ? 're-embed stopped — retry' : 'stale — re-embed'}</span>
       </button>
     )
   }
   if (behind > 0) {
     return (
-      <button type="button" onClick={() => onBackfill(false)} disabled={busy}
-        title={`${behind} item${behind === 1 ? '' : 's'} not yet embedded — click to backfill (model: ${e.model})`}
+      <button type="button" onClick={onReindex} disabled={starting} aria-busy={starting || undefined}
+        title={`${stopped}${behind} item${behind === 1 ? '' : 's'} not yet embedded — click to embed ${behind === 1 ? 'it' : 'them'} (model: ${e.model})`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
-        <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
+        <Boxes size={15} className={`shrink-0 ${starting ? 'animate-pulse text-primary' : 'text-warning'}`} />
         <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{embedded}/{stats.items}</span>
-        <span data-type="caption" className="text-on-surface-low">{busy ? 'embedding…' : 'embed rest'}</span>
+        <span data-type="caption" className="text-on-surface-low">{starting ? 'starting…' : stopped ? 're-embed stopped — retry' : 'embed rest'}</span>
       </button>
     )
   }
@@ -387,16 +417,10 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
     }
   }
 
-  // Backfill embeddings for items indexed before a model was available (semantic
-  // search only covers embedded items). One click → embed the stragglers.
-  const [embedding, setEmbedding] = useState(false)
-  // rebuild=true re-embeds EVERY item (needed when vectors are stale after an embedding-
-  // model switch); rebuild=false only fills in never-embedded stragglers.
-  const backfillEmbeddings = async (rebuild = false) => {
-    setEmbedding(true)
-    try { await api.generateKnowledgeEmbeddings(rebuild) } catch { /* surfaced by reload */ }
-    finally { setEmbedding(false); refreshStats() }
-  }
+  // The one embedding re-index: followed from mount, so one the gateway started (the first start
+  // after an update re-embeds the library once) shows here, and started or joined by the chip.
+  // Its end re-reads the counts it changed.
+  const { job: reindex, start: startReindex, starting: reindexStarting } = useEmbeddingReindex({ onSettled: refreshStats })
 
   // Create-fast/enrich-async: items land in the list immediately and enrich in the
   // background. While any item is still processing, poll so its title/tags/summary
@@ -565,7 +589,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
             <StatChip icon={Database} label="items" value={stats.items} />
             <StatChip icon={Sparkles} label="entities" value={stats.entities} />
             <StatChip icon={Network} label="relations" value={stats.relations} />
-            <EmbeddingChip stats={stats} busy={embedding} onBackfill={backfillEmbeddings} />
+            <EmbeddingChip stats={stats} reindex={reindex} starting={reindexStarting} onReindex={startReindex} />
           </div>
         </div>
       )}

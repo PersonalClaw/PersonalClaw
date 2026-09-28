@@ -362,12 +362,6 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // (a) The drawer copy's engagement toggle: a silent optimistic revert. Its own file already reports
   // `saveInboxSettings` correctly two functions up, so the panel answers for two of its three writes.
   'pages/inbox/InboxSettingsPanel.tsx': 1,
-  // (b) "surfaced by reload" — the re-embed BACKFILL trigger, whose progress the embedding chip renders
-  // on the refetch. It had a sibling here, the re-enrich trigger, on the same argument — and live
-  // validation measured that argument false for it: on a home with no model the route answered
-  // `{queued: 3}`, every job failed, and the reload surfaced nothing. That one now reports its outcome
-  // (and the route refuses up front), so this is 1. The remaining one rests on the same assumption.
-  'pages/knowledge/KnowledgeListPage.tsx': 1,
   // (b) A read-state latch reset so the next scroll tick retries. Auto-marking an article as "reading"
   // is inferred from scroll position; nobody asked, and nothing claims it happened.
   'pages/knowledge/ReadingView.tsx': 1,
@@ -579,10 +573,13 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     // siblings kept hitting is a single narrowing going unnoticed behind a still-passing total.
     expect(W.size, 'no write methods parsed out of lib/api.ts').toBeGreaterThan(300)
     const c = census()
-    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(30)
+    // 30 → 29: the Knowledge page's re-embed trigger ("surfaced by reload") is gone. Its chip starts
+    // the one embedding re-index now and renders that job's refusal and progress.
+    expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(29)
     // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
-    // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them).
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(48)
+    // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, and the
+    // Knowledge page's re-embed trigger: 48 → 47).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(47)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

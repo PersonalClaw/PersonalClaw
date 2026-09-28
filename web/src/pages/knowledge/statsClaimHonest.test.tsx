@@ -42,6 +42,7 @@ function mockApi(over: Record<string, unknown>) {
     ...(await orig<Record<string, unknown>>()),
     api: {
       knowledgeStats: () => Promise.resolve(okStats),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       knowledgeItems: () => Promise.resolve({ items: [] }),
       knowledgeCollections: () => Promise.resolve([]),
       knowledgeIntents: () => Promise.resolve([]),

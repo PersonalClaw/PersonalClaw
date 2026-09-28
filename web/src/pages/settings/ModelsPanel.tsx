@@ -25,6 +25,7 @@ import { StatusPill } from '../../ui/StatusPill'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import type { Rebase, Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { confirm } from '../../ui/dialog'
 import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
@@ -867,7 +868,10 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
   // component ever used it for.
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
-  const [reindex, setReindex] = useState<import('../../lib/api').ReindexJob | null>(null)
+  // The one embedding re-index, followed wherever it was started: this row's save, or the
+  // gateway itself (at its start, or after a binding made elsewhere). Only the Embedding row
+  // reads it.
+  const { job: reindex, start: startReindex } = useEmbeddingReindex({ enabled: useCase === 'embedding' })
   // The bindings that name a model. One stored before the gateway refused `"provider:"` chose
   // none: it is not shown, and the next change here writes the chain without it.
   const activeModels = useMemo(() => chain.value.filter(namesModel), [chain.value])
@@ -898,36 +902,6 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
     for (const m of matched) (activeModels.includes(`${m.provider}:${m.id}`) ? active : rest).push(m)
     return active.length ? [...active, ...rest] : matched
   }, [matched, activeModels])
-
-  // Changing the embedding model invalidates every stored vector → warn, then
-  // kick off a re-index of all knowledge + memory embeddings with live progress.
-  const startReindex = () => {
-    api.startEmbeddingReindex().then((job) => {
-      setReindex(job)
-      if (job.status !== 'running') return
-      const es = new EventSource(api.embeddingReindexStreamUrl(job.id))
-      const onFrame = (e: MessageEvent) => {
-        try { const j = JSON.parse(e.data) as import('../../lib/api').ReindexJob; setReindex(j); if (j.status !== 'running') es.close() } catch { /* ignore */ }
-      }
-      for (const ev of ['snapshot', 'progress', 'done', 'error']) es.addEventListener(ev, onFrame as EventListener)
-      // A stream failure is NOT a re-index failure: the job keeps running server-side, we just lost
-      // the progress feed. Closing silently froze this panel on its last percentage forever, so a
-      // user could not tell "still working" from "we stopped hearing about it". Recorded on the job
-      // itself, which this panel already renders — and the copy says what is actually known.
-      es.onerror = () => {
-        es.close()
-        setReindex((r) => (r && r.status === 'running'
-          ? { ...r, status: 'error', error: 'Lost the progress feed — the re-index may still be running in the background. Reload to check.' }
-          : r))
-      }
-    }).catch((err) => {
-      // 409 model_not_ready (or any failure): the change stands but vectors weren't
-      // wiped — tell the user the index is stale until the model is ready.
-      let msg = err instanceof Error ? err.message : String(err)
-      try { msg = JSON.parse(msg).error || msg } catch { /* raw */ }
-      setReindex({ id: '', model: '', status: 'error', phase: 'error', done: 0, total: 0, knowledge: 0, memory: 0, error: msg })
-    })
-  }
 
   // 🔴 THE CHAIN IS SAVED WHOLE, over the revision this row read it at. Every edit here used to
   // send this row's copy with one change spliced in — so a panel opened before another tab,
@@ -1072,7 +1046,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
           {reindex.status === 'error' ? (
             <span style={{ color: ERROR_SURFACE_PAINT.color }}>{reindex.id ? reindex.error : `Re-index not started: ${reindex.error}`}</span>
           ) : reindex.status === 'done' ? (
-            <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.memory} memory embeddings.</span>
+            <span style={{ color: 'var(--color-ok)' }}>Re-indexed {reindex.knowledge} knowledge + {reindex.chunks ?? 0} passage + {reindex.memory} memory embeddings.</span>
           ) : (
             <div className="flex flex-col gap-1.5">
               <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>

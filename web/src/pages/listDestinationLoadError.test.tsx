@@ -67,6 +67,8 @@ function mockApi(over: Record<string, unknown>) {
       knowledgeCollections: () => Promise.resolve([]),
       knowledgeItems: () => Promise.resolve({ items: [] }),
       knowledgeStats: () => Promise.resolve({ items: 0, entities: 0, relations: 0 }),
+      // The embedding chip follows the one re-index, and reads whether one runs on mount.
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       autonomyLadder: boom,
       ...over,
     },

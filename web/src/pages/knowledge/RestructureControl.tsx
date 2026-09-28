@@ -97,6 +97,8 @@ function RestructureForm({ item, selection, onDone }: {
   // warns about, one line under the comment. Separate from `err`, which belongs to the restructure
   // ACTION and is dismissable + cleared by `reset()`; a load failure is neither.
   const [dupErr, setDupErr] = useState<unknown>(null)
+  // The server's sentence about the items titled like this one it could not compare (`""` = none).
+  const [dupNote, setDupNote] = useState('')
 
   // 🔴 Both lookups store their REJECTION rather than falling back to an empty list. An empty
   // sections list legitimately means "no headings, cannot be split", and an empty duplicates list
@@ -108,7 +110,7 @@ function RestructureForm({ item, selection, onDone }: {
       .then((d) => { if (live) setSections(d.sections) })
       .catch((e) => { if (live) { setSections([]); setErr(msg(e)) } })
     api.knowledgeDuplicates(item.id)
-      .then((d) => { if (live) setDuplicates(d) })
+      .then((d) => { if (live) { setDuplicates(d.duplicates); setDupNote(d.not_compared_note) } })
       .catch((e) => { if (live) { setDuplicates([]); setDupErr(e) } })
     return () => { live = false }
   }, [item.id])
@@ -254,7 +256,9 @@ function RestructureForm({ item, selection, onDone }: {
            disabled-reason census flags exactly that, and it is right to: an empty greyed-out
            dropdown reading "Nothing to merge" is worse than the sentence on its own. */
         <p data-type="body-s" className="text-on-surface-low">
-          No near-duplicates were found for this item, so there is nothing to fold into it.
+          {dupNote
+            ? `No near-duplicates were found among the items it could be compared with, so there is nothing to fold into it. ${dupNote}`
+            : 'No near-duplicates were found for this item, so there is nothing to fold into it.'}
         </p>
       ))}
 

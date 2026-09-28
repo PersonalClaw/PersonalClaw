@@ -411,6 +411,16 @@ every read (`Failure.providers` names them), and the page reads the run again be
 it forks, because a breaker can open after the step failed: every call to that
 provider counts toward it.
 
+A stopped run (`failed` or `escalated`) waits on nobody, so its escalation panel is
+headed "This run stopped" and offers the ways forward that work on a finished run:
+Retry where every failure is retryable, and **Change the workflow**, the definition's
+editor (`#/workflows/defs/<name>/edit`), for a failure a new run repeats until the step
+changes. The record's five `options` are still not offered: nothing accepts one back.
+The page names a step the way the run's ending does, by its label: each node row of
+`GET /api/workflows/runs/{id}` carries the `label` its node declares (absent on a step
+without one), and the rows, the graph, the dialogs, the inspector and the escalation
+panel read it, falling back to the node's id.
+
 ## Waiting on a person
 
 Two kinds of step wait on a person, and both are asked the same way. A `gate`
@@ -522,7 +532,11 @@ resolve and before the frontier, and `end_at_gate` ends the run there:
   branch, and `produce-and-audit`'s quality gate, whose words asked a person to
   accept an artifact the audit had not passed, is a real approval that a branch asks
   only then. No bundled gate carries words the engine never shows
-  (`test_workflows_no_gate_text_goes_unshown`).
+  (`test_workflows_no_gate_text_goes_unshown`), and validation warns an author whose gate
+  does (`WF_GATE_TEXT_UNSHOWN`, from `validator.GATE_TEXT_READ`): any words on a verifier
+  or a ladder, which read none, a `prompt` on an expression gate, a `message` on a judge,
+  or a `message` beside the `prompt` of an approval or event gate, which the ask shows
+  only when there is no `prompt`. The spec still saves and runs.
 
 Every way, each step after the gate, in each sequence that holds it, is marked
 skipped with the reason ("not run: “approve” was declined", "not run: “verify”

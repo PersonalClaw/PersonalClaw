@@ -1089,10 +1089,12 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
 
     🔴 RUNTIME STATE IS DROPPED, deliberately. `next_fire_at` from another machine is a fire that was
     already scheduled elsewhere, and `run_count`/`last_success_at`/health describe runs this home
-    never performed. An imported trigger arrives UNARMED and the boot sweep arms it here — which is
-    also why importing cannot resurrect a fire that should have happened during the move.
+    never performed. An imported trigger arrives UNARMED and switched off, and the boot sweep arms
+    it here once it is switched on — which is also why importing cannot resurrect a fire that should
+    have happened during the move. The rule is `triggers.store.arrived_from_another_home`, the one a
+    device sync applies to a peer's trigger store too.
     """
-    from personalclaw.triggers.store import RUNTIME_FIELDS
+    from personalclaw.triggers.store import arrived_from_another_home
 
     src = json.loads(src_path.read_text())
     dst = json.loads(dst_path.read_text())
@@ -1103,9 +1105,7 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
         name = str(trigger.get("name") or "")
         if not name or name in existing_names:
             continue
-        row = dict(trigger)
-        for field in RUNTIME_FIELDS:
-            row.pop(field, None)
+        row = arrived_from_another_home(trigger)
         base = str(row.get("id") or "") or "imported"
         candidate = base
         n = 2
@@ -1113,14 +1113,6 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
             candidate = f"{base}-{n}"
             n += 1
         row["id"] = candidate
-        # An imported automation must not fire until this home has armed it.
-        #
-        # Not redundant with the `RUNTIME_FIELDS` pop above, which now includes `enabled`: the pop
-        # discards whatever the SOURCE home said, and this states what THIS home means. Keep both.
-        # Dropping the pop would let a source's `enabled: true` through if the field ever leaves
-        # `RUNTIME_FIELDS`; dropping this line would leave the field absent and let
-        # `parse_trigger`'s default (enabled) decide — the opposite of the docstring's promise.
-        row["enabled"] = False
         existing_ids.add(candidate)
         existing_names.add(name)
         dst.setdefault("triggers", []).append(row)

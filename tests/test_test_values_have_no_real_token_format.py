@@ -17,6 +17,12 @@ next contributor that pasting a key into a test is normal. So test code follows 
    secret lint, the capture store); their tests fail when the value loses its shape (measured
    literal by literal). Everywhere else a test uses a neutral fake (``fake-anthropic-test``),
    because nothing on that path reads the shape.
+3. **A workspace or account identifier in a test reads as made up.** A Slack id (a type letter,
+   then eight to ten capitals and digits holding at least two of each) carries ``EXAMPLE``,
+   ``ABC``, ``AB12``, ``0123``, ``OWNER`` or ``BAD``, or one character four times running; an
+   AWS account in an ARN or a registry host is one the AWS documentation uses in its examples.
+   A real one says which workspace or account the test was copied from, and a failure prints
+   only its first characters, so the report does not publish it either.
 """
 
 from __future__ import annotations
@@ -60,6 +66,22 @@ _PREFIXED = re.compile(
 
 #: The AWS documentation's example values: exempt from both rules.
 _DOCUMENTED_EXAMPLE = re.compile(r"EXAMPLE")
+
+#: A Slack id (rule 3): a type letter (bot, channel, direct message, enterprise, group, team,
+#: user, enterprise user), then eight to ten capitals and digits holding at least two of each.
+#: Not after a backslash, so a ``\U0001F…`` escape is not read as a user id.
+_SLACK_ID = re.compile(
+    r"(?<![A-Za-z0-9_\\])[BCDEGTUW](?=(?:[A-Z]*[0-9]){2})(?=(?:[0-9]*[A-Z]){2})[A-Z0-9]{8,10}"
+    r"(?![A-Za-z0-9_])"
+)
+#: What makes a Slack id read as made up rather than copied from a workspace.
+_PLACEHOLDER_SLACK_ID = re.compile(r"EXAMPLE|ABC|AB12|0123|OWNER|BAD|([A-Z0-9])\1{3}")
+#: An AWS account where one is written: an ARN's account field, a container registry's host.
+_AWS_ACCOUNT = re.compile(
+    r"\barn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:(\d{12}):|\b(\d{12})\.dkr\.ecr\."
+)
+#: The accounts the AWS documentation uses in its examples, and the all-zero one.
+_PLACEHOLDER_ACCOUNTS = frozenset({"000000000000", "111122223333", "123456789012", "444455556666"})
 
 #: Rule 2's files: each exercises code that recognises a credential by its value's shape, and its
 #: tests fail when the value loses that shape.
@@ -187,6 +209,37 @@ def _census() -> dict[str, tuple[list[str], list[str]]]:
     return out
 
 
+def _real_ids(text: str) -> list[str]:
+    """Rule 3's findings, each cut to its first three characters."""
+    found = [
+        m.group(0)
+        for m in _SLACK_ID.finditer(text)
+        if not _PLACEHOLDER_SLACK_ID.search(m.group(0)[1:])
+    ]
+    found += [
+        account
+        for m in _AWS_ACCOUNT.finditer(text)
+        for account in m.groups()
+        if account and account not in _PLACEHOLDER_ACCOUNTS
+    ]
+    return [f"{value[:3]}…" for value in found]
+
+
+def _id_census(paths: list[Path]) -> dict[str, list[str]]:
+    """Rule 3 over *paths*: each file's real-looking ids, masked."""
+    out: dict[str, list[str]] = {}
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        hits = _real_ids(text)
+        if hits:
+            key = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.name
+            out[key] = hits
+    return out
+
+
 def test_no_test_value_has_a_published_token_format():
     real = {path: hits for path, (hits, _) in _census().items() if hits}
     assert real == {}, (
@@ -224,6 +277,47 @@ def test_the_detectors_see_what_they_are_for():
     for sample in ("s" + "k-ant-test", "g" + "hp_fixture", "x" + "oxb-saved", "h" + "f_explicit"):
         assert _prefixed(f'"{sample}"'), sample
     assert not _prefixed('"fake-anthropic-test" "task-queue" "mask-this"')
+
+
+def test_a_workspace_or_account_id_in_a_test_reads_as_made_up():
+    real = _id_census(_test_files())
+    assert real == {}, (
+        "A test value is a real-looking Slack id or AWS account: it names the workspace or the "
+        "account it was copied from. Use one that reads as made up (C0EXAMPLE01, U0EXAMPLE01, "
+        f"the documentation's account 111122223333): {real}"
+    )
+
+
+def test_the_id_detectors_see_what_they_are_for(tmp_path):
+    """Positive control for rule 3, assembled at run time so this file holds no real-looking id:
+    each random-looking one is refused, each placeholder shape passes, and the census that reads
+    the test code reports a planted file."""
+    account = "2109" + "87654321"
+    refused = {
+        "C" + "0Q7W2R9Z5K": "C0Q…",
+        "U" + "07HX4LM2QR": "U07…",
+        f"arn:aws:sts::{account}:assumed-role/Dev/x": "210…",
+        f"{account}.dkr.ecr.us-east-1.amazonaws.com/app": "210…",
+    }
+    for sample, masked in refused.items():
+        assert _real_ids(f'"{sample}"') == [masked], sample
+    passed = [
+        "C0EXAMPLE01",
+        "C0123ABC456",
+        "C07AB12CD",
+        "U0OWNER01",
+        "CBADCHAN01",
+        "C0AAAA1111",
+        "C0123456789",
+        "SECP256R1",
+        "\\U0001FAFF",
+        "arn:aws:iam::111122223333:role/x",
+    ]
+    for sample in passed:
+        assert _real_ids(f'"{sample}"') == [], sample
+    planted = tmp_path / "test_planted.py"
+    planted.write_text("\n".join(f'VALUE = "{sample}"' for sample in [*refused, *passed]))
+    assert _id_census([planted]) == {"test_planted.py": list(refused.values())}
 
 
 def test_the_census_reads_the_test_code():

@@ -27,6 +27,7 @@ vi.mock('../../lib/api', async (orig) => {
       activeChain: () => Promise.resolve({ value: [], revision: '' }),
       modelDownloads: () => Promise.resolve([]),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       judgeBench: () => Promise.resolve({ ran: false }),
       modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 1.5 * GiB }),
       hfTokenStatus: () => Promise.resolve({ sources: [] }),

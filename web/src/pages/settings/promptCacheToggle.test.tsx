@@ -34,6 +34,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       modelsAvailable: () => Promise.resolve([]),
       activeChains: () => Promise.resolve({}),
       modelsHealth: () => Promise.resolve({ providers: [] }),
+      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
       // The panel's HuggingFace-token section fetches on mount too.
       hfTokenStatus: () => Promise.resolve({ sources: [] }),
       // The panel reads the judge benchmark's tier recommendations on mount to offer

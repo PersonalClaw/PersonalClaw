@@ -31,11 +31,11 @@ WHAT IT LOOKS FOR. Two halves:
   finding, gap, seam, slice, criterion or ledger number, and the ledger's vocabulary words.
 - The private half — the prefixes of the ledger's work-item ids and the names of its plans — is
   known to this file ONLY as salted digests (``planning_id_rule`` in
-  ``publication-hygiene-baseline.json``, the same digest and salt the internal-reference rule
-  uses). The text is folded into candidates of each id shape, each distinct candidate is
-  digested once, and the digests are compared. A work-item id counts only up to its prefix's
-  number ceiling, so an algorithm or a standard named like one is not an id. Add a new prefix or
-  plan with ``python scripts/check_publication_hygiene.py --digest KIND TEXT``.
+  ``publication-hygiene-baseline.json``, digested with the salt that rule carries). The text is
+  folded into candidates of each id shape, each distinct candidate is digested once, and the
+  digests are compared. A work-item id counts only up to its prefix's number ceiling, so an
+  algorithm or a standard named like one is not an id. Add a new prefix or plan with
+  ``python scripts/check_publication_hygiene.py --digest KIND TEXT``.
 
 A per-file count is the unit, never the ids themselves: listing what was found would publish the
 very names the private half keeps out of the tree.
@@ -465,7 +465,7 @@ class Vocabulary:
 @lru_cache(maxsize=1)
 def shipped_vocabulary() -> Vocabulary:
     policy = load_baseline()
-    return Vocabulary(policy["planning_id_rule"], policy["internal_reference_rule"]["digest_salt"])
+    return Vocabulary(policy["planning_id_rule"], policy["planning_id_rule"]["digest_salt"])
 
 
 def _plan_name_hits(text: str, vocab: Vocabulary) -> Iterator[tuple[int, int]]:

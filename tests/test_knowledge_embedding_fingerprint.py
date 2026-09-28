@@ -402,7 +402,7 @@ def test_a_chunk_written_under_the_still_bound_model_is_never_flagged(tmp_path, 
     item_id = _item_with_one_chunk(store, _Embedder(VEC_A))
 
     assert store.count_stale_chunk_vectors() == 0
-    assert store.stale_chunk_item_rows() == []
+    assert store.stale_vector_item_rows() == []
     outcome = _retriever(store, VEC_A).search_with_diagnostics(UNMATCHABLE_QUERY, limit=5)
     assert [r["id"] for r in outcome.results] == [item_id]
     assert outcome.degradations == ()
@@ -422,7 +422,7 @@ def test_nothing_bound_is_not_staleness(tmp_path, monkeypatch):
     assert active_fingerprint() is None
     assert _fingerprints(store) == [(None, None)]
     assert store.count_stale_chunk_vectors() == 0
-    assert store.stale_chunk_item_rows() == []
+    assert store.stale_vector_item_rows() == []
     # And the unstamped vector still scores — the filter is omitted, not inverted.
     assert [r["id"] for r in _retriever(store, VEC_A).search(UNMATCHABLE_QUERY, limit=5)] == [
         item_id

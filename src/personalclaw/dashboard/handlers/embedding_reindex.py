@@ -137,7 +137,8 @@ def resume_interrupted_reindex(app) -> Any:
 
     Knowledge: an item the model bound now has not embedded — no vector, one another model wrote,
     or one written before items recorded their model — or one at another width than the model
-    writes (the gateway died between a model change and the end of its re-index). Memory: a
+    writes (the gateway died between a model change and the end of its re-index), and a passage
+    vector another model wrote (it died in the re-index's passage phase, after the items). Memory: a
     vector in any memory store that is not the bound model's — another model's, from the same
     kind of stop, or one written before each vector recorded its model — and a memory no model
     embedded, written while none was bound. Until embedded they are read by keyword.
@@ -171,6 +172,10 @@ class _Pending:
     ready: bool
     knowledge: int
     memory: int
+    #: Passage (chunk) vectors another model wrote. Counted apart from the items: the re-index
+    #: re-embeds the items first, so one stopped in its passage phase leaves every item current
+    #: and only these to do, and a start that counted items alone never finished them.
+    passages: int = 0
 
 
 def _pending_reembed(app) -> _Pending:
@@ -187,6 +192,7 @@ def _pending_reembed(app) -> _Pending:
     _dim = getattr(embedder, "dim", None) if embedder is not None else None
     active_dim = _dim() if callable(_dim) else None
     knowledge = ks.count_items_to_reembed(active_dim) if ks is not None else 0
+    passages = ks.count_stale_chunk_vectors() if ks is not None else 0
     with every_memory_vector_store(_get_provider(state)) as stores:
         memory = sum(_not_embedded(store) for store in stores)
     return _Pending(
@@ -195,6 +201,7 @@ def _pending_reembed(app) -> _Pending:
         ready=embed_fn is not None,
         knowledge=knowledge,
         memory=memory,
+        passages=passages,
     )
 
 
@@ -202,13 +209,16 @@ def _start_pending(app, pending: _Pending) -> Any:
     """Start the re-index *pending* calls for, on the event loop's thread; None when none is."""
     from personalclaw.dashboard.handlers.memory import _get_provider
 
-    if pending.knowledge <= 0 and pending.memory <= 0:
+    knowledge = pending.knowledge > 0 or pending.passages > 0
+    if not knowledge and pending.memory <= 0:
         return None  # nothing bound, or every store is whole (or empty)
     if not pending.ready:
         logger.warning(
-            "Embedding re-index needed (%d knowledge item(s), %d memory vector(s)), but the bound "
-            "embedding model (%s) isn't ready: they stay keyword-searchable until it is.",
+            "Embedding re-index needed (%d knowledge item(s), %d passage vector(s), %d memory "
+            "vector(s)), but the bound embedding model (%s) isn't ready: they stay "
+            "keyword-searchable until it is.",
             pending.knowledge,
+            pending.passages,
             pending.memory,
             pending.model,
         )
@@ -217,7 +227,7 @@ def _start_pending(app, pending: _Pending) -> Any:
     ks = getattr(state, "knowledge_store", None)
     job, error = state.embedding_reindex().start(
         model=pending.model,
-        knowledge_store=ks if pending.knowledge > 0 else None,
+        knowledge_store=ks if knowledge else None,
         memory_store=_get_provider(state),
         embedder=pending.embedder,
     )
@@ -225,8 +235,10 @@ def _start_pending(app, pending: _Pending) -> Any:
         logger.warning("Embedding re-index refused: %s", error)
         return None
     logger.info(
-        "Embedding re-index (%d knowledge item(s), %d memory vector(s)) with model %s [job %s]",
+        "Embedding re-index (%d knowledge item(s), %d passage vector(s), %d memory vector(s)) "
+        "with model %s [job %s]",
         pending.knowledge,
+        pending.passages,
         pending.memory,
         pending.model,
         getattr(job, "id", "?"),
@@ -236,10 +248,10 @@ def _start_pending(app, pending: _Pending) -> Any:
 
 def _not_embedded(store: Any) -> int:
     """``store``'s memories the bound model did not embed — another model's vectors, and the
-    memories no model embedded (0 for a store that cannot be read)."""
+    memories no model embedded — as every surface counts them (``read_by_keyword``); 0 for a store
+    that cannot be read."""
     try:
-        stats = store.memory_stats()
-        return int(stats.get("embedded_stale") or 0) + int(stats.get("unembedded") or 0)
+        return int(store.memory_stats().get("read_by_keyword") or 0)
     except Exception:  # noqa: BLE001 — the job, if one runs, names the store it cannot read
         return 0
 

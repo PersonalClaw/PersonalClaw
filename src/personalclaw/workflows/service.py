@@ -61,6 +61,7 @@ from personalclaw.workflows.models import (
     RunStatus,
     WorkflowDef,
     WorkflowRun,
+    instance_order,
     sibling_group,
     spec_path,
     valid_name,
@@ -1116,7 +1117,9 @@ def output(run_id: str, node_id: str) -> dict[str, Any]:
         return _service_failure(
             "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
         )
-    target = sorted(matched)[-1]
+    # The last by INDEX, not by characters: `body#10` sorts before `body#2` as text, so an
+    # eleven-item fan-out answered with item 9.
+    target = max(matched, key=instance_order)
     return _ok(
         run_id=run_id,
         node_id=node_id,
@@ -1181,8 +1184,9 @@ def inspect_node(run_id: str, node_id: str) -> dict[str, Any]:
             "WF_NODE_NOT_RUN", f"node {node_id!r} has not produced an output yet"
         )
     # The LAST instance for the id — a `foreach` body produces many, and inspecting item 0
-    # for the whole fan-out is the same footgun `output()` documents.
-    target = sorted(matched)[-1]
+    # for the whole fan-out is the same footgun `output()` documents. Last by index, as `output()`
+    # reads it: by characters, `body#9` came after `body#10`.
+    target = max(matched, key=instance_order)
     inst = instances[target]
     if inst.state not in TERMINAL_STATES:
         return _service_failure(
@@ -2245,11 +2249,14 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
     instances = store.read_state(run_id)
     spec = store.read_spec(run_id)
     ids: dict[str, str] = {}
+    labels: dict[str, str] = {}
     if spec:
         try:
             for path, node in walk(Node.from_dict(spec.get("root") or {})):
                 if node.id:
                     ids[path] = node.id
+                if node.label:
+                    labels[path] = node.label
         except ValueError:
             pass
     # How many instances share each expansion GROUP — the `2` in "[1/2]" for a LOOP's iterations,
@@ -2266,7 +2273,8 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
         groups[key] = groups.get(key, 0) + 1
 
     out: list[dict[str, Any]] = []
-    for path in sorted(instances):
+    # In the order the engine runs them (by index: `children[2]` before `children[10]`).
+    for path in sorted(instances, key=instance_order):
         inst = instances[path]
         base = spec_path(path)
         # Asked again at every read: the breaker a Retry passes through can have opened since the
@@ -2284,6 +2292,11 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             "degraded_reason": inst.degraded_reason,
             "failure": failure.to_dict() if failure else None,
         }
+        # The author's name for the step: what the run's ending and every failure line call it
+        # (`ending_sentence._step`), so the page names it the same way beside them. Omitted for a
+        # step without one, which has nothing better than its id.
+        if labels.get(base):
+            row["label"] = labels[base]
         # What this node's declared `schema` asked for and did not get (#3545), so the run view can
         # say it on the row that produced it. Omitted rather than sent as "" for the same reason
         # `cached` is: absence already means "there was nothing to report", and an empty string on

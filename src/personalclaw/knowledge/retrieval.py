@@ -10,7 +10,7 @@ from personalclaw.sqlite_compat import sqlite3
 from personalclaw.vector_stores.registry import active_provider as active_vector_store
 
 from .embedder import floats_to_bytes
-from .embedding_fingerprint import FRESH_PREDICATE, active_fingerprint
+from .embedding_fingerprint import FRESH_PREDICATE, ITEM_FRESH_PREDICATE, active_fingerprint
 from .searchability import SearchOutcome, degradations_from, unsearchable_rows
 from .store import KnowledgeStore
 
@@ -302,14 +302,14 @@ class HybridRetriever:
         ``knowledge_search`` tool — use this.
 
         **RET-4 adds one derived reason to the persisted ones.** ``stale_index`` names items
-        whose chunk vectors came from a different embedding model than the one bound now:
+        holding a vector the model bound now did not write — a passage's, or the whole-item one:
         :meth:`_vector_search` refused to score those vectors (scoring them would produce a
         meaningless number), so a search that returns nothing because of them must say so.
-        It is derived from the chunk fingerprints rather than read off the item, because the
+        It is derived from the fingerprints rather than read off the item's status, because the
         thing that changed is the bound model and the item is otherwise healthy.
         """
         results = self.search(query, limit, include_archived=include_archived, arms=arms)
-        rows = unsearchable_rows(self.store) + self.store.stale_chunk_item_rows(
+        rows = unsearchable_rows(self.store) + self.store.stale_vector_item_rows(
             include_archived=include_archived
         )
         return SearchOutcome(results=results, degradations=degradations_from(rows))
@@ -856,16 +856,21 @@ class HybridRetriever:
         # and it is load-bearing: vec_distance_cosine RAISES on a dimension mismatch, so a
         # half-re-embedded library would otherwise fail the whole query instead of skipping
         # the unscoreable rows.
+        #
+        # The chunk arm's model rule, for the whole-item vector too: an item records the model
+        # that wrote its vector, and only the ACTIVE model's are scored. At one width two models'
+        # vectors compare and score a number that means nothing, which the length guard cannot see.
         archived_clause = "" if include_archived else "AND COALESCE(is_archived, 0) = 0"
+        item_fresh = f"AND {ITEM_FRESH_PREDICATE} " if fp is not None else ""
         item_rows = None
         if index is not None:
             try:
                 item_rows = self.store.db.execute(
                     "SELECT id, embedding FROM items "
                     "WHERE embedding IS NOT NULL AND status = 'active' "
-                    f"{archived_clause} AND length(embedding) = ? "  # noqa: S608
+                    f"{archived_clause} AND length(embedding) = ? {item_fresh}"  # noqa: S608
                     "ORDER BY vec_distance_cosine(embedding, ?) LIMIT ?",
-                    (q_dim * 4, q_blob, max(1, limit) * _ANN_OVERFETCH),
+                    (q_dim * 4, *fresh_params, q_blob, max(1, limit) * _ANN_OVERFETCH),
                 ).fetchall()
             except sqlite3.Error as exc:  # fail soft to the exact scan, never into the search
                 logger.debug("knowledge vector search: item-arm ANN query failed: %s", exc)
@@ -881,7 +886,8 @@ class HybridRetriever:
         else:
             for row in self.store.db.execute(
                 "SELECT id, embedding FROM items WHERE embedding IS NOT NULL "
-                f"AND status = 'active' {archived_clause}"  # noqa: S608 (fixed literal)
+                f"AND status = 'active' {archived_clause} {item_fresh}",  # noqa: S608 (literal)
+                fresh_params,
             ):
                 # Unordered: every row must be scored, so no early exit is available here.
                 _consider(row["id"], row["embedding"], None)

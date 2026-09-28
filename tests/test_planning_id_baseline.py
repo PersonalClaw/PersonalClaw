@@ -274,7 +274,7 @@ def test_the_vocabulary_is_digests_and_no_kind_is_only_its_control(rule):
 
 
 def test_every_control_is_a_real_entry_of_the_shipped_policy(rule):
-    salt = hygiene.load_baseline()["internal_reference_rule"]["digest_salt"]
+    salt = hygiene.load_baseline()["planning_id_rule"]["digest_salt"]
 
     def digest(kind: str, text: str) -> str:
         return hygiene.internal_reference_digest(kind, text, salt)

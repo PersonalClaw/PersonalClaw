@@ -20,7 +20,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
-from personalclaw.knowledge.embedder import floats_to_bytes
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime, make_image_thumbnail
 from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
@@ -1001,11 +1000,33 @@ async def get_entity_items(request: web.Request) -> web.Response:
     return web.json_response([store._serialize_item(r) for r in rows])
 
 
+def _not_compared_note(count: int) -> str:
+    """What the duplicates panel says about the items titled like this one that it could not
+    compare with it (``store.duplicates_not_compared``), ``""`` when there are none."""
+    if count <= 0:
+        return ""
+    if count == 1:
+        return (
+            "1 item titled like this one was not compared with it: a different embedding model "
+            "embedded it, so no score between the two would mean anything. Once the re-index in "
+            "Settings → Models has embedded both with one model, they are compared."
+        )
+    return (
+        f"{count} items titled like this one were not compared with it: a different embedding "
+        "model embedded them, so no score between them and this one would mean anything. Once "
+        "the re-index in Settings → Models has embedded them all with one model, they are "
+        "compared."
+    )
+
+
 async def get_item_duplicates(request: web.Request) -> web.Response:
     """GET /api/knowledge/items/{id}/duplicates — near-duplicates, best match first.
 
     Surfacing only. Merging is a separate POST, because a merge DELETES one of the two and
-    that must be a deliberate act, never a side effect of looking.
+    that must be a deliberate act, never a side effect of looking. ``not_compared`` counts the
+    items titled like this one that another model embedded, which no cosine can compare with
+    it (two vectors are compared only when one model wrote both), and ``not_compared_note``
+    says so, so the panel's "no duplicates" is not read as "none exists".
     """
     store = _store(request)
     item_id = request.match_info["id"]
@@ -1015,7 +1036,14 @@ async def get_item_duplicates(request: web.Request) -> web.Response:
         limit = min(50, max(1, int(request.query.get("limit", 25) or 25)))
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
-    return web.json_response({"duplicates": store.find_duplicates(item_id, limit=limit)})
+    not_compared = store.duplicates_not_compared(item_id)
+    return web.json_response(
+        {
+            "duplicates": store.find_duplicates(item_id, limit=limit),
+            "not_compared": not_compared,
+            "not_compared_note": _not_compared_note(not_compared),
+        }
+    )
 
 
 async def merge_items(request: web.Request) -> web.Response:
@@ -1606,21 +1634,17 @@ async def get_full_graph(request: web.Request) -> web.Response:
 
 
 def _stale_embedding_count(store, embedder) -> int:
-    """How many active items hold a vector whose dimension != the ACTIVE model's — i.e.
-    embedded under a previous model and now vector-dead (retrieval skips dimension
-    mismatches). 0 when embeddings are off/unavailable or the model is unchanged. The
-    dimension is the stored blob's byte-length / 4 (32-bit floats)."""
+    """How many active items hold a vector the ACTIVE model did not write — a passage's or the
+    whole-item one, another model's or one that records no model — which search skips until the
+    re-index re-embeds them: the items search's ``stale_index`` note and the Doctor's knowledge row
+    name (``store.stale_vector_item_rows``), counted from the same rows. 0 when embeddings are off
+    or unavailable.
+
+    It used to compare only the whole-item vector's width, so a vector another model wrote at the
+    same width, and every stale passage, counted as current while search skipped them."""
     if not (embedder and embedder.is_available()):
         return 0
-    active_dim = embedder.dim()
-    if not active_dim:
-        return 0
-    row = store.db.execute(
-        "SELECT COUNT(*) as c FROM items WHERE status = 'active' "
-        "AND embedding IS NOT NULL AND LENGTH(embedding) != ?",
-        (active_dim * 4,),
-    ).fetchone()
-    return row["c"] if row else 0
+    return len(store.stale_vector_item_rows())
 
 
 def _entity_extraction_tally(store) -> dict[str, int]:
@@ -1811,57 +1835,6 @@ async def get_embedding_status(request: web.Request) -> web.Response:
             "stale_items": _stale_embedding_count(store, embedder),
         }
     )
-
-
-async def batch_embed_items(request: web.Request) -> web.Response:
-    """POST /api/knowledge/embedding/generate -- embed all unembedded items (or re-embed all)."""
-    store = _store(request)
-    embedder = _embedder()
-    if not embedder:
-        return web.json_response({"error": "Embedding not enabled"}, status=400)
-    if not embedder.is_available():
-        # Provider-blind: the UnifiedEmbedder wraps whatever model is bound to the
-        # embedding use-case (native, ollama, openai-compatible, …) — never name one.
-        return web.json_response({"error": "Embedding model not available"}, status=503)
-
-    body = await request.json() if request.can_read_body else {}
-    rebuild = body.get("rebuild", False)
-
-    if rebuild:
-        rows = store.db.execute(
-            "SELECT id, title, summary, content FROM items WHERE status = 'active'"
-        ).fetchall()
-    else:
-        rows = store.db.execute(
-            "SELECT id, title, summary, content FROM items WHERE status = 'active' AND embedding IS NULL"  # noqa: E501
-        ).fetchall()
-
-    loop = asyncio.get_running_loop()
-    embedded = 0
-    failed = 0
-    for row in rows:
-        vec = await loop.run_in_executor(
-            None, embedder.embed_for_item, row["title"], row["summary"], row["content"]
-        )
-        if vec:
-            store.db.execute(
-                "UPDATE items SET embedding = ? WHERE id = ?", (floats_to_bytes(vec), row["id"])
-            )
-            embedded += 1
-        else:
-            # Surface which item failed to embed — a silent skip here left items
-            # permanently stale (embedded with an old-dimension vector) after a
-            # model switch, with no signal to the user or logs about why.
-            failed += 1
-            logger.warning(
-                "batch_embed: no vector for item %s (title=%r) — skipped",
-                row["id"],
-                (row["title"] or "")[:60],
-            )
-
-    store.db.commit()
-    _sel_log("batch_embed", count=embedded, rebuild=rebuild, failed=failed)
-    return web.json_response({"embedded": embedded, "total": len(rows), "failed": failed})
 
 
 # ---------- Knowledge Fetch (for chat context injection) ----------
@@ -3983,7 +3956,6 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/entities/by-name/{name}/related", get_entity_related)
     app.router.add_get("/api/knowledge/entities/{id}/graph", get_entity_graph)
     app.router.add_get("/api/knowledge/embedding/status", get_embedding_status)
-    app.router.add_post("/api/knowledge/embedding/generate", batch_embed_items)
     app.router.add_get("/api/knowledge/search-for-context", search_for_context)
     # The create/tune/inspect surface. `/preview` is
     # registered before `/{id}` for legibility only — they differ by method, so aiohttp

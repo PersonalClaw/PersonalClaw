@@ -1460,38 +1460,68 @@ class TestArchivedHiddenFromRetrieval:
 
 
 class TestStaleEmbeddingCount:
-    """_stale_embedding_count flags items whose stored vector dimension != the active
-    model's — the cue the UI uses to offer a re-embed after a model switch."""
+    """_stale_embedding_count counts the items holding a vector the bound model did not write —
+    another model's (at any width) or one that records no model — which search skips. The
+    Knowledge page's chip offers the re-index on it, so it must count what search skips, not
+    what merely has another width."""
 
-    def _embed(self, store, item_id, dim):
+    BOUND = ("all-minilm-l6-v2", "native")
+
+    def _bind(self, monkeypatch):
+        model_id, provider = self.BOUND
+        monkeypatch.setattr(
+            "personalclaw.embedding_providers.registry._active_embedding_spec",
+            lambda: (provider, model_id),
+        )
+
+    def _embed(self, store, item_id, dim, model=None):
         import struct
 
+        model_id, provider = model if model else (None, None)
         store.db.execute(
-            "UPDATE items SET embedding = ? WHERE id = ?",
-            (struct.pack(f"{dim}f", *([0.1] * dim)), item_id),
+            "UPDATE items SET embedding = ?, embedding_model_id = ?, embedding_provider = ? "
+            "WHERE id = ?",
+            (struct.pack(f"{dim}f", *([0.1] * dim)), model_id, provider, item_id),
         )
         store.db.commit()
 
-    def test_counts_only_dimension_mismatches(self, store):
+    class _Emb:
+        model = "all-MiniLM-L6-v2"
+
+        def is_available(self):
+            return True
+
+        def dim(self):
+            return 384
+
+    def test_counts_the_vectors_the_bound_model_did_not_write(self, store, monkeypatch):
         from personalclaw.dashboard.handlers import knowledge as H
 
-        cur = store.create_typed_item(item_type="note", title="Current", content="x")
-        old = store.create_typed_item(item_type="note", title="Old model", content="y")
-        store.create_typed_item(item_type="note", title="Unembedded", content="z")  # no vector
+        self._bind(monkeypatch)
+        ids = {
+            name: store.create_typed_item(item_type="note", title=name, content=name)
+            for name in ("current", "same width", "old width", "unrecorded", "unembedded")
+        }
         store.db.commit()
-        self._embed(store, cur, 384)  # active-model dimension
-        self._embed(store, old, 768)  # a previous model's dimension
+        self._embed(store, ids["current"], 384, self.BOUND)
+        # Another model at the bound one's width: its vector passes every width check, and
+        # search skips it all the same. This is the one the width comparison could not see.
+        self._embed(store, ids["same width"], 384, ("bge-small-en", "native"))
+        self._embed(store, ids["old width"], 768, ("nomic-embed-text", "ollama"))
+        self._embed(store, ids["unrecorded"], 384)
 
-        class _Emb:
-            model = "all-MiniLM-L6-v2"
+        assert H._stale_embedding_count(store, self._Emb()) == 3
 
-            def is_available(self):
-                return True
+    def test_zero_with_no_model_bound(self, store, monkeypatch):
+        from personalclaw.dashboard.handlers import knowledge as H
 
-            def dim(self):
-                return 384
-
-        assert H._stale_embedding_count(store, _Emb()) == 1  # only the 768-dim item
+        monkeypatch.setattr(
+            "personalclaw.embedding_providers.registry._active_embedding_spec", lambda: None
+        )
+        iid = store.create_typed_item(item_type="note", title="E", content="x")
+        self._embed(store, iid, 384, ("bge-small-en", "native"))
+        # Nothing is compared with no model bound, so nothing is skipped for being stale.
+        assert H._stale_embedding_count(store, self._Emb()) == 0
 
     def test_zero_when_embedder_unavailable_or_dimless(self, store):
         from personalclaw.dashboard.handlers import knowledge as H

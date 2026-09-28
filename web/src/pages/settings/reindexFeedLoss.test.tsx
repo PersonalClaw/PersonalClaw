@@ -24,23 +24,26 @@ import { join } from 'node:path'
 
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+// The stream and the start live in the hook every surface that shows the re-index follows it with
+// (Settings → Models, and the Knowledge page's chip); the panel renders the job it hands back.
+const HOOK = 'lib/useEmbeddingReindex.ts'
 
 describe('a dropped re-index feed reports itself honestly', () => {
   it('the stream handler records the loss instead of closing in silence', () => {
-    const code = read('pages/settings/ModelsPanel.tsx')
+    const code = read(HOOK)
     expect(code, 'it still closes the dead stream').toMatch(/es\.onerror = \(\) => \{\s*\n\s*es\.close\(\)/)
     expect(code, 'and records it on the job the panel already renders')
       .toMatch(/status: 'error', error: 'Lost the progress feed/)
   })
 
   it('the copy does not claim the re-index failed', () => {
-    const code = read('pages/settings/ModelsPanel.tsx')
+    const code = read(HOOK)
     expect(code).toMatch(/may still be running in the background/)
     expect(code, 'never asserts the job stopped').not.toMatch(/error: 'Re-index failed/)
   })
 
   it('it only overwrites a RUNNING job, so a finished one is never relabelled', () => {
-    expect(read('pages/settings/ModelsPanel.tsx')).toMatch(/r && r\.status === 'running'/)
+    expect(read(HOOK)).toMatch(/r && r\.status === 'running'/)
   })
 
   it('"Re-index not started" is now conditional on the job never having started', () => {
@@ -52,7 +55,7 @@ describe('a dropped re-index feed reports itself honestly', () => {
   it('the not-started path that the prefix belongs to still sets an empty id', () => {
     // Vacuity floor: if that path starts carrying an id, the discriminator above stops working and the
     // prefix disappears from a case that needs it.
-    expect(read('pages/settings/ModelsPanel.tsx')).toMatch(/setReindex\(\{ id: '', model: '', status: 'error'/)
+    expect(read(HOOK)).toMatch(/setJob\(\{ id: '', model: '', status: 'error'/)
   })
 })
 

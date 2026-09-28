@@ -1012,18 +1012,13 @@ class ConversationLog:
 
     @staticmethod
     def _forget_search_rows(key: str) -> None:
-        """Drop *key*'s FTS rows under every key form that maps to its file.
-
-        ``_safe_key`` collapses ``dashboard:chat-X`` and ``dashboard_chat-X``
-        onto one filename, and callers pass either form, while the index stores
-        the ``list_sessions`` form — so forget the exact key plus both
-        single-swap variants (idempotent, cheap).
-        """
+        """Drop *key*'s FTS rows. Callers pass either ``dashboard:chat-X`` or
+        ``dashboard_chat-X``; the index keeps a chat under its file's name alone and forgets it
+        by either (``session_search.forget_session``)."""
         try:
             from personalclaw import session_search
 
-            for form in {key, key.replace(":", "_", 1), key.replace("_", ":", 1)}:
-                session_search.forget_session(form)
+            session_search.forget_session(key)
         except Exception:  # noqa: BLE001 — search cleanup must never block deletion
             logger.debug("delete_session: FTS forget failed for %s", key, exc_info=True)
 

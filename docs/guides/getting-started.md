@@ -343,6 +343,17 @@ defaults flipped, and some routes refuse input they used to accept. Run
   installed apps alongside the core upgrade.
 - **Chat's Activity → Index tab is gone.** The Session Map is the session's index.
 
+### After updating from 0.2.0
+
+- **The first start re-embeds your library once.** Knowledge items and memories that 0.2.0
+  embedded do not record which embedding model wrote their vectors, and nothing else can
+  tell one model's vector from another's, so the first start re-embeds them in the
+  background with the model bound in Settings → Models. Until an item is re-embedded,
+  search finds it by keyword. Settings → Models and the Knowledge page show the re-index
+  and its progress while it runs, and if PersonalClaw stops part way, the next start
+  resumes where it stopped. No model bound means nothing is re-embedded until you choose
+  one.
+
 ## Where to go next
 
 - **Explore the platform** — Skills, Agents, Tasks, goal Loops, Knowledge,

@@ -341,7 +341,8 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
 
   it('🔴 THE RATCHET: the number of busy-gated Buttons announcing nothing may only go DOWN', () => {
     // 179 as first measured; 114 once Class A, the self-spun bystanders and the identity-gated half of
-    // Class B were closed; 79 once the census learned the spellings described below; **76 now.** The
+    // Class B were closed; 79 once the census learned the spellings described below; 76, then **75 now**
+    // (the schedule panel's Run now publishes its run as `loading`). The
     // converted sites drop out of the population entirely, because `disabled={busy}` is GONE from them
     // rather than supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that
     // PR), and a NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
@@ -371,7 +372,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(76)
+    ).toBeLessThanOrEqual(75)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {
@@ -405,17 +406,19 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
     // Named sites, so the trap survives as an example rather than as prose. Each pairs a SHARED
     // dimming gate with a PER-ROW spinner; `loading={gate}` would spin every row at once.
     const { A, B, C, D } = census()
-    // 🔻 WAS A FLOOR OF 15, NOW AN EXACT RECORD, because the class was 24 and is now 1. The 24 all
+    // 🔻 WAS A FLOOR OF 15, NOW AN EXACT RECORD, because the class was 24 and is now 0. The 24 all
     // took the same two-prop fix — `loading={<spinner condition>} disabled={<original gate>}` — and
-    // the spinner condition is precisely the identity the bystander gate lacked. What is left is the
-    // INVERTED shape (`ScheduleDetail`, spinner in the non-busy arm), which the converter refused on
-    // purpose rather than guessing at. A floor here would now certify nothing; an exact record reds
-    // when a NEW mismatched site appears, which is the direction that happens.
+    // the spinner condition is precisely the identity the bystander gate lacked. The last was the
+    // INVERTED shape (`ScheduleDetail`'s Run now, its spinner in the non-busy arm and its post-run
+    // flash drawn on the disabled button), which the converter refused rather than guess at; it is
+    // `loading={running}` with a `loadingLabel` now, and the flash is a status line of its own. A
+    // floor here would certify nothing; an exact record reds when a NEW mismatched site appears,
+    // which is the direction that happens.
     const mismatched = [...A, ...B, ...C, ...D]
       .filter((s) => s.spinner && norm(s.spinner) !== norm(s.gate))
       .map((s) => s.at.split(':')[0])
     expect([...new Set(mismatched)], 'a new shared-gate/narrow-spinner site needs the two-prop fix')
-      .toEqual(['pages/schedule/ScheduleDetail.tsx'])
+      .toEqual([])
   })
 
   it('the sites that DO announce it keep doing so', () => {

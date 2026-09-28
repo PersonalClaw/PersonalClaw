@@ -86,13 +86,20 @@ export const TERMINAL_NODE_STATES = new Set<string>([
 
 export const isNodeTerminal = (state: string) => TERMINAL_NODE_STATES.has(state)
 
+/** What a step is called where a person reads it: its author's `label`, the name the run's ending
+ *  and every failure line give it, else its id. */
+export function stepName(node: { node_id: string; label?: string }): string {
+  return node.label || node.node_id
+}
+
 /** Node instances a `foreach` body produces share one node id, so the INSTANCE PATH is the
- *  stable key. Strips the `#i` / `@n` suffix for display without losing which instance a
- *  row is. */
-export function nodeLabel(node: { node_id: string; instance_path: string }): string {
-  if (node.node_id) {
+ *  stable key. Names the step (`stepName`), keeping the `#i` / `@n` suffix that says which
+ *  instance a row is. */
+export function nodeLabel(node: { node_id: string; instance_path: string; label?: string }): string {
+  const name = stepName(node)
+  if (name) {
     const suffix = node.instance_path.match(/[#@]\d+$/)
-    return suffix ? `${node.node_id} ${suffix[0]}` : node.node_id
+    return suffix ? `${name} ${suffix[0]}` : name
   }
   return node.instance_path
 }

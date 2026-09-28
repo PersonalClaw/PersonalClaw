@@ -209,9 +209,21 @@ class ReindexRegistry:
         self, run: _Running, knowledge_store: Any, memory_stores: Sequence[Any], embedder: Any
     ) -> None:
         job = run.job
-        # Tally total work up front for a determinate bar.
-        k_total = knowledge_store.count_items_to_reembed() if knowledge_store else 0
-        job.total = k_total + sum(_to_reembed(store) for store in memory_stores)
+        # The knowledge phases need the embedder, so only with one is their work counted.
+        if embedder is None:
+            knowledge_store = None
+        # The model's width, so the job re-embeds exactly the items the gateway's start counts
+        # (``count_items_to_reembed(active_dim)``): the model's own vector at a width it no longer
+        # writes too. Counted and cleared without it, such an item was counted at every start, and
+        # every start's job left it as it was.
+        _dim = getattr(embedder, "dim", None) if knowledge_store else None
+        active_dim = _dim() if callable(_dim) else None
+        # Tally total work up front for a determinate bar. The passage vectors count too: there
+        # are several per item, so their phase is the longest, and a bar that counted the items
+        # alone stood still through it.
+        k_total = knowledge_store.count_items_to_reembed(active_dim) if knowledge_store else 0
+        p_total = knowledge_store.count_stale_chunk_vectors() if knowledge_store else 0
+        job.total = k_total + p_total + sum(_to_reembed(store) for store in memory_stores)
         job.phase = "counting"
         self._publish(job, "progress")
 
@@ -227,12 +239,12 @@ class ReindexRegistry:
 
         # ── Knowledge ──
         k_done = 0
-        if knowledge_store and embedder is not None:
+        if knowledge_store:
             job.phase = "reindexing knowledge"
             self._publish(job, "progress")
             # The items the model has not embedded, and no others: their vectors are cleared
             # first, so nothing compares one with this model's meanwhile.
-            knowledge_store.clear_stale_embeddings()
+            knowledge_store.clear_stale_embeddings(active_dim)
             res = knowledge_store.reembed_all(
                 embedder, only_missing=True, on_progress=lambda d, _t: _progress(d, 0)
             )
@@ -247,9 +259,12 @@ class ReindexRegistry:
             # every chunk vector now belonged to another model's space.
             job.phase = "reindexing passages"
             self._publish(job, "progress")
-            chunk_res = knowledge_store.reembed_stale_chunks(embedder)
+            chunk_res = knowledge_store.reembed_stale_chunks(
+                embedder, on_progress=lambda d, _t, b=k_done: _progress(d, b)
+            )
             job.chunks = int(chunk_res.get("reembedded", 0))
             job.chunks_stale = int(chunk_res.get("stale_remaining", 0))
+            k_done += int(chunk_res.get("total", 0))
             self._publish(job, "progress")
 
         # ── Memory ── every store, continuing the bar after the knowledge items

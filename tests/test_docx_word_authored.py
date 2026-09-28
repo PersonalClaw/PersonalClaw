@@ -43,9 +43,13 @@ The suite makes four claims, in the order they can fail:
 from __future__ import annotations
 
 import io
+import re
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
+from xml.etree import ElementTree
 
+import pytest
 from docx import Document
 
 from personalclaw.documents.docx_parser import LOSS_KINDS, LossItem, parse_docx
@@ -188,6 +192,86 @@ def test_the_word_provenance_markers_reject_a_python_docx_file():
     ours = render_docx(DocumentModel(blocks=[Block(kind="paragraph", text="not from Word")]))
 
     assert _markers(ours) == dict.fromkeys(_WORD_MARKERS, False)
+
+
+_PLANTED = "zz-planted"
+_CUSTOM_PART = (
+    '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties">'
+    '<property name="zzControl"/></Properties>'
+)
+
+
+def _filled(tag: str) -> Callable[[str], str]:
+    """An edit that plants a value in the empty ``<tag></tag>`` field."""
+    return lambda text: text.replace(f"<{tag}></{tag}>", f"<{tag}>{_PLANTED}</{tag}>")
+
+
+@pytest.mark.parametrize(
+    "edits, problem",
+    [
+        pytest.param({"docProps/custom.xml": _CUSTOM_PART}, "a custom-properties part", id="part"),
+        pytest.param(
+            {
+                "[Content_Types].xml": lambda text: text.replace(
+                    "</Types>",
+                    '<Override PartName="/docProps/custom.xml" '
+                    f'ContentType="{_CUSTOM_PROPERTIES_TYPE}"/></Types>',
+                )
+            },
+            "a custom-properties content type",
+            id="content-type",
+        ),
+        pytest.param(
+            {
+                "_rels/.rels": lambda text: text.replace(
+                    "</Relationships>",
+                    f'<Relationship Id="rId9" Type="{_CUSTOM_PROPERTIES_RELATIONSHIP}" '
+                    'Target="docProps/custom.xml"/></Relationships>',
+                )
+            },
+            "a custom-properties relationship in _rels/.rels",
+            id="relationship",
+        ),
+        pytest.param(
+            {"docProps/custom.xml": _CUSTOM_PART.replace("zzControl", "MSIP_Label_0_Enabled")},
+            "a sensitivity label in docProps/custom.xml",
+            id="label-property",
+        ),
+        pytest.param(
+            {"docMetadata/LabelInfo.xml": "<labelList/>"},
+            "a sensitivity label in docMetadata/LabelInfo.xml",
+            id="label-part",
+        ),
+        pytest.param({"docProps/core.xml": _filled("dc:creator")}, "a creator", id="creator"),
+        pytest.param(
+            {"docProps/core.xml": _filled("cp:lastModifiedBy")},
+            "a lastModifiedBy",
+            id="last-modified-by",
+        ),
+        pytest.param({"docProps/app.xml": _filled("Company")}, "a Company", id="company"),
+        pytest.param({"docProps/app.xml": _filled("Manager")}, "a Manager", id="manager"),
+        pytest.param(
+            {"word/document.xml": lambda text: text.replace("Between the tables.", "zz@x.invalid")},
+            "an address or an absolute path in word/document.xml",
+            id="address",
+        ),
+        pytest.param(
+            {
+                "docProps/app.xml": lambda text: text.replace(
+                    "<Template>Normal.dotm</Template>",
+                    "<Template>Macintosh HD:Templates:Normal.dotm</Template>",
+                )
+            },
+            "an address or an absolute path in docProps/app.xml",
+            id="path",
+        ),
+    ],
+)
+def test_the_identity_check_fires_on_each_thing_it_guards(edits, problem):
+    """The provenance test's second vacuity floor: each defect the identity check exists for,
+    planted into a copy of the fixture, must be reported — so the fixture's empty report is a
+    measurement, not a check that could not have fired."""
+    assert problem in _identity_problems(_replanted(_fixture_bytes(), edits))
 
 
 # --------------------------------------------------------------------------------------

@@ -302,6 +302,19 @@ def spec_path(path: str) -> str:
     return INSTANCE_MARKER_RE.sub("", path)
 
 
+def instance_order(path: str) -> list[Any]:
+    """The sort key that orders instance paths NUMERICALLY on their indices.
+
+    A plain string sort puts `children[10]` before `children[2]` and `body@10` before `body@2`, so
+    "oldest first" and "the last instance" silently become wrong at the tenth iteration or item:
+    a binding's window kept the wrong cycles, `previous.output` returned the wrong one, and the
+    node inspector and `output()` answered with item 9 of an eleven-item fan-out. Ten in is late
+    enough that no short test sees it. Digit runs compare as numbers and text as text, left to
+    right, as the run view's `instancePathOrder` does, so the views and the engine agree.
+    """
+    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", path)]
+
+
 #: The instance's OWN marker — the one on its last segment, so `root.body@0.children[1].body#2`
 #: matches `#2` and not `@0`.
 TRAILING_MARKER_RE = re.compile(r"[@#]\d+$")

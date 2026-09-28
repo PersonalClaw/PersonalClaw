@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { FieldError } from '../../ui/forms'
-import { Pencil, Trash2, Check, X, PlayCircle, Loader2, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
+import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
@@ -72,9 +72,9 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // next list poll (~10s), so without this the UI would look like nothing
   // happened. We hold this true from click until the run is observed finished.
   const [triggered, setTriggered] = useState(false)
-  // Brief post-run flash ON the Run button: what the run recorded, in its history row's words
-  // ("Run finished", or "Waiting for you" for a run that stopped for you), for a couple seconds, then
-  // the button reverts to "Run now". `fading` drives the opacity transition before we clear it.
+  // Brief post-run line under the Run button: what the run recorded, in its history row's words
+  // ("Run finished", or "Waiting for you" for a run that stopped for you), for a couple seconds.
+  // `fading` drives the opacity transition before we clear it.
   const [ranFlash, setRanFlash] = useState<ReturnType<typeof runFlashMeta> | null>(null)
   // The status the run THIS press started recorded — `/run` answers it — read when the watcher
   // below sees that run land. It used to be the trigger's health rollup, which says how the
@@ -268,27 +268,21 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
     <div className="flex flex-col gap-l">
       {/* action row */}
       <div className="flex flex-wrap items-center gap-s">
-        {/* 🪤 THE REASON IS CONDITIONAL, because one disjunct of this gate is NOT in-flight at all.
-            `ranFlash` is the transient post-run confirmation ("Run finished", "Waiting for you"), so
-            during it "An action is already in progress" would be FALSE — the action just ended. The
-            label already says what happened, so the flash keeps the native attribute and no reason. */}
-        <Button size="sm" variant="secondary" onClick={runNow} disabled={busy || running || !!ranFlash}
-          disabledReason={ranFlash ? undefined : BUSY_REASON}>
-          <span className={`inline-flex items-center gap-1.5 transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
-            style={ranFlash ? { color: ranFlash.tone } : undefined}>
-            {running ? <Loader2 size={14} className="animate-spin" />
-              : ranFlash ? <ranFlash.icon size={14} />
-              : <PlayCircle size={14} />}
-            {running ? 'Running…' : ranFlash ? ranFlash.label : 'Run now'}
-          </span>
+        {/* In flight, the button says so (`loadingLabel`, announced as busy); what the run recorded
+            is said on its own line below, at full strength. It used to be the button's label for a
+            couple of seconds while the button was disabled, so it read at the disabled 40% opacity,
+            in the run's tone, and a screen reader heard nothing. */}
+        <Button size="sm" variant="secondary" onClick={runNow} disabled={busy} disabledReason={BUSY_REASON}
+          loading={running} loadingLabel="Running…">
+          <PlayCircle size={14} /> Run now
         </Button>
         {/* The explanation rides the button's own `title` (which `Button` joins to a blocked reason)
             rather than a wrapper's: a wrapper tooltip is unreachable from the keyboard. And it says
             what a dry run IS — the old "Dry-run replay … write tools are not executed" described a
             replay that no longer exists. */}
-        <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running || !!ranFlash}
+        <Button size="sm" variant="ghost" onClick={dryRun} disabled={busy || running}
           title="Preview what a run would do — nothing is executed and nothing is recorded"
-          disabledReason={ranFlash ? undefined : BUSY_REASON}>
+          disabledReason={BUSY_REASON}>
           <FlaskConical size={14} /> Dry run
         </Button>
         <Button size="sm" variant="ghost" onClick={() => { setDry(null); setEditing(true) }}><Pencil size={14} /> Edit</Button>
@@ -300,6 +294,15 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
         </label>
       </div>
       {err && <FieldError>{err}</FieldError>}
+      {/* What the run this press started recorded, in its history row's words, for a couple of
+          seconds. A status, so it is announced; its tone is the row's. */}
+      {ranFlash && !err && (
+        <p role="status" data-type="label-s"
+          className={`inline-flex items-center gap-1.5 transition-opacity duration-500 ${fading ? 'opacity-0' : 'opacity-100'}`}
+          style={{ color: ranFlash.tone }}>
+          <ranFlash.icon size={14} aria-hidden />{ranFlash.label}
+        </p>
+      )}
       {note && !running && <p className="text-ok text-[0.8125rem]">{note}</p>}
       {dry && <DryRunResult result={dry} providers={providers} onDismiss={() => setDry(null)} />}
 

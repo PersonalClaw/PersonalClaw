@@ -801,12 +801,26 @@ class StructuralRetriever:
                 logger.debug("structural rank: embedder failed, using lexical", exc_info=True)
                 qvec = None
             if qvec:
+                from personalclaw.knowledge.embedding_fingerprint import (
+                    EmbeddingFingerprint,
+                    active_fingerprint,
+                )
+
+                # The query was embedded by the model bound now, so a candidate's vector counts
+                # only if that model wrote it, as in search. Another model's, or one that
+                # records none, scores as a candidate with no vector does: nothing to compare.
+                active = active_fingerprint()
                 out: dict[str, float] = {}
                 for cid in ids:
                     row = self.store.db.execute(
-                        "SELECT embedding FROM items WHERE id = ?", (cid,)
+                        "SELECT embedding, embedding_model_id, embedding_provider FROM items "
+                        "WHERE id = ?",
+                        (cid,),
                     ).fetchone()
-                    vec = bytes_to_floats(row["embedding"]) if row and row["embedding"] else []
+                    fresh = row is not None and active == EmbeddingFingerprint.recorded(
+                        row["embedding_model_id"], row["embedding_provider"]
+                    )
+                    vec = bytes_to_floats(row["embedding"]) if fresh and row["embedding"] else []
                     out[cid] = _cosine(qvec, vec)
                 return out, RANK_VECTOR
         texts: dict[str, str] = {}

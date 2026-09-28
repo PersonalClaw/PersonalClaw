@@ -208,11 +208,24 @@ whole sentence above the trace.
 answers `status`, the status the run recorded (`last_run_status` on the list row
 reads the same record), and its `result` is the row's own line for a run that
 stopped for you ("Waiting for you. Sign in to …") rather than "ran". So the
-schedule panel's button flashes "Waiting for you", "Launched" or "Queued" where
-that is what happened, and "Run finished" only for a run that did its work; the
-automation panel and the restart review's Run now say the same. The flash used
+schedule panel says "Waiting for you", "Launched" or "Queued" under its Run
+button where that is what happened, and "Run finished" only for a run that did
+its work, for a couple of seconds, as a status (announced, at full strength; it
+used to be the disabled button's own label, drawn at 40% opacity); the
+automation panel and the restart review's Run now say the same. The line used
 to read the trigger's health rollup, which says how the automation has been
 going and nothing about this run.
+
+**An automation from another home arrives switched off, with nothing of what
+happened to it there.** A snapshot merge (`snapshot._merge_triggers`) and a
+device sync (the `triggers` inventory entry's `arrives`, applied by
+`durability.reconcile`) bring a row in by one rule,
+`triggers.store.arrived_from_another_home`: it drops `RUNTIME_FIELDS` (its armed
+fire, run count, success, failure and waiting stamps, debounce and park stamps,
+alert dedupe, health and state) and sets `enabled: false`. A sync brings the
+peer's `triggers.json` in only to a home that has none (the store merges
+`union_by_id` as one document), and what it writes is not recorded as a common
+ancestor with the peer, because it is not the peer's row.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.

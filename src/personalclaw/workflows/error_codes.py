@@ -153,6 +153,11 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_BAD_GATE_KIND": "A gate node declares a `kind` the gate vocabulary does not contain.",
     "WF_MISSING_VERIFY": "A gate that verifies something has no `verify` block.",
     "WF_MISSING_CRITERIA": "A ladder gate has an absent or empty `criteria` list.",
+    "WF_GATE_TEXT_UNSHOWN": (
+        "A gate carries a `prompt` or `message` its kind never shows anyone: an expression gate "
+        "asks nobody, a judge sends its model only its `prompt`, a verifier or ladder reads no "
+        "words, and an approval or event shows its `message` only when it has no `prompt`."
+    ),
     "WF_MISSING_REF": "A subworkflow node has no `ref` naming the definition to run.",
     "WF_BAD_REF": "A subworkflow node's `ref` is not a valid workflow definition name.",
     "WF_SUPERVISOR_NOT_OBJECT": "The spec's `supervisor` is present but not an object.",

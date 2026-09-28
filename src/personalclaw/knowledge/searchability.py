@@ -34,8 +34,8 @@ store already carries (``queued`` / ``processing`` / ``done`` / ``partial`` / ``
 / ``unreachable``) rather than in ``http_errors.HTTP_ERROR_CODES``.
 
 **RET-4 extends the vocabulary with one READ-TIME reason.** :data:`STALE_INDEX` names an
-item whose chunk vectors came from a different embedding model than the one bound now
-(:mod:`personalclaw.knowledge.embedding_fingerprint`). It is minted by a comparison at
+item holding a vector (a passage's, or the whole-item one) the embedding model bound now did not
+write (:mod:`personalclaw.knowledge.embedding_fingerprint`). It is minted by a comparison at
 query time rather than persisted at ingest, because the fact that changed is the *bound
 model*, not the item — so it must never be written into the item's ``processing_status``.
 :data:`INGEST_REASONS` is the subset an ingest may persist; :data:`REASONS` is every reason
@@ -88,12 +88,13 @@ NO_EMBEDDING_PROVIDER = "no_embedding_provider"
 #: (the embed attempt errored, or the provider returned nothing).
 NOT_INDEXED = "not_indexed"
 
-#: The item's chunk vectors were written by a DIFFERENT embedding model than the one bound
-#: now, so they are not comparable to the current query vector. Unlike the three
-#: above, this reason is NOT persisted on the item at ingest time — it is a fact about the
-#: bound model, which changes under an item that never changed, so it is derived at read
-#: time from the chunk fingerprints (:mod:`personalclaw.knowledge.embedding_fingerprint`).
-#: The item is otherwise healthy; a re-index fixes it without re-ingesting anything.
+#: A vector of the item — a passage's, or its whole-item one — was not written by the embedding
+#: model bound now (another model, or one it did not record), so it is not comparable to the
+#: current query vector. Unlike the three above, this reason is NOT persisted on the
+#: item at ingest time — it is a fact about the bound model, which changes under an item that
+#: never changed, so it is derived at read time from the fingerprints
+#: (:mod:`personalclaw.knowledge.embedding_fingerprint`). The item is otherwise healthy; a
+#: re-index fixes it without re-ingesting anything.
 STALE_INDEX = "stale_index"
 
 #: The closed reason vocabulary. Matched explicitly by every consumer: an unknown value
@@ -187,9 +188,13 @@ def _reach_sentence(reason: str, subject: str, count: int) -> str:
             f"keyword search finds {them}, semantic search cannot"
         )
     if reason == STALE_INDEX:
+        # "Or with no model recorded": a vector written before its model was recorded (every
+        # whole-item vector from before items recorded one) may be the bound model's, and is
+        # skipped all the same, because nothing can tell. Calling it another model's is false.
         return (
             f"{subject} {has} embeddings from a different embedding model than the one bound "
-            f"now — keyword search finds {them}, semantic search skips {them} until a re-index"
+            f"now, or with no model recorded — keyword search finds {them}, semantic search "
+            f"skips {them} until a re-index"
         )
     if reason == NO_EXTRACTABLE_TEXT:
         what, name = (

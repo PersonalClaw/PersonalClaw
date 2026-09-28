@@ -262,6 +262,11 @@ async def _sessions_search(arguments: dict, state: Any) -> str:
             f" Only {answer.searched:,} of {answer.of:,} conversations were searched: the search "
             "index is still being built, so matches in the others are not listed yet."
         )
+    elif answer.of - answer.searched == 1:
+        partial = (
+            f" Only {answer.searched:,} of {answer.of:,} conversations were searched whole: the "
+            "other one is longer than the search index keeps, so only its beginning was searched."
+        )
     else:
         partial = (
             f" Only {answer.searched:,} of {answer.of:,} conversations were searched whole: the "

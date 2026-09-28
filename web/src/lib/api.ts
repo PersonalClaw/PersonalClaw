@@ -1519,6 +1519,12 @@ export interface KnowledgeAnnotation {
 export interface KnowledgeDuplicate {
   id: string; title: string; item_type: string; created_at: string; word_count: number; reason: string
 }
+/** One item's duplicates lookup. `not_compared` counts the items titled like it that another
+ *  embedding model embedded, which no score can compare with it; `not_compared_note` is the
+ *  server's sentence about them (`""` at 0), so an empty list is not read as "no copy exists". */
+export interface KnowledgeDuplicateScan {
+  duplicates: KnowledgeDuplicate[]; not_compared: number; not_compared_note: string
+}
 // What a merge moved to the survivor. The route reports it per relation so the UI can tell the
 // user what it actually did ("3 collections, 2 mentions") instead of a bare "Merged".
 export interface KnowledgeMergeResult {
@@ -1972,6 +1978,9 @@ export type WorkflowRunStatus =
 // produces many instances of one node id), so it — not node_id — is the list key.
 export interface WorkflowNodeState {
   instance_path: string; node_id: string; state: string; attempt?: number
+  /** The author's name for the step — what the run's ending and every failure line call it.
+   *  Absent on a step without one, which has nothing better than its `node_id`. */
+  label?: string
   degraded_reason?: string
   // `retryable` is the engine's own verdict (`models.RETRYABLE_CLASSES`): whether a fresh attempt
   // could succeed with nothing changed — what decides whether a failed run offers Retry.
@@ -4532,9 +4541,14 @@ export interface DailyDigest { day: string; text: string; created_at: string }
 export interface MemoryStats {
   semantic_active: number; semantic_deleted: number; episodic_active: number; episodic_deleted: number
   /** `embedded_count` — memories the model bound now embedded, so searchable by meaning;
-   *  `embedded_stale` — ones another model embedded, read by keyword until the re-index. With no
-   *  model bound (`embedding_provider: 'none'`), every memory holding a vector, and none stale. */
-  events_count: number; embedded_count: number; embedded_stale: number; embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
+   *  `embedded_stale` — ones another model embedded, and `unembedded` — ones no model embedded,
+   *  both read by keyword until the re-index. `read_by_keyword` is their sum and
+   *  `read_by_keyword_note` the server's sentence about it (`""` at 0), the recall disclosure's
+   *  own words. With no model bound (`embedding_provider: 'none'`), every memory holding a vector,
+   *  and none waiting. */
+  events_count: number; embedded_count: number; embedded_stale: number; unembedded: number
+  read_by_keyword: number; read_by_keyword_note: string
+  embedding_provider?: string; has_legacy_memory?: boolean; migrated?: boolean
 }
 // A semantic memory entry. `value_json` is a JSON-encoded value (often double-
 // encoded) — parse defensively for display.
@@ -5321,7 +5335,14 @@ export function isLiveDownload(job: Pick<DownloadJob, 'state'>): boolean {
 export interface ReindexJob {
   id: string; model: string; status: 'running' | 'done' | 'error'
   phase: string; done: number; total: number; knowledge: number; memory: number; error: string
+  /** Passage vectors it re-embedded, and the ones still on another model when it ended. Absent on
+   *  the job a refused start stands in for. */
+  chunks?: number; chunks_stale?: number
 }
+/** `GET /api/models/embedding/reindex`: the jobs this gateway ran, and the one running (there is
+ *  at most one). The gateway starts one on its own — at its start, and after an Embedding
+ *  binding — so a surface follows `active` rather than only a job it started. */
+export interface ReindexJobs { jobs: ReindexJob[]; active: ReindexJob | null }
 // One resident model occupying RAM right now (matches loaded_occupants() in
 // local_models/residency.py, LMMV §7). `rss_mb` is null for an in-process model — the
 // gateway's heap cannot be attributed per-model, so the honest value is "unknown", never a
@@ -7555,9 +7576,11 @@ export const api = {
   // refused with `409 stale_write` rather than overwritten.
   setActiveModel: (useCase: string, models: string[], base: string) =>
     put<{ ok?: boolean; revision?: string }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }, basedOn(base)),
-  // Re-index all knowledge + memory embeddings after the embedding model changed.
-  // 409 {code:'model_not_ready'} if the new model can't produce vectors.
+  // Re-embed what the bound embedding model has not embedded, in knowledge and memory. Answers the
+  // running job when one is in flight, so a second caller joins it rather than racing it.
+  // 409 {code:'model_not_ready'} if the model can't produce vectors.
   startEmbeddingReindex: () => post<ReindexJob>('/api/models/embedding/reindex'),
+  embeddingReindexJobs: () => get<ReindexJobs>('/api/models/embedding/reindex'),
   embeddingReindexStreamUrl: (id: string) => `/api/models/embedding/reindex/${encodeURIComponent(id)}/stream`,
 
   // Slash commands offered in the composer "/" menu (backend excludes TUI-only
@@ -8715,7 +8738,7 @@ export const api = {
   // surface whose whole job is to tell you two copies exist. The rejection has to reach the
   // caller so the panel can say the lookup failed instead of silently claiming it is clean.
   knowledgeDuplicates: (id: string) =>
-    get<{ duplicates: KnowledgeDuplicate[] }>(`/api/knowledge/items/${encodeURIComponent(id)}/duplicates`).then((d) => d.duplicates),
+    get<KnowledgeDuplicateScan>(`/api/knowledge/items/${encodeURIComponent(id)}/duplicates`),
   // The SURVIVOR is the path id and the loser is in the body — the route's own shape, kept
   // in the same order here so a caller cannot silently swap them. `confirm: true` is sent by
   // this helper because the route requires it; the USER's confirmation is a separate, earlier
@@ -8800,7 +8823,6 @@ export const api = {
     get<{ outbound: KnowledgeItemRelation[]; inbound: KnowledgeItemRelation[] }>(
       `/api/knowledge/items/${encodeURIComponent(id)}/relations`),
   knowledgeEmbeddingStatus: () => get<{ enabled: boolean; available?: boolean; model?: string; total_items?: number; embedded_items?: number; stale_items?: number }>('/api/knowledge/embedding/status'),
-  generateKnowledgeEmbeddings: (rebuild = false) => post<{ ok?: boolean; embedded?: number }>('/api/knowledge/embedding/generate', { rebuild }),
   // Every uploaded file → ONE logical-document item run through its node-graph.
   ingestKnowledgeFile: async (
     file: File,

@@ -175,8 +175,9 @@ def recompute_item_edges(
        CHUNKS OF ITS OWN DOCUMENT (self-similarity ~1.0). Without that headroom a 30-chunk
        document spends its whole candidate budget on itself and finds no neighbour at all.
     3. Score each candidate pair with the store's one cosine (`dedup.cosine_similarity`)
-       behind a dimension guard, and drop anything below `min_score` — per pair, before the
-       roll-up, so a weak chunk can never become an edge's cited evidence.
+       behind a dimension guard, and only when one model wrote both chunks, and drop
+       anything below `min_score` — per pair, before the roll-up, so a weak chunk can never
+       become an edge's cited evidence.
     4. **Collapse chunk pairs to item pairs keeping the MAX**, which is the rule the vector
        retrieval arm already uses: the question is "do these two documents share content",
        which is a max over passages. A mean drags a 50-chunk document with one perfect
@@ -194,6 +195,12 @@ def recompute_item_edges(
     """
     from personalclaw.knowledge.dedup import cosine_similarity
     from personalclaw.knowledge.embedder import floats_to_bytes
+    from personalclaw.knowledge.embedding_fingerprint import EmbeddingFingerprint
+
+    def _model(chunk: dict) -> EmbeddingFingerprint:
+        return EmbeddingFingerprint.recorded(
+            chunk.get("embedding_model_id"), chunk.get("embedding_provider")
+        )
 
     mine = [c for c in (store.get_chunks(item_id, with_embedding=True) or []) if c.get("embedding")]
     if not mine or top_k <= 0:
@@ -204,8 +211,15 @@ def recompute_item_edges(
     # other_item_id -> (best score, winning chunk of THIS item, winning chunk of the other)
     best: dict[str, tuple[float, Any, Any]] = {}
 
-    def _consider(other_item: str, other_index: Any, other_vec: list, mine_chunk: dict) -> None:
+    def _consider(other: dict, mine_chunk: dict) -> None:
+        other_item, other_index = other["item_id"], other["chunk_index"]
+        other_vec = other["embedding"]
         my_vec = mine_chunk["embedding"]
+        # Two passages are compared only when one model wrote both. At one width two models'
+        # vectors compare and score a number that means nothing, which the dimension guard
+        # below cannot see. Such pairs fall out until the re-index re-embeds them.
+        if _model(other) != _model(mine_chunk):
+            return
         # Dimension guard, same reasoning as the retrieval arm: a vector from a different
         # embedding model cannot be compared, and cosine over zip() would silently truncate
         # to the shorter and score a meaningless prefix. Such pairs fall out until re-embedded.
@@ -235,7 +249,7 @@ def recompute_item_edges(
             for row in store.chunk_vectors_by_ids(candidates):
                 if row["item_id"] == item_id:
                     continue
-                _consider(row["item_id"], row["chunk_index"], row["embedding"], chunk)
+                _consider(row, chunk)
 
     if not served:
         # Discard the partial ANN roll-up so the fallback result does not depend on how far
@@ -244,7 +258,7 @@ def recompute_item_edges(
         best.clear()
         for row in store.iter_embedded_chunks(exclude_item_id=item_id):
             for chunk in mine:
-                _consider(row["item_id"], row["chunk_index"], row["embedding"], chunk)
+                _consider(row, chunk)
 
     # Score desc, then id asc so a tie resolves the same way on every run.
     ranked = sorted(best.items(), key=lambda kv: (-kv[1][0], kv[0]))[:top_k]

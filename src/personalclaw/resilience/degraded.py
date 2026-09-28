@@ -213,15 +213,18 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
     shell chip words it that way. ``problem`` says what an unavailable surface is waiting on
     (:func:`_problem`); ``None`` on one that is available.
 
-    When ``notify`` is set and a ``state`` with a ``.notify`` method is given, a
-    surface CHANGING availability emits one notification: on going down, ``warning`` "<surface>
-    degraded" when its chosen model cannot serve and ``info`` "Choose a model for <surface>" when
-    none is chosen, each saying the row's ``problem``; ``info`` (with the drained/backlog
-    summary) on recovery, and a recovery only after a notice the user was given. The first
-    evaluation of a surface only seeds the baseline — it never notifies (no boot storm).
+    When ``notify`` is set and a ``state`` with a ``.notify`` method is given, the surfaces
+    CHANGING availability in this evaluation are announced, ONE notification per kind of change
+    however many surfaces it moved: ``warning`` "<surface> degraded" when the chosen model cannot
+    serve, ``info`` "Choose a model for <surface>" when none is chosen (each saying the row's
+    ``problem``), ``info`` "<surface> recovered" / "<surface> is ready" (with the drained/backlog
+    summary) when it is back, and a recovery only after a notice the user was given. Several
+    surfaces read "<n> surfaces …" and name each one. The first evaluation of a surface only
+    seeds the baseline — it never notifies (no boot storm).
     """
     rows: list[dict] = []
     known: dict[str, Optional[tuple[str, str]]] = {}
+    changes: list[_Change] = []
     for contract in _CONTRACTS.values():
         available = _available(contract)
         backlog = _backlog(contract)
@@ -240,11 +243,37 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
             }
         )
         if notify:
-            _maybe_notify(contract, available, backlog, state, chosen=chosen, problem=problem)
+            change = _transition(
+                contract, available, backlog, state, chosen=chosen, problem=problem
+            )
+            if change is not None:
+                changes.append(change)
+    if changes:
+        _announce(changes, state)
     return rows
 
 
-def _maybe_notify(
+#: The four ways a surface changes, in the order a single evaluation announces them. The two
+#: downs are the chip's two states, in its words: a chosen model that cannot serve is a decline;
+#: no model chosen is a choice to make, and "degraded" would claim a decline. The two ups follow
+#: the notice before them: a decline recovers, and a choice made is "ready" (nothing declined).
+_DECLINED, _UNCHOSEN, _RECOVERED, _READY = "declined", "unchosen", "recovered", "ready"
+_CHANGE_ORDER = (_DECLINED, _UNCHOSEN, _RECOVERED, _READY)
+
+
+@dataclass(frozen=True)
+class _Change:
+    """One surface's change of availability, to be announced with the others of its kind."""
+
+    kind: str
+    contract: DegradedContract
+    #: What a surface that went down waits on (the row's ``problem``).
+    problem: str = ""
+    #: A recovery's drained/backlog clause (" · 3 item(s) re-enriched"), or ``""``.
+    tail: str = ""
+
+
+def _transition(
     contract: DegradedContract,
     available: bool,
     backlog: int,
@@ -252,55 +281,118 @@ def _maybe_notify(
     *,
     chosen: bool,
     problem: Optional[str],
-) -> None:
+) -> Optional[_Change]:
+    """Record one surface's availability and return its change for :func:`_announce`, or None
+    when there is nothing to announce: its first sight (the silent baseline), no change, no
+    notify sink, or a recovery the user was never told went down."""
     prev = _last_available.get(contract.surface)
     _last_available[contract.surface] = available
     if prev is None or prev == available:
-        return  # first sight (silent baseline) or no change
+        return None  # first sight (silent baseline) or no change
     drained: Optional[int] = None
     if available and contract.drain is not None:
         # The unavailable→available flip is what fires the drain. Before the
         # notification, and independent of whether a notify sink exists — the
         # re-enrichment is the promise the floor made; the message about it is not.
         drained = _fire_drain(contract, state)
+    if not callable(getattr(state, "notify", None)):
+        return None
+    if not available:  # went down
+        return _Change(_DECLINED if chosen else _UNCHOSEN, contract, problem=problem or "")
+    if contract.surface not in _announced_down:
+        return None  # never announced as down, so nothing to announce as back
+    was_chosen = _announced_down.pop(contract.surface)
+    # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
+    # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
+    # just cleared it would announce a queue that no longer exists. So: the drained
+    # count when the drain finished here, the standing backlog when it moved nothing
+    # or is still running, and nothing at all when there was never a queue.
+    if drained:
+        tail = f" · {drained} item(s) re-enriched"
+    elif backlog:
+        tail = f" · {backlog} item(s) awaiting re-enrichment"
+    else:
+        tail = ""
+    return _Change(_RECOVERED if was_chosen else _READY, contract, tail=tail)
+
+
+def _announce(changes: list[_Change], state: object) -> None:
+    """Post one notification per kind of change in *changes*.
+
+    🔴 ONE CHANGE, ONE NOTICE. Most model-backed surfaces need the Chat model, and Background and
+    Reasoning resolve through it, so clearing Chat took ten surfaces down in one evaluation and
+    posted ten "Choose a model for <surface>" notices, and choosing one again posted ten "is
+    ready" ones. A notice now covers every surface one kind of change moved, and names each.
+    """
     notify_fn = getattr(state, "notify", None)
     if not callable(notify_fn):
         return
-    needs = " and ".join(use_case_names(contract))
-    try:
-        if not available:  # went down
-            # The chip's two states, in its words: a chosen model that cannot serve is a
-            # decline; no model chosen is a choice to make, and "degraded" would claim a decline.
-            if chosen:
-                notify_fn("warning", f"{contract.label} degraded", f"{problem} {contract.floor}")
-            else:
-                notify_fn(
-                    "info", f"Choose a model for {contract.label}", f"{problem} {contract.floor}"
-                )
-            _announced_down[contract.surface] = chosen
-        elif contract.surface in _announced_down:  # back, from a notice we gave
-            was_chosen = _announced_down.pop(contract.surface)
-            # §5.2 criterion #3 wants the recovery to summarize what was RE-ENRICHED, and
-            # `backlog` was measured BEFORE the drain ran — reporting it after a drain that
-            # just cleared it would announce a queue that no longer exists. So: the drained
-            # count when the drain finished here, the standing backlog when it moved nothing
-            # or is still running, and nothing at all when there was never a queue.
-            if drained:
-                tail = f" · {drained} item(s) re-enriched"
-            elif backlog:
-                tail = f" · {backlog} item(s) awaiting re-enrichment"
-            else:
-                tail = ""
-            if was_chosen:
-                notify_fn(
-                    "info",
-                    f"{contract.label} recovered",
-                    f"A {needs} model is available again{tail}.",
-                )
-            else:  # nothing declined, so nothing recovered: a model was chosen
-                notify_fn("info", f"{contract.label} is ready", f"A {needs} model is chosen{tail}.")
-    except Exception:
-        logger.debug("degraded: notify failed for %s", contract.surface, exc_info=True)
+    for kind in _CHANGE_ORDER:
+        group = [c for c in changes if c.kind == kind]
+        if not group:
+            continue
+        level, title, body = _notice(kind, group)
+        try:
+            notify_fn(level, title, body)
+        except Exception:
+            logger.debug("degraded: notify failed for %s", title, exc_info=True)
+            continue
+        if kind in (_DECLINED, _UNCHOSEN):
+            for change in group:
+                _announced_down[change.contract.surface] = kind == _DECLINED
+
+
+def _notice(kind: str, group: list[_Change]) -> tuple[str, str, str]:
+    """``(level, title, body)`` for the surfaces of *group*, which all changed as *kind* says.
+
+    One surface keeps its own words, floor and all. Several are counted in the title and named
+    in the body, which says what each waits on once: every surface's floor is in the degraded
+    chip, and ten of them in one notice would bury the sentence that says what to do.
+    """
+    if len(group) == 1:
+        change = group[0]
+        label, floor = change.contract.label, change.contract.floor
+        needs = " and ".join(use_case_names(change.contract))
+        if kind == _DECLINED:
+            return "warning", f"{label} degraded", f"{change.problem} {floor}"
+        if kind == _UNCHOSEN:
+            return "info", f"Choose a model for {label}", f"{change.problem} {floor}"
+        if kind == _RECOVERED:
+            return "info", f"{label} recovered", f"A {needs} model is available again{change.tail}."
+        return "info", f"{label} is ready", f"A {needs} model is chosen{change.tail}."
+    count = f"{len(group)} surfaces"
+    labels = _join([c.contract.label for c in group])
+    needs = _join(list(dict.fromkeys(n for c in group for n in use_case_names(c.contract))))
+    tails = "".join(f" · {c.contract.label}: {c.tail.removeprefix(' · ')}" for c in group if c.tail)
+    if kind == _DECLINED:
+        problems = " ".join(dict.fromkeys(c.problem for c in group if c.problem))
+        until = f"Until then {labels} do only what works without a model."
+        return "warning", f"{count} degraded", f"{problems} {until}".strip()
+    if kind == _UNCHOSEN:
+        return (
+            "info",
+            f"Choose a model for {count}",
+            f"No model chosen for {needs}. Until one is, {labels} do only what works without "
+            "a model.",
+        )
+    if kind == _RECOVERED:
+        return (
+            "info",
+            f"{count} recovered",
+            f"A model is available again for {needs}, so {labels} are back{tails}.",
+        )
+    return (
+        "info",
+        f"{count} are ready",
+        f"A model is chosen for {needs}, so {labels} can run now{tails}.",
+    )
+
+
+def _join(parts: list[str]) -> str:
+    """``"A"``, ``"A and B"``, ``"A, B and C"``."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def _fire_drain(contract: DegradedContract, state: object) -> Optional[int]:

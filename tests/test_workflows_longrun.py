@@ -768,10 +768,10 @@ def test_instance_paths_sort_numerically():
     """A string sort puts `body@10` before `body@2`, so "oldest first" silently became wrong at
     the tenth iteration: the window would keep the wrong items and `previous.output` would
     return the wrong cycle. Ten cycles in is later than any short test would reach."""
-    from personalclaw.workflows.node_bindings import _natural_key
+    from personalclaw.workflows.models import instance_order
 
     paths = [f"root.body@{n}.children[0]" for n in range(12)]
-    ordered = [p.split("@")[1].split(".")[0] for p in sorted(paths, key=_natural_key)]
+    ordered = [p.split("@")[1].split(".")[0] for p in sorted(paths, key=instance_order)]
     assert ordered == [str(n) for n in range(12)]
 
 
