@@ -46,10 +46,11 @@ from personalclaw.snapshot import (
     _do_replace,
     _merge_crons,
     _merge_event_triggers,
-    _merge_hooks,
     _merge_memory,
     _merge_notifications,
+    _merge_records,
     _merge_triggers,
+    _records_entry,
 )
 from personalclaw.sqlite_compat import sqlite3
 
@@ -872,10 +873,11 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
     mode is transactional — POSIX gives no atomic multi-file swap — so the contract is
     *recoverability*, not atomicity:
 
-    * ``merge`` is **copy-if-missing on every path**. A failure part-way leaves the home
-      with some of the archive's absent stores present and the rest not; nothing the
-      home already had is ever touched, so a partial merge is a *subset* of a complete
-      one and re-running it is safe and idempotent. There is no hybrid to be left in.
+    * ``merge`` is **copy-if-missing on every path**, a store of records one record at a
+      time (``snapshot._merge_records``). A failure part-way leaves the home with some of
+      the archive's absent stores and records present and the rest not; nothing the home
+      already had is ever touched, so a partial merge is a *subset* of a complete one and
+      re-running it is safe and idempotent. There is no hybrid to be left in.
     * ``replace`` moves each live path into ``pre-restore-<ts>/`` **before** writing the
       incoming one (`snapshot._do_replace`), so a failure part-way leaves the displaced
       originals on disk under that directory and the summary reports its path. That
@@ -985,10 +987,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     shutil.copy2(str(snap / "crons.json"), str(pc / "crons.json"))
                     summary["items"].append("crons (copied)")
 
-            if (snap / "hooks.json").is_file():
-                summary["items"].append(
-                    f"hooks ({_merge_hooks(snap / 'hooks.json', pc / 'hooks.json')} merged)"
-                )
+            said = _merge_records(snap, pc, "hooks.json")
+            if said:
+                summary["items"].append(said)
 
             if (snap / "config.json").is_file() and not (pc / "config.json").is_file():
                 shutil.copy2(str(snap / "config.json"), str(pc / "config.json"))
@@ -1045,15 +1046,18 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # feedback copy-only, cron-history no-overwrite) that a generic pass would erase.
             #
             # Copy-if-missing, matching `_copy_tree_no_overwrite` above: an import must not
-            # overwrite
-            # state the receiving home already has. The snapshot restore path owns the richer
-            # per-store merges; an import is the conservative direction because the archive came
-            # from
-            # somewhere else.
+            # overwrite state the receiving home already has. A store of records — the inbox,
+            # the tags, the comments, … — takes each record it lacks, by the rule a sync takes
+            # another machine's by (`snapshot._merge_records`), so an archive's records arrive in
+            # a home that has the store too, not only in one without it.
             imported_stores = 0
             for entry in _remaining_export_paths(snap):
                 sp, dp = snap / entry, pc / entry
-                if sp.is_dir():
+                if _records_entry(entry) is not None:
+                    said = _merge_records(snap, pc, entry)
+                    if said:
+                        summary["items"].append(said)
+                elif sp.is_dir():
                     dp.mkdir(parents=True, exist_ok=True)
                     # What an export leaves out an import never plants, from an older archive
                     # that still carries it either (an app's `venv/`, a project's worktrees).
@@ -1065,5 +1069,10 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     imported_stores += 1
             if imported_stores:
                 summary["items"].append(f"{imported_stores} stores (merged)")
+            # Memories came in with the vectors their home wrote; another model's are re-embedded
+            # by the re-index path the gateway's watch takes (`embedding_arrivals`).
+            from personalclaw import embedding_arrivals
+
+            embedding_arrivals.arrived()
 
     return summary

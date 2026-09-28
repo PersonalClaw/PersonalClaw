@@ -15,8 +15,8 @@ picked so that every failure leaves a state a repeat of the same request fixes:
    local row is read, the one reviewed row is substituted by entity id, and the full set is
    written back atomically (temp file + rename). A single-row ``apply_rows`` would truncate a
    ``jsonl_append`` stream to one event, so the substitution is not an optimisation to skip. A
-   store of records (``StateEntry.records``) has the one record substituted in its document
-   (``reconcile.write_record``).
+   store of records (``StateEntry.records``) has the one record substituted in its document,
+   under the file's lock (``reconcile.write_record``).
 2. The queue record flips to ``resolved`` only AFTER that write returns.
 
 So a failed write leaves the record ``needs-review`` and the store untouched (the caller sees
@@ -179,7 +179,9 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
 
     applied = writeback.ApplyResult()
     if choice != CHOICE_KEEP_LOCAL:
-        if entry.records and not all(reconcile.is_record(entry, r) for r in (rec.remote_row, row)):
+        if entry.records is not None and not all(
+            reconcile.is_record(entry, r) for r in (rec.remote_row, row)
+        ):
             return _refuse(
                 "not_a_record",
                 (
@@ -246,7 +248,7 @@ def _write_chosen_row(
     one the conflict was detected in, so a resolution cannot reshape the store. A store of
     records has the one record substituted in its document (``reconcile.write_record``).
     """
-    if entry.records:
+    if entry.records is not None:
         return reconcile.write_record(entry, dest, entity_id, row)
     rows = reconcile.read_local_rows(entry, dest)
     out = [r for r in rows if conflicts_mod.row_id(r) != entity_id]

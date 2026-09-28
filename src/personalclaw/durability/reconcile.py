@@ -19,12 +19,18 @@ abort the whole pull; the caller advances its cursor past it rather than looping
 Reads the local rows exactly as ``shards.export_shards`` would, so the merge sees the same
 row shapes on both sides — the invariant that makes convergence hold (criterion 4).
 
-A ``json_file`` that is a list of records (``StateEntry.records``: the automations in
-``triggers.json``, the hooks in ``hooks.json``) is exported as one row, the whole file, but
+A ``json_file`` that holds user records (``StateEntry.records``: the automations in
+``triggers.json``, the inbox's items, the tags, …) is exported as one row, the whole file, but
 reconciled record by record (:func:`entity_rows`): each record is an entity with its own id,
 conflict and common ancestor, and the merged records are written back into the one file, each
-where this home keeps it (:func:`_write_records`). Merged as one row, the file this home already
-had won whole, so a peer's records reached only a home that had none.
+where this home keeps it (:func:`_merged_document`), through the file's lock
+(``record_files.rewrite``) — the lock the store's own writes hold, so neither writes over the
+other. Merged as one row, the file this home already had won whole, so a peer's records reached
+only a home that had none. A restore's merge and an import bring an archive's records in by the
+same rule (:func:`bring_in`).
+
+A ``replace_only`` entry is restored whole or not at all — the configuration, and the stores
+whose every record is a grant this home's owner gave — so a sync leaves it exactly as it is.
 """
 
 from __future__ import annotations
@@ -33,13 +39,14 @@ import logging
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
+from personalclaw import record_files
 from personalclaw.durability import conflicts as conflicts_mod
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
-from personalclaw.durability.merge import _is_tombstone, merge_rows
+from personalclaw.durability.merge import MergeResult, _is_tombstone, merge_rows
 from personalclaw.durability.shards import (
     _json_rows_from_entity_dir,
     _json_rows_from_file,
@@ -107,82 +114,76 @@ def handles_kind(kind: str) -> bool:
     return kind in _ROW_KINDS
 
 
-def _record_id(record: object) -> str:
-    """A record's id, or ``""`` for one without a string id (which nothing can tell apart)."""
-    rid = record.get("id") if isinstance(record, dict) else None
-    return rid if isinstance(rid, str) else ""
-
-
 def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
     """The entities a sync reconciles among *rows* — the exporter's rows for *entry*, this home's
     or a peer's: the rows themselves, or for a store of records (``StateEntry.records``) the
     records its one document holds.
 
     Only records with an id: one without cannot be told from another, so it is never merged. This
-    home's stays where it is in the file (:func:`_write_records`); a peer's is not taken in.
+    home's stays where it is in the file (:func:`_merged_document`); a peer's is not taken in.
     """
-    if not entry.records:
+    if entry.records is None:
         return rows
     out: list[dict] = []
     for row in rows:
-        data = row.get("data")
-        items = data.get(entry.records) if isinstance(data, dict) else None
-        if isinstance(items, list):
-            out.extend(item for item in items if _record_id(item))
+        out.extend(_identified(entry, row.get("data")))
     return out
+
+
+def _identified(entry: inv.StateEntry, document: Any) -> list[dict]:
+    """The records with an id in *document*, one of *entry*'s files (none for another shape)."""
+    assert entry.records is not None
+    return _with_ids(entry.records.records(document) or [])
+
+
+def _with_ids(records: list) -> list[dict]:
+    """The records that have an id: the only ones anything can tell apart."""
+    return [r for r in records if isinstance(r, dict) and record_files.record_id(r)]
 
 
 def is_record(entry: inv.StateEntry, row: object) -> bool:
     """Whether *row* can be written as one of the records of *entry* (a store of records): it has
-    an id and is not a whole document of them. A conflict recorded before the store was reconciled
-    record by record holds the whole file as each version, and writing that into the file as one
-    record would break it."""
-    if not isinstance(row, dict) or not _record_id(row):
-        return False
-    data = row.get("data")
-    return not (isinstance(data, dict) and entry.records in data)
+    an id, and is not the store's whole file. A conflict recorded before the store was reconciled
+    record by record holds the whole file as each version — the exporter's one row, named for the
+    file — and writing that into the file as one record would break it."""
+    rid = record_files.record_id(row)
+    return bool(rid) and rid != Path(entry.path).name
 
 
-def _local_document(entry: inv.StateEntry, dest: Path, stored: list[dict]) -> dict | None:
-    """This home's document for a store of records, or ``None`` when it has none.
-
-    Raises when the file is there and is not a list of records under the store's key — unreadable,
-    or another shape: a write built without it would replace records it could not see, so the file
-    is left for its owner to inspect, as the store's own reader leaves it.
-    """
-    if not stored:
-        if dest.exists():
-            raise ValueError(f"{entry.path} could not be read here, so it is left as it is")
-        return None
-    data = stored[0].get("data")
-    if not isinstance(data, dict) or not isinstance(data.get(entry.records), list):
-        raise ValueError(
-            f"{entry.path} holds no list of {entry.records} here, so it is left as it is"
-        )
-    return data
+def _here(entry: inv.StateEntry, document: Any) -> list:
+    """This home's records, in its file's order — none when it has no file. Raises when the file
+    holds another shape: a write built without it would replace records it could not see, so the
+    file is left for its owner to inspect, as the store's own reader leaves it."""
+    assert entry.records is not None
+    if document is None:
+        return []
+    held = entry.records.records(document)
+    if held is None:
+        raise ValueError(f"{entry.path} holds no records here, so it is left as it is")
+    return held
 
 
-def _write_records(
+def _merged_document(
     entry: inv.StateEntry,
-    dest: Path,
-    document: dict | None,
-    peer_rows: list[dict],
+    document: Any,
+    peer_document: Any,
     arrived_order: list[str],
     merged: list[dict],
-) -> writeback.ApplyResult:
-    """Write *merged* (a store's records after a merge) back into its one document.
+) -> Any:
+    """*document* — this home's file, or None — with *merged* (its records after a merge) in it,
+    or None when that is the file exactly as it is.
 
     Each record where this home keeps it, and the ones that arrived after them in the order the
     peer keeps them, so a sync never reorders the list a person sees. A record the merge did not
-    take — one with no id, or a second with an id already placed — stays as it is. Nothing is
-    written when the document would not change: a pull that brings nothing leaves the file exactly
-    as the store wrote it.
+    take — one with no id, or a second with an id already placed — stays as it is. A home with no
+    file gets the peer's around the records, as its store writes one.
     """
-    by_id = {_record_id(r): r for r in merged if _record_id(r)}
+    assert entry.records is not None
+    by_id = {record_files.record_id(r): r for r in merged if record_files.record_id(r)}
     items: list[object] = []
     placed: set[str] = set()
-    for item in (document or {}).get(entry.records, []):
-        rid = _record_id(item)
+    for item in _here(entry, document):
+        rid = record_files.record_id(item)
         if rid in by_id and rid not in placed:
             items.append(by_id[rid])
             placed.add(rid)
@@ -192,40 +193,76 @@ def _write_records(
         if rid in by_id and rid not in placed:
             items.append(by_id[rid])
             placed.add(rid)
-    if document is None:
-        if not items:
-            return writeback.ApplyResult()
-        # No store here yet: the peer's envelope around the records, as its store writes one.
-        peer: dict = next((r["data"] for r in peer_rows if isinstance(r.get("data"), dict)), {})
-        base = {key: value for key, value in peer.items() if key != entry.records}
-    else:
-        base = document
-    updated = {**base, entry.records: items}
-    if updated == document:
-        return writeback.ApplyResult()
-    return writeback.apply_rows(entry.kind, dest, [{"id": dest.name, "data": updated}])
+    if document is None and not items:
+        return None
+    updated = entry.records.document(document if document is not None else peer_document, items)
+    return None if updated == document else updated
 
 
 def write_record(
     entry: inv.StateEntry, dest: Path, entity_id: str, record: dict
 ) -> writeback.ApplyResult:
     """Put *record* in place of *entity_id*'s in a store of records, or after the others when this
-    home has none — the conflict resolver's write, through the same document read and the same
-    guard as a sync's (:func:`_local_document`)."""
-    document = _local_document(entry, dest, read_local_rows(entry, dest))
-    items: list[object] = []
-    placed = False
-    for item in (document or {}).get(entry.records, []):
-        if _record_id(item) == entity_id:
-            if not placed:
-                items.append(record)
-                placed = True
-            continue
-        items.append(item)
-    if not placed:
-        items.append(record)
-    updated = {**(document or {}), entry.records: items}
-    return writeback.apply_rows(entry.kind, dest, [{"id": dest.name, "data": updated}])
+    home has none — the conflict resolver's write, through the file's lock and the same guard as a
+    sync's (:func:`_here`)."""
+    assert entry.records is not None
+    shape = entry.records
+
+    def change(document: Any) -> Any:
+        items: list[object] = []
+        placed = False
+        for item in _here(entry, document):
+            if record_files.record_id(item) == entity_id:
+                if not placed:
+                    items.append(record)
+                    placed = True
+                continue
+            items.append(item)
+        if not placed:
+            items.append(record)
+        return shape.document(document, items)
+
+    wrote = record_files.rewrite(dest, change)
+    return writeback.ApplyResult(written=1 if wrote else 0)
+
+
+def bring_in(home: Path, entry: inv.StateEntry, archived: Path) -> int:
+    """Bring the records of *archived* — *entry*'s file in an archive: a snapshot, an export —
+    into this home's store, by the rule a sync brings another machine's in. Returns how many came.
+
+    One record at a time, by its ``id``: each one this home does not have arrives, by the store's
+    arrival rule (``StateEntry.arrives``), after the ones it has, which stay exactly as they are —
+    a merge only fills in what the home lacks. A home with no store gets the archive's, every
+    record in it brought in by the same rule. Written through the file's lock
+    (``record_files.rewrite``), which the store's own writes hold. Raises ``ValueError`` when
+    either file cannot be read or holds another shape, leaving this home's as it is.
+    """
+    assert entry.records is not None
+    shape = entry.records
+    archived_document = record_files.read(archived)
+    if shape.records(archived_document) is None:
+        raise ValueError(f"the archive's {entry.path} holds no records, so nothing came from it")
+    arriving = _identified(entry, archived_document)
+    came = 0
+
+    def change(document: Any) -> Any:
+        nonlocal came
+        here = _here(entry, document)
+        known = {record_files.record_id(r) for r in here if record_files.record_id(r)}
+        added: list[object] = []
+        for record in arriving:
+            rid = record_files.record_id(record)
+            if rid in known:
+                continue
+            known.add(rid)
+            added.append(record if entry.arrives is None else entry.arrives(record))
+        came = len(added)
+        if document is not None and not added:
+            return None
+        return shape.document(document if document is not None else archived_document, here + added)
+
+    record_files.rewrite(Path(home) / entry.path, change)
+    return came
 
 
 def reconcile_entry(
@@ -241,9 +278,10 @@ def reconcile_entry(
     back. Returns a :class:`ReconcileResult` carrying the cursor verdict.
 
     Declines (``handled=False``) a non-row kind — the cycle routes sqlite via ATTACH-IGNORE
-    and tree via the blob store. A row kind that throws mid-merge is caught and reported
-    ``payload-bad`` so a single bad entry advances the cursor past itself rather than
-    wedging every later seq (§4.1).
+    and tree via the blob store. Consumes a ``replace_only`` entry and writes nothing: it is
+    restored whole or not at all, and never merged (``merge.merge_rows`` refuses one). A row
+    kind that throws mid-merge is caught and reported ``payload-bad`` so a single bad entry
+    advances the cursor past itself rather than wedging every later seq (§4.1).
 
     **Conflict handling (DAS-7, §4.2).** With ``ancestors`` (the shared registry's agreed
     shas for this family) and a ``queue``, every id whose local AND remote row both moved
@@ -256,32 +294,48 @@ def reconcile_entry(
     """
     if not handles_kind(entry.kind):
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
+    if entry.merge == inv.MERGE_REPLACE_ONLY:
+        return ReconcileResult(entry.id, detail="restored whole or not at all; left as it is")
     dest = Path(home) / entry.path
-    try:
-        stored = read_local_rows(entry, dest)
-        document = _local_document(entry, dest, stored) if entry.records else None
-        local = entity_rows(entry, stored)
-        remote = entity_rows(entry, remote_rows)
+    remote = entity_rows(entry, remote_rows)
+    outcome: dict[str, Any] = {}
+
+    def merge_into(local: list[dict]) -> MergeResult:
         held, recorded = _record_conflicts(entry, local, remote, ancestors, queue, now)
         effective_remote = (
             [r for r in remote if conflicts_mod.row_id(r) not in held] if held else remote
         )
-        merged = merge_rows(
+        outcome.update(held=held, recorded=recorded, effective_remote=effective_remote)
+        return merge_rows(
             entry.merge,
             local,
             _as_they_arrive(entry, effective_remote),
             tombstones=entry.tombstones,
             dedup_key="id",
         )
-        if entry.records:
-            arrived_order = [conflicts_mod.row_id(r) for r in effective_remote]
-            applied = _write_records(entry, dest, document, remote_rows, arrived_order, merged.rows)
+
+    try:
+        if entry.records is not None:
+            peer_document = next((r.get("data") for r in remote_rows if "data" in r), None)
+
+            def change(document: Any) -> Any:
+                merged = merge_into(_with_ids(_here(entry, document)))
+                outcome["merged"] = merged
+                arrived_order = [conflicts_mod.row_id(r) for r in outcome["effective_remote"]]
+                return _merged_document(entry, document, peer_document, arrived_order, merged.rows)
+
+            record_files.rewrite(dest, change)
+            removed = 0
         else:
-            applied = writeback.apply_rows(entry.kind, dest, merged.rows)
+            merged = merge_into(read_local_rows(entry, dest))
+            outcome["merged"] = merged
+            removed = writeback.apply_rows(entry.kind, dest, merged.rows).removed
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
         logger.warning("reconcile: %s failed (%s) — advancing past it", entry.id, exc)
         return ReconcileResult(entry.id, verdict=PAYLOAD_BAD, detail=str(exc))
-    detail = f"+{merged.added} ~{merged.updated} -{applied.removed}"
+    merged = outcome["merged"]
+    held, recorded = outcome["held"], outcome["recorded"]
+    detail = f"+{merged.added} ~{merged.updated} -{removed}"
     if recorded or held:
         detail += f" !{recorded} conflict(s), {len(held)} id(s) held local"
     return ReconcileResult(
@@ -289,10 +343,10 @@ def reconcile_entry(
         verdict=CONSUMED,
         added=merged.added,
         updated=merged.updated,
-        removed=applied.removed,
+        removed=removed,
         detail=detail,
         conflicts=recorded,
-        new_ancestors=_agreed_shas(entry, effective_remote, merged.rows, held),
+        new_ancestors=_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),
     )
 
 

@@ -97,8 +97,12 @@ async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
 
 
 async def api_chat_folders(request: web.Request) -> web.Response:
-    """GET /api/chat/folders — list all project folders."""
+    """GET /api/chat/folders — list all project folders.
+
+    With any another writer put in the file since this state last read it: a sync, a restore's
+    merge."""
     state: DashboardState = request.app["state"]
+    state.refresh_folders()
     return web.json_response(state._folders)
 
 

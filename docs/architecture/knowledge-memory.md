@@ -200,10 +200,16 @@ item vector).
     provider whose model was bound so the next in its chain is bound instead, the setup
     wizard's one-click local model bind, a binding another process wrote
     (`--seed-local-model`, an edit by hand), and the gateway's start when any store holds
-    what the bound model has not embedded. The gateway's watch on the binding
-    (`watch_embedding_binding`) takes the path at its start, whenever the binding changes,
-    and again later for a model that was not ready, backing off from 30 seconds to 10
-    minutes, so a model bound before it could embed is re-indexed once it can. The memory
+    what the bound model has not embedded. So do another home's memories and knowledge,
+    which a merge brings in with the vectors their model wrote — a sync pulling a peer's
+    databases, a restore's merge, an import: each says rows arrived (`embedding_arrivals`),
+    and the path re-embeds what the model bound here did not embed. The gateway's watch on
+    the binding (`watch_embedding_binding`) takes the path at its start, whenever the
+    binding changes or rows arrive (after the re-index running then, which counted what was
+    there when it began), and again later for a model that was not ready, backing off from
+    30 seconds to 10 minutes, so a model bound before it could embed is re-indexed once it
+    can. A merge run at a terminal is another process: the gateway's next start takes it.
+    The memory
     re-embed commits as it goes (`reembed_stale`, every 50 memories), so a stop keeps what
     it did, and the index file is used only when it holds exactly the vectors the database
     does, so a file saved before a stop is rebuilt rather than read as the new model's. A

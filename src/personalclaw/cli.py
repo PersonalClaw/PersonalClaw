@@ -729,7 +729,7 @@ Examples:
     rest_parser.add_argument("--components", help="Comma-separated components to restore")
     rest_parser.add_argument("--list-components", action="store_true")
     rest_parser.add_argument(
-        "--force", action="store_true", help="Restore even if gateway is running"
+        "--force", action="store_true", help="Replace even while the gateway is running"
     )
 
     # inbound — the shared inbound access seam

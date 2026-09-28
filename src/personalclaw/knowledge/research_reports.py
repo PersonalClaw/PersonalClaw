@@ -52,7 +52,9 @@ loads as an empty list and never raises: these definitions are read on the
 gateway's scheduler path and by the reports API, so an unreadable store must
 degrade to "no reports" rather than take the gateway down. The file is
 hand-editable by design, which is the other half of why rule 1 lives in
-``is_due`` and not only in ``save_report``.
+``is_due`` and not only in ``save_report``. Every write re-reads it under its
+lock (``record_files.locked``), which a sync and a restore's merge hold too when
+they bring another machine's reports in, so neither writes over the other.
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ from uuid import uuid4
 
 from croniter import croniter  # type: ignore[import-untyped]
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND as _RESEARCH_FINDING_KIND
@@ -257,6 +260,38 @@ def to_dict(defn: ReportDefinition) -> dict:
     }
 
 
+#: What belongs to one home rather than to what a report IS: whether it is switched on there, and
+#: what its runs there did — when it last ran, how that went, and how far it has read. A report
+#: from another home arrives without them (:func:`arrived_from_another_home`), and two homes never
+#: compare them (:func:`what_it_is`), so a run in one is not an edit the other must review.
+RUNTIME_FIELDS: tuple[str, ...] = (
+    "enabled",
+    "last_run_ts",
+    "last_status",
+    "last_error",
+    "watermark_ts",
+)
+
+
+def what_it_is(row: dict) -> dict:
+    """A stored report as a person made it: without :data:`RUNTIME_FIELDS`. What two homes compare
+    to tell whether either changed it."""
+    return {name: value for name, value in row.items() if name not in RUNTIME_FIELDS}
+
+
+def arrived_from_another_home(row: dict) -> dict:
+    """A stored report from another home, as it is brought into this one: by a sync, a restore's
+    merge or an import, and a sync conflict resolved with the other machine's version.
+
+    What it is (:func:`what_it_is`), switched off: it runs on its cadence, unattended, and each run
+    is a model call, so it runs here only once someone here switches it on — which saves it here,
+    and schedules it (:func:`save_report`). It first reads from where its window starts, as a new
+    report does, since how far another home's runs read is theirs."""
+    arrived = what_it_is(row)
+    arrived["enabled"] = False
+    return arrived
+
+
 def from_dict(raw: dict) -> ReportDefinition:
     """Tolerant inverse of ``to_dict``: unknown keys ignored, bad types coerced or
     defaulted. Tolerant because the store is hand-editable and because a single
@@ -350,9 +385,10 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
         # created_ts is the first-fire anchor (rule 2), so it can never stay 0.
         defn.created_ts = time.time()
     defn.iteration_cap = _clamp_iteration_cap(defn.iteration_cap)
-    defns = [d for d in load_reports() if d.id != defn.id]
-    defns.append(defn)
-    _write(defns)
+    with record_files.locked(_store_path()):
+        defns = [d for d in load_reports() if d.id != defn.id]
+        defns.append(defn)
+        _write(defns)
     # The schedule is attached HERE rather than in the handler, because this is the one home
     # of the definition store: a second writer (a CLI, an app, a future importer) would
     # otherwise persist a report that never fires, which is precisely the state this change
@@ -362,11 +398,12 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
 
 
 def delete_report(report_id: str) -> bool:
-    defns = load_reports()
-    kept = [d for d in defns if d.id != report_id]
-    if len(kept) == len(defns):
-        return False
-    _write(kept)
+    with record_files.locked(_store_path()):
+        defns = load_reports()
+        kept = [d for d in defns if d.id != report_id]
+        if len(kept) == len(defns):
+            return False
+        _write(kept)
     # Order matters: the definition is gone first, so a failure to remove the trigger leaves
     # a row whose provider then refuses ("no report definition") instead of a live schedule
     # for a report that no longer exists.
@@ -533,19 +570,20 @@ def record_run(
     A missing id is a no-op: a report deleted while its run was in flight must
     not make the runner's bookkeeping raise.
     """
-    defns = load_reports()
-    target = next((d for d in defns if d.id == report_id), None)
-    if target is None:
-        logger.warning("record_run for unknown research report %s, ignoring", report_id)
-        return
-    now = time.time()
-    if ok:
-        target.last_run_ts = now
-        target.last_status = "ok"
-        target.last_error = ""
-        if watermark_ts is not None:
-            target.watermark_ts = watermark_ts
-    else:
-        target.last_status = "error"
-        target.last_error = _redact(error)
-    _write(defns)
+    with record_files.locked(_store_path()):
+        defns = load_reports()
+        target = next((d for d in defns if d.id == report_id), None)
+        if target is None:
+            logger.warning("record_run for unknown research report %s, ignoring", report_id)
+            return
+        now = time.time()
+        if ok:
+            target.last_run_ts = now
+            target.last_status = "ok"
+            target.last_error = ""
+            if watermark_ts is not None:
+                target.watermark_ts = watermark_ts
+        else:
+            target.last_status = "error"
+            target.last_error = _redact(error)
+        _write(defns)

@@ -23,6 +23,11 @@ the artifact tiles overlaid on each view (presets included). A preset's core ref
 never written — they are reconstructed from code on every load, so a preset can never
 drift from the shipped layout.
 
+Each user view, and each tile pinned to a view, is a record of its own to a sync and to a
+restore's merge (the ``dashboard_views`` inventory entry): a tile pinned on another machine
+arrives in the view it was pinned to here too. Every write re-reads the file under its lock
+(``record_files.locked``), which those hold as well, so neither writes over the other.
+
 ``ambient.tiles_enabled`` is the master switch over exactly that additive registry, and
 fact 2 above is why it can be honoured in one place: OFF means the overlay reads as empty
 (:func:`_overlay_tiles`) and a new pin is REFUSED (:func:`add_tile`), which by that fact is
@@ -41,6 +46,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 
@@ -393,12 +399,13 @@ def create_view(name: str, icon: str | None = None) -> DashboardView:
     name = name.strip()
     if not name:
         raise ValueError("view name is required")
-    data = _read_disk()
     view_id = uuid.uuid4().hex[:8]
-    data["views"].append(
-        {"id": view_id, "name": name, "icon": icon or None, "nav_pinned": False, "tiles": []}
-    )
-    _write_disk(data)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        data["views"].append(
+            {"id": view_id, "name": name, "icon": icon or None, "nav_pinned": False, "tiles": []}
+        )
+        _write_disk(data)
     return DashboardView(id=view_id, name=name, icon=icon or None, preset=False, tiles=[])
 
 
@@ -406,20 +413,21 @@ def update_view(view_id: str, patch: dict) -> DashboardView:
     """Update a user view's metadata. Presets refuse edit (they are code-locked)."""
     if _is_preset(view_id):
         raise PresetLockedError(f"'{view_id}' is a preset and cannot be edited")
-    data = _read_disk()
-    for v in data["views"]:
-        if v.get("id") == view_id:
-            # No coercion and no truthiness test: the handler has already established
-            # that a present `name` is a non-blank `str` (#2992). `str(patch["name"])`
-            # here is what turned `null` into the four-character name "None".
-            if "name" in patch:
-                v["name"] = patch["name"]
-            if "icon" in patch:
-                v["icon"] = str(patch["icon"]) if patch["icon"] else None
-            if "nav_pinned" in patch:
-                v["nav_pinned"] = bool(patch["nav_pinned"])
-            _write_disk(data)
-            return _user_view_from_dict(v)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        for v in data["views"]:
+            if v.get("id") == view_id:
+                # No coercion and no truthiness test: the handler has already established
+                # that a present `name` is a non-blank `str` (#2992). `str(patch["name"])`
+                # here is what turned `null` into the four-character name "None".
+                if "name" in patch:
+                    v["name"] = patch["name"]
+                if "icon" in patch:
+                    v["icon"] = str(patch["icon"]) if patch["icon"] else None
+                if "nav_pinned" in patch:
+                    v["nav_pinned"] = bool(patch["nav_pinned"])
+                _write_disk(data)
+                return _user_view_from_dict(v)
     raise ViewNotFoundError(view_id)
 
 
@@ -427,13 +435,14 @@ def delete_view(view_id: str) -> None:
     """Delete a user view. Presets refuse deletion."""
     if _is_preset(view_id):
         raise PresetLockedError(f"'{view_id}' is a preset and cannot be deleted")
-    data = _read_disk()
-    before = len(data["views"])
-    data["views"] = [v for v in data["views"] if v.get("id") != view_id]
-    if len(data["views"]) == before:
-        raise ViewNotFoundError(view_id)
-    data["overlay"].pop(view_id, None)
-    _write_disk(data)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        before = len(data["views"])
+        data["views"] = [v for v in data["views"] if v.get("id") != view_id]
+        if len(data["views"]) == before:
+            raise ViewNotFoundError(view_id)
+        data["overlay"].pop(view_id, None)
+        _write_disk(data)
 
 
 def _max_tiles() -> int:
@@ -473,20 +482,19 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
     if not _is_preset(view_id) and get_view(view_id) is None:
         raise ViewNotFoundError(view_id)
 
-    data = _read_disk()
-    tiles = data["overlay"].setdefault(view_id, [])
-    if not isinstance(tiles, list):
-        tiles = []
-        data["overlay"][view_id] = tiles
-    # Idempotent: pinning an already-pinned slug is a no-op (never a duplicate tile).
-    for t in tiles:
-        if isinstance(t, dict) and t.get("ref") == ref:
-            return get_view(view_id)  # type: ignore[return-value]
     cap = _max_tiles()
-    if len([t for t in tiles if isinstance(t, dict)]) >= cap:
-        raise ValueError(f"view is at its tile cap ({cap}); unpin one first")
-    tiles.append({"ref": ref, "size": size, "order": len(tiles), "added_by": added_by})
-    _write_disk(data)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        tiles = data["overlay"].setdefault(view_id, [])
+        if not isinstance(tiles, list):
+            tiles = []
+            data["overlay"][view_id] = tiles
+        # Idempotent: pinning an already-pinned slug is a no-op (never a duplicate tile).
+        if not any(isinstance(t, dict) and t.get("ref") == ref for t in tiles):
+            if len([t for t in tiles if isinstance(t, dict)]) >= cap:
+                raise ValueError(f"view is at its tile cap ({cap}); unpin one first")
+            tiles.append({"ref": ref, "size": size, "order": len(tiles), "added_by": added_by})
+            _write_disk(data)
     return get_view(view_id)  # type: ignore[return-value]
 
 
@@ -498,15 +506,16 @@ def set_tile_refresh(view_id: str, ref: str, patch: dict) -> DashboardTile:
     the write so what the caller reads back is what a refresh will actually honor.
     """
     ref = ref.strip()
-    data = _read_disk()
-    tiles = data["overlay"].get(view_id)
-    if not isinstance(tiles, list):
-        raise ViewNotFoundError(view_id)
-    for t in tiles:
-        if isinstance(t, dict) and t.get("ref") == ref:
-            t["refresh"] = asdict(_refresh_from_dict(patch))
-            _write_disk(data)
-            return _tile_from_dict(t)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        tiles = data["overlay"].get(view_id)
+        if not isinstance(tiles, list):
+            raise ViewNotFoundError(view_id)
+        for t in tiles:
+            if isinstance(t, dict) and t.get("ref") == ref:
+                t["refresh"] = asdict(_refresh_from_dict(patch))
+                _write_disk(data)
+                return _tile_from_dict(t)
     raise ViewNotFoundError(f"{view_id}:{ref}")
 
 
@@ -529,26 +538,27 @@ def resolve_tile(view_id: str, ref: str, keep: bool) -> DashboardView:
     unpin a user tile). Both are the human's decision — the agent only proposes.
     """
     ref = ref.strip()
-    data = _read_disk()
-    tiles = data["overlay"].get(view_id)
-    if not isinstance(tiles, list):
-        raise ViewNotFoundError(view_id)
-    if keep:
-        found = False
-        for t in tiles:
-            if isinstance(t, dict) and t.get("ref") == ref:
-                t["added_by"] = "user"
-                found = True
-        if not found:
-            raise ViewNotFoundError(f"{view_id}:{ref}")
-    else:
-        kept = [t for t in tiles if not (isinstance(t, dict) and t.get("ref") == ref)]
-        if len(kept) == len(tiles):
-            raise ViewNotFoundError(f"{view_id}:{ref}")
-        data["overlay"][view_id] = kept
-        # Re-pack order so the flow layout has no gaps after a removal.
-        for i, t in enumerate(data["overlay"][view_id]):
-            if isinstance(t, dict):
-                t["order"] = i
-    _write_disk(data)
+    with record_files.locked(views_path()):
+        data = _read_disk()
+        tiles = data["overlay"].get(view_id)
+        if not isinstance(tiles, list):
+            raise ViewNotFoundError(view_id)
+        if keep:
+            found = False
+            for t in tiles:
+                if isinstance(t, dict) and t.get("ref") == ref:
+                    t["added_by"] = "user"
+                    found = True
+            if not found:
+                raise ViewNotFoundError(f"{view_id}:{ref}")
+        else:
+            kept = [t for t in tiles if not (isinstance(t, dict) and t.get("ref") == ref)]
+            if len(kept) == len(tiles):
+                raise ViewNotFoundError(f"{view_id}:{ref}")
+            data["overlay"][view_id] = kept
+            # Re-pack order so the flow layout has no gaps after a removal.
+            for i, t in enumerate(data["overlay"][view_id]):
+                if isinstance(t, dict):
+                    t["order"] = i
+        _write_disk(data)
     return get_view(view_id)  # type: ignore[return-value]

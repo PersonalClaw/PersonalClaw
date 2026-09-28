@@ -113,8 +113,12 @@ def known_tag_ids(state) -> set[str]:
 
 
 async def api_chat_tags(request: web.Request) -> web.Response:
-    """GET /api/chat/tags — list all tag definitions."""
+    """GET /api/chat/tags — list all tag definitions.
+
+    With any another writer put in the file since this state last read it: a sync, a restore's
+    merge."""
     state: DashboardState = request.app["state"]
+    state.refresh_tags()
     return web.json_response(sorted(state._tags, key=lambda t: t.get("order", 0)))
 
 
@@ -325,8 +329,12 @@ def _normalize_column(
 
 
 async def api_chat_tag_columns(request: web.Request) -> web.Response:
-    """GET /api/chat/tag-columns — list sidebar column layout."""
+    """GET /api/chat/tag-columns — list sidebar column layout.
+
+    With any column another writer put in the file since this state last read it: a sync, a
+    restore's merge."""
     state: DashboardState = request.app["state"]
+    state.refresh_tag_boards()
     return web.json_response(sorted(state._tag_boards, key=lambda c: c.get("order", 0)))
 
 

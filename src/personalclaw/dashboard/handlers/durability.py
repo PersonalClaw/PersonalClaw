@@ -103,7 +103,7 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
 
 def _replace_refused(request: web.Request, operation: str, *, what: str, path: str) -> web.Response:
     """The one answer both routes give a replace: ``409 gateway_running``, naming the command that
-    does it.
+    does it, in the words ``personalclaw restore`` refuses one in (``snapshot.replace_refusal``).
 
     A replace moves the live home aside and writes the incoming one in its place, under a gateway
     that holds that state open — databases, caches and stores it writes back. Serving this request
@@ -112,15 +112,10 @@ def _replace_refused(request: web.Request, operation: str, *, what: str, path: s
     archive, with the gateway stopped, and there is no ``force`` over HTTP: overriding the guard
     is a local operator decision at a terminal. *path* is quoted for a shell, or a placeholder.
     """
+    from personalclaw.snapshot import replace_refusal
+
     _audit_api(request, operation, "denied", "gateway_running")
-    return json_error(
-        "gateway_running",
-        message=(
-            f"a replace {what} rewrites state this gateway holds open; stop the gateway "
-            f"and run `personalclaw restore {path} --mode replace` instead"
-        ),
-        status=409,
-    )
+    return json_error("gateway_running", message=replace_refusal(what, path), status=409)
 
 
 def _reject_app(request: web.Request) -> web.Response | None:

@@ -7,7 +7,9 @@ memory store with SSE progress. Mirrors the download-job route shape.
 
 Every change of the model reaches the re-index by one path, :func:`reindex_for_binding`,
 whether it is saved here, comes from a provider's removal, is written by another process, or
-waits for the model to be ready; :func:`watch_embedding_binding` takes it whenever it is due.
+waits for the model to be ready; :func:`watch_embedding_binding` takes it whenever it is due. So
+do another home's vectors, arriving by a sync, a restore's merge or an import
+(``embedding_arrivals``).
 """
 
 from __future__ import annotations
@@ -208,17 +210,24 @@ async def watch_embedding_binding(app, *, every: float = WATCH_SECS) -> None:
     """The gateway's watch on the embedding binding, from its start to its stop.
 
     Takes :func:`reindex_for_binding` at once — the start's check, for what a stop or an update
-    left — and then whenever the model bound now is not the one it last settled, or a look again
-    it asked for is due (``ReindexRegistry.check_due``). Reading the binding is a file read, so the
-    watch sees a change nothing in this process made, such as a binding another process wrote, and
-    it probes a model only when one of those is so.
+    left — and then whenever the model bound now is not the one it last settled, a look again it
+    asked for is due (``ReindexRegistry.check_due``), or a merge brought another home's rows in
+    (``embedding_arrivals``): a sync, a restore's merge or an import, whose vectors another model
+    may have written. Reading the binding is a file read, so the watch sees a change nothing in
+    this process made, such as a binding another process wrote, and it probes a model only when
+    one of those is so. Rows that arrive while a re-index runs are taken once it ends, since the
+    one running counted what was there when it began.
     """
+    from personalclaw import embedding_arrivals
     from personalclaw.embedding_providers.registry import BoundEmbedding
 
     registry = app["state"].embedding_reindex()
     while True:
         try:
-            if registry.check_due(BoundEmbedding.ref() or "", time.monotonic()):
+            due = registry.check_due(BoundEmbedding.ref() or "", time.monotonic())
+            if registry.active() is None and embedding_arrivals.take():
+                due = True
+            if due:
                 await reindex_for_binding(app)
         except asyncio.CancelledError:
             raise

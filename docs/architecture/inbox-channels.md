@@ -126,17 +126,23 @@ absent from `_UPDATABLE_FIELD_TYPES` (pinned equal to the HTTP allowlist
 `handlers_inbox._UPDATABLE_FIELDS`), so `PUT /api/inbox/{id}` cannot re-attribute a
 teammate's item to the owner and launder foreign content into owner intent.
 
-### Known limitation: the item store is last-writer-wins
+### The item store keeps what another writer wrote
 
-`InboxStore.save()` serialises its whole in-memory `items` dict over `inbox.json`. Two
-processes each holding an `InboxStore` will therefore lose the earlier writer's new items:
-whoever saves last wins, and the loss is silent. This is the F4 failure mode
-([shared-store-provider-conformance.md](shared-store-provider-conformance.md) clause 3) —
-declared here rather than papered over, which is what that clause requires of a
-last-writer-wins store. It is not a problem for the shipped single-gateway topology (one
-process owns the store, and `InboxService` bounces mutations onto the loop that owns it),
-and it is exactly what a future multi-writer shared inbox must fix — with a
-sibling-preserving read-modify-write — before it can claim a merge-safe semantic.
+`inbox.json` has more writers than the running service: a sync bringing another machine's items
+in, a restore's merge or an import bringing items back, and an `InboxStore` opened elsewhere in
+the process. So `InboxStore.save()` is a read-modify-write under the file's lock
+(`record_files.written`): it writes the items it holds with, on top, every item another writer
+added, changed or removed since the store last read or wrote the file — unless the store changed
+that same item itself, in which case its own change stands. `InboxStore.refresh()` takes those
+items in (`record_files.taken_in`), and the inbox API calls it before it reads, so an item a sync
+brought shows up without a restart. The earlier writer's new items are no longer lost to whoever
+saves last; two writers editing one item still resolve it last-writer-wins for that item alone,
+the F4 case [shared-store-provider-conformance.md](shared-store-provider-conformance.md) clause 3
+asks a store to declare.
+
+Two homes compare an item without where each is with it (`inbox.item_what_it_is`): its status,
+triage, draft, sent time and star are each machine's, so reading or answering one on both is
+never an edit to review.
 
 ## Pending approvals: one registry, every surface
 

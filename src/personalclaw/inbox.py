@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from personalclaw import notification_addressing, notification_kinds
+from personalclaw import notification_addressing, notification_kinds, record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.security import redact_for_display
@@ -457,6 +457,27 @@ class InboxItem:
         return cls(**clean)
 
 
+#: What of an item is where THIS machine is with it rather than what came in: its triage, what was
+#: drafted or sent here, and the owner's star. Another machine reads and handles the same item on
+#: its own, so two homes compare an item without them (:func:`item_what_it_is`).
+_TRIAGE_FIELDS: tuple[str, ...] = (
+    "status",
+    "classification",
+    "confidence",
+    "draft",
+    "context_summary",
+    "replied_at",
+    "favorited",
+)
+
+
+def item_what_it_is(row: dict) -> dict:
+    """A stored item as it came in, without where this machine is with it (:data:`_TRIAGE_FIELDS`).
+    What two homes compare to tell whether either changed an item, so reading, answering or
+    starring one on each is never an edit to review."""
+    return {name: value for name, value in row.items() if name not in _TRIAGE_FIELDS}
+
+
 # ── User Resolver ──
 
 
@@ -559,34 +580,74 @@ class InboxState:
 
 # ── Inbox (item storage) ──
 
+#: Where ``inbox.json`` keeps its items.
+_ITEMS = record_files.Shape(key="items")
+
+
+def _item_form(record: dict) -> dict:
+    """A stored item as :class:`InboxStore` holds and writes it."""
+    return InboxItem.from_dict(record).to_dict()
+
 
 class InboxStore:
-    """Persists InboxItems to disk."""
+    """Persists InboxItems to disk.
+
+    Holds them in memory between writes, and the file has other writers: a sync bringing another
+    machine's items in, a restore's merge bringing items back, a store opened elsewhere in this
+    process. So a write keeps what they wrote since this store read or wrote the file, and
+    :meth:`refresh` takes it in (``record_files.written`` / ``taken_in``): writing the items read
+    before would have put the file back as it was.
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or (config_dir() / _ITEMS_FILE)
         self.items: dict[str, InboxItem] = {}  # id → item
         self._dirty = False
+        self._kept = record_files.Kept(normalize=_item_form)
 
     def load(self) -> None:
         if self._path.exists():
             try:
+                at = record_files.stamp(self._path)
                 data = json.loads(self._path.read_text())
                 self.items.clear()
                 for d in data.get("items", []):
                     item = InboxItem.from_dict(d)
                     self.items[item.id] = item
                 self._dirty = False
+                self._kept.took(at, self._held())
             except (json.JSONDecodeError, OSError):
                 logger.warning("Failed to load inbox items, starting fresh")
 
+    def _held(self) -> list[dict]:
+        return [item.to_dict() for item in self.items.values()]
+
     def save(self) -> None:
-        data = {"items": [item.to_dict() for item in self.items.values()]}
         try:
-            atomic_write(self._path, json.dumps(data, indent=2), mode=0o600)
+            record_files.written(self._path, _ITEMS, self._kept, self._held(), self._write)
             self._dirty = False
         except OSError:
             logger.warning("Failed to save inbox items")
+
+    def _write(self, records: list[dict]) -> None:
+        atomic_write(self._path, json.dumps({"items": records}, indent=2), mode=0o600)
+
+    def refresh(self) -> int:
+        """Take in what another writer put in the file since this store last read or wrote it —
+        an item a sync brought from another machine, one a restore's merge brought back, or one
+        another store changed or removed — unless this store changed the same item since. Returns
+        how many items that moved."""
+        held = {item_id: item.to_dict() for item_id, item in self.items.items()}
+        moves = record_files.taken_in(self._path, _ITEMS, self._kept, held)
+        for item_id, record in moves.items():
+            if record is None:
+                self.items.pop(item_id, None)
+                continue
+            try:
+                self.items[item_id] = InboxItem.from_dict(record)
+            except (TypeError, ValueError):
+                logger.warning("inbox item %s could not be read, so it is not shown", item_id)
+        return len(moves)
 
     def add(self, item: InboxItem) -> None:
         """Store *item*, stamping attribution when it carries none.

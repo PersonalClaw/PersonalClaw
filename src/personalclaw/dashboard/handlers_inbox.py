@@ -38,9 +38,12 @@ _UPDATABLE_FIELDS = {"status", "draft", "classification", "confidence", "favorit
 
 
 def _get_inbox(state: "DashboardState") -> tuple[InboxState, InboxStore]:
-    """Get inbox state and store — prefer the running service's instances."""
+    """Get inbox state and store — prefer the running service's instances, with what another
+    writer put in the file since the service last read or wrote it taken in (a sync, a restore's
+    merge)."""
     svc = getattr(state, "_inbox_svc", None)
     if svc:
+        svc.inbox.refresh()
         return svc.state, svc.inbox
     # Fallback: load from disk (no running service)
     if not hasattr(state, "_inbox_state") or state._inbox_state is None:

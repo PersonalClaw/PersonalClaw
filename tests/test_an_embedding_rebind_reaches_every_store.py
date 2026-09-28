@@ -1118,3 +1118,128 @@ def test_a_model_bound_before_it_can_embed_is_re_embedded_once_it_can(
 
     assert _finished(jobs) == [(f"{ENTRY}:{C}", "done")]
     assert store.memory_stats()["embedded_stale"] == 0
+
+
+# ── another home's memories are re-embedded when they arrive ─────────────────────────────
+
+
+def _another_homes_memory(tmp_path: Path) -> Path:
+    """Another home's ``memory.db``, holding a memory the other model (C) embedded there."""
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    _bind(C)
+    elsewhere = VectorMemoryStore(db_path=tmp_path / "elsewhere" / "memory.db")
+    elsewhere.init()
+    assert elsewhere.write_episodic(KESTREL)
+    elsewhere.close()
+    _bind(A)
+    return tmp_path / "elsewhere" / "memory.db"
+
+
+def _by_a_sync(db: Path, home: Path, tmp_path: Path) -> None:
+    """A peer's database, as a sync stages and merges it."""
+    import shutil
+
+    from personalclaw.durability import inventory as inv
+    from personalclaw.durability.db_merge import make_db_merger
+
+    staged = tmp_path / "shard" / "db"
+    staged.mkdir(parents=True)
+    shutil.copy2(db, staged / "memory_db.db")
+    assert make_db_merger(home)(inv.by_id("memory_db"), tmp_path / "shard") == "consumed"
+
+
+def _by_a_restores_merge(db: Path, home: Path, tmp_path: Path) -> None:
+    import shutil
+
+    from personalclaw.snapshot import _do_merge
+
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    shutil.copy2(db, snap / "memory.db")
+    _do_merge(snap, home, ["memory"])
+
+
+def _by_an_import(db: Path, home: Path, tmp_path: Path) -> None:
+    import zipfile
+
+    from personalclaw.portability import apply_import_zip
+
+    archive = tmp_path / "personalclaw-export.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.write(db, "personalclaw-export/memory.db")
+    apply_import_zip(archive, mode="merge")
+
+
+@pytest.mark.parametrize(
+    "arrive",
+    [_by_a_sync, _by_a_restores_merge, _by_an_import],
+    ids=["a sync", "a restore's merge", "an import"],
+)
+def test_a_memory_another_model_embedded_is_re_embedded_when_it_arrives(recorded, tmp_path, arrive):
+    """🔴 Red before: a merge brought another home's memories in with the vectors its model wrote
+    — a sync pulling a peer's database, a restore's merge, an import — and nothing re-embedded
+    them, since the model bound here had not changed: each was read by keyword only, until the
+    model was rebound or the gateway restarted. The gateway's watch now takes the one re-index path
+    when rows arrive, and it re-embeds what the model bound here did not embed."""
+    import time
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+    db = _another_homes_memory(tmp_path)
+    state = _main_state(config_dir())
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    store = state.context_builder.memory.vector_store
+
+    async def _it_arrives() -> None:
+        await _until(
+            lambda: not jobs.check_due(f"{ENTRY}:{A}", time.monotonic()), what="the first look"
+        )
+        assert jobs.list() == [], "every memory here is the bound model's: nothing to do"
+        arrive(db, config_dir(), tmp_path)
+        assert store.memory_stats()["embedded_stale"] == 1, "it came with the other model's vector"
+        await _until(lambda: _finished(jobs), what="the re-index")
+
+    asyncio.run(_watching(state, _it_arrives))
+
+    assert _finished(jobs) == [(f"{ENTRY}:{A}", "done")]
+    assert store.memory_stats()["embedded_stale"] == 0
+    assert (A, KESTREL) in [(model, text) for model, _endpoint, text in recorded]
+
+
+def test_memories_that_arrive_while_a_re_index_runs_are_re_embedded_after_it(
+    recorded, tmp_path, monkeypatch
+):
+    """The re-index running when rows arrive counted what was there when it began, so the rows
+    wait for it to end and then take the path themselves, rather than being settled by it."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+    from personalclaw.dashboard.handlers import embedding_reindex as er
+    from personalclaw.embedding_providers.registry import BoundEmbedding
+
+    db = _another_homes_memory(tmp_path)
+    state = _main_state(config_dir())
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    taken: list[str] = []
+
+    async def _the_path(app) -> None:
+        taken.append("taken")
+        jobs.settle(BoundEmbedding.ref() or "")
+
+    monkeypatch.setattr(er, "reindex_for_binding", _the_path)
+    running = types.SimpleNamespace(status="running", model=f"{ENTRY}:{A}")
+
+    async def _while_one_runs() -> None:
+        await _until(lambda: taken, what="the start's look")
+        monkeypatch.setattr(jobs, "active", lambda: running)
+        _by_a_restores_merge(db, config_dir(), tmp_path)
+        await asyncio.sleep(0.1)
+        assert taken == ["taken"], "taken while the one running could not count them"
+        monkeypatch.setattr(jobs, "active", lambda: None)
+        await _until(lambda: len(taken) == 2, what="the arrivals, once it ended")
+
+    asyncio.run(_watching(state, _while_one_runs))

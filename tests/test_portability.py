@@ -1141,9 +1141,11 @@ def _seeded_home(tmp_path: Path) -> Path:
     ):
         (home / name).mkdir(parents=True, exist_ok=True)
         (home / name / "x.json").write_text('{"id":"MY-DATA"}', encoding="utf-8")
+    # A store of records in its own shape: an import takes an archive's records in one at a time,
+    # and a file that holds none it can read brings nothing.
+    (home / "inbox.json").write_text('{"items":[{"id":"MY-DATA"}]}', encoding="utf-8")
+    (home / "tags.json").write_text('[{"id":"MY-DATA"}]', encoding="utf-8")
     for name in (
-        "inbox.json",
-        "tags.json",
         "tool_usage.json",
         "spend.json",
         "model_calls.jsonl",
@@ -1384,14 +1386,17 @@ class TestImportReadsTheWidenedExport:
         dst = tmp_path / "dst"
         (dst / "tasks").mkdir(parents=True)
         (dst / "tasks" / "x.json").write_text('{"id":"LOCAL"}', encoding="utf-8")
-        (dst / "inbox.json").write_text('{"v":"LOCAL"}', encoding="utf-8")
+        (dst / "inbox.json").write_text(
+            '{"items":[{"id":"MY-DATA","v":"LOCAL"}]}', encoding="utf-8"
+        )
         monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
         monkeypatch.setattr("personalclaw.portability.config_dir", lambda: dst)
 
         apply_import_zip(archive, mode="merge")
 
         assert json.loads((dst / "tasks" / "x.json").read_text())["id"] == "LOCAL"
-        assert json.loads((dst / "inbox.json").read_text())["v"] == "LOCAL"
+        items = json.loads((dst / "inbox.json").read_text())["items"]
+        assert items == [{"id": "MY-DATA", "v": "LOCAL"}], "the item this home has stays as it is"
 
     def test_a_nested_database_arrives_INTACT_through_the_round_trip(self, tmp_path, monkeypatch):
         """The export stages it through the backup API; the import must actually place it. Asserted

@@ -179,7 +179,8 @@ def test_the_scan_finds_the_copy_it_is_meant_to_read():
     assert "web/src/pages/settings/CompanionPanel.tsx" in where  # backticks in a hint string
     assert "web/src/pages/settings/UpdatesPanel.tsx" in where  # \` in a template literal
     assert "web/src/pages/apps/installConsent.tsx" in where  # cmd('personalclaw setup')
-    assert "src/personalclaw/dashboard/handlers/durability.py" in where  # an API error
+    # The replace refusal: the dashboard's 409 and the terminal's, one sentence.
+    assert "src/personalclaw/snapshot.py" in where
     assert "personalclaw doctor" in commands
 
 

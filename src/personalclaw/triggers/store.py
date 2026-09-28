@@ -45,7 +45,6 @@ otherwise a chat-created trigger vanishes when the dashboard saves a stale in-me
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -55,6 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from personalclaw import record_files
 from personalclaw.triggers.models import Issue, Trigger, parse_trigger
 from personalclaw.triggers.provider import TriggerStoreProvider
 
@@ -65,7 +65,6 @@ logger = logging.getLogger(__name__)
 STORE_VERSION = 1
 
 STORE_FILENAME = "triggers.json"
-LOCK_FILENAME = ".triggers.lock"
 
 
 @dataclass
@@ -131,7 +130,6 @@ class TriggerStore(TriggerStoreProvider):
 
         self._dir = Path(base_dir) if base_dir else config_dir()
         self._path = self._dir / STORE_FILENAME
-        self._lock_path = self._dir / LOCK_FILENAME
         self._last_mtime = 0.0
 
     # ── paths ──
@@ -153,20 +151,16 @@ class TriggerStore(TriggerStoreProvider):
 
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
-        """Cross-process advisory lock, matching `ScheduleService._file_lock`.
+        """The store's cross-process advisory lock: `record_files.locked`, a lock FILE beside
+        `triggers.json` rather than a lock on it, since the atomic write replaces the store by
+        rename, which would invalidate a lock held on the old inode.
 
-        A separate lock FILE rather than locking `triggers.json` itself: the atomic write
-        replaces the
-        store by rename, which would invalidate a lock held on the old inode.
+        The one lock every writer of the file holds — this store's mutations, and a sync or a
+        restore's merge bringing another home's automations in — so none of them writes a store
+        built from a copy another has since changed.
         """
-        self._dir.mkdir(parents=True, exist_ok=True)
-        handle = self._lock_path.open("w")
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        with record_files.locked(self._path):
             yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-            handle.close()
 
     def _write(self, rows: list[dict[str, Any]]) -> None:
         """Atomic tmp→rename. A partial write is worse than a lost one."""

@@ -242,8 +242,11 @@ the step keys that loosen whether its agent asks. So it arrives with
 `enabled: false`, and switching it on here asks first for what it runs, as the
 Triggers page asks of any row that holds no grant: a yes is given where the owner
 is shown what runs. A lifecycle hook from another home arrives by the same rule
-(`hooks.hook_arrived_from_another_home`, `HOOK_RUNTIME_FIELDS`), through
-`snapshot._merge_hooks` and the `hooks` inventory entry.
+(`hooks.hook_arrived_from_another_home`, `HOOK_RUNTIME_FIELDS`), through the `hooks` inventory
+entry, which a sync, a restore's merge and an import all apply (`durability.reconcile.bring_in`
+for the last two). A standing research report arrives the same way, switched off and without its
+runs there (`knowledge.research_reports.arrived_from_another_home`): it runs on its cadence and
+each run is a model call.
 
 A sync reconciles `triggers.json` and `hooks.json` one entry at a time
 (`StateEntry.records`), although each is exported as one file: a peer's
@@ -253,6 +256,23 @@ file as the store wrote it. Two homes compare only what a person makes of an
 automation (`StateEntry.compared`), so a fire, a switch or a grant in either is
 never an edit to review; an edit in both is a conflict on that one automation.
 "Keep this machine's" writes nothing: the automation stays as it is now.
+
+Every writer of `triggers.json` holds the trigger store's own lock
+(`.triggers.lock`, `record_files.locked`) and re-reads the file under it: the
+store's mutations, a sync, a restore's merge and an import alike. One that read
+the file, merged and wrote it back while the store added an automation used to
+write that automation away. Every other file of user records is written the same
+way — the inbox, the document comments, the research reports, the tags, the tag
+boards, the folders, the dashboard's views and the hooks each have one lock their
+store and those paths hold — and a store that holds its records in memory keeps,
+when it writes, what another writer put there since it last read the file.
+
+A store whose every record is a grant never takes another machine's in by a
+sync: which projects run their scripts (`project_trust.json`), which actions run
+without asking and their undo handles (`autonomy_rungs.json`,
+`autonomy_reversals.json`), and which integrations may connect
+(`inbound_clients.json`, `inbound_tokens.json`). They are `replace_only`, as the
+configuration is: restored whole or not at all, and left as they are by a pull.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.

@@ -178,7 +178,8 @@ has cost someone a debugging session.
   and `mode=merge` (with `confirm: true`) merges. Both refuse a replace the same way,
   `409 gateway_running`: a replace rewrites state the running gateway holds open, so the
   message names `personalclaw restore <archive> --mode replace`, which takes a snapshot or an
-  export archive with the gateway stopped. A merge's answer carries `restart`, the sentence
+  export archive with the gateway stopped, and which refuses a replace in the same words while
+  the gateway runs (a merge runs from either). A merge's answer carries `restart`, the sentence
   saying that the gateway picks up everything it brought in once it restarts. Credentials and
   rebuildable caches never travel in an export.
 - **Secret values are write-only.** `/api/secrets` returns presence flags, names and

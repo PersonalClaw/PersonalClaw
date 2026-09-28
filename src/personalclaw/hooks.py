@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.safety_flags import strict_bool
 from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
@@ -781,9 +782,9 @@ def hook_arrived_from_another_home(row: dict) -> dict:
     (:func:`hook_what_it_is`), switched off. A hook runs on the agent's own events — every prompt,
     every tool call — so one from elsewhere runs here only once someone here switches it on, which
     asks first for what it runs (``dashboard.handlers.triggers._switch_on_grant``). The rule every
-    way one arrives applies: a snapshot or archive merge (``snapshot._merge_hooks``), a device sync
-    (the ``hooks`` inventory entry's ``arrives``), and a sync conflict resolved with the other
-    machine's version or a drafted merge."""
+    way one arrives applies — the ``hooks`` inventory entry's ``arrives``: a device sync, a snapshot
+    or archive merge (``durability.reconcile.bring_in``), and a sync conflict resolved with the
+    other machine's version or a drafted merge."""
     arrived = hook_what_it_is(row)
     arrived["enabled"] = False
     return arrived
@@ -1079,8 +1080,24 @@ _HOOKS_FILE = "hooks.json"
 LIFECYCLE_TRIGGER_PREFIX = "lifecycle:"
 
 
+#: Where ``hooks.json`` keeps its hooks.
+_HOOKS = record_files.Shape(key="hooks")
+
+
+def _hook_form(record: dict) -> dict:
+    """A stored hook as :class:`ScriptHookStore` holds and writes it."""
+    return ScriptHook.from_dict(record).to_dict()
+
+
 class ScriptHookStore:
-    """Persist script hooks to ~/.personalclaw/hooks.json."""
+    """Persist script hooks to ~/.personalclaw/hooks.json.
+
+    Holds them in memory between writes, and the file has other writers: a sync or a restore's
+    merge bringing another machine's hooks in, switched off, and a store opened elsewhere. So every
+    write keeps what they wrote since this store read or wrote the file, and every read takes it in
+    first (``record_files.written`` / ``taken_in``): the store fires on each tool call and writes
+    after, so the list it read before would otherwise have put the file back within seconds.
+    """
 
     def __init__(self, config_dir: Path | None = None):
         from personalclaw.config.loader import config_dir as _cfg_dir
@@ -1088,6 +1105,7 @@ class ScriptHookStore:
         self._dir = config_dir or _cfg_dir()
         self._path = self._dir / _HOOKS_FILE
         self._hooks: dict[str, ScriptHook] = {}
+        self._kept = record_files.Kept(normalize=_hook_form)
         self._load()
 
     def _load(self) -> None:
@@ -1097,10 +1115,12 @@ class ScriptHookStore:
         Measured on `main`: the chat's ``hook_register`` wrote its registrations into this file,
         and ``hook_id="hooks"`` replaced the list with an object — every later start raised
         ``AttributeError`` here, the store never loaded, and no lifecycle trigger ran. Callbacks
-        have their own file now (`webhook_callbacks`), and this store is this file's only writer.
+        have their own file now (`webhook_callbacks`), and nothing but hooks is written to this
+        one: by this store, and by a sync or a restore's merge bringing hooks in.
         """
         if not self._path.exists():
             return
+        at = record_files.stamp(self._path)
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
@@ -1118,18 +1138,38 @@ class ScriptHookStore:
                 logger.warning("hooks.json: skipping an entry that is not a lifecycle trigger")
                 continue
             self._hooks[hook.id] = hook
+        self._kept.took(at, self._held())
+
+    def _held(self) -> list[dict]:
+        return [h.to_dict() for h in self._hooks.values()]
+
+    def _take_in(self) -> None:
+        """Take in what another writer put in ``hooks.json`` since this store last read or wrote
+        it — a hook a sync or a restore's merge brought, one another store changed or removed —
+        unless this store changed the same hook since."""
+        held = {hook_id: hook.to_dict() for hook_id, hook in self._hooks.items()}
+        for hook_id, record in record_files.taken_in(self._path, _HOOKS, self._kept, held).items():
+            if record is None:
+                self._hooks.pop(hook_id, None)
+                continue
+            try:
+                self._hooks[hook_id] = ScriptHook.from_dict(record)
+            except (AttributeError, TypeError, ValueError):
+                logger.warning("hooks.json: skipping an entry that is not a lifecycle trigger")
 
     def _save(self) -> None:
-        data = {"hooks": [h.to_dict() for h in self._hooks.values()]}
-        atomic_write(self._path, json.dumps(data, indent=2))
+        self._save_snapshot(self._held())
 
     def list_all(self) -> list[ScriptHook]:
+        self._take_in()
         return list(self._hooks.values())
 
     def get(self, hook_id: str) -> ScriptHook | None:
+        self._take_in()
         return self._hooks.get(hook_id)
 
     def create(self, data: dict) -> ScriptHook:
+        self._take_in()
         hook = ScriptHook.from_dict(data)
         if not hook.id:
             hook.id = str(uuid.uuid4())[:8]
@@ -1138,6 +1178,7 @@ class ScriptHookStore:
         return hook
 
     def update(self, hook_id: str, data: dict) -> ScriptHook | None:
+        self._take_in()
         hook = self._hooks.get(hook_id)
         if not hook:
             return None
@@ -1167,6 +1208,7 @@ class ScriptHookStore:
         return hook
 
     def delete(self, hook_id: str) -> bool:
+        self._take_in()
         if hook_id in self._hooks:
             del self._hooks[hook_id]
             self._save()
@@ -1174,6 +1216,7 @@ class ScriptHookStore:
         return False
 
     def toggle(self, hook_id: str) -> ScriptHook | None:
+        self._take_in()
         hook = self._hooks.get(hook_id)
         if not hook:
             return None
@@ -1317,6 +1360,7 @@ class ScriptHookStore:
         if tool_response is not None:
             hook_event["tool_response"] = tool_response
 
+        self._take_in()
         for hook in list(self._hooks.values()):
             if not hook.enabled or hook.event != event:
                 continue
@@ -1349,9 +1393,12 @@ class ScriptHookStore:
         return results
 
     def _save_snapshot(self, hooks_data: list[dict]) -> None:
-        """Thread-safe save using pre-captured hook snapshot."""
-        data = {"hooks": hooks_data}
-        atomic_write(self._path, json.dumps(data, indent=2))
+        """Thread-safe save using pre-captured hook snapshot, under the file's lock and with
+        what another writer put there since kept (``record_files.written``)."""
+        record_files.written(self._path, _HOOKS, self._kept, hooks_data, self._write)
+
+    def _write(self, records: list[dict]) -> None:
+        atomic_write(self._path, json.dumps({"hooks": records}, indent=2))
 
 
 # -- Global script hook store accessor --

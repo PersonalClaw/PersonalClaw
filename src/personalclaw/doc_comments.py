@@ -26,7 +26,9 @@ name would have to be a hash with no way back to the document.
 
 **No localStorage cache remains.** Keeping one would leave two writers over one list and
 no rule for which wins after an edit on a second device; the store is the single source
-of truth and the frontend reads it.
+of truth and the frontend reads it. Every write re-reads it under its lock
+(``record_files.locked``), which a sync and a restore's merge hold too when they bring another
+machine's comments in, so neither writes over the other.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 
@@ -185,41 +188,43 @@ def add(
     body = _clamp(comment, MAX_COMMENT_CHARS)
     if not body.strip():
         raise ValueError("comment is required")
-    rows = load()
-    if len(rows) >= MAX_COMMENTS:
-        raise ValueError(f"the comment deck is full ({MAX_COMMENTS} comments)")
-    row = DocComment(
-        id=f"c-{uuid.uuid4().hex[:12]}",
-        doc_id=doc_id,
-        doc_label=_clamp(doc_label, 500),
-        doc_path=_clamp(doc_path, 4_000),
-        quote=_clamp(quote, MAX_QUOTE_CHARS),
-        comment=body,
-        line=_int_or_none(line),
-        column=_int_or_none(column),
-        context=_clamp(context, 1_000),
-        ts=time.time(),
-    )
-    rows.append(row)
-    _save(rows)
+    with record_files.locked(store_path()):
+        rows = load()
+        if len(rows) >= MAX_COMMENTS:
+            raise ValueError(f"the comment deck is full ({MAX_COMMENTS} comments)")
+        row = DocComment(
+            id=f"c-{uuid.uuid4().hex[:12]}",
+            doc_id=doc_id,
+            doc_label=_clamp(doc_label, 500),
+            doc_path=_clamp(doc_path, 4_000),
+            quote=_clamp(quote, MAX_QUOTE_CHARS),
+            comment=body,
+            line=_int_or_none(line),
+            column=_int_or_none(column),
+            context=_clamp(context, 1_000),
+            ts=time.time(),
+        )
+        rows.append(row)
+        _save(rows)
     return row
 
 
 def update(comment_id: str, *, comment: str) -> DocComment | None:
     """Edit one comment's body. ``None`` when the id is unknown."""
-    rows = load()
     body = _clamp(comment, MAX_COMMENT_CHARS)
     if not body.strip():
         raise ValueError("comment is required")
-    found: DocComment | None = None
-    for row in rows:
-        if row.id == comment_id:
-            row.comment = body
-            found = row
-            break
-    if found is None:
-        return None
-    _save(rows)
+    with record_files.locked(store_path()):
+        rows = load()
+        found: DocComment | None = None
+        for row in rows:
+            if row.id == comment_id:
+                row.comment = body
+                found = row
+                break
+        if found is None:
+            return None
+        _save(rows)
     return found
 
 
@@ -233,17 +238,19 @@ def remove(ids: list[str]) -> int:
     wanted = {str(i) for i in ids if str(i).strip()}
     if not wanted:
         return 0
-    rows = load()
-    kept = [r for r in rows if r.id not in wanted]
-    removed = len(rows) - len(kept)
-    if removed:
-        _save(kept)
+    with record_files.locked(store_path()):
+        rows = load()
+        kept = [r for r in rows if r.id not in wanted]
+        removed = len(rows) - len(kept)
+        if removed:
+            _save(kept)
     return removed
 
 
 def clear() -> int:
     """Empty the deck. Returns how many rows went away."""
-    rows = load()
-    if rows:
-        _save([])
+    with record_files.locked(store_path()):
+        rows = load()
+        if rows:
+            _save([])
     return len(rows)

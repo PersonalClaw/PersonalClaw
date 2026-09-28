@@ -13,10 +13,12 @@ than inventing a second one:
   merged with ``INSERT OR IGNORE``, FTS shadow tables skipped and the index rebuilt.
 
 Embeddings ride the ATTACH (they live IN the DB, carried by the merge — matching the snapshot
-precedent, so a synced memory is searchable without re-embedding). Derived indexes
-(``memory.faiss`` / ``memory_index.db``, `derived=True`) are NOT synced and are rebuilt locally
-by their owning subsystems (boot rebuild + the heartbeat reindex) — this merger touches only the
-authoritative DB, per §4.1 "indexes rebuilt on import, never synced".
+precedent, so a synced memory embedded by the model bound here is searchable without
+re-embedding). One embedded by another model is not: each merge says rows arrived
+(``embedding_arrivals``), and the gateway's one re-index path re-embeds what the model bound here
+did not embed. Derived indexes (``memory.faiss`` / ``memory_index.db``, `derived=True`) are NOT
+synced and are rebuilt locally by their owning subsystems (boot rebuild + the heartbeat reindex) —
+this merger touches only the authoritative DB, per §4.1 "indexes rebuilt on import, never synced".
 
 Verdicts returned to the cursor: ``consumed`` on a clean merge; ``prerequisite-absent`` if this
 seq carried no DB copy for the entry (a row-only export mis-routed here — hold, don't advance
@@ -29,6 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from personalclaw import embedding_arrivals
 from personalclaw.durability import inventory as inv
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT
 from personalclaw.durability.pull_engine import DbMerger
@@ -62,6 +65,7 @@ def make_db_merger(home: Path) -> DbMerger:
         except Exception as exc:  # noqa: BLE001 — one bad DB must not wedge the whole pull
             logger.warning("db_merge: %s failed (%s) — advancing past it", entry.id, exc)
             return PAYLOAD_BAD
+        embedding_arrivals.arrived()
         return CONSUMED
 
     return _merge

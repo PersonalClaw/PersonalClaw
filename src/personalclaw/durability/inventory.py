@@ -35,6 +35,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+from personalclaw.record_files import Shape
 
 logger = logging.getLogger(__name__)
 
@@ -103,17 +106,20 @@ class StateEntry:
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
     derived_within: tuple[str, ...] = field(default_factory=tuple)
-    # For a ``json_file`` that is a list of records under one key (``triggers.json``'s
-    # ``triggers``): that key. A device sync then reconciles each record as an entity of its own —
-    # its own id, conflict and common ancestor (`reconcile.entity_rows`) — rather than the file as
-    # one row, which kept whichever file a home already had and brought a peer's in only to a home
-    # with none. ``""``: the file is one row.
-    records: str = ""
+    # For a ``json_file`` that holds user records (a list of them, or a document holding one):
+    # where they are (`record_files.Shape`). A sync (`reconcile.reconcile_entry`), a restore's merge
+    # and an import (`reconcile.bring_in`) take another machine's in one record at a time — by its
+    # ``id``, each with its own conflict and common ancestor — and write the file through its one
+    # lock, which the store's own writes hold too. Reconciled as ONE row, the file a home already
+    # had won whole, and another machine's records reached only a home that had none. ``None``: the
+    # file is one row.
+    records: Shape | None = None
     # How a peer's row (for a ``records`` store, each record) comes into this store, for a store
     # whose rows also hold what is ONE home's: what happened to them there, or the owner's yes
     # there. Applied to every peer row but a tombstone by every path one arrives by: the sync's
-    # merge (`reconcile.reconcile_entry`) and a conflict resolved with the other machine's version
-    # or a drafted merge (`conflict_resolve`). `None`: a peer's row arrives as the peer wrote it.
+    # merge (`reconcile.reconcile_entry`), a restore's merge and an import (`reconcile.bring_in`),
+    # and a conflict resolved with the other machine's version or a drafted merge
+    # (`conflict_resolve`). `None`: a peer's row arrives as the peer wrote it.
     arrives: Callable[[dict], dict] | None = None
     # What of a row two homes compare, for the same stores: the part a person makes, without what
     # is one home's. Conflict detection and the common ancestors read it (`conflicts.compared`),
@@ -152,6 +158,76 @@ def _hook_compared(row: dict) -> dict:
     from personalclaw.hooks import hook_what_it_is
 
     return hook_what_it_is(row)
+
+
+def _report_arrives(row: dict) -> dict:
+    """One standing research report from a peer, as this home takes it in
+    (``knowledge.research_reports.arrived_from_another_home``)."""
+    from personalclaw.knowledge.research_reports import arrived_from_another_home
+
+    return arrived_from_another_home(row)
+
+
+def _report_compared(row: dict) -> dict:
+    """What two homes compare of a research report (``research_reports.what_it_is``)."""
+    from personalclaw.knowledge.research_reports import what_it_is
+
+    return what_it_is(row)
+
+
+def _inbox_compared(row: dict) -> dict:
+    """What two homes compare of an inbox item (``inbox.item_what_it_is``)."""
+    from personalclaw.inbox import item_what_it_is
+
+    return item_what_it_is(row)
+
+
+def _views_split(document: Any) -> list | None:
+    """The records ``dashboard_views.json`` holds, in its order: each user view, then each tile
+    pinned to a view (a preset's included), as ``{"id": "view:<view id>", "view"}`` and
+    ``{"id": "tile:<view id>:<ref>", "view_id", "tile"}`` — a tile is told apart by the view it is
+    on and what it shows. One the file holds with nothing to tell it by, a view with no id or a
+    tile with no ref, comes as a record with no id, which a merge leaves where it is. None for a
+    document that is not the store's (``dashboard.views_store``)."""
+    if not isinstance(document, dict):
+        return None
+    views, overlay = document.get("views", []), document.get("overlay", {})
+    if not isinstance(views, list) or not isinstance(overlay, dict):
+        return None
+    out: list = []
+    for view in views:
+        vid = view.get("id") if isinstance(view, dict) else None
+        out.append(
+            {"id": f"view:{vid}", "view": view} if isinstance(vid, str) and vid else {"view": view}
+        )
+    for view_id, tiles in overlay.items():
+        for tile in tiles if isinstance(tiles, list) else []:
+            ref = tile.get("ref") if isinstance(tile, dict) else None
+            record: dict = {"view_id": view_id, "tile": tile}
+            if isinstance(ref, str) and ref:
+                record = {"id": f"tile:{view_id}:{ref}", **record}
+            out.append(record)
+    return out
+
+
+def _views_join(base: Any, records: list) -> dict:
+    """``dashboard_views.json`` — *base*, or a new one — holding *records* (:func:`_views_split`'s)
+    in their order: each view among the views, each tile in the overlay of the view it is on, and
+    every view's overlay where *base* keeps it. The rest of *base* stays as it is."""
+    doc = dict(base) if isinstance(base, dict) else {}
+    old = doc.get("overlay")
+    overlay: dict = {key: [] for key in old} if isinstance(old, dict) else {}
+    views: list = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if "view" in record:
+            views.append(record["view"])
+        elif "tile" in record:
+            overlay.setdefault(str(record.get("view_id", "")), []).append(record["tile"])
+    doc["views"] = views
+    doc["overlay"] = overlay
+    return doc
 
 
 # ── the manifest ────────────────────────────────────────────────────────────
@@ -265,6 +341,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_KNOWLEDGE,
         merge=MERGE_UNION_BY_ID,
         help="comments anchored to file, artifact and planning-doc passages",
+        records=Shape(key="comments"),
     ),
     # ── work ──
     StateEntry(
@@ -408,7 +485,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         # Synced one automation at a time. A peer's arrive switched off, with nothing of what
         # happened to them there and no grant its owner gave there: its armed fires, run counts,
         # health, alert dedupe and yes are the peer's, not this home's.
-        records="triggers",
+        records=Shape(key="triggers"),
         arrives=_trigger_arrives,
         compared=_trigger_compared,
         arrival=(
@@ -460,7 +537,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="lifecycle triggers",
         # A hook runs on every prompt or tool call it matches, so one from a peer arrives as an
         # automation does: switched off, with no grant and nothing of what happened to it there.
-        records="hooks",
+        records=Shape(key="hooks"),
         arrives=_hook_arrives,
         compared=_hook_compared,
         arrival=(
@@ -603,6 +680,11 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="composable-home views and their pinned artifact tiles",
+        # Each view, and each tile pinned to a view, is a record of its own: a tile pinned on
+        # another machine arrives in a view this one pins to as well. A tile's refresh reaches
+        # only the read-only, zero-token data providers (`tile_refresh.DATA_PROVIDERS`), so it
+        # carries no grant to anything that writes or spends, and arrives as it is.
+        records=Shape(split=_views_split, join=_views_join),
     ),
     # A TREE, not a `jsonl_append`, even though its leaves are JSONL: on disk it is one
     # DIRECTORY per tile (`dashboard_tiles/<view>__<slug>/events.jsonl`). Declaring the leaf kind
@@ -719,6 +801,12 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
         help="native inbox items",
+        records=Shape(key="items"),
+        # Where an item is in its triage, and what this machine drafted or decided about it, are
+        # this machine's: two homes compare what came in (`inbox.item_what_it_is`), so reading an
+        # item here and there is never an edit to review. An item carries no grant: acting on one
+        # asks here, as it does for any other.
+        compared=_inbox_compared,
     ),
     StateEntry(
         id="spend",
@@ -729,13 +817,15 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="per-day model spend (drives the budget caps)",
     ),
     StateEntry(
-        # Per-project Trust/Preview decisions keyed by resolved dir.
-        # LWW — a decision is a small last-writer-wins flag, not an append log.
+        # Per-project Trust/Preview decisions keyed by resolved dir. Every record here is a grant
+        # (Trust runs a project's scripts), and a yes is given on the machine where the owner was
+        # shown what runs, so another machine's never arrives by a sync: a sync leaves the file as
+        # it is. A restore brings a missing one back, as it brings any whole store.
         id="project_trust",
         kind=KIND_JSON_FILE,
         path="project_trust.json",
         domain=DOMAIN_PLATFORM,
-        merge=MERGE_LWW,
+        merge=MERGE_REPLACE_ONLY,
         help="per-project Trust/Preview decisions (Preview → read-only project-script execution)",
     ),
     StateEntry(
@@ -862,6 +952,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="folder organization",
+        records=Shape(),
     ),
     StateEntry(
         id="tags",
@@ -870,6 +961,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="tag vocabulary",
+        records=Shape(),
     ),
     StateEntry(
         id="tool_usage",
@@ -928,11 +1020,13 @@ INVENTORY: tuple[StateEntry, ...] = (
         kind=KIND_JSON_FILE,
         path="autonomy_rungs.json",
         domain=DOMAIN_CONFIG,
-        # Last-write-wins per file rather than a union: a rung grant and a demotion for
-        # the same action type are contradictory decisions, and merging them would
-        # resurrect a grant the other machine already withdrew. The conservative merge
-        # for a permission store is the newest whole document.
-        merge=MERGE_LWW,
+        # Every rung here is a grant: an action type that runs without asking. A yes is given on
+        # the machine where the owner was shown what runs, so another machine's never arrives by
+        # a sync, which leaves the file as it is; merged, a grant and a demotion for one action
+        # type were two contradictory decisions, and the one that won could be the grant the
+        # other machine had withdrawn. A restore brings a missing one back, as it brings any
+        # whole store.
+        merge=MERGE_REPLACE_ONLY,
         help="earned-autonomy rung grants and demotion history",
     ),
     StateEntry(
@@ -940,11 +1034,11 @@ INVENTORY: tuple[StateEntry, ...] = (
         kind=KIND_JSON_FILE,
         path="autonomy_reversals.json",
         domain=DOMAIN_CONFIG,
-        # Last-write-wins for the same reason as the grants beside it, with one extra: a
-        # union merge could resurrect a record another machine has already marked reversed,
-        # and re-offering an undo for something already undone is the one wrong answer this
-        # store can give.
-        merge=MERGE_LWW,
+        # The undo of an action that ran here without asking, under a rung granted here: another
+        # machine's is for an action that ran there, so a sync leaves the file as it is, with
+        # the grants beside it. Offering an undo for something already undone, or never done
+        # here, is the one wrong answer this store can give.
+        merge=MERGE_REPLACE_ONLY,
         help="undo handles for actions that ran at the auto-with-undo rung",
     ),
     StateEntry(
@@ -1207,24 +1301,29 @@ INVENTORY: tuple[StateEntry, ...] = (
     # silently means every external client stops working after a restore with no
     # indication why. It carries token HASHES only, so it is not `secret=True` —
     # the tokens themselves live in the credential store, which is already excluded.
+    # A client here is a grant: its token's hash lets whoever holds the token in, to what its
+    # bindings reach. A grant is given on the machine where the owner was shown it, so another
+    # machine's client never arrives by a sync, which leaves the file as it is; synced, the token
+    # an owner gave one machine's integration would open this one too.
     StateEntry(
         id="inbound_clients",
         kind=KIND_JSON_FILE,
         path="inbound_clients.json",
         domain=DOMAIN_SECURITY,
-        merge=MERGE_LWW,
+        merge=MERGE_REPLACE_ONLY,
         help="inbound access clients: labels, bindings and token hashes (never tokens)",
     ),
     # How long each integration token works (ledger 317a), keyed by the token's SHA-256 —
     # never the token. EXPORTS beside the client registry it describes, for the same
     # reason: a home restored without it records every configured token as new, and gives
-    # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything.
+    # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything. Left as it
+    # is by a sync, with the clients it describes.
     StateEntry(
         id="inbound_tokens",
         kind=KIND_JSON_FILE,
         path="inbound_tokens.json",
         domain=DOMAIN_SECURITY,
-        merge=MERGE_LWW,
+        merge=MERGE_REPLACE_ONLY,
         help="when each integration token was issued and stops working, by hash (never tokens)",
     ),
     # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports (§10 lists it
@@ -1350,8 +1449,8 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         help="most-recently-opened project directories (capped at 10)",
     ),
-    # A list of `ReportDefinition` rows each carrying `id` — the same shape as
-    # `triggers.json`, hence the same `json_file` + `union_by_id`.
+    # A bare list of `ReportDefinition` rows each carrying `id`: a sync, a restore's merge and an
+    # import take them in one at a time, by id.
     StateEntry(
         id="research_reports",
         kind=KIND_JSON_FILE,
@@ -1359,6 +1458,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_KNOWLEDGE,
         merge=MERGE_UNION_BY_ID,
         help="standing research report definitions, cadences and watermarks",
+        records=Shape(),
+        # A report runs unattended on its cadence, spending a model call each time, so one from
+        # another machine arrives as an automation does: switched off, without what happened to
+        # it there (its runs, their errors, how far they read).
+        arrives=_report_arrives,
+        compared=_report_compared,
+        arrival=(
+            "A report from another machine arrives switched off, without what happened to it "
+            "there."
+        ),
     ),
     StateEntry(
         id="runners",
@@ -1563,7 +1672,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="notifications waiting for the next digest",
     ),
     # Kanban columns over tags (`DashboardState.save_tag_boards`): a bare list of `id` rows,
-    # the same shape as its `tags.json` neighbour, so the same merge and the same executor.
+    # the same shape as its `tags.json` neighbour, so the same merge, one record at a time.
     StateEntry(
         id="tag_boards",
         kind=KIND_JSON_FILE,
@@ -1571,6 +1680,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="tag board columns",
+        records=Shape(),
     ),
     # Per-project dismissals of surfaced packs: a dismissal is a decision, and losing it
     # re-proposes everything the user already said no to.

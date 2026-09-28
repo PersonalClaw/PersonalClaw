@@ -151,6 +151,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Voice input and a refused re-index say why speech-to-text or the embedding model can't work, in its provider's words, and a transcription that failed no longer reads as a recording with no speech.**
 
 - **An error above the chat composer stays until you dismiss it or send again; only an update clears on its own.**
+- **Sync, a merge restore and an import bring another machine's inbox items, document comments, research reports, tags, tag boards, folders and dashboard views into a home that has its own.**
+
+- **An automation, hook, inbox item, tag or other record written while a sync, a merge restore or an import runs is no longer lost.**
+
+- **`personalclaw restore` merges while the gateway runs, and refuses a replace in the words the dashboard uses.**
+
+- **Memories and knowledge another machine's model embedded are re-embedded when a sync, a merge restore or an import brings them in.**
 
 - **The image and video tools say where to choose a model, and name no vendor.**
 - **Clearing Chat posts one notice, not ten.**
@@ -453,6 +460,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent app's ACP adapter installs from npm only when you install or enable the app, never at a gateway start; a failed install says why on its card, with Retry.**
 
 - **Hugging Face's transfer cache stays in the PersonalClaw home, for the gateway and every process it starts.**
+
+- **A research report from another machine arrives switched off, and sync never brings in another machine's project trust, autonomy grants or integration clients.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

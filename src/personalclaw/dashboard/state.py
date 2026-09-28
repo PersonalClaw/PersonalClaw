@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from personalclaw import trust_mode
+from personalclaw import record_files, trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
@@ -981,6 +981,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._tags: list[dict[str, Any]] = []
         # Sidebar columns — flat list of {id, name, tag_ids, mode, order, include_untagged}
         self._tag_boards: list[dict[str, Any]] = []
+        # Each of the three files as this state last read or wrote it, so a write keeps what a
+        # sync or a restore's merge put there since, and a read takes it in (`_save_listed`).
+        self._kept_folders = record_files.Kept()
+        self._kept_tags = record_files.Kept()
+        self._kept_tag_boards = record_files.Kept()
         self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
         # YOLO / auto-approve is process-global trust state owned by
         # personalclaw.trust_mode (single source of truth). The state object
@@ -2203,14 +2208,20 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         path = config_dir() / self._FOLDERS_FILE
         try:
             if path.exists():
+                at = record_files.stamp(path)
                 self._folders = json.loads(path.read_text(encoding="utf-8"))
+                self._kept_folders.took(at, self._folders)
         except Exception:
             logger.warning("Failed to load folders", exc_info=True)
 
     def save_folders(self) -> None:
         """Persist folder definitions to disk (atomic write)."""
-        path = config_dir() / self._FOLDERS_FILE
-        self._atomic_write_json(path, self._folders)
+        self._save_listed(config_dir() / self._FOLDERS_FILE, self._kept_folders, self._folders)
+
+    def refresh_folders(self) -> None:
+        """Take in what another writer put in ``folders.json`` since this state last read or
+        wrote it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(config_dir() / self._FOLDERS_FILE, self._kept_folders, self._folders)
 
     def load_tags(self) -> None:
         """Load tag vocabulary and sidebar columns from disk; seed defaults if missing.
@@ -2224,9 +2235,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         file_existed = tags_path.exists()
         try:
             if file_existed:
+                at = record_files.stamp(tags_path)
                 raw = json.loads(tags_path.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     self._tags = [t for t in raw if isinstance(t, dict) and t.get("id")]
+                    self._kept_tags.took(at, self._tags)
         except Exception:
             logger.warning("Failed to load tags", exc_info=True)
             # Treat a parse error like a present file: do not re-seed.
@@ -2241,19 +2254,69 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         columns_path = config_dir() / self._TAG_BOARDS_FILE
         try:
             if columns_path.exists():
+                at = record_files.stamp(columns_path)
                 raw = json.loads(columns_path.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     self._tag_boards = [c for c in raw if isinstance(c, dict) and c.get("id")]
+                    self._kept_tag_boards.took(at, self._tag_boards)
         except Exception:
             logger.warning("Failed to load sidebar columns", exc_info=True)
 
     def save_tags(self) -> None:
         """Persist tag vocabulary to disk (atomic write)."""
-        self._atomic_write_json(config_dir() / self._TAGS_FILE, self._tags)
+        self._save_listed(config_dir() / self._TAGS_FILE, self._kept_tags, self._tags)
 
     def save_tag_boards(self) -> None:
         """Persist sidebar column layout to disk (atomic write)."""
-        self._atomic_write_json(config_dir() / self._TAG_BOARDS_FILE, self._tag_boards)
+        self._save_listed(
+            config_dir() / self._TAG_BOARDS_FILE, self._kept_tag_boards, self._tag_boards
+        )
+
+    def refresh_tags(self) -> None:
+        """Take in what another writer put in ``tags.json`` since this state last read or wrote
+        it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(config_dir() / self._TAGS_FILE, self._kept_tags, self._tags)
+
+    def refresh_tag_boards(self) -> None:
+        """Take in what another writer put in ``tag_boards.json`` since this state last read or
+        wrote it (:meth:`_take_in_listed`)."""
+        self._take_in_listed(
+            config_dir() / self._TAG_BOARDS_FILE, self._kept_tag_boards, self._tag_boards
+        )
+
+    #: The three files are each a bare list of records with an ``id``.
+    _LISTED = record_files.Shape()
+
+    def _save_listed(
+        self, path: Path, kept: record_files.Kept, records: list[dict[str, Any]]
+    ) -> None:
+        """Write *records* — the folders, the tags or the boards this state holds — to *path*
+        under its lock, with what another writer put there since this state last read or wrote it
+        kept (``record_files.written``): a sync or a restore's merge writes the same file, and
+        writing the list read before put back the file as it was then."""
+        try:
+            record_files.written(
+                path, self._LISTED, kept, records, lambda out: self._atomic_write_json(path, out)
+            )
+        except OSError:
+            logger.warning("Failed to write %s", path.name, exc_info=True)
+
+    def _take_in_listed(
+        self, path: Path, kept: record_files.Kept, records: list[dict[str, Any]]
+    ) -> None:
+        """Bring into *records*, in place, what another writer put in *path* since this state
+        last read or wrote it — a folder, tag or board another machine made, one a restore's merge
+        brought back — unless this state changed the same one since."""
+        if not isinstance(records, list):
+            return
+        held = {r["id"]: r for r in records if isinstance(r, dict) and isinstance(r.get("id"), str)}
+        try:
+            moves = record_files.taken_in(path, self._LISTED, kept, held)
+        except OSError:
+            logger.warning("Failed to read %s", path.name, exc_info=True)
+            return
+        if moves:
+            records[:] = record_files.with_moves(records, moves)
 
     @staticmethod
     def _atomic_write_json(path: Path, data: Any) -> None:

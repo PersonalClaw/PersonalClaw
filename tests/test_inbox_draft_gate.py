@@ -26,7 +26,10 @@ def _req(item) -> tuple[MagicMock, AsyncMock]:
     svc.draft_reply = draft_spy
     # _get_inbox prefers the running service's (state, inbox) pair.
     svc.state = MagicMock()
-    svc.inbox = SimpleNamespace(items={item.id: item} if item is not None else {})
+    # A store's read interface: its items, and the take-in of what another writer wrote.
+    svc.inbox = SimpleNamespace(
+        items={item.id: item} if item is not None else {}, refresh=lambda: 0
+    )
     r = MagicMock()
     app = web.Application()
     app["state"] = MagicMock(_inbox_svc=svc)

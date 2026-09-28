@@ -815,7 +815,7 @@ class TestCorruptSourceDB:
 
 class TestGatewayRunningRefusal:
     def test_restore_refused_when_gateway_running(self, env, capsys, monkeypatch):
-        """Restore refuses if gateway is running (unless --force)."""
+        """A replace refuses if the gateway is running (unless --force), naming the command."""
         _, _, tarball, tmp_path = env
         fresh = tmp_path / "fresh_gw"
         fresh.mkdir()
@@ -823,7 +823,7 @@ class TestGatewayRunningRefusal:
         monkeypatch.setattr("personalclaw.snapshot._is_gateway_running", lambda: True)
         ret = restore_main([str(tarball), "--mode", "replace"])
         assert ret == 1
-        assert "Gateway is running" in capsys.readouterr().err
+        assert f"`personalclaw restore {tarball} --mode replace`" in capsys.readouterr().err
 
     def test_restore_allowed_with_force(self, env, capsys, monkeypatch):
         """--force bypasses gateway check."""
@@ -2165,31 +2165,41 @@ def test_a_snapshots_SPEND_never_moves_the_live_counter(tmp_path: Path) -> None:
     assert got["2026-08-01"] == 1.0, "a day only the snapshot has is recoverable"
 
 
+def _records_merge(tmp_path: Path, archived: str, here: str) -> tuple[str | None, Path]:
+    """`hooks.json` from an archive (*archived*) merged into a home holding *here*, by the one
+    executor of every store of records (`_merge_records`). Returns its line and the home's file."""
+    from personalclaw.snapshot import _merge_records
+
+    snap, home = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir(exist_ok=True)
+    home.mkdir(exist_ok=True)
+    (snap / "hooks.json").write_text(archived, encoding="utf-8")
+    (home / "hooks.json").write_text(here, encoding="utf-8")
+    return _merge_records(snap, home, "hooks.json"), home / "hooks.json"
+
+
 def test_LIVE_ROWS_WIN_on_a_key_collision(tmp_path: Path) -> None:
     """Merge mode's contract is that local state wins; the snapshot only fills gaps. A hook the user
     has since edited must not revert to the archived version."""
-    from personalclaw.snapshot import _merge_json_collection
+    _said, live = _records_merge(
+        tmp_path,
+        json.dumps({"hooks": [{"id": "same", "name": "SNAPSHOT"}]}),
+        json.dumps({"hooks": [{"id": "same", "name": "LIVE"}]}),
+    )
 
-    src, dst = tmp_path / "s.json", tmp_path / "d.json"
-    src.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "SNAPSHOT"}]}), encoding="utf-8")
-    dst.write_text(json.dumps({"hooks": [{"id": "same", "cmd": "LIVE"}]}), encoding="utf-8")
-
-    _merge_json_collection(src, dst, wrapper="hooks", key="id")
-
-    rows = json.loads(dst.read_text())["hooks"]
-    assert rows == [{"id": "same", "cmd": "LIVE"}]
+    assert json.loads(live.read_text())["hooks"] == [{"id": "same", "name": "LIVE"}]
 
 
 def test_the_json_merges_are_IDEMPOTENT(tmp_path: Path) -> None:
     """A restore drill is run twice. Both executors must import on the first pass and nothing
     after."""
-    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+    from personalclaw.snapshot import _merge_json_map, _merge_records
 
-    src, dst = tmp_path / "c_s.json", tmp_path / "c_d.json"
-    src.write_text(json.dumps({"hooks": [{"id": "s"}]}), encoding="utf-8")
-    dst.write_text(json.dumps({"hooks": [{"id": "l"}]}), encoding="utf-8")
-    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 1
-    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
+    said, _live = _records_merge(
+        tmp_path, json.dumps({"hooks": [{"id": "s"}]}), json.dumps({"hooks": [{"id": "l"}]})
+    )
+    assert said is not None and said.startswith("hooks.json: 1 imported"), said
+    assert _merge_records(tmp_path / "snap", tmp_path / "home", "hooks.json") is None
 
     msrc, mdst = tmp_path / "m_s.json", tmp_path / "m_d.json"
     msrc.write_text(json.dumps({"a": 1}), encoding="utf-8")
@@ -2201,43 +2211,39 @@ def test_the_json_merges_are_IDEMPOTENT(tmp_path: Path) -> None:
 def test_a_MALFORMED_json_file_leaves_the_live_copy_untouched(tmp_path: Path) -> None:
     """These are hand-editable files, so a truncated or half-written one is reachable. Overwriting
     real state with a parse of something we do not understand is the worse direction."""
-    from personalclaw.snapshot import _merge_json_collection, _merge_json_map
+    from personalclaw.snapshot import _merge_json_map
 
-    bad, live = tmp_path / "bad.json", tmp_path / "live.json"
-    bad.write_text("{not json", encoding="utf-8")
-    live.write_text(json.dumps({"hooks": [{"id": "keep"}]}), encoding="utf-8")
+    said, live = _records_merge(tmp_path, "{not json", json.dumps({"hooks": [{"id": "keep"}]}))
 
-    assert _merge_json_collection(bad, live, wrapper="hooks", key="id") == 0
-    assert _merge_json_map(bad, live) == 0
+    assert said is not None and "left as it is" in said, said
+    assert _merge_json_map(tmp_path / "snap" / "hooks.json", live) == 0
     assert json.loads(live.read_text())["hooks"] == [{"id": "keep"}]
 
 
 def test_a_row_with_NO_ID_is_skipped(tmp_path: Path) -> None:
     """A row carrying no identity cannot be deduplicated, so importing it would double on the next
     drill — the exact non-idempotence the FTS shadow tables showed."""
-    from personalclaw.snapshot import _merge_json_collection
+    _said, live = _records_merge(
+        tmp_path,
+        json.dumps({"hooks": [{"name": "no-id"}, {"id": "ok"}]}),
+        json.dumps({"hooks": []}),
+    )
 
-    src, dst = tmp_path / "s.json", tmp_path / "d.json"
-    src.write_text(json.dumps({"hooks": [{"cmd": "no-id"}, {"id": "ok"}]}), encoding="utf-8")
-    dst.write_text(json.dumps({"hooks": []}), encoding="utf-8")
-
-    _merge_json_collection(src, dst, wrapper="hooks", key="id")
-
-    assert json.loads(dst.read_text())["hooks"] == [{"id": "ok"}]
+    assert [h["id"] for h in json.loads(live.read_text())["hooks"]] == ["ok"]
 
 
 def test_a_WRAPPER_MISMATCH_is_a_no_op(tmp_path: Path) -> None:
-    """The wrapper key is read from the owning module's real shape (`{"hooks": [...]}`,
-    `{"items": [...]}`, `{"rows": {...}}`). If a future version changes the envelope, the merge must
-    do nothing rather than guess — a wrong guess writes a document the owning module cannot read."""
-    from personalclaw.snapshot import _merge_json_collection
+    """The records are read from the owning module's real shape (`{"hooks": [...]}`,
+    `{"items": [...]}`). If a future version changes the envelope, the merge must do nothing rather
+    than guess — a wrong guess writes a document the owning module cannot read."""
+    said, live = _records_merge(
+        tmp_path,
+        json.dumps({"entries": [{"id": "s"}]}),
+        json.dumps({"entries": [{"id": "l"}]}),
+    )
 
-    src, dst = tmp_path / "s.json", tmp_path / "d.json"
-    src.write_text(json.dumps({"entries": [{"id": "s"}]}), encoding="utf-8")
-    dst.write_text(json.dumps({"entries": [{"id": "l"}]}), encoding="utf-8")
-
-    assert _merge_json_collection(src, dst, wrapper="hooks", key="id") == 0
-    assert json.loads(dst.read_text()) == {"entries": [{"id": "l"}]}
+    assert said is not None and "left as it is" in said, said
+    assert json.loads(live.read_text()) == {"entries": [{"id": "l"}]}
 
 
 def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Path) -> None:
@@ -2247,8 +2253,9 @@ def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Pat
     * `append_dedup` — `_merge_run_history`, `_merge_notifications`, `_merge_security_events`
       (key-gated), `_merge_keyed_jsonl`; `crashes`/`sessions` are directories.
     * `sqlite_attach_ignore` — `_merge_sqlite_attach`, plus `memory.db`'s own `_merge_memory`.
-    * `union_by_id` / `lww_by_updated_at` — `_merge_json_collection` / `_merge_json_map` for the
-      file-shaped entries; the directory-shaped ones union per-file via the tree copy.
+    * `union_by_id` / `lww_by_updated_at` — `_merge_records` for a store of records, one record at
+      a time, and `_merge_json_map` for the map-shaped files; the directory-shaped ones union
+      per-file via the tree copy.
     * `replace_only` — every entry is `derived` (excluded from a backup), `secret` (restored
       copy-if-missing by the `security` component), or plain config reached by a copy-if-missing
       path.
@@ -2275,7 +2282,7 @@ def test_every_declared_MERGE_STRATEGY_has_an_executor_or_a_reason(tmp_path: Pat
         "_merge_keyed_jsonl",
         "_merge_sqlite_attach",
         "_merge_memory",
-        "_merge_json_collection",
+        "_merge_records",
         "_merge_json_map",
     ):
         assert hasattr(snapshot, executor), f"{executor} is missing"

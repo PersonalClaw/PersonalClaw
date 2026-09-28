@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import sys
@@ -14,10 +15,13 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.sqlite_compat import sqlite3
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from personalclaw.durability.inventory import StateEntry
 
 VALID_COMPONENTS = (
     "memory",
@@ -1097,81 +1101,50 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
 
     A home with no store gets the archive's, with every automation in it brought in by the same
     rule: copying the file in whole brought each one in switched on, armed and granted. A home
-    that has one is written only when an automation arrives.
+    that has one is written only when an automation arrives — through the trigger store's own lock
+    (``record_files.rewrite``), re-read under it, so an automation the running gateway writes
+    meanwhile is neither lost nor written over.
     """
+    from personalclaw import record_files
     from personalclaw.triggers.store import arrived_from_another_home
 
     src = json.loads(src_path.read_text())
-    here = dst_path.is_file()
-    dst: dict = (
-        json.loads(dst_path.read_text())
-        if here
-        else {**{key: value for key, value in src.items() if key != "triggers"}, "triggers": []}
-    )
-    existing_names = {str(t.get("name") or "") for t in dst.get("triggers", [])}
-    existing_ids = {str(t.get("id") or "") for t in dst.get("triggers", [])}
     imported = 0
-    for trigger in src.get("triggers", []):
-        name = str(trigger.get("name") or "")
-        if not name or name in existing_names:
-            continue
-        row = arrived_from_another_home(trigger)
-        base = str(row.get("id") or "") or "imported"
-        candidate = base
-        n = 2
-        while candidate in existing_ids:
-            candidate = f"{base}-{n}"
-            n += 1
-        row["id"] = candidate
-        existing_ids.add(candidate)
-        existing_names.add(name)
-        dst.setdefault("triggers", []).append(row)
-        imported += 1
-    if imported or not here:
-        atomic_write(dst_path, json.dumps(dst, indent=2))
+
+    def _bring(dst: dict | None) -> dict | None:
+        nonlocal imported
+        here = dst is not None
+        doc: dict = (
+            dst
+            if dst is not None
+            else {**{key: value for key, value in src.items() if key != "triggers"}, "triggers": []}
+        )
+        existing_names = {str(t.get("name") or "") for t in doc.get("triggers", [])}
+        existing_ids = {str(t.get("id") or "") for t in doc.get("triggers", [])}
+        for trigger in src.get("triggers", []):
+            name = str(trigger.get("name") or "")
+            if not name or name in existing_names:
+                continue
+            row = arrived_from_another_home(trigger)
+            base = str(row.get("id") or "") or "imported"
+            candidate = base
+            n = 2
+            while candidate in existing_ids:
+                candidate = f"{base}-{n}"
+                n += 1
+            row["id"] = candidate
+            existing_ids.add(candidate)
+            existing_names.add(name)
+            doc.setdefault("triggers", []).append(row)
+            imported += 1
+        return doc if imported or not here else None
+
+    record_files.rewrite(dst_path, _bring)
     total = len(src.get("triggers", []))
     print(
         f"  Automations imported: {imported} (skipped {total - imported} duplicates) "
         f"— imported rows arrive PAUSED; review and enable them"
     )
-
-
-def _merge_hooks(src_path: Path, dst_path: Path) -> int:
-    """Merge an imported `hooks.json` into the live one, skipping hooks this home has by id.
-    Returns how many were imported.
-
-    A hook runs on the agent's own events, so one from an archive arrives as an automation does
-    (`hooks.hook_arrived_from_another_home`): switched off, with no grant and nothing of what
-    happened to it where the archive was made. A home with no `hooks.json` gets the archive's,
-    with every hook in it brought in by the same rule — copying the file in whole brought each
-    one in switched on with the other home's yes, to run on the next prompt. A home that has one
-    is written only when a hook arrives.
-    """
-    from personalclaw.hooks import hook_arrived_from_another_home
-
-    src = json.loads(src_path.read_text(encoding="utf-8"))
-    arriving = src.get("hooks") if isinstance(src, dict) else None
-    here = dst_path.is_file()
-    if here:
-        dst = json.loads(dst_path.read_text(encoding="utf-8"))
-        held = dst.get("hooks") if isinstance(dst, dict) else None
-    else:
-        dst = {k: v for k, v in src.items() if k != "hooks"} if isinstance(src, dict) else {}
-        held = []
-    if not isinstance(arriving, list) or not isinstance(held, list):
-        # A hand-edited or truncated file: leaving the live copy untouched is the safe direction.
-        return 0
-    existing = {str(h.get("id") or "") for h in held if isinstance(h, dict)}
-    added: list[dict] = []
-    for hook in arriving:
-        hook_id = str(hook.get("id") or "") if isinstance(hook, dict) else ""
-        if not hook_id or hook_id in existing:
-            continue
-        added.append(hook_arrived_from_another_home(hook))
-        existing.add(hook_id)
-    if added or not here:
-        atomic_write(dst_path, json.dumps({**dst, "hooks": held + added}, indent=2))
-    return len(added)
 
 
 def _merge_event_triggers(src_path: Path, dst_path: Path) -> None:
@@ -1224,52 +1197,42 @@ def _merge_notifications(src_path: Path, dst_path: Path) -> None:
     print(f"  Notifications imported: {imported}")
 
 
-def _merge_json_collection(src: Path, dst: Path, *, wrapper: str | None, key: str) -> int:
-    """Union an id-bearing JSON collection, live rows winning on a key collision (S181).
+def _records_entry(rel: str) -> "StateEntry | None":
+    """The inventory entry for *rel* when it is a store of records (``StateEntry.records``) — a
+    file of user records another home's arrive in one at a time — or None."""
+    from personalclaw.durability import inventory as inv
 
-    Nine file-shaped entries declare `union_by_id` or `lww_by_updated_at` and none had an executor.
-    S177 made them reachable, but reachably copy-if-missing — so a file the live home already had
-    kept
-    its own contents and dropped the snapshot's entirely. Driven: 8 of 8 lost the snapshot side.
+    entry = next((e for e in inv.INVENTORY if e.path == rel), None)
+    return entry if entry is not None and entry.records is not None else None
 
-    `wrapper` names the envelope key when the collection is nested (`{"hooks": [...]}`,
-    `{"items": [...]}`) and is None for a bare top-level list (`tags.json`). Live rows win because
-    merge mode's contract is that local state wins — the snapshot only fills gaps.
+
+def _merge_records(snap: Path, pc: Path, rel: str) -> str | None:
+    """Merge the archive's *rel*, a store of records, into this home's: the executor of every
+    ``StateEntry.records`` store, for a snapshot's merge and an export archive's import alike.
+    Returns the line that says what came, or None when *rel* is no such store or the archive does
+    not hold it.
+
+    Each record this home does not have comes in, by the store's arrival rule, after the ones it
+    has, which stay as they are — the rule a sync brings another machine's in by
+    (``durability.reconcile.bring_in``), under the store's own lock. A home with no store gets the
+    archive's, every record in it brought in by that rule. Copied in whole, an archive's hooks
+    came in switched on and granted; merged as one document, a file the home already had dropped
+    every record of the archive's. A file either side cannot read is left as it is: overwriting
+    real state with a parse of something not understood is the worse direction.
     """
-    if not src.is_file() or not dst.is_file():
-        return 0
-    try:
-        src_doc = json.loads(src.read_text(encoding="utf-8"))
-        dst_doc = json.loads(dst.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # A hand-edited or truncated file. Leaving the live copy untouched is the safe direction:
-        # the alternative is overwriting real state with a parse of something we do not understand.
-        return 0
+    from personalclaw.durability.reconcile import bring_in
 
-    def _rows(doc: object) -> list | None:
-        if wrapper is None:
-            return doc if isinstance(doc, list) else None
-        if isinstance(doc, dict) and isinstance(doc.get(wrapper), list):
-            return doc[wrapper]
+    entry = _records_entry(rel)
+    if entry is None or not (snap / rel).is_file():
         return None
-
-    src_rows, dst_rows = _rows(src_doc), _rows(dst_doc)
-    if src_rows is None or dst_rows is None:
-        return 0
-    seen = {r.get(key) for r in dst_rows if isinstance(r, dict)}
-    added = [
-        r for r in src_rows if isinstance(r, dict) and r.get(key) is not None and r[key] not in seen
-    ]
-    if not added:
-        return 0
-    merged = dst_rows + added
-    if wrapper is None:
-        out: object = merged
-    else:
-        out = dict(dst_doc)
-        out[wrapper] = merged
-    atomic_write(dst, json.dumps(out, indent=2))
-    return len(added)
+    try:
+        came = bring_in(pc, entry, snap / rel)
+    except ValueError as exc:
+        return f"{rel}: left as it is ({exc})"
+    if not came:
+        return None
+    note = f" — {entry.arrival}" if entry.arrival else ""
+    return f"{rel}: {came} imported{note}"
 
 
 def _merge_json_map(src: Path, dst: Path, *, wrapper: str | None = None) -> int:
@@ -1766,7 +1729,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     rows: list[dict] = []
 
     def _add(path: str, strategy: str, detail: str = "", *, by_rule: bool = False) -> None:
-        # `by_rule`: a store whose rows arrive by a rule (`_merge_triggers`, `_merge_hooks`) is
+        # `by_rule`: a store whose rows arrive by a rule (`_merge_triggers`, `_merge_records`) is
         # merged into a home without one too, never copied in whole.
         src, dst = snap / path, pc / path
         if not src.exists():
@@ -1825,6 +1788,10 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
             continue
         entry = by_path.get(path)
         strategy = entry.merge if entry else inv.MERGE_UNION_BY_ID
+        if entry is not None and entry.records is not None:
+            arrives = "; they arrive switched off" if entry.arrives is not None else ""
+            _add(path, strategy, f"by id, one record at a time{arrives}", by_rule=True)
+            continue
         _add(path, strategy, "per-file union" if entry and entry.kind else "")
     return rows
 
@@ -1914,13 +1881,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             if s.is_file() and not d.is_file():
                 shutil.copy2(str(s), str(d))
                 print(f"  {f}: restored (was missing)")
-        if (snap / "hooks.json").is_file():
-            n = _merge_hooks(snap / "hooks.json", pc / "hooks.json")
-            if n:
-                print(
-                    f"  hooks.json: {n} imported — hooks arrive switched off; "
-                    "review and enable them"
-                )
+        said = _merge_records(snap, pc, "hooks.json")
+        if said:
+            print(f"  {said}")
         print("  ✅ config")
 
     # 🔴 The run history, whose declared `append_dedup` had no executor. Grouped with
@@ -1992,23 +1955,15 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             if s_db.is_file() and d_db.is_file():
                 _merge_sqlite_attach(s_db, d_db, rel)
 
-    # 🔴 The nine file-shaped `union_by_id`/`lww_by_updated_at` entries with no executor.
-    # Runs BEFORE the generic store pass so a file the live home already holds is MERGED rather than
-    # left alone; that pass then copies any missing outright.
+    # 🔴 The file-shaped `union_by_id`/`lww_by_updated_at` entries that are maps rather than stores
+    # of records, which had no executor. Runs BEFORE the generic store pass so a file the live home
+    # already holds is MERGED rather than left alone; that pass then copies any missing outright.
+    # A store of records (`StateEntry.records` — the inbox, the tags, …) is merged in that pass,
+    # one record at a time (`_merge_records`).
     #
-    # Per-file, not generic: the shapes genuinely differ (a wrapped list, a bare list, a map keyed
-    # by
-    # date/tool/composite) and so do the semantics. Read off the owning module's contract, measured
-    # against a real home.
+    # Per-file, not generic: the maps are keyed by date, by tool or by a composite, and their
+    # semantics differ too. Read off the owning module's contract, measured against a real home.
     if _want(components, "everything"):
-        for rel, wrapper, key in (
-            ("inbox.json", "items", "id"),
-            ("tags.json", None, "id"),
-            ("tag_boards.json", None, "id"),
-        ):
-            n = _merge_json_collection(snap / rel, pc / rel, wrapper=wrapper, key=key)
-            if n:
-                print(f"  {rel}: {n} imported")
         for rel, wrapper in (
             # `spend.json` is date-keyed and `tool_usage.json` tool-keyed; tokenjuice's rows are
             # keyed "<month>|<model>|<compressor>"; autonudge's live loops sit under `loops`.
@@ -2039,6 +1994,12 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 dst.mkdir(parents=True, exist_ok=True)
                 _copy_tree_no_overwrite(src, dst, entry_path=rel)
                 restored.append(rel)
+            elif _records_entry(rel) is not None:
+                # A store of records: each of the archive's this home lacks comes in, into a home
+                # without one too — never the file copied in whole.
+                said = _merge_records(snap, pc, rel)
+                if said:
+                    print(f"  {said}")
             elif src.is_file() and not dst.exists():
                 # A file the live home does not have. An EXISTING file is left alone: merge
                 # mode's contract is that local state wins, and these entries have no
@@ -2051,6 +2012,13 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
         print("  ✅ stores")
 
+    if _want(components, "memory") or _want(components, "everything"):
+        # Memories and knowledge came in with the vectors their home wrote, and another model's
+        # are not searchable here until embedded again: the re-index path re-embeds what the
+        # model bound here did not embed, taken by the gateway's watch (`embedding_arrivals`).
+        from personalclaw import embedding_arrivals
+
+        embedding_arrivals.arrived()
     print("✅ Merge complete.")
 
 
@@ -2113,6 +2081,34 @@ def restore_plan(archive: Path, components: list[str] | None) -> dict:
 MERGE_RESTART_NOTE = "Restart the gateway to pick up everything the merge brought in."
 
 
+def replace_refusal(what: str, path: str) -> str:
+    """Why a replace is refused while the gateway runs, and the command that does it: the one
+    answer the dashboard (``409 gateway_running``) and ``personalclaw restore`` both give.
+
+    One restore rule for both: a merge only fills in what the home lacks, through the same locks
+    the running gateway's stores write under, so it runs while the gateway runs, from either; a
+    replace moves the live home aside under a gateway that holds that state open — databases,
+    caches, stores it writes back — so it runs with the gateway stopped. *what* names the restore
+    (``restore``, ``import``); *path* is the archive, quoted for a shell, or a placeholder.
+    """
+    return (
+        f"A replace {what} rewrites state the running gateway holds open. Stop the gateway "
+        f"(`personalclaw stop`), then run `personalclaw restore {path} --mode replace`."
+    )
+
+
+def _replace_refused(args: argparse.Namespace, mode: str, what: str) -> bool:
+    """Whether this command refuses the restore it was asked for: a replace while this home's
+    gateway runs, without ``--force`` — a local operator's decision, taken at the terminal. Says
+    why on stderr, in the words the dashboard refuses one in (:func:`replace_refusal`). A merge is
+    never refused for a running gateway."""
+    if mode != "replace" or getattr(args, "force", False) or not _is_gateway_running():
+        return False
+    _audit("state_restore_rejected", "reason=gateway_running")
+    print(f"❌ {replace_refusal(what, shlex.quote(str(args.snapshot)))}", file=sys.stderr)
+    return True
+
+
 def restore_merge(archive: Path, components: list[str] | None) -> dict:
     """Merge `archive` into this home: the dashboard's restore.
 
@@ -2140,10 +2136,11 @@ def restore_merge(archive: Path, components: list[str] | None) -> dict:
 def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     """`personalclaw restore <export.zip>`: put an export archive (Settings → Import / Export)
     back into this home — merged, as the dashboard's Import does, or replacing the home, which the
-    dashboard refuses while it runs and names this command for. The running-gateway guard has
-    already been asked (`restore_main`). The archive is checked as the dashboard checks it
-    (`portability.validate_import_zip`) before anything is written, and applied by the same
-    `portability.apply_import_zip`, so the two cannot restore an archive differently.
+    dashboard refuses while it runs and names this command for. The archive is checked as the
+    dashboard checks it (`portability.validate_import_zip`) before anything is written, and
+    applied by the same `portability.apply_import_zip`, so the two cannot restore an archive
+    differently. A replace is refused while the gateway runs (:func:`_replace_refused`), as the
+    dashboard refuses one.
     """
     from personalclaw.portability import apply_import_zip, validate_import_zip
 
@@ -2170,6 +2167,8 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         if mode == "replace":
             print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
         return 0
+    if _replace_refused(args, mode, "import"):
+        return 1
 
     pc.mkdir(parents=True, exist_ok=True)
     # A replace says where it set the previous state aside as it does it (`_do_replace`).
@@ -2190,7 +2189,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         p.add_argument("--mode", choices=("replace", "merge"))
         p.add_argument("--dry-run", action="store_true")
         p.add_argument(
-            "--force", action="store_true", help="Allow restore even if gateway is running"
+            "--force", action="store_true", help="Replace even while the gateway is running"
         )
         p.add_argument("--components")
         p.add_argument("--list-components", action="store_true")
@@ -2205,15 +2204,6 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         # A usage error, so the usage-error status: nothing on the command line to restore.
         print("❌ snapshot file is required (unless --list-components is given)", file=sys.stderr)
         return 2
-
-    force = getattr(args, "force", False)
-    if not force and _is_gateway_running():
-        _audit("state_restore_rejected", "reason=gateway_running")
-        print(
-            "❌ Gateway is running. Stop it first (personalclaw stop) or use --force.",
-            file=sys.stderr,
-        )
-        return 1
 
     snap_path = Path(args.snapshot)
     if not snap_path.is_file():
@@ -2282,6 +2272,8 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
                 print("  An app the snapshot brings back keeps the engine it has here.")
             return 0
+        if _replace_refused(args, mode, "restore"):
+            return 1
 
         pc.mkdir(parents=True, exist_ok=True)
         if mode == "replace":
