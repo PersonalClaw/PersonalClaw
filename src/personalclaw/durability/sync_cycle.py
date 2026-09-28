@@ -138,6 +138,14 @@ def run_sync_cycle(
         report.ok = False
         report.error = f"encryption: {exc}"
         return report
+    except Exception as exc:  # noqa: BLE001 — a bad cycle must not kill the service loop
+        # The salt is read from the remote through the transport's listing and read, and a
+        # transport says a listing or read that fails by raising. That is the failed read the
+        # pull step below reports, so it is said the same way; nothing moves without the codec.
+        logger.warning("sync cycle: reading the encryption salt failed (%s)", exc, exc_info=True)
+        report.ok = False
+        report.error = f"pull: {exc}"
+        return report
 
     # ── PULL + MERGE ────────────────────────────────────────────────────────
     try:

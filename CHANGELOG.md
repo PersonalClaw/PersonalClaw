@@ -110,6 +110,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A generated image or video larger than 10 MB is saved whole instead of cut off, and one that can't be saved says why.**
 
+- **An encrypted sync that can't read its store is reported as a failed read, as an unencrypted one is.**
+
 - **Settings → Speech & Transcription shows speech-to-text on until you turn it off, as voice input behaves.**
 
 - **Settings → Models keeps an image or video provider that can't generate in its row, with the reason it gives.**

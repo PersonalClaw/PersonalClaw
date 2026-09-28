@@ -86,6 +86,22 @@ class TestOneCycle:
         report = run_sync_cycle(FailingStore(), home, self_id="A", now="t")
         assert report.ok is False and "network down" in report.error  # not raised
 
+    def test_a_transport_failure_while_the_encryption_salt_is_read_is_contained(
+        self, tmp_path, monkeypatch
+    ):
+        """With encryption on, the salt is read first, through the same listing and read, and a
+        transport says a listing that fails by raising. That escaped the cycle, which never
+        raises. It is the cycle's failed read now, said as the pull step says one."""
+        from personalclaw.durability import crypto
+
+        monkeypatch.setattr(crypto, "load_passphrase", lambda: "a passphrase for this test")
+        home = tmp_path / "A"
+        _task(home, "t1", {"id": "t1"})
+
+        report = run_sync_cycle(FailingStore(), home, self_id="A", now="t", encrypt="on")
+
+        assert (report.ok, report.error, report.pushed) == (False, "pull: network down", None)
+
 
 class TestCriterion4Convergence:
     """The plan's Success Criterion 4, end to end through run_sync_cycle."""
