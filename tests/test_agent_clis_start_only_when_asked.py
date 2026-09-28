@@ -335,3 +335,26 @@ def test_only_what_the_user_pressed_reaches_a_check_that_starts_an_agent_cli():
         "these reach a check that STARTS another agent's CLI, and none is an action the user "
         f"took to start it: {extra}"
     )
+
+
+def test_a_runtimes_test_record_stays_in_its_folder_whatever_its_id(tmp_path, monkeypatch):
+    """The record's file is named from the runtime id, through the one resolver from a record id
+    to a path inside its store: an id holding a separator, a parent segment or an absolute path
+    still names a file in the agent metadata folder, and so does one longer than a file name
+    may be, cut rather than refused so one runtime cannot fail the whole listing."""
+    from personalclaw import agent_metadata
+    from personalclaw.agents import runtime_tests
+
+    monkeypatch.setattr(agent_metadata, "metadata_dir", lambda: tmp_path)
+    for runtime_id in (
+        "acp:demo-cli",
+        "acp:../../../etc/passwd",
+        "/tmp/elsewhere",
+        "..",
+        "",
+        "acp:" + "x" * 400,
+    ):
+        path = runtime_tests.record_path(runtime_id)
+        assert path.parent == tmp_path, (runtime_id, path)
+        assert path.name.endswith(".runtime-test.json"), path.name
+    assert runtime_tests.record_path("acp:demo-cli").name == "acp-demo-cli.runtime-test.json"

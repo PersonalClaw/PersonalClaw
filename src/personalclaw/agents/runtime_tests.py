@@ -58,11 +58,22 @@ _running: dict[str, "asyncio.Task[dict[str, Any]]"] = {}
 
 
 def record_path(runtime_id: str) -> Path:
-    """Where the last Test of *runtime_id* is kept (the file need not exist)."""
-    from personalclaw import agent_metadata
+    """Where the last Test of *runtime_id* is kept (the file need not exist).
 
-    slug = _UNSAFE_NAME.sub("-", runtime_id.lower()).strip("-") or "runtime"
-    return agent_metadata.metadata_dir() / f"{slug}{_RECORD_SUFFIX}"
+    The file is named from the id, so the name goes through the one resolver from a record id
+    to a path inside its store (``record_ids.record_path``), and a runtime id of any shape
+    names a file in the agent metadata folder. The slug is cut to the longest id that resolver
+    takes rather than refused: the record names the runtime it is for (:func:`last_test`), so
+    two long ids that cut to one slug read as not tried, never as each other's answer.
+    """
+    from personalclaw import agent_metadata
+    from personalclaw.record_ids import MAX_RECORD_ID_LEN
+    from personalclaw.record_ids import record_path as path_in_store
+
+    slug = _UNSAFE_NAME.sub("-", runtime_id.lower()).strip("-")[:MAX_RECORD_ID_LEN] or "runtime"
+    return path_in_store(
+        agent_metadata.metadata_dir(), slug, suffix=_RECORD_SUFFIX, kind="runtime_id"
+    )
 
 
 def _command_of(entry: Any) -> list[str]:
