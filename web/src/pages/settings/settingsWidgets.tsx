@@ -517,7 +517,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined} stale={isStalePaint} failed={status === 'error'} error={error} onRetry={refresh}>
           {data === null || (data && data.length === 0)
-            ? <div data-type="body-s" className="text-on-surface-low">Per-model success, latency, and cost land here as unattended work runs — reasoning, background, loops and orchestration — showing which is most efficient.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">Per-model success, latency, and cost land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis — showing which is most efficient.</div>
             : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
                 <div data-type="body-s" className="mt-1 inline-flex items-center gap-1 text-on-surface-low">
                   <Trophy size={11} className="text-ok" /> {frontier} on the frontier

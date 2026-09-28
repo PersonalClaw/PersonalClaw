@@ -47,17 +47,19 @@ const USE_CASES = [
   { key: 'reasoning', label: 'Reasoning' },
 ] as const
 
-// 🔴 ONLY SOME OF THOSE AXES CAN EVER HAVE TELEMETRY, and the empty state used to promise all three
-// would fill in. Traced: routing stats are folded in `ModelCallGuard._audit`, the guard is applied by
-// `provider_bridge` only when `_guard_use_case` is set, and that happens for exactly
-// `("reasoning", "background", "loops", "orchestration")`. Its own comment says why — "The interactive
-// chat/code_tools stream stays OUT OF SCOPE … both human-watched".
+// 🔴 NOT EVERY CALL ON THOSE AXES HAS TELEMETRY, and the empty state used to promise all three would
+// fill in. Routing stats are folded in `ModelCallGuard._audit`, and `provider_bridge` puts the guard on a
+// call when `_guard_use_case` is set: for EVERY call on an axis in its `METERED_AXES`, and for a call
+// automation makes on any other axis (`resolve_metered_model`: a loop's judge or gate, a knowledge step,
+// a one-shot completion). The turns a person makes on Chat or Code & tools stay unguarded, "both
+// human-watched" in the bridge's own words.
 //
-// So on a fresh install a user lands on the DEFAULT tab (Chat), reads "it fills in as models handle
-// this kind of request", and waits for data that cannot arrive. Two of the three tabs are structurally
-// empty. The tabs are left as they are — mirroring the Models panel's axes is a deliberate choice, and
-// removing two of them is the owner's call — but the copy now says which axes are measured.
-const MEASURED_USE_CASES = ['reasoning', 'background', 'loops', 'orchestration'] as const
+// So Reasoning fills in as models handle it, while Chat (the DEFAULT tab) and Code & tools fill in only
+// from the calls automation makes there: a user who only chats sees nothing on them, and the copy says
+// why rather than promising data their own turns never produce. The tabs are left as they are
+// (mirroring the Models panel's axes is a deliberate choice, and removing two is the owner's call).
+// `routingTelemetryPromise.test.tsx` reads this list against the bridge's own.
+const METERED_AXES = ['reasoning', 'background', 'loops', 'orchestration'] as const
 
 // The fixed query-class vocabulary (routing/classifier.py QUERY_CLASSES), in its
 // stable order. 5 options (>4) → a Select from the ui/ form family, not a Segmented.
@@ -162,9 +164,9 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
           <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">Loading…</div>
         ) : rows.length === 0 ? (
           <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
-            {(MEASURED_USE_CASES as readonly string[]).includes(useCase)
+            {(METERED_AXES as readonly string[]).includes(useCase)
               ? 'No routing telemetry recorded for this yet — it fills in as models handle this kind of request.'
-              : 'Nothing is measured for this axis. Routing telemetry comes from unattended work — reasoning, background, loops and orchestration — because interactive requests deliberately stay outside the model-call guard.'}
+              : 'No routing telemetry recorded for this yet. On this axis only the calls automation makes are measured, such as a loop’s judge or a knowledge step, so it fills in as they run. The turns you type here stay outside the model-call guard.'}
           </div>
         ) : (
           <>

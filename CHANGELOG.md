@@ -223,6 +223,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A model server on another machine is no longer priced as free: only one on this machine is, and any other is priced by a rate set or declared for it, or reads as unpriced.**
 
+- **Routing & Efficiency says what it measures: every call on Reasoning, and on Chat or Code & tools only the calls automation makes, not the turns you type.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**

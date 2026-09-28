@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { pyMethod } from '../../design/pySource'
+import { pyMethod, pyStrTuple } from '../../design/pySource'
 
 // ── The empty-state hints that promise an automatic future, pinned to the mechanism ─────────────
 //
@@ -124,17 +124,34 @@ describe('the routing card on the Settings home', () => {
     expect(w, 'the unmeasured axis must not come back').not.toMatch(/use_case: 'chat'/)
   })
 
+  // The gate, read from the bridge rather than copied here: the axes it guards on every call.
+  const bridge = py('providers/provider_bridge.py')
+  const metered = pyStrTuple(bridge, 'METERED_AXES')
+
   it('its empty copy names what is measured', () => {
-    expect(web('pages/settings/settingsWidgets.tsx')).toContain(
-      'land here as unattended work runs — reasoning, background, loops and orchestration',
+    const w = web('pages/settings/settingsWidgets.tsx')
+    expect(w).toContain(
+      'land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis',
     )
+    // Paired against the gate: widen or narrow the axes the bridge guards on every call and the copy
+    // has to follow. A parse that finds no axes fails here instead of passing over nothing.
+    expect(metered.length, 'METERED_AXES is read from the bridge').toBeGreaterThan(0)
+    const start = w.indexOf('Per-model success, latency, and cost land here')
+    const copy = w.slice(start, w.indexOf('</div>', start))
+    expect(copy, 'the sentence is found').toContain('showing which is most efficient')
+    for (const axis of metered) expect(copy, `the copy names ${axis}`).toMatch(new RegExp(`\\b${axis}\\b`))
   })
 
   it('the axis it asks for is one the backend actually guards', () => {
-    // Paired against the gate, like #1631's panel: widen or narrow the guard and this fails.
-    const bridge = py('providers/provider_bridge.py')
-    expect(bridge).toMatch(
-      /if use_case in \("reasoning", "background", "loops", "orchestration"\):/,
+    // Paired against the gate, like #1631's panel. The card's axis must be one the bridge guards on
+    // EVERY call, since that is what makes its copy's promise true; and the constant must be what
+    // gates, with the flag that extends the guard to automation's calls on any other axis.
+    expect(metered, 'the card asks for reasoning').toContain('reasoning')
+    expect(bridge, 'METERED_AXES is the gate, beside the any-axis flag').toMatch(
+      /if _metered or use_case in METERED_AXES:\s*\n\s*kwargs\["_guard_use_case"\] = use_case/,
+    )
+    expect(pyMethod(bridge, 'def resolve_metered_model'), 'automation’s calls set that flag').toMatch(
+      /_metered=True/,
     )
   })
 })

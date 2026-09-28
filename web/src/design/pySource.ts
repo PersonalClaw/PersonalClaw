@@ -48,6 +48,17 @@ export function pyEnumMembers(src: string, cls: string): string[] {
   return [...body.matchAll(/^\s+[A-Z_0-9]+ = "([a-z_]+)"/gm)].map((m) => m[1])
 }
 
+/** Every string of a module-level tuple literal, such as `METERED_AXES = ("reasoning", …)`.
+ *
+ *  🔑 DERIVED, for the reason `pyEnumMembers` is: a rail that pairs UI copy with a backend constant has
+ *  to read the constant, or it only proves the test still agrees with itself. Bounded by the tuple's own
+ *  closing parenthesis. Returns [] for an unknown name, so a caller's "the tuple is non-empty" assertion
+ *  is what fails when the constant is renamed or reshaped. */
+export function pyStrTuple(src: string, name: string): string[] {
+  const found = src.match(new RegExp(`^${name}(?:: [^=\\n]+)? = \\(([^)]*)\\)`, 'm'))
+  return found ? [...found[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []
+}
+
 /** Every KEY of a module-level `dict[str, str]` literal — e.g. a status→outcome mapping table. */
 export function pyDictKeys(src: string, name: string): string[] {
   const body = pyBetween(src, `${name}: dict[str, str] = {`, '\n}')
