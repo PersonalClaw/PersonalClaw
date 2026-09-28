@@ -409,10 +409,10 @@ def _build_skeptic_prompt(
 
 def _judge_usage(loop_id: str) -> Attribution:
     """Whose spend a judge's verdict is: the loop's, under the key its spend is read by
-    (``loop.manager.session_key``)."""
-    from personalclaw.loop.manager import session_key
+    (``loop.manager.usage_key``)."""
+    from personalclaw.loop.manager import usage_key
 
-    return Attribution(source="loop", session_key=session_key(loop_id))
+    return Attribution(source="loop", session_key=usage_key(loop_id))
 
 
 async def _stream(judge, prompt: str, usage: Attribution) -> str:

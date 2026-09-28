@@ -13,7 +13,12 @@ an obviously broken one — which is why every test below asserts the figure, no
 * a bare ``startswith`` prefix reports a total that is silently too HIGH, by swallowing a
   different loop whose id extends this one's;
 * the planner session sits OUTSIDE the worker prefix (``loop-plan-<id>``), so a figure that
-  quietly omitted it would imply a completeness it does not have.
+  quietly omitted it would imply a completeness it does not have;
+* the rows are written by the CHAT seam, under the key it gives a dashboard session
+  (``dashboard:loop-<id>``), not under the bare name the manager mints. A read of the bare name
+  matched no row at all and reported $0.00 for a loop that had spent real money — so every row
+  here is written through the writer's own function (``chat_utils._history_key_for``, the key
+  ``run_chat`` records a turn under), and a reader that drifts from it reds.
 """
 
 from __future__ import annotations
@@ -21,7 +26,8 @@ from __future__ import annotations
 import pytest
 
 from personalclaw import usage_ledger as ul
-from personalclaw.loop.manager import loop_spend, session_key, task_session_key
+from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.loop.manager import loop_spend, session_key, task_session_key, usage_key
 from personalclaw.loop.plan_walkthrough import planner_session_key
 from personalclaw.usage_ledger import TurnUsage
 
@@ -41,11 +47,12 @@ def _home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _turn(skey: str, cost: float, *, priced: bool = True, tokens: int = 100) -> None:
+def _turn(session_name: str, cost: float, *, priced: bool = True, tokens: int = 100) -> None:
+    """One turn of the dashboard session *session_name*, booked where the chat seam books it."""
     ul.record_turn(
         TurnUsage(
             ts="2026-08-21T12:00:00+00:00",
-            session_key=skey,
+            session_key=_history_key_for(session_name),
             source="loop",
             agent="",
             provider="anthropic",
@@ -70,6 +77,25 @@ def test_the_key_shapes_this_reads_are_the_ones_the_manager_mints() -> None:
     assert not planner_session_key(LOOP).startswith(session_key(LOOP) + "-")
 
 
+def test_the_loop_reads_its_spend_under_the_key_its_turns_are_written_under() -> None:
+    """🔴 Red before the fix: the read asked for the bare name `loop-<id>` while the chat seam had
+    written every worker turn under `dashboard:loop-<id>`, so this loop read $0.00 and 0 turns.
+
+    Both halves are the production functions: the rows below are keyed by `_history_key_for`,
+    the key `run_chat` records a turn under, and `usage_key` is what `loop_spend` reads.
+    """
+    assert usage_key(LOOP) == _history_key_for(session_key(LOOP)) == f"dashboard:loop-{LOOP}"
+    _turn(session_key(LOOP), 0.25)
+    _turn(task_session_key(LOOP, "t1"), 0.50)
+    _turn(planner_session_key(LOOP), 0.40)
+
+    spend = loop_spend(LOOP)
+    assert (spend["dollars_est"], spend["turns"]) == (pytest.approx(0.75), 2)
+    assert spend["planning"] == {"dollars_est": pytest.approx(0.40), "turns": 1}
+    # The bare name really does match nothing: the rows exist only under the written key.
+    assert ul.totals(session_prefix=session_key(LOOP))["turns"] == 0
+
+
 def test_a_fan_out_loop_sums_the_main_worker_AND_every_task_worker() -> None:
     """The clause's real content: one logical run spanning several session keys.
 
@@ -88,8 +114,8 @@ def test_a_fan_out_loop_sums_the_main_worker_AND_every_task_worker() -> None:
     # workers passing for a fan-out sum.
     assert (
         loop_spend(LOOP)["dollars_est"]
-        > ul.totals(session_key=task_session_key(LOOP, "t1"))["cost_usd"]
-        + ul.totals(session_key=task_session_key(LOOP, "t2"))["cost_usd"]
+        > ul.totals(session_key=_history_key_for(task_session_key(LOOP, "t1")))["cost_usd"]
+        + ul.totals(session_key=_history_key_for(task_session_key(LOOP, "t2")))["cost_usd"]
     )
 
 
@@ -131,12 +157,12 @@ def test_the_extending_loops_own_task_workers_stay_with_it() -> None:
 
 def test_the_prefix_match_is_separator_aware_at_the_seam_itself() -> None:
     """Unit-level, so a red points at the predicate rather than at a fixture."""
-    prefix = session_key(LOOP)
+    prefix = usage_key(LOOP)
     assert ul._session_matches(prefix, "", prefix) is True  # the key itself
     assert ul._session_matches(prefix + "-t1", "", prefix) is True  # a child at the separator
     assert ul._session_matches(prefix + "4", "", prefix) is False  # a longer id, NOT a child
     assert ul._session_matches(prefix + "4-t1", "", prefix) is False
-    assert ul._session_matches("loop-plan-" + LOOP, "", prefix) is False
+    assert ul._session_matches(_history_key_for(planner_session_key(LOOP)), "", prefix) is False
 
 
 def test_an_empty_prefix_selects_everything_rather_than_nothing() -> None:
@@ -150,15 +176,15 @@ def test_an_empty_prefix_selects_everything_rather_than_nothing() -> None:
 def test_the_exact_session_filter_still_works_alongside_the_prefix_one() -> None:
     _turn(session_key(LOOP), 1.00)
     _turn(task_session_key(LOOP, "t1"), 2.00)
-    assert ul.totals(session_key=session_key(LOOP))["cost_usd"] == pytest.approx(1.00)
-    assert ul.totals(session_prefix=session_key(LOOP))["cost_usd"] == pytest.approx(3.00)
+    assert ul.totals(session_key=usage_key(LOOP))["cost_usd"] == pytest.approx(1.00)
+    assert ul.totals(session_prefix=usage_key(LOOP))["cost_usd"] == pytest.approx(3.00)
 
 
 def test_rollup_takes_the_prefix_too_and_groups_within_it() -> None:
     _turn(session_key(LOOP), 1.00)
     _turn(task_session_key(LOOP, "t1"), 2.00)
     _turn(session_key(LOOP_LONGER), 9.00)
-    rows = ul.rollup(group_by="model", session_prefix=session_key(LOOP))
+    rows = ul.rollup(group_by="model", session_prefix=usage_key(LOOP))
     assert len(rows) == 1
     assert rows[0]["cost_usd"] == pytest.approx(3.00)
 
@@ -218,3 +244,34 @@ def test_another_loops_spend_never_reaches_this_one() -> None:
     _turn(session_key("ffffffff"), 7.00)
     _turn(task_session_key("ffffffff", "t1"), 7.00)
     assert loop_spend(LOOP)["dollars_est"] == 0.0
+
+
+# ── 5. the figure is a cap's input, not only a display ─────────────────────────────────
+
+
+def test_the_cost_cap_stops_a_loop_on_the_turns_its_worker_really_ran(tmp_path, monkeypatch):
+    """🔴 Red before the fix: the watchdog's per-loop cost cap reads this figure, which read $0.00
+    for every loop, so a loop capped at $1.00 kept running after its worker had spent $1.25.
+
+    Driven through the real poll (`LoopWatchdog._poll_once`), with the worker's turn booked where
+    the chat seam books it.
+    """
+    from test_loop_watchdog import _FakeSession, _run, _running, _wd, _write_finding
+
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus, LoopStopReason
+
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
+    capped = _running(kind="general", kind_config={}, max_cycles=20, max_cost_usd=1.0)
+    watchdog = _wd()
+    worker = session_key(capped.id)
+    watchdog._state._sessions[worker] = _FakeSession(worker)
+    _run(watchdog._poll_once())  # seeds liveness
+    _turn(worker, 1.25)
+    _write_finding(capped.id, 1)
+    _run(watchdog._poll_once())
+
+    after = store.get(capped.id)
+    assert after.status == LoopStatus.COMPLETE.value
+    assert after.stop_reason == LoopStopReason.COST_BUDGET.value
+    assert "$1.25" in (after.error_message or ""), after.error_message

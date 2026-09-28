@@ -49,7 +49,7 @@ def dashboard_session_key(session_name: str) -> str:
     Idempotent: an already-wrapped key is returned unchanged, so a caller that cannot
     tell which form it holds is still safe. A name in its transcript's file form
     (``dashboard_<name>``) is read by :func:`dashboard_key_from_file_form`;
-    ``dashboard/chat_utils._history_key_for`` applies both rules.
+    :func:`dashboard_history_key` applies both rules.
     """
     if session_name.startswith(DASHBOARD_SESSION_PREFIX):
         return session_name
@@ -69,10 +69,24 @@ def dashboard_key_from_file_form(name: str) -> str:
     Here rather than in ``dashboard/chat_utils`` for the reason :data:`DASHBOARD_SESSION_PREFIX`
     is: code below the HTTP surface names a chat from its transcript's file (the idle-chat
     compression pass records its usage under the key the chat's turns are recorded by), and
-    ``chat_utils._history_key_for`` normalizes a session name with this same rule.
+    :func:`dashboard_history_key` normalizes a session name with this same rule.
     """
     if not name.startswith(DASHBOARD_FILE_PREFIX):
         return name
     while name.startswith(DASHBOARD_FILE_PREFIX):
         name = name[len(DASHBOARD_FILE_PREFIX) :]
     return dashboard_session_key(name)
+
+
+def dashboard_history_key(session_name: str) -> str:
+    """The key a dashboard chat session is recorded under — its transcript, and the usage row
+    each of its turns writes — from its name in whichever form it arrives: bare, already
+    wrapped, or its transcript's file form.
+
+    The ONE rule for that key. The chat turn writer (``dashboard/chat_utils._history_key_for``)
+    and every reader of those rows key through it, so a reader cannot ask for a key the writer
+    never wrote. One did: a loop's spend total read its worker's bare session name while every
+    turn the worker ran had been booked under the wrapped one, so a loop that had spent real
+    money read $0.00 and its cost cap could never trip.
+    """
+    return dashboard_session_key(dashboard_key_from_file_form(session_name))

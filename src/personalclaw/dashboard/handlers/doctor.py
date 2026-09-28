@@ -549,13 +549,21 @@ async def _run_selftest(name: str) -> dict:
     async def _timed(coro, timeout: float = 15.0):
         return await _asyncio.wait_for(coro, timeout=timeout)
 
-    # chat — one short completion via the resolved chat provider (async).
+    # chat — one short completion through the Background model (async). The reply has to SAY
+    # something: a model that answers with nothing has not served a completion, and reading only
+    # `None` as a failure reported an empty reply as a working model.
     if can_resolve_use_case("chat"):
         try:
             from personalclaw.llm_helpers import one_shot_completion
 
             txt = await _timed(one_shot_completion("ping", use_case="background"))
-            out["chat"] = {"ok": bool(txt is not None), "detail": "completion returned"}
+            if txt and txt.strip():
+                out["chat"] = {"ok": True, "detail": "the Background model replied"}
+            else:
+                out["chat"] = {
+                    "ok": False,
+                    "detail": "the Background model answered with an empty reply",
+                }
         except Exception as exc:
             out["chat"] = {"ok": False, "detail": str(exc)[:200]}
 
@@ -616,6 +624,7 @@ async def _tts_clone_probe(_timed) -> dict | None:
     import tempfile
 
     try:
+        from personalclaw.tts.provider import wrote_audio
         from personalclaw.tts.registry import active_voice_params, route_synthesis
     except Exception:
         return None
@@ -646,10 +655,13 @@ async def _tts_clone_probe(_timed) -> dict | None:
             _write_reference_clip(ref_path)
             params = {**params, "ref_audio": ref_path, "ref_text": "reference clip"}
         result = await _timed(route_synthesis(params, "Selftest.", output_path=clip), timeout=60.0)
+        # Read before `finally` removes it. The clip was made above, so a path coming back proves
+        # nothing: an engine that wrote no audio returns the same empty file.
+        audio = wrote_audio(result)
         detail = "clone synthesis returned audio" if clone_capable else "synthesis returned audio"
         return {
-            "ok": bool(result),
-            "detail": detail if result else "synthesize returned nothing",
+            "ok": audio,
+            "detail": detail if audio else "synthesize returned nothing",
             "cloning": clone_capable,
         }
     except Exception as exc:

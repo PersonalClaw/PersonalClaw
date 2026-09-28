@@ -652,13 +652,19 @@ async def _selftest_tts(provider, model: str, timeout: float) -> dict:
     # Hand the provider a caller-owned path and clean it up in `finally` regardless of outcome
     # — a timeout cancels the coroutine mid-write, so an ok-only unlink (or output_path="")
     # orphans whatever the provider already wrote. Matches _selftest_stt/_selftest_diarization.
+    from personalclaw.tts.provider import wrote_audio
+
     fd, out = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-tts-")
     os.close(fd)
     outcome, value, ms = "error", None, 0
+    audio = False
     try:
         outcome, value, ms = await _timed(
             provider.synthesize("Selftest.", voice=model, output_path=out), timeout
         )
+        # Read before `finally` removes it. The path handed over was made here, so a path coming
+        # back proves nothing: an engine that wrote no audio returns the same empty file.
+        audio = outcome == "ok" and wrote_audio(value)
     finally:
         # Unlink the path we handed over AND any different path the provider chose to return.
         for path in {out, value if isinstance(value, str) else ""}:
@@ -671,12 +677,11 @@ async def _selftest_tts(provider, model: str, timeout: float) -> dict:
         return _timeout_result(ms, "synthesis")
     if outcome == "error":
         return _error_result(value, ms)
-    ok = bool(value)
     return {
-        "ok": ok,
+        "ok": audio,
         "duration_ms": ms,
-        "detail": "synthesis returned audio" if ok else "synthesize returned nothing",
-        "reason": "" if ok else "tts_returned_nothing",
+        "detail": "synthesis returned audio" if audio else "synthesize returned nothing",
+        "reason": "" if audio else "tts_returned_nothing",
     }
 
 

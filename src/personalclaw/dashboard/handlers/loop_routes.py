@@ -390,7 +390,7 @@ async def api_loop_grill_tree(request: web.Request) -> web.Response:
     from personalclaw.llm_helpers import one_shot_completion
     from personalclaw.usage_ledger import Attribution
 
-    who = Attribution(source="loop", session_key=manager.session_key(cid))
+    who = Attribution(source="loop", session_key=manager.usage_key(cid))
 
     async def _ask(prompt: str) -> str:
         return await one_shot_completion(prompt, use_case="background", usage=who)

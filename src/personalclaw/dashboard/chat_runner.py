@@ -775,6 +775,27 @@ def _turn_complete_line(
     return line
 
 
+#: The ``_app`` tags a loop's hidden sessions carry: ``"loop"`` on its workers (``loop/manager``)
+#: and ``"loops"`` on its planner (``loop/plan_walkthrough``). The other checks in this module key
+#: WORKER behaviour off ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both
+#: are loop work, so both take the loops axis.
+_LOOP_WORK_APPS = frozenset({"loop", "loops"})
+
+
+def model_axis_for(session: object) -> str:
+    """The axis a chat turn's inner model resolves on, which is also the axis the spend guard
+    meters it on: ``loops`` for a loop's worker and planner, else ``""`` (the chat binding).
+
+    Keyed off ``_app`` (the loop code sets it, and it is persisted), NOT the session-key prefix.
+    An explicit per-loop model still wins — it rides ``session.model`` beside the axis. Every
+    other session's turn takes the chat binding, which the spend guard leaves alone by design:
+    Settings → Guardrails says the daily cap binds unattended work, not a chat. The planner used
+    to take the chat binding, because only the worker's tag was checked here, so a loop's
+    planning was never metered.
+    """
+    return "loops" if getattr(session, "_app", "") in _LOOP_WORK_APPS else ""
+
+
 def _record_turn_usage(
     event: object,
     *,
@@ -2632,11 +2653,9 @@ async def run_chat(
             # turn so artifact_save stamps the artifact's project_id, tying artifacts
             # created here back to the Project. "" for an unscoped session.
             project_id=getattr(session, "project_id", "") or "",
-            # Loop worker sessions resolve the ``loops`` chain for their inner model
-            # (MODEL-USE-CASES-V2 T2.3; key off _app — the manager sets it — NOT the
-            # session-key prefix). An explicit per-loop model still wins (it rides
-            # session.model above). Unbound axis → chat chain, unchanged.
-            model_axis="loops" if getattr(session, "_app", "") == "loop" else "",
+            # A loop's worker and planner sessions resolve — and are metered on — the ``loops``
+            # axis; every other session takes the chat binding (`model_axis_for`).
+            model_axis=model_axis_for(session),
         )
         _acquired = True
         # The chosen model could not run and another answers: said now, before the reply streams

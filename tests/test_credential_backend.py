@@ -23,6 +23,7 @@ no-keyring path is proven by blocking the import, not by the absence of a packag
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import json
 import stat
@@ -30,6 +31,7 @@ import sys
 import types
 from pathlib import Path
 
+import keychain_stub
 import pytest
 
 from personalclaw.config import loader
@@ -78,7 +80,10 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, "keyring", None)
     monkeypatch.delitem(sys.modules, "keyring", raising=False)
     monkeypatch.setattr(sys, "meta_path", [blocker, *sys.meta_path])
-    assert not keychain_available(), "the blocker must make keyring unimportable"
+    # The blocker itself, not `keychain_available()`: the suite keeps the keychain switched off,
+    # so that predicate is False with or without a blocker and would prove nothing here.
+    with pytest.raises(ImportError):
+        importlib.import_module("keyring")
     return blocker
 
 
@@ -121,7 +126,7 @@ def _install_stub_keyring(
     module.get_keyring = lambda: _backend_class(backend_module)()  # type: ignore[attr-defined]
     module.get_password = get_password  # type: ignore[attr-defined]
     module.set_password = set_password  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "keyring", module)
+    keychain_stub.stand_in(monkeypatch, module)
     return values
 
 

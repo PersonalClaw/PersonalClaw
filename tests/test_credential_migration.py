@@ -22,6 +22,7 @@ import sys
 import types
 from pathlib import Path
 
+import keychain_stub
 import pytest
 
 from personalclaw.config import credential_migration as mig
@@ -98,7 +99,7 @@ def _stub_keyring(
     module.get_password = get_password  # type: ignore[attr-defined]
     module.set_password = set_password  # type: ignore[attr-defined]
     module.delete_password = delete_password  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "keyring", module)
+    keychain_stub.stand_in(monkeypatch, module)
     return values
 
 

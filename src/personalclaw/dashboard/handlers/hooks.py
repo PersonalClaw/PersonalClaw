@@ -11,6 +11,7 @@ from aiohttp import web
 
 from personalclaw import notification_kinds
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.guardrails.failure import BudgetExceededError
 
 if TYPE_CHECKING:
     from personalclaw.webhook_callbacks import Callback
@@ -400,7 +401,12 @@ async def _run_hook_inner(
     """Inner agent turn — called within timeout wrapper."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK  # noqa: F811
 
-    client, is_new, resumed = await state.sessions.get_or_create(session_key, agent=agent)
+    # A webhook's agent turn is automation — an ephemeral agent session, as a subagent is — so it
+    # rides the orchestration axis a subagent rides, which is what puts the spend guard on its
+    # calls. On the chat binding it had none, and the daily cap never counted a webhook's spend.
+    client, is_new, resumed = await state.sessions.get_or_create(
+        session_key, agent=agent, model_axis="orchestration"
+    )
     full_message = message
     if is_new and state.context_builder:
         from personalclaw.context_headroom import resolve_window
@@ -475,6 +481,12 @@ async def _run_hook_agent(
         result_text = f"Hook agent timed out after {timeout_secs}s"
         logger.warning("Hook agent timeout: %s", session_key)
         await state.sessions.record_failure(session_key)
+    except BudgetExceededError as exc:
+        # The spend guard refused a call (`_run_hook_inner` rides a metered axis): a ceiling the
+        # owner set, not a failure of the session, so it is said as the refusal it is.
+        outcome = "refused_budget_exceeded"
+        result_text = f"Hook agent stopped: {exc.sentence()}"
+        logger.info("Hook agent refused by the spend budget: %s — %s", session_key, exc)
     except Exception:
         outcome = "error"
         result_text = f"Hook agent error: internal failure (session {session_key})"

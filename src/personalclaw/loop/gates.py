@@ -146,15 +146,15 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
     unchanged.
 
     The verdict's usage row is the loop's (*loop_id*), under the key the loop's spend is read
-    by (``loop.manager.session_key``)."""
+    by (``loop.manager.usage_key``)."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.loop.judge import judge_use_case
-    from personalclaw.loop.manager import session_key
+    from personalclaw.loop.manager import usage_key
     from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
     from personalclaw.usage_ledger import Attribution, recorder
 
-    who = Attribution(source="loop", session_key=session_key(loop_id))
+    who = Attribution(source="loop", session_key=usage_key(loop_id))
 
     use_case = judge_use_case()
     # The chunks of the most recent FAILED attempt. ``_drain`` must RE-RAISE so the walk

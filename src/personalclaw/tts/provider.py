@@ -8,6 +8,7 @@ to the uniform local-model contract); a REMOTE/hosted backend (OpenAI TTS) subcl
 management stubs. The two axes are independent.
 """
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -76,6 +77,21 @@ class TtsProvider(ABC):
 
     def info(self) -> dict[str, Any]:
         return {"name": self.name, "display_name": self.display_name}
+
+
+def wrote_audio(path: object) -> bool:
+    """Whether the path :meth:`TtsProvider.synthesize` returned is a file with something in it.
+
+    A caller that hands the provider a path of its own (the selftests do, so they can remove it)
+    cannot read "a path came back" as "audio came back": that file existed, empty, before the
+    engine ran, and an engine that produced nothing hands the same path back.
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
 
 
 class LocalTtsProvider(TtsProvider, LocalModelProvider):

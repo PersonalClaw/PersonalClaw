@@ -488,18 +488,14 @@ def _history_key_for(session_name: str) -> str:
     Dashboard sessions live under the ``dashboard:`` namespace; a ``dashboard_``
     filename form normalizes to it. This helper is for dashboard-native session
     ids only — it does NOT know about channel-provider threads (those persist +
-    resolve under their own bare provider key; see ``resolve_history_key``)."""
-    from personalclaw.constants import (
-        DASHBOARD_SESSION_PREFIX,
-        dashboard_key_from_file_form,
-        dashboard_session_key,
-    )
+    resolve under their own bare provider key; see ``resolve_history_key``).
 
-    if session_name.startswith(DASHBOARD_SESSION_PREFIX):
-        return session_name
-    # The file form and the wrapping both live in `constants` — layers below this one name a
-    # chat from its file and key off the wrapped form, so each rule must exist once.
-    return dashboard_session_key(dashboard_key_from_file_form(session_name))
+    The rule itself is :func:`personalclaw.constants.dashboard_history_key`: a chat's turns
+    are written under this key, and code below this layer that reads them back (a loop's
+    spend total) keys through the same function, so the two cannot disagree."""
+    from personalclaw.constants import dashboard_history_key
+
+    return dashboard_history_key(session_name)
 
 
 def chat_usage(session: _ChatSession) -> Attribution:

@@ -193,6 +193,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A text-to-speech model that is chosen but cannot speak yet says so, instead of answering with no audio.**
 
+- **A loop's cost counts the turns its workers ran, so its cost cap stops it.**
+
+- **The daily spend cap counts a subagent given its own model, a loop's planning, a webhook's agent turn and a scheduled job's reading of its subagent's result.**
+
+- **The daily spend cap counts each subagent once, including one on an agent CLI.**
+
+- **A session stopped the hard way comes back as the agent it was, where it was.**
+
+- **A webhook stopped by the spend cap says so, not "internal failure".**
+
+- **A model selftest fails on an empty reply, and a voice selftest on an engine that wrote no audio.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**

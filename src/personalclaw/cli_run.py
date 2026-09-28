@@ -493,17 +493,17 @@ def _token_total(session_key: str) -> int:
     🔴 The ledger keys rows by the DASHBOARD-WRAPPED provider key
     (``dashboard:inbound:cli:<id>``), not by the session name. Querying the bare key
     matched nothing and reported a confident ``"tokens": 0`` on a turn that had really
-    billed 22,979 — a decorative field, not a measured one. ``dashboard_session_key`` is
-    the shared wrapper, so the query cannot drift from the write site. It is imported from
+    billed 22,979 — a decorative field, not a measured one. ``dashboard_history_key`` is
+    the write site's own rule, so the query cannot drift from it. It is imported from
     ``constants``, NOT from ``dashboard.chat_utils``: reaching up into the HTTP surface for
     a naming rule is the inversion ``core-must-not-import-the-http-surface`` exists to
     catch, and the gate caught it here.
     """
     try:
         from personalclaw import usage_ledger
-        from personalclaw.constants import dashboard_session_key
+        from personalclaw.constants import dashboard_history_key
 
-        agg = usage_ledger.totals(session_key=dashboard_session_key(session_key))
+        agg = usage_ledger.totals(session_key=dashboard_history_key(session_key))
         return int(agg.get("input_tokens", 0)) + int(agg.get("output_tokens", 0))
     except Exception:  # noqa: BLE001 — telemetry must never fail a completed turn
         return 0

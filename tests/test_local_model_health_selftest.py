@@ -85,8 +85,16 @@ class _TtsFake(_BaseFake):
         import tempfile
 
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="pc-tts-fake-")
+        os.write(fd, b"RIFF")  # it synthesized something
         os.close(fd)
         return path  # the selftest must delete this (TtsProvider caller-owns contract)
+
+
+class _SilentTtsFake(_BaseFake):
+    """An engine that produced nothing and hands back the path it was given, as it came."""
+
+    async def synthesize(self, text, voice="", output_path="", *, speed=1.0, **opts):
+        return output_path
 
 
 class _SlowSttFake(_BaseFake):
@@ -232,6 +240,16 @@ async def test_selftest_embedding_reports_dims():
 async def test_selftest_tts_ok_and_cleans_up_its_file():
     out = await md._dispatch_selftest(_TtsFake(), ["tts"], "", 30.0)
     assert out["tts"]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_selftest_tts_that_wrote_no_audio_is_not_green():
+    """🔴 Red before the fix: the selftest makes the output file itself, so "a path came back"
+    was true of an engine that wrote nothing — it passed as "synthesis returned audio"."""
+    out = await md._dispatch_selftest(_SilentTtsFake(), ["tts"], "", 30.0)
+    assert out["tts"]["ok"] is False
+    assert out["tts"]["reason"] == "tts_returned_nothing"
+    assert out["tts"]["detail"] == "synthesize returned nothing"
 
 
 @pytest.mark.asyncio

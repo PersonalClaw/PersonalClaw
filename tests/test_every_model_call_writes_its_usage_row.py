@@ -366,13 +366,14 @@ async def test_an_eval_judges_verdict_is_eval_spend(scripted):
 @pytest.mark.asyncio
 async def test_a_loop_judges_verdict_is_the_loops_spend(scripted):
     from personalclaw.loop import judge as judge_mod
-    from personalclaw.loop.manager import loop_spend, session_key
+    from personalclaw.loop.manager import loop_spend, usage_key
 
     finding = {"cycle": 1, "summary": "s"}
     await judge_mod.assess_cycle("a goal", "done when", finding, [], loop_id="l1")
 
     row = _the_one_row()
-    assert (row["source"], row["session_key"]) == ("loop", session_key("l1"))
+    # Under the key the loop's spend is read by, which is its worker's chat history key.
+    assert (row["source"], row["session_key"]) == ("loop", usage_key("l1"))
     assert loop_spend("l1")["turns"] == 1, "the loop's own spend holds its judge"
     assert _uncounted() == 0
 
@@ -380,10 +381,11 @@ async def test_a_loop_judges_verdict_is_the_loops_spend(scripted):
 @pytest.mark.asyncio
 async def test_a_stage_gates_verdict_is_the_loops_spend(scripted):
     from personalclaw.loop.gates import judge_verdict
-    from personalclaw.loop.manager import session_key
+    from personalclaw.loop.manager import loop_spend, usage_key
 
     assert await judge_verdict("PASS or FAIL?", loop_id="l2") == "An answer"
 
     row = _the_one_row()
-    assert (row["source"], row["session_key"]) == ("loop", session_key("l2"))
+    assert (row["source"], row["session_key"]) == ("loop", usage_key("l2"))
+    assert loop_spend("l2")["turns"] == 1, "the loop's own spend holds its stage gate's verdict"
     assert _uncounted() == 0

@@ -499,9 +499,9 @@ def _token_totals(session_key: str) -> tuple[int, int]:
     """
     try:
         from personalclaw import usage_ledger
-        from personalclaw.constants import dashboard_session_key
+        from personalclaw.constants import dashboard_history_key
 
-        agg = usage_ledger.totals(session_key=dashboard_session_key(session_key))
+        agg = usage_ledger.totals(session_key=dashboard_history_key(session_key))
         return int(agg.get("input_tokens", 0) or 0), int(agg.get("output_tokens", 0) or 0)
     except Exception:  # noqa: BLE001 — telemetry must never fail a completed turn
         return 0, 0

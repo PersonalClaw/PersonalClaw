@@ -275,14 +275,15 @@ def test_the_word_priced_means_the_same_thing_on_both_money_surfaces(ledger_home
     reds rather than being discovered by a user comparing two panels.
     """
     from personalclaw import usage_ledger
-    from personalclaw.loop.manager import loop_spend, session_key
+    from personalclaw.loop.manager import loop_spend, usage_key
 
     loop_id = "abc12345"
-    # An unpriced turn on the loop's own worker session — what `loop_spend` reads.
+    # An unpriced turn on the loop's own worker session — what `loop_spend` reads, under the key
+    # the chat seam writes a worker's turns under.
     usage_ledger.record_turn(
         usage_ledger.TurnUsage(
             ts="2026-09-07T00:00:00+00:00",
-            session_key=session_key(loop_id),
+            session_key=usage_key(loop_id),
             source="loop",
             agent="",
             provider="ollama",
@@ -306,7 +307,7 @@ def test_the_word_priced_means_the_same_thing_on_both_money_surfaces(ledger_home
     usage_ledger.record_turn(
         usage_ledger.TurnUsage(
             ts="2026-09-07T00:00:01+00:00",
-            session_key=session_key("bcd23456"),
+            session_key=usage_key("bcd23456"),
             source="loop",
             agent="",
             provider="anthropic",

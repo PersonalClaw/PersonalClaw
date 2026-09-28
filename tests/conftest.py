@@ -66,6 +66,17 @@ if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
         f"  invoking repository root: {_INVOKING_REPO_ROOT}"
     )
 
+# ── The machine's keychain stays out ────────────────────────────────────
+# One OS keychain serves every home on the machine, so a scratch home does not keep a test out
+# of the developer's secrets: the credential store reads the keychain, writes it and deletes from
+# it whenever `keyring` is importable, and a credential it reads is mirrored into this process's
+# environment. So the suite runs with it OFF, from before the first test module is collected —
+# the switch the apps suite throws too (`personalclaw.sdk.testing.keychain_off`). A test of the
+# keychain seam itself stands a stub in with `keychain_stub.stand_in`, the only way back on.
+# Proof: tests/test_the_suite_never_reaches_the_machines_keychain.py.
+_CREDENTIALS = importlib.import_module("personalclaw.config.credentials")
+_LET_THE_KEYCHAIN_BACK_IN = _CREDENTIALS.keychain_off()
+
 
 def _caller_chose_a_home() -> bool:
     """Whether the home was chosen explicitly: ``$PERSONALCLAW_HOME`` set (to anything, the
@@ -85,6 +96,10 @@ def _caller_chose_a_home() -> bool:
 
 def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+
+
+def pytest_unconfigure(config):
+    _LET_THE_KEYCHAIN_BACK_IN()
 
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this

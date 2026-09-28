@@ -627,11 +627,14 @@ def _build_native_runtime(
     Its inference ModelProvider is resolved through the SAME active-model
     selection (Settings → Models). ``model_axis`` names the chat sub-category
     whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
-    the lite factory, "loops" for loop workers, "orchestration" for model-less
-    subagent spawns, else the session's own use case — so a sub-category
-    binding governs native agents too (previously the inner model hardcoded
-    "chat", making e.g. a code_tools binding cosmetic). Tools come from the
-    in-process core provider.
+    the lite factory, "loops" for a loop's worker and planner, "orchestration"
+    for subagent spawns and the other agent turns nobody typed, else the
+    session's own use case — so a sub-category binding governs native agents too
+    (previously the inner model hardcoded "chat", making e.g. a code_tools binding
+    cosmetic). A model the caller names still serves; it rides BESIDE the axis,
+    because the axis also decides whether the inner model is metered — only the
+    non-interactive axes are wrapped by the spend guard (below, in
+    ``resolve_provider_for_use_case``). Tools come from the in-process core provider.
     """
     from pathlib import Path
 
@@ -1247,8 +1250,9 @@ def resolve_provider_for_use_case(
     # which binds it per-turn so artifact_save can stamp the artifact's project_id.
     _project_id = str(kwargs.pop("project_id", "") or "")
     # The chat sub-category whose CHAIN governs this session's INNER model
-    # (MODEL-USE-CASES-V2 T2.x): the _bg factory passes "background", loop worker
-    # sessions "loops", model-less subagent spawns "orchestration". Defaults to the
+    # (MODEL-USE-CASES-V2 T2.x): the _bg factory passes "background", a loop's worker
+    # and planner "loops", subagent spawns and webhook agent turns "orchestration" (a
+    # model the caller names rides beside the axis, never instead). Defaults to the
     # outer use_case itself (chat sessions → the chat chain; code_tools sessions →
     # the code_tools chain — previously the inner model hardcoded "chat", making a
     # code_tools binding cosmetic for native agents). Pop unconditionally so it
@@ -1333,7 +1337,8 @@ def resolve_provider_for_use_case(
     # Model-call guard: every NON-INTERACTIVE text axis
     # (``reasoning`` / ``background`` / ``loops`` / ``orchestration`` — backing
     # one_shot_completion, the lite background factory, loop workers/judges/gates,
-    # and model-less subagent spawns) routes every resolved provider through
+    # and every subagent spawn and agent turn nobody typed — the census of those is
+    # tests/test_automation_spend_is_metered.py) routes every resolved provider through
     # ModelCallGuard (per-provider circuit breaker + hard wall-clock timeout +
     # attempt-level JSONL audit) — so the breaker and the audit see the TRUE axis
     # (MODEL-USE-CASES-V2). The interactive chat/code_tools stream stays OUT OF

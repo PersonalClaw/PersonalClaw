@@ -156,6 +156,21 @@ class BudgetExceededError(GuardError):
         self.spent = spent
         super().__init__(f"{scope} {dimension} budget exceeded: spent {spent:.4g} of {limit:.4g}")
 
+    def sentence(self) -> str:
+        """The refusal as a person reads it: which ceiling stopped the run, what was spent
+        against it, and where it is changed."""
+        which = "daily" if self.scope == "day" else "per-run"
+        if self.dimension == "tokens":
+            figure = f"{int(self.spent):,} of {int(self.limit):,} tokens"
+            unit = "token"
+        else:
+            figure = f"${self.spent:.2f} of ${self.limit:.2f}"
+            unit = "dollar"
+        fix = "raise it in Settings → Guardrails"
+        if self.scope == "day":
+            fix = f"it resets tomorrow, or {fix}"
+        return f"The {which} {unit} budget is spent ({figure}): {fix}."
+
 
 class SecretLeakBlocked(GuardError):
     """An outbound prompt was refused at the scan stage in ``block`` mode.

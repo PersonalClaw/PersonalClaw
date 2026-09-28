@@ -59,7 +59,7 @@ const USE_CASE_META: Record<string, { label: string; group?: string; description
   code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Native agent turns that lean on tool use and code work.', chain: true, icon: Code2, fallback: 'Chat' },
   reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls — web-page extraction and other guarded single completions.', chain: true, icon: BrainCircuit, fallback: 'Chat' },
   background: { label: 'Background', group: 'Chat routing', description: 'Housekeeping chores — session titles, tags, suggestions, digests, consolidation. Bind a cheap or local model here so chores stop burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat' },
-  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat' },
+  orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Supervising turns, webhook agent turns, and subagents spawned without an explicit model.', chain: true, icon: Network, fallback: 'Chat' },
   loops: { label: 'Loops', group: 'Chat routing', description: 'Autonomous goal-loop workers, gates and judges — long-horizon work that benefits from a long-context model.', chain: true, icon: RefreshCcw, fallback: 'Chat' },
   embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes },
   stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic },

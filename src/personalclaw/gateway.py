@@ -4269,7 +4269,12 @@ class GatewayOrchestrator:
                 acquired = False
                 cron_response: str | None = None
                 try:
-                    client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
+                    # The scheduled job's session reading its subagent's result: a supervising
+                    # turn nobody typed, so it rides the orchestration axis its subagent rode —
+                    # the axis is what meters it under the daily cap.
+                    client, is_new, _resumed = await self.sessions.get_or_create(
+                        parent_key, model_axis="orchestration"
+                    )
                     acquired = True
                     if self.ctx_builder:
                         from personalclaw.context_headroom import resolve_window

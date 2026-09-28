@@ -444,6 +444,12 @@ class SubagentInfo:
     # background-agents list lead with it. "" for a run nobody named, which reads by its task. After
     # `trigger_id` for the same reason `trigger_id` is last.
     title: str = ""
+    # Whether the spend guard already charged this child's model calls to the day's spend, call by
+    # call — its completion names the guarded calls it came from (``LLMEvent.audit_ids``). A child
+    # whose calls no guard sees (an agent CLI runs its own) is charged at completion instead
+    # (`_charge_child_and_check_budget`), so the daily cap counts every child exactly once. Set
+    # at completion, never passed in, so it is no part of the constructor apps call.
+    _spend_metered: bool = field(default=False, init=False, repr=False)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1510,6 +1516,12 @@ class SubagentManager:
         in-flight children are cancelled. Fail-open: a budget is a guardrail — except for
         an UNREADABLE ceiling, which stops the fan-out (#3458), because the run scope is
         the only thing that bounds N children each spending under one day snapshot.
+
+        The DAY scope counts each child once. A child whose model calls went through the
+        spend guard was charged there, call by call (``_spend_metered``); one whose calls no
+        guard sees — an agent CLI makes its own — is charged here, or the daily cap would
+        never count it. Charging a guarded child here as well counted it twice, so the cap bit
+        at half the real spend and its refusal named a total the day had not spent.
         """
         fkey = _fanout_key(info)
         try:
@@ -1520,6 +1532,10 @@ class SubagentManager:
                 run_budget_from_config,
             )
 
+            meter = get_meter()
+            tokens = info.input_tokens + info.output_tokens
+            if not info._spend_metered:
+                meter.charge(tokens, info.cost_usd)
             try:
                 budget = run_budget_from_config()
             except BudgetConfigUnreadable as exc:
@@ -1529,8 +1545,7 @@ class SubagentManager:
                 return
             if budget.is_unlimited:
                 return
-            meter = get_meter()
-            meter.charge(info.input_tokens + info.output_tokens, info.cost_usd, run_key=fkey)
+            meter.charge_run(fkey, tokens, info.cost_usd)
             verdict, reason = meter.check_run(fkey, budget)
             if verdict is BudgetVerdict.EXCEEDED and fkey not in self._fanout_stops:
                 typed = f"run budget exceeded ({reason})"
@@ -1980,13 +1995,6 @@ class SubagentManager:
                 resources=f"subagent_id={info.id},inherited_agent={agent}",
             )
         extra_kwargs: dict[str, Any] = {}
-        if info.model:
-            extra_kwargs["model"] = info.model
-        else:
-            # A model-less spawn resolves the ``orchestration`` chain for its inner
-            # model — an explicit spawn model still wins
-            # (the branch above). Unbound axis → chat chain, unchanged.
-            extra_kwargs["model_axis"] = "orchestration"
         if info.cwd:
             extra_kwargs["cwd"] = info.cwd
         # Sandbox provider: thread the chosen isolation backend to the ACP worker
@@ -2028,8 +2036,17 @@ class SubagentManager:
         client, is_new, _resumed = await self._sessions.get_or_create(
             session_key,
             agent=agent or None,
+            # The spawn's own model when it names one; with none, the orchestration chain
+            # serves it, and an unbound axis falls back to chat.
+            model=info.model or None,
             approval_policy=parent_policy,
             approval_source=self._policy_source(info),
+            # EVERY spawn rides the orchestration axis, one that names a model too: the model
+            # rides beside the axis, as a loop's own model rides the loops axis. The axis is not
+            # only which chain serves a model-less spawn — it is what puts the spend guard on the
+            # child's calls. A spawn given a model used to take the chat binding instead, which
+            # has no guard, so the daily dollar cap never counted what it spent.
+            model_axis="orchestration",
             **extra_kwargs,
         )
         # Intentionally check info.agent (not resolved `agent`) so only
@@ -2338,6 +2355,7 @@ class SubagentManager:
 
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
+                info._spend_metered = bool(getattr(event, "audit_ids", ()) or ())
                 cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
                 # Priced by the model that answered, which a spawn with no model of its own
                 # never named: its child ran on the chain's head and was charged nothing.

@@ -13,10 +13,10 @@ the keychain would pass a test that asked only the predicate.
 
 from __future__ import annotations
 
-import sys
 import types
 from pathlib import Path
 
+import keychain_stub
 import pytest
 
 from personalclaw.config import credentials, loader
@@ -44,7 +44,7 @@ class _Keychain:
         module.get_password = self._get  # type: ignore[attr-defined]
         module.set_password = self._set  # type: ignore[attr-defined]
         module.delete_password = self._delete  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "keyring", module)
+        keychain_stub.stand_in(monkeypatch, module)
         return self
 
     def _get(self, service: str, key: str) -> str | None:

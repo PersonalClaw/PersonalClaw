@@ -788,13 +788,71 @@ class TestStopTurn:
         mgr.release("key1")
 
         provider.cancel = AsyncMock(return_value="timeout")
+        stopped = mgr._sessions["key1"]
+        acquired_with = {
+            **stopped.acquired_with,
+            "approval_policy": stopped.approval_policy,
+            "approval_source": stopped.approval_source,
+        }
 
         with patch.object(mgr, "_eager_respawn", new_callable=AsyncMock) as mock_respawn:
             await mgr.stop_turn("key1")
             # Allow the created task to run
             await asyncio.sleep(0)
-            mock_respawn.assert_awaited_once_with("key1")
+            mock_respawn.assert_awaited_once_with("key1", acquired_with)
 
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_a_hard_stopped_session_respawns_as_the_runtime_it_was(self, cfg):
+        """🔴 Red before the fix: the respawn asked for the key alone, so a hard-stopped loop
+        worker came back as the default agent, in no directory, on the chat binding — and the
+        next turn REUSES what the respawn built, whatever that turn asks for. Its model axis is
+        what puts the spend guard on its calls, so the respawned worker spent unmetered."""
+        built: list[dict] = []
+        inner = _mock_provider_factory()
+
+        def factory(session_key=None, **kwargs):
+            built.append({"key": session_key, **kwargs})
+            return inner(session_key, **kwargs)
+
+        mgr = SessionManager(cfg, provider_factory=factory)
+        provider, _, _ = await mgr.get_or_create(
+            "dashboard:loop-abc",
+            agent="personalclaw-coder",
+            cwd="/tmp/example-project",
+            model_axis="loops",
+            unattended=True,
+        )
+        mgr.release("dashboard:loop-abc")
+        provider.cancel = AsyncMock(return_value="timeout")
+
+        assert await mgr.stop_turn("dashboard:loop-abc") == "hard"
+        # The respawn is fire-and-forget: wait for the task the hard path scheduled.
+        await asyncio.wait(set(mgr._background_tasks), timeout=5)
+
+        assert len(built) == 2, built
+        first, again = built
+        for field_name in ("key", "agent", "cwd", "model_axis", "unattended"):
+            assert again.get(field_name) == first.get(field_name), field_name
+        assert (again["agent"], again["model_axis"]) == ("personalclaw-coder", "loops")
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_a_respawn_keeps_the_approval_the_session_holds_now(self, cfg):
+        """The respawn replays how the runtime was built, but NOT the approval it was built with:
+        a grant withdrawn after that stays withdrawn through a hard stop."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        provider, _, _ = await mgr.get_or_create("dashboard:chat-1", approval_policy="auto")
+        mgr.release("dashboard:chat-1")
+        assert mgr._sessions["dashboard:chat-1"].approval_policy == "auto", "the premise"
+        mgr.set_approval_policy("dashboard:chat-1", "")  # the person turns the grant off
+        provider.cancel = AsyncMock(return_value="timeout")
+
+        assert await mgr.stop_turn("dashboard:chat-1") == "hard"
+        await asyncio.wait(set(mgr._background_tasks), timeout=5)
+
+        assert mgr._sessions["dashboard:chat-1"].approval_policy == ""
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -806,7 +864,7 @@ class TestStopTurn:
             mgr, "get_or_create", new_callable=AsyncMock, side_effect=RuntimeError("boom")
         ):
             with caplog.at_level(logging.DEBUG, logger="personalclaw.session"):
-                await mgr._eager_respawn("key1")
+                await mgr._eager_respawn("key1", {})
 
         assert "Eager respawn failed" in caplog.text
         await mgr.close_all()
@@ -823,7 +881,7 @@ class TestStopTurn:
         # Sanity: semaphore is full (1 permit available) before respawn.
         assert sess.semaphore.locked() is False
 
-        await mgr._eager_respawn("key1")
+        await mgr._eager_respawn("key1", {})
 
         # After respawn the semaphore MUST be released, otherwise the next
         # caller of get_or_create would hang on sess.semaphore.acquire().

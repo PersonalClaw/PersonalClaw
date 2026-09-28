@@ -275,16 +275,6 @@ class TestConsumerAxes:
         src = Path(session.__file__).read_text(encoding="utf-8")
         assert 'model_axis="background"' in src
 
-    def test_model_less_subagent_spawn_passes_orchestration_axis(self):
-        # Read the module FILE (inspect.getsource on the class raises "is a
-        # built-in class" on CI's 3.12 when linecache misses under xdist).
-        from pathlib import Path
-
-        from personalclaw import subagent
-
-        src = Path(subagent.__file__).read_text(encoding="utf-8")
-        assert 'extra_kwargs["model_axis"] = "orchestration"' in src
-
     def test_guard_extends_to_all_noninteractive_axes(self, isolated_store, monkeypatch):
         """Resolving each non-interactive axis threads _guard_use_case (breaker +
         audit see the true axis)."""

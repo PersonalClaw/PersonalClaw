@@ -180,6 +180,20 @@ class SpendMeter:
                 rt.tokens += tokens
                 rt.dollars += dollars
 
+    def charge_run(self, run_key: str, tokens: int, dollars: float) -> None:
+        """Record spend against ``run_key``'s run scope ONLY — spend the day scope has already
+        counted (a guarded call charged it where it was made), folded into a run it also
+        belongs to. :meth:`charge` there would count those dollars against the day twice.
+        Best-effort; never raises."""
+        tokens = max(0, int(tokens or 0))
+        dollars = max(0.0, float(dollars or 0.0))
+        if not run_key or (tokens == 0 and dollars == 0.0):
+            return
+        with self._lock:
+            rt = self._run_totals.setdefault(run_key, _ScopeTotal())
+            rt.tokens += tokens
+            rt.dollars += dollars
+
     def end_run(self, run_key: str) -> None:
         """Drop a run's in-memory counter when the run completes."""
         with self._lock:

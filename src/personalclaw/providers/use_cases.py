@@ -79,7 +79,9 @@ CAPABILITIES: tuple[str, ...] = (
 #   background    — the _bg/personalclaw-lite session factory + one_shot_completion's
 #                   informal-label collapse (titles, tags, suggestions, digests,
 #                   consolidation)
-#   orchestration — orchestrated-chat supervising turns + model-less subagent spawns
+#   orchestration — supervising turns (a scheduled job reading its subagent's result among
+#                   them), webhook agent turns, and EVERY subagent spawn: one that names
+#                   a model keeps it, and is metered on this axis all the same
 #   loops         — loop WORKER sessions (long-horizon). NOT the judges/gates that
 #                   grade them: those ride `loops.judge_use_case`.
 CHAT_SUBCATEGORIES: tuple[str, ...] = (

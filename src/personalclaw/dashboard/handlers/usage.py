@@ -30,7 +30,7 @@ import logging
 from aiohttp import web
 
 from personalclaw import usage_ledger as ul
-from personalclaw.constants import dashboard_session_key
+from personalclaw.constants import dashboard_history_key
 from personalclaw.http_errors import json_error
 from personalclaw.routing import usage as usage_fold
 
@@ -49,9 +49,9 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     restricts to one session key (empty = all). The param carries the bare chat session
     id the frontend/URL hold; ledger rows are keyed by the ``dashboard:``-namespaced
     form (``chat_runner.run_chat`` writes via ``_history_key_for``), so it is
-    canonicalized here the same way ``openai_dialect.py``/``cli_run.py`` do before
-    querying — a bare-key query would otherwise match nothing and silently report a
-    confident 0 (CATO-7)."""
+    canonicalized here through the writer's own rule, ``dashboard_history_key``, as every
+    reader of those rows is — a bare-key query would otherwise match nothing and silently
+    report a confident 0 (CATO-7)."""
     group_by = request.query.get("group_by", "model")
     if group_by not in _GROUP_KEYS:
         return json_error(
@@ -62,7 +62,7 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     session = request.query.get("session", "")
-    session_key = dashboard_session_key(session) if session else session
+    session_key = dashboard_history_key(session) if session else session
     try:
         rows = ul.rollup(since=since, until=until, group_by=group_by, session_key=session_key)
     except Exception:  # noqa: BLE001 — a ledger read must never 500 a read-only surface
@@ -85,7 +85,7 @@ async def api_usage_totals(request: web.Request) -> web.Response:
     since = request.query.get("since", "")
     until = request.query.get("until", "")
     session = request.query.get("session", "")
-    session_key = dashboard_session_key(session) if session else session
+    session_key = dashboard_history_key(session) if session else session
     try:
         totals = ul.totals(since=since, until=until, session_key=session_key)
     except Exception:  # noqa: BLE001

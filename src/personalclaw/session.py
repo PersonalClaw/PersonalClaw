@@ -390,6 +390,12 @@ class _Session:
     # finishes, never under it — so an open chat or room answers its next turn as the agent
     # now reads. See ``SessionManager.mark_agent_stale``.
     definition_stale: bool = False
+    # The request that built this runtime — ``get_or_create``'s arguments — so a runtime killed by
+    # a hard stop is rebuilt as the same one (``_eager_respawn``): its agent, cwd and model axis,
+    # the axis being what meters a subagent's or a loop's calls. Rebuilt from nothing, it came
+    # back as the default agent on the chat binding, and the next turn reused it. Its approval is
+    # NOT taken from here: the respawn takes the one the session holds when it is stopped.
+    acquired_with: dict[str, Any] = field(default_factory=dict)
 
 
 class SessionManager:
@@ -1370,6 +1376,16 @@ class SessionManager:
                         approval_policy=approval_policy,
                         approval_source=approval_source,
                         agent=agent or "",
+                        acquired_with={
+                            "agent": agent,
+                            "channel_id": channel_id,
+                            "approval_policy": approval_policy,
+                            "model": model,
+                            "cwd": cwd,
+                            "extra_env": extra_env,
+                            "approval_source": approval_source,
+                            **extra_factory_kwargs,
+                        },
                     )
                     _push_approval_policy(provider, approval_policy, approval_source)
                     self._sessions[key] = sess
@@ -2120,10 +2136,18 @@ class SessionManager:
                 return "idle"
             # timeout or error → escalate to hard kill
 
+        # Read before the reset drops the session. The respawn rebuilds the runtime this one was,
+        # under the approval the session holds NOW: a grant withdrawn since it was built stays
+        # withdrawn, and one given since is kept (`set_approval_policy` records both here).
+        acquired_with = {
+            **session.acquired_with,
+            "approval_policy": session.approval_policy,
+            "approval_source": session.approval_source,
+        }
         await self.reset(key)
         # Keep a strong reference — the event loop holds only a weak ref,
         # and without this the task could be GC'd mid-respawn.
-        t = asyncio.create_task(self._eager_respawn(key))
+        t = asyncio.create_task(self._eager_respawn(key, acquired_with))
         self._background_tasks.add(t)
         t.add_done_callback(self._background_tasks.discard)
         if on_hard:
@@ -2133,14 +2157,20 @@ class SessionManager:
                 logger.warning("on_hard hook failed for %s", key, exc_info=True)
         return "hard"
 
-    async def _eager_respawn(self, key: str) -> None:
-        """Fire-and-forget respawn after hard kill.
+    async def _eager_respawn(self, key: str, acquired_with: dict[str, Any]) -> None:
+        """Fire-and-forget respawn after hard kill, as the runtime the session had.
+
+        *acquired_with* is the request that built the killed runtime (``_Session.acquired_with``),
+        carrying the approval the session held when it was stopped. The next turn REUSES whatever
+        this builds, whatever that turn asks for, so a respawn from nothing turned a hard-stopped
+        loop worker or subagent into the default agent, in the default directory, on the chat
+        binding — whose calls the spend guard does not meter.
 
         ``get_or_create`` acquires the per-session semaphore on every return
         path; release it here so the next real user message can run.
         """
         try:
-            await self.get_or_create(key)
+            await self.get_or_create(key, **acquired_with)
             self.release(key)
         except Exception:
             logger.debug("Eager respawn failed for %s", key, exc_info=True)

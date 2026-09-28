@@ -407,6 +407,20 @@ def task_session_key(loop_id: str, task_id: str) -> str:
     return f"{session_key(loop_id)}-{task_id}"
 
 
+def usage_key(loop_id: str) -> str:
+    """The key a loop's spend is booked under in the usage ledger.
+
+    The worker is a dashboard chat session named :func:`session_key`, so the chat seam writes each
+    of its turns under :func:`~personalclaw.constants.dashboard_history_key` of that name, and a
+    task worker's under the same key extended at the separator. :func:`loop_spend` reads through
+    this, and anything else that books money to a loop must write through it, or its rows sit
+    outside the loop's total.
+    """
+    from personalclaw.constants import dashboard_history_key
+
+    return dashboard_history_key(session_key(loop_id))
+
+
 def loop_spend(loop_id: str) -> dict:
     """What one loop cost, read from the per-turn ledger (MRT-3).
 
@@ -414,17 +428,21 @@ def loop_spend(loop_id: str) -> dict:
     exactly "the spend booked against those keys". A loop's worker turns reach
     ``usage/turns.jsonl`` through the ordinary chat seam (``chat_runner`` passes
     ``session._app or "chat"``, and the worker's ``_app`` is ``"loop"``), so no loop-specific
-    writer is involved — only a loop-specific READ.
+    writer is involved — only a loop-specific READ, and it keys through the seam's own rule
+    (:func:`usage_key`), never the bare session names this module mints. The seam writes the
+    wrapped key; a read of the bare name matched no row at all, so a loop that had spent real
+    money read $0.00 here, and the watchdog's cost cap, which reads this figure, never tripped.
 
     Two figures, deliberately not summed into one:
 
     * ``worker`` — :func:`session_key` and every :func:`task_session_key` under it, via a
-      separator-aware prefix query. A fan-out loop that under-counted its task workers would
-      report a confidently-low number, so the prefix is the point.
+      separator-aware prefix query on :func:`usage_key`. A fan-out loop that under-counted its
+      task workers would report a confidently-low number, so the prefix is the point.
     * ``planning`` — ``plan_walkthrough.planner_session_key``, which is ``loop-plan-<id>`` and
-      therefore NOT under the worker prefix. Reported beside the worker figure rather than folded
-      into it: the planner is a distinct session doing distinct work, and a surface that silently
-      omitted it would imply a completeness the number does not have. The caller renders both.
+      therefore NOT under the worker prefix; its turns are read under the same rule. Reported
+      beside the worker figure rather than folded into it: the planner is a distinct session doing
+      distinct work, and a surface that silently omitted it would imply a completeness the number
+      does not have. The caller renders both.
 
     NOT ``ledger.run_totals``. That reads ``loop/journal.py``'s ``step_completed`` rows, which
     carry no ``tokens`` and no ``cost_usd``, so making it work would mean copying turn dollars
@@ -433,10 +451,11 @@ def loop_spend(loop_id: str) -> dict:
     one that admits a gap. See MODEL-ROUTING-TELEMETRY's MRT-3 log for the recorded deviation.
     """
     from personalclaw import usage_ledger
+    from personalclaw.constants import dashboard_history_key
     from personalclaw.loop.plan_walkthrough import planner_session_key
 
-    worker = usage_ledger.totals(session_prefix=session_key(loop_id))
-    planning = usage_ledger.totals(session_key=planner_session_key(loop_id))
+    worker = usage_ledger.totals(session_prefix=usage_key(loop_id))
+    planning = usage_ledger.totals(session_key=dashboard_history_key(planner_session_key(loop_id)))
     return {
         "dollars_est": round(float(worker["cost_usd"]), 6),
         "turns": int(worker["turns"]),
