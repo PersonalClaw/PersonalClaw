@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An app can say why its media features fail: `personalclaw.sdk.stt.SttError`, `unavailable_reason()` on speech-to-text and embedding providers, and `personalclaw.sdk.net.sentence_with_detail` (SDK additions no app has to change for; `bedrock-models` uses all three, and `openrouter-models`, `google-models`, `alibaba-models`, `git-sync`, `dir-sync`, `rsync-sync`, `s3-sync` and `vector-store-qdrant` use `sentence_with_detail`).**
+
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
@@ -95,6 +97,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**
+
+- **Voice input and a refused re-index say why speech-to-text or the embedding model can't work, in its provider's words, and a transcription that failed no longer reads as a recording with no speech.**
+
+- **An error above the chat composer stays until you dismiss it or send again; only an update clears on its own.**
 
 - **The image and video tools say where to choose a model, and name no vendor.**
 - **Clearing Chat posts one notice, not ten.**

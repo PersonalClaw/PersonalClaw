@@ -62,6 +62,16 @@ class SttModel:
     language_codes: list[str] = field(default_factory=list)
 
 
+class SttError(Exception):
+    """A speech-to-text provider could not transcribe, and its message says why.
+
+    The message is product copy, shown as written: what is missing or went wrong, and what to
+    do. It is what separates a failed transcription from a recording with no speech in it —
+    both used to come back as ``None``, so a knowledge item whose provider could not sign in
+    landed "done" with an empty transcript, and the composer's microphone went quiet.
+    """
+
+
 class SttProvider(ABC):
     """Provider interface for speech-to-text backends — the INFERENCE axis only.
 
@@ -87,9 +97,24 @@ class SttProvider(ABC):
         """Check if this provider is installed and usable."""
         ...
 
+    async def unavailable_reason(self) -> str:
+        """Why :meth:`is_available` answers False, as the sentence a surface shows: what is
+        missing and what to do. ``""`` when this provider cannot say, and the surface uses its
+        own words.
+
+        Asked only after ``is_available()`` said False. A remote provider whose credentials
+        failed knows why — its SDK told it — and "speech-to-text isn't available" on its own sent
+        the user to set up a model that was already set up.
+        """
+        return ""
+
     @abstractmethod
     async def transcribe(self, audio_path: str, model: str = "", language: str = "") -> str | None:
-        """Transcribe an audio file. Returns text or None on failure."""
+        """Transcribe an audio file: its text, empty when there was no speech.
+
+        Raises :class:`SttError` when it could not transcribe and can say why. ``None`` is a
+        failure it cannot explain.
+        """
         ...
 
     async def transcribe_detailed(
@@ -107,7 +132,7 @@ class SttProvider(ABC):
         keeps working. Providers that can emit structure (e.g. faster-whisper) override
         this and flip :attr:`supports_segments` / :attr:`supports_word_timestamps`.
         ``bias_terms`` is the Lexicon's pre-decode vocabulary hint (L2); providers
-        without :attr:`supports_bias_terms` ignore it.
+        without :attr:`supports_bias_terms` ignore it. Fails as :meth:`transcribe` does.
         """
         text = await self.transcribe(audio_path, model=model, language=language)
         return TranscriptResult(text=text) if text is not None else None

@@ -305,3 +305,23 @@ def test_transcription_no_audio_still_fails(monkeypatch):
     ctx = NodeContext(item_id="x", item_type="audio", file_path="")  # no audio
     out = _run(node.run({}, ctx))
     assert out.success is False and out.error == "no audio"
+
+
+def test_a_transcription_its_provider_could_not_run_fails_with_the_providers_reason(monkeypatch):
+    """A provider that says why it could not transcribe fails the node with that reason. The same
+    failure used to come back as ``None``, and the item landed "done" with an empty transcript."""
+    from personalclaw.knowledge.pipeline.nodes.media_nodes import TranscriptionNode
+    from personalclaw.sdk.stt import SttError  # raised by an app's provider, as an app raises it
+
+    reason = "No credentials were found for this account. Sign in, then try again."
+
+    async def _refused(_audio, **_kw):
+        raise SttError(reason)
+
+    monkeypatch.setattr("personalclaw.transcribe.transcribe_audio_detailed", _refused)
+    node = TranscriptionNode()
+    ctx = NodeContext(item_id="x", item_type="audio", file_path="/tmp/meeting.wav")
+
+    out = _run(node.run({}, ctx))
+
+    assert (out.success, out.error) == (False, reason)

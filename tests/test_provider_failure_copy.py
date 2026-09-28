@@ -118,3 +118,64 @@ def test_probe_failure_uses_the_shared_classifier() -> None:
     # mention exception names; BRANCHING on them here is the drift this bans.
     assert "isinstance(root," not in probe
     assert 'getattr(exc, "os_error"' not in probe
+
+
+# ── 4. an app's own sentence, with its SDK's words kept after it ────────────────
+#
+# Imported as an app imports it, through ``personalclaw.sdk.net``: the apps that say their
+# failures this way live in the apps repository.
+
+
+def test_an_apps_sentence_keeps_the_sdk_words_after_it() -> None:
+    """🔴 Red before: no such helper, so each app relayed ``str(exc)`` as the whole message."""
+    from personalclaw.sdk.net import sentence_with_detail
+
+    said = sentence_with_detail(
+        "No credentials were found. Sign in, then try again.",
+        RuntimeError("Unable to  locate\n  credentials"),
+    )
+
+    assert said == (
+        "No credentials were found. Sign in, then try again. Details: Unable to locate credentials"
+    )
+
+
+def test_a_failure_with_no_words_is_the_sentence_alone() -> None:
+    from personalclaw.sdk.net import sentence_with_detail
+
+    assert sentence_with_detail("The job failed. Try again.", RuntimeError("  \n ")) == (
+        "The job failed. Try again."
+    )
+    assert sentence_with_detail("The job failed. Try again.", "") == "The job failed. Try again."
+
+
+def test_a_failures_text_is_taken_as_the_detail() -> None:
+    """A job's failure message or a command's stderr is what an app holds, not an exception."""
+    from personalclaw.sdk.net import sentence_with_detail
+
+    assert sentence_with_detail("The sync failed.", "fatal: remote refused\n") == (
+        "The sync failed. Details: fatal: remote refused"
+    )
+
+
+def test_the_detail_is_redacted_before_it_is_cut() -> None:
+    """A credential in the detail is redacted — and BEFORE the cut, or a key id cut in half
+    would slip past the redactor. The key id here starts four characters before the cut."""
+    from personalclaw.providers.failure_copy import DETAIL_CHARS
+    from personalclaw.sdk.net import sentence_with_detail
+
+    words = "x" * (DETAIL_CHARS - 5) + " AKIAIOSFODNN7EXAMPLE"
+
+    detail = sentence_with_detail("S.", RuntimeError(words)).split(" Details: ", 1)[1]
+
+    assert len(detail) == DETAIL_CHARS + 1 and detail.endswith("…"), detail
+    assert "AKIA" not in detail
+
+
+def test_apps_reach_it_through_the_sdk() -> None:
+    """The tests above import it the way an app does; this is that it is core's own helper."""
+    from personalclaw.providers.failure_copy import sentence_with_detail as core_helper
+    from personalclaw.sdk import net
+
+    assert net.sentence_with_detail is core_helper
+    assert "sentence_with_detail" in net.__all__

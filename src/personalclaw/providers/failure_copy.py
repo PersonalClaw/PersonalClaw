@@ -31,10 +31,15 @@ import aiohttp
 
 __all__ = [
     "connectivity_guidance",
+    "DETAIL_CHARS",
     "endpoint_problem",
     "relayed_failure_copy",
+    "sentence_with_detail",
     "UNEXPECTED_FAILURE_COPY",
 ]
+
+#: The most of a failure's own words :func:`sentence_with_detail` keeps after its sentence.
+DETAIL_CHARS = 200
 
 #: The fallback sentence for a failure that is none of the connectivity classes —
 #: unexpected, so the honest copy is "unexpected", plus the one action that helps.
@@ -91,6 +96,27 @@ def relayed_failure_copy(exc: BaseException, *, endpoint: str = "") -> str:
     if isinstance(exc, (ModelDiscoveryError, ValueError)) and str(exc):
         return str(exc)
     return UNEXPECTED_FAILURE_COPY
+
+
+def sentence_with_detail(sentence: str, error: BaseException | str) -> str:
+    """``sentence``, then the failure's own words after it as ``Details: …``.
+
+    For an app that knows what a failure means: ``sentence`` says what is missing and the next
+    step, in the app's words, because an SDK's own text ("Unable to locate credentials", a JSON
+    dump, a CLI's stderr) names neither. The SDK's words are still worth keeping, second, so the
+    cause is never hidden — on one line, with credentials redacted, and cut to
+    :data:`DETAIL_CHARS`. Redacted BEFORE it is cut, since a credential cut in half would slip
+    past the redactor. ``error`` is the exception, or the failure's text when that is what the
+    app holds (a job's failure message, a command's stderr). With no words, ``sentence`` alone.
+    """
+    from personalclaw.security import redact_credentials
+
+    words, _ = redact_credentials(" ".join(str(error).split()))
+    if not words:
+        return sentence
+    if len(words) > DETAIL_CHARS:
+        words = words[:DETAIL_CHARS].rstrip() + "…"
+    return f"{sentence} Details: {words}"
 
 
 def endpoint_problem(value: str) -> str | None:

@@ -15,6 +15,7 @@ import { spring } from '../../design/motion'
 import { api, isCreatedLoopRun, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
+import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/ComposerNotice'
 import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
 
@@ -118,7 +119,9 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
   // otherwise picked) lands with an empty workspace_dir and can't touch any files.
   const [brownfieldWs, setBrownfieldWs] = useState('')
   const [optimizing, setOptimizing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // What failed — a microphone refused, a task the classifier or validation refused, a create
+  // that did not go through. It stays until dismissed or the next send, as the chat's does.
+  const notice = useComposerNotice()
   const [previewDesignSystem, setPreviewDesignSystem] = useState(false)
   // Design multi-modal intake (D2): a reference URL + file attachments (image/video/
   // html/react/DESIGN.md). Persisted as kind_config.design_inputs + uploaded into the
@@ -166,13 +169,13 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
 
   async function submit() {
     if (task.trim().length < MIN_CHARS || busy) return
-    setBusy(true); setError(null)
+    setBusy(true); notice.clear()
     try {
       // #3470: keep the rejection. The backend authors a remediation for the case that
       // actually happens here (409 `model_unresolved` names Settings → Models), so the
       // handler relays it rather than substituting a shorter question of its own.
       const cls = await api.classifyULoop(kind, task.trim()).catch((e) => {
-        setError(classifyFailure(e)); return null
+        notice.showError(classifyFailure(e)); return null
       })
       if (!cls) { setBusy(false); return }
       // Build the unified create body: spine fields at top level, kind-specific in
@@ -215,7 +218,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         kind_config: kc,
       }
       const v = await api.validateULoop(body).catch(() => null)
-      if (v && !v.can_start) { setError((v.errors ?? ['Validation failed']).join(' · ')); setBusy(false); return }
+      if (v && !v.can_start) { notice.showError((v.errors ?? ['Validation failed']).join(' · ')); setBusy(false); return }
       const created = await api.createULoop(body)
       // Upload design attachments into the loop's files dir so the design-pass planner
       // (cwd'd there) can read them. Best-effort: a failed upload shouldn't block launch
@@ -239,7 +242,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
       // the cockpit (the host starts it). The kind drives which screens render.
       onCreated(created, kind, (cls.intake_rigor ?? 'grill') !== 'minimal')
     } catch (e) {
-      setError((e as Error).message || 'Could not create the loop'); setBusy(false)
+      notice.showError((e as Error).message || 'Could not create the loop'); setBusy(false)
     }
   }
 
@@ -348,7 +351,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
               controls={COMPOSER_CONTROLS}
               onOptimize={optimize} optimizing={optimizing}
               onTranscribe={transcribe}
-              onMicError={(m) => { setError(m); window.setTimeout(() => setError((c) => c === m ? null : c), 6000) }}
+              onMicError={notice.showError}
               onFocusChange={setFocused}
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}
@@ -408,8 +411,8 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
               <p data-type="caption" className="text-on-surface-low">A few more words — then press send to plan it.</p>
             )}
             {busy && <p data-type="body-s" className="text-on-surface-low">Analyzing…</p>}
-            {error && (
-              <div role="alert" data-type="body-s" className="w-full max-w-[480px] rounded-lg px-4 py-3 text-center" style={{ background: 'color-mix(in srgb, var(--color-error) 8%, transparent)', color: 'var(--color-error)' }}>{error}</div>
+            {notice.notice && (
+              <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} className="w-full max-w-[480px]" />
             )}
           </div>
         </div>

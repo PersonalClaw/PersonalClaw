@@ -278,6 +278,34 @@ def embed_fn_for(provider_name: str, model_id: str) -> Callable[[str], list[floa
     return _llm_embed_fn(provider_name, model_id)
 
 
+async def bound_unavailable_reason() -> str:
+    """Why the bound embedding model cannot embed, in its provider's own words.
+
+    The :meth:`~personalclaw.embedding_providers.base.EmbeddingProvider.unavailable_reason` of
+    the in-process or app-registered provider behind the binding. ``""`` when nothing is bound,
+    when the binding embeds through a configured model provider's own ``embed()`` (which has no
+    such channel), or when the provider cannot say — and the caller uses its own words.
+    """
+    spec = _active_embedding_spec()
+    if not spec:
+        return ""
+    if spec[0] in _NATIVE_NAMES:
+        provider = _providers.get("native")
+    else:
+        _ensure_scanned()
+        provider = _providers.get(spec[0])
+    reason = getattr(provider, "unavailable_reason", None)
+    if reason is None:
+        return ""
+    try:
+        return str(await reason() or "").strip()
+    except Exception:  # noqa: BLE001 — a reason is best-effort; the caller has its own words
+        logger.debug(
+            "embedding provider %r could not say why it is unavailable", spec[0], exc_info=True
+        )
+        return ""
+
+
 # ── The embedding a long-lived holder keeps: the model bound NOW ──
 
 #: How long a binding whose provider could not be built waits before the next build attempt. A

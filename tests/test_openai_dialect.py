@@ -957,3 +957,31 @@ async def test_transcriptions_503_when_no_stt_is_installed(monkeypatch):
         await client.close()
     assert resp.status == 503
     assert payload["error"]["code"] == "stt_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_transcriptions_503_says_the_bound_providers_reason(monkeypatch):
+    """🔴 Red before: "Install a transcription model" for a bound model whose provider knew it
+    could not sign in."""
+    _enable(monkeypatch)
+    token = _token()
+    reason = "No credentials were found for this account. Sign in, then try again."
+
+    async def _false() -> bool:
+        return False
+
+    async def _why() -> str:
+        return reason
+
+    monkeypatch.setattr("personalclaw.transcribe.is_available", lambda: _false())
+    monkeypatch.setattr("personalclaw.transcribe.unavailable_reason", lambda: _why())
+    client, _ = await _client(monkeypatch)
+    try:
+        resp = await client.post(
+            dialect.ROUTE_TRANSCRIPTIONS, data={"file": _upload()}, headers=_auth(token)
+        )
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 503
+    assert (payload["error"]["code"], payload["error"]["message"]) == ("stt_unavailable", reason)

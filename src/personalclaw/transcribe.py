@@ -10,6 +10,8 @@ in-process CTranslate2 Whisper) is the sole bundled backend; it depends on
 import logging
 import os
 
+from personalclaw.stt.provider import SttError
+
 logger = logging.getLogger(__name__)
 
 # Above this size a single audio file is segmented (via ffmpeg) into fixed-length
@@ -39,6 +41,18 @@ def ensure_ffmpeg_in_path() -> None:
             path_parts.insert(0, d)
 
 
+def _bound_provider():
+    """The active STT provider, when STT is enabled and a model is bound; else ``None``."""
+    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.stt.registry import active_stt
+
+    settings = load_use_case_settings("stt")
+    if not settings.get("enabled", True):
+        return None
+    resolved = active_stt()
+    return resolved[0] if resolved is not None else None
+
+
 async def is_available() -> bool:
     """Whether STT is enabled (use_case_settings) and the active provider is usable.
 
@@ -46,22 +60,27 @@ async def is_available() -> bool:
     in-process deps, remote backends check a credential — so the readiness gate
     is the same one transcription will use, regardless of provider.
     """
-    from personalclaw.providers.use_cases import load_use_case_settings
-    from personalclaw.stt.registry import active_stt
-
-    settings = load_use_case_settings("stt")
-    if not settings.get("enabled", True):
-        return False
-    resolved = active_stt()
-    if resolved is None:
-        return False
-    provider, _model = resolved
-    if not await provider.is_available():
+    provider = _bound_provider()
+    if provider is None or not await provider.is_available():
         return False
     ensure_ffmpeg_in_path()
     if not _ffmpeg_present():
         logger.warning("ffmpeg not found; .webm transcription will be unavailable")
     return True
+
+
+async def unavailable_reason() -> str:
+    """Why speech-to-text is unavailable, in the bound provider's own words: its
+    :meth:`~personalclaw.stt.provider.SttProvider.unavailable_reason`.
+
+    ``""`` when STT is off, nothing is bound, the provider is available, or it cannot say —
+    and the surface then uses its own words. Asked by a surface once :func:`is_available`
+    said False, so "not available" can name its cause.
+    """
+    provider = _bound_provider()
+    if provider is None or await provider.is_available():
+        return ""
+    return (await provider.unavailable_reason()).strip()
 
 
 def _ffmpeg_present() -> bool:
@@ -71,7 +90,12 @@ def _ffmpeg_present() -> bool:
 
 
 async def transcribe_audio(audio_path: str) -> str | None:
-    """Transcribe an audio file via the active STT provider. Returns text or None."""
+    """Transcribe an audio file via the active STT provider. Returns text or None.
+
+    A provider that could not transcribe and says why raises
+    :class:`~personalclaw.stt.provider.SttError`, and it reaches the caller unchanged: the
+    caller shows the reason instead of reading the failure as a recording with no speech.
+    """
     from personalclaw.providers.use_cases import load_use_case_settings
     from personalclaw.stt.registry import active_stt
 
@@ -122,7 +146,8 @@ async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | 
     Mirrors :func:`transcribe_audio` (same active-STT resolution, sensitive-path guard,
     credential/exfil redaction of the flat text) but preserves structure. For large files
     the segmented path OFFSETS each chunk's segment/word times by the chunk's start so the
-    merged timeline is continuous. ``bias_terms`` is the Lexicon pre-decode hint (L2)."""
+    merged timeline is continuous. ``bias_terms`` is the Lexicon pre-decode hint (L2).
+    Like :func:`transcribe_audio`, a provider's ``SttError`` reaches the caller unchanged."""
     from personalclaw.providers.use_cases import load_use_case_settings
     from personalclaw.stt.registry import active_stt
 
@@ -230,6 +255,10 @@ async def _transcribe_segmented_detailed(
                 part = await provider.transcribe_detailed(
                     chunk, model=model_id, language=language, bias_terms=bias_terms
                 )
+            except SttError:
+                # The provider said why it cannot transcribe (its credentials, its bucket):
+                # every chunk would fail the same way, and skipping them all read as silence.
+                raise
             except Exception:
                 logger.warning("STT segment failed: %s", os.path.basename(chunk), exc_info=True)
                 part = None
@@ -333,6 +362,8 @@ async def _transcribe_segmented(
         for seg in segments:
             try:
                 text = await provider.transcribe(seg, model=model_id, language=language)
+            except SttError:
+                raise  # the provider said why; see _transcribe_segmented_detailed
             except Exception:
                 logger.warning("STT segment failed: %s", os.path.basename(seg), exc_info=True)
                 text = None

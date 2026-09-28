@@ -33,7 +33,13 @@ from personalclaw.net import (  # noqa: F401
 # the fix — the container-localhost case included). Exported so a provider app composes its
 # connection-test and discovery failures in core's words instead of relaying `str(exc)`,
 # which is how a bare `[Errno 111]` reached the Providers page (ollama-models reads it).
-from personalclaw.providers.failure_copy import relayed_failure_copy  # noqa: F401
+# `sentence_with_detail` is the other half: an app that knows what its own SDK's failure means
+# says so in one sentence (what is missing, what to do) and keeps the SDK's words after it —
+# redacted and capped here, once, rather than in every app that relays one.
+from personalclaw.providers.failure_copy import (  # noqa: F401
+    relayed_failure_copy,
+    sentence_with_detail,
+)
 from personalclaw.web.fetch import (  # noqa: F401
     ExtractOutcome,
     FetchOutcome,
@@ -79,4 +85,5 @@ __all__ = [
     # deny-by-default posture instead of composing its own.
     "a2a_outbound_policy",
     "relayed_failure_copy",
+    "sentence_with_detail",
 ]

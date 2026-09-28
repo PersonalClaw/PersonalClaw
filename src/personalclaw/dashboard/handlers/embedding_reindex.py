@@ -94,9 +94,15 @@ async def api_reindex_start(request: web.Request) -> web.Response:
     state = request.app["state"]
     embedder, embed_fn, model = _resolve_embed(request.app)
     if embed_fn is None:
+        from personalclaw.embedding_providers.registry import bound_unavailable_reason
+
+        # The bound provider's own reason when it has one (its credentials failed): the
+        # download-or-reconnect advice is only a guess at a cause it could not name.
+        why = await bound_unavailable_reason()
         return web.json_response(
             {
-                "error": "The selected embedding model is not available (download it "
+                "error": why
+                or "The selected embedding model is not available (download it "
                 "or check the provider connection before re-indexing).",
                 "code": "model_not_ready",
             },

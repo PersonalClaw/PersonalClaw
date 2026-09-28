@@ -4585,7 +4585,12 @@
     "params": [],
     "returns": "bool"
    },
-   "name": {"kind": "property", "returns": "str", "settable": false}
+   "name": {"kind": "property", "returns": "str", "settable": false},
+   "unavailable_reason": {
+    "kind": "async method",
+    "params": [],
+    "returns": "str"
+   }
   }
  },
  "personalclaw.sdk.feedback.FeedbackRecord": {
@@ -7148,6 +7153,14 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.net.sentence_with_detail": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "sentence"},
+   {"annotation": "BaseException | str", "kind": "positional_or_keyword", "name": "error"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.net.sync_egress_policy": {
   "kind": "function",
   "params": [
@@ -8140,6 +8153,10 @@
   ],
   "returns": "dict[str, Any]"
  },
+ "personalclaw.sdk.stt.SttError": {
+  "bases": ["Exception"],
+  "kind": "class"
+ },
  "personalclaw.sdk.stt.SttModel": {
   "bases": ["object"],
   "init": {
@@ -8196,6 +8213,11 @@
      {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "bias_terms"}
     ],
     "returns": "TranscriptResult | None"
+   },
+   "unavailable_reason": {
+    "kind": "async method",
+    "params": [],
+    "returns": "str"
    }
   }
  },

@@ -131,6 +131,17 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     async def is_available(self) -> bool: ...
 
+    async def unavailable_reason(self) -> str:
+        """Why this provider cannot embed right now, as the sentence a surface shows: what is
+        missing and what to do. ``""`` when it cannot say, and the surface uses its own words.
+
+        Read when an embedding it was asked for did not come back — the re-index's readiness
+        check — since :meth:`embed` answers a failure with ``None`` and nothing else. A remote
+        provider whose credentials failed knows why, and "the model is not available" on its own
+        sent the user to download or reconnect a model that was already set up.
+        """
+        return ""
+
     @abstractmethod
     async def embed(self, text: str, model: str = "") -> list[float] | None:
         """Embed a single text. Returns vector or None on failure."""

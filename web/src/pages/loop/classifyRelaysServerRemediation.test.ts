@@ -93,6 +93,8 @@ describe('§2 the composer actually uses it', () => {
     // assertions above are both satisfied by a page that no longer classifies anything.
     const src = composer()
     expect(src, 'nothing left to relay a rejection from').toMatch(/api\.classifyULoop\(/)
-    expect(src, 'the error branch still renders somewhere').toMatch(/role="alert"/)
+    // The error renders through the composer's notice line, which announces an error as an
+    // alert (`ui/composer/ComposerNotice.test.tsx` pins the role).
+    expect(src, 'the error branch still renders somewhere').toMatch(/<ComposerNoticeLine\b/)
   })
 })

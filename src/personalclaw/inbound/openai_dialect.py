@@ -1043,9 +1043,10 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
     if limited is not None:
         return limited
 
-    from personalclaw.transcribe import is_available, transcribe_audio
+    from personalclaw.transcribe import is_available, transcribe_audio, unavailable_reason
 
     if not await is_available():
+        why = await unavailable_reason()
         audit(
             OPENAI_SURFACE,
             route=ROUTE_TRANSCRIPTIONS,
@@ -1053,8 +1054,11 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
             client_id=client_id,
             refused="stt unavailable",
         )
+        # The bound provider's own reason when it has one; the install advice is only true
+        # when nothing is bound or the provider cannot say.
         return openai_error(
-            "Speech-to-text is not available. Install a transcription model in "
+            why
+            or "Speech-to-text is not available. Install a transcription model in "
             "Settings -> Models.",
             code="stt_unavailable",
             type_="server_error",

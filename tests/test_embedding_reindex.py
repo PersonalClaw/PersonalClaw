@@ -245,6 +245,67 @@ async def test_reindex_start_blocks_when_model_not_ready(monkeypatch):
     assert json.loads(resp.body)["code"] == "model_not_ready"
 
 
+@pytest.mark.asyncio
+async def test_a_refused_reindex_says_the_bound_providers_reason(monkeypatch):
+    """🔴 Red before: "The selected embedding model is not available (download it or check the
+    provider connection…)" for a bound model whose provider knew it could not sign in."""
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import embedding_reindex as H
+    from personalclaw.embedding_providers import registry
+    from personalclaw.embedding_providers.base import EmbeddingProvider
+
+    reason = "No credentials were found for this account. Sign in, then try again."
+
+    class _SignedOut(EmbeddingProvider):
+        @property
+        def name(self) -> str:
+            return "work-cloud"
+
+        @property
+        def display_name(self) -> str:
+            return "Work cloud"
+
+        async def is_available(self) -> bool:
+            return False
+
+        async def unavailable_reason(self) -> str:
+            return reason
+
+        async def embed(self, text: str, model: str = "") -> list[float] | None:
+            return None
+
+        async def embed_batch(self, texts: list[str], model: str = "") -> list[list[float]]:
+            return [[] for _ in texts]
+
+    monkeypatch.setattr(registry, "get_active_embed_fn", lambda: None)
+    monkeypatch.setattr(registry, "_active_embedding_spec", lambda: ("work-cloud", "embed-v1"))
+    monkeypatch.setattr(registry, "_ensure_scanned", lambda: None)
+    monkeypatch.setitem(registry._providers, "work-cloud", _SignedOut())
+
+    state = SimpleNamespace(embedding_reindex=lambda: SimpleNamespace())
+    req = make_mocked_request("POST", "/api/models/embedding/reindex")
+    req.app["state"] = state
+
+    resp = await H.api_reindex_start(req)
+
+    assert resp.status == 409
+    assert json.loads(resp.body) == {"error": reason, "code": "model_not_ready"}
+
+
+@pytest.mark.asyncio
+async def test_a_provider_with_no_reason_leaves_the_reindex_its_own_words(monkeypatch):
+    from personalclaw.embedding_providers import registry
+
+    monkeypatch.setattr(registry, "_active_embedding_spec", lambda: ("absent", "embed-v1"))
+    monkeypatch.setattr(registry, "_ensure_scanned", lambda: None)
+
+    assert await registry.bound_unavailable_reason() == ""
+
+
 # ── The chunk backfill as a graph-maintenance pass ───────────────────────────
 #
 # The backfill's product surface is that it runs by itself: a user who upgrades gets deep

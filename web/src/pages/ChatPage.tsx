@@ -37,6 +37,7 @@ import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoard
 import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
+import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { joinsATurnStartedElsewhere } from './chat/joinTurn'
 import { sessionRowMeta } from './chat/sessionRowMeta'
@@ -927,19 +928,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // the draft as it was just before an optimize-prompt rewrite, so the user can
   // revert if they don't like the optimized version (otherwise it's lost).
   const [preOptimize, setPreOptimize] = useState<string | null>(null)
-  const [micError, setMicError] = useState<string | null>(null)
+  // The line above the composer that says what failed (it stays until dismissed, or until the
+  // next send) or what just happened (it clears on its own): `ui/composer/ComposerNotice`.
+  const notice = useComposerNotice()
   // Screen context. The HOST owns the display stream because it
   // also owns the header chip that must stay lit for the stream's whole life — a
   // composer-local stream could not keep a header indicator honest. Errors ride the
-  // existing transient line above the composer rather than a second mechanism.
-  const screenShare = useScreenShare(sessionId ?? '', (m) => {
-    setMicError(m)
-    window.setTimeout(() => setMicError(null), 6000)
-  })
+  // composer's notice line rather than a second mechanism.
+  const screenShare = useScreenShare(sessionId ?? '', notice.showError)
   const [toast, setToast] = useState<string | null>(null)  // transient confirmation (brief/workspace-dir)
   // Upload rejection (oversize / upload failure) — a message the user must ACT on
-  // (pick a smaller file), so it's dismissible-but-persistent, NOT a 6s-vanishing
-  // transient like micError.
+  // (pick a smaller file), so it's dismissible-but-persistent, on a line of its own so a
+  // later notice cannot replace it.
   const [attachError, setAttachError] = useState<string | null>(null)
   const [memoryMode, setMemoryMode] = useState<MemoryMode>('persistent')
   // Branch lineage: when this session was branched off another, the parent's
@@ -2126,6 +2126,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (followups.length) setFollowups([])
     if (checkWorkOffer) setCheckWorkOffer(null)
     if (routingSuggestion) setRoutingSuggestion(null)
+    // …and takes down the composer's notice: an error stays until it is dismissed or the
+    // user sends again, and sending is the user moving on.
+    notice.clear()
     // Use the synchronous streamingRef (not the `streaming` state) for the queue-vs-
     // fresh-turn decision: two sends in one tick both see the stale state, but the
     // ref flips the instant the first turn commits — so the second correctly queues.
@@ -2341,8 +2344,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const frame = screenShare.lastFrame()
     if (!sid) return
     if (!frame) {
-      setMicError('Send a message while sharing first — there is no frame to pin yet.')
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError('Send a message while sharing first — there is no frame to pin yet.')
       return
     }
     try {
@@ -2350,8 +2352,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (r?.path) setAttachedPaths((prev) => [...prev, r.path])
     } catch (e) {
       // Surface the server's own reason (incognito, switch off) rather than inventing one.
-      setMicError((e as Error)?.message || 'Could not pin the frame.')
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError((e as Error)?.message || 'Could not pin the frame.')
     }
   }
 
@@ -2368,12 +2369,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       const r = await api.chatPlanActivate(sid)
       setSelection((sel) => ({ ...sel, taskMode: 'plan' }))
       if (r.parked) {
-        setMicError('This run is parked — approve the plan below to resume it.')
-        window.setTimeout(() => setMicError(null), 6000)
+        notice.showInfo('This run is parked — approve the plan below to resume it.')
       }
     } catch (e) {
-      setMicError((e as Error)?.message || 'Could not start plan mode.')
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError((e as Error)?.message || 'Could not start plan mode.')
     }
   }
 
@@ -2485,23 +2484,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const r = await api.transcribeAudio(blob, { duplex: opts?.duplex, session: sessionRef.current || '' })
     // Surface failures: otherwise a denied/unconfigured STT just drops the
     // recording silently after the spinner — the user has no idea why no text
-    // appeared. The notice auto-clears so it doesn't linger.
+    // appeared. The reason stays until it is dismissed or the next send.
     if (r.error) {
       const msg = /not available/i.test(r.error)
         ? 'Voice input needs a speech-to-text model — configure one in Settings → AI & Models.'
         : `Couldn’t transcribe audio: ${r.error}`
-      setMicError(msg)
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError(msg)
       return ''
     }
     // The echo filter dropped this capture. Say so — silence
     // here is indistinguishable from a deaf microphone.
     if (r.filtered === 'echo') {
-      setMicError('Ignored the assistant’s own voice coming back through the microphone.')
-      window.setTimeout(() => setMicError(null), 4000)
+      notice.showInfo('Ignored the assistant’s own voice coming back through the microphone.')
       return ''
     }
-    setMicError(null)
+    notice.clear()
     return r.text ?? ''
   }
 
@@ -2604,8 +2601,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!s || streaming) return
     try { await api.switchVariant(s, index) }
     catch (e) {
-      setMicError(`Couldn’t switch answer: ${(e as Error).message}`)
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError(`Couldn’t switch answer: ${(e as Error).message}`)
     }
   }
 
@@ -2638,8 +2634,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // and nothing happening looks broken. `e.message` is the endpoint's own
         // wording, so the session-cap 429 arrives readable ("session cap reached
         // (500)") rather than as a bare status.
-        setMicError(`Couldn’t branch this chat: ${e.message}`)
-        window.setTimeout(() => setMicError(null), 6000)
+        notice.showError(`Couldn’t branch this chat: ${e.message}`)
       })
   }
 
@@ -2698,8 +2693,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       const r = await api.forkRewound(s, turnIndex, snapshotIndex)
       if (r?.key) navigate(`chat/${r.key}`)
     } catch (e) {
-      setMicError(`Couldn’t restore that history: ${(e as Error).message}`)
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError(`Couldn’t restore that history: ${(e as Error).message}`)
     }
   }
 
@@ -2766,8 +2760,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return api.voiceSynthesize(text, s ?? '').catch((e: Error) => {
       setSpeakingTurn((cur) => (cur === turnIndex ? null : cur))
       const refused = hasApiCode(e, 'tts_unbound') || hasApiCode(e, 'tts_disabled')
-      setMicError(refused ? e.message : `Couldn’t play audio: ${e.message}`)
-      window.setTimeout(() => setMicError(null), 6000)
+      notice.showError(refused ? e.message : `Couldn’t play audio: ${e.message}`)
     })
   }
 
@@ -3294,20 +3287,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       {/* An app's conversation: what you send runs under the APP's grant, not your approval
           switches — said before you type, like the memory notice above. */}
       {startedBy && <AppPermissionNotice name={startedBy.name} autoApproves={startedBy.autoApproves} />}
-      {/* Voice-input failure notice: STT errors (mic denied, no STT model,
-          backend failure) otherwise vanish silently after the spinner. */}
-      {micError && (
-        <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-danger">
-          <AlertTriangle size={13} className="shrink-0" /><span>{micError}</span>
-        </div>
-      )}
+      {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
+          branch…), which stays until dismissed or the next send, or what just happened. */}
+      <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />
       {toast && (
         <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-var">
           <Check size={13} className="shrink-0 text-ok" /><span>{toast}</span>
         </div>
       )}
       {/* Upload rejection (oversize / failure) — persistent + dismissible, since the
-          user must act on it (choose a smaller file), unlike the transient micError. */}
+          user must act on it (choose a smaller file), on its own line beside the notice. */}
       {attachError && (
         <div role="alert" className="mb-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[0.75rem]"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
@@ -3495,7 +3484,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={(m) => { setMicError(m); window.setTimeout(() => setMicError(null), 6000) }} canQueue contextPct={contextPct}
+          onTranscribe={transcribe} onMicError={notice.showError} canQueue contextPct={contextPct}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />

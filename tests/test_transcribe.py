@@ -368,3 +368,132 @@ class TestTranscriptContract:
         assert r.segments[0].start == 0.0 and r.segments[0].end == 5.0
         assert r.segments[1].start == 600.0 and r.segments[1].end == 605.0
         assert r.segments[1].words[0].start == 600.0  # word times offset too
+
+
+# ---------------------------------------------------------------------------
+# Why speech-to-text is unavailable, and a provider's SttError
+# ---------------------------------------------------------------------------
+
+_REASON = "No credentials were found for this account. Sign in, then try again."
+
+
+def _bound(prov):
+    """Bind ``prov`` as the active STT provider, with STT on."""
+    return (
+        patch(
+            "personalclaw.providers.use_cases.load_use_case_settings",
+            return_value={"enabled": True},
+        ),
+        patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
+    )
+
+
+class TestUnavailableReason:
+    @pytest.mark.asyncio
+    async def test_the_bound_providers_reason_is_the_reason(self):
+        """🔴 Red before: nothing could say why — "not available" was all a surface had."""
+        from personalclaw.transcribe import unavailable_reason
+
+        prov = MagicMock()
+        prov.is_available = AsyncMock(return_value=False)
+        prov.unavailable_reason = AsyncMock(return_value=f"  {_REASON}\n")
+        settings, active = _bound(prov)
+        with settings, active:
+            assert await unavailable_reason() == _REASON
+
+    @pytest.mark.asyncio
+    async def test_there_is_no_reason_while_it_is_available_off_or_unbound(self):
+        from personalclaw.transcribe import unavailable_reason
+
+        prov = MagicMock()
+        prov.is_available = AsyncMock(return_value=True)
+        prov.unavailable_reason = AsyncMock(return_value=_REASON)
+        settings, active = _bound(prov)
+        with settings, active:
+            assert await unavailable_reason() == "", "an available provider has nothing to explain"
+        with patch(
+            "personalclaw.providers.use_cases.load_use_case_settings",
+            return_value={"enabled": False},
+        ):
+            assert await unavailable_reason() == ""
+        with (
+            patch(
+                "personalclaw.providers.use_cases.load_use_case_settings",
+                return_value={"enabled": True},
+            ),
+            patch("personalclaw.stt.registry.active_stt", return_value=None),
+        ):
+            assert await unavailable_reason() == ""
+
+    @pytest.mark.asyncio
+    async def test_a_provider_that_cannot_say_has_no_reason(self):
+        """The ABC's default: an older provider that never learned to say why says nothing."""
+        from personalclaw.stt.provider import SttProvider
+
+        class _Quiet(SttProvider):
+            name = "quiet"
+            display_name = "Quiet"
+
+            async def is_available(self) -> bool:
+                return False
+
+            async def transcribe(self, audio_path, model="", language=""):
+                return None
+
+        assert await _Quiet().unavailable_reason() == ""
+
+
+class TestSttErrorReachesTheCaller:
+    @pytest.mark.asyncio
+    async def test_a_providers_reason_reaches_the_caller_of_transcribe_audio(self):
+        from personalclaw.sdk.stt import SttError  # as an app's provider raises it
+
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(side_effect=SttError(_REASON))
+        settings, active = _bound(prov)
+        with (
+            settings,
+            active,
+            patch("personalclaw.security.is_sensitive_path", return_value=False),
+            pytest.raises(SttError, match="Sign in, then try again"),
+        ):
+            await transcribe_audio("/tmp/test.webm")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_a_segment_that_says_why_it_failed_is_raised_not_read_as_silence(
+        self, tmp_path, detailed
+    ):
+        """🔴 Red before: each segment's failure was logged and skipped, so a provider that
+        could not sign in produced an empty transcript — read as a recording with no speech."""
+        from personalclaw import transcribe as T
+        from personalclaw.sdk.stt import SttError  # as an app's provider raises it
+
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(side_effect=SttError(_REASON))
+        prov.transcribe_detailed = AsyncMock(side_effect=SttError(_REASON))
+
+        async def _fake_exec(*a, **k):
+            proc = MagicMock()
+            proc.wait = AsyncMock(return_value=0)
+            return proc
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
+            patch("os.listdir", lambda p: ["seg_00000.wav", "seg_00001.wav"]),
+            patch("asyncio.create_subprocess_exec", _fake_exec),
+            pytest.raises(SttError, match="Sign in, then try again"),
+        ):
+            if detailed:
+                await T._transcribe_segmented_detailed(
+                    prov, "turbo", "", str(tmp_path / "big.wav"), None
+                )
+            else:
+                await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "big.wav"))
+
+    def test_apps_reach_the_error_through_the_sdk(self):
+        """The tests above raise it as an app does; this is that it is core's own class."""
+        from personalclaw.sdk import stt as sdk_stt
+        from personalclaw.stt.provider import SttError as core_error
+
+        assert sdk_stt.SttError is core_error and "SttError" in sdk_stt.__all__

@@ -300,11 +300,19 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     """
     import tempfile  # noqa: F811
 
-    from personalclaw.transcribe import is_available, transcribe_audio_detailed  # noqa: F811
+    from personalclaw.stt.provider import SttError
+    from personalclaw.transcribe import (  # noqa: F811
+        is_available,
+        transcribe_audio_detailed,
+        unavailable_reason,
+    )
     from personalclaw.voice.duplex import VOICE_DISCLAIMER, is_echo
 
     if not await is_available():
-        return web.json_response({"error": "STT not available"}, status=503)
+        # The provider's own reason when it has one (its credentials failed, a setting it needs
+        # is empty): "not available" alone sent the user to set up a model already bound.
+        why = await unavailable_reason()
+        return web.json_response({"error": why or "STT not available"}, status=503)
 
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):
@@ -403,6 +411,11 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
         if text and cfg.voice_disclaimer_enabled:
             payload["disclaimer"] = VOICE_DISCLAIMER
         return web.json_response(payload)
+    except SttError as exc:
+        # The provider said why it could not transcribe; an empty transcript would read as a
+        # recording with no speech in it.
+        logger.warning("STT transcribe failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=502)
     except Exception:
         logger.exception("STT transcribe failed")
         return web.json_response({"error": "transcription failed"}, status=500)
