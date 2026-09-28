@@ -4575,7 +4575,7 @@
      {"annotation": "list[str]", "kind": "positional_or_keyword", "name": "texts"},
      {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "model"}
     ],
-    "returns": "list[list[float]]"
+    "returns": "list[list[float] | None]"
    },
    "get_embed_fn": {
     "kind": "method",
@@ -4764,7 +4764,12 @@
     "params": [],
     "returns": "list[ImageGenModel]"
    },
-   "name": {"kind": "property", "returns": "str", "settable": false}
+   "name": {"kind": "property", "returns": "str", "settable": false},
+   "unavailable_reason": {
+    "kind": "async method",
+    "params": [],
+    "returns": "str"
+   }
   }
  },
  "personalclaw.sdk.image.ImageResult": {
@@ -9022,7 +9027,12 @@
     "params": [],
     "returns": "list[VideoGenModel]"
    },
-   "name": {"kind": "property", "returns": "str", "settable": false}
+   "name": {"kind": "property", "returns": "str", "settable": false},
+   "unavailable_reason": {
+    "kind": "async method",
+    "params": [],
+    "returns": "str"
+   }
   }
  },
  "personalclaw.sdk.video.VideoResult": {

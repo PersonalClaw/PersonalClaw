@@ -304,15 +304,17 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
     from personalclaw.transcribe import (  # noqa: F811
         is_available,
         transcribe_audio_detailed,
-        unavailable_reason,
+        unavailable_sentence,
     )
     from personalclaw.voice.duplex import VOICE_DISCLAIMER, is_echo
 
     if not await is_available():
-        # The provider's own reason when it has one (its credentials failed, a setting it needs
-        # is empty): "not available" alone sent the user to set up a model already bound.
-        why = await unavailable_reason()
-        return web.json_response({"error": why or "STT not available"}, status=503)
+        # Why, in a sentence the composer shows as it is (the provider's own reason, or what is
+        # missing), and the code it keys on: it matched "not available" in the words, and sent
+        # the user to set up a model already bound.
+        return web.json_response(
+            {"error": await unavailable_sentence(), "code": "stt_unavailable"}, status=503
+        )
 
     ctype = request.headers.get("Content-Type", "")
     if not ctype.lower().startswith("multipart/"):

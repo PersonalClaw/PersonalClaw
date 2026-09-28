@@ -83,7 +83,7 @@ async def test_the_microphone_says_why_the_bound_provider_is_unavailable(home):
     with _bind(_Bound(available=False, reason=REASON)):
         status, body = await _post(home)
 
-    assert (status, body) == (503, {"error": REASON})
+    assert (status, body) == (503, {"error": REASON, "code": "stt_unavailable"})
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,54 @@ async def test_a_provider_that_cannot_say_leaves_the_microphone_its_own_words(ho
     with _bind(_Bound(available=False)):
         status, body = await _post(home)
 
-    assert (status, body) == (503, {"error": "STT not available"})
+    assert (status, body) == (
+        503,
+        {
+            "error": "The speech-to-text model can't run right now, and its provider doesn't say "
+            "why. Check the gateway log, or choose another model under Speech-to-text in "
+            "Settings → Models.",
+            "code": "stt_unavailable",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_microphone_says_no_model_is_chosen(home):
+    """🔴 Red before: "STT not available", which the composer matched on its words to give its
+    setup advice. The sentence is the gateway's now, and the code is what a composer keys on."""
+    with patch("personalclaw.stt.registry.active_stt", return_value=None):
+        status, body = await _post(home)
+
+    assert (status, body) == (
+        503,
+        {
+            "error": "No speech-to-text model is chosen, so nothing can be transcribed. Choose one "
+            "under Speech-to-text in Settings → Models.",
+            "code": "stt_unavailable",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_microphone_says_speech_to_text_is_turned_off(home):
+    """A model is chosen and Enable speech-to-text is off: "configure a model" was not the fix."""
+    with (
+        _bind(_Bound(available=True)),
+        patch(
+            "personalclaw.providers.use_cases.load_use_case_settings",
+            return_value={"enabled": False},
+        ),
+    ):
+        status, body = await _post(home)
+
+    assert (status, body) == (
+        503,
+        {
+            "error": "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → "
+            "Speech & Transcription.",
+            "code": "stt_unavailable",
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -109,4 +156,4 @@ async def test_the_microphone_says_why_a_transcription_could_not_run(home, monke
     ):
         status, body = await _post(home)
 
-    assert (status, body) == (502, {"error": REASON})
+    assert (status, body) == (502, {"error": REASON}), "no code: the composer names it a failure"

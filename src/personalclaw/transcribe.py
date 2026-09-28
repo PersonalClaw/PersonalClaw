@@ -83,6 +83,37 @@ async def unavailable_reason() -> str:
     return (await provider.unavailable_reason()).strip()
 
 
+async def unavailable_sentence() -> str:
+    """Why speech-to-text cannot run, as the sentence a surface shows once :func:`is_available`
+    said False: the bound provider's own reason when it gives one, else what is missing (no
+    model chosen, or speech-to-text turned off), else that its provider cannot say.
+
+    A surface sends it with the code ``stt_unavailable``, so a client keys on the code and never
+    on the words: the chat composer matched ``/not available/i`` and replaced a provider's own
+    reason that happened to say so with advice to set up a model that was already bound.
+    """
+    reason = await unavailable_reason()
+    if reason:
+        return reason
+    from personalclaw.providers.use_cases import load_use_case_settings
+    from personalclaw.stt.registry import active_stt
+
+    if active_stt() is None:
+        return (
+            "No speech-to-text model is chosen, so nothing can be transcribed. Choose one under "
+            "Speech-to-text in Settings → Models."
+        )
+    if not load_use_case_settings("stt").get("enabled", True):
+        return (
+            "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → Speech & "
+            "Transcription."
+        )
+    return (
+        "The speech-to-text model can't run right now, and its provider doesn't say why. Check "
+        "the gateway log, or choose another model under Speech-to-text in Settings → Models."
+    )
+
+
 def _ffmpeg_present() -> bool:
     import shutil
 

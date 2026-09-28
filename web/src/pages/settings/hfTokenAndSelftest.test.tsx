@@ -153,6 +153,50 @@ describe('a gated model and the per-model Test button', () => {
     render(<ModelsPanel />)
     fireEvent.click(await screen.findByRole('button', { name: /speaker diarization/i }))
     fireEvent.click(await screen.findByRole('button', { name: /^test$/i }))
-    expect(await screen.findByText(/diarization: selftest_error:AttributeError/i)).toBeInTheDocument()
+    expect(await screen.findByText('diarization: boom (selftest_error:AttributeError, 3 ms)')).toBeInTheDocument()
+  })
+
+  it('shows a failure in the provider\u2019s own words, whole, with its typed reason after them', async () => {
+    // 🔴 Before: the typed reason stood in for the sentence, so the next step a provider named
+    // never showed, and the gateway cut the sentence at 200 characters on its way here anyway.
+    const sentence = 'Speaker diarization needs the pyannote pipeline\u2019s terms accepted on Hugging Face. '
+      + 'Accept them on the model\u2019s page, sign in with a token that can read it under HuggingFace '
+      + 'token below, then run Test again. Details: 403 Client Error: Forbidden for url: '
+      + 'https://huggingface.example/pyannote/speaker-diarization-3.1/resolve/main/config.yaml'
+    expect(sentence.length).toBeGreaterThan(200)
+    localModelSelftest.mockResolvedValue({
+      provider: 'diarization-pyannote',
+      capabilities: { diarization: { ok: false, duration_ms: 3, detail: sentence, reason: 'selftest_error:SttError' } },
+    })
+    render(<ModelsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /speaker diarization/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^test$/i }))
+    expect(await screen.findByText(`diarization: ${sentence} (selftest_error:SttError, 3 ms)`)).toBeInTheDocument()
+  })
+})
+
+describe('an image or video provider that cannot generate right now', () => {
+  const REASON = 'No Gemini API key is set on this instance, so it can\u2019t make images. Add it in '
+    + 'Google Gemini API Key on this Google Gemini instance in Settings \u2192 Providers, or set GEMINI_API_KEY.'
+
+  beforeEach(() => {
+    hfTokenStatus.mockResolvedValue({ sources: [] })
+  })
+
+  it('stays in its row with the reason it gives, instead of vanishing', async () => {
+    // 🔴 Before: /api/models/available left an unavailable provider out, and the panel flattened
+    // its rows into models alone, so an instance whose key was missing was simply not there.
+    modelsAvailable.mockResolvedValue([
+      { name: 'Gemini', type: 'image_gen', models: [], error: REASON },
+      { name: 'Veo elsewhere', type: 'video_gen', models: [], error: 'A video reason.' },
+    ])
+    render(<ModelsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /image · generation/i }))
+
+    const list = await screen.findByRole('list', { name: 'Image · Generation providers that can\u2019t be used right now' })
+    expect(list).toHaveTextContent(`Gemini: ${REASON}`)
+    expect(list).not.toHaveTextContent('A video reason.')
+    // It is not "add a backend first": the backend is there, and the reason says what it lacks.
+    expect(screen.queryByText(/No models with Image · Generation capability/)).toBeNull()
   })
 })

@@ -90,11 +90,10 @@ def _wire_payload(monkeypatch, *, host: fit.HostCapacity, models, hide_unrunnabl
     )
     monkeypatch.setattr(R, "_catalog_for_config_provider", lambda p: _ConfigCatalog())
 
-    async def _none():
+    async def _none(_kind):
         return []
 
-    monkeypatch.setattr(R, "_discover_image_gen_models", _none)
-    monkeypatch.setattr(R, "_discover_video_gen_models", _none)
+    monkeypatch.setattr(R, "_media_rows", _none)
 
     prov = _Prov()
     monkeypatch.setattr(LR, "get_provider", lambda name: prov if name == "ollama" else None)

@@ -93,7 +93,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -2485,11 +2485,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Surface failures: otherwise a denied/unconfigured STT just drops the
     // recording silently after the spinner — the user has no idea why no text
     // appeared. The reason stays until it is dismissed or the next send.
-    if (r.error) {
-      const msg = /not available/i.test(r.error)
-        ? 'Voice input needs a speech-to-text model — configure one in Settings → AI & Models.'
-        : `Couldn’t transcribe audio: ${r.error}`
-      notice.showError(msg)
+    const failed = transcriptionFailure(r)
+    if (failed) {
+      notice.showError(failed)
       return ''
     }
     // The echo filter dropped this capture. Say so — silence

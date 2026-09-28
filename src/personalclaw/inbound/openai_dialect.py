@@ -53,6 +53,7 @@ from aiohttp import web
 from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
+from personalclaw.providers.failure_copy import sentence_with_detail
 
 logger = logging.getLogger(__name__)
 
@@ -1043,10 +1044,10 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
     if limited is not None:
         return limited
 
-    from personalclaw.transcribe import is_available, transcribe_audio, unavailable_reason
+    from personalclaw.stt.provider import SttError
+    from personalclaw.transcribe import is_available, transcribe_audio, unavailable_sentence
 
     if not await is_available():
-        why = await unavailable_reason()
         audit(
             OPENAI_SURFACE,
             route=ROUTE_TRANSCRIPTIONS,
@@ -1054,12 +1055,10 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
             client_id=client_id,
             refused="stt unavailable",
         )
-        # The bound provider's own reason when it has one; the install advice is only true
-        # when nothing is bound or the provider cannot say.
+        # The bound provider's own reason when it gives one, else what is missing: install
+        # advice is only true when nothing is bound.
         return openai_error(
-            why
-            or "Speech-to-text is not available. Install a transcription model in "
-            "Settings -> Models.",
+            await unavailable_sentence(),
             code="stt_unavailable",
             type_="server_error",
             status=503,
@@ -1121,10 +1120,18 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
             return openai_error("Missing 'file' field.", code="missing_file", status=400)
 
         transcript = await transcribe_audio(saved)
+    except SttError as exc:
+        # The provider's sentence already says what failed and what to do; "Transcription
+        # failed: " in front of it said the first half twice.
+        logger.warning("openai dialect: transcription failed: %s", exc)
+        return openai_error(str(exc), code="transcription_failed", type_="server_error", status=502)
     except Exception as exc:  # noqa: BLE001
         logger.warning("openai dialect: transcription failed", exc_info=True)
         return openai_error(
-            f"Transcription failed: {exc}",
+            sentence_with_detail(
+                "The transcription failed. Try again; if it keeps failing, check the gateway log.",
+                exc,
+            ),
             code="transcription_failed",
             type_="server_error",
             status=502,

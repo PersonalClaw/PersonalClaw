@@ -85,6 +85,24 @@ class OpenAIImageProvider(ImageGenProvider):
             return False
         return True
 
+    async def unavailable_reason(self) -> str:
+        """Why this adapter cannot make images, when it is one that lists image models (its
+        vendor's app contributed a catalog). One built for a vendor with no image catalog says
+        nothing: an OpenAI-compatible chat server it serves is no image provider."""
+        if not self._catalog_models() or await self.is_available():
+            return ""
+        if not self._resolve_api_key():
+            return (
+                f"{self._provider_name} has no API key, so it can't make images. Add the key on "
+                f"the {self._provider_name} instance in Settings → Providers, or set "
+                "OPENAI_API_KEY."
+            )
+        return (
+            f"{self._provider_name} can't make images: the openai package isn't installed. "
+            "Install it with `pip install 'personalclaw[openai]'` (or reinstall the OpenAI "
+            "provider app), then restart PersonalClaw."
+        )
+
     async def list_models(self) -> list[ImageGenModel]:
         # Only the vendor whose app contributed a catalog for this provider type
         # advertises curated models (OpenAI: gpt-image-1/dall-e-*). A different-vendor

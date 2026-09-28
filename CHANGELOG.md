@@ -19,6 +19,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An app's provider runs git the way core runs its own through `personalclaw.sdk.git`, masks what a program it starts printed with `personalclaw.sdk.security.mask_child_output`, and passes only the SSH agent to a program that signs in over ssh with `child_process_env(ssh_agent=True)` (`git-repo`, `git-sync`, `notes`, `spec-builder`, `skills-sh` and `rsync-sync` use them).**
 
+- **An image or video provider can say why it can't generate: `unavailable_reason()` on `ImageGenProvider` and `VideoGenProvider` (an SDK addition no app has to change for; `google-models`, `bedrock-models`, `openrouter-models`, `alibaba-models`, `fal-image` and `local-image-gen` say why).**
+
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
@@ -58,6 +60,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`EmbeddingProvider.embed_batch` answers `None` for a text it did not embed, never an empty vector (`bedrock-models` and `sentence-transformers` implement it).**
+
 - **MCP Tool Servers ships with PersonalClaw: an MCP server you add or import is one every agent can call, with nothing to install from the Store.**
 
 - **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
@@ -85,6 +89,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The per-site browse "profile key", which nothing used; a key an earlier release stored is deleted at start.**
 
 ### Fixed
+
+- **Settings → Models keeps an image or video provider that can't generate in its row, with the reason it gives.**
+
+- **Voice input shows the reason speech-to-text can't run instead of setup advice for a model already chosen, and the loop composer says why a recording did not become text.**
+
+- **The Models page's Test shows a failure's whole sentence, next step included.**
+
+- **The OpenAI-compatible transcription endpoint no longer puts "Transcription failed:" in front of a provider's own sentence.**
 
 - **`personalclaw app new` writes a `.gitignore`, so an app's first commit no longer publishes its compiled bytecode and the path it was built on.**
 

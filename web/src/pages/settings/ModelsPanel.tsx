@@ -40,6 +40,12 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { DownloadFailure, InlineModelDownload, isDownloadable, modelLabel, useRowDownload } from './InlineModelDownload'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
+/** The `/api/models/available` rows whose type is the use case they serve: one per image- or
+ *  video-generation provider. */
+const MEDIA_ROW_TYPES: ReadonlySet<string> = new Set(['image_gen', 'video_gen'])
+/** A media provider that can't generate right now, and the reason it gives. */
+interface UnavailableProvider { name: string; useCase: string; error: string }
+
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
 // later entries tried when an earlier provider's breaker is open or its build
@@ -239,7 +245,12 @@ export function ModelsPanel() {
     ])
     // `local` marks a provider the local-model registry lists — one that can DOWNLOAD a model it
     // does not have yet — so a row can offer its Download right where it is chosen.
-    return { allModels: rows.flatMap((r) => r.models ?? []), active, localProviders: rows.filter((r) => r.local).map((r) => r.name) }
+    // `unavailable`: an image or video provider that can't generate right now, with why. Its row
+    // lists no models, so flattening the rows into models alone dropped it from the page.
+    const unavailable = rows
+      .filter((r) => r.error && MEDIA_ROW_TYPES.has(r.type))
+      .map((r): UnavailableProvider => ({ name: r.name, useCase: r.type, error: r.error ?? '' }))
+    return { allModels: rows.flatMap((r) => r.models ?? []), active, localProviders: rows.filter((r) => r.local).map((r) => r.name), unavailable }
   }, { persist: true })
   // Per-provider breaker health for the chain-entry dots — refreshed on panel
   // mount (persist:false so a broken provider isn't shown green from cache).
@@ -303,7 +314,8 @@ export function ModelsPanel() {
           return (
             <div key={uc}>
               {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
-              <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} downloads={downloads} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
+              <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} downloads={downloads} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)}
+                unavailable={(data?.unavailable ?? []).filter((p) => p.useCase === uc)} onChanged={reloadActive} />
             </div>
           )
         })}
@@ -505,11 +517,16 @@ function ModelTestButton({ provider, model }: { provider: string; model: string 
         <span data-type="caption" className="text-on-surface-low">{result.detail}</span>
       ) : (
         <div className="flex flex-col gap-0.5">
+          {/* A failure shows what went wrong (the provider's sentence, which wraps) and its typed
+              reason after it. The reason used to stand in for the sentence, so the next step a
+              provider named was never shown. */}
           {caps.map(([cap, r]) => (
-            <span key={cap} data-type="caption" className="inline-flex items-center gap-1"
+            <span key={cap} data-type="caption" className="flex items-start gap-1"
               style={{ color: r.ok ? 'var(--color-ok)' : 'var(--color-danger)' }}>
-              {r.ok ? <Check size={10} /> : <X size={10} />}
-              {cap}: {r.ok ? r.detail : (r.reason || r.detail)} ({r.duration_ms} ms)
+              {r.ok ? <Check size={10} className="mt-0.5 shrink-0" /> : <X size={10} className="mt-0.5 shrink-0" />}
+              <span className="min-w-0 break-words">
+                {cap}: {r.detail} ({!r.ok && r.reason ? `${r.reason}, ` : ''}{r.duration_ms} ms)
+              </span>
             </span>
           ))}
         </div>
@@ -854,9 +871,11 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle
   )
 }
 
-function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, health, judgeRec, onChanged }: {
+function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, health, judgeRec, unavailable, onChanged }: {
   /** The use case's chain as the panel read it, with the revision of exactly that chain. */
   useCase: string; chain: Revisioned<string[]>; allModels: AvailableModel[]
+  /** This use case's providers that can't generate right now, each with the reason it gives. */
+  unavailable: UnavailableProvider[]
   /** Providers that can download a model they do not have yet (see `isDownloadable`). */
   localProviders: ReadonlySet<string>
   /** Each model's latest download job, from the panel's one read of the list (`latestDownloads`). */
@@ -1071,7 +1090,20 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
         </div>
       )}
 
-      {capable.length === 0 ? (
+      {unavailable.length > 0 && (
+        <ul className="flex flex-col gap-1" aria-label={`${meta.label} providers that can’t be used right now`}>
+          {unavailable.map((p) => (
+            <li key={p.name} data-type="caption" className="flex items-start gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-on-surface-low">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
+              <span className="min-w-0 break-words"><span className="fw-500 text-on-surface">{p.name}:</span> {p.error}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* With a provider above that says why it can't be used, "add a backend first" would send
+          the user to add one they already have. */}
+      {capable.length === 0 ? (unavailable.length === 0 && (
         <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
           {meta.fallback ? (
             <>Already uses your <span className="text-on-surface not-italic fw-500">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
@@ -1079,7 +1111,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
             <>No models with {meta.label} capability. Add a backend with compatible models first.</>
           )}
         </div>
-      ) : (
+      )) : (
         <>
           {capable.length > 8 && (
             <>

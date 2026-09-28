@@ -126,75 +126,65 @@ def _catalog_for_config_provider(p: dict[str, Any]):
     return get_default_registry().build_catalog(entry)
 
 
-async def _discover_image_gen_models() -> list[dict[str, Any]]:
-    """Discover image-generation models from the image_gen registry.
+def _media_model(kind: str, provider: str, m: Any) -> dict[str, Any]:
+    """One image- or video-generation model as a Settings → Models row lists it. The id is BARE:
+    the FE prepends ``provider:`` to build the binding ref (matching stt/tts/chat)."""
+    model: dict[str, Any] = {
+        "id": m.name,
+        "name": m.name,
+        "capabilities": [kind],
+        "description": m.description,
+        "provider": provider,
+        "provider_type": kind,
+    }
+    if kind == "image_gen":
+        model["downloaded"] = m.downloaded
+        model["supports_edit"] = m.supports_edit
+    return model
 
-    The image_gen providers (the OpenAI-Images adapter built per OpenAI-family
-    config provider + any bespoke bundle like FAL) own their own model catalogs
-    that the chat/embedding discovery above doesn't see. Surface them here, tagged
-    image_gen, so they appear in the Settings -> Models 'Image · Generation' row.
-    Each model id is namespaced ``provider:model`` so the active-binding ref is
-    exactly what the registry resolves.
+
+async def _media_rows(kind: str) -> list[dict[str, Any]]:
+    """Settings → Models' rows for the ``image_gen`` or ``video_gen`` providers: one per provider,
+    keyed by its name, so each shows under its own card.
+
+    The image_gen providers (the OpenAI-Images adapter built per OpenAI-family config provider,
+    and the apps' own adapters) own model catalogs the chat/embedding discovery doesn't see, so
+    they are listed here for the 'Image · Generation' row, and the video providers for 'Video ·
+    Generation'. A provider that cannot generate right now keeps its row when it says why
+    (``unavailable_reason``), with that sentence as the row's ``error``: every unavailable
+    provider used to be left out, so an instance whose key was missing vanished from the row with
+    nothing saying why. One with nothing to say is still left out, as an adapter that makes no
+    images at all is. A listing that fails is its row's error too, not a row that lists none.
     """
     try:
-        from personalclaw.image_gen import registry as ig
+        if kind == "image_gen":
+            from personalclaw.image_gen import registry as ig
 
-        ig._ensure_registered()
-        out: list[dict[str, Any]] = []
-        for prov in ig.list_providers():
-            try:
-                if not await prov.is_available():
-                    continue
-                for m in await prov.list_models():
-                    # Bare model id — the FE prepends ``provider:`` to build the
-                    # binding ref (matching stt/tts/chat), so DON'T namespace here.
-                    out.append(
-                        {
-                            "id": m.name,
-                            "name": m.name,
-                            "capabilities": ["image_gen"],
-                            "description": m.description,
-                            "downloaded": m.downloaded,
-                            "provider": prov.name,
-                            "provider_type": "image_gen",
-                            "supports_edit": m.supports_edit,
-                        }
-                    )
-            except Exception:  # noqa: BLE001 — one bad provider shouldn't drop the rest
-                logger.debug("image_gen provider %r list_models failed", prov.name, exc_info=True)
-        return out
-    except Exception:
-        logger.debug("image_gen discovery failed", exc_info=True)
+            ig._ensure_registered()
+            providers: list[Any] = list(ig.list_providers())
+        else:
+            from personalclaw.video_gen import registry as vg
+
+            providers = list(vg.list_providers())
+    except Exception:  # noqa: BLE001 — a registry that can't load lists no media providers
+        logger.debug("%s discovery failed", kind, exc_info=True)
         return []
-
-
-async def _discover_video_gen_models() -> list[dict[str, Any]]:
-    """Discover video-generation models from the video_gen registry."""
-    try:
-        from personalclaw.video_gen import registry as vg
-
-        out: list[dict[str, Any]] = []
-        for prov in vg.list_providers():
-            try:
-                if not await prov.is_available():
-                    continue
-                for m in await prov.list_models():
-                    out.append(
-                        {
-                            "id": m.name,
-                            "name": m.name,
-                            "capabilities": ["video_gen"],
-                            "description": m.description,
-                            "provider": prov.name,
-                            "provider_type": "video_gen",
-                        }
-                    )
-            except Exception:  # noqa: BLE001
-                logger.debug("video_gen provider %r list_models failed", prov.name, exc_info=True)
-        return out
-    except Exception:
-        logger.debug("video_gen discovery failed", exc_info=True)
-        return []
+    rows: list[dict[str, Any]] = []
+    for prov in providers:
+        row: dict[str, Any] = {"name": prov.name, "type": kind, "models": []}
+        try:
+            if not await prov.is_available():
+                reason = " ".join(str(await prov.unavailable_reason() or "").split())
+                if reason:
+                    rows.append({**row, "error": reason[:FAILURE_DETAIL_CHARS]})
+                continue
+            row["models"] = [_media_model(kind, prov.name, m) for m in await prov.list_models()]
+        except Exception as exc:  # noqa: BLE001 — one provider's failure is its row's error
+            logger.debug("%s provider %r could not be listed", kind, prov.name, exc_info=True)
+            row["error"] = relayed_failure_copy(exc)[:FAILURE_DETAIL_CHARS]
+        if row["models"] or "error" in row:
+            rows.append(row)
+    return rows
 
 
 _BYTES_PER_MB = 1024 * 1024
@@ -460,25 +450,9 @@ async def api_models_available(request: web.Request) -> web.Response:
             row["connection"] = instance.to_wire()
         result.append(row)
 
-    # Image-generation models from the image_gen registry (OpenAI-Images adapter +
-    # bespoke bundles like FAL). Grouped per provider so each shows under its own
-    # card. ``id`` is already ``provider:model`` (the binding ref).
-    image_gen_models = await _discover_image_gen_models()
-    if image_gen_models:
-        by_provider: dict[str, list[dict[str, Any]]] = {}
-        for m in image_gen_models:
-            by_provider.setdefault(m["provider"], []).append(m)
-        for pname, models in by_provider.items():
-            result.append({"name": pname, "type": "image_gen", "models": models})
-
-    # Video-generation models from the video_gen registry (FAL video, etc.).
-    video_gen_models = await _discover_video_gen_models()
-    if video_gen_models:
-        by_provider_v: dict[str, list[dict[str, Any]]] = {}
-        for m in video_gen_models:
-            by_provider_v.setdefault(m["provider"], []).append(m)
-        for pname, models in by_provider_v.items():
-            result.append({"name": pname, "type": "video_gen", "models": models})
+    # Image- and video-generation providers, one row each: their models, or why they have none.
+    result.extend(await _media_rows("image_gen"))
+    result.extend(await _media_rows("video_gen"))
 
     return web.json_response(
         {

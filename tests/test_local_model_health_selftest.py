@@ -243,6 +243,25 @@ async def test_selftest_diarization_contract_break_fails_on_api_with_typed_reaso
     assert out["diarization"]["reason"] == "selftest_error:AttributeError"
 
 
+def test_a_failed_selftest_keeps_the_providers_whole_sentence():
+    """🔴 Red before: the detail was cut at 200 characters, which dropped the next step a
+    provider's sentence names and the words after it."""
+    from personalclaw.llm.catalog import FAILURE_DETAIL_CHARS
+
+    sentence = (
+        "Speech-to-text with the local engine needs its model downloaded and the engine "
+        "installed. Download the model under Speech-to-text in Settings → Models, install the "
+        "engine from its card in Settings → Providers, then run Test again. Details: the model "
+        "folder is empty"
+    )
+    assert 200 < len(sentence) <= FAILURE_DETAIL_CHARS
+    out = md._error_result(RuntimeError(sentence), 7)
+    assert (out["detail"], out["reason"]) == (sentence, "selftest_error:RuntimeError")
+
+    endless = md._error_result(RuntimeError("word " * 400), 7)["detail"]
+    assert len(endless) <= FAILURE_DETAIL_CHARS + 1 and endless.endswith("…"), "still bounded"
+
+
 @pytest.mark.asyncio
 async def test_selftest_diarization_none_is_a_typed_empty_result():
     out = await md._dispatch_selftest(_DiarNoneFake(), ["diarization"], "", 30.0)

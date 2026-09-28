@@ -5282,6 +5282,20 @@ export interface ProviderModels {
 // The raw /api/models/available envelope. `fit` is absent on a host that predates LMMV-8's
 // budget probe, which reads as "unknown" everywhere downstream.
 export interface AvailableModelsResponse { providers: ProviderModels[]; fit?: HostModelFit }
+/** A recording's transcription, or why there is none. `code` is `stt_unavailable` when speech-to-text
+ *  can't run at all: `error` is then the gateway's whole sentence, naming what to change. */
+export interface Transcription {
+  text?: string; error?: string; code?: string; filtered?: string; input_origin?: string; disclaimer?: string
+}
+/** What a composer says when a recording did not become text, or null when it did: the gateway's
+ *  own sentence when speech-to-text can't run, else the transcription's failure after "Couldn’t
+ *  transcribe audio:". Keyed on the code, never the words: ChatPage matched `/not available/i`, and
+ *  a provider's reason that happened to say so was replaced with advice to set up a model that
+ *  was already bound. */
+export function transcriptionFailure(r: Transcription): string | null {
+  if (!r.error) return null
+  return r.code === 'stt_unavailable' ? r.error : `Couldn’t transcribe audio: ${r.error}`
+}
 export interface ProviderTestResult { ok: boolean; status?: string; message: string; connection?: ModelConnection }
 // One HF-token cascade source's status (LMMV §5). The token VALUE never crosses the wire —
 // only `masked` (hf_…abcd). `active` marks the single winning source (first whoami-valid).
@@ -7838,7 +7852,7 @@ export const api = {
   transcribeAudio: async (
     blob: Blob,
     opts?: { duplex?: boolean; session?: string },
-  ): Promise<{ text?: string; error?: string; filtered?: string; input_origin?: string; disclaimer?: string }> => {
+  ): Promise<Transcription> => {
     const fd = new FormData()
     fd.append('audio', blob, 'recording.webm')
     const qs = new URLSearchParams()
@@ -7847,7 +7861,8 @@ export const api = {
     const url = qs.toString() ? `/api/stt/transcribe?${qs}` : '/api/stt/transcribe'
     const r = await fetch(url, { method: 'POST', headers: { ...SK }, body: fd })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { error: data?.error || `HTTP ${r.status}` }
+    // `code` rides along so a composer keys on it, never on the words (`transcriptionFailure`).
+    if (!r.ok) return { error: data?.error || `HTTP ${r.status}`, code: data?.code }
     return data
   },
 

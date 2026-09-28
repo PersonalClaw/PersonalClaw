@@ -148,8 +148,15 @@ class EmbeddingProvider(ABC):
         ...
 
     @abstractmethod
-    async def embed_batch(self, texts: list[str], model: str = "") -> list[list[float]]:
-        """Embed multiple texts."""
+    async def embed_batch(self, texts: list[str], model: str = "") -> list[list[float] | None]:
+        """Embed multiple texts: one entry per text, in order, and ``None`` for a text that was not
+        embedded, as :meth:`embed` answers one.
+
+        Never an empty vector for it: core's batch path (``knowledge/embed_batch.py``) stores
+        what comes back as each text's vector, and keeps a text answered ``None`` without one,
+        still keyword-searchable. A failure that is the whole batch's may raise instead; that path
+        retries and splits a batch that raises.
+        """
         ...
 
     def get_embed_fn(self, model: str = "") -> Callable[[str], list[float] | None]:

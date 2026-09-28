@@ -12,7 +12,7 @@ import { ClawMark } from '../../ui/ClawMark'
 import { ComposerStage } from '../../ui/ComposerStage'
 import { DotGlow } from '../../ui/DotGlow'
 import { spring } from '../../design/motion'
-import { api, isCreatedLoopRun, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
+import { api, isCreatedLoopRun, transcriptionFailure, type Granularity, type LoopCreateResult, type LoopKind } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutcome'
 import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/ComposerNotice'
@@ -163,8 +163,13 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     catch (e) { const f = optimizeFailure(e); notify(f.message, f.level) }
     finally { setOptimizing(false) }
   }
+  // A recording that did not become text says why, as the chat composer's does; this dropped it
+  // with nothing said, so a microphone that "worked" left the task box empty.
   async function transcribe(blob: Blob): Promise<string> {
-    const r = await api.transcribeAudio(blob); return r.text ?? ''
+    const r = await api.transcribeAudio(blob)
+    const failed = transcriptionFailure(r)
+    if (failed) { notice.showError(failed); return '' }
+    return r.text ?? ''
   }
 
   async function submit() {

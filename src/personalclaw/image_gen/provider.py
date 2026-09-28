@@ -63,6 +63,17 @@ class ImageGenProvider(ABC):
         """True when a credential resolves and the SDK/runtime is importable."""
         ...
 
+    async def unavailable_reason(self) -> str:
+        """Why this provider cannot generate right now, as the sentence Settings → Models shows
+        under Image · Generation: what is missing and what to do.
+
+        ``""`` when it is available, or when it has nothing to say, and then it is left out of
+        that row, as an adapter that makes no images at all is. Settings → Models used to leave
+        out every unavailable provider, so an instance whose key was missing vanished from the
+        row with nothing saying why.
+        """
+        return ""
+
     @abstractmethod
     async def list_models(self) -> list[ImageGenModel]:
         """List the models this provider offers (downloaded + downloadable)."""

@@ -400,6 +400,31 @@ class TestOpenAIImageCatalogByType:
         assert {m.name for m in await prov.list_models()} == {"gpt-image-1", "dall-e-3", "dall-e-2"}
 
     @pytest.mark.asyncio
+    async def test_an_image_vendor_without_a_key_says_why(self, _openai_image_catalog):
+        """🔴 Red before: the SDK's default "" — Settings → Models left the adapter out with
+        nothing saying why."""
+        from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
+        prov = OpenAIImageProvider(provider_name="OpenAI", provider_type="openai", api_key="")
+        with patch.dict("os.environ", {}, clear=True):
+            assert await prov.unavailable_reason() == (
+                "OpenAI has no API key, so it can't make images. Add the key on the OpenAI "
+                "instance in Settings → Providers, or set OPENAI_API_KEY."
+            )
+        keyed = OpenAIImageProvider(provider_name="OpenAI", provider_type="openai", api_key="sk-x")
+        assert await keyed.unavailable_reason() == ""
+
+    @pytest.mark.asyncio
+    async def test_an_adapter_for_a_vendor_with_no_image_models_says_nothing(self):
+        """Built for every OpenAI-family provider: a chat server with no image catalog is no
+        image provider, so it has nothing to say in Image · Generation."""
+        from personalclaw.image_gen.openai_provider import OpenAIImageProvider
+
+        prov = OpenAIImageProvider(provider_name="Local", provider_type="vllm", api_key="")
+        with patch.dict("os.environ", {}, clear=True):
+            assert await prov.unavailable_reason() == ""
+
+    @pytest.mark.asyncio
     async def test_uncontributed_type_lists_no_models(self):
         from personalclaw.image_gen.openai_provider import OpenAIImageProvider
 

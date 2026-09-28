@@ -960,6 +960,39 @@ async def test_transcriptions_503_when_no_stt_is_installed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_failed_transcription_relays_the_providers_sentence_as_it_is(monkeypatch):
+    """🔴 Red before: "Transcription failed: " in front of a sentence that already says what
+    failed and what to do."""
+    from personalclaw.sdk.stt import SttError
+
+    _enable(monkeypatch)
+    token = _token()
+    reason = "Amazon Transcribe couldn't transcribe this audio. Try again in a moment."
+
+    async def _true() -> bool:
+        return True
+
+    async def _refused(_path):
+        raise SttError(reason)
+
+    monkeypatch.setattr("personalclaw.transcribe.is_available", lambda: _true())
+    monkeypatch.setattr("personalclaw.transcribe.transcribe_audio", _refused)
+    client, _ = await _client(monkeypatch)
+    try:
+        resp = await client.post(
+            dialect.ROUTE_TRANSCRIPTIONS, data={"file": _upload()}, headers=_auth(token)
+        )
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 502
+    assert (payload["error"]["code"], payload["error"]["message"]) == (
+        "transcription_failed",
+        reason,
+    )
+
+
+@pytest.mark.asyncio
 async def test_transcriptions_503_says_the_bound_providers_reason(monkeypatch):
     """🔴 Red before: "Install a transcription model" for a bound model whose provider knew it
     could not sign in."""
