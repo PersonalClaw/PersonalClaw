@@ -748,6 +748,23 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A model provider's instances are managed through /api/model-providers, not the "
         "generic provider-instance store."
     ),
+    # ── the agents a runtime offers (dashboard/handlers/providers.py — GET
+    # /api/agent-providers/{id}/agents) ──
+    # 502: the runtime's last Test did not list them — it failed, or its answer could not be read
+    # — answered in place of an empty list, which would read as "this runtime offers none". The
+    # message says why.
+    "agent_discovery_failed": (
+        "The agents this runtime offers are not known: its last Test did not list them. The "
+        "message says why."
+    ),
+    # ── an agent runner's version check (dashboard/handlers/providers.py) ──
+    # 409: nothing set that runner's CLI up here — no installed agent app, and no provider entry
+    # of the owner's own, registers its runtime — so PersonalClaw never runs it, not even for
+    # its version.
+    "runner_not_set_up": (
+        "Nothing sets this runner up here — no installed agent app or provider entry registers "
+        "its runtime — so PersonalClaw does not run its CLI."
+    ),
     # ── per-run policy overrides (workflows/handlers.py) ──
     # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
     # `json_error` call site, but registered here all the same: these are wire codes a

@@ -189,7 +189,17 @@ stays saved, and running `setup` again is safe: Enter at a prompt keeps its answ
 ## `personalclaw doctor`
 
 Verify the PersonalClaw setup (credentials, model bindings, channel tokens,
-directories). No flags.
+directories, and each agent CLI an installed agent app set up).
+
+Doctor starts no agent CLI unless you ask it to. For each one it reports whether the CLI
+is installed and what its last Test found (the Test on its card in Settings → Providers);
+one nobody has tested reads as installed and not started, which is not an issue.
+
+| Flag | What it does |
+|---|---|
+| `--start-agent-clis` | Also start each of those agent CLIs once — its ACP handshake and one empty session, what its Test does — to check it runs and is signed in, and record the answer for its card. |
+| `--paths` | Print the resolved install paths (reference docs, config, skills, install dir) as `key<TAB>path` lines, and exit. |
+| `--rebuild-routing-stats` | Refold `routing_stats.json` from the model-call audit log, and exit. |
 
 ## Gateway lifecycle
 

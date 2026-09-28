@@ -135,16 +135,19 @@ describe('the shared settings mutation reports as well as reconciles', () => {
   })
 
   it('the deliberate optimists are still named, and still deliberate', () => {
-    // Not every optimistic write is a defect, and these three were judged rather than swept:
+    // Not every optimistic write is a defect, and these two were judged rather than swept:
     //   • FeedbackThumbs — documented low-stakes optimism; a re-thumb supersedes, and breaking a chat
     //     turn over a telemetry write would be worse than dropping the signal.
-    //   • ProvidersPanel.recheckRuntimes — a READ refresh. Keeping the last known list is the
-    //     ux-672 doctrine, not a swallow.
     //   • identity.tsx — belongs to the recorded owner taste call about that file.
     expect(codeOf('ui/FeedbackThumbs.tsx'), 'still optimistic on purpose').toMatch(/catch \{/)
-    // (Scoped to the one runtime whose card asked since a plain read stopped spawning runtimes.)
-    expect(codeOf('pages/settings/ProvidersPanel.tsx'), 'still keeps the last known runtimes')
-      .toMatch(/setRuntimeOverride\(await api\.agentRuntimes\(true, runtime \?\? ''\)\)/)
+  })
+
+  it("an agent runtime's Test is a write the user started, so its failure is reported", () => {
+    // The Test starts the runtime's CLI and records what it found. It used to be a READ refresh
+    // that kept the last known list on failure; a Test that failed silently would read as "nothing
+    // happened" on the one control that runs the CLI.
+    expect(codeOf('pages/settings/ProvidersPanel.tsx'))
+      .toMatch(/reportingWrite\(`test \$\{who\}`, \(\) => api\.testAgentRuntime\(runtime\)\)/)
   })
 
   it('NO source file anywhere in the tree still swallows a write into silence', () => {

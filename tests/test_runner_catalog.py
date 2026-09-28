@@ -229,7 +229,7 @@ def test_unparseable_version_output_reports_unknown_not_a_placeholder(monkeypatc
 def test_never_probed_runner_surfaces_null_health_not_a_default():
     """A row with no recorded evidence reports ``health: null`` — not "fine"."""
     _byo({"id": "unprobed", "display_name": "Unprobed", "bin_names": ["nope-cli"]})
-    row = next(r for r in runners.runner_rows(probe=False) if r.definition.id == "unprobed")
+    row = next(r for r in runners.runner_rows() if r.definition.id == "unprobed")
     assert row.to_dict()["health"] is None
 
 
@@ -259,7 +259,8 @@ async def test_verbatim_error_survives_to_the_api_response():
 
     This is the end of clause 2: it is not enough that the probe knows the reason — the
     surface has to carry it. A generic 'unavailable' anywhere between here and the row
-    dict reds this assertion.
+    dict reds this assertion. The probe is a runner's Check (the read runs nothing), so the
+    recorded Check is what the read must carry.
     """
     from personalclaw.dashboard.handlers.providers import api_agent_runners_list
 
@@ -271,7 +272,8 @@ async def test_verbatim_error_survives_to_the_api_response():
             "env_var": _FAKE_ENV,
         }
     )
-    request = SimpleNamespace(query={"probe": "1"})
+    runners.probe_runner(runners.catalog()["fake-runner"])
+    request = SimpleNamespace(query={})
     resp = await api_agent_runners_list(request)  # type: ignore[arg-type]
     payload = json.loads(resp.text or "{}")
     row = next(r for r in payload["runners"] if r["id"] == "fake-runner")
@@ -493,7 +495,7 @@ def test_capabilities_persist_from_the_discovery_snapshot():
     assert caps["source"] == "initialize"
     assert "m1" in caps["models"]
 
-    row = next(r for r in runners.runner_rows(probe=False) if r.definition.id == "fake-runner")
+    row = next(r for r in runners.runner_rows() if r.definition.id == "fake-runner")
     assert row.to_dict()["capabilities"]["models"] == ["m1"]
 
 
@@ -803,7 +805,7 @@ def test_the_interval_actually_decides_whether_a_row_reads_stale(monkeypatch, tm
         cfg = AppConfig.load()
         cfg.agent.runner_health_check_secs = interval
         monkeypatch.setattr(AppConfig, "load", classmethod(lambda _cls: cfg))
-        rows = runners.runner_rows(probe=False)
+        rows = runners.runner_rows()
         return next(r for r in rows if r.definition.id == "aging-runner").to_dict()
 
     stale = _row(600)  # the reading is 30 min old; the window is 10 min
@@ -819,7 +821,7 @@ def test_a_never_probed_row_is_not_reported_stale():
     never probed already says so, and putting an age on a measurement that does not
     exist would invent one."""
     _byo({"id": "untouched", "display_name": "Untouched", "bin_names": [_MISSING_BIN]})
-    row = next(r for r in runners.runner_rows(probe=False) if r.definition.id == "untouched")
+    row = next(r for r in runners.runner_rows() if r.definition.id == "untouched")
     d = row.to_dict()
     assert d["health"] is None
     assert d["health_stale"] is None

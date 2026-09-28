@@ -324,6 +324,28 @@ def _resolution_moved(provider: Any) -> bool:
     return basis is not None and not basis.holds()
 
 
+def _record_runner_lease(runtime_id: str, holder: str) -> None:
+    """Record that session *holder* started a chat on the external runner *runtime_id*.
+
+    The lease is what Settings → Agents reads to say who holds which runner, and a holder that
+    goes quiet past ``agent.runner_idle_release_secs`` is released. It is written when a chat's
+    ACP runtime actually starts — the one moment a session takes a runner — and a same-holder
+    re-record renews it, which is what keeps a reconnect after a connection death from reading
+    as someone else's hold. Best-effort by contract: the lease is an observable record, so an
+    advisory file that cannot be written must never fail the chat that started.
+    """
+    if not runtime_id.startswith("acp:") or not holder:
+        return
+    try:
+        from personalclaw.agents import runner_lifecycle
+
+        granted, reason = runner_lifecycle.claim_runner(runtime_id, holder)
+        if granted is None:
+            logger.debug("runner lease not recorded for %s (%s)", runtime_id, reason)
+    except Exception:
+        logger.debug("runner lease record failed for %s", runtime_id, exc_info=True)
+
+
 @dataclass
 class _Session:
     provider: ModelProvider
@@ -650,77 +672,6 @@ class SessionManager:
         except asyncio.QueueEmpty:
             return None
 
-    async def _claim_acp_pool(
-        self,
-        key: str,
-        channel_id: str | None,
-        agent: str | None,
-        model: str | None,
-        extra_factory_kwargs: dict[str, Any],
-    ) -> "ModelProvider | None":
-        """Claim a warmed connection from the ACP live-connection pool and
-        specialize it for this session, or ``None`` (caller cold-starts).
-
-        Only fires for ``acp:<cli>`` runtimes (read from the resolved
-        ``provider_kind`` the chat runner threads through). The claimed connection
-        is already started; we rekey it to this session and apply the per-session
-        agent persona (default-dialect ``set_mode``) + model live, mirroring the
-        single-agent warm-pool claim path."""
-        provider_kind = str(extra_factory_kwargs.get("provider_kind") or "")
-        if not provider_kind.startswith("acp:"):
-            return None
-        try:
-            from personalclaw.acp.connection_pool import get_acp_pool
-
-            pool = get_acp_pool()
-            if pool is None:
-                return None
-            # `holder=key` records the WORK-R8 runner lease: this session key is what
-            # Settings → Agents shows as the holder, and it is what makes a re-claim after a
-            # connection death a RENEWAL rather than a refusal.
-            provider = await pool.claim(provider_kind, holder=key)
-        except Exception:
-            logger.debug("ACP pool claim failed for %s", key, exc_info=True)
-            return None
-        if provider is None:
-            return None
-        try:
-            from personalclaw.agents.provider import AgentProvider
-
-            if isinstance(provider, AgentProvider):
-                provider.set_session_key(key, channel_id)
-                # Specialize live: bind the chosen persona (ACP modeId) + model +
-                # permission mode. The pooled connection was warmed generic
-                # (default agent/model/mode), so a session needing a non-default
-                # mode (e.g. an unattended goal loop's bypassPermissions) MUST
-                # re-apply it here or it silently stays "default". Mode follows
-                # model (adapters clamp an out-of-range mode to the active model).
-                _acp_agent = str(extra_factory_kwargs.get("agent") or agent or "")
-                if _acp_agent:
-                    await provider.set_agent(_acp_agent)
-                if model:
-                    await provider.set_model(model)
-                # Declare unattended BEFORE the mode. A warmed pool connection
-                # is attended by default, so without this the loop's
-                # bypassPermissions is clamped straight back to the host-authority
-                # mode by the gate — the mode would silently stay "default".
-                if hasattr(provider, "set_unattended"):
-                    provider.set_unattended(bool(extra_factory_kwargs.get("unattended")))
-                _acp_mode = str(extra_factory_kwargs.get("acp_mode") or "")
-                if _acp_mode and hasattr(provider, "set_mode"):
-                    await provider.set_mode(_acp_mode)
-                # Reasoning effort follows model too (effort granularity can be
-                # model-dependent). A pooled connection warms at the adapter default,
-                # so re-apply the session's effort live on claim.
-                _acp_effort = str(extra_factory_kwargs.get("reasoning_effort_override") or "")
-                if _acp_effort and hasattr(provider, "set_reasoning_effort"):
-                    await provider.set_reasoning_effort(_acp_effort)
-            logger.info("Claimed ACP pool connection for %s (runtime=%s)", key, provider_kind)
-            return provider
-        except (asyncio.CancelledError, Exception):
-            _sync_kill_provider(provider)
-            raise
-
     async def _open_acp_concurrent(
         self,
         key: str,
@@ -778,7 +729,8 @@ class SessionManager:
             )
             if provider is None:
                 return None
-            # Specialize live (persona / model / mode / effort) exactly like the claim path.
+            # Specialize live (persona / model / mode / effort): the shared connection was
+            # opened generic, so a session needing a non-default mode must apply it here.
             from personalclaw.agents.provider import AgentProvider
 
             if isinstance(provider, AgentProvider):
@@ -786,7 +738,9 @@ class SessionManager:
                     await provider.set_agent(agent)
                 if model:
                     await provider.set_model(model)
-                # Unattended before mode, exactly as on the claim path above.
+                # Unattended BEFORE the mode: the session starts attended, and an attended
+                # session's permission gate clamps an auto-approve mode straight back to the
+                # host-authority one, so an unattended loop's mode would silently stay default.
                 if hasattr(provider, "set_unattended"):
                     provider.set_unattended(bool(extra_factory_kwargs.get("unattended")))
                 _mode = str(extra_factory_kwargs.get("acp_mode") or "")
@@ -1318,29 +1272,18 @@ class SessionManager:
                 _sync_kill_provider(provider)
                 raise
         else:
-            # ACP live-connection pool: when the resolved runtime is an
-            # ``acp:<cli>`` and there's no resume to honor (a pooled connection has
-            # no prior session), try to claim a WARMED connection so the first turn
-            # is instant instead of paying the ~15-20s cold start. On a hit we
-            # specialize it live (agent persona / model) and use it WITHOUT
-            # calling start() (already started). Misses fall through to cold-start.
+            # When concurrent sessions are enabled for this (proven-concurrent) ACP
+            # runtime and there is no resume to honor, open a session on the runtime's
+            # SHARED connection — spawned for the first chat that needs it, never ahead of
+            # one. Gated (both flags off → this returns None and we fall through to the
+            # one-session cold start below).
             provider = None
-            claimed_from_acp_pool = False
             if not resume_sid and not is_stateless:
-                # P9: when concurrent sessions are enabled for this (proven-concurrent)
-                # ACP runtime, open a session on a SHARED connection instead of claiming
-                # a whole one-session-per-process connection. Gated (both flags off →
-                # this returns None and we fall through to the one-session path).
                 provider = await self._open_acp_concurrent(
                     key, channel_id, agent, model, cwd, extra_factory_kwargs
                 )
-                if provider is None:
-                    provider = await self._claim_acp_pool(
-                        key, channel_id, agent, model, extra_factory_kwargs
-                    )
-                claimed_from_acp_pool = provider is not None
 
-            if not claimed_from_acp_pool:
+            if provider is None:
                 # Cold start: start provider OUTSIDE the lock so other sessions
                 # can proceed in parallel.  Semaphore limits concurrent cold-starts
                 # to avoid CPU saturation from multiple ACP agent processes.
@@ -1382,9 +1325,10 @@ class SessionManager:
 
         # Everything after start() must be wrapped so that a CancelledError
         # between start() and session registration doesn't orphan the process.
-        # Invariant: by here provider is set — either claimed from the ACP pool or
-        # cold-started via factory() above (both branches assign it).
+        # Invariant: by here provider is set — a warm-pool process, a session on a
+        # shared ACP connection, or cold-started via factory() above.
         assert provider is not None
+        registered = False
         try:
             # Check if session was resumed
             resumed = False
@@ -1447,6 +1391,7 @@ class SessionManager:
                     Stats().inc_session_created()
 
                     result = (provider, True, resumed)
+                    registered = True
         except BaseException:
             # CancelledError or any other exception after provider.start()
             # succeeded — provider is running but never registered.  Kill it.
@@ -1459,6 +1404,8 @@ class SessionManager:
             await race_loser.semaphore.acquire()
             return race_loser.provider, False, False
 
+        if registered:
+            _record_runner_lease(str(extra_factory_kwargs.get("provider_kind") or ""), key)
         return result
 
     async def reset(self, key: str) -> None:

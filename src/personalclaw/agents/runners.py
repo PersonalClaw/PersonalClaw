@@ -43,7 +43,9 @@ Three parts, deliberately separate:
 Probe posture: the health probe runs ``<bin> --version`` (or the row's
 ``version_args``) and nothing else. It never opens a session, never passes a prompt,
 and writes nothing outside the sidecar — so probing the catalog cannot touch a
-workspace.
+workspace. It still runs another agent's CLI, so it runs only for a runner's Check,
+which the user presses, and only on a runner something set up here (:func:`is_set_up`):
+reading the catalog runs nothing.
 
 A shipped row's ``runtime_id`` MUST be the id a bundle actually registers — the
 CANONICAL provider name, never one of :data:`personalclaw.acp.permission_authority.
@@ -92,10 +94,12 @@ __all__ = [
     "evidence_is_stale",
     "guard_unattended_spawn",
     "health_check_interval_secs",
+    "is_set_up",
     "load_evidence",
     "probe_runner",
     "record_capabilities",
     "record_provenance",
+    "runner_row",
     "runner_rows",
     "runtime_id_for_agent",
     "verify_adapter",
@@ -468,12 +472,30 @@ def resolve_runner_command(defn: RunnerDefinition) -> list[str] | None:
     )
 
 
+def is_set_up(defn: RunnerDefinition) -> bool:
+    """Whether something set *defn*'s runner up here: its runtime is a registered agent runtime.
+
+    An installed agent app registers its ``acp:<cli>`` runtime when it finds the CLI, and a
+    provider entry of the owner's own does the same, so a registered runtime is a CLI the
+    owner chose to have PersonalClaw drive. Only such a runner's CLI is ever run for a Check —
+    a CLI that merely sits on PATH is not one the owner asked PersonalClaw to touch.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        entry = get_default_registry().get_entry(defn.runtime_id)
+    except Exception:
+        return False
+    return entry.type == "acp_agent"
+
+
 def probe_runner(defn: RunnerDefinition, *, persist: bool = True) -> HealthEvidence:
     """Probe *defn*'s CLI and return MEASURED evidence (also persisted by default).
 
     The probe is ``<resolved bin> <version_args>`` — a read of the CLI's own version
-    string. It spawns nothing else, passes no prompt and writes no workspace file, so
-    it is safe to run on every Settings load.
+    string. It spawns nothing else, passes no prompt and writes no workspace file. It
+    still runs the CLI, so it runs only for the runner's Check, which the user presses
+    (``POST /api/agent-runners/{id}/check``), on a runner :func:`is_set_up` says is set up.
 
     Failure carries the probe's OWN text: an unresolvable binary yields the resolver's
     verbatim reason, a non-zero exit yields the CLI's stderr verbatim, and a timeout
@@ -870,6 +892,9 @@ class RunnerRow:
     #: expiry-filtered by ``runner_lifecycle.lease_for`` — a row never carries a holder that
     #: idle-release has taken back.
     lease: dict[str, Any] | None = None
+    #: Whether something set this runner up here (:func:`is_set_up`) — the only runners whose
+    #: CLI a Check runs.
+    set_up: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         ev = self.evidence
@@ -880,6 +905,10 @@ class RunnerRow:
             "source": self.definition.source,
             "dialect": self.definition.dialect,
             "bin_names": list(self.definition.bin_names),
+            # What a Check runs, after the CLI is resolved: `<bin> <version_args>`. Named so the
+            # control can say what it runs before anyone presses it.
+            "version_args": list(self.definition.version_args),
+            "set_up": self.set_up,
             # Health is either measured evidence or explicitly absent. There is no
             # third "assume it's fine" shape: an unprobed runner reports null.
             "health": ev.to_dict() if ev is not None else None,
@@ -902,40 +931,40 @@ class RunnerRow:
         }
 
 
-def runner_rows(*, probe: bool = False) -> list[RunnerRow]:
-    """Every catalog row with its evidence. ``probe=True`` re-measures health first.
+def runner_row(defn: RunnerDefinition) -> RunnerRow:
+    """*defn*'s row: its definition, the evidence last recorded for it, and what it is now.
 
-    Without ``probe`` this is a pure read of persisted evidence (fast, no spawns), so
-    the Settings surface paints from the last real measurement instead of stalling on
-    four subprocesses.
+    A pure read of persisted evidence — no spawns, so the Settings surface paints from the
+    last real measurement instead of stalling on a CLI, and a runner nobody checked says so.
     """
-    rows: list[RunnerRow] = []
-    for defn in sorted(catalog().values(), key=lambda d: d.display_name.lower()):
-        evidence = probe_runner(defn) if probe else load_evidence(defn.id)
-        try:
-            verdict = verify_adapter(defn)
-        except Exception:
-            logger.debug("adapter verification failed for %s", defn.id, exc_info=True)
-            verdict = AdapterVerification(state="unverified", detail="verification errored")
-        # The live lease. Read per row rather than passed in, so every caller of
-        # ``runner_rows`` (the Settings endpoint today, anything else tomorrow) shows the
-        # same holder — a surface that had to remember to ask separately is a surface that
-        # eventually forgets. Lazy import: ``runner_lifecycle`` reaches the workflow lease
-        # store, which must not become an import-time dependency of the catalog.
-        try:
-            from personalclaw.agents import runner_lifecycle
+    try:
+        verdict = verify_adapter(defn)
+    except Exception:
+        logger.debug("adapter verification failed for %s", defn.id, exc_info=True)
+        verdict = AdapterVerification(state="unverified", detail="verification errored")
+    # The live lease. Read per row rather than passed in, so every caller of
+    # ``runner_rows`` (the Settings endpoint today, anything else tomorrow) shows the
+    # same holder — a surface that had to remember to ask separately is a surface that
+    # eventually forgets. Lazy import: ``runner_lifecycle`` reaches the workflow lease
+    # store, which must not become an import-time dependency of the catalog.
+    try:
+        from personalclaw.agents import runner_lifecycle
 
-            lease = runner_lifecycle.lease_for(defn.runtime_id)
-        except Exception:
-            logger.debug("lease read failed for %s", defn.id, exc_info=True)
-            lease = None
-        rows.append(
-            RunnerRow(
-                definition=defn,
-                evidence=evidence,
-                capabilities=load_capabilities(defn.id),
-                adapter=verdict,
-                lease=lease,
-            )
-        )
-    return rows
+        lease = runner_lifecycle.lease_for(defn.runtime_id)
+    except Exception:
+        logger.debug("lease read failed for %s", defn.id, exc_info=True)
+        lease = None
+    return RunnerRow(
+        definition=defn,
+        evidence=load_evidence(defn.id),
+        capabilities=load_capabilities(defn.id),
+        adapter=verdict,
+        lease=lease,
+        set_up=is_set_up(defn),
+    )
+
+
+def runner_rows() -> list[RunnerRow]:
+    """Every catalog row (:func:`runner_row`), by display name. Runs no CLI."""
+    ordered = sorted(catalog().values(), key=lambda d: d.display_name.lower())
+    return [runner_row(defn) for defn in ordered]

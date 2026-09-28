@@ -216,9 +216,9 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
   //
   // `#/settings/providers` renders one `ProviderCard` per provider. **11 buttons, and
   // every one of them was named "Configure"** — one duplicate group of 11, each opening a DIFFERENT
-  // provider's config form. The card's other controls have the same shape (Sign in · Check availability ·
-  // and the channel strip's Test / Connect / Disconnect), conditional on runtime state, so they are
-  // fixed together rather than left as known members.
+  // provider's config form. The card's other controls have the same shape (Sign in · the agent
+  // runtime's Test · and the channel strip's Test / Connect / Disconnect), conditional on runtime
+  // state, so they are fixed together rather than left as known members.
   //
   // 🔑 THE FILE ALREADY NAMED ONE OF ITS OWN CONTROLS: the enable `Toggle` passes
   // `label={`Toggle ${ext.name}`}`. So the convention was in the file, applied once.
@@ -230,7 +230,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
   // After: **11 buttons, 0 duplicate name groups.**
   const PROVIDER_CONTROLS: [string, string][] = [
     ['Sign in', 'aria-label={`Sign in: ${who}`}'],
-    ['Check availability', 'label={`Check availability: ${who}`} title="Check availability"'],
+    ['agent Test', 'ariaLabel={`Test: ${who}`}'],
     ['Configure', 'label={`Configure: ${who}`} title="Configure"'],
     ['Test', 'aria-label={`Test: ${channel.name}`}'],
     ['Disconnect', 'aria-label={`Disconnect: ${channel.name}`}'],
@@ -249,7 +249,7 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
       .toMatch(/\{ext\.displayName \|\| ext\.name\}/)
     // The bare names are the defect; none may come back.
     expect(code).not.toMatch(/label="Configure"/)
-    expect(code).not.toMatch(/label="Check availability"/)
+    expect(code).not.toMatch(/ariaLabel="Test"/)
   })
 
   // ── the derived census: a row action is one whose HANDLER references the mapped item ─────────────

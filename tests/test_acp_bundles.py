@@ -436,45 +436,10 @@ def test_factory_falls_back_to_entry_defaults_without_per_session(monkeypatch, t
     assert prov._mode == ""
 
 
-def _stub_discovery_client(monkeypatch, session_new: dict):
-    """Stub AcpConnection spawn + handshake so discover_agents reads `session_new`
-    without launching a real process. Post-P9#7 discover_agents probes on a throwaway
-    AcpConnection (spawn → initialize → new_session → last_session_new_snapshot)."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    from personalclaw.acp import session as session_mod
-    from personalclaw.llm import acp_agent as acp_mod
-
-    fake_conn = MagicMock()
-    fake_conn.initialize = AsyncMock(return_value={})
-    fake_conn.new_session = AsyncMock(return_value=MagicMock())
-    fake_conn.last_session_new_snapshot = session_new
-    fake_conn.close = AsyncMock()
-
-    async def fake_spawn(**kwargs):  # AcpConnection.spawn(...) classmethod
-        return fake_conn
-
-    monkeypatch.setattr(session_mod.AcpConnection, "spawn", staticmethod(fake_spawn))
-    # which() must pass for the command gate (imported inside the method, so
-    # patch the shutil module attribute directly).
-    import shutil as _shutil
-
-    monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
-    # discover_agents gates on readiness — stub it ready so the discovery path
-    # runs without a real handshake.
-    from personalclaw.agents.provider import ReadinessStatus
-
-    async def fake_probe(cls, options):
-        return ReadinessStatus(ready=True, state="ready")
-
-    monkeypatch.setattr(acp_mod.AcpAgentProvider, "probe_readiness", classmethod(fake_probe))
-    return acp_mod
-
-
-@pytest.mark.asyncio
-async def test_discover_agents_claude_effort(monkeypatch, tmp_path):
-    """claude discovery → exactly ONE base agent; the backend's effort levels
-    ride along as supported_efforts (per-turn setting), NOT effort-variant agents."""
+def test_claude_agents_from_a_test_snapshot_are_one_agent_with_its_efforts():
+    """claude's ``session/new`` (what a Test's one session returns) → exactly ONE base agent;
+    the backend's effort levels ride along as supported_efforts (a per-turn setting), NOT
+    effort-variant agents. Pure: mapping a snapshot starts nothing."""
     from personalclaw.llm.acp_agent import AcpAgentProvider
 
     snew = {
@@ -490,15 +455,9 @@ async def test_discover_agents_claude_effort(monkeypatch, tmp_path):
             },
         ],
     }
-    _stub_discovery_client(monkeypatch, snew)
-    fake = _fake_on_path(monkeypatch, tmp_path, "claude-agent-acp")
-    agents = await AcpAgentProvider.discover_agents(
-        {
-            "command": [str(fake)],
-            "dialect": "claude-code",
-            "runtime_id": "acp:claude-code",
-            "runtime_label": "Claude",
-        }
+    agents = AcpAgentProvider.agents_from_snapshot(
+        {"dialect": "claude-code", "runtime_id": "acp:claude-code", "runtime_label": "Claude"},
+        snew,
     )
     # ONE agent — no effort variants in the picker.
     assert len(agents) == 1
@@ -510,88 +469,6 @@ async def test_discover_agents_claude_effort(monkeypatch, tmp_path):
         {"value": "high", "label": "High"},
         {"value": "max", "label": "Max"},
     ]
-
-
-@pytest.mark.asyncio
-async def test_discover_agents_absent_binary_returns_empty(monkeypatch):
-    """No adapter on PATH → discovery returns [] (never raises)."""
-    from personalclaw.llm.acp_agent import AcpAgentProvider
-
-    agents = await AcpAgentProvider.discover_agents(
-        {
-            "command": ["/nonexistent/test-cli", "acp"],
-            "dialect": "default",
-            "runtime_id": "acp:test-cli",
-        }
-    )
-    assert agents == []
-
-
-@pytest.mark.asyncio
-async def test_discover_agents_spawn_failure_returns_empty(monkeypatch):
-    """A ready runtime whose probe spawn/handshake THROWS → [] (never raises).
-
-    Regression: the failure branch's debug log referenced an undefined
-    ``runtime_id`` name, so any handshake exception escaped discover_agents as
-    a NameError instead of the contractual [] — breaking "discovery never
-    raises into the API"."""
-    import shutil as _shutil
-
-    from personalclaw.acp import session as session_mod
-    from personalclaw.agents.provider import ReadinessStatus
-    from personalclaw.llm import acp_agent as acp_mod
-    from personalclaw.llm.acp_agent import AcpAgentProvider
-
-    monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
-
-    async def ready(cls, options):
-        return ReadinessStatus(ready=True, state="ready")
-
-    monkeypatch.setattr(acp_mod.AcpAgentProvider, "probe_readiness", classmethod(ready))
-
-    async def boom(**kwargs):
-        raise RuntimeError("handshake exploded")
-
-    monkeypatch.setattr(session_mod.AcpConnection, "spawn", staticmethod(boom))
-
-    agents = await AcpAgentProvider.discover_agents(
-        {
-            "command": ["test-cli", "acp"],
-            "dialect": "default",
-            "runtime_id": "acp:test-cli",
-        }
-    )
-    assert agents == []
-
-
-@pytest.mark.asyncio
-async def test_discover_agents_not_ready_returns_empty(monkeypatch, tmp_path):
-    """A runtime whose readiness probe fails (e.g. codex: adapter present but its
-    engine CLI absent → not_found) contributes NO discovered agents — discovery
-    and readiness never disagree."""
-    import shutil as _shutil
-
-    from personalclaw.agents.provider import ReadinessStatus
-    from personalclaw.llm import acp_agent as acp_mod
-    from personalclaw.llm.acp_agent import AcpAgentProvider
-
-    monkeypatch.setattr(_shutil, "which", lambda c: "/usr/bin/" + str(c))
-
-    async def not_ready(cls, options):
-        return ReadinessStatus(ready=False, state="not_found", detail="engine 'codex' not found")
-
-    monkeypatch.setattr(acp_mod.AcpAgentProvider, "probe_readiness", classmethod(not_ready))
-
-    fake = _fake_on_path(monkeypatch, tmp_path, "codex-acp")
-    agents = await AcpAgentProvider.discover_agents(
-        {
-            "command": [str(fake)],
-            "dialect": "codex",
-            "runtime_id": "acp:codex",
-            "requires_executable": {"label": "codex", "env_var": "CODEX_PATH", "path": ""},
-        }
-    )
-    assert agents == []
 
 
 def test_bundle_factories_return_none(monkeypatch, tmp_path):

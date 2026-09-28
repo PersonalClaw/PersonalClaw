@@ -41,13 +41,14 @@ def config_dir() -> Path:
 _MIN_NODE_VERSION = 18
 
 
-def _doctor_providers() -> list[str]:
-    """Run a health probe for each registered ProviderEntry.
+def _doctor_providers(*, start_agent_clis: bool = False) -> list[str]:
+    """Report each registered ProviderEntry. Returns an issue string for each that fails.
 
-    For ``acp_agent`` entries, spawns the configured command and completes
-    the ACP ``initialize`` handshake.  For other entries, performs
-    a lightweight capability check (import test + credential presence).
-    Returns a list of issue strings for any entry that fails.
+    An ``acp_agent`` entry is another agent's CLI, and doctor does not start it unless asked:
+    by default it reports whether the CLI is installed and what its last Test found (the one on
+    its card in Settings → Providers). ``start_agent_clis`` — ``personalclaw doctor
+    --start-agent-clis`` — starts each one once, the same Test, and records the answer.
+    Other entries get a lightweight registration check.
     """
     issues: list[str] = []
     try:
@@ -69,7 +70,7 @@ def _doctor_providers() -> list[str]:
     for entry in entries:
         label = f"{entry.name} ({entry.type})"
         if entry.type == "acp_agent":
-            _probe_acp_agent(entry, label, issues)
+            _report_acp_agent(entry, label, issues, start=start_agent_clis)
         else:
             # Any model provider type (ollama core-native, or an installed model
             # app: openai/anthropic/vllm/bedrock/…). The type is shown in the label;
@@ -80,30 +81,49 @@ def _doctor_providers() -> list[str]:
     return issues
 
 
-def _probe_acp_agent(entry: object, label: str, issues: list[str]) -> None:
-    """Probe the acp_agent entry's readiness via the shared readiness probe."""
+#: How each readiness state reads in doctor's output.
+_READINESS_ICONS = {
+    "ready": "✅",
+    "untested": "⏹",
+    "not_found": "❌",
+    "needs_login": "🔑",
+    "timeout": "⏳",
+    "error": "❌",
+}
+
+
+def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bool) -> None:
+    """Report one agent runtime: from what is installed and its last Test, or — only when
+    *start* — from a Test run now (``agents/runtime_tests.py``, the path the card's Test takes).
+    """
     import asyncio
 
-    from personalclaw.llm.acp_agent import AcpAgentProvider
-
-    options = getattr(entry, "options", {}) or {}
+    from personalclaw.agents import runtime_tests
 
     try:
-        status = asyncio.run(AcpAgentProvider.probe_readiness(options))
+        if start:
+            readiness = asyncio.run(runtime_tests.run_test(entry))
+        else:
+            readiness = runtime_tests.readiness(entry)
     except Exception as exc:
-        print(f"  {label}: ⚠️  could not probe ({exc})")
+        print(f"  {label}: ⚠️  could not check ({exc})")
         return
 
-    icon = {
-        "ready": "✅",
-        "not_found": "❌",
-        "needs_login": "🔑",
-        "timeout": "⏳",
-        "error": "❌",
-    }.get(status.state, "⚠️")
-    print(f"  {label}: {icon} {status.detail}")
-    if not status.ready:
-        issues.append(f"{label}: {status.state}")
+    state = str(readiness.get("state") or "error")
+    icon = _READINESS_ICONS.get(state, "⚠️")
+    tested_at = readiness.get("tested_at")
+    detail = str(readiness.get("detail") or "")
+    if state == "untested":
+        detail = (
+            "installed, not started — run `personalclaw doctor --start-agent-clis` to start "
+            "each agent CLI once, or press Test on its card in Settings → Providers"
+        )
+    elif tested_at and not start:
+        detail = f"{detail} (last Test {tested_at})"
+    print(f"  {label}: {icon} {detail}")
+    # A CLI nobody started is not a failure — only a check that ran, and failed, is.
+    if not readiness.get("ready") and state != "untested":
+        issues.append(f"{label}: {state}")
 
 
 def _doctor_paths() -> None:
@@ -526,8 +546,11 @@ def _probe_python_version(python: str | Path) -> str:
     return result.stdout.strip().removeprefix("Python ").strip()
 
 
-def _doctor() -> None:
-    """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
+def _doctor(*, start_agent_clis: bool = False) -> None:
+    """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
+
+    Starts no agent CLI unless ``start_agent_clis`` (``--start-agent-clis``) says to.
+    """
 
     print("PersonalClaw Doctor\n")
     issues: list[str] = []
@@ -936,7 +959,7 @@ def _doctor() -> None:
 
     # ── Provider Health ──
     print("\nProvider Health")
-    _provider_issues = _doctor_providers()
+    _provider_issues = _doctor_providers(start_agent_clis=start_agent_clis)
     issues.extend(_provider_issues)
 
     # ── Connectivity ──

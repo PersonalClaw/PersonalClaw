@@ -364,6 +364,16 @@ The posture is announced on stderr, so stdout stays pipeable.
         action="store_true",
         help="Refold routing_stats.json from the model-call audit log and exit",
     )
+    doctor_parser.add_argument(
+        "--start-agent-clis",
+        action="store_true",
+        help=(
+            "Also START each agent CLI an installed agent app set up, once — its ACP handshake "
+            "and one empty session, as its Test in Settings → Providers does — to check it runs "
+            "and is signed in. Without this, doctor only checks each is installed and shows its "
+            "last Test"
+        ),
+    )
 
     # gateway
     gw_parser = sub.add_parser(
@@ -1500,6 +1510,12 @@ def main() -> None:
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
 
+    # Before an app can import huggingface_hub: it sends only a token a caller handed it, never
+    # one it found outside the home by itself.
+    from personalclaw.local_models.hf_token import keep_the_hub_from_finding_tokens
+
+    keep_the_hub_from_finding_tokens()
+
     # Load .env from the working directory and from
     # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
     # users to manually copy .env into ~/.personalclaw.
@@ -1688,7 +1704,7 @@ def main() -> None:
         elif getattr(args, "rebuild_routing_stats", False):
             _doctor_rebuild_routing_stats()
         else:
-            _doctor()
+            _doctor(start_agent_clis=getattr(args, "start_agent_clis", False))
     elif args.command == "cron":
         _cron(args)
     elif args.command == "automation":

@@ -457,33 +457,44 @@ class TestSettingsSurface:
         ), "an expired lease was painted as the current holder"
 
 
-class TestPoolWiring:
+class TestLeaseWriter:
     """The WRITER. A lease nothing writes is state with no producer."""
 
-    async def test_claiming_a_pooled_connection_records_the_session_as_holder(self):
-        from personalclaw.acp.connection_pool import AcpConnectionPool
+    def test_starting_a_chat_on_an_external_runner_records_the_session_as_holder(self):
+        from personalclaw.session import _record_runner_lease
 
-        class _Provider:
-            def is_alive(self) -> bool:
-                return True
-
-        import asyncio
-
-        pool = AcpConnectionPool(
-            provider_builder=lambda _r: _Provider(), start_sem=asyncio.Semaphore(1)
-        )
-        slot = await pool._slot("acp:codex")
-        slot.provider = _Provider()  # type: ignore[assignment]
-        slot.warmed_at = time.monotonic()
-        got = await pool.claim("acp:codex", holder="chat:zoe")
-        assert got is not None
+        _record_runner_lease("acp:codex", "chat:zoe")
         assert runner_lifecycle.lease_for("acp:codex")["holder"] == "chat:zoe"
-        # VACUITY FLOOR: a claim with NO holder records nothing rather than an empty holder.
+        # VACUITY FLOOR: no holder, or a runtime that is not an external runner, records nothing
+        # rather than an empty holder or a lease on the in-process loop.
         runner_lifecycle.release_runner("acp:codex", "chat:zoe")
-        slot.provider = _Provider()  # type: ignore[assignment]
-        await pool.claim("acp:codex")
+        _record_runner_lease("acp:codex", "")
+        _record_runner_lease("native", "chat:zoe")
         assert runner_lifecycle.lease_for("acp:codex") is None
-        pool._closed = True
+
+    async def test_get_or_create_records_the_lease_when_it_starts_an_acp_session(self):
+        """The call site: a chat whose runtime is an ``acp:<cli>`` takes the runner when its
+        session starts. Nothing warms a connection ahead of the chat any more, so this is the
+        one moment a session takes a runner, and the only place the lease can be written."""
+        from unittest.mock import AsyncMock
+
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.session import SessionManager
+
+        def factory(session_key=None, agent=None, channel_id=None, **kwargs):
+            provider = AsyncMock()
+            provider.compacts_automatically = False
+            return provider
+
+        mgr = SessionManager(AppConfig(), provider_factory=factory)
+        try:
+            await mgr.get_or_create("dashboard:lease-chat", provider_kind="acp:codex")
+            assert runner_lifecycle.lease_for("acp:codex")["holder"] == "dashboard:lease-chat"
+            # A chat on the in-process runtime takes no runner.
+            await mgr.get_or_create("dashboard:native-chat")
+            assert runner_lifecycle.lease_for("acp:codex")["holder"] == "dashboard:lease-chat"
+        finally:
+            await mgr.close_all()
 
     async def test_the_pools_own_sweep_releases_an_idle_lease(self, monkeypatch):
         """The idle-release SWEEP has a caller. Without this it is a function nobody runs."""
@@ -491,13 +502,13 @@ class TestPoolWiring:
 
         from personalclaw.acp.connection_pool import AcpConnectionPool
 
-        pool = AcpConnectionPool(provider_builder=lambda _r: None, start_sem=asyncio.Semaphore(1))
+        pool = AcpConnectionPool(start_sem=asyncio.Semaphore(1))
         runner_lifecycle.claim_runner("acp:codex", "chat:alice", ttl=60)
         monkeypatch.setattr(
             runner_lifecycle, "sweep_idle_leases", lambda: _record(pool, "swept") or ["acp:codex"]
         )
         await pool._release_idle_leases()
-        assert getattr(pool, "_ei6_swept", False), "the health loop's sweep hook did not fire"
+        assert getattr(pool, "_ei6_swept", False), "the lease sweep's hook did not fire"
         pool._closed = True
 
 
@@ -556,6 +567,6 @@ class TestSubstrateIsolation:
 def test_the_catalog_row_carries_the_lease_field_at_all():
     """A cheap ratchet on the payload shape: the surface reads `lease`, so the row must
     always emit it, including for a runner nobody has ever claimed."""
-    rows = runners.runner_rows(probe=False)
+    rows = runners.runner_rows()
     assert rows, "no catalog rows"
     assert all("lease" in r.to_dict() for r in rows)

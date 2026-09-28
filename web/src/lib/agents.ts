@@ -18,13 +18,24 @@ import { api, type AgentProvider, type DiscoveredAgent, type ModelItem } from '.
  *  a name in `routing_status().muted` goes through here; `routingMuteReachable` is the rail. */
 export const canonicalAgentKey = (name: string): string => String(name ?? '').trim().toLowerCase()
 
+/** What ACP discovery found: each ready runtime's agents, and — for a runtime whose agents could
+ *  not be listed — why. A failed read is never an empty list: `[]` says the runtime offers none. */
+export interface AcpDiscovery {
+  agents: Record<string, DiscoveredAgent[]>
+  failed: Record<string, string>
+}
+
 /** ACP discovery: for every ready non-native provider, fetch its agents. */
-export async function loadAcpDiscovered(providers: AgentProvider[]): Promise<Record<string, DiscoveredAgent[]>> {
+export async function loadAcpDiscovered(providers: AgentProvider[]): Promise<AcpDiscovery> {
   const acp = providers.filter((p) => p.type !== 'native' && p.ready)
   const results = await Promise.allSettled(acp.map((p) => api.agentProviderAgents(p.provider_id)))
-  const map: Record<string, DiscoveredAgent[]> = {}
-  acp.forEach((p, i) => { const r = results[i]; if (r.status === 'fulfilled') map[p.provider_id] = r.value.agents })
-  return map
+  const found: AcpDiscovery = { agents: {}, failed: {} }
+  acp.forEach((p, i) => {
+    const r = results[i]
+    if (r.status === 'fulfilled') found.agents[p.provider_id] = r.value.agents
+    else found.failed[p.provider_id] = r.reason instanceof Error ? r.reason.message : String(r.reason)
+  })
+  return found
 }
 
 /** A flat, grouped agent option — native agents + ACP-discovered agents. */
@@ -62,7 +73,7 @@ export function useAgentCatalog(opts: { native?: 'saved' | 'installed' } = {}): 
       ])
       if (!alive) return
       const nativeNames = nat.status === 'fulfilled' ? nat.value.map((a) => a.name) : []
-      const disc = providers.status === 'fulfilled' ? await loadAcpDiscovered(providers.value) : {}
+      const disc = providers.status === 'fulfilled' ? (await loadAcpDiscovered(providers.value)).agents : {}
       if (!alive) return
       setDiscovered(disc)
       setOptions(flattenAgentOptions(nativeNames, disc))

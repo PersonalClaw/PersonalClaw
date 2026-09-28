@@ -682,8 +682,8 @@ class AcpConnection:
         self._sessions: dict[str, AcpSession] = {}
         self._agent_capabilities: dict = {}
         # Raw ``session/new`` response (modes / models / configOptions) from the most
-        # recent new-session — the discovery snapshot the connection pool + the N=1
-        # client read off a warmed connection (no second throwaway spawn).
+        # recent new-session — the discovery snapshot the client reads off this
+        # connection, so a runtime's Test lists its agents without a second spawn.
         self._last_session_new_snapshot: dict = {}
 
     @classmethod
@@ -886,8 +886,8 @@ class AcpConnection:
     @property
     def last_session_new_snapshot(self) -> dict:
         """The raw ``session/new`` response from the most recent new-session (modes /
-        models / configOptions) — the agent-discovery snapshot, read off a live
-        connection by the pool + the N=1 client."""
+        models / configOptions) — the agent-discovery snapshot, read off this connection
+        by the client (a runtime's Test keeps it as the agents that runtime offers)."""
         return self._last_session_new_snapshot
 
     async def close_session(self, session_id: str) -> None:

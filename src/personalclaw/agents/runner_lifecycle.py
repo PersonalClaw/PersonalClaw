@@ -1,11 +1,11 @@
 """Runner lifecycle — idle-release, lease records, transparent reconnect (§3.1(5)).
 
-The ACP connection pool already does claim-and-rewarm: a warmed connection is handed to a
-session and a replacement is warmed behind it. What it did NOT do is say *who is holding
-what*, or notice that a holder went quiet. Both gaps are the same gap — nothing outlived the
-pool's in-memory slot, so a gateway restart erased every fact about who had which runner, and
-a session that stopped using its runner held it as far as any observer could tell (forever,
-silently).
+A chat that starts an external runner (an ``acp:<cli>`` runtime) holds it, and two facts about
+that used to live nowhere: *who is holding what*, and whether a holder went quiet. Both gaps
+are the same gap — nothing outlived the process's memory, so a gateway restart erased every
+fact about who had which runner, and a session that stopped using its runner held it as far
+as any observer could tell (forever, silently). The session manager records the lease when a
+chat's runtime starts (``session._record_runner_lease``).
 
 This module adds the durable half, and deliberately does NOT invent a second locking scheme
 for it. It is an APPLICATION of the WORK-R8 claim convention in
@@ -17,12 +17,11 @@ a documented risk of this plan; one convention with two target namespaces is not
 The target namespace is ``runner:<runtime_id>`` — disjoint from the run/task ids WORK-R8 uses,
 so neither can shadow the other.
 
-**What the lease is and is not.** It is not the pool's mutual exclusion: the pool's own slot
-already guarantees one claimant, because ``claim`` detaches the provider and the next caller
-finds nothing. The lease is the *observable* half — the record a co-tenant session and the
-Settings surface read to answer "who has the Claude Code runner, and since when". So a lease
-that cannot be acquired is logged and stepped over rather than failing the claim: refusing a
-claim on a stale advisory record would turn a visibility feature into an outage.
+**What the lease is and is not.** It is not a lock: nothing waits on it or is refused by it.
+It is the *observable* record — what a co-tenant session and the Settings surface read to
+answer "who has the Claude Code runner, and since when". So a lease that cannot be acquired is
+logged and stepped over rather than failing the chat: refusing a chat on a stale advisory
+record would turn a visibility feature into an outage.
 
 **Idle-release.** ``expires_at`` IS the idle deadline. Activity renews it (a same-holder
 re-claim renews by construction — see ``containers.claim``), so a lease still in the future
@@ -33,7 +32,7 @@ longer than ``agent.runner_idle_release_secs``. Two things then act on that:
   present a dead holder as the current one — this is the same
   drop-at-render rule ``board_row`` uses, for the same reason;
 * :func:`sweep_idle_leases` deletes the file, so the release is a real state change and not
-  just a rendering convention. The pool's health loop calls it.
+  just a rendering convention. The ACP pool's lease sweep calls it.
 
 Both halves exist on purpose: the reader's drop makes the surface truthful even if the sweep
 never runs, and the sweep makes the on-disk state match what the surface says.
@@ -110,8 +109,8 @@ def claim_runner(
 
     ``ttl`` defaults to the configured idle-release window. A re-claim by the same holder
     RENEWS (``containers.claim``'s same-holder rule) — which is exactly what transparent
-    reconnect needs: a session whose connection died and re-claimed a warm replacement must
-    not be locked out of its own runner until the old lease expired.
+    reconnect needs: a session whose connection died and started its runtime again must not
+    read as locked out of its own runner until the old lease expired.
     """
     if not runtime_id or not holder:
         return None, "no holder"

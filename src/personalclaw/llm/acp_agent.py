@@ -50,18 +50,25 @@ logger = logging.getLogger(__name__)
 # means "use the CLI's own built-in default" (empty agent → dialect skips
 # activation). There is deliberately no fabricated default agent name.
 
+#: What an installed ACP CLI that nobody has started reads as. Only starting it can say whether
+#: it speaks ACP and is signed in, and PersonalClaw starts another agent's CLI only when the user
+#: asks for that: the Test on its card.
+UNTESTED_DETAIL = (
+    "Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers)."
+)
+
 
 def options_sandbox_mode(options: dict) -> str:
     """The OS path-sandbox mode an ``acp:<cli>`` entry declares (default ``auto``).
 
     Every path that spawns the CLI from an entry's ``options`` must read the mode
-    through here. Three of them exist — the readiness probe, agent discovery and
-    the runtime factory — and each used to decide for itself, so only the factory
-    honoured a declared mode. That is not a cosmetic split: a bundle that declares
+    through here: the readiness probe (the Test a user starts) and the runtime
+    factory. They used to decide for themselves, so only the factory honoured a
+    declared mode. That is not a cosmetic split: a bundle that declares
     ``self_sandboxing`` (``sandbox_mode="off"``, because the CLI applies its own OS
-    sandbox and the host's cannot nest inside it) got the wrap anyway on the two
-    reader-less paths, so the provider card reported a dead runtime that in fact
-    worked the moment a real turn went through the factory.
+    sandbox and the host's cannot nest inside it) got the wrap anyway on the probe,
+    so the provider card reported a dead runtime that in fact worked the moment a
+    real turn went through the factory.
     """
     return str(options.get("sandbox_mode") or "auto")
 
@@ -74,8 +81,7 @@ def options_env(options: dict) -> dict[str, str]:
     a region or a model (``env_passthrough``), when it is set; a computed value wins over the
     gateway's for the same name. Never a credential (`sandbox.declared_env`). Read through here
     by every path that spawns the CLI from an entry, like :func:`options_sandbox_mode`: the
-    readiness probe, agent discovery, the runtime factory and a concurrent session's shared
-    connection.
+    readiness probe, the runtime factory and a concurrent session's shared connection.
     """
     from personalclaw.sandbox import declared_env
 
@@ -119,9 +125,8 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         the fallback for a provider constructed without a runtime id.
 
         This is the same value :attr:`AcpSessionProvider.provider_id` returns and
-        the same entry-name-with-basename-fallback rule
-        :meth:`discover_agents` applies to ``options["runtime_id"]`` — one
-        runtime id, three call sites in agreement.
+        the entry name a Test hands :meth:`agents_from_snapshot` as
+        ``options["runtime_id"]`` — one runtime id, three call sites in agreement.
 
         The ``acp:`` prefix is an invariant, not decoration: consumers split on
         it (the not-gateable registry lookup in
@@ -135,25 +140,24 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         return f"acp:{cli}"
 
     @classmethod
-    async def probe_readiness(cls, options: dict) -> "ReadinessStatus":
-        """Probe whether the configured ACP CLI is installed and signed in.
+    def presence(cls, options: dict) -> "ReadinessStatus":
+        """What is known about the configured ACP CLI WITHOUT starting it.
 
-        Resolution order:
           * no ``command`` configured → ``error``
           * adapter binary not on PATH → ``not_found``
           * a declared delegate engine CLI (``options.requires_executable``) is
-            absent → ``not_found`` (handshake never attempted — see below)
-          * spawn + ACP ``initialize`` + one bare ``session/new`` succeed → ``ready``
-            (:meth:`probe_handshake` — no MCP servers, no session setup verbs)
-          * handshake fails with an auth/login signal → ``needs_login`` (with a
-            best-effort ``login_command`` argv for the Sign-in terminal)
-          * any other failure → ``error``
+            absent → ``not_found`` (see below)
+          * otherwise → ``untested``: the CLI is installed, and only starting it can
+            say whether it speaks ACP and is signed in. That start is
+            :meth:`probe_readiness`, which runs only when the user asks for it.
 
-        This is the single source of truth for ACP readiness; the CLI doctor
-        consumes it too (no parallel probe path).
+        Nothing is run: ``shutil.which`` and the declared engine path are file-system
+        reads. Every listing (``/api/agent-providers``, ``personalclaw doctor``) answers
+        from this plus the user's last Test (``agents/runtime_tests.py``).
         """
         import shutil
 
+        from personalclaw.acp.cli_resolve import is_npx_fallback
         from personalclaw.agents.provider import ReadinessStatus
 
         command = options.get("command")
@@ -169,27 +173,6 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                 ready=False,
                 state="not_found",
                 detail=f"'{command[0]}' not found on PATH",
-            )
-
-        # Adapter-provisioning gate. When the launch argv is the ``npx -y <pkg>``
-        # last resort (the adapter isn't installed on disk — auto-provisioning
-        # either wasn't run or couldn't find a new-enough Node), that path only
-        # works under a Node the adapter supports (>= 20). If NO such Node exists
-        # on this machine, npx would die with EBADENGINE — so report a clean,
-        # actionable ``not_found`` up front instead of spawning npx and surfacing
-        # a raw fetch/engine stack trace. When a Node >= 20 IS present, npx is a
-        # supported cold path (see the timeout budget below) — let it proceed.
-        from personalclaw.acp.cli_resolve import is_npx_fallback, resolve_node_ge
-
-        if is_npx_fallback(command) and not resolve_node_ge():
-            return ReadinessStatus(
-                ready=False,
-                state="not_found",
-                detail=(
-                    "ACP adapter is not installed and cannot be auto-provisioned: "
-                    "no Node >= 20 found (the adapter needs it). Install Node >= 20, "
-                    "install the adapter, or set the bundle's *_ACP_BIN override."
-                ),
             )
 
         # Delegate-engine gate. Some ACP adapters (claude-agent-acp, codex-acp)
@@ -220,6 +203,60 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                     ),
                 )
 
+        detail = UNTESTED_DETAIL
+        if is_npx_fallback(command):
+            detail += " Its adapter is not installed here, so a Test fetches it with npx first."
+        return ReadinessStatus(ready=False, state="untested", detail=detail)
+
+    @classmethod
+    async def probe_readiness(cls, options: dict) -> "ReadinessStatus":
+        """START the configured ACP CLI once and report whether it is usable.
+
+        Only for an action the user took to test this runtime — the Test on its card
+        (``POST /api/agent-providers/{id}/test``) or ``personalclaw doctor
+        --start-agent-clis``. Nothing else calls it: a listing answers from
+        :meth:`presence`.
+
+        Resolution order:
+          * :meth:`presence` says it cannot start (no command, CLI or engine absent)
+            → that answer, and nothing is started
+          * the ``npx -y`` adapter fallback with no Node >= 20 → ``not_found``
+          * spawn + ACP ``initialize`` + one bare ``session/new`` succeed → ``ready``
+            (:meth:`probe_handshake` — no MCP servers, no session setup verbs), with
+            that session's snapshot in ``session_snapshot`` for discovery
+          * handshake fails with an auth/login signal → ``needs_login`` (with a
+            best-effort ``login_command`` argv for the Sign-in terminal)
+          * any other failure → ``error``
+        """
+        from personalclaw.agents.provider import ReadinessStatus
+
+        present = cls.presence(options)
+        if present.state != "untested":
+            return present
+        command = [str(part) for part in options["command"]]
+
+        # Adapter-provisioning gate. When the launch argv is the ``npx -y <pkg>``
+        # last resort (the adapter isn't installed on disk — auto-provisioning
+        # either wasn't run or couldn't find a new-enough Node), that path only
+        # works under a Node the adapter supports (>= 20). If NO such Node exists
+        # on this machine, npx would die with EBADENGINE — so report a clean,
+        # actionable ``not_found`` up front instead of spawning npx and surfacing
+        # a raw fetch/engine stack trace. When a Node >= 20 IS present, npx is a
+        # supported cold path (see the timeout budget below) — let it proceed.
+        # (Here and not in :meth:`presence`: finding that Node runs ``node --version``.)
+        from personalclaw.acp.cli_resolve import is_npx_fallback, resolve_node_ge
+
+        if is_npx_fallback(command) and not resolve_node_ge():
+            return ReadinessStatus(
+                ready=False,
+                state="not_found",
+                detail=(
+                    "ACP adapter is not installed and cannot be auto-provisioned: "
+                    "no Node >= 20 found (the adapter needs it). Install Node >= 20, "
+                    "install the adapter, or set the bundle's *_ACP_BIN override."
+                ),
+            )
+
         provider = cls(
             command=command,
             cwd=options.get("cwd"),
@@ -240,18 +277,21 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         # own warm-up — both can exceed a few seconds before the ACP
         # ``initialize`` even begins. A 10s budget made authenticated-but-slow
         # CLIs probe as timed-out and (worse) get mislabeled needs_login. Use a
-        # realistic cold-start budget. The probe runs at boot, on "Check availability"
-        # and after a sign-in — never on a plain Settings read (/api/agent-providers
-        # serves the cached answer).
+        # realistic cold-start budget. The probe runs only when the user asked for it
+        # (see the docstring) — /api/agent-providers answers from presence + last Test.
         probe_timeout = float(options.get("probe_timeout_secs") or 45)
         try:
             await asyncio.wait_for(provider.probe_handshake(), timeout=probe_timeout)
             caps = sorted(provider.declared_capabilities)
+            # Copied BEFORE the shutdown, which clears it: the agents this runtime offers are
+            # read from this one run instead of starting it a second time to ask.
+            snapshot = dict(provider.session_snapshot or {})
             await provider.shutdown()
             return ReadinessStatus(
                 ready=True,
                 state="ready",
                 detail=f"initialize OK (caps: {', '.join(caps) or 'none'})",
+                session_snapshot=snapshot,
             )
         except Exception as exc:  # noqa: BLE001 - probe summarizes any failure
             # Read the child's stderr tail BEFORE shutting down: ``teardown()`` clears
@@ -322,111 +362,14 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
             return ReadinessStatus(ready=False, state="error", detail=detail)
 
     @classmethod
-    async def discover_agents(cls, options: dict) -> list["DiscoveredAgent"]:
-        """Open one session, read ``session/new``, normalize via the dialect.
-
-        Maps the dialect's vendor-neutral :class:`DiscoveryResult` to
-        :class:`DiscoveredAgent` rows for the chat picker. The model-override list
-        is attached to every discovered agent of the runtime (the runtime offers
-        the same models regardless of which persona/effort is active). Returns
-        ``[]`` on any failure — discovery never raises into the API.
-
-        ``options`` mirrors the ``probe_readiness`` shape plus ``runtime_id`` (the
-        ``acp:<cli>`` entry name) used to label and id the rows; falls back to the
-        command basename when absent.
-        """
-        import shutil
-
-        from personalclaw.acp.client import CLIENT_NAME, CLIENT_VERSION
-        from personalclaw.acp.dialect import get_dialect
-
-        command = options.get("command")
-        if not isinstance(command, list) or not command:
-            return []
-        command = [str(p) for p in command]
-        if not shutil.which(command[0]):
-            return []
-
-        # Gate discovery on readiness: a runtime that can't actually serve (e.g.
-        # codex's adapter handshakes via npx but its engine CLI is absent →
-        # not_found) must contribute NO discovered agents, so the picker never
-        # offers a runtime that would fail on the first turn. This reuses the
-        # single readiness source of truth (delegate gate included), keeping
-        # discovery and /api/agent-providers in agreement.
-        status = await cls.probe_readiness(options)
-        if not status.ready:
-            logger.debug(
-                "discover_agents: %s not ready (%s) — no agents",
-                options.get("runtime_id") or command[0],
-                status.state,
-            )
-            return []
-
-        # Ensure runtime_id is present in options so agents_from_snapshot (which
-        # reads it) gets the derived fallback too.
-        if not str(options.get("runtime_id") or "").strip():
-            options = {**options, "runtime_id": f"acp:{Path(command[0]).name}"}
-
-        dialect = get_dialect(options.get("dialect"))
-        # Probe on a THROWAWAY AcpConnection — the same shared machinery the client
-        # wraps N=1, but here used bare: spawn → initialize → new_session returns exactly
-        # the discovery snapshot we need (no half-built client, no retired internals).
-        from personalclaw.acp.session import AcpConnection
-
-        # The CONFIGURED workspace root, not a real-home literal: discovery spawns a real
-        # CLI, and ``AcpConnection.spawn`` mkdirs its cwd — so hardcoding
-        # ``Path.home()/".personalclaw"/"workspace"`` made a PERSONALCLAW_HOME-isolated
-        # gateway (or a test) create and work in the OPERATOR'S home anyway.
-        from personalclaw.config.loader import workspace_root
-
-        work_dir = workspace_root()
-        timeout = float(options.get("probe_timeout_secs") or 45)
-        connection: "AcpConnection | None" = None
-        try:
-            connection = await asyncio.wait_for(
-                AcpConnection.spawn(
-                    command=command,
-                    work_dir=work_dir,
-                    dialect=dialect,
-                    extra_env=options_env(options),
-                    # Same reason as the readiness probe: discovery spawns the CLI
-                    # for real, so a declared mode has to reach this spawn too or a
-                    # self-sandboxing runtime discovers zero agents.
-                    sandbox_mode=options_sandbox_mode(options),
-                ),
-                timeout=timeout,
-            )
-            await connection.initialize(
-                {
-                    "protocolVersion": dialect.protocol_version(),
-                    "clientInfo": dialect.client_info(
-                        client_name=CLIENT_NAME, client_version=CLIENT_VERSION
-                    ),
-                },
-                timeout=timeout,
-            )
-            await connection.new_session({"cwd": str(work_dir), "mcpServers": []}, timeout=timeout)
-            session_new = dict(connection.last_session_new_snapshot or {})
-        except Exception as exc:  # noqa: BLE001 - discovery never raises into the API
-            logger.debug("discover_agents failed for %s: %s", options.get("runtime_id"), exc)
-            return []
-        finally:
-            if connection is not None:
-                try:
-                    await connection.close()
-                except Exception:
-                    pass
-
-        return cls.agents_from_snapshot(options, session_new)
-
-    @classmethod
     def agents_from_snapshot(cls, options: dict, snapshot: dict) -> list["DiscoveredAgent"]:
         """Map a raw ``session/new`` snapshot to ``DiscoveredAgent`` rows.
 
         Pure (no spawn): the dialect normalizes the vendor shape, then we apply the
-        runtime-scoped id + display name. Shared by :meth:`discover_agents` (after
-        its throwaway probe) and the connection pool's snapshot fast-path, so both
-        produce identical rows."""
+        runtime-scoped id + display name. Its input is the one session a user's Test
+        opened (:attr:`ReadinessStatus.session_snapshot`), so reading a runtime's agents
+        never starts it a second time. The model-override list is attached to every
+        agent of the runtime (it offers the same models whichever persona is active)."""
         from personalclaw.acp.dialect import get_dialect
         from personalclaw.agents.provider import DiscoveredAgent
 
@@ -674,8 +617,8 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     @property
     def session_snapshot(self) -> dict:
         """The live session's raw ``session/new`` response (modes / models /
-        configOptions), or ``{}`` before start. The connection pool reads this to
-        serve agent discovery off a warmed connection without a second spawn."""
+        configOptions), or ``{}`` before start. :meth:`probe_readiness` copies it before
+        it shuts the CLI down, so a Test reads the agents it offers from the same run."""
         return self._client.session_snapshot
 
     # ── Streaming and events ─────────────────────────────────────────

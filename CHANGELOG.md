@@ -63,6 +63,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A subagent works in the workspace unless you add another folder: `agent.subagent_cwd_allowed_roots` is empty by default.**
 
 - **The git PersonalClaw runs refuses a remote at a local path; reach it over ssh or https.**
+- **Settings → Agent defaults → Runners runs a runner's `--version` only when you press its Check, and only for a runner an installed agent app set up.**
 
 - **`note_unknown_sender` loses its unused `silent` argument.**
 - **`make build` is the one distribution build, and it proves what it built.**
@@ -123,6 +124,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow run whose worktree or container could not be made works in the scratch folder it falls back to, and its record says so.**
 
 - **Git over ssh signs in through your SSH agent, and the service install keeps git's own certificate settings.**
+- **The Agents page says why an agent runtime's agents couldn't be listed, instead of "No agents discovered."**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
@@ -418,6 +420,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **What a hook or another program PersonalClaw starts prints reaches the gateway log masked, and a hook's output is logged by its length only.**
 
 - **The git PersonalClaw runs gets no gateway secret, and runs no program a repository's own configuration names: no hook, file-system monitor, ssh command, external diff, credential helper or `ext::` remote.**
+- **PersonalClaw never starts an agent CLI on its own: a gateway start, the Providers page and `personalclaw doctor` only check that it is installed, and the Test on its card is what starts it.**
+
+- **A Hugging Face download sends only the token PersonalClaw resolved: the library no longer reads `huggingface-cli login`'s token from outside the home by itself.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

@@ -8,8 +8,14 @@ Routes:
     POST   /api/model-providers/{name}/test  — test a provider's connectivity
     GET    /api/model-providers/{name}/models, /search; POST .../pull, .../models/delete
     GET    /api/agent-providers              — list agent runtimes (native + acp:<cli>)
-    GET    /api/agent-providers/{id}/agents  — discovered agents for a runtime
-    GET    /api/agent-runners                — runner catalog rows + measured health
+    POST   /api/agent-providers/{id}/test    — start one runtime's CLI once (the user's Test)
+    GET    /api/agent-providers/{id}/agents  — the agents a runtime offered at its last Test
+    GET    /api/agent-runners                — runner catalog rows + the health last checked
+    POST   /api/agent-runners/{id}/check     — run one runner's CLI for its version
+
+Only the two POSTs start another agent's CLI, and only because the user pressed Test or
+Check: every GET here answers from what is on disk and from what the user's last Test or
+Check found (``agents/runtime_tests.py``, ``agents/runners.py``).
 """
 
 import asyncio
@@ -31,72 +37,6 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import RequestValidationError, require_string
 
 logger = logging.getLogger(__name__)
-
-# Readiness answers for ``/api/agent-providers``, keyed by runtime id →
-# (monotonic_ts, status_dict). A probe SPAWNS the runtime's CLI and opens a session on it, so
-# a plain read never probes: it serves the pool's live connection, else this cache however old
-# it is. It is filled at boot (``warm_readiness_cache``), by ``?refresh=1`` (the card's "Check
-# availability" and the post-sign-in poll), and once in the background for a runtime nothing
-# has measured yet. It used to expire after 5 minutes and re-probe INLINE on the next read,
-# which is how a Settings → Providers visit started a new Claude Code session each time.
-_readiness_cache: dict[str, tuple[float, dict[str, Any]]] = {}
-# The one background probe per never-measured runtime (dedup across concurrent reads).
-_readiness_probes: dict[str, "asyncio.Task[dict[str, Any]]"] = {}
-
-#: What a never-measured runtime reads while its background probe runs.
-_READINESS_CHECKING: dict[str, Any] = {
-    "ready": False,
-    "state": "checking",
-    "detail": "Checking whether this runtime is installed and signed in…",
-    "login_command": None,
-}
-
-
-async def _probe_and_cache(entry: Any) -> dict[str, Any]:
-    """Probe one ACP runtime entry and cache the answer. Never raises."""
-    import time as _time
-
-    from personalclaw.agents.registry import get_agent_provider_class
-
-    family = "acp" if entry.type == "acp_agent" else entry.type
-    cls = get_agent_provider_class(family)
-    if cls is None:
-        status_d: dict[str, Any] = {
-            "ready": False,
-            "state": "error",
-            "detail": f"no agent provider registered for family {family!r}",
-            "login_command": None,
-        }
-    else:
-        try:
-            status = await cls.probe_readiness(dict(entry.options or {}))
-            status_d = {
-                "ready": status.ready,
-                "state": status.state,
-                "detail": status.detail,
-                "login_command": status.login_command,
-            }
-        except Exception as exc:  # noqa: BLE001 - never fail the listing
-            logger.debug("agent-provider probe failed for %s: %s", entry.name, exc)
-            status_d = {
-                "ready": False,
-                "state": "error",
-                "detail": f"probe failed: {exc}",
-                "login_command": None,
-            }
-    _readiness_cache[entry.name] = (_time.monotonic(), status_d)
-    return status_d
-
-
-def _schedule_readiness_probe(entry: Any) -> None:
-    """Measure a never-measured runtime once, in the background (deduplicated)."""
-    loop = asyncio.get_running_loop()
-    running = _readiness_probes.get(entry.name)
-    # A probe stranded on a loop that has since closed never reports done.
-    if running is not None and not running.done() and running.get_loop() is loop:
-        return
-    _readiness_probes[entry.name] = loop.create_task(_probe_and_cache(entry))
-
 
 # ── /api/model-providers ────────────────────────────────────────────────────────────
 
@@ -299,43 +239,57 @@ async def api_provider_types(request: web.Request) -> web.Response:
 # ── /api/agent-providers ──────────────────────────────────────────────────────
 
 
+def _runtime_entries() -> list[Any]:
+    """Every registry entry that is an agent RUNTIME (an ``acp:<cli>`` a bundle registered)."""
+    from personalclaw.agents.registry import get_agent_provider_class
+    from personalclaw.llm.registry import get_default_registry
+
+    return [
+        entry
+        for entry in get_default_registry().list_entries()
+        if get_agent_provider_class("acp" if entry.type == "acp_agent" else entry.type) is not None
+    ]
+
+
+def _runtime_row(entry: Any, readiness: dict[str, Any]) -> dict[str, Any]:
+    # entry.name is already the canonical runtime id ("acp:<cli>") — used directly rather than
+    # re-derived from the command basename (which would mislabel an adapter like
+    # claude-agent-acp).
+    return {
+        "name": entry.name,
+        "provider_id": entry.name,
+        "type": entry.type,
+        "extension": dict(entry.options or {}).get("extension"),
+        **readiness,
+    }
+
+
 async def api_agent_providers_list(request: web.Request) -> web.Response:
     """GET /api/agent-providers — the single list of agent runtimes + readiness.
 
     This is the one source of truth for the "Agent Providers" UI section: the
     AgentProvider *runtime* axis, spanning the in-process ``native`` runtime
     and every ``acp:<cli>`` runtime registered by a removable bundle
-    (claude-code / codex / future). Each row carries the runtime's measured
-    readiness so the UI can show a readiness chip and offer the Sign-in terminal
-    when a runtime reports ``needs_login``.
+    (claude-code / codex / future). Each row carries the runtime's readiness so
+    the UI can show a readiness chip, the Test, and the Sign-in terminal when a
+    runtime's last Test reported ``needs_login``.
 
     Returns ``{agent_providers: [{name, provider_id, type, extension, ready,
-    state, detail, login_command}]}`` where ``extension`` (when present) is the
+    state, detail, login_command, tested_at}]}`` where ``extension`` (when present) is the
     bundle name the row's enable/config card is keyed by, so the frontend can
     merge readiness onto the extension card instead of rendering two sections.
 
-    A plain read spawns nothing (see ``_readiness_cache``); a runtime nothing has
-    measured yet reads ``state: "checking"`` while one background probe runs.
+    **A read starts nothing.** An ``acp:<cli>`` row answers from whether its CLI is
+    installed and from the user's last Test (``agents/runtime_tests.py``): ``untested``
+    until the user presses Test, then that Test's answer and when it ran (``tested_at``).
     """
-    from personalclaw.agents.registry import get_agent_provider_class
-    from personalclaw.llm.registry import get_default_registry
-
-    # ?refresh=1 probes now — the card's "Check availability" and the post-sign-in poll, so
-    # a newly-authed CLI is re-detected. ?runtime=<id> scopes that to one runtime: a sign-in
-    # poll re-probing EVERY runtime would spawn every CLI a dozen times.
-    force_refresh = request.query.get("refresh") in ("1", "true", "yes")
-    only_runtime = request.query.get("runtime", "")
-
-    registry = get_default_registry()
-    entries = registry.list_entries()
-
-    result: list[dict[str, Any]] = []
+    from personalclaw.agents import runtime_tests
 
     # ── native: the always-available in-process runtime ──────────────────
     # It is not a model-registry ProviderEntry (it's resolved per-session by
     # the provider bridge from an agent's definition), so synthesize its row
     # explicitly. It needs no external CLI and no sign-in — always ready.
-    result.append(
+    result: list[dict[str, Any]] = [
         {
             "name": "native",
             "provider_id": "native",
@@ -345,205 +299,130 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
             "state": "ready",
             "detail": "In-process agent runtime (no external CLI).",
             "login_command": None,
+            "tested_at": None,
         }
-    )
-
-    # ── acp:<cli> runtimes registered by bundles ─────────────────────────
-    # Only entries that resolve to an AgentProvider runtime belong here. The
-    # ACP family registers under runtime-id prefix "acp"; entry type is
-    # "acp_agent".
-    runtime_entries = [
-        entry
-        for entry in entries
-        if get_agent_provider_class("acp" if entry.type == "acp_agent" else entry.type) is not None
     ]
-
-    # A runtime with a live warmed pool connection is provably ready — answer
-    # from the pool WITHOUT a fresh handshake. Without this, every call to this
-    # endpoint re-spawns a probe per ACP runtime (~22s total; codex alone does a
-    # 45s npx fetch before failing), which is what made the chat picker's
-    # discovered section appear ~22s late even though the snapshot was pre-warmed.
-    from personalclaw.acp.connection_pool import get_acp_pool
-
-    _pool = get_acp_pool()
-
-    async def _row_for(entry: Any) -> dict[str, Any]:
-        def _row(status_d: dict[str, Any]) -> dict[str, Any]:
-            # entry.name is already the canonical runtime id ("acp:<cli>") — used directly
-            # rather than re-derived from the command basename (which would mislabel an
-            # adapter like claude-agent-acp).
-            return {
-                "name": entry.name,
-                "provider_id": entry.name,
-                "type": entry.type,
-                "extension": dict(entry.options or {}).get("extension"),
-                **status_d,
-            }
-
-        # 1. Pool fast-path: a live warmed connection IS ready (no probe).
-        if _pool is not None and _pool.is_warmed(entry.name):
-            return _row(
-                {
-                    "ready": True,
-                    "state": "ready",
-                    "detail": "warmed (pooled live connection)",
-                    "login_command": None,
-                }
-            )
-        # 2. An explicit re-check probes now.
-        if force_refresh and only_runtime in ("", entry.name):
-            return _row(await _probe_and_cache(entry))
-        # 3. Whatever was last measured, however old — a read spawns nothing.
-        hit = _readiness_cache.get(entry.name)
-        if hit is not None:
-            return _row(hit[1])
-        # 4. Never measured: measure once in the background, and say so.
-        _schedule_readiness_probe(entry)
-        return _row(dict(_READINESS_CHECKING))
-
-    # Parallel — an explicit re-check of several runtimes must not wait on their sum.
-    if runtime_entries:
-        result.extend(await asyncio.gather(*(_row_for(e) for e in runtime_entries)))
-
+    # ── acp:<cli> runtimes registered by bundles ─────────────────────────
+    result.extend(_runtime_row(e, runtime_tests.readiness(e)) for e in _runtime_entries())
     return web.json_response({"agent_providers": result})
 
 
-async def warm_readiness_cache() -> int:
-    """Populate ``_readiness_cache`` for every ACP runtime at startup.
+async def api_agent_provider_test(request: web.Request) -> web.Response:
+    """POST /api/agent-providers/{id}/test — start one agent CLI once, because you asked.
 
-    The agent-providers readiness probe is slow for runtimes NOT in the pool
-    (codex does a 45s npx fetch before failing). Running it once in the background
-    at launch means the first ``/api/agent-providers`` call — which the chat
-    picker's discovered section depends on — is fast instead of blocking on the
-    slowest probe. Pool-warmed runtimes are answered from the pool and skipped
-    here. Best-effort; never raises. Returns the number of runtimes probed."""
-    import asyncio as _asyncio
+    The one route that starts another agent's CLI, and only the one it names: ACP
+    ``initialize`` and one empty session, then the CLI is stopped. What that found —
+    ready, needs sign-in, too slow, or its error, and the agents the runtime offered in
+    that session — is recorded (``agents/runtime_tests.py``), and the runtime's card and the
+    chat's agent picker read from it until the next Test. A CLI that is not installed is not
+    started; its row says so. A second press while a Test runs waits for that Test.
 
-    from personalclaw.acp.connection_pool import get_acp_pool
-    from personalclaw.llm.registry import get_default_registry
+    Returns ``{agent_provider: <row>}``, the row ``GET /api/agent-providers`` lists.
+    """
+    from personalclaw.agents import runtime_tests
+    from personalclaw.http_errors import json_error
 
-    pool = get_acp_pool()
-    entries = [e for e in get_default_registry().list_entries() if e.type == "acp_agent"]
-    targets = [e for e in entries if not (pool is not None and pool.is_warmed(e.name))]
-    if not targets:
-        return 0
-
-    async def _probe_one(entry: Any) -> None:
-        status_d = await _probe_and_cache(entry)
-        # A ready runtime's FIRST discovery is a cold session/new (~15-20s). If we
-        # only warm readiness, the chat picker's discovered section is still empty
-        # on first open until that slow fetch lands ("No agents available" right
-        # after an agent app becomes ready). Warm discovery here too so a booted /
-        # freshly-enabled ACP runtime is immediately pickable. Best-effort.
-        if status_d.get("ready"):
-            try:
-                await _compute_discovery(entry.name, entry)
-            except Exception:  # noqa: BLE001 - warming never breaks boot
-                logger.debug("discovery pre-warm failed for %s", entry.name, exc_info=True)
-
-    await _asyncio.gather(*(_probe_one(e) for e in targets), return_exceptions=True)
-    return len(targets)
+    runtime_id = request.match_info.get("id", "")
+    entry = next((e for e in _runtime_entries() if e.name == runtime_id), None)
+    if entry is None:
+        return json_error(
+            "not_found",
+            message=(
+                f"No agent CLI is set up as {runtime_id!r} here, so there is nothing to test."
+            ),
+            status=404,
+        )
+    readiness = await runtime_tests.run_test(entry)
+    return web.json_response({"agent_provider": _runtime_row(entry, readiness)})
 
 
 # ── /api/agent-providers/{id}/agents ──────────────────────────────────────────
 
-# In-process discovery cache: discovery opens a live session (spawn + initialize
-# + session/new, ~15-20s), so cache the normalized result per runtime id with a
-# short TTL. A "Refresh" affordance (?refresh=1) bypasses the cache. The cache is
-# intentionally module-level + process-local: it reflects a live external CLI's
-# account state and must not survive a gateway restart.
-_DISCOVERY_TTL_SECS = 600.0
-_discovery_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-
-
-def _runtime_label_for(entry: Any) -> str:
-    """A friendly display label for a runtime (e.g. "Claude Code", "Codex").
-
-    Title-cases the ``acp:<cli>`` suffix so discovered agent names read well
-    (``claude-code`` → ``Claude Code``). Vendor display polish lives at this
-    presentation layer; the backend stays neutral."""
-    name = str(entry.name or "")
-    cli = name.split(":", 1)[-1] if ":" in name else name
-    return " ".join(w.capitalize() for w in cli.replace("_", "-").split("-") if w) or cli
-
 
 async def api_agent_provider_agents(request: web.Request) -> web.Response:
-    """GET /api/agent-providers/{id}/agents — list a runtime's discoverable agents.
+    """GET /api/agent-providers/{id}/agents — the agents a runtime offered at its last Test.
 
-    Opens one live session on the ``acp:<cli>`` runtime and returns its normalized
-    agent catalog (default-dialect personas / claude effort-agents) for the chat picker.
-    Cached per runtime id with a TTL; ``?refresh=1`` forces a fresh probe.
+    Starts nothing. The list is the one the user's last Test of the runtime recorded, for
+    the command it runs now (``agents/runtime_tests.py``); a runtime nobody has tested lists
+    none, with ``tested_at: null``. The chat picker reads it (default-dialect personas /
+    claude effort-agents).
 
     Returns ``{agents: [{id, name, runtime, description, provider_agent,
-    reasoning_effort, models}], permission_modes: [...], cached: bool}`` where
-    ``permission_modes`` are the runtime's NATIVE permission modes (raw capability
-    for the trust-ladder grey-out). ``native`` and unknown ids return ``[]``.
+    reasoning_effort, models, supported_efforts}], permission_modes: [...], tested_at}``
+    where ``permission_modes`` are the runtime's NATIVE permission modes (raw capability for
+    the trust-ladder grey-out). ``native`` returns ``[]``.
+
+    A last Test that did not list the agents — it failed, or its answer could not be read — is
+    answered as that failure (``agent_discovery_failed``, 502, the message says why), never as
+    ``agents: []``, which is the answer "this runtime offers none".
     """
+    from personalclaw.agents import runtime_tests
+    from personalclaw.http_errors import json_error
+    from personalclaw.llm.registry import get_default_registry
+
     runtime_id = request.match_info.get("id", "")
-    refresh = request.rel_url.query.get("refresh") in ("1", "true", "yes")
 
     # native has no discovered agents (its agents are PersonalClaw's own defs).
     if runtime_id == "native":
-        return web.json_response({"agents": [], "permission_modes": [], "cached": False})
+        return web.json_response({"agents": [], "permission_modes": [], "tested_at": None})
 
-    # Serve from cache unless a refresh was requested.
-    if not refresh:
-        cached = _cached_discovery(runtime_id)
-        if cached is not None:
-            return web.json_response({**cached, "cached": True})
-
-    from personalclaw.llm.registry import get_default_registry
-
-    registry = get_default_registry()
     try:
-        entry = registry.get_entry(runtime_id)
+        entry = get_default_registry().get_entry(runtime_id)
     except Exception:
         return web.json_response({"error": f"unknown runtime {runtime_id!r}"}, status=404)
     if entry.type != "acp_agent":
         return web.json_response({"error": f"{runtime_id!r} is not an ACP runtime"}, status=400)
 
-    payload = await _compute_discovery(runtime_id, entry)
-    if payload is None:
-        return web.json_response({"error": "ACP runtime class unavailable"}, status=500)
-    return web.json_response({**payload, "cached": False})
-
-
-def _cached_discovery(runtime_id: str) -> dict[str, Any] | None:
-    """Return the cached discovery payload for *runtime_id* if still fresh."""
-    import time as _time
-
-    hit = _discovery_cache.get(runtime_id)
-    if hit and (_time.monotonic() - hit[0]) < _DISCOVERY_TTL_SECS:
-        return dict(hit[1][0]) if hit[1] else {}
-    return None
+    last = runtime_tests.last_test(entry)
+    failure = runtime_tests.discovery_failure(entry)
+    if failure is not None:
+        # The agents are unknown, and "[]" would say the runtime offers none.
+        return json_error(
+            "agent_discovery_failed",
+            message=(
+                f"Couldn't list the agents {runtime_tests.runtime_label(entry)} offers: its last "
+                f"Test {failure}."
+            ),
+            status=502,
+        )
+    return web.json_response(
+        {
+            "agents": runtime_tests.tested_agents(entry) or [],
+            "permission_modes": _runtime_permission_modes(dict(entry.options or {})),
+            "tested_at": last.get("tested_at") if last else None,
+        }
+    )
 
 
 def declared_efforts(runtime_id: str) -> list[str] | None:
     """The reasoning-effort values *runtime_id* DECLARED, or ``None`` when unknown.
 
-    Cache-only by design: discovery opens a live ACP session (~15-20 s), so a write path
-    validating against this must never be the thing that triggers it. Reads the same
-    payload :func:`api_agent_provider_agents` already served to the composer, so the set
-    checked on the write path is exactly the set the pill was drawn from.
+    Starts nothing: it reads the agents the runtime offered at the user's last Test
+    (``agents/runtime_tests.py``), which is the list the composer's pill was drawn from, so
+    the set checked on the write path is exactly the set the user saw.
 
     **An empty list and ``None`` are different facts and must not be collapsed.**
     ``[]`` is a *declaration* — the backend was asked and reported no effort axis (codex:
     ``supported_efforts: []``), so pinning an effort is refusable. ``None`` is an
-    *absence of information* — discovery has not run, is stale, or failed — and a caller
-    must fall back to a format check rather than refuse a bind it cannot judge.
-    ``supported_efforts`` is computed once per runtime and attached identically to every
-    agent (``AcpAgentProvider.discover_agents``), so this is a runtime-level question and
-    needs no per-agent disambiguation.
+    *absence of information* — the runtime has not been tested, or its Test found no agent
+    — and a caller must fall back to a format check rather than refuse a bind it cannot
+    judge. ``supported_efforts`` is computed once per runtime and attached identically to
+    every agent (``AcpAgentProvider.agents_from_snapshot``), so this is a runtime-level
+    question and needs no per-agent disambiguation.
     """
-    payload = _cached_discovery(runtime_id)
-    if payload is None:
+    from personalclaw.agents import runtime_tests
+    from personalclaw.llm.registry import get_default_registry
+
+    try:
+        entry = get_default_registry().get_entry(runtime_id)
+    except Exception:
         return None
-    agents = payload.get("agents") or []
+    agents = runtime_tests.tested_agents(entry)
     if not agents:
-        return None  # cached but empty: discovery failed, not "declared none"
-    first = agents[0] if isinstance(agents[0], dict) else {}
+        return None  # never tested, or a Test that listed no agent: unknown, not "none"
+    first = agents[0]
     if "supported_efforts" not in first:
-        return None  # a payload shape that predates the field — unknown, not empty
+        return None  # a record shape without the field — unknown, not empty
     # The rows are the backend's VERBATIM option dicts (``{"value", "label", …}``), the
     # same shape the composer's pill renders and `record_capabilities` reads `value` from.
     # Stringifying a row instead of reading `value` would compare an effort against
@@ -556,76 +435,11 @@ def declared_efforts(runtime_id: str) -> list[str] | None:
     return out
 
 
-async def _compute_discovery(runtime_id: str, entry: Any) -> dict[str, Any] | None:
-    """Run discovery for one ACP runtime entry, write the cache, return payload.
-
-    Returns ``None`` only when the ACP runtime class can't be resolved. Discovery
-    failures yield an empty agent list (never raises) so callers never break.
-    """
-    import time as _time
-
-    from personalclaw.agents.registry import get_agent_provider_class
-
-    cls = get_agent_provider_class("acp")
-    if cls is None:
-        return None
-
-    options = dict(entry.options or {})
-    options["runtime_id"] = runtime_id
-    options["runtime_label"] = _runtime_label_for(entry)
-
-    # Fast path: a warmed pool connection holds a live ``session/new`` snapshot —
-    # map it directly (no spawn). Falls back to a throwaway probe when no pool
-    # connection exists (no-pool deploys / a not-yet-warmed runtime).
-    agents = None
-    try:
-        from personalclaw.acp.connection_pool import get_acp_pool
-
-        pool = get_acp_pool()
-        snap = pool.snapshot(runtime_id) if pool is not None else None
-        if snap is not None:
-            agents = cls.agents_from_snapshot(options, snap)
-            logger.debug("discovery: served %s from pool snapshot", runtime_id)
-    except Exception:
-        logger.debug("discovery: pool snapshot path failed for %s", runtime_id, exc_info=True)
-        agents = None
-
-    if agents is None:
-        try:
-            agents = await cls.discover_agents(options)
-        except Exception as exc:  # noqa: BLE001 - discovery never breaks the caller
-            logger.debug("discover_agents failed for %s: %s", runtime_id, exc)
-            agents = []
-
-    permission_modes = await _runtime_permission_modes(options, cls)
-    payload: dict[str, Any] = {
-        "agents": [
-            {
-                "id": a.id,
-                "name": a.name,
-                "runtime": a.runtime,
-                "description": a.description,
-                "provider_agent": a.provider_agent,
-                "reasoning_effort": a.reasoning_effort,
-                "models": list(a.models),
-                "supported_efforts": list(a.supported_efforts),
-            }
-            for a in agents
-        ],
-        "permission_modes": permission_modes,
-    }
-    _discovery_cache[runtime_id] = (_time.monotonic(), [payload])
-    return payload
-
-
-async def _runtime_permission_modes(options: dict, cls: Any) -> list[str]:
+def _runtime_permission_modes(options: dict) -> list[str]:
     """The runtime's native permission modes (capability for the trust grey-out).
 
-    Reuses the same lightweight read discovery does — but discovery already
-    captured it via the dialect. To avoid a second spawn we infer from the
-    dialect's static shape: Zed adapters expose the 5-mode axis; the default
-    dialect exposes none. This is a static per-dialect fact, so no extra
-    session is opened."""
+    A static per-dialect fact, so nothing is started to learn it: Zed adapters expose the
+    5-mode axis; the default dialect exposes none."""
     from personalclaw.acp.dialect import ZedAdapterDialect, get_dialect
 
     dialect = get_dialect(options.get("dialect"))
@@ -1357,24 +1171,57 @@ async def api_provider_test(request: web.Request) -> web.Response:
 
 
 async def api_agent_runners_list(request: web.Request) -> web.Response:
-    """GET /api/agent-runners — the BYO runner catalog with measured health evidence.
+    """GET /api/agent-runners — the runner catalog, with the health each one was last checked at.
 
-    One row per cataloged runner (EXECUTION-ISOLATION §3.1): the definition, the last
-    MEASURED health evidence (``ok``/``version``/``latency_ms``/``error``/
-    ``checked_at``), the capability matrix persisted from a real ACP handshake, and the
-    adapter-provenance verdict the unattended-spawn gate reads.
+    One row per cataloged runner: the definition, the health its last Check MEASURED
+    (``ok``/``version``/``latency_ms``/``error``/``checked_at``), the capability matrix a Test's
+    handshake recorded, the adapter-provenance verdict the unattended-spawn gate reads, and
+    ``set_up`` — whether an installed agent app or a provider entry of the owner's registers
+    its runtime here.
 
-    A plain GET is a pure read of persisted evidence, so the Settings surface paints
-    instantly and never fabricates a value for a runner it has not probed —
-    ``health: null`` means "never probed", not "fine". ``?probe=1`` re-measures every
-    row first (one ``--version`` spawn per runner, nothing else), which is what the
-    surface's refresh action calls.
+    Starts nothing, so the Settings surface paints at once and never fabricates a value for
+    a runner nobody checked: ``health: null`` means "never checked", not "fine". A runner's
+    Check (``POST /api/agent-runners/{id}/check``) is the one thing that runs its CLI.
     """
     from personalclaw.agents import runners as runner_catalog
 
-    probe = request.query.get("probe") in ("1", "true", "yes")
     loop = asyncio.get_running_loop()
-    # Probing spawns one subprocess per runner; run the whole sweep off the event loop
-    # so a slow CLI cannot stall every other request for its timeout budget.
-    rows = await loop.run_in_executor(None, lambda: runner_catalog.runner_rows(probe=probe))
+    # A read of small files and of the adapter's install records, off the loop all the same.
+    rows = await loop.run_in_executor(None, runner_catalog.runner_rows)
     return web.json_response({"runners": [row.to_dict() for row in rows]})
+
+
+async def api_agent_runner_check(request: web.Request) -> web.Response:
+    """POST /api/agent-runners/{id}/check — run one runner's CLI for its version, because you asked.
+
+    Runs ``<bin> <version_args>`` (``--version`` for every shipped row) and nothing else, for
+    the ONE runner it names, and only one that is set up here. A CLI nothing set up — no
+    installed agent app, no provider entry of the owner's — is refused with
+    ``runner_not_set_up`` and never run, not even for its version.
+
+    Returns ``{runner: <row>}``, the row ``GET /api/agent-runners`` lists, with this Check's
+    measured health.
+    """
+    from personalclaw.agents import runners as runner_catalog
+    from personalclaw.http_errors import json_error
+
+    runner_id = request.match_info.get("id", "")
+    defn = runner_catalog.catalog().get(runner_id)
+    if defn is None:
+        return json_error(
+            "not_found", message=f"No runner {runner_id!r} is in the catalog.", status=404
+        )
+    if not runner_catalog.is_set_up(defn):
+        return json_error(
+            "runner_not_set_up",
+            message=(
+                f"Nothing sets {defn.display_name} up here — no installed agent app or provider "
+                f"entry registers {defn.runtime_id} — so PersonalClaw does not run its CLI."
+            ),
+            status=409,
+        )
+    loop = asyncio.get_running_loop()
+    # One subprocess with a bounded budget; off the loop so a slow CLI stalls nothing else.
+    await loop.run_in_executor(None, runner_catalog.probe_runner, defn)
+    row = await loop.run_in_executor(None, runner_catalog.runner_row, defn)
+    return web.json_response({"runner": row.to_dict()})

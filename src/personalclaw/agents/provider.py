@@ -48,12 +48,21 @@ class AgentRuntimeDefinition:
 
 @dataclass
 class ReadinessStatus:
-    """Result of probing whether an agent backend is usable."""
+    """Whether an agent backend is usable, as far as one check could tell.
+
+    ``untested`` is the answer :meth:`AgentProvider.presence` gives for a backend that is
+    installed but that nobody has started: only running it can say more, and PersonalClaw runs
+    it only when the user asks (:meth:`AgentProvider.probe_readiness`).
+    """
 
     ready: bool
-    state: str  # "ready" | "not_found" | "needs_login" | "timeout" | "error"
+    state: str  # "ready" | "untested" | "not_found" | "needs_login" | "timeout" | "error"
     detail: str = ""
     login_command: list[str] | None = None  # argv for the Sign-in terminal
+    #: What the backend offered in the one session the check opened (the raw ACP
+    #: ``session/new`` response), so the agents it lists are read from the same run rather than
+    #: from a second one. Empty when the check started nothing or the session did not open.
+    session_snapshot: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -62,9 +71,9 @@ class DiscoveredAgent:
 
     A normalized, vendor-neutral view of one agent a runtime offers — the chat
     agent-picker lists these alongside PersonalClaw's own native/saved agents so
-    the user can pick a backend persona directly. Discovery is live (a session
-    must be opened to read it); these are ephemeral, never persisted as
-    AgentDefinitions, so the catalog always reflects the live backend.
+    the user can pick a backend persona directly. Reading them needs an open session,
+    so they are what the runtime offered at its last Test, kept with that Test's
+    result (``agents/runtime_tests.py``) and never made AgentDefinitions.
 
     Each ACP axis maps onto an existing PersonalClaw concept:
       * default-dialect ``availableModes`` → one DiscoveredAgent each (``provider_agent`` =
@@ -114,28 +123,32 @@ class AgentProvider(ABC):
         ...
 
     @classmethod
-    async def probe_readiness(cls, options: dict) -> ReadinessStatus:
-        """Probe whether this backend is usable with ``options``. Default ready."""
+    def presence(cls, options: dict) -> ReadinessStatus:
+        """What can be known about this backend with ``options`` WITHOUT starting anything.
+
+        Default ready: a backend with nothing to start (the in-process native runtime) is as
+        ready as it will ever be. A backend that runs another program answers from what is on
+        disk — ``not_found`` when that program is not there, else ``untested`` — and never
+        starts it, because only the user decides when another agent's program runs.
+        """
         return ReadinessStatus(ready=True, state="ready")
 
     @classmethod
-    async def discover_agents(cls, options: dict) -> list[DiscoveredAgent]:
-        """List the agents this backend exposes for the chat agent-picker.
+    async def probe_readiness(cls, options: dict) -> ReadinessStatus:
+        """Start the backend once and report whether it is usable. Default ready.
 
-        Default: ``[]`` — a runtime contributes no discovered agents (the native
-        runtime's agents are PersonalClaw's own definitions, not discovered). The
-        ACP runtime opens one session and reads its live discovery surface,
-        delegating the vendor-specific normalization to its dialect. Discovery is
-        EXPENSIVE (spawn + ``initialize`` + ``session/new``), so callers cache it
-        (the API route owns a TTL cache) and never invoke it on a hot path.
+        A backend that runs another program STARTS it here, so this is called only for an
+        action the user took to test that backend: the Test on its card, or
+        ``personalclaw doctor --start-agent-clis``. Listings answer from :meth:`presence`.
         """
-        return []
+        return ReadinessStatus(ready=True, state="ready")
 
     @classmethod
     def agents_from_snapshot(cls, options: dict, snapshot: dict) -> list[DiscoveredAgent]:
-        """Map a warmed pool ``session/new`` snapshot to discovered agents WITHOUT
-        a fresh spawn. Default: ``[]`` — only runtimes that expose a live discovery
-        surface (the ACP runtime) override this; every other backend contributes none.
+        """Map a ``session/new`` snapshot (:attr:`ReadinessStatus.session_snapshot`) to
+        discovered agents WITHOUT starting anything. Default: ``[]`` — only runtimes that
+        expose a discovery surface (the ACP runtime) override this; every other backend
+        contributes none.
         """
         return []
 
@@ -236,14 +249,14 @@ class AgentProvider(ABC):
     async def set_model(self, model: str) -> None: ...
 
     async def set_agent(self, agent: str) -> None:
-        """Switch the active agent/persona on a running connection (pool claim).
-        Default no-op; ACP overrides (default dialect ``session/set_mode``)."""
+        """Switch the active agent/persona on a running connection (a session opened on a
+        shared connection). Default no-op; ACP overrides (default dialect ``session/set_mode``)."""
         ...
 
     async def set_reasoning_effort(self, effort: str) -> None:
-        """Set the per-turn reasoning effort on a running connection (pool claim /
-        per turn). ``effort`` is one of the backend's declared effort options (see
-        ``DiscoveredAgent.supported_efforts``) or "" for default. Default no-op;
+        """Set the per-turn reasoning effort on a running connection (a session opened on a
+        shared connection, or per turn). ``effort`` is one of the backend's declared effort
+        options (see ``DiscoveredAgent.supported_efforts``) or "" for default. Default no-op;
         ACP overrides (Zed ``set_config_option`` configId=effort). MUST follow
         :meth:`set_model`."""
         ...

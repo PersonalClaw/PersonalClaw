@@ -570,6 +570,11 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: Bringing your setup over (``/api/onboarding/import``) and the one-click bind
 #: (``/api/onboarding/local-model/bind``) are :data:`OWNER_ONLY_API_PATHS` subtrees; the rest are
 #: ``OwnerOnly`` rows.
+#:
+#: **Another agent's CLI runs only when you say so.** The Test on an agent runtime's card starts
+#: that CLI once, signed in as you, and a runner's Check runs its CLI for its version; nothing
+#: else in ``/api/agent-providers`` or ``/api/agent-runners`` runs anything. Both writes are the
+#: owner's, so no app can start your agent CLIs by calling them; the reads stay the allowlist's.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -585,6 +590,8 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/prompts": "the system prompts your chats, unattended runs and judges start from",
     "/api/prompt-snippets": "text included in your prompts",
     "/api/agent": "the ACP agent's runtime config",
+    "/api/agent-providers": "the agent CLIs you installed — a Test starts one, as you",
+    "/api/agent-runners": "the agent CLIs you installed — a Check runs one, as you",
     "/api/config": "your settings",
     "/api/autonomy": "earned autonomy",
     "/api/incident": "the incident stop",
@@ -843,6 +850,14 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/providers/{name}/instances/{id}/test": AppMay(
         "tests an instance of the app's own provider; it runs only the app's own code",
         owns=_OWN_APP,
+    ),
+    # ── the agent CLIs you installed (only you decide when another agent's CLI runs) ──
+    "POST /api/agent-providers/{id}/test": OwnerOnly(
+        "starting an agent CLI you installed — its Test runs that CLI once, as you, with your "
+        "sign-in"
+    ),
+    "POST /api/agent-runners/{id}/check": OwnerOnly(
+        "running an agent CLI you installed to read its version"
     ),
     # ── model providers (yours: where your model calls go, and with which key) ──
     "GET /api/model-providers": OwnerOnly(

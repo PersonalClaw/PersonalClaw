@@ -1995,9 +1995,9 @@ def _effort_not_honorable(provider: str, effort: str) -> str | None:
     is a setting the user is told took effect.
 
     Judges only what the runtime DECLARED, never a guess:
-      * ``None`` from :func:`declared_efforts` → unknown (discovery cold/stale/failed).
-        Fail OPEN: refusing a bind we cannot judge would make the picker unusable whenever
-        discovery has not warmed, and the format check still applies.
+      * ``None`` from :func:`declared_efforts` → unknown (the runtime has not been tested,
+        or its Test listed no agent). Fail OPEN: refusing a bind we cannot judge would make
+        the picker unusable until the runtime's first Test, and the format check still applies.
       * ``[]`` → the backend was asked and reported no effort axis. Refuse.
       * a non-empty set → the effort must be one of the backend's own verbatim values.
         This is also why the bind path can no longer use a hardcoded ``low/medium/high/max``

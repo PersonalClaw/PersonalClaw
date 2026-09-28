@@ -316,8 +316,8 @@ class AcpClient:
     @property
     def session_snapshot(self) -> dict[str, object]:
         """The raw ``session/new`` response (modes / models / configOptions) from the
-        live session, or ``{}`` before one is created. The connection pool reads this
-        to serve agent discovery off a warmed connection."""
+        live session, or ``{}`` before one is created. The readiness probe (a user's
+        Test) reads the runtime's agents from it."""
         return self._session_new_snapshot
 
     def is_process_alive(self) -> bool:
@@ -574,6 +574,9 @@ class AcpClient:
                 timeout=_INIT_TIMEOUT,
                 session_files_dir=self._session_files_dir,
             )
+            # What the CLI offered in this session (modes / models / configOptions): a Test
+            # lists the runtime's agents from it rather than starting the CLI again to ask.
+            self._session_new_snapshot = dict(conn.last_session_new_snapshot or {})
         except (AcpTimeoutError, AcpError):
             # Same reason as ensure_ready: teardown clears the live deque, so keep the tail.
             self._retained_stderr_tail = self._transport.stderr_tail()

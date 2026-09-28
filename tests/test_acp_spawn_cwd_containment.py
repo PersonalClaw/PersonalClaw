@@ -126,9 +126,10 @@ def test_empty_default_dir_with_no_session_binding_falls_back_to_the_workspace(i
     assert resolve_session_workspace(cfg, "inheriting", "") == str(workspace_root())
 
 
-# Every module that can spawn an ACP backend. ``discover_agents`` (llm/acp_agent.py) is
-# the reason this is a STATIC rail rather than a driven one: it spawns a real CLI, so the
-# only cheap way to keep its cwd honest is to forbid the construct that broke it.
+# Every module that can spawn an ACP backend. Each spawn starts a real CLI (the Test's
+# ``probe_readiness`` in llm/acp_agent.py among them), which is why this is a STATIC rail
+# rather than a driven one: the only cheap way to keep a spawn's cwd honest is to forbid the
+# construct that broke it.
 _ACP_SPAWN_MODULES = (
     "personalclaw/acp/client.py",
     "personalclaw/acp/session.py",

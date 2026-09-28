@@ -433,7 +433,10 @@ Data leaving the running system:
   the machine-wide Hugging Face folder with its `huggingface-cli login` token, a subscription
   provider's sign-in) is declared in that module, is off until the owner turns it on in Settings →
   Security → Outside PersonalClaw's home (`security.outside_home`, a loosening the PATCH asks to
-  confirm), and is only read. Deleting a skill that lives outside the home is refused (409). The
+  confirm), and is only read. The Hugging Face library would read that token itself for any call
+  that passes none, so every `personalclaw` command turns its lookup off
+  (`HF_HUB_DISABLE_IMPLICIT_TOKEN`, `local_models/hf_token.py`), and an app's download passes the
+  token PersonalClaw resolved, or none. Deleting a skill that lives outside the home is refused (409). The
   Files page has no root for the home itself, whose `config.json`, `mcp.json` and automations it
   used to let you edit, only for the work folders inside it.
   `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the

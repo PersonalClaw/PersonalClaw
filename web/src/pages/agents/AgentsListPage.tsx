@@ -212,8 +212,11 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                   const items = g.agents.filter(agentMatch)
                   return (
                     <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={items.length}
-                      subtitle={g.ready ? 'Provided by the runtime — read-only.' : `Unavailable — ${g.detail || 'runtime not ready'}`} ready={g.ready}>
-                      {!g.ready ? null : items.length === 0 ? (
+                      subtitle={g.ready ? 'Provided by the runtime — read-only.' : g.state === 'untested' ? g.detail : `Unavailable — ${g.detail || 'runtime not ready'}`} ready={g.ready}>
+                      {!g.ready ? null : g.failure ? (
+                        // The agents are unknown, so this says why rather than "No agents discovered".
+                        <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{g.failure}</p>
+                      ) : items.length === 0 ? (
                         // Same n-branch as the Native group: a search miss must not read as an
                         // empty catalog — the count above it is filtered too, so they agree (#667).
                         <p className="text-on-surface-low text-[0.8125rem]">{n ? 'No matching agents.' : 'No agents discovered.'}</p>

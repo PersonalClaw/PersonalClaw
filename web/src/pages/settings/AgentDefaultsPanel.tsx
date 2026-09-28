@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+import { reportingWrite } from '../../app/reportingWrite'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useQuery } from '../../lib/data'
 import { durableWorkersHint, usePersistAvailable } from '../../lib/persistClaim'
@@ -166,7 +167,7 @@ export function AgentDefaultsPanel() {
           <NumberRow label="Soft-stop budget" cfg={cfg} field="soft_stop_budget_secs" patch={patch} min={0.5} max={60} step={0.5} suffix="s"
             hint="Seconds to wait for a cooperative cancel before hard-killing a session." />
           <NumberRow label="Runner health check interval" cfg={cfg} field="runner_health_check_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
-            hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
+            hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is checked automatically — use a runner's Check version." />
           <NumberRow label="Runner idle release" cfg={cfg} field="runner_idle_release_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
             hint="How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched." />
           {/* The hint used to END with "Requires the tmux binary; without it this has no effect" —
@@ -237,29 +238,34 @@ function DefaultAgentRow({ options, value, onChange, onRetry }: { options: Agent
 
 /** The runner catalog: one row per external agent CLI, with the health evidence
  *  actually measured for it. Every value shown here is a reading or an explicit
- *  "unknown" — an unprobed runner says so, an unparseable version says so, and a
- *  failed probe carries the CLI's own error text verbatim rather than a house
- *  paraphrase, because the verbatim text is what tells you WHICH thing is missing. */
+ *  "unknown" — an unchecked runner says so, an unparseable version says so, and a
+ *  failed check carries the CLI's own error text verbatim rather than a house
+ *  paraphrase, because the verbatim text is what tells you WHICH thing is missing.
+ *
+ *  Reading the catalog runs nothing. A runner's CLI runs only when you press ITS Check,
+ *  which runs only its version command, and only for a runner an installed agent app set
+ *  up here — the row says which, before anything is pressed. */
 function RunnersSection() {
   const [rows, setRows] = useState<RunnerRow[] | null>(null)
   const [err, setErr] = useState<unknown>(null)
-  const [probing, setProbing] = useState(false)
 
-  const load = useCallback((probe: boolean) => {
-    if (probe) setProbing(true)
-    api.agentRunners(probe)
+  const load = useCallback(() => {
+    api.agentRunners()
       .then((r) => { setRows(r); setErr(null) })
       .catch((e) => setErr(e))
-      .finally(() => setProbing(false))
   }, [])
 
-  useEffect(() => { load(false) }, [load])
+  useEffect(() => { load() }, [load])
+
+  // A Check answers with the one row it measured; it replaces that row and no other.
+  const onChecked = useCallback((row: RunnerRow) => {
+    setRows((cur) => (cur ?? []).map((r) => (r.id === row.id ? row : r)))
+  }, [])
 
   return (
     <Section title="Runners"
-      hint="External agent CLIs this install can drive. Health is measured by asking each CLI for its own version — nothing else is spawned."
-      right={<Button size="xs" variant="secondary" loading={probing} onClick={() => load(true)}>Re-check runners</Button>}>
-      {!rows && err ? <LoadError what="runners" error={err} onRetry={() => load(false)} />
+      hint="External agent CLIs this install can drive. Nothing here runs one until you press its Check version, which runs only that CLI's version command — and only for a runner an installed agent app set up.">
+      {!rows && err ? <LoadError what="runners" error={err} onRetry={load} />
         : !rows ? <FormSkeleton sections={1} rows={4} title={false} what="runners" />
         : rows.length === 0 ? (
           <p data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
@@ -267,7 +273,7 @@ function RunnersSection() {
           </p>
         ) : (
           <ul className="divide-y divide-outline-variant overflow-hidden rounded-lg bg-surface-container">
-            {rows.map((r) => <RunnerRowItem key={r.id} row={r} />)}
+            {rows.map((r) => <RunnerRowItem key={r.id} row={r} onChecked={onChecked} />)}
           </ul>
         )}
     </Section>
@@ -287,16 +293,25 @@ function Chip({ children, tone = 'neutral' }: { children: React.ReactNode; tone?
   return <span data-type="caption" className={`${base} bg-surface-high ${toneCx}`}>{children}</span>
 }
 
-function RunnerRowItem({ row }: { row: RunnerRow }) {
+function RunnerRowItem({ row, onChecked }: { row: RunnerRow; onChecked: (row: RunnerRow) => void }) {
+  const [checking, setChecking] = useState(false)
   const h = row.health
   const caps = row.capabilities
+  // What a Check runs, said before anyone presses it: the CLI's name and its version flag.
+  const command = [row.bin_names[0], ...(row.version_args ?? [])].join(' ')
+  const check = async () => {
+    setChecking(true)
+    try {
+      await reportingWrite(`check ${row.display_name}`, async () => onChecked(await api.checkAgentRunner(row.id)))
+    } finally { setChecking(false) }
+  }
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <span data-type="body-m" className="text-on-surface">{row.display_name}</span>
         <span data-type="caption" className="font-mono text-on-surface-low">{row.runtime_id}</span>
         {row.source === 'user' && <Chip>your definition</Chip>}
-        {h === null ? <Chip>never probed</Chip> : h.ok ? <Chip tone="ok">healthy</Chip> : <Chip tone="bad">unhealthy</Chip>}
+        {h === null ? <Chip>never checked</Chip> : h.ok ? <Chip tone="ok">healthy</Chip> : <Chip tone="bad">unhealthy</Chip>}
         {/* An overdue check is not a verdict on the runner — it says the reading you are
             looking at is older than the health-check interval, so "healthy" describes
             then, not now. Only shown for `true`: `null` means we do not know the age. */}
@@ -306,6 +321,19 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
             start a chat on right now. The backend has already dropped an expired lease, so
             a chip here always names a CURRENT holder. */}
         {row.lease !== null && <Chip>held by {row.lease.holder}</Chip>}
+        {row.set_up && (
+          <Button size="xs" variant="secondary" className="ml-auto" loading={checking} loadingLabel="Checking…"
+            ariaLabel={`Check version: ${row.display_name}`} title={`Runs ${command}`} onClick={check}>
+            Check version
+          </Button>
+        )}
+      </div>
+      {/* What runs, and when — on every row, so a runner's CLI never runs without the row having
+          said so first. A runner nothing set up here is never run, not even for its version. */}
+      <div data-type="caption" className="mt-1.5 text-on-surface-low">
+        {row.set_up
+          ? <>Check version runs <code className="font-mono">{command}</code> and nothing else, only when you press it.</>
+          : 'Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it.'}
       </div>
       {/* The lease detail, only when there is a lease. "for Ns" is the age of the hold and
           "released in Ns" is when idle-release takes it back — together they tell a user

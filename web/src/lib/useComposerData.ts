@@ -47,8 +47,8 @@ export function useComposerData() {
       if (md.status === 'fulfilled') setModels(md.value)
       if (pr.status === 'fulfilled') {
         setProviders(pr.value)
-        const map = await loadAcpDiscovered(pr.value)
-        if (alive) setDiscovered(map)
+        const found = await loadAcpDiscovered(pr.value)
+        if (alive) setDiscovered(found.agents)
       }
       setReady(true)
     })()

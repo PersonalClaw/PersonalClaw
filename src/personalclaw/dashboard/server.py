@@ -901,7 +901,9 @@ async def start_dashboard(
     register_app_routes(app)
     from personalclaw.dashboard.handlers.providers import (
         api_agent_provider_agents,
+        api_agent_provider_test,
         api_agent_providers_list,
+        api_agent_runner_check,
         api_agent_runners_list,
         api_provider_create,
         api_provider_delete,
@@ -919,8 +921,10 @@ async def start_dashboard(
     app.router.add_get("/api/model-providers", api_providers_list)
     app.router.add_get("/api/model-provider-types", api_provider_types)
     app.router.add_get("/api/agent-providers", api_agent_providers_list)
+    app.router.add_post("/api/agent-providers/{id}/test", api_agent_provider_test)
     app.router.add_get("/api/agent-providers/{id}/agents", api_agent_provider_agents)
     app.router.add_get("/api/agent-runners", api_agent_runners_list)
+    app.router.add_post("/api/agent-runners/{id}/check", api_agent_runner_check)
     app.router.add_post("/api/model-providers", api_provider_create)
     app.router.add_put("/api/model-providers/{name}", api_provider_update)
     app.router.add_delete("/api/model-providers/{name}", api_provider_delete)
@@ -2025,9 +2029,7 @@ async def start_dashboard(
         here, and resolves it against the registry.
 
         Registered AFTER the provider/source hooks above so anything they register is in
-        the registry before a name is resolved, and before ``_warm_acp_pool_startup`` —
-        the pool pre-spawns sessions, and those must not assemble their first turn on an
-        engine that is about to be swapped.
+        the registry before a name is resolved.
 
         ``install_engine`` fails closed to the default on an unknown name, a factory that
         raises, or an instance that misses a hook, so this cannot darken chat; the
@@ -2119,40 +2121,26 @@ async def start_dashboard(
 
     register_chunk_backfill_pass()
 
-    async def _warm_acp_pool_startup(app_: web.Application) -> None:
-        """Start the ACP live-connection pool: one warmed connection per ready
-        runtime, serving BOTH the discovery snapshot (instant lists) AND the first
-        chat turn (instant first turn — claimed in get_or_create). Warming runs in
-        the BACKGROUND (each is a ~15-20s live session); the pool also starts a
-        health loop that respawns dead connections. Runs after the boot-time
-        config replay in the body above, so the acp_agent entries are registered.
-        Best-effort — failures never affect the gateway."""
+    async def _acp_pool_startup(app_: web.Application) -> None:
+        """Install the ACP connection pool: the shared connections a user's concurrent chats
+        open sessions on, and its runner-lease sweep. It starts NO agent CLI — PersonalClaw
+        never starts another agent's CLI unless the user asks, so an installed runtime runs
+        for the first chat that uses it, or for the Test on its card. Best-effort — failures
+        never affect the gateway."""
         try:
             import asyncio as _asyncio
 
             from personalclaw.acp.connection_pool import init_acp_pool
-            from personalclaw.dashboard.handlers.providers import warm_readiness_cache
 
             st = app_.get("state")
             start_sem = getattr(getattr(st, "sessions", None), "_start_sem", None)
             if start_sem is None:
                 start_sem = _asyncio.Semaphore(4)
             await init_acp_pool(start_sem)
-
-            # Also warm the readiness-probe cache for runtimes the pool can't warm
-            # (e.g. codex's slow-failing npx probe), in the background, so the first
-            # /api/agent-providers call the chat picker makes isn't blocked on it.
-            async def _warm_readiness() -> None:
-                try:
-                    await warm_readiness_cache()
-                except Exception:
-                    logger.debug("ACP readiness warm failed", exc_info=True)
-
-            _asyncio.ensure_future(_warm_readiness())
         except Exception:
             logger.debug("ACP pool startup failed", exc_info=True)
 
-    app.on_startup.append(_warm_acp_pool_startup)
+    app.on_startup.append(_acp_pool_startup)
 
     async def _acp_pool_shutdown(app_: web.Application) -> None:
         """Drain + shut down all pooled ACP connections on gateway stop."""

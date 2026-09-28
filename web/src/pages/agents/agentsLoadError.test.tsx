@@ -69,6 +69,35 @@ describe('#/agents distinguishes a failed read from an empty catalog', () => {
   })
 })
 
+describe("a runtime's agents that could not be listed are said to be unknown, with why", () => {
+  // The agents a runtime offers are read in the session its Test opened. A read that failed used
+  // to be dropped by `Promise.allSettled` and the group fell back to `[]`, so the page said
+  // "No agents discovered." about a runtime whose agents nobody could read.
+  const ready = { name: 'acp:demo-cli', provider_id: 'acp:demo-cli', type: 'acp_agent', extension: 'demo-cli-agent', ready: true, state: 'ready', detail: '', login_command: null, tested_at: '2026-09-28T10:00:00+00:00' }
+  const reason = "Couldn't list the agents Demo Cli offers: its last Test got an answer that could not be read: bad shape."
+
+  it('shows the reason in place of "No agents discovered."', async () => {
+    mockApi({
+      agentProviders: () => Promise.resolve([ready]),
+      agentProviderAgents: () => Promise.reject(new Error(reason)),
+    })
+    await mount()
+    const alert = await waitFor(() => screen.getByText(reason))
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(screen.queryByText('No agents discovered.'), 'a failed read is not an empty catalog').toBeNull()
+  })
+
+  it('still says "No agents discovered." when the runtime really offers none', async () => {
+    mockApi({
+      agentProviders: () => Promise.resolve([ready]),
+      agentProviderAgents: () => Promise.resolve({ agents: [], permission_modes: [], tested_at: ready.tested_at }),
+    })
+    await mount()
+    await waitFor(() => expect(screen.getByText('No agents discovered.')).toBeInTheDocument())
+    expect(screen.queryByText(reason)).toBeNull()
+  })
+})
+
 describe('the adapter no longer swallows, and neither does its fetcher', () => {
   const src = readFileSync(join(process.cwd(), 'src/pages/agents/agentsData.ts'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

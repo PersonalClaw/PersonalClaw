@@ -7,9 +7,10 @@ effort regardless: codex measured ``supported_efforts: []`` (`C2`) and a bind wi
 control the provider cannot honor is worse than a missing one — it is a setting the user is
 told took effect.
 
-These tests drive the endpoints over a seeded DISCOVERY CACHE rather than calling the
-validator directly, because the defect was never in a validator: it was that no write path
-consulted the declaration at all.
+These tests drive the endpoints over a seeded record of the runtime's last Test (where the
+agents it offers, and their declared efforts, are kept) rather than calling the validator
+directly, because the defect was never in a validator: it was that no write path consulted
+the declaration at all.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -28,28 +29,58 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 RUNTIME = "acp:codex"
 
 
+_COMMAND = ["/nonexistent/codex-acp"]
+
+
 @pytest.fixture(autouse=True)
-def _clean_discovery_cache():
-    """The discovery cache is module-level and process-local, so a leaked entry would make
-    a later test judge an effort against another test's runtime."""
-    providers_mod._discovery_cache.clear()
+def _tested_runtime():
+    """The runtime these sessions bind to, registered for the duration: its declared efforts
+    are read from its last Test, which is kept per registered runtime and the command it runs.
+    Each test's home is its own, so a record never leaks into another test."""
+    from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+    registry = get_default_registry()
+    registry.unregister_entry(RUNTIME)
+    registry.register_entry(
+        ProviderEntry(
+            name=RUNTIME,
+            type="acp_agent",
+            model="",
+            options={"command": list(_COMMAND), "dialect": "codex"},
+            credential=None,
+            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+        )
+    )
     yield
-    providers_mod._discovery_cache.clear()
+    registry.unregister_entry(RUNTIME)
 
 
 def _seed(runtime: str, efforts: list[dict] | None, *, agents: bool = True) -> None:
-    """Seed the cache the way discovery would.
+    """Record a Test of *runtime* the way the Test route writes one.
 
-    ``efforts=None`` omits the key entirely (a payload shape predating the field);
-    ``agents=False`` seeds a cached-but-failed discovery (empty agent list).
+    ``efforts=None`` omits the key entirely (a record shape without the field);
+    ``agents=False`` records a Test that did not list the agents, with why.
     """
-    import time as _time
+    import json
+
+    from personalclaw.agents import runtime_tests
 
     agent: dict = {"id": f"{runtime}/a", "name": "A"}
     if efforts is not None:
         agent["supported_efforts"] = efforts
-    payload = {"agents": [agent] if agents else []}
-    providers_mod._discovery_cache[runtime] = (_time.monotonic(), [payload])
+    record = {
+        "runtime_id": runtime,
+        "command": list(_COMMAND),
+        "tested_at": "2026-09-28T10:00:00+00:00",
+        "ready": True,
+        "state": "ready",
+        "detail": "",
+        "login_command": None,
+        "agents": [agent] if agents else None,
+        "discovery_error": "" if agents else "got an answer that could not be read: bad shape",
+    }
+    runtime_tests.record_path(runtime).write_text(json.dumps(record), encoding="utf-8")
 
 
 def _app(state: DashboardState) -> web.Application:
@@ -84,10 +115,10 @@ def _bound_session(runtime: str = RUNTIME) -> _ChatSession:
 class TestDeclaredEfforts:
     def test_a_declaration_of_none_is_not_the_same_as_unknown(self):
         """The whole fix rests on this distinction: `[]` is a backend that was ASKED and
-        reported no effort axis (refusable); `None` is discovery that never ran (must fail
-        open). Collapsing them either blocks every bind on a cold cache or silently accepts
-        an effort codex said it cannot honor."""
-        assert providers_mod.declared_efforts(RUNTIME) is None, "cold cache must read unknown"
+        reported no effort axis (refusable); `None` is a runtime nobody has tested (must fail
+        open). Collapsing them either blocks every bind on an untested runtime or silently
+        accepts an effort codex said it cannot honor."""
+        assert providers_mod.declared_efforts(RUNTIME) is None, "untested must read unknown"
         _seed(RUNTIME, [])
         assert providers_mod.declared_efforts(RUNTIME) == [], "declared none must read as []"
 
@@ -151,8 +182,8 @@ class TestPerTurnEndpointHonorsTheDeclaration:
 
     @pytest.mark.asyncio
     async def test_an_unknown_declaration_fails_OPEN(self):
-        """Cold discovery must not make the control unusable — the format check is still the
-        bar, and refusing here would break the picker whenever discovery has not warmed."""
+        """An untested runtime must not make the control unusable — the format check is still
+        the bar, and refusing here would break the picker until the runtime's first Test."""
         session = _bound_session()
         async with TestClient(TestServer(_app(_state(session)))) as client:
             resp = await client.post(

@@ -163,36 +163,17 @@ def test_the_readiness_probe_honours_the_declared_sandbox_mode(
     assert seen[0] == expected
 
 
-def test_agent_discovery_honours_the_declared_sandbox_mode(monkeypatch, tmp_path):
-    """Discovery is the second reader-less path: it spawns the CLI through
-    ``AcpConnection.spawn`` and also dropped the declared mode, so a self-sandboxing
-    runtime would discover zero agents even once its probe went green."""
-    fake = _fake_cli(monkeypatch, tmp_path, "selfbox-cli", _DIES_ON_STDERR)
-    register_acp_cli_entry(
-        cli="selfbox-cli", dialect="default", command=[str(fake)], self_sandboxing=True
-    )
-    options = dict(get_default_registry().get_entry("acp:selfbox-cli").options)
-    options["probe_timeout_secs"] = 20
-    options["runtime_id"] = "acp:selfbox-cli"
-
-    seen = _spy_transport_mode(monkeypatch)
-    asyncio.run(AcpAgentProvider.discover_agents(options))
-
-    assert seen, "discovery never spawned a transport — nothing was measured"
-    assert seen[0] == "off"
-
-
 def test_every_options_spawn_path_reads_the_mode_through_one_helper():
-    """Guard against a FOURTH reader drifting. The defect was three call sites each
-    deciding for itself; ``options.get("sandbox_mode")`` must therefore appear exactly
-    once in the module — inside :func:`options_sandbox_mode`."""
+    """Guard against another reader drifting. The defect was call sites each deciding for
+    themselves; ``options.get("sandbox_mode")`` must therefore appear exactly once in the
+    module — inside :func:`options_sandbox_mode` — and both spawn paths read it there."""
     from pathlib import Path as _Path
 
     import personalclaw.llm.acp_agent as mod
 
     source = _Path(mod.__file__).read_text()
     assert source.count('options.get("sandbox_mode")') == 1
-    assert source.count("options_sandbox_mode(options)") == 3  # probe, discovery, factory
+    assert source.count("options_sandbox_mode(options)") == 2  # the probe (a Test), the factory
 
 
 def test_a_plain_runtime_is_still_wrapped_when_a_backend_exists():

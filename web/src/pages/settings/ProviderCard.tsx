@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, RefreshCw, Beaker, Plug, PlugZap, Loader2, HelpCircle, UserCheck, UserX } from 'lucide-react'
+import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, Beaker, Plug, PlugZap, Loader2, HelpCircle, UserCheck, UserX } from 'lucide-react'
 import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
 import { reportingWrite } from '../../app/reportingWrite'
 import { setActivation } from '../../app/appActivation'
 import { Toggle } from './settingsUI'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { Button } from '../../ui/Button'
 import { ProviderConfigForm } from './ProviderConfigForm'
 import { ChannelOwnerSection } from './ChannelOwnerSection'
 import { EngineSection } from './EngineSection'
@@ -13,17 +14,19 @@ import { fvs } from '../../design/fontWeight'
 /** One provider card: identity + enable toggle, with the provider's own
  *  schema-driven config tucked UNDER the toggle (expand chevron, only when
  *  enabled + the provider has a settingsSchema). Agent cards also show a
- *  runtime-readiness chip + Sign-in when their runtime needs login.
+ *  runtime-readiness chip, the runtime's Test, and Sign-in when its last Test said it needs login.
  *
  *  The config accordion is fully controlled by the parent so it can ride the URL
  *  (?open=<provider>, push → Back collapses it). One provider's config is open at
  *  a time across the whole panel; opening another closes the first. */
-export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChanged, onSignIn, onRecheck, onChannelChanged }: {
+export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChanged, onSignIn, onTest, onChannelChanged }: {
   ext: SettingsProvider; runtime?: AgentRuntime; channel?: ChannelRuntime; open: boolean; onOpenChange: (v: boolean) => void; onChanged: () => void
-  onSignIn?: (rt: AgentRuntime) => void; onRecheck?: () => Promise<void> | void; onChannelChanged?: () => void
+  onSignIn?: (rt: AgentRuntime) => void; onTest?: (rt: AgentRuntime) => Promise<void> | void; onChannelChanged?: () => void
 }) {
   const [busy, setBusy] = useState(false)
-  const [rechecking, setRechecking] = useState(false)
+  const [testing, setTesting] = useState(false)
+  // Set once Sign in opened the terminal: the card then says how to find out whether it worked.
+  const [signingIn, setSigningIn] = useState(false)
   const [measuring, setMeasuring] = useState(false)
   const hasConfig = !!ext.enabled && ext.provider?.hasConfigSchema === true
   // Measured by the gateway in a child process, never on this request: a card the gateway has
@@ -88,21 +91,23 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
             🪤 This comment sits BEFORE the conditional, not after its `&& (` — a JSX comment in an
             EXPRESSION position is an object literal, which is four TS1005s and no comment at all. */}
         {runtime && runtime.state === 'needs_login' && runtime.login_command && onSignIn && (
-          <button type="button" onClick={() => onSignIn(runtime)} aria-label={`Sign in: ${who}`}
+          <button type="button" onClick={() => { setSigningIn(true); onSignIn(runtime) }} aria-label={`Sign in: ${who}`}
             data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface hover:bg-surface-highest">
             <KeyRound size={12} /> Sign in
           </button>
         )}
-        {/* Manual availability re-check — forces a fresh readiness probe. `loading`, not
-            `disabled`: a probe in flight is working, not unavailable, and the primitive's own
-            spinner replaces spinning this button's RefreshCw by hand.
+        {/* The runtime's Test — the one control that STARTS this agent's CLI, once: its ACP
+            handshake and one empty session, then it stops. Nothing else on this page starts it,
+            so the button says what it does. `loading`, not `disabled`: a Test in flight is
+            working, not unavailable.
             🪤 Same trap as the comment above: this sits BEFORE the conditional, not after its
             `&& (` — a JSX comment in an EXPRESSION position is an object literal. */}
-        {runtime && runtime.type !== 'native' && !unavailable && onRecheck && (
-          <SquareIconButton label={`Check availability: ${who}`} title="Check availability" loading={rechecking} className="shrink-0"
-            onClick={async () => { setRechecking(true); try { await onRecheck() } finally { setRechecking(false) } }}>
-            <RefreshCw size={14} />
-          </SquareIconButton>
+        {runtime && runtime.type !== 'native' && !unavailable && onTest && (
+          <Button size="xs" variant="secondary" className="shrink-0" loading={testing} loadingLabel="Testing…"
+            ariaLabel={`Test: ${who}`} title={`Starts ${who} once to check it runs and is signed in`}
+            onClick={async () => { setTesting(true); try { await onTest(runtime) } finally { setTesting(false); setSigningIn(false) } }}>
+            <Beaker size={12} /> Test
+          </Button>
         )}
         {/* Managed app provider → install/uninstall toggle. Native built-in →
             always-on (mandatory): no toggle, just a quiet badge. */}
@@ -135,6 +140,14 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
       {ext.provider?.execution === 'sidecar' && <EngineSection app={ext.name} displayName={who} onInstalled={onChanged} />}
       {runtime && runtime.detail && runtime.state !== 'ready' && !unavailable && (
         <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><TerminalSquare size={12} className="mt-0.5 shrink-0" /> {runtime.detail}</div>
+      )}
+      {/* When the answer above was measured: a readiness that is a past Test's says so, rather than
+          reading as the present state. */}
+      {runtime && runtime.tested_at && !unavailable && (
+        <div data-type="caption" className="mt-1 text-on-surface-low">Last tested {new Date(runtime.tested_at).toLocaleString()}</div>
+      )}
+      {signingIn && runtime && runtime.state === 'needs_login' && (
+        <div role="status" data-type="caption" className="mt-1 text-on-surface-low">When the sign-in in the terminal finishes, press Test to check it.</div>
       )}
       {ext.error && <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
 
@@ -246,9 +259,9 @@ function RuntimeChip({ state }: { state: string }) {
     needs_login: { icon: <KeyRound size={12} />, label: 'Needs sign-in', color: 'var(--color-warning)' },
     not_found: { icon: <AlertTriangle size={12} />, label: 'Not found', color: 'var(--color-on-surface-low)' },
     timeout: { icon: <Clock size={12} />, label: 'Slow to start', color: 'var(--color-warning)' },
-    // Never measured yet: one background probe is running. A plain read no longer spawns the
-    // runtime, so "not answered yet" is a state of its own rather than an error.
-    checking: { icon: <Loader2 size={12} className="animate-spin" />, label: 'Checking…', color: 'var(--color-on-surface-low)' },
+    // Installed, and nobody has started it: PersonalClaw starts another agent's CLI only when you
+    // press its Test, so "not tried" is a state of its own — never "ready" and never an error.
+    untested: { icon: <HelpCircle size={12} />, label: 'Not tried yet', color: 'var(--color-on-surface-low)' },
     error: { icon: <AlertTriangle size={12} />, label: 'Error', color: 'var(--color-danger)' },
   }
   const m = map[state] ?? map.error

@@ -15,8 +15,12 @@ export interface DiscoveredGroup {
   kind: 'discovered'
   providerId: string        // "acp:claude-code"
   ready: boolean
+  /** The runtime's readiness state — `untested` is installed and never started, not broken. */
+  state: string
   detail: string
   agents: DiscoveredAgent[]
+  /** Why this ready runtime's agents could not be listed, or `''`. Set, `agents` says nothing. */
+  failure: string
 }
 export type AgentGroup = NativeGroup | DiscoveredGroup
 
@@ -51,7 +55,10 @@ async function fetchAgentGroups(): Promise<AgentGroup[]> {
     // discover agents for READY providers (unready ones still shown as a group)
     const discovered = await loadAcpDiscovered(acp.filter((p) => p.ready))
     for (const p of acp) {
-      out.push({ kind: 'discovered', providerId: p.provider_id, ready: p.ready, detail: p.detail, agents: discovered[p.provider_id] ?? [] })
+      out.push({
+        kind: 'discovered', providerId: p.provider_id, ready: p.ready, state: p.state, detail: p.detail,
+        agents: discovered.agents[p.provider_id] ?? [], failure: discovered.failed[p.provider_id] ?? '',
+      })
     }
   }
   return out

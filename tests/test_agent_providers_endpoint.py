@@ -9,18 +9,25 @@ Pins the contract the frontend relies on to render ONE section instead of two:
   canonical runtime id) — NOT re-derived from the adapter command basename,
   which would mislabel e.g. ``claude-agent-acp`` → ``acp:claude-agent-acp``;
 * the bundle-declared ``extension`` is carried on each row so the UI can join
-  readiness onto the matching enable/config extension card.
+  readiness onto the matching enable/config extension card;
+* a READ starts nothing: a runtime reads ``untested`` until the user's Test, then that
+  Test's answer — and the Test starts exactly the runtime it names.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import stat
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from personalclaw.dashboard.handlers.providers import api_agent_providers_list
+from personalclaw.dashboard.handlers.providers import (
+    api_agent_provider_agents,
+    api_agent_provider_test,
+    api_agent_providers_list,
+)
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
 from personalclaw.llm.registry import (
     ProviderEntry,
@@ -78,153 +85,169 @@ def _call(query: str = "") -> dict:
     return json.loads(resp.body.decode())
 
 
-def test_pool_warmed_runtime_answered_without_probe(monkeypatch):
-    """A runtime with a live warmed pool connection is reported ready INSTANTLY —
-    probe_readiness is never called (this is what kept /api/agent-providers fast
-    so the chat picker's discovered section appears immediately)."""
-    from personalclaw.acp import connection_pool as cp
-    from personalclaw.agents.registry import get_agent_provider_class
-
-    _fresh_registry()
-    try:
-        registry = get_default_registry()
-        registry.register_entry(
-            ProviderEntry(
-                name="acp:test-cli",
-                type="acp_agent",
-                model="",
-                options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None,
-                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
-            )
-        )
-
-        class _FakePool:
-            def is_warmed(self, runtime_id):
-                return runtime_id == "acp:test-cli"
-
-        cp.set_acp_pool(_FakePool())
-
-        async def boom(cls, options):
-            raise AssertionError("probe_readiness must NOT run for a pool-warmed runtime")
-
-        monkeypatch.setattr(get_agent_provider_class("acp"), "probe_readiness", classmethod(boom))
-
-        data = _call()
-        row = next(r for r in data["agent_providers"] if r["provider_id"] == "acp:test-cli")
-        assert row["ready"] is True and row["state"] == "ready"
-    finally:
-        cp.set_acp_pool(None)
-        reset_default_registry()
-
-
-def _register_runtime(name: str, command: list[str]) -> None:
-    get_default_registry().register_entry(
-        ProviderEntry(
-            name=name,
-            type="acp_agent",
-            model="",
-            options={"command": command, "dialect": "codex"},
-            credential=None,
-            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
-        )
-    )
-
-
 async def _acall(query: str = "") -> dict:
     req = make_mocked_request("GET", "/api/agent-providers" + (f"?{query}" if query else ""))
     resp = await api_agent_providers_list(req)
     return json.loads(resp.body.decode())
 
 
+async def _atest(runtime: str) -> tuple[int, dict]:
+    req = make_mocked_request(
+        "POST", f"/api/agent-providers/{runtime}/test", match_info={"id": runtime}
+    )
+    resp = await api_agent_provider_test(req)
+    return resp.status, json.loads(resp.body.decode())
+
+
 def _row(data: dict, runtime: str) -> dict:
     return next(r for r in data["agent_providers"] if r["provider_id"] == runtime)
 
 
+def _installed(tmp_path, name: str) -> str:
+    """An executable named *name*: an installed CLI as far as PATH can tell. Never run here."""
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(path)
+
+
+def _register_runtime(name: str, command: list[str], **options) -> None:
+    get_default_registry().register_entry(
+        ProviderEntry(
+            name=name,
+            type="acp_agent",
+            model="",
+            options={"command": command, "dialect": "codex", **options},
+            credential=None,
+            declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
+        )
+    )
+
+
 @pytest.fixture
 def counted_probe(monkeypatch):
-    """Nothing pooled, an empty readiness cache, and a probe that counts (and can stall)."""
-    from personalclaw.acp import connection_pool as cp
+    """A fresh registry, and a probe that counts every start (and can stall, or be ready)."""
     from personalclaw.agents.provider import ReadinessStatus
     from personalclaw.agents.registry import get_agent_provider_class
-    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
-    prov_mod._readiness_cache.clear()
-    getattr(prov_mod, "_readiness_probes", {}).clear()
-    cp.set_acp_pool(None)
     calls: dict[str, int] = {}
     stall = {"secs": 0.0}
+    answer = {"status": None}
 
     async def fake_probe(cls, options):
-        key = options["command"][0]
+        key = options["command"][0].rsplit("/", 1)[-1]
         calls[key] = calls.get(key, 0) + 1
         await asyncio.sleep(stall["secs"])
-        return ReadinessStatus(ready=False, state="not_found", detail=f"{key}: no engine")
+        return answer["status"] or ReadinessStatus(
+            ready=False, state="needs_login", detail=f"{key}: sign in", login_command=[key, "login"]
+        )
 
     monkeypatch.setattr(get_agent_provider_class("acp"), "probe_readiness", classmethod(fake_probe))
     try:
-        yield prov_mod, calls, stall
+        yield calls, stall, answer
     finally:
-        prov_mod._readiness_cache.clear()
-        getattr(prov_mod, "_readiness_probes", {}).clear()
         reset_default_registry()
 
 
 @pytest.mark.asyncio
-async def test_a_stale_readiness_answer_is_served_without_spawning_the_runtime(counted_probe):
-    """A plain read never probes. It used to re-probe INLINE once an answer passed 5 minutes —
-    which spawned the CLI and opened a session on every spaced-out Providers visit."""
-    import time as _time
+async def test_an_installed_runtime_nobody_tested_reads_untested_and_no_read_starts_it(
+    counted_probe, tmp_path
+):
+    """A plain read never starts the CLI — not the first read, not a stale one, not a
+    ``?refresh=1`` from an old client. It used to start one in the background on first
+    sight, and re-probe inline once an answer aged, so a Providers visit started the CLI."""
+    calls, _stall, _answer = counted_probe
+    _register_runtime("acp:codex", [_installed(tmp_path, "codex-acp")])
 
-    prov_mod, calls, _stall = counted_probe
-    _register_runtime("acp:codex", ["codex-acp"])
-    stale = {"ready": False, "state": "needs_login", "detail": "sign in", "login_command": None}
-    prov_mod._readiness_cache["acp:codex"] = (_time.monotonic() - 3600, stale)
+    queries = ("", "", "refresh=1", "refresh=1&runtime=acp:codex")
+    rows = [_row(await _acall(q), "acp:codex") for q in queries]
 
+    assert calls == {}, "a read started the runtime's CLI"
+    for row in rows:
+        assert row["state"] == "untested" and row["ready"] is False
+        assert row["tested_at"] is None
+        assert "press Test" in row["detail"], "the row must say plainly it has not been tried"
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_whose_cli_is_gone_reads_not_found_and_is_not_started(counted_probe):
+    calls, _stall, _answer = counted_probe
+    _register_runtime("acp:codex", ["/nonexistent/codex-acp"])
     row = _row(await _acall(), "acp:codex")
-
-    assert calls == {}, "a plain read spawned the runtime to re-probe it"
-    assert row["state"] == "needs_login"
+    assert row["state"] == "not_found" and calls == {}
 
 
 @pytest.mark.asyncio
-async def test_a_never_measured_runtime_reads_checking_at_once_and_is_probed_once(counted_probe):
-    import time as _time
+async def test_the_test_starts_the_one_runtime_it_names_and_its_answer_is_what_reads_show(
+    counted_probe, tmp_path
+):
+    calls, _stall, _answer = counted_probe
+    _register_runtime("acp:codex", [_installed(tmp_path, "codex-acp")])
+    _register_runtime("acp:other", [_installed(tmp_path, "other-acp")])
 
-    prov_mod, calls, stall = counted_probe
-    _register_runtime("acp:codex", ["codex-acp"])
-    stall["secs"] = 3.0
+    status, data = await _atest("acp:codex")
 
-    started = _time.monotonic()
-    first, second = await asyncio.gather(_acall(), _acall())
-    elapsed = _time.monotonic() - started
-    assert elapsed < 1.0, f"the read waited {elapsed:.1f}s on the runtime's probe"
-    assert _row(first, "acp:codex")["state"] == "checking"
-    assert _row(second, "acp:codex")["state"] == "checking"
-
-    await prov_mod._readiness_probes["acp:codex"]
-    assert calls == {"codex-acp": 1}, "two concurrent reads started two probes"
-    assert _row(await _acall(), "acp:codex")["state"] == "not_found"
+    assert status == 200
+    assert calls == {"codex-acp": 1}, f"a Test of one runtime started {sorted(calls)}"
+    tested = data["agent_provider"]
+    assert tested["provider_id"] == "acp:codex" and tested["state"] == "needs_login"
+    assert tested["login_command"] == ["codex-acp", "login"] and tested["tested_at"]
+    # Every read after it answers from that Test, and still starts nothing.
+    listed = await _acall()
+    assert _row(listed, "acp:codex")["state"] == "needs_login"
+    assert _row(listed, "acp:codex")["tested_at"] == tested["tested_at"]
+    assert _row(listed, "acp:other")["state"] == "untested"
+    assert calls == {"codex-acp": 1}
 
 
 @pytest.mark.asyncio
-async def test_refresh_probes_now_and_runtime_scopes_it_to_one(counted_probe):
-    import time as _time
+async def test_two_presses_while_a_test_runs_start_the_cli_once(counted_probe, tmp_path):
+    calls, stall, _answer = counted_probe
+    _register_runtime("acp:codex", [_installed(tmp_path, "codex-acp")])
+    stall["secs"] = 0.3
 
-    prov_mod, calls, _stall = counted_probe
-    _register_runtime("acp:codex", ["codex-acp"])
-    _register_runtime("acp:other", ["other-acp"])
-    # Measured already, so the scoped re-check below is the only thing that could probe it.
-    ready = {"ready": True, "state": "ready", "detail": "ok", "login_command": None}
-    prov_mod._readiness_cache["acp:other"] = (_time.monotonic(), ready)
+    (s1, d1), (s2, d2) = await asyncio.gather(_atest("acp:codex"), _atest("acp:codex"))
 
-    data = await _acall("refresh=1&runtime=acp:codex")
+    assert s1 == s2 == 200
+    assert calls == {"codex-acp": 1}, "two presses started the CLI twice"
+    assert d1["agent_provider"]["tested_at"] == d2["agent_provider"]["tested_at"]
 
-    assert calls == {"codex-acp": 1}, f"a scoped re-check probed {sorted(calls)}"
-    assert _row(data, "acp:codex")["state"] == "not_found"
-    await _acall("refresh=1")
-    assert calls == {"codex-acp": 2, "other-acp": 1}
+
+@pytest.mark.asyncio
+async def test_a_test_of_an_absent_cli_starts_nothing_and_records_nothing(counted_probe, tmp_path):
+    """Nothing to start is a fact about now: once the CLI is installed its card reads
+    "not tried", never the old not-found."""
+    calls, _stall, _answer = counted_probe
+    missing = tmp_path / "codex-acp"
+    _register_runtime("acp:codex", [str(missing)])
+
+    status, data = await _atest("acp:codex")
+    assert status == 200 and data["agent_provider"]["state"] == "not_found" and calls == {}
+
+    _installed(tmp_path, "codex-acp")
+    assert _row(await _acall(), "acp:codex")["state"] == "untested"
+
+
+@pytest.mark.asyncio
+async def test_a_result_for_another_command_reads_as_not_tried(counted_probe, tmp_path):
+    """A Test is about the command it ran: after an update moves the CLI, the old verdict is
+    about a different program, so the runtime reads "not tried" again."""
+    _calls, _stall, _answer = counted_probe
+    _register_runtime("acp:codex", [_installed(tmp_path, "codex-acp")])
+    await _atest("acp:codex")
+    reset_default_registry()
+    _fresh_registry()
+    _register_runtime("acp:codex", [_installed(tmp_path, "codex-acp-2")])
+    assert _row(await _acall(), "acp:codex")["state"] == "untested"
+
+
+@pytest.mark.asyncio
+async def test_testing_a_runtime_nobody_set_up_is_refused(counted_probe):
+    calls, _stall, _answer = counted_probe
+    status, data = await _atest("acp:nothing-here")
+    assert status == 404 and data["error"]["code"] == "not_found"
+    assert calls == {}
 
 
 def test_native_row_always_present_and_ready():
@@ -238,13 +261,12 @@ def test_native_row_always_present_and_ready():
         assert native["state"] == "ready"
         assert native["extension"] == "native-agents"
         assert native["login_command"] is None  # in-process, no sign-in
+        assert native["tested_at"] is None
     finally:
         reset_default_registry()
 
 
 def _call_agents(runtime_id: str, query: str = "") -> tuple[int, dict]:
-    from personalclaw.dashboard.handlers.providers import api_agent_provider_agents
-
     path = f"/api/agent-providers/{runtime_id}/agents" + (f"?{query}" if query else "")
     req = make_mocked_request("GET", path, match_info={"id": runtime_id})
     resp = asyncio.run(api_agent_provider_agents(req))
@@ -271,112 +293,132 @@ def test_discovery_unknown_runtime_404():
         reset_default_registry()
 
 
-def test_discovery_lists_agents_and_caches(monkeypatch):
-    """Discovery surfaces discover_agents output + caches it (2nd call cached)."""
-    from personalclaw.agents.provider import DiscoveredAgent
+def test_discovery_lists_the_agents_the_last_test_found_and_a_read_starts_nothing(
+    monkeypatch, tmp_path
+):
+    """The chat picker's agents for a runtime come from the session its Test opened — one
+    start, read once. Before a Test the list is empty; reading it never starts the CLI."""
+    from personalclaw.agents.provider import ReadinessStatus
     from personalclaw.agents.registry import get_agent_provider_class
-    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
     try:
-        prov_mod._discovery_cache.clear()
-        registry = get_default_registry()
-        registry.register_entry(
-            ProviderEntry(
-                name="acp:test-cli",
-                type="acp_agent",
-                model="",
-                options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None,
-                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
-            )
+        _register_runtime(
+            "acp:test-cli", [_installed(tmp_path, "test-cli"), "acp"], dialect="default"
         )
-        calls = {"n": 0}
+        starts = {"n": 0}
+        snapshot = {
+            "modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
+            "models": {"availableModels": [{"modelId": "auto"}]},
+        }
 
-        async def fake_discover(cls, options):
-            calls["n"] += 1
-            assert options.get("runtime_id") == "acp:test-cli"
-            assert options.get("runtime_label") == "Test Cli"  # title-cased label
-            return [
-                DiscoveredAgent(
-                    id="acp:test-cli/gpu-dev",
-                    name="gpu-dev",
-                    runtime="acp:test-cli",
-                    provider_agent="gpu-dev",
-                    models=["auto"],
-                )
-            ]
+        async def ready_probe(cls, options):
+            starts["n"] += 1
+            return ReadinessStatus(ready=True, state="ready", session_snapshot=snapshot)
 
-        # Patch the class the handler actually resolves (acp_agent was reloaded by
-        # _fresh_registry, so a stale import would miss).
-        acp_cls = get_agent_provider_class("acp")
-        monkeypatch.setattr(acp_cls, "discover_agents", classmethod(fake_discover))
+        monkeypatch.setattr(
+            get_agent_provider_class("acp"), "probe_readiness", classmethod(ready_probe)
+        )
 
-        status, data = _call_agents("acp:test-cli")
-        assert status == 200 and data["cached"] is False
-        assert [a["id"] for a in data["agents"]] == ["acp:test-cli/gpu-dev"]
-        assert calls["n"] == 1
+        status, before = _call_agents("acp:test-cli", query="refresh=1")
+        assert status == 200 and before["agents"] == [] and before["tested_at"] is None
+        assert starts["n"] == 0, "reading a runtime's agents started it"
 
-        # 2nd call served from cache — discover_agents NOT called again.
-        status, data2 = _call_agents("acp:test-cli")
-        assert data2["cached"] is True and calls["n"] == 1
-        assert [a["id"] for a in data2["agents"]] == ["acp:test-cli/gpu-dev"]
+        async def press_test():
+            return await _atest("acp:test-cli")
 
-        # refresh=1 bypasses the cache.
-        status, data3 = _call_agents("acp:test-cli", query="refresh=1")
-        assert data3["cached"] is False and calls["n"] == 2
+        asyncio.run(press_test())
+        assert starts["n"] == 1
+
+        status, after = _call_agents("acp:test-cli")
+        assert status == 200 and after["tested_at"]
+        assert [a["id"] for a in after["agents"]] == ["acp:test-cli/gpu-dev"]
+        assert after["agents"][0]["provider_agent"] == "gpu-dev"
+        assert after["agents"][0]["runtime"] == "acp:test-cli"
+        assert starts["n"] == 1, "reading the agents after the Test started the CLI again"
     finally:
-        prov_mod._discovery_cache.clear()
         reset_default_registry()
 
 
-def test_discovery_uses_pool_snapshot_without_spawn(monkeypatch):
-    """When a warmed pool connection holds a live snapshot, discovery maps it
-    directly (agents_from_snapshot) and never calls the spawning discover_agents."""
-    from personalclaw.acp import connection_pool as cp
+def _test_then_read_agents(monkeypatch, tmp_path, status, *, unreadable: str = ""):
+    """Register a runtime, press its Test with *status* as the probe's answer, read its agents.
+
+    *unreadable* makes the answer's snapshot fail to map, with that as the error's words."""
     from personalclaw.agents.registry import get_agent_provider_class
-    from personalclaw.dashboard.handlers import providers as prov_mod
 
     _fresh_registry()
+    _register_runtime("acp:test-cli", [_installed(tmp_path, "test-cli"), "acp"], dialect="default")
+    cls = get_agent_provider_class("acp")
+
+    async def probe(_cls, options):
+        return status
+
+    monkeypatch.setattr(cls, "probe_readiness", classmethod(probe))
+    if unreadable:
+
+        def refuse(_cls, options, snapshot):
+            raise ValueError(unreadable)
+
+        monkeypatch.setattr(cls, "agents_from_snapshot", classmethod(refuse))
+    asyncio.run(_atest("acp:test-cli"))
+    return _call_agents("acp:test-cli")
+
+
+def test_a_test_that_failed_says_why_the_agents_are_unknown_not_that_there_are_none(
+    monkeypatch, tmp_path
+):
+    """The agents are read in the session a Test opens. A Test that did not get one (here, the
+    CLI needs a sign-in) knows nothing about them, and the read used to answer ``agents: []`` —
+    which the Agents page shows as "No agents discovered"."""
+    from personalclaw.agents.provider import ReadinessStatus
+    from personalclaw.dashboard.handlers.providers import declared_efforts
+
     try:
-        prov_mod._discovery_cache.clear()
-        registry = get_default_registry()
-        registry.register_entry(
-            ProviderEntry(
-                name="acp:test-cli",
-                type="acp_agent",
-                model="",
-                options={"command": ["/x/test-cli", "acp"], "dialect": "test-cli"},
-                credential=None,
-                declared_capabilities=ACP_AGENT_CAPABILITY.capabilities,
-            )
+        status, data = _test_then_read_agents(
+            monkeypatch,
+            tmp_path,
+            ReadinessStatus(ready=False, state="needs_login", detail="run test-cli login first"),
         )
-
-        # A fake pool that serves a live snapshot for the runtime.
-        class _FakePool:
-            def snapshot(self, runtime_id):
-                if runtime_id == "acp:test-cli":
-                    return {
-                        "modes": {"availableModes": [{"id": "gpu-dev", "name": "gpu-dev"}]},
-                        "models": {"availableModels": [{"modelId": "auto"}]},
-                    }
-                return None
-
-        cp.set_acp_pool(_FakePool())
-
-        # discover_agents (the spawning path) must NOT be called.
-        async def boom(cls, options):
-            raise AssertionError("discover_agents should not spawn when pool snapshot exists")
-
-        monkeypatch.setattr(get_agent_provider_class("acp"), "discover_agents", classmethod(boom))
-
-        status, data = _call_agents("acp:test-cli")
-        assert status == 200
-        assert [a["id"] for a in data["agents"]] == ["acp:test-cli/gpu-dev"]
-        assert data["agents"][0]["provider_agent"] == "gpu-dev"
+        assert status == 502, data
+        assert data["error"]["code"] == "agent_discovery_failed"
+        message = data["error"]["message"]
+        assert "Test Cli" in message and "needs_login" in message
+        assert "run test-cli login first" in message, "the reason is the Test's own words"
+        assert declared_efforts("acp:test-cli") is None, "unknown, not a declaration of none"
     finally:
-        cp.set_acp_pool(None)
-        prov_mod._discovery_cache.clear()
+        reset_default_registry()
+
+
+def test_a_test_whose_answer_could_not_be_read_says_so(monkeypatch, tmp_path):
+    from personalclaw.agents.provider import ReadinessStatus
+
+    try:
+        status, data = _test_then_read_agents(
+            monkeypatch,
+            tmp_path,
+            ReadinessStatus(ready=True, state="ready", session_snapshot={"sessionId": "s-1"}),
+            unreadable="an answer shape nobody expected",
+        )
+        assert status == 502, data
+        assert data["error"]["code"] == "agent_discovery_failed"
+        assert "an answer shape nobody expected" in data["error"]["message"]
+    finally:
+        reset_default_registry()
+
+
+def test_a_test_that_read_no_agents_is_an_empty_list(monkeypatch, tmp_path):
+    """The control: a session whose answer lists no personas is the one case "none" is true."""
+    from personalclaw.agents.provider import ReadinessStatus
+
+    try:
+        status, data = _test_then_read_agents(
+            monkeypatch,
+            tmp_path,
+            ReadinessStatus(ready=True, state="ready", session_snapshot={"sessionId": "s-1"}),
+        )
+        assert status == 200, data
+        assert data["agents"] == [] and data["tested_at"]
+    finally:
         reset_default_registry()
 
 

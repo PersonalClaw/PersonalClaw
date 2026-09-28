@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
 import {
   Bot, Cpu, Hash, Inbox, Bell, Wrench, ListChecks, Webhook, Sparkles,
   BookOpen, Database, FileText, Workflow, Search, RefreshCw, type LucideIcon,
@@ -7,6 +7,7 @@ import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } fr
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
+import { reportingWrite } from '../../app/reportingWrite'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Section, PanelHeader } from './settingsUI'
 import { Skeleton, LoadingStatus, LoadError } from '../../ui/ListScaffold'
@@ -88,6 +89,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   const { data: runtimesData, refresh: refreshRuntimes } = useQuery(
     'settings:agent-runtimes', () => api.agentRuntimes().catch(() => [] as AgentRuntime[]), { persist: true },
   )
+  const runtimes = runtimesData ?? []
   // Available models per provider — feeds each local-model provider's download card
   // (catalog + downloaded state + `searchable`). One fetch, revalidated on mutation.
   const { data: availableData, refresh: refreshAvailable } = useQuery(
@@ -111,11 +113,6 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
     for (const c of channelsData ?? []) if (c.app) m.set(c.app, c)
     return m
   }, [channelsData])
-  // A forced readiness recheck (manual / post-sign-in) takes precedence over the
-  // cached snapshot until the next revalidate folds it back in.
-  const [runtimeOverride, setRuntimeOverride] = useState<AgentRuntime[] | null>(null)
-  const runtimes = runtimeOverride ?? runtimesData ?? []
-
   // A mutation (enable/disable/config) invalidates the cached catalog so the next
   // read revalidates against the changed state instead of a stale snapshot. The channel
   // runtime too: enabling, disabling or saving a channel starts or stops its receiver, and
@@ -127,39 +124,23 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
     refreshProviders(); refreshRuntimes(); refreshAvailable(); refreshChannels()
   }
 
-  // Re-probe agent-runtime readiness NOW. A plain read never spawns a runtime (it answers from
-  // the live connection or the last measurement), so this is the one way to re-measure — and it
-  // is scoped to the ONE runtime whose card asked: probing every runtime spawned every CLI.
-  const recheckRuntimes = async (runtime?: string) => {
-    try { setRuntimeOverride(await api.agentRuntimes(true, runtime ?? '')) } catch { /* keep current */ }
+  // The card's Test — the ONE thing on this page that starts an agent CLI, and only the one
+  // whose card was pressed. Reading the runtimes starts nothing: each answers from whether its
+  // CLI is installed and from its last Test. After a Test every reader of the list re-reads it.
+  const testRuntime = async (who: string, runtime: string) => {
+    if (await reportingWrite(`test ${who}`, () => api.testAgentRuntime(runtime))) {
+      invalidateKeys('settings:agent-runtimes')
+    }
   }
 
-  // A card the gateway has not measured yet reads `checking` (availability measured in a child
-  // process, a runtime's first readiness probe running in the background). Re-read until each
-  // has its answer; nothing polls once no card is left checking.
+  // A card the gateway has not measured yet reads `checking` (availability is measured in a
+  // child process). Re-read until each has its answer; nothing polls once no card is left
+  // checking. The reads start nothing.
   const providersChecking = (providers ?? []).some((p) => p.availability?.state === 'checking')
   useVisiblePoll(() => { if (providersChecking) refreshProviders() }, providersChecking ? CHECKING_POLL_MS : null)
-  const runtimesChecking = runtimes.some((r) => r.state === 'checking')
-  useVisiblePoll(() => {
-    if (runtimesChecking) { setRuntimeOverride(null); refreshRuntimes() }
-  }, runtimesChecking ? CHECKING_POLL_MS : null)
   // Same for a channel whose receiver the gateway is starting: re-read until it says how that went.
   const channelsStarting = (channelsData ?? []).some((c) => c.health?.state === 'starting')
   useVisiblePoll(() => { if (channelsStarting) refreshChannels() }, channelsStarting ? CHECKING_POLL_MS : null)
-
-  // After kicking off a sign-in, the CLI auth (often a browser OAuth flow) takes a
-  // few seconds — a single fixed delay misses it. Poll a fresh probe a handful of
-  // times until the runtime stops reporting needs_login (or we give up).
-  const pollAfterSignIn = async (id: string) => {
-    for (let i = 0; i < 12; i++) {
-      await new Promise((r) => setTimeout(r, 2500))
-      let rts: AgentRuntime[] = []
-      try { rts = await api.agentRuntimes(true, id) } catch { continue }
-      setRuntimeOverride(rts)
-      const rt = rts.find((r) => r.provider_id === id || r.name === id)
-      if (rt && rt.state !== 'needs_login') return  // signed in (ready) or a new state
-    }
-  }
 
   // 🔑 THE FAILURE BRANCH COMES FIRST, and it has to: `providers` is `undefined` both while
   // loading and after a rejection, so the skeleton below would otherwise claim "still loading"
@@ -184,11 +165,10 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   const runtimeByExt = new Map<string, AgentRuntime>()
   for (const r of runtimes) if (r.extension) runtimeByExt.set(r.extension, r)
 
+  // Sign-in runs the CLI's own login in the terminal, which the user drives. Whether it worked is
+  // what the card's Test then says: nothing re-starts the CLI behind the sign-in to find out.
   const onSignIn = (rt: AgentRuntime) => {
     if (rt.login_command?.length) requestRunInTerminal(rt.login_command.join(' '))
-    // Sign-in completes asynchronously (terminal/browser auth) — poll a fresh
-    // readiness probe until the runtime is no longer needs_login.
-    void pollAfterSignIn(rt.provider_id || rt.name)
   }
 
   const orderedTypes = [...ENTITY_ORDER.filter((t) => byType.has(t)), ...[...byType.keys()].filter((t) => !ENTITY_ORDER.includes(t))]
@@ -203,7 +183,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
           <EntitySection key={type} icon={meta.icon} label={meta.label} hint={meta.hint} count={exts.length}>
             {type === 'agent' && exts.map((ext) => (
               <ProviderCard key={ext.name} ext={ext} runtime={runtimeByExt.get(ext.name)} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onSignIn={onSignIn}
-                onRecheck={() => recheckRuntimes(runtimeByExt.get(ext.name)?.name)} />
+                onTest={(rt) => testRuntime(ext.displayName || ext.name, rt.provider_id || rt.name)} />
             ))}
 
             {type === 'model' && <ModelEntitySection exts={exts} availableByProvider={availableByProvider} openProvider={openProvider} openCfg={openCfg} onChanged={reload} />}

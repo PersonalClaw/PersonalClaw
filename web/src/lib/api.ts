@@ -749,6 +749,8 @@ export interface AgentHook { command: string; matcher?: string; source?: string 
 export interface WaitingAgentHook { event: string; command: string; matcher: string; seal: string }
 export interface AgentProvider {
   name: string; provider_id: string; type: string; ready: boolean; state: string; detail: string
+  /** When the user's last Test of this runtime ran (ISO-8601), or `null` when nobody has. */
+  tested_at: string | null
 }
 export interface DiscoveredAgent {
   id: string; name: string; runtime: string; description: string; provider_agent: string; reasoning_effort: string; models: string[]
@@ -5087,6 +5089,8 @@ export interface SettingsProvider {
 export interface AgentRuntime {
   name: string; provider_id: string; type: string; extension: string | null
   ready: boolean; state: string; detail: string; login_command: string[] | null
+  /** When the user's last Test of it ran (ISO-8601), or `null` when nobody has tested it. */
+  tested_at: string | null
 }
 // One BYO-runner catalog row. `health` is MEASURED
 // evidence or `null` for "never probed" — and inside it, `version`/`latency_ms` are
@@ -5105,6 +5109,11 @@ export interface RunnerCapabilities {
 export interface RunnerRow {
   id: string; display_name: string; runtime_id: string; source: string
   dialect: string; bin_names: string[]
+  /** What a Check runs after the CLI is resolved: `<bin> <version_args>`. */
+  version_args: string[]
+  /** Whether an installed agent app (or a provider entry of yours) set this runner up here —
+   *  only then is a Check offered, and only then does the server run it. */
+  set_up: boolean
   health: RunnerHealth | null
   // Whether `health` is still current per `agent.runner_health_check_secs`. `null` is
   // unknown (never probed, or a timestamp the backend could not parse) — distinct from
@@ -7402,8 +7411,9 @@ export const api = {
     put<{ ok: boolean; theme: ThemeRecord; revision: string }>(`/api/themes/${encodeURIComponent(slug)}`, body, basedOn(base)),
   deleteTheme: (slug: string) => del(`/api/themes/${encodeURIComponent(slug)}`),
   agentProviders: () => get<{ agent_providers: AgentProvider[] }>('/api/agent-providers').then((d) => d.agent_providers),
-  agentProviderAgents: (id: string, refresh = false) =>
-    get<{ agents: DiscoveredAgent[]; permission_modes: string[] }>(`/api/agent-providers/${encodeURIComponent(id)}/agents${refresh ? '?refresh=1' : ''}`),
+  // The agents a runtime offered at its last Test — a read that starts nothing (none before a Test).
+  agentProviderAgents: (id: string) =>
+    get<{ agents: DiscoveredAgent[]; permission_modes: string[]; tested_at: string | null }>(`/api/agent-providers/${encodeURIComponent(id)}/agents`),
 
   // models
   // The one chat-model list (active selection, or all chat-capable on fallback).
@@ -7426,17 +7436,20 @@ export const api = {
   // (A provider has no on/off of its own: its switch is its app's `enableApp` / `disableApp`.)
   recheckProviderAvailability: (name: string) =>
     post<{ name: string; availability: ProviderAvailability }>(`/api/providers/${encodeURIComponent(name)}/availability`),
-  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A plain read
-  // never spawns a runtime: it answers from the live connection or the last measurement, and a
-  // never-measured runtime reads `checking`. refresh=true measures now (post-sign-in / manual
-  // re-check); `runtime` scopes that to one runtime instead of every one.
-  agentRuntimes: (refresh = false, runtime = '') =>
-    get<{ agent_providers: AgentRuntime[] }>(`/api/agent-providers${refresh ? `?refresh=1${runtime ? `&runtime=${encodeURIComponent(runtime)}` : ''}` : ''}`)
-      .then((d) => d.agent_providers),
-  // BYO runner catalog rows. A plain read returns the last PERSISTED evidence (no
-  // spawns); probe=true re-measures every runner's `--version` handshake first, which
-  // is what the panel's "Re-check runners" action calls.
-  agentRunners: (probe = false) => get<{ runners: RunnerRow[] }>(`/api/agent-runners${probe ? '?probe=1' : ''}`).then((d) => d.runners),
+  // agent runtimes (native + acp:<cli>) with readiness — merged onto agent cards. A read that
+  // starts nothing: each runtime answers from whether its CLI is installed and from the user's
+  // last Test, and one nobody has tested reads `untested`.
+  agentRuntimes: () => get<{ agent_providers: AgentRuntime[] }>('/api/agent-providers').then((d) => d.agent_providers),
+  // The card's Test: STARTS that one runtime's CLI once (ACP handshake + one empty session),
+  // records what it found, and answers with the runtime's new row. The only call that starts it.
+  testAgentRuntime: (id: string) =>
+    post<{ agent_provider: AgentRuntime }>(`/api/agent-providers/${encodeURIComponent(id)}/test`).then((d) => d.agent_provider),
+  // BYO runner catalog rows: the health each runner's last Check measured (no spawns).
+  agentRunners: () => get<{ runners: RunnerRow[] }>('/api/agent-runners').then((d) => d.runners),
+  // A runner's Check: runs `<bin> <version_args>` for that ONE runner, and only when it is set up
+  // here (`set_up`) — the server refuses any other with `runner_not_set_up`.
+  checkAgentRunner: (id: string) =>
+    post<{ runner: RunnerRow }>(`/api/agent-runners/${encodeURIComponent(id)}/check`).then((d) => d.runner),
   // generic multi-instance CRUD (any multiInstance=true provider — MCP/OpenAI tools, …).
   providerInstances: (name: string) => get<{ instances: ProviderInstance[] }>(`/api/providers/${encodeURIComponent(name)}/instances`).then((d) => d.instances),
   // An MCP Tool Servers instance is an MCP server: creating one, or changing what it runs, is asked

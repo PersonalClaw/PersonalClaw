@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { AgentDefaultsPanel } from './AgentDefaultsPanel'
 
@@ -16,13 +16,15 @@ import { AgentDefaultsPanel } from './AgentDefaultsPanel'
 //    capability matrix.
 
 const agentRunners = vi.fn()
+const checkAgentRunner = vi.fn()
 const personalclawConfig = vi.fn()
 
 const VERBATIM = "'gemini' not found on PATH (looked for: gemini); set GEMINI_CLI_EXECUTABLE to override"
 
 vi.mock('../../lib/api', () => ({
   api: {
-    agentRunners: (probe?: boolean) => agentRunners(probe),
+    agentRunners: () => agentRunners(),
+    checkAgentRunner: (id: string) => checkAgentRunner(id),
     personalclawConfig: () => personalclawConfig(),
     patchConfig: () => Promise.resolve({}),
     agents: () => Promise.resolve({ default_agent: '' }),
@@ -51,7 +53,7 @@ vi.mock('../../lib/data', () => ({
 
 const unhealthyRow = {
   id: 'gemini-cli', display_name: 'Gemini CLI', runtime_id: 'acp:gemini-cli', source: 'builtin',
-  dialect: '', bin_names: ['gemini'],
+  dialect: '', bin_names: ['gemini'], version_args: ['--version'], set_up: false,
   health: {
     ok: false, probe: 'path', checked_at: '2026-08-17T10:00:00+00:00',
     version: null, latency_ms: null, error: VERBATIM, resolved_command: [],
@@ -64,7 +66,7 @@ const unhealthyRow = {
 
 const healthyRow = {
   id: 'claude-code', display_name: 'Claude Code', runtime_id: 'acp:claude-code', source: 'builtin',
-  dialect: 'claude-code', bin_names: ['claude'],
+  dialect: 'claude-code', bin_names: ['claude'], version_args: ['--version'], set_up: true,
   health: {
     ok: true, probe: 'version', checked_at: '2026-08-17T10:00:00+00:00',
     version: '2.1.233', latency_ms: 58, error: null, resolved_command: ['/usr/bin/claude'],
@@ -82,6 +84,40 @@ describe('the runner rows in Settings → Agent defaults', () => {
   beforeEach(() => {
     personalclawConfig.mockResolvedValue({ agent: { unattended_requires_verified_adapter: false } })
     agentRunners.mockResolvedValue([healthyRow, unhealthyRow])
+    checkAgentRunner.mockReset()
+  })
+
+  // ── what runs, and when: a runner's CLI runs only for its own Check ─────────────────────────
+  //
+  // "Re-check runners" used to run `<bin> --version` for EVERY catalogued CLI on PATH, one the user
+  // had installed an app for or not, and the button did not say so. A Check now names what it runs,
+  // runs it for the one runner pressed, and exists only on a runner an installed app set up.
+
+  it('reading the runners runs no CLI, and nothing offers to run every CLI at once', async () => {
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeTruthy())
+    expect(agentRunners).toHaveBeenCalled()
+    expect(checkAgentRunner).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /re-check/i })).toBeNull()
+  })
+
+  it("a set-up runner's Check says what it runs, and runs it for that runner alone", async () => {
+    checkAgentRunner.mockResolvedValue({ ...healthyRow, health: { ...healthyRow.health, version: '2.2.0' } })
+    render(<AgentDefaultsPanel />)
+    const check = await screen.findByRole('button', { name: 'Check version: Claude Code' })
+    expect(check.getAttribute('title')).toBe('Runs claude --version')
+    expect(screen.getByText('claude --version')).toBeTruthy()
+    await act(async () => { fireEvent.click(check) })
+    await waitFor(() => expect(screen.getByText('v2.2.0')).toBeTruthy())
+    expect(checkAgentRunner).toHaveBeenCalledTimes(1)
+    expect(checkAgentRunner).toHaveBeenCalledWith('claude-code')
+  })
+
+  it('a runner nothing set up offers no Check and says PersonalClaw never runs it', async () => {
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Check version: Gemini CLI' })).toBeNull()
+    expect(screen.getByText('Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it.')).toBeTruthy()
   })
 
   it('prints the probe error verbatim, not a house paraphrase', async () => {

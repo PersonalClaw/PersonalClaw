@@ -59,8 +59,9 @@ Measured on the development host on 2026-08-19:
 | `gemini` | **not installed** | catalog row and bundle exist; provider unverified |
 
 Re-measured on the same host on **2026-09-19**, both by the CLIs' own `--version` and by the
-product's own probe (`GET /api/agent-runners?probe=1`, which is what a user sees — a plain `GET`
-is a read of persisted evidence and reports `health: null` until something probes):
+product's own probe (`GET /api/agent-runners?probe=1` then, which is what a user saw — a plain `GET`
+is a read of persisted evidence and reports `health: null` until something probes; the probe is now
+each runner's Check, `POST /api/agent-runners/{id}/check`):
 
 | Component | Version | Notes |
 |---|---|---|

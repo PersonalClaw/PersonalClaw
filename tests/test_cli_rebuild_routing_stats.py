@@ -65,16 +65,26 @@ class TestItDispatches:
         assert called == [True], "cli.main did not dispatch the flag to the rebuild executor"
 
     def test_it_does_not_shadow_the_other_doctor_flag_or_plain_doctor(self, monkeypatch):
-        """Three mutually exclusive doctor paths. A new branch must not swallow the other two."""
+        """Three mutually exclusive doctor paths. A new branch must not swallow the other two.
+
+        ``--start-agent-clis`` is not a fourth path: it is plain doctor, told it may start the
+        agent CLIs, and plain doctor is told it may not."""
         seen: list[str] = []
         monkeypatch.setattr(cli, "_doctor_rebuild_routing_stats", lambda: seen.append("rebuild"))
         monkeypatch.setattr(cli, "_doctor_paths", lambda: seen.append("paths"))
-        monkeypatch.setattr(cli, "_doctor", lambda: seen.append("doctor"))
+        monkeypatch.setattr(
+            cli,
+            "_doctor",
+            lambda *, start_agent_clis: seen.append(
+                "doctor, starting agent CLIs" if start_agent_clis else "doctor"
+            ),
+        )
 
         for argv, expected in (
             (["personalclaw", "doctor", "--paths"], "paths"),
             (["personalclaw", "doctor", "--rebuild-routing-stats"], "rebuild"),
             (["personalclaw", "doctor"], "doctor"),
+            (["personalclaw", "doctor", "--start-agent-clis"], "doctor, starting agent CLIs"),
         ):
             seen.clear()
             monkeypatch.setattr(sys, "argv", argv)
