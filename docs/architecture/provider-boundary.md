@@ -181,9 +181,19 @@ The clearest illustration of the tenet is the Slack extraction (originally
   session-origin labels are `origin="channel"`. Old Slack-named routes 404 —
   clean break, no aliases.
 
-The same pattern applied to the Ollama client (`llm/ollama.py`, 1002 LOC →
-`apps/ollama-models/provider.py`) and the vendor-specific inbox source
-(deleted outright — channels are channel providers, not inbox sources).
+The same pattern applied to the Ollama client (`llm/ollama.py`, 1002 LOC → an
+`ollama-models` app bundle) and the vendor-specific inbox source (deleted
+outright — channels are channel providers, not inbox sources).
+
+The Ollama bundle has since moved into the wheel, as `apps/native/ollama-models/`,
+under an owner ruling (2026-09-21): a fresh install gets a chat and embedding
+provider with no credential and no second repository to clone. That changed
+where the bundle ships, not where the line is. Its client, catalog and
+endpoints are still bundle code behind the `model` seam; it imports core only
+through `personalclaw.sdk.*` and registers its own type at import, so core gained
+no `llm/*.py` module back. See [app-platform.md](app-platform.md) for the
+native-bundle contract it meets. What the move did change is removability: a
+native app is locked on, so it can be neither turned off nor uninstalled.
 
 ## Rules of thumb for contributors
 
