@@ -102,8 +102,8 @@ def boxed_backend(tmp_path, monkeypatch):
     The wrap is stood in for by one that makes the same kind of file, so what is under test
     is the supervisor's handling of it on every platform, including one with no OS sandbox.
     """
+    from personalclaw import sandbox
     from personalclaw.apps import manager
-    from personalclaw.sandbox_providers import none as none_tier
 
     system_temp = tmp_path / "system-temp"
     system_temp.mkdir()
@@ -114,7 +114,7 @@ def boxed_backend(tmp_path, monkeypatch):
         os.close(fd)
         return list(argv), path
 
-    monkeypatch.setattr(none_tier, "wrap_argv", wrap_that_leaves_a_file)
+    monkeypatch.setattr(sandbox, "wrap_argv", wrap_that_leaves_a_file)  # the `none` tier reads it
     entry = manager.app_dir("boxed") / "backend" / "server.py"
     entry.parent.mkdir(parents=True)
     entry.write_text("import time\nwhile True:\n    time.sleep(1)\n", encoding="utf-8")

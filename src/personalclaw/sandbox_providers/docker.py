@@ -34,7 +34,9 @@ import subprocess
 import sys
 import time
 
-from personalclaw.sandbox import ResourceCeilings, create_subprocess_limited
+# The spawn is read from the module when a command runs (see sandbox_providers/none.py).
+from personalclaw import sandbox
+from personalclaw.sandbox import ResourceCeilings
 from personalclaw.sandbox_providers.base import (
     SandboxHandle,
     SandboxProvider,
@@ -214,7 +216,7 @@ class _DockerHandle(SandboxHandle):
         )
         # Ceilings on the docker CLIENT are harmless and keep the seam uniform with ``none``;
         # the container's OWN limits are the ``--pids-limit``/``--memory`` flags built above.
-        return await create_subprocess_limited(
+        return await sandbox.create_subprocess_limited(
             *self._argv, profile=self._spec.profile, ceilings=self._ceilings, **kwargs
         )
 

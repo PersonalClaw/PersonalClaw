@@ -24,10 +24,10 @@ async def _spawned_env(transport: AcpProcess) -> dict:
     """Spawn *transport* against a mocked subprocess and return the env dict it passed
     to ``create_subprocess_exec`` (the env-building the transport owns)."""
     with (
-        # The OS-sandbox wrap now lives behind the ``none`` sandbox provider, so patch
-        # wrap_argv where that provider imports it. The transport composes it via
+        # The OS-sandbox wrap lives behind the ``none`` sandbox provider, which reads
+        # ``sandbox.wrap_argv`` when it wraps. The transport composes it via
         # resolve_provider("none").wrap(...); the final launch is still create_subprocess_exec.
-        patch("personalclaw.sandbox_providers.none.wrap_argv", return_value=(["/bin/echo"], None)),
+        patch("personalclaw.sandbox.wrap_argv", return_value=(["/bin/echo"], None)),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec,
         patch("personalclaw.session._track_pid"),
         patch("personalclaw.session._track_session_pid"),

@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-from personalclaw.sandbox import create_subprocess_limited, wrap_argv
+# The module, and its functions read from it when a command runs: a name bound at import keeps
+# whatever it held at that moment, so a replacement made after it, or undone before it, is lost.
+from personalclaw import sandbox
 from personalclaw.sandbox_providers.base import SandboxHandle, SandboxProvider, SandboxSpec
 
 NONE_PROVIDER_NAME = "none"
@@ -36,7 +38,7 @@ class _NoneHandle(SandboxHandle):
         # Ceilings are delivered by the post-exec shim inside create_subprocess_limited —
         # never preexec_fn — so the parent stays on posix_spawn and the event loop is never
         # blocked on a fork. ``ceilings=None`` means load-from-config at exec time.
-        return await create_subprocess_limited(
+        return await sandbox.create_subprocess_limited(
             *self._argv, profile=self._profile, ceilings=self._ceilings, **kwargs
         )
 
@@ -64,7 +66,7 @@ class NoneSandboxProvider(SandboxProvider):
         return True
 
     def wrap(self, spec: SandboxSpec, argv: list[str]) -> _NoneHandle:
-        wrapped, cleanup_path = wrap_argv(list(argv), mode=spec.mode)
+        wrapped, cleanup_path = sandbox.wrap_argv(list(argv), mode=spec.mode)
         return _NoneHandle(wrapped, spec.profile, spec.ceilings, cleanup_path)
 
 

@@ -75,6 +75,36 @@ def _group_is_empty(pgid: int, *, deadline: float = 2.0) -> bool:
     return False
 
 
+def _forking_script(tmp_path: Path) -> tuple[Path, Path]:
+    """A shell that forks a long-lived grandchild inheriting its pipes, and the file where it
+    records both pids: ``(script, pids)``."""
+    pids = tmp_path / "pids"
+    script = tmp_path / "forks.sh"
+    script.write_text(
+        f'#!/bin/sh\necho "child $$" >> "{pids}"\n'
+        f'/bin/sleep {GRANDCHILD_SECS} &\necho "grandchild $!" >> "{pids}"\nwait\n'
+    )
+    script.chmod(0o755)
+    return script, pids
+
+
+async def _until_forked(pids: Path, *, within: float = 30.0) -> list[list[str]]:
+    """The ``(role, pid)`` rows once a forking stub has recorded both its child and grandchild.
+
+    Waited on, never assumed from the clock: on a loaded host the stub can start a second or more
+    late, and a test that read the file after a fixed delay found no grandchild yet (or no file),
+    and measured a grandchild that did not exist.
+    """
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        with contextlib.suppress(FileNotFoundError):
+            rows = [ln.split() for ln in pids.read_text().split("\n") if ln.strip()]
+            if {role for role, _ in rows} == {"child", "grandchild"}:
+                return rows
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"the stub never recorded both of its processes within {within:.0f}s")
+
+
 # ── the call site ──
 
 
@@ -134,23 +164,24 @@ async def test_run_verify_command_kills_the_grandchild_within_the_bound(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_control_the_replaced_shape_blows_the_same_bound():
+async def test_control_the_replaced_shape_blows_the_same_bound(tmp_path):
     """VACUITY: BOUND_SECS discriminates. The replaced shape must fail the same check.
 
     Spawned with ``start_new_session=True`` but killed by **pid** — that isolates the
     variable to *which* thing is signalled, and lets this test clean up the group it
-    deliberately orphans.
+    deliberately orphans. The clock starts once the grandchild holds the pipe: a shell killed
+    before it forks has nothing to wait out, and returned under the bound on a loaded host.
     """
+    script, pids = _forking_script(tmp_path)
     proc = await asyncio.create_subprocess_exec(
-        "/bin/sh",
-        "-c",
-        FORKING_CMD,
+        str(script),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
     )
     pgid = os.getpgid(proc.pid)
     try:
+        await _until_forked(pids)
         started = time.monotonic()
         try:
             await asyncio.wait_for(proc.communicate(), timeout=1)
@@ -808,15 +839,30 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, t
         ),
     )
 
+    # The install's deadline starts when its spawn returns. The spawn returns only once the stub
+    # has forked, so a stub that starts late on a loaded host still meets the deadline with a
+    # grandchild to leak, and the time is measured from there.
+    real_spawn = asyncio.create_subprocess_exec
+    recorded: list[list[str]] = []
+    deadline_from: list[float] = []
+
+    async def spawn_then_wait_for_the_fork(program, *args, **kwargs):
+        proc = await real_spawn(program, *args, **kwargs)
+        if str(program) == str(stub):
+            recorded.extend(await _until_forked(pids))
+            deadline_from.append(time.monotonic())
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn_then_wait_for_the_fork)
+
     orch = gw.GatewayOrchestrator.__new__(gw.GatewayOrchestrator)
     orch.dashboard_state = None
     orch.sessions = None
 
-    started = time.monotonic()
     await orch._auto_apply_update()
-    elapsed = time.monotonic() - started
+    assert deadline_from, "the auto-update never started the install this test times out"
+    elapsed = time.monotonic() - deadline_from[0]
 
-    recorded = [ln.split() for ln in pids.read_text().split("\n") if ln.strip()]
     roles = {role for role, _ in recorded}
     assert roles == {"child", "grandchild"}, (
         f"the pip stub did not fork as expected (recorded {recorded!r}) — this test would "
@@ -866,14 +912,7 @@ async def test_control_the_gateway_shape_before_the_fix_leaks_the_pair(tmp_path)
     pytest worker down with the child. That is the same hazard
     ``cancellation._is_group_leader`` exists to prevent, and a test is not exempt from it.
     """
-    pids = tmp_path / "pids"
-    script = tmp_path / "forks.sh"
-    script.write_text(
-        f'#!/bin/sh\necho "child $$" >> "{pids}"\n'
-        f'/bin/sleep {GRANDCHILD_SECS} &\necho "grandchild $!" >> "{pids}"\nwait\n'
-    )
-    script.chmod(0o755)
-
+    script, pids = _forking_script(tmp_path)
     proc = await asyncio.create_subprocess_exec(
         str(script),
         stdout=asyncio.subprocess.PIPE,
@@ -883,13 +922,13 @@ async def test_control_the_gateway_shape_before_the_fix_leaks_the_pair(tmp_path)
     pgid = os.getpgid(proc.pid)
     assert pgid == proc.pid, "the control must lead its own group for its cleanup to be safe"
     try:
+        # The pair exists first, however late the script starts; then the pre-fix shape.
+        recorded = await _until_forked(pids)
         with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
             await asyncio.wait_for(proc.communicate(), timeout=1)
         # ...and then NO teardown whatsoever: the pre-fix arm did not exist.
         await asyncio.sleep(0.3)
 
-        recorded = [ln.split() for ln in pids.read_text().split("\n") if ln.strip()]
-        assert {r for r, _ in recorded} == {"child", "grandchild"}
         alive = []
         for role, pid in recorded:
             try:

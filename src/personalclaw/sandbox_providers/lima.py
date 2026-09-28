@@ -47,7 +47,9 @@ import shutil
 import subprocess
 import time
 
-from personalclaw.sandbox import ResourceCeilings, create_subprocess_limited
+# The spawn is read from the module when a command runs (see sandbox_providers/none.py).
+from personalclaw import sandbox
+from personalclaw.sandbox import ResourceCeilings
 from personalclaw.sandbox_providers.base import (
     SandboxHandle,
     SandboxProvider,
@@ -235,7 +237,7 @@ class _LimaHandle(SandboxHandle):
         )
         # Ceilings bound the ``limactl`` CLIENT and keep the seam uniform with ``none``/``docker``;
         # the guest's OWN pids/memory bounds are instance-creation config, not a per-exec flag.
-        return await create_subprocess_limited(
+        return await sandbox.create_subprocess_limited(
             *self._argv, profile=self._spec.profile, ceilings=self._ceilings, **kwargs
         )
 
