@@ -86,6 +86,7 @@ from personalclaw.onboarding_import.sources.common import (
     mcp_item,
     message_count,
     not_imported_rows,
+    not_read,
     note_unreadable,
     one_line,
     prompt_history,
@@ -94,6 +95,7 @@ from personalclaw.onboarding_import.sources.common import (
     settings_not_imported,
     slug_name,
     text_item,
+    unreadable_conversations,
     unreadable_file,
 )
 
@@ -397,9 +399,7 @@ def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
         _scan_rules(base, result)
         _scan_conversations(base, result, look=look)
         _scan_settings(config, config_name, withheld, result)
-        history = prompt_history(base / _HISTORY_FILE)
-        if history is not None:
-            result.not_imported.append(history)
+        prompt_history(base / _HISTORY_FILE, result)
         _count_withheld_files(base, result)
     result.note_withheld()
     return result
@@ -803,11 +803,6 @@ def _too_large(*, compressed: bool) -> str:
     return f"{what}, the most this import reads for one conversation"
 
 
-def _not_read(exc: OSError) -> str:
-    """Why a file could not be opened or read, in the system's words and without its path."""
-    return f"could not be read ({exc.strerror})" if exc.strerror else "could not be read"
-
-
 def _plain_name(name: str) -> str:
     """A session file's name as Codex names it before it compresses it."""
     return name.removesuffix(".zst") if name.endswith(_COMPRESSED_SUFFIX) else name
@@ -892,7 +887,12 @@ def _open_session(path: Path) -> TextIO:
 
 def _session_titles(base: Path) -> dict[str, str]:
     """``{session id: thread name}`` from ``session_index.jsonl`` — the names Codex lists
-    conversations by. A later line for an id is a rename, so it wins."""
+    conversations by. A later line for an id is a rename, so it wins.
+
+    A line that does not parse is passed over: Codex appends to this file, and the one it is
+    writing now is not damage. An index that is there and will not open raises
+    :class:`FileUnreadable`: the conversations still come over, under their first prompts, and
+    the scan says which file their names were in."""
     path = base / _SESSION_INDEX
     titles: dict[str, str] = {}
     if not path.is_file() or refuses(path):
@@ -908,8 +908,8 @@ def _session_titles(base: Path) -> dict[str, str]:
                     session, name = entry.get("id"), entry.get("thread_name")
                     if isinstance(session, str) and isinstance(name, str) and name.strip():
                         titles[session] = name
-    except OSError:
-        return titles
+    except OSError as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="text")) from exc
     return titles
 
 
@@ -976,7 +976,7 @@ def _session_lines(path: Path) -> Generator[str, None, None]:
         with _open_session(path) as handle:
             yield from handle
     except OSError as exc:
-        raise SessionUnreadable(_not_read(exc)) from None
+        raise SessionUnreadable(not_read(exc)) from None
     except zstandard.ZstdError:
         raise SessionUnreadable(_DAMAGED) from None
 
@@ -1224,10 +1224,6 @@ def _session_files(root: Path) -> list[Path]:
     return [found[plain] for plain in sorted(found)]
 
 
-#: How many unreadable sessions the step names before it says how many more there are.
-_UNREADABLE_NAMED = 6
-
-
 def _session_label(path: Path, titles: Mapping[str, str]) -> str:
     """A session file as the step names it: its file name, after the title Codex lists it by
     when it has one."""
@@ -1248,9 +1244,15 @@ def _scan_conversations(base: Path, result: ScanResult, *, look: bool) -> None:
     A session this import cannot read is named with the reason. One Codex archived (moved to
     ``archived_sessions/``) is counted, not imported. To ``look`` is to read each file not read
     before only as far as its first typed prompt: a provisional item, read in full later
-    (:attr:`ScanResult.unread`) — and a file that cannot be read to its end is named then.
+    (:attr:`ScanResult.unread`) — and a file that cannot be read to its end is named then. An
+    index of their names that cannot be read is named on the scan, and they come over under their
+    first prompts.
     """
-    titles = _session_titles(base)
+    try:
+        titles = _session_titles(base)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        titles = {}
     unreadable: list[str] = []
     for path in _session_files(base / _SESSIONS_DIR):
         if refuses(path):
@@ -1284,13 +1286,10 @@ def _scan_conversations(base: Path, result: ScanResult, *, look: bool) -> None:
                 provisional=not reading.whole,
             )
         )
-    named = unreadable[:_UNREADABLE_NAMED]
-    if len(unreadable) > len(named):
-        named.append(f"{len(unreadable) - len(named)} more cannot be read either.")
     not_imported_rows(
         result,
         [
-            (len(unreadable), "Unreadable conversations", " ".join(named)),
+            unreadable_conversations(unreadable),
             (
                 len(_session_files(base / _ARCHIVED_SESSIONS_DIR)),
                 "Archived conversations",

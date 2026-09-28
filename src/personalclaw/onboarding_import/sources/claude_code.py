@@ -67,8 +67,10 @@ from personalclaw.onboarding_import.sources.common import (
     McpListing,
     McpServer,
     Reading,
+    SessionUnreadable,
     Transcript,
     Undecided,
+    Unreadable,
     conversation_note,
     denied_command_item,
     display_path,
@@ -79,6 +81,7 @@ from personalclaw.onboarding_import.sources.common import (
     mcp_item,
     message_count,
     not_imported_rows,
+    not_read,
     note_unreadable,
     on_this_machine,
     one_line,
@@ -87,6 +90,7 @@ from personalclaw.onboarding_import.sources.common import (
     settings_not_imported,
     slug_name,
     text_item,
+    unreadable_conversations,
     unreadable_file,
 )
 
@@ -449,9 +453,7 @@ def scan(root: Path | str | None = None, *, look: bool = False) -> ScanResult:
         _scan_commands(base, result)
         _scan_conversations(base, known, result, look=look)
         _scan_settings(base, result)
-        history = prompt_history(base / _HISTORY_FILE)
-        if history is not None:
-            result.not_imported.append(history)
+        prompt_history(base / _HISTORY_FILE, result)
         _count_withheld_files(base, result)
     result.note_withheld()
     return result
@@ -874,47 +876,55 @@ class _Lines:
         )
 
 
-def _read_lines(path: Path, *, look: bool) -> _Lines | Undecided | None:
+def _read_lines(path: Path, *, look: bool) -> _Lines | Undecided:
     """``path``'s lines, read in full — or, to ``look``, only until the first prompt, and never
-    past :data:`LOOK_BYTES`: :data:`UNDECIDED` when none was reached by then. ``None`` when the
-    file cannot be opened."""
+    past :data:`LOOK_BYTES`: :data:`UNDECIDED` when none was reached by then.
+
+    Raises :class:`SessionUnreadable` when the file cannot be opened or read, as Codex's reader
+    does. It used to answer ``None``, the answer for a file with no prompt in it, so a transcript
+    that would not open was left out of the step without a word, and an import of it said it
+    held no conversation."""
     lines = _Lines()
     try:
-        handle = path.open(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    with handle:
-        read = 0
-        for count, raw in enumerate(handle):
-            if not count % GIVE_WAY_LINES:
-                give_way()
-            lines.feed(raw)
-            if look:
-                if lines.prompt:
-                    return lines
-                read += len(raw)
-                if read >= LOOK_BYTES:
-                    return UNDECIDED
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            read = 0
+            for count, raw in enumerate(handle):
+                if not count % GIVE_WAY_LINES:
+                    give_way()
+                lines.feed(raw)
+                if look:
+                    if lines.prompt:
+                        return lines
+                    read += len(raw)
+                    if read >= LOOK_BYTES:
+                        return UNDECIDED
+    except OSError as exc:
+        raise SessionUnreadable(not_read(exc)) from None
     return lines
 
 
 def _reading(path: Path, *, look: bool) -> Reading:
     """What ``path`` holds, as the step lists it: remembered while the file is unchanged, else
-    read — in full, or to ``look``, only as far as its first prompt."""
+    read — in full, or to ``look``, only as far as its first prompt. A file that cannot be read is
+    remembered as :class:`Unreadable`, with why."""
     signature = file_signature(path)
     if signature is None:
         return None
     found, reading = READINGS.recall(path, signature, whole=not look)
     if found:
         return reading
-    lines = _read_lines(path, look=look)
-    if lines is None or lines is UNDECIDED:
-        reading = lines
-    elif lines.prompt:
-        # A look that reached the end of the file before its first prompt read the whole file.
-        reading = lines.transcript(path, whole=not look)
+    try:
+        lines = _read_lines(path, look=look)
+    except SessionUnreadable as exc:
+        reading = Unreadable(exc.reason)
     else:
-        reading = None
+        if lines is UNDECIDED:
+            reading = lines
+        elif lines.prompt:
+            # A look that reached the end of the file before its first prompt read the whole file.
+            reading = lines.transcript(path, whole=not look)
+        else:
+            reading = None
     READINGS.keep(path, signature, reading)
     return reading
 
@@ -929,12 +939,18 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
     or the summary it writes after compacting (the conversation it summarises is imported
     whole). Every text passes floor 2. ``None`` for a file with no prompt in it.
 
-    Read whole, so what the step says of the file becomes final too.
+    Raises :class:`SessionUnreadable` for a file that cannot be read, which the import refuses with
+    the reason. Read whole, so what the step says of the file becomes final too.
     """
     if refuses(path):
         return None
     signature = file_signature(path)
-    lines = _read_lines(path, look=False)
+    try:
+        lines = _read_lines(path, look=False)
+    except SessionUnreadable as exc:
+        if signature is not None:
+            READINGS.keep(path, signature, Unreadable(exc.reason))
+        raise
     if not isinstance(lines, _Lines):
         return None
     conversation = lines.conversation()
@@ -944,7 +960,8 @@ def read_conversation(path: Path) -> tuple[dict[str, Any], int] | None:
 
 
 def read_for_import(item: ImportItem) -> tuple[dict[str, Any], int] | None:
-    """The conversation ``item`` names, read in full now: :func:`read_conversation` of its file."""
+    """The conversation ``item`` names, read in full now: :func:`read_conversation` of its file.
+    Raises :class:`SessionUnreadable` for a file that cannot be read."""
     return read_conversation(Path(item.path))
 
 
@@ -961,10 +978,14 @@ def _scan_conversations(
 
     A subagent's own transcript (``agent-*.jsonl``) is part of the conversation that started it,
     not a conversation of its own. To ``look`` is to read each file not read before only as far as
-    its first prompt: a provisional item, read in full later (:attr:`ScanResult.unread`).
+    its first prompt: a provisional item, read in full later (:attr:`ScanResult.unread`). A
+    transcript that cannot be read is named with why under "Not brought over", the row Codex's
+    importer names its own in.
     """
+    unreadable: list[str] = []
     for project_dir in _project_dirs(base):
-        origin = f"Project · {_project_label(project_dir.name, known)}"
+        project = _project_label(project_dir.name, known)
+        origin = f"Project · {project}"
         for path in sorted(project_dir.glob("*.jsonl")):
             if not path.is_file() or path.name.startswith("agent-") or refuses(path):
                 continue
@@ -972,6 +993,9 @@ def _scan_conversations(
             reading = _reading(path, look=look)
             if not is_final(reading):
                 result.unread.append(path)
+            if isinstance(reading, Unreadable):
+                unreadable.append(f"{path.name} in {project} {reading.reason}.")
+                continue
             if not isinstance(reading, Transcript):
                 continue
             redactions = reading.redactions or 0
@@ -990,6 +1014,7 @@ def _scan_conversations(
                     provisional=not reading.whole,
                 )
             )
+    not_imported_rows(result, [unreadable_conversations(unreadable)])
 
 
 #: A Bash permission rule, ``Bash(<command>)`` — or ``Bash`` alone, which is every command.

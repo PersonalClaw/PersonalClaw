@@ -39,6 +39,7 @@ from personalclaw.onboarding_import.floors import (
     read_text_safely,
     refuses,
     safe_text,
+    why_unreadable,
 )
 from personalclaw.onboarding_import.model import (
     ImportCategory,
@@ -311,28 +312,37 @@ def scan_skills(source: str, roots: list[tuple[Path, str]], result: ScanResult) 
 
 
 def count_lines(path: Path) -> int:
-    """How many non-blank lines a JSONL file holds (0 when it is refused or unreadable)."""
+    """How many non-blank lines a JSONL file holds: 0 when it is not there or is refused. One that
+    is there and will not open raises :class:`FileUnreadable`, because 0 would say it is empty."""
     if not path.is_file() or refuses(path):
         return 0
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             return sum(1 for line in handle if line.strip())
-    except OSError:
-        return 0
+    except OSError as exc:
+        raise FileUnreadable(path, why_unreadable(exc, kind="text")) from exc
 
 
-def prompt_history(path: Path) -> NotImported | None:
-    """A tool's list of past prompts (``history.jsonl``), counted and never imported."""
-    count = count_lines(path)
+def prompt_history(path: Path, result: ScanResult) -> None:
+    """A tool's list of past prompts (``history.jsonl``), counted under "Not brought over" and
+    never imported. A list that is there and will not open is named on the scan instead: counted
+    as none, it read as a tool with no prompt history."""
+    try:
+        count = count_lines(path)
+    except FileUnreadable as exc:
+        note_unreadable(result, unreadable_file(exc))
+        return
     if not count:
-        return None
-    return NotImported(
-        what="Prompt history",
-        count=count,
-        why=(
-            "PersonalClaw keeps no separate list of past prompts. The prompts in your "
-            "conversations come over with them."
-        ),
+        return
+    result.not_imported.append(
+        NotImported(
+            what="Prompt history",
+            count=count,
+            why=(
+                "PersonalClaw keeps no separate list of past prompts. The prompts in your "
+                "conversations come over with them."
+            ),
+        )
     )
 
 
@@ -553,6 +563,26 @@ class Unreadable:
     :class:`SessionUnreadable` it raised)."""
 
     reason: str
+
+
+def not_read(exc: OSError) -> str:
+    """Why a conversation file could not be opened or read, in the system's words and without its
+    path: the :class:`SessionUnreadable` reason both tools' readers give."""
+    return f"could not be read ({exc.strerror})" if exc.strerror else "could not be read"
+
+
+#: How many unreadable conversations the step names before it says how many more there are.
+UNREADABLE_NAMED = 6
+
+
+def unreadable_conversations(named: list[str]) -> tuple[int, str, str]:
+    """The "Unreadable conversations" row (:func:`not_imported_rows`): how many, then the first
+    :data:`UNREADABLE_NAMED` by name with why, then how many more. ``named`` holds one sentence
+    per file (``"<file> could not be read (Permission denied)."``)."""
+    shown = named[:UNREADABLE_NAMED]
+    if len(named) > len(shown):
+        shown.append(f"{len(named) - len(shown)} more cannot be read either.")
+    return (len(named), "Unreadable conversations", " ".join(shown))
 
 
 class Undecided(Enum):

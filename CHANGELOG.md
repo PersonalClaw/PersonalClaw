@@ -464,6 +464,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Another tool's config file that can't be read is named on the onboarding step and in the Tools page's import list, and no longer shows as nothing to import.**
 
+- **The onboarding step names a Claude Code conversation, a prompt history or a Codex session index it can't read, instead of dropping it, and importing that conversation says why it can't come over.**
+
 - **The Routing tab says when your routing table can't be read, and a reorder or an accepted proposal no longer writes over it.**
 
 - **Pack suggestions say when project fingerprinting is off, and name each project whose folder is missing or protected.**
