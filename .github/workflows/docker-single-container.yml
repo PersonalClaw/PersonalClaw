@@ -7,7 +7,8 @@
 # installed package only when `web/dist` is in the build tree and nothing in
 # `Dockerfile.backend` ever built it. It also asserts the image can offer its default chat
 # model — the installed sign-off record and a non-null `chat_download_offer` — because the
-# image once shipped without that record behind all-200 responses.
+# image once shipped without that record behind all-200 responses. And a login shell in it
+# must find `personalclaw`, as the dashboard's terminal needs.
 # `tools/docker_single_container_smoke.py` owns the assertions (and their negative control);
 # this file only decides WHICH image it runs against.
 #
@@ -44,6 +45,8 @@ on:
       - pyproject.toml
       - scripts/installed_bundled_model_probe.py
       - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
+      # What step 7 judges: the profile a login shell in the image reads.
+      - deploy/docker/personalclaw-profile.sh
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   push:
@@ -62,6 +65,8 @@ on:
       - pyproject.toml
       - scripts/installed_bundled_model_probe.py
       - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
+      # What step 7 judges: the profile a login shell in the image reads.
+      - deploy/docker/personalclaw-profile.sh
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   workflow_dispatch:

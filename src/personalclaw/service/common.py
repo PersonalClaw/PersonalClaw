@@ -57,16 +57,26 @@ class Platform(enum.Enum):
     # on some older Linux systemd versions, so we don't ship one.
     SYSTEMD = "systemd"
     LAUNCHD = "launchd"
+    # The published container image. Its service manager is the container runtime on the host,
+    # which starts, stops and restarts the gateway (the container's own main process) and which
+    # nothing inside the container can drive, so every service action here says what the host
+    # runs instead (`personalclaw.container_host`).
+    CONTAINER = "container"
     UNSUPPORTED = "unsupported"
 
 
 def current_platform() -> Platform:
     """Return the platform whose service manager we should target.
 
+    The container image → CONTAINER, whatever is on PATH.
     Linux with systemctl on PATH → SYSTEMD.
     macOS with launchctl on PATH → LAUNCHD.
     Anything else → UNSUPPORTED.
     """
+    from personalclaw import container_host
+
+    if container_host.in_container():
+        return Platform.CONTAINER
     if sys.platform.startswith("linux") and shutil.which("systemctl"):
         return Platform.SYSTEMD
     if sys.platform == "darwin" and shutil.which("launchctl"):

@@ -46,6 +46,10 @@ services:
       PERSONALCLAW_PORT: "10000"
       PERSONALCLAW_WORKSPACE: /data/workspace
       PERSONALCLAW_BIND_HOST: "0.0.0.0"
+      # Compose starts this container, so the commands PersonalClaw prints for updating,
+      # stopping and restarting it are the compose ones. A container cannot see how it was
+      # started; without this it prints the README's `docker run` ones.
+      PERSONALCLAW_CONTAINER_STARTED_BY: compose
       # NOTE: PERSONALCLAW_BYPASS_LOCAL_NETWORKS is intentionally NOT set here.
       # It comes from `.env` via env_file above. Declaring it in this
       # `environment:` block would override env_file with compose's own

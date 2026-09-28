@@ -516,7 +516,7 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--mode",
         choices=["docker", "service", "none"],
         default="",
-        help="Deployment mode: docker (Compose), service (systemd/launchd), or none",
+        help="Deployment mode: docker (one container), service (systemd/launchd), or none",
     )
     setup_parser.add_argument(
         "--provider",
@@ -1143,12 +1143,12 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     )
 
     # stop
-    stop_parser = sub.add_parser("stop", help="Stop a running PersonalClaw gateway")
+    stop_parser = sub.add_parser("stop", help="Stop this home's PersonalClaw gateway")
     stop_parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
+        help="Stop it only if it listens on this port (default: wherever it listens)",
     )
 
     # restart
@@ -1160,7 +1160,8 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
+        help="Restart it only if it listens on this port; with none running, start one on it "
+        "(default: the port it had, else PERSONALCLAW_PORT or dashboard.url)",
     )
 
     # consolidate — run skill/memory extraction over a session's transcript on
@@ -1714,9 +1715,9 @@ def main() -> None:
     elif args.command == "update":
         _update(to=getattr(args, "to", "") or "")
     elif args.command == "stop":
-        _stop(resolve_client_port(args.port))
+        _stop(args.port)
     elif args.command == "restart":
-        _restart(resolve_client_port(args.port))
+        _restart(args.port)
     elif args.command == "consolidate":
         asyncio.run(_consolidate_cmd(args))
     elif args.command == "service":

@@ -1,17 +1,26 @@
 """E11-P1: service-aware `personalclaw restart`.
 
-Covers the four branches of cli_server._restart:
+Covers the branches of cli_server._restart:
   - a managed service present → restart_service() True → no foreground spawn
-  - no service + a running foreground gateway → _stop then spawn
-  - no service + nothing running (_stop exits) → SystemExit swallowed, still spawn
+  - no service + a running foreground gateway → _stop, then spawn on the port it had
+  - no service + a running gateway `_stop` cannot stop → no spawn: never a second gateway
+  - no service + nothing running → no _stop, spawn on the resolved port
   - the service/platform restart() functions dispatch correctly
+(The container, whose runtime owns the gateway, is in test_container_runtime_owns_the_gateway.)
 """
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from personalclaw import cli_server
+import pytest
+
+from personalclaw import cli_server, gateway_base
+
+
+@pytest.fixture(autouse=True)
+def _not_a_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
 
 def test_restart_uses_service_when_present():
@@ -21,33 +30,53 @@ def test_restart_uses_service_when_present():
         patch.object(cli_server, "_spawn_detached_gateway") as spawn,
         patch.object(cli_server, "_stop") as stop,
     ):
-        cli_server._restart(7777)
+        cli_server._restart(None)
     rs.assert_called_once()
     spawn.assert_not_called()
     stop.assert_not_called()
 
 
-def test_restart_foreground_stops_then_spawns():
-    """No service + running gateway → _stop then spawn a fresh one."""
+def test_restart_foreground_stops_then_spawns_on_the_port_it_had():
+    """No service + running gateway → _stop, then a fresh one on the recorded port."""
     with (
         patch.object(cli_server.service_controller, "restart_service", return_value=False),
+        patch.object(
+            gateway_base, "live_gateway", return_value=gateway_base.LiveGateway(7777, 4242)
+        ),
+        patch.object(cli_server, "_stop") as stop,
+        patch.object(cli_server, "_spawn_detached_gateway") as spawn,
+    ):
+        cli_server._restart(None)
+    stop.assert_called_once_with(None)
+    spawn.assert_called_once_with(7777)
+
+
+def test_restart_does_not_spawn_when_stop_could_not_stop_the_gateway():
+    """_stop exits nonzero while the gateway still runs → the restart ends there. Spawning
+    anyway put a second gateway beside the first, on the same home."""
+    with (
+        patch.object(cli_server.service_controller, "restart_service", return_value=False),
+        patch.object(
+            gateway_base, "live_gateway", return_value=gateway_base.LiveGateway(7777, 4242)
+        ),
+        patch.object(cli_server, "_stop", side_effect=SystemExit(1)) as stop,
+        patch.object(cli_server, "_spawn_detached_gateway") as spawn,
+    ):
+        with pytest.raises(SystemExit):
+            cli_server._restart(None)
+    stop.assert_called_once_with(None)
+    spawn.assert_not_called()
+
+
+def test_restart_with_nothing_running_spawns_without_a_stop():
+    with (
+        patch.object(cli_server.service_controller, "restart_service", return_value=False),
+        patch.object(gateway_base, "live_gateway", return_value=None),
         patch.object(cli_server, "_stop") as stop,
         patch.object(cli_server, "_spawn_detached_gateway") as spawn,
     ):
         cli_server._restart(7777)
-    stop.assert_called_once_with(7777)
-    spawn.assert_called_once_with(7777)
-
-
-def test_restart_swallows_stop_systemexit_and_still_spawns():
-    """_stop exits nonzero when nothing is running → swallowed, gateway still spawned."""
-    with (
-        patch.object(cli_server.service_controller, "restart_service", return_value=False),
-        patch.object(cli_server, "_stop", side_effect=SystemExit(1)) as stop,
-        patch.object(cli_server, "_spawn_detached_gateway") as spawn,
-    ):
-        cli_server._restart(7777)  # must not raise
-    stop.assert_called_once_with(7777)
+    stop.assert_not_called()
     spawn.assert_called_once_with(7777)
 
 

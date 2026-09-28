@@ -206,27 +206,6 @@ def detect_install_kind() -> InstallKind:
     return "pip"
 
 
-_COMPOSE_CMD = "docker compose -f deploy/compose/compose.yaml"
-
-
-def container_instructions(image_tag: str = "") -> list[str]:
-    """The two commands that update a container install, in order.
-
-    Pure and network-free. When *image_tag* is given (the channel/pin-resolved tag,
-    RUM-7) each command carries an inline ``PERSONALCLAW_IMAGE_TAG=<tag>`` assignment
-    so the pull AND the recreate both target that exact tag. The compose file selects
-    the image via ``ghcr.io/…:${PERSONALCLAW_IMAGE_TAG:-latest}``
-    (``deploy/compose/compose.yaml``), and the two commands run as INDEPENDENT
-    processes — setting the variable on only one would let the other fall back to
-    ``latest`` — so the prefix is repeated on both. An empty tag emits the bare
-    commands (compose's own ``latest`` default), which is the pre-RUM-7 answer a
-    caller that resolved nothing still gets.
-    """
-    tag = (image_tag or "").strip()
-    prefix = f"PERSONALCLAW_IMAGE_TAG={tag} " if tag else ""
-    return [f"{prefix}{_COMPOSE_CMD} pull", f"{prefix}{_COMPOSE_CMD} up -d"]
-
-
 def package_root(proj: str) -> str:
     """Resolve the directory ``pip install -e .`` and the frontend build run
     from. Git operations run in the checkout (``proj`` =
@@ -612,12 +591,15 @@ async def build_update_status(current: str) -> dict[str, object]:
     # The container kind rides the `updates` channel/pin: the pull+recreate
     # commands carry the resolved image tag, not a bare `latest`. A pin naming no
     # release resolves to "" — emit NO commands (the panel/CLI say why) rather than
-    # silently offering `latest`, mirroring the pip pin-miss refusal.
+    # silently offering `latest`, mirroring the pip pin-miss refusal. The commands are the
+    # documented install's own (`container_host`), for whichever of the two ran it.
     image_tag = ""
     instructions: list[str] = []
     if kind == "container":
+        from personalclaw import container_host
+
         image_tag = await resolve_image_tag(channel, pin)
-        instructions = container_instructions(image_tag) if image_tag else []
+        instructions = container_host.update_commands(image_tag) if image_tag else []
 
     return {
         "kind": kind,
@@ -828,9 +810,10 @@ async def resolve_wheel_target(channel: str, pin: str = "") -> str:
 
 # ── Container image tag resolver ────────────────────────────────────────────
 #
-# A container install advances by pulling a new image and recreating; the compose
-# file picks the image tag from ``${PERSONALCLAW_IMAGE_TAG:-latest}``. So the
-# container analogue of :func:`resolve_wheel_target` maps the ``updates``
+# A container install advances by pulling a new image and recreating: the README's
+# ``docker run`` names the tag on the image ref, and the compose file picks it from
+# ``${PERSONALCLAW_IMAGE_TAG:-latest}`` (``container_host.update_commands`` spells both). So
+# the container analogue of :func:`resolve_wheel_target` maps the ``updates``
 # channel/pin onto that IMAGE tag rather than a release tag. The tag scheme is
 # ``:X.Y.Z`` (immutable, for a pin), ``:X.Y`` (moving minor, for stable),
 # ``:beta`` (moving prerelease line), ``:latest`` (stable fallback). RUM-8 publishes

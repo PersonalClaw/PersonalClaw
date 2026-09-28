@@ -257,7 +257,7 @@ def _setup_noninteractive(
 ) -> bool:
     """Apply non-interactive setup flags (R8.8, R12.1). False when one was refused.
 
-    ``--mode docker`` prints a ``docker compose up`` quick-start hint.
+    ``--mode docker`` prints the README's ``docker run`` quick-start (``container_host``).
     ``--mode service`` prints a ``personalclaw service install`` hint.
     ``--mode none`` skips all deployment hints.
     ``--provider <name>`` wires a registry entry as the default chat provider
@@ -269,11 +269,13 @@ def _setup_noninteractive(
     """
     applied = True
     if mode == "docker":
+        from personalclaw import container_host
+
         print(
             "  Deployment mode: docker\n"
-            "  Quick-start:\n"
-            "    cp .env.example .env   # fill in secrets\n"
-            "    docker compose up -d\n"
+            "  Quick-start, on the host:\n"
+            f"    {container_host.run_command()}\n"
+            f"    docker exec {container_host.CONTAINER_NAME} personalclaw token\n"
         )
     elif mode == "service":
         print(

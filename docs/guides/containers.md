@@ -28,6 +28,13 @@ Nothing else is needed for your work to survive `docker rm` + `docker run`: the 
 sets `PERSONALCLAW_WORKSPACE=/data/workspace`, so the workspace is on the volume (see
 [Volumes](#volumes)).
 
+The gateway is the container's own process, so the container runtime starts, stops and
+restarts it, from the host: `docker stop personalclaw`, `docker start personalclaw`,
+`docker restart personalclaw`. Inside the container, `personalclaw stop`, `personalclaw
+restart` and `personalclaw service install` say so, print the host command, and change
+nothing. Stopped from inside, the gateway would end the container, and the restart policy
+would start it straight back.
+
 Take the two-service deployment below instead when you want the nginx TLS/HTTP2
 proxy in front (self-signed out of the box), a Slack worker, or `.env`-driven
 configuration.
@@ -129,8 +136,12 @@ a sensible default. Common ones:
 | `PERSONALCLAW_LOGIN_PASSWORD` | — | the password for that login (≥12 characters) |
 
 The images set `PERSONALCLAW_INSTALL_KIND=container` so the gateway knows it is a
-container install — the in-app Updates panel then shows the correct update
-instructions (pull + up) instead of a git/pip update flow.
+container install — the in-app Updates panel then shows the host's update commands
+instead of a git/pip update flow. Nothing inside a container can see how it was started,
+so `compose.yaml` also sets `PERSONALCLAW_CONTAINER_STARTED_BY=compose`: with it, the
+commands PersonalClaw prints for updating, stopping and restarting are the compose ones;
+without it they are the [one container](#one-container)'s `docker` ones. Set it in your own
+compose file too.
 
 ## Getting the dashboard URL
 
@@ -198,16 +209,30 @@ docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personal
 docker compose -f deploy/compose/compose.yaml cp personalclaw-gateway:/data/snapshots/<file>.tar.gz .
 ```
 
-Restore by copying an archive back in and running
-`personalclaw restore <path>` inside the container. Take a snapshot before every
-upgrade.
+A restore needs the gateway stopped, and in a container the gateway is the container's own
+process, so the restore runs in a one-shot container on the same volume, between a stop and
+a start:
+
+```bash
+docker compose -f deploy/compose/compose.yaml stop personalclaw-gateway
+docker compose -f deploy/compose/compose.yaml run --rm personalclaw-gateway \
+  personalclaw restore /data/snapshots/<file>.tar.gz
+docker compose -f deploy/compose/compose.yaml start personalclaw-gateway
+```
+
+For the [one container](#one-container), the same with `docker`: `docker stop personalclaw`,
+then the restore in a one-shot container of the image your container runs, on its volume
+(`--rm -v personalclaw_home:/data`, with `personalclaw restore /data/snapshots/<file>.tar.gz`
+as its command), then `docker start personalclaw`. An archive from somewhere else goes into
+`/data/snapshots` first: `docker cp <file>.tar.gz personalclaw:/data/snapshots/` works on a
+stopped container too. Take a snapshot before every upgrade.
 
 ## Updates
 
 Container installs update by pulling the new image and recreating — there is no
 in-place self-update. The app's Updates panel (and `personalclaw update`) show
-exactly the commands for the image tag your `updates` channel/pin resolves to,
-carried on `PERSONALCLAW_IMAGE_TAG`:
+exactly the commands for the image tag your `updates` channel/pin resolves to, for the
+way the container was started (see [Environment](#environment-env)):
 
 - **stable** (default) → the moving minor `:X.Y` (e.g. `:0.2`) — stays on the
   0.2.x line;
@@ -217,8 +242,23 @@ carried on `PERSONALCLAW_IMAGE_TAG`:
   is refused when you save it. A well-formed pin that matches no published release
   pulls nothing (never a silent `latest`), and Settings → Updates says so.
 
+For the [one container](#one-container), they pull the image and remove the container:
+
 ```bash
-# the tag is prefixed on BOTH commands so the recreate matches the pull:
+docker pull ghcr.io/personalclaw/personalclaw-gateway:0.2
+docker stop personalclaw
+docker rm personalclaw
+```
+
+and then make it again with the [one container](#one-container)'s `docker run`, with `:0.2`
+in place of `:latest`; what PersonalClaw prints has the tag in place already. The volume is
+named, so `docker rm` leaves it, and your state, where they are. If you started the container
+with another name, port or volume, use yours.
+
+With Compose, the tag is carried on `PERSONALCLAW_IMAGE_TAG`, on BOTH commands so the
+recreate matches the pull:
+
+```bash
 PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml pull
 PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml up -d
 ```
@@ -234,7 +274,8 @@ of you (PersonalClaw is pre-1.0).
 ### Rolling back
 
 Pin the older version and recreate — the `X.Y.Z` image tags are immutable, so every
-release stays pullable:
+release stays pullable. `personalclaw update --to` pins it and prints the commands above for
+that tag; with Compose:
 
 ```bash
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway \
@@ -245,10 +286,13 @@ PERSONALCLAW_IMAGE_TAG=0.2.0 docker compose -f deploy/compose/compose.yaml pull
 PERSONALCLAW_IMAGE_TAG=0.2.0 docker compose -f deploy/compose/compose.yaml up -d
 ```
 
+For the one container, `docker exec personalclaw personalclaw snapshot` and
+`docker exec personalclaw personalclaw update --to 0.2.0`, then the update above on `:0.2.0`.
+
 The pin is what makes it a rollback rather than a one-off pull: without it, the next check
 resolves the channel's newest release and offers to take you straight back. Settings →
 Updates shows **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version
-change at least once; on this kind it pins and then prints the two commands above, because
+change at least once; on this kind it pins and then prints the commands above, because
 a container replaces its image from the host rather than patching itself.
 
 ### Applying automatically, and turning the check off

@@ -175,7 +175,7 @@ Install agent config and configure credentials (interactive wizard).
 |---|---|
 | `--agent-only` | Only install agent config; skip credential prompts. |
 | `--clean` | Fresh install — don't merge MCP servers/tools from existing config. |
-| `--mode {docker,service,none}` | Deployment mode: Docker Compose, system service (systemd/launchd), or none. |
+| `--mode {docker,service,none}` | Deployment mode: print the README's one-container `docker run`, the system service (systemd/launchd) install, or nothing. |
 | `--provider NAME` | Set the default chat provider by registry entry name. |
 | `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
 | `--app NAME` | Run only the named installed app's setup step. |
@@ -196,8 +196,8 @@ directories). No flags.
 | Command | What it does |
 |---|---|
 | `personalclaw status [--port]` | Show runtime stats from the running gateway. |
-| `personalclaw stop [--port]` | Stop a running gateway. |
-| `personalclaw restart [--port]` | Restart the gateway (service if installed, else foreground). |
+| `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed, it stops the service. In a container it changes nothing and prints the host command that stops the container. |
+| `personalclaw restart [--port]` | Restart the gateway: the service if installed, else stop this home's gateway and start a fresh one on the port it had. A fresh one starts only once the old one has exited. In a container it changes nothing and prints the host command that restarts the container. |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), launchd stdout file (macOS), or the foreground log file. |
 | `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
 | `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |
@@ -209,6 +209,11 @@ Manage the gateway as a system service — systemd unit on Linux
 (`/etc/systemd/system/`, requires sudo) or launchd LaunchAgent on macOS
 (`~/Library/LaunchAgents/`, no sudo). Survives SSH disconnect, auto-restarts on
 crash, auto-starts on boot.
+
+In a container there is no service: the container runtime keeps the gateway running
+(the README's `docker run --restart unless-stopped`, or Compose's `restart:
+unless-stopped`). Each subcommand there says so and changes nothing; `service status`
+also says whether the gateway is running.
 
 | Subcommand | What it does |
 |---|---|

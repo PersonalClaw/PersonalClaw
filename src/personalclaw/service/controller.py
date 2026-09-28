@@ -9,7 +9,7 @@ directly. This keeps the dispatch logic in one place and makes the
 import sys
 from collections.abc import Iterable
 
-from personalclaw import tmux_substrate
+from personalclaw import container_host, gateway_base, tmux_substrate
 from personalclaw.config import loader as config_loader
 from personalclaw.service import linux, macos
 from personalclaw.service.common import Platform, current_platform
@@ -23,6 +23,17 @@ def _unsupported_message() -> None:
         "   directly or wrap it in tmux/screen yourself.",
         file=sys.stderr,
     )
+
+
+def _in_a_container(outcome: str) -> None:
+    """Say who keeps the gateway running in a container, and *outcome*: that nothing changed.
+
+    Not the unsupported message. That one advises running the gateway by hand or under
+    tmux/screen, which in a container is wrong: the gateway already runs, as the container's
+    own process, and the container runtime brings it back after a crash. On stdout, because
+    nothing failed.
+    """
+    print(f"{container_host.keeps_running()} {outcome}")
 
 
 def _print_carried(carried: Capture) -> None:
@@ -44,8 +55,15 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
     runs as ``User=$USER`` once started — personalclaw code is never
     invoked under sudo. On macOS no sudo is required. The CLI is
     expected to surface the sudo prompt to a real terminal.
+
+    In a container there is nothing to install, and 0 says the job is done: the container
+    runtime keeps the gateway running, the way ``personalclaw update`` there exits 0 after
+    saying what the host runs.
     """
     plat = current_platform()
+    if plat == Platform.CONTAINER:
+        _in_a_container("There is no service to install here, and nothing was changed.")
+        return 0
     if plat == Platform.SYSTEMD:
         try:
             carried = linux.install(extra=extra, without=without)
@@ -84,9 +102,12 @@ def uninstall_service() -> int:
     The server holds the gateway's persistent terminals and durable workers, and outlives the
     gateway by design, so stopping the service leaves it running. Its home comes from the
     installed file, read before the file is removed; with no service installed, nothing is
-    stopped.
+    stopped. A container has no service to remove.
     """
     plat = current_platform()
+    if plat == Platform.CONTAINER:
+        _in_a_container("There is no service to remove here, and nothing was changed.")
+        return 0
     if plat not in (Platform.SYSTEMD, Platform.LAUNCHD):
         _unsupported_message()
         return 2
@@ -101,8 +122,19 @@ def uninstall_service() -> int:
 
 def service_status() -> int:
     """Print the platform service status and the environment its installed file starts the
-    gateway in. Returns 0 if active, 1 if inactive, 2 if unsupported."""
+    gateway in. Returns 0 if active, 1 if inactive, 2 if unsupported.
+
+    In a container the container runtime is the service, and it is active when this home's
+    gateway is: the one it runs as the container's process."""
     plat = current_platform()
+    if plat == Platform.CONTAINER:
+        running = gateway_base.live_gateway()
+        _in_a_container(
+            f"The gateway is running, on port {running.port}."
+            if running
+            else "The gateway is not running."
+        )
+        return 0 if running else 1
     if plat == Platform.SYSTEMD:
         print(linux.status())
         _print_environment(linux.installed_environment())

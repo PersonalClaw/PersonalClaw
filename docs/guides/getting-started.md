@@ -365,7 +365,8 @@ defaults flipped, and some routes refuse input they used to accept. Run
   unit (Linux) or launchd agent (macOS) so the gateway survives reboots. Run it
   from the shell that has your settings: it carries `PERSONALCLAW_HOME`,
   `AWS_PROFILE` and [the other variables listed here](../reference/cli.md#the-services-environment)
-  into the service, and never a secret.
+  into the service, and never a secret. In a container there is no service to install:
+  the container's restart policy does this ([containers](containers.md#one-container)).
 - **Back it up** — `personalclaw snapshot` creates a portable state archive;
   `personalclaw restore` brings it back. The archive never contains a credential: API keys
   and app tokens stay in this machine's credential store (the OS keychain, or
@@ -387,8 +388,9 @@ defaults flipped, and some routes refuse input they used to accept. Run
 
 ## Troubleshooting
 
-- **"Gateway not running" from CLI commands** — `status`/`stop`/`token` need a
-  live gateway on the resolved port; pass `--port` if you changed it.
+- **"Gateway not running" from CLI commands** — `status`/`token` need a
+  live gateway on the resolved port; pass `--port` if you changed it. `stop` finds
+  this home's gateway wherever it listens, from the record the gateway keeps in its home.
 - **Backend code changes don't take effect** (source checkouts) — Python
   changes need a gateway restart (`personalclaw restart`); only frontend
   rebuilds are live.

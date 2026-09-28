@@ -19,7 +19,7 @@ import types
 
 import pytest
 
-from personalclaw import cli_server
+from personalclaw import cli_server, container_host
 from personalclaw import self_update as su
 
 
@@ -555,22 +555,25 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
 # ── container / desktop: instructions, not pretending ───────────────────────
 
 
-def test_container_kind_prints_the_two_commands_and_exits_zero(
+def test_container_kind_prints_the_readme_installs_commands_and_exits_zero(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
     # Default config (stable/no-pin) + the autouse offline `fetch_releases`->[] means
     # the resolver degrades to the `latest` fallback: the commands still print
-    # and carry `PERSONALCLAW_IMAGE_TAG=latest`, exit 0.
+    # and carry `:latest`, exit 0. They are the README's `docker run` install's, which
+    # is what a container started without the compose file is.
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
 
     cli_server._update()  # returns, i.e. exit status 0 — see _update's docstring
 
     out = capsys.readouterr().out
-    for cmd in su.container_instructions("latest"):
+    for cmd in container_host.update_commands("latest"):
         assert cmd in out
-    assert "PERSONALCLAW_IMAGE_TAG=latest " in out
+    assert container_host.run_command("latest") in out
+    assert "docker compose" not in out
     assert not git.calls and not spawns
 
 
@@ -591,6 +594,7 @@ def test_container_prints_the_channel_pin_resolved_tag(
     the beta and pin rows. Drives the REAL `resolve_image_tag`/`select_image_tag` (only
     `fetch_releases` is stubbed)."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
     _channel(monkeypatch, channel, pin)
     _fake_release_list(monkeypatch)
     git = _Git()
@@ -599,9 +603,9 @@ def test_container_prints_the_channel_pin_resolved_tag(
     cli_server._update()
 
     out = capsys.readouterr().out
-    for cmd in su.container_instructions(tag):
+    for cmd in container_host.update_commands(tag):
         assert cmd in out, f"expected {cmd!r} in output; out={out!r}"
-    assert f"PERSONALCLAW_IMAGE_TAG={tag} " in out
+    assert f"personalclaw-gateway:{tag}\n" in out
     assert not git.calls and not spawns
 
 
@@ -622,7 +626,7 @@ def test_container_pin_miss_refuses_and_prints_no_pull(
     printed = capsys.readouterr()
     assert exc.value.code == 1
     assert "No release matches the pinned version" in printed.err
-    assert "docker compose" not in printed.out + printed.err  # nothing to pull — no commands
+    assert "docker " not in printed.out + printed.err  # nothing to pull — no commands
     assert not git.calls and not spawns
 
 

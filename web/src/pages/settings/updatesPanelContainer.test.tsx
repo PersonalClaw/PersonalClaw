@@ -4,9 +4,9 @@ import type { UpdateCheck } from '../../lib/api'
 
 // ── The container Updates panel renders the channel/pin-resolved tag ──────────────────────
 //
-// The backend (build_update_status) now emits `instructions` carrying
-// `PERSONALCLAW_IMAGE_TAG=<tag>` for the resolved channel/pin. The panel must render THOSE
-// commands verbatim — not a hard-coded `latest` — and, on a pin that matches no release,
+// The backend (build_update_status) now emits `instructions` for the resolved channel/pin's
+// tag (here a Compose install's, carried on `PERSONALCLAW_IMAGE_TAG=<tag>`). The panel must render
+// THOSE commands verbatim — not a hard-coded `latest` — and, on a pin that matches no release,
 // must say so rather than silently falling back to a bare `latest` pull. Both are things
 // only the frontend can get wrong, so they are locked here.
 //

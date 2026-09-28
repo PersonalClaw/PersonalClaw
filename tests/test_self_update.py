@@ -20,6 +20,7 @@ import subprocess
 import aiohttp
 import pytest
 
+from personalclaw import container_host
 from personalclaw import self_update as uk
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.self_update import detect_install_kind
@@ -1200,22 +1201,6 @@ def test_select_image_tag_pin_miss_refuses_and_empty_is_only_a_pin_miss() -> Non
     assert uk.select_image_tag([], "nightly") == "latest"
 
 
-def test_container_instructions_carry_the_tag_on_both_commands() -> None:
-    cmds = uk.container_instructions("0.2")
-    assert cmds == [
-        "PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml pull",
-        "PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml up -d",
-    ]
-    # Both commands carry the tag: pull and up run as separate processes, so a tag on
-    # only one would let the other fall back to compose's `latest` default.
-    assert all("PERSONALCLAW_IMAGE_TAG=0.2 " in c for c in cmds)
-    # An empty tag emits the bare commands (the pre-RUM-7 answer for an unresolved tag).
-    assert uk.container_instructions() == [
-        "docker compose -f deploy/compose/compose.yaml pull",
-        "docker compose -f deploy/compose/compose.yaml up -d",
-    ]
-
-
 @pytest.mark.asyncio
 async def test_resolve_image_tag_over_the_release_list(monkeypatch) -> None:
     async def _fake_releases() -> list[dict[str, object]]:
@@ -1249,7 +1234,8 @@ async def test_build_update_status_container_carries_the_resolved_tag(
     monkeypatch, channel, pin, tag
 ) -> None:
     """RUM-7 acceptance criteria: build_update_status emits the channel/pin image tag AND the
-    exact `docker compose pull`+`up -d` carrying it. Drives the REAL resolver
+    exact host commands carrying it — for the README's `docker run` install, its pull and
+    its own `docker run` on that tag. Drives the REAL resolver
     (`fetch_releases` is the only stub) over the adversarial list, so stable/beta/pin
     land on DIFFERENT tags — a bare-`latest` implementation fails the beta and pin rows.
     """
@@ -1261,6 +1247,7 @@ async def test_build_update_status_container_carries_the_resolved_tag(
         return _FAKE_RELEASES
 
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
     monkeypatch.setattr(uk, "fetch_latest_release", _rel)
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     _fake_container_config(monkeypatch, channel, pin)
@@ -1268,10 +1255,16 @@ async def test_build_update_status_container_carries_the_resolved_tag(
     status = await uk.build_update_status("0.1.0")
     assert status["kind"] == "container"
     assert status["image_tag"] == tag
-    assert status["instructions"] == [
-        f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml pull",
-        f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml up -d",
-    ]
+    assert status["instructions"] == container_host.update_commands(tag)
+    assert f"docker pull ghcr.io/personalclaw/personalclaw-gateway:{tag}" in status["instructions"]
+    assert status["instructions"][-1] == container_host.run_command(tag)
+
+    # A compose install is shown its compose commands, on the same tag.
+    monkeypatch.setenv(container_host.STARTED_BY_ENV, "compose")
+    status = await uk.build_update_status("0.1.0")
+    assert f"PERSONALCLAW_IMAGE_TAG={tag} docker compose -f deploy/compose/compose.yaml pull" in (
+        status["instructions"]
+    )
 
 
 @pytest.mark.asyncio

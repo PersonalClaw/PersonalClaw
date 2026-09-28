@@ -128,6 +128,12 @@ RUN groupadd --gid 10001 personalclaw && \
 
 COPY --from=builder /opt/venv /opt/venv
 
+# The ENV PATH below reaches every process the container runtime starts, but not a login shell:
+# /etc/profile resets PATH without /opt/venv/bin, and the dashboard's terminal is a login shell,
+# so `personalclaw` was not found there. /etc/profile then reads /etc/profile.d, and this puts the
+# environment back in front.
+COPY deploy/docker/personalclaw-profile.sh /etc/profile.d/personalclaw.sh
+
 # /data is the ONLY volume, so everything a user makes has to land under it. The workspace root —
 # the default chat workspace, and where the folder picker opens to create a project folder —
 # defaults to `workspace` in the home, /data/workspace here. It is also named explicitly: it is

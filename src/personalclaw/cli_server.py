@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from personalclaw import __version__, self_update
+from personalclaw import __version__, container_host, gateway_base, process_facts, self_update
 from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -61,8 +61,9 @@ def config_path() -> Path:
 
 
 def resolve_client_port(cli_port: int | None) -> int:
-    """Return the dashboard port a *client* CLI command (token/status/logout/stop)
-    should talk to.
+    """Return the dashboard port a *client* CLI command (token/status/logout) should talk to,
+    and the port ``restart`` starts a gateway on when none was running. (``stop`` needs no
+    port: it reads the one this home's gateway recorded.)
 
     Resolution order:
 
@@ -73,7 +74,7 @@ def resolve_client_port(cli_port: int | None) -> int:
     4. ``_DEFAULT_PORT`` (10000) as the final fallback.
 
     This matches the server-side ``parse_dashboard_url()`` logic so that
-    ``personalclaw token`` / ``status`` / ``logout`` / ``stop`` all hit the same
+    ``personalclaw token`` / ``status`` / ``logout`` all hit the same
     port the gateway is actually bound to when the user has configured a
     non-default ``dashboard.url`` (for example a dev instance on 6777 or an
     alternative prod port like 7778).
@@ -214,47 +215,37 @@ def _logout(port: int) -> None:
         sys.exit(1)
 
 
-def _stop(port: int) -> None:
-    """Stop a running PersonalClaw gateway.
+#: How long `stop` waits for the gateway to exit once asked. The gateway bounds its own graceful
+#: shutdown at 10 s (`GatewayOrchestrator._finish`) and then exits, so this is that bound with a
+#: margin for its last cleanup. Returning only once it is gone is what lets `restart` start the
+#: next gateway, and `restore` run, without the old one still writing the home.
+_STOP_WAIT_SECS = 15.0
+_STOP_POLL_SECS = 0.1
 
-    If a user-level service (systemd/launchd) is active, prefer
-    ``service stop`` so the process manager does not immediately
-    restart the gateway under us. Otherwise fall back to the
-    SIGTERM-by-port path used for foreground gateways.
+
+def _runs_the_gateway(command: str) -> bool:
+    """Whether *command*, a process's command line, is PersonalClaw's gateway: the ``gateway``
+    subcommand of the ``personalclaw`` program, however it was started (its console script,
+    ``python -m personalclaw``, or the desktop app's bundled backend)."""
+    words = command.split()
+    for at, word in enumerate(words):
+        if os.path.basename(word) in ("personalclaw", "personalclaw-backend"):
+            return "gateway" in words[at + 1 :]
+    return False
+
+
+def _this_homes_gateway(port: int | None) -> gateway_base.LiveGateway:
+    """The gateway ``stop`` may signal, or exit 1 saying why there is none.
+
+    It is the one this home's runtime record names, and three things must hold before its pid
+    is signalled: the record is there and its pid alive, a ``--port`` the user typed is the port
+    it listens on, and the pid still runs a PersonalClaw gateway. The last one is the guard a
+    pid needs: a gateway that crashed leaves its record behind, and the system may since have
+    given the pid to another program. Each refusal fails closed, since a signal cannot be
+    taken back.
     """
-    if service_controller.stop_service():
-        sel().log_api_access(
-            caller="cli",
-            operation="gateway_stop",
-            outcome="allowed",
-            source="cli",
-            resources=f"port={port} via=service",
-        )
-        print("✅ Stopped personalclaw service. To remove it: personalclaw service uninstall")
-        return
-
-    try:
-        out = subprocess.check_output(
-            ["lsof", "-ti", f"TCP:{port}", "-sTCP:LISTEN"], text=True
-        ).strip()
-    except FileNotFoundError:
-        sel().log_api_access(
-            caller="cli",
-            operation="gateway_stop",
-            outcome="error",
-            source="cli",
-            resources=f"port={port} reason=lsof_not_found",
-        )
-        print(
-            "❌ `lsof` not found — cannot look up gateway process. "
-            f"Install lsof or use `ss -tlnp | grep {port}` to find the PID manually.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except subprocess.CalledProcessError:
-        out = ""
-
-    if not out:
+    gateway = gateway_base.live_gateway()
+    if gateway is None:
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
@@ -262,124 +253,138 @@ def _stop(port: int) -> None:
             source="cli",
             resources=f"port={port}",
         )
-        print(f"No PersonalClaw gateway currently running on port {port}.", file=sys.stderr)
+        print(f"No PersonalClaw gateway is running for {config_dir()}.", file=sys.stderr)
         sys.exit(1)
-
-    pids = list(dict.fromkeys(int(p) for p in out.splitlines() if p.strip().isdigit()))
-
-    # Only kill processes that are actually PersonalClaw gateways.
-    # Note: TOCTOU race exists between this check and os.kill — the PID could be
-    # recycled. Acceptable risk for an interactive CLI tool with low blast radius.
-    try:
-        pids = [p for p in pids if _is_personalclaw_process(p)]
-    except FileNotFoundError:
-        sel().log_api_access(
-            caller="cli",
-            operation="gateway_stop",
-            outcome="error",
-            source="cli",
-            resources=f"port={port} reason=ps_not_found",
-        )
-        print(
-            "❌ `ps` not found — cannot verify gateway process. "
-            "Install procps or manually kill the process.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if not pids:
+    if port is not None and port != gateway.port:
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
             outcome="no_target",
             source="cli",
-            resources=f"port={port} reason=no_personalclaw_process",
+            resources=f"port={port} reason=port_mismatch gateway_port={gateway.port}",
         )
-        print(f"No PersonalClaw gateway currently running on port {port}.", file=sys.stderr)
+        print(
+            f"This home's gateway listens on port {gateway.port}, not {port}, so nothing was "
+            "stopped. Without --port, `personalclaw stop` stops this home's gateway; another "
+            "home's is stopped with that home's PERSONALCLAW_HOME.",
+            file=sys.stderr,
+        )
         sys.exit(1)
+    if not _runs_the_gateway(process_facts.command_line(gateway.pid)):
+        sel().log_api_access(
+            caller="cli",
+            operation="gateway_stop",
+            outcome="no_target",
+            source="cli",
+            resources=f"pid={gateway.pid} port={gateway.port} reason=not_a_gateway",
+        )
+        print(
+            f"No PersonalClaw gateway is running for {config_dir()}: pid {gateway.pid}, which "
+            "its record names, is not a PersonalClaw gateway now, so it was not signalled.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return gateway
 
-    sent: set[int] = set()
-    denied: list[int] = []
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-            sent.add(pid)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            denied.append(pid)
 
-    # Wait briefly for processes to exit so the port is freed
-    if sent:
-        for _ in range(10):  # up to 1s
-            time.sleep(0.1)
-            if all(_pid_exited(p) for p in sent):
-                break
+def _stop(port: int | None) -> None:
+    """Stop this home's gateway, and return once it has exited.
 
-    if sent:
+    Service first: if systemd or launchd runs the gateway, stopping the PROCESS would only have
+    the service manager start it again, so the service is stopped instead. In a container the
+    container runtime is that manager, and nothing inside the container can drive it, so this
+    says which host command does it and changes nothing.
+
+    Otherwise the gateway is the one this home's runtime record names (``gateway_base``): the
+    port it bound and its pid, written once it listens and removed as it stops. It used to be
+    found by asking ``lsof`` which process listens on the port and ``ps`` whether that process
+    is a gateway, and neither program is installed everywhere; the published image has neither,
+    so ``stop`` could only fail there. The record also keeps the stop to THIS home, so a
+    gateway of another home is not this command's to stop, even one on the port asked about.
+
+    *port* is the ``--port`` the user typed, or None.
+    """
+    if service_controller.stop_service():
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
             outcome="allowed",
             source="cli",
-            resources=f"pids={sorted(sent)} port={port}",
+            resources="via=service",
         )
-        print(f"✅ Sent SIGTERM to gateway (pid {', '.join(str(p) for p in sorted(sent))}).")
-    if denied:
+        print("✅ Stopped personalclaw service. To remove it: personalclaw service uninstall")
+        return
+    if current_platform() is Platform.CONTAINER:
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
-            outcome="denied",
+            outcome="refused",
             source="cli",
-            resources=f"pids={denied} port={port}",
+            resources="via=container_runtime",
         )
         print(
-            f"❌ No permission to stop pid {', '.join(str(p) for p in denied)} — "
-            "try: sudo personalclaw stop",
+            container_host.not_done_here("stopped", container_host.stop_command()),
             file=sys.stderr,
         )
         sys.exit(1)
-    if not sent:
+
+    gateway = _this_homes_gateway(port)
+    try:
+        os.kill(gateway.pid, signal.SIGTERM)
+    except ProcessLookupError:
         sel().log_api_access(
             caller="cli",
             operation="gateway_stop",
             outcome="no_target",
             source="cli",
-            resources=f"port={port} reason=process_already_exited",
+            resources=f"pid={gateway.pid} reason=process_already_exited",
         )
         print(
-            f"No PersonalClaw gateway currently running on port {port} (process already exited).",
+            f"No PersonalClaw gateway is running for {config_dir()} (it exited just now).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except PermissionError:
+        sel().log_api_access(
+            caller="cli",
+            operation="gateway_stop",
+            outcome="denied",
+            source="cli",
+            resources=f"pid={gateway.pid} port={gateway.port}",
+        )
+        print(
+            f"❌ No permission to stop the gateway (pid {gateway.pid}): it runs as another "
+            "user. Stop it as that user.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-
-def _is_personalclaw_process(pid: int) -> bool:
-    """Return True if *pid* looks like a PersonalClaw gateway process."""
-    try:
-        out = (
-            subprocess.check_output(["ps", "-p", str(pid), "-o", "args="], text=True)
-            .strip()
-            .lower()
+    for _ in range(int(_STOP_WAIT_SECS / _STOP_POLL_SECS)):
+        if not gateway_base.pid_is_alive(gateway.pid):
+            break
+        time.sleep(_STOP_POLL_SECS)
+    else:
+        sel().log_api_access(
+            caller="cli",
+            operation="gateway_stop",
+            outcome="allowed",
+            source="cli",
+            resources=f"pid={gateway.pid} port={gateway.port} still_running",
         )
-        return (
-            "backend.gateway" in out
-            or "personalclaw.dashboard" in out
-            or "personalclaw gateway" in out
-            or "personalclaw start" in out
+        print(
+            f"Asked the gateway to stop (pid {gateway.pid}), and it is still running after "
+            f"{_STOP_WAIT_SECS:g} seconds. Nothing else was done.",
+            file=sys.stderr,
         )
-    except subprocess.CalledProcessError:
-        return False
-
-
-def _pid_exited(pid: int) -> bool:
-    """Return True if *pid* no longer exists."""
-    try:
-        os.kill(pid, 0)
-        return False
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False  # still alive, just can't signal
+        sys.exit(1)
+    sel().log_api_access(
+        caller="cli",
+        operation="gateway_stop",
+        outcome="allowed",
+        source="cli",
+        resources=f"pid={gateway.pid} port={gateway.port}",
+    )
+    print(f"✅ Stopped the gateway (pid {gateway.pid}, port {gateway.port}).")
 
 
 def _spawn_detached_gateway(port: int) -> None:
@@ -414,14 +419,18 @@ def _spawn_detached_gateway(port: int) -> None:
     print(f"✅ Started a fresh PersonalClaw gateway on port {port} (logs: {log_path}).")
 
 
-def _restart(port: int) -> None:
+def _restart(port: int | None) -> None:
     """Restart the gateway, service-aware.
 
-    If a platform service (systemd/launchd) manages the gateway, restart it
-    through the service manager and stop — it owns the process lifecycle.
-    Otherwise stop any foreground gateway on ``port`` and spawn a fresh
-    detached one. A ``_stop`` that exits (e.g. nothing was running) is
-    swallowed so restart still starts a gateway.
+    If a platform service (systemd/launchd) manages the gateway, restart it through the service
+    manager and stop there: it owns the process lifecycle. In a container the container runtime
+    owns it, so this says which host command restarts it and changes nothing. Otherwise stop
+    this home's gateway, if one runs, and start a fresh detached one on the port it had (with
+    none running, on the ``--port`` typed or the configured one).
+
+    The fresh gateway starts only once this home has none. A stop that could not stop the
+    running gateway ends the restart there, with its reason: the restart used to start one
+    anyway, which put a second gateway beside the first on the same home.
     """
     if service_controller.restart_service():
         sel().log_api_access(
@@ -429,19 +438,29 @@ def _restart(port: int) -> None:
             operation="gateway_restart",
             outcome="allowed",
             source="cli",
-            resources=f"port={port} via=service",
+            resources="via=service",
         )
         print("✅ Restarted personalclaw service.")
         return
+    if current_platform() is Platform.CONTAINER:
+        sel().log_api_access(
+            caller="cli",
+            operation="gateway_restart",
+            outcome="refused",
+            source="cli",
+            resources="via=container_runtime",
+        )
+        print(
+            container_host.not_done_here("restarted", container_host.restart_command()),
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # No managing service — bounce the foreground gateway ourselves.
-    try:
-        _stop(port)
-    except SystemExit:
-        # _stop exits nonzero when nothing is running; that's fine for restart —
-        # we still want to bring a fresh gateway up.
-        pass
-    _spawn_detached_gateway(port)
+    running = gateway_base.live_gateway()
+    if running is not None:
+        _stop(port)  # returns only once it has exited; exits 1 when it cannot stop it
+    _spawn_detached_gateway(running.port if running else resolve_client_port(port))
 
 
 # Every InstallKind `_update` maps to a branch. The dispatch is exhaustive over
@@ -666,10 +685,11 @@ def _update_pip() -> None:
 
 
 def _update_container() -> None:
-    """A container image cannot be updated in place — print the two commands.
+    """A container image cannot be updated in place — print the host's commands.
 
-    Rides the ``updates`` channel/pin (RUM-7): the printed
-    ``docker compose pull``+``up -d`` carry the resolved image tag —
+    They are the documented install's own (``container_host.update_commands``): the README's
+    pull, remove and ``docker run``, or the compose file's pull and ``up -d``. They ride the
+    ``updates`` channel/pin, carrying the resolved image tag —
     ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``, a pin -> the
     exact ``:X.Y.Z``. A pin naming no release REFUSES and exits 1 (mirrors
     ``_update_pip``'s pin-miss) rather than pulling ``latest`` behind the user's back.
@@ -699,7 +719,7 @@ def _update_container() -> None:
 
     print("  📦 This is a container install — the image is replaced, not patched.")
     print("  Run these on the host:\n")
-    for cmd in self_update.container_instructions(image_tag):
+    for cmd in container_host.update_commands(image_tag):
         print(f"      {cmd}")
     print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
     print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")
@@ -804,8 +824,8 @@ def _update(to: str = "") -> None:
     |  |  | dirty tree blocking it |
     | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
     |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |
-    | container | prints `docker compose pull` + `up -d` | 0; 1 on a pin naming no |
-    |  |  | release |
+    | container | prints the host's pull + recreate for the documented | 0; 1 on a pin naming no |
+    |  | install (`container_host.update_commands`) | release |
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |
 
@@ -845,7 +865,8 @@ def _update(to: str = "") -> None:
         )
         print("   pip/pipx/uv tool → upgrade the `personalclaw` package;", file=sys.stderr)
         print(
-            "   container → docker compose pull && up -d; git checkout → check out the new tag.",
+            "   container → pull the new image and recreate the container "
+            "(docs/guides/containers.md#updates); git checkout → check out the new tag.",
             file=sys.stderr,
         )
         sys.exit(1)

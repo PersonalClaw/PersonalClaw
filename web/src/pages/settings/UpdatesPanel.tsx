@@ -346,10 +346,11 @@ export function UpdatesPanel() {
           {msg && <div data-type="caption" className="mt-2 text-on-surface-low">{msg}</div>}
 
           {/* Container: no in-place apply — show the exact pull+recreate commands for the
-              channel/pin-resolved image tag. The backend emits them carrying
-              `PERSONALCLAW_IMAGE_TAG=<tag>`, so this renders them verbatim rather than a
-              hard-coded `latest`. A pin that matches no release yields no commands, and the
-              headline above says why — for every install kind. That notice used to live HERE,
+              channel/pin-resolved image tag. The backend emits them for that tag and
+              for the way the container was started (the README's `docker run`, or Compose), so
+              this renders them verbatim rather than a hard-coded `latest`. A pin that matches no
+              release yields no commands, and the headline above says why — for every install
+              kind. That notice used to live HERE,
               gated on `info.available`, which a pin-miss can never be (it resolves no release),
               so it was the one message about the state it described that no one could see. */}
           {isContainer && info.available && info.instructions?.length ? (

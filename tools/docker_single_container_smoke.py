@@ -16,7 +16,11 @@ That is the exact failure this file exists to catch, and why it asserts an asset
   4. the FIRST script the shell references → 200 **with a JavaScript content-type**;
   5. the image's INSTALLED package carries the default chat model's sign-off record — the
      one its bundled-chat app reads — and it parses under a permitted licence;
-  6. `GET /api/onboarding` on the fresh volume → a non-null `chat_download_offer`.
+  6. `GET /api/onboarding` on the fresh volume → a non-null `chat_download_offer`;
+  7. a LOGIN shell in the container finds `personalclaw` on PATH, the image's own. The
+     dashboard's terminal is a login shell, and a login shell's `/etc/profile` resets PATH
+     without the image's environment, so `personalclaw` was "not found" in the terminal while
+     every `docker exec` found it.
 
 **Steps 5 and 6 are the 2026-09-25 release blocker.** The record was a symlink into `docs/`,
 the image copies only `src/`, so the image installed no record: every response 200, no
@@ -484,6 +488,28 @@ def _assert_download_offer(base: str, token: str) -> None:
     _log(f"OK: /api/onboarding offers {offer.get('model')} ({offer['bytes']} bytes)")
 
 
+#: Where the image's environment puts the `personalclaw` a user types: its own, not another.
+_IMAGE_PERSONALCLAW = "/opt/venv/bin/personalclaw"
+
+
+def _assert_login_shell_finds_personalclaw(name: str) -> None:
+    """Step 7: a login shell resolves `personalclaw` to the image's own, as the terminal needs.
+
+    Resolved on PATH (``command -v``), not run from an absolute path: what the terminal's user
+    depends on is the name resolving, and an absolute path would pass through exactly the
+    regression this step exists to catch.
+    """
+    proc = _docker("exec", name, "bash", "-lc", "command -v personalclaw", check=False)
+    found = proc.stdout.strip()
+    if proc.returncode != 0 or found != _IMAGE_PERSONALCLAW:
+        _fail(
+            "a login shell in the image does not find the image's `personalclaw` (the "
+            f"dashboard's terminal is one): rc={proc.returncode} found={found!r} "
+            f"stderr={redact_secrets(proc.stderr).strip()[-500:]!r}"
+        )
+    _log(f"OK: a login shell in the container resolves personalclaw to {found}")
+
+
 def _dump_container_logs(name: str) -> None:
     """Print the container's tail for diagnosis, with session tokens redacted.
 
@@ -552,6 +578,7 @@ def main() -> int:
         _assert_asset(base, first_script)
         _assert_installed_record(name)
         _assert_download_offer(base, token)
+        _assert_login_shell_finds_personalclaw(name)
     except Unmeasurable as exc:
         print(f"UNMEASURABLE: {exc}", file=sys.stderr)
         return 2
@@ -569,7 +596,7 @@ def main() -> int:
     _log("")
     _log("PASS: one `docker run` from README.md reaches a usable dashboard — healthz 200, the")
     _log("      SPA shell, its first bundle served as JavaScript, the installed sign-off record,")
-    _log("      and a download offer for the default chat model.")
+    _log("      a download offer for the default chat model, and `personalclaw` in a login shell.")
     return 0
 
 

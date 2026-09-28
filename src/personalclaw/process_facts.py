@@ -1,15 +1,19 @@
 """Read-only facts about this host's processes: their parents, their command lines, where they run.
 
-Two features ask the OS the same questions, and one place asks them: the run web preview (which
-listening processes work inside a run's workspace, ``workflows/web_preview.py``) and the app
+Three features ask the OS the same questions, and one place asks them: the run web preview (which
+listening processes work inside a run's workspace, ``workflows/web_preview.py``), the app
 runtime (which processes still run an app's files after the app was unloaded,
-``apps/app_runtime.py``). Asking has traps of its own — ``lsof -p ""`` selects every process on
-the host rather than none, and ``lsof`` exits non-zero when it merely found nothing — and a second
-copy of the asking would have to relearn each of them.
+``apps/app_runtime.py``), and ``personalclaw stop`` (whether the pid a gateway recorded still runs
+that gateway). Asking has traps of its own — ``lsof -p ""`` selects every process on the host
+rather than none, and ``lsof`` exits non-zero when it merely found nothing — and a second copy of
+the asking would have to relearn each of them.
 
-Every probe here is a CONSTANT argv plus pids the caller has just read: never a model's, a turn's
-or an app's words, no shell, ``check=False``, and a short timeout. The only programs run are ``ps``
-and ``lsof``, and a probe that fails reads as "nothing found", never as an error.
+``/proc`` is read wherever there is one (Linux), because it needs no program: the published
+container image ships neither ``ps`` nor ``lsof``, and a table read from a missing ``ps`` is an
+empty one, which a caller reads as "nothing is running". Everywhere else the probes run ``ps`` and
+``lsof``. Every probe is a CONSTANT argv plus pids the caller has just read: never a model's, a
+turn's or an app's words, no shell, ``check=False``, and a short timeout. A probe that fails reads
+as "nothing found", never as an error.
 """
 
 from __future__ import annotations
@@ -24,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 #: Seconds any probe may take. A wedged ``lsof`` must degrade whatever asked, never hang it.
 PROBE_TIMEOUT = 4.0
+
+#: Where Linux publishes its process facts. A module constant so a test can stand up a fake one.
+PROC = Path("/proc")
 
 
 def run_probe(argv: list[str]) -> str:
@@ -72,11 +79,10 @@ def working_dirs(pids: list[int]) -> dict[int, str]:
     if not pids:
         return {}
     proc_cwds: dict[int, str] = {}
-    linux_proc = Path("/proc")
-    if linux_proc.is_dir():
+    if PROC.is_dir():
         for pid in pids:
             try:
-                proc_cwds[pid] = os.readlink(str(linux_proc / str(pid) / "cwd"))
+                proc_cwds[pid] = os.readlink(str(PROC / str(pid) / "cwd"))
             except OSError:
                 continue
         if proc_cwds:
@@ -99,12 +105,59 @@ def parse_ps_table(out: str) -> dict[int, tuple[int, str]]:
     return table
 
 
-def process_table() -> dict[int, tuple[int, str]]:
-    """``{pid: (ppid, command line)}`` for every process ``ps`` lists; empty when it cannot run.
+def _joined_argv(raw: bytes) -> str:
+    """A ``/proc/<pid>/cmdline`` (NUL-separated words) as the one line ``ps`` would print."""
+    return " ".join(word.decode("utf-8", "replace") for word in raw.split(b"\0") if word)
 
-    ``-ww`` keeps the command line whole: without it Linux ``ps`` clips it to the screen width
-    when stdout is not a terminal, and a path at the end of a long command would never match.
+
+def command_line(pid: int) -> str:
+    """The command line *pid* runs, its words joined by spaces; "" when it cannot be read.
+
+    "" means no such process as much as an unreadable one, so a caller deciding whether to
+    signal *pid* reads both as "not confirmed".
     """
+    if pid <= 0:
+        return ""
+    if PROC.is_dir():
+        try:
+            return _joined_argv((PROC / str(pid) / "cmdline").read_bytes())
+        except OSError:
+            return ""
+    return run_probe(["ps", "-ww", "-p", str(pid), "-o", "args="]).strip()
+
+
+def _proc_table() -> dict[int, tuple[int, str]]:
+    """:func:`process_table` read from ``/proc``."""
+    table: dict[int, tuple[int, str]] = {}
+    try:
+        entries = [e for e in os.scandir(PROC) if e.name.isdigit()]
+    except OSError:
+        return table
+    for entry in entries:
+        try:
+            stat = Path(entry.path, "stat").read_text(encoding="utf-8", errors="replace")
+            raw = Path(entry.path, "cmdline").read_bytes()
+        except OSError:
+            continue  # it exited between the listing and the read
+        # `pid (comm) state ppid …`. The program name in the parentheses may itself hold spaces
+        # and parentheses, so the fields are counted from the LAST `)`.
+        try:
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (IndexError, ValueError):
+            continue
+        table[int(entry.name)] = (ppid, _joined_argv(raw))
+    return table
+
+
+def process_table() -> dict[int, tuple[int, str]]:
+    """``{pid: (ppid, command line)}`` for every process on this host; empty when none can be read.
+
+    ``-ww`` keeps ``ps``'s command line whole: without it Linux ``ps`` clips it to the screen
+    width when stdout is not a terminal, and a path at the end of a long command would never
+    match.
+    """
+    if PROC.is_dir():
+        return _proc_table()
     return parse_ps_table(run_probe(["ps", "-Awwo", "pid=,ppid=,command="]))
 
 

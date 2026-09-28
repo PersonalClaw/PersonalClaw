@@ -67,6 +67,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
+- **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**
+
+- **In a container, `personalclaw service`, `stop` and `restart` say the container runtime runs the gateway, print the host command, and change nothing.**
+
+- **`personalclaw` is found in the dashboard's terminal on the container image.**
+
+- **`personalclaw stop` needs neither `lsof` nor `ps`, stops only this home's gateway and waits for it to exit, and `restart` never starts a second gateway beside one it could not stop.**
+
+- **On a host without `ps`, the container image included, an app update names the processes still running its previous version.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 

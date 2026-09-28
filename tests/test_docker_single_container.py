@@ -823,8 +823,53 @@ def test_the_teardown_stops_the_container_before_removing_it(
     monkeypatch.setattr(smoke, "_mint_token", lambda name: _SYNTHETIC_TOKEN)
     monkeypatch.setattr(smoke, "_assert_shell", lambda base, token: "/assets/x.js")
     monkeypatch.setattr(smoke, "_assert_installed_record", lambda name: None)
+    monkeypatch.setattr(smoke, "_assert_login_shell_finds_personalclaw", lambda name: None)
     monkeypatch.setattr(sys, "argv", ["smoke", "--readme", str(readme), "--image", "local:ci"])
 
     assert smoke.main() == 0
     teardown = [c[:2] if c[0] == "volume" else c[:1] for c in calls if c[0] != "version"]
     assert teardown == [("logs",), ("stop",), ("rm",), ("volume", "rm")], calls
+
+
+# ---------------------------------------------------------------------------
+# Step 7: a login shell in the image finds the image's `personalclaw`
+# ---------------------------------------------------------------------------
+
+
+def _fake_login_shell(
+    monkeypatch: pytest.MonkeyPatch, *, returncode: int, stdout: str
+) -> list[tuple[str, ...]]:
+    calls: list[tuple[str, ...]] = []
+
+    def _fake(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(list(args), returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(smoke, "_docker", _fake)
+    return calls
+
+
+def test_the_login_shell_step_resolves_the_name_through_a_login_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _fake_login_shell(monkeypatch, returncode=0, stdout="/opt/venv/bin/personalclaw\n")
+    smoke._assert_login_shell_finds_personalclaw("c")
+    # A LOGIN shell, and the NAME resolved on its PATH: an absolute path would pass through
+    # the very PATH reset this step exists to catch.
+    assert calls == [("exec", "c", "bash", "-lc", "command -v personalclaw")]
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout",
+    [
+        (1, ""),  # the defect: /etc/profile dropped /opt/venv/bin, nothing resolves
+        (0, "/usr/local/bin/personalclaw\n"),  # something else answers to the name
+    ],
+)
+def test_the_login_shell_step_fails_unless_it_finds_the_images_own(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str
+) -> None:
+    _fake_login_shell(monkeypatch, returncode=returncode, stdout=stdout)
+    with pytest.raises(SystemExit) as exc:
+        smoke._assert_login_shell_finds_personalclaw("c")
+    assert exc.value.code == 1

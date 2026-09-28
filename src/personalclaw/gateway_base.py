@@ -54,6 +54,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -153,12 +154,26 @@ def unpublish() -> None:
         logger.debug("could not remove %s", RUNTIME_FILE, exc_info=True)
 
 
-def live_port() -> int | None:
-    """The bound port recorded by a LIVE gateway of this home, or ``None``.
+class LiveGateway(NamedTuple):
+    """A live gateway of this home, as its runtime record names it."""
+
+    port: int
+    pid: int
+
+
+def live_gateway() -> LiveGateway | None:
+    """The port and pid recorded by a LIVE gateway of this home, or ``None``.
 
     Deliberately does NOT consult the environment: this answers "is a gateway of this
     home up, and on what socket", and an operator's exported ``PERSONALCLAW_PORT`` is a
     hint about where to talk, not evidence that anything is listening.
+
+    ``personalclaw stop`` reads the pid from here, because the record is the one account of
+    this home's gateway that needs nothing installed: finding it by asking ``lsof`` who
+    listens on a port failed on every host without ``lsof``, the published image included.
+    A live pid is still only a pid, and a crash leaves the record behind for the system to
+    hand that pid to another program, so a caller that signals it confirms first what runs
+    under it (``process_facts.command_line``).
     """
     try:
         raw = _runtime_path().read_text(encoding="utf-8")
@@ -173,7 +188,14 @@ def live_port() -> int | None:
         return None
     if port <= 0 or not pid_is_alive(pid):
         return None
-    return port
+    return LiveGateway(port, pid)
+
+
+def live_port() -> int | None:
+    """The bound port recorded by a LIVE gateway of this home, or ``None`` (see
+    :func:`live_gateway`)."""
+    gateway = live_gateway()
+    return gateway.port if gateway else None
 
 
 def _configured_port() -> int | None:
