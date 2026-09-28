@@ -705,11 +705,11 @@ def _close_sqlite_connections(monkeypatch):
     Closing them one fixture at a time would be ~95 edits guarding one seam, and the
     96th store would leak again — the same argument :func:`_isolate_real_home_writers`
     makes about ``config_dir()``. So this wraps the seam every store shares: the
-    ``connect`` of the sqlite driver module. Both bindings are patched — the stdlib
-    module (six stores still ``import sqlite3`` directly) and the one
-    ``sqlite_compat`` resolved (which is ``pysqlite3`` when that wheel is installed, so
-    patching only the stdlib would miss every store that goes through the shared
-    binding — see the driver-mismatch hazard in ``sqlite_compat``'s docstring).
+    ``connect`` of the sqlite driver module. Both bindings are patched: the one
+    ``sqlite_compat`` resolved, which every module under ``src/`` opens its databases
+    through (``pysqlite3`` where that wheel is installed, so patching only the stdlib would
+    miss them all), and the stdlib module, which tests that open a database of their own
+    still import.
 
     Deliberately NOT done: closing on a weak reference (a connection already collected
     has already warned), and swallowing every teardown error. ``ProgrammingError`` is
@@ -827,6 +827,36 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
 
+@functools.cache
+def _real_registry_accessor() -> object:
+    """The provider registry's accessor, read at the first test's setup, before any test ran."""
+    from personalclaw.llm import registry
+
+    return registry.get_default_registry
+
+
+#: Where our own modules live in ``sys.modules``: the package, its app bundles (loaded under a
+#: namespaced name, ``apps.native_contract.namespaced_module_name``) and the test modules.
+_OUR_MODULES = ("personalclaw", "_pclaw_app_", "test_")
+
+
+def _put_back_the_registry_accessor() -> None:
+    """Every module of ours that binds ``get_default_registry`` binds the real one again.
+
+    ``personalclaw.llm.registry`` defines the only function of that name anywhere in this
+    repository, so in our modules any other value there, unless the module defines it itself, is
+    a replacement a test left behind.
+    """
+    real = _real_registry_accessor()
+    for name, module in list(sys.modules.items()):
+        if module is None or not name.startswith(_OUR_MODULES):
+            continue
+        bound = (getattr(module, "__dict__", None) or {}).get("get_default_registry")
+        if bound is None or bound is real or getattr(bound, "__module__", None) == name:
+            continue
+        module.get_default_registry = real
+
+
 @pytest.fixture(autouse=True)
 def _restore_provider_registry() -> object:
     """Undo any provider-registry ENTRY a test registers into the process-global singleton, and
@@ -862,9 +892,25 @@ def _restore_provider_registry() -> object:
     the original are still left alone (there is no `unregister_type`, so a mutation that would drop
     a type can only be a reset/swap, which this catches): `register_type` is how a test simulates
     an installed provider app, it is idempotent, and a type with no entry resolves nothing.
+
+    And every test STARTS with the real ACCESSOR in every module of ours that binds it. Many tests
+    replace the accessor itself (`monkeypatch.setattr("personalclaw.llm.registry.
+    get_default_registry", lambda: registry)`), and undoing that restores only the registry
+    module's own name: a module first imported while it was replaced bound the replacement
+    (`from personalclaw.llm.registry import get_default_registry`) and kept it. Measured:
+    `test_a_named_model_is_said_not_swapped` was the first on its worker to import
+    `personalclaw.sdk.model` and `sdk.provider_helpers` that way, so every provider app loaded
+    later on the worker registered its type into that test's private registry, and
+    `test_best_of_n_provider_outage` then read "type 'ollama', which no loaded app provides" in all
+    fifteen tests, in an order where it came after. `test_images_reach_the_model` and
+    `test_a_pasted_image_is_read_only_when_its_text_is_sent` did the same to the SDK, and
+    `test_inert_surface_baseline` then found `sdk.model.ProviderRegistry` inert: the accessor whose
+    signature returns it was the other test's lambda. Put back at the NEXT test's setup, because
+    this fixture's own teardown runs before the test's monkeypatches are undone.
     """
     from personalclaw.llm import registry as _registry_mod
 
+    _put_back_the_registry_accessor()
     original = _registry_mod.get_default_registry()
     entries = getattr(original, "_entries", None)
     before = set(entries) if isinstance(entries, dict) else set()
@@ -935,7 +981,8 @@ def _reset_provider_measurement_boards() -> object:
     tables keyed by provider NAME, which every test reuses (`ollama`, `openrouter`, …). An
     answer measured against one test's fixture home would otherwise be served to the next test
     on the worker as a cached fact about its own. A check still in flight belongs to the
-    finished test's event loop, which cancels it (and the availability child it started).
+    finished test's event loop, which cancels it. No test's check starts the real availability
+    child unless the test asked for it (:func:`_no_real_availability_probe`).
     """
     yield
     from personalclaw.providers.availability import reset_availability_board
@@ -943,6 +990,46 @@ def _reset_provider_measurement_boards() -> object:
 
     reset_availability_board()
     reset_connection_board()
+
+
+@pytest.fixture
+def real_availability_probe() -> None:
+    """Let this test's availability board start the real probe child.
+
+    For the tests of the probe itself, which plant the app they measure in their own home."""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_availability_probe(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test starts the real availability probe unless it asks to (``real_availability_probe``).
+
+    The board measures a provider app by starting ``personalclaw availability-probe <app>``, a
+    child that imports the app and runs its hook: the test's home, but a real process running real
+    app code. A test that boots the dashboard (its startup warms the board), lists providers or
+    finishes an install started one without meaning to, and left it to the loop's teardown to
+    cancel. On Python 3.12 a cancel that lands while the child's pipes connect is never woken, so
+    that teardown can hang until the test times out.
+
+    So a board on the real probe command settles what it was asked as ``unknown`` and starts
+    nothing, as it does when the child cannot start. A board a test gave a child of its own
+    (``argv_for``) still starts that child.
+    """
+    if "real_availability_probe" in request.fixturenames:
+        return
+    from personalclaw.providers import availability
+
+    real_command = availability.probe_argv
+    real_probe = availability.AvailabilityBoard._probe
+
+    async def _probe(board: availability.AvailabilityBoard, names: list[str]) -> None:
+        if board._argv_for is not real_command:
+            await real_probe(board, names)
+            return
+        board._settle(names, set(), "The availability check does not run in tests.")
+
+    monkeypatch.setattr(availability.AvailabilityBoard, "_probe", _probe)
 
 
 @pytest.fixture(autouse=True)

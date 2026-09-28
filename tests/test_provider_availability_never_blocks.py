@@ -102,8 +102,9 @@ def _behave(root: Path, *, sleep: float, ok: bool, reason: str, needs: str = "")
 
 
 @pytest.fixture
-def planted(monkeypatch):
-    """The app installed in this test's home, a private registry holding it, a fresh board."""
+def planted(monkeypatch, real_availability_probe):
+    """The app installed in this test's home, a private registry holding it, a fresh board on the
+    real probe child, which the suite starts only for a test that asks (``conftest.py``)."""
     # Resolved through the loader MODULE at call time: a `from ... import config_dir` at
     # module top binds the function before conftest's home redirect exists, and this fixture
     # then plants its app in the developer's real home.

@@ -49,14 +49,9 @@ def _home(tmp_path, monkeypatch):
     return tmp_path
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def rechecked(monkeypatch) -> list[str]:
-    """The apps a finished install asked to be measured again, in place of the real measuring.
-
-    The real availability board measures by starting a probe process on the test's loop, just as
-    the job reads ``done`` and the test ends. The loop's teardown then cancels that start, and on
-    Python 3.12 a cancel that lands while the process's pipes connect is never woken, so the
-    teardown hangs until the test times out. Nothing here is about what the probe answers."""
+    """The apps a finished install asked to be measured again, in place of the real measuring."""
     from personalclaw.providers import availability
 
     asked: list[str] = []
