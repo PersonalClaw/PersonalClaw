@@ -140,6 +140,14 @@ the owner's press. Nobody answering in that window is `expired`, and the turn st
 ended, the prompt says how and loses its buttons, and a press that arrives later is told how it
 ended and changes nothing.
 
+### A compaction the agent did on its own is said
+
+The agent can compact the conversation on its own in the middle of a turn: an
+`EVENT_COMPACTION_STATUS` whose `text` is `personalclaw.sdk.channel.COMPACTION_AUTOMATIC`, with
+`title` saying how much it freed. A channel that runs its own turns says so, in the words it gives
+the result of a `/compact`, since it is the same pass, and keeps the answer that streamed before
+it. Silently dropping it leaves the conversation missing its middle with nothing said.
+
 ### Declare capabilities honestly
 
 `ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:

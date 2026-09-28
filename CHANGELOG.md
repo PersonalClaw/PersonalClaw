@@ -17,6 +17,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A channel app waits for an approval as long as PersonalClaw does: `personalclaw.sdk.channel.approval_window_secs()`, used by `slack-channel`.**
 
+- **A channel app can say the agent compacted the conversation on its own: `personalclaw.sdk.channel.COMPACTION_AUTOMATIC`, used by `slack-channel`.**
+
 - **An app's provider runs git the way core runs its own through `personalclaw.sdk.git`, masks what a program it starts printed with `personalclaw.sdk.security.mask_child_output`, and passes only the SSH agent to a program that signs in over ssh with `child_process_env(ssh_agent=True)` (`git-repo`, `git-sync`, `notes`, `spec-builder`, `skills-sh` and `rsync-sync` use them).**
 
 - **An image or video provider can say why it can't generate: `unavailable_reason()` on `ImageGenProvider` and `VideoGenProvider` (an SDK addition no app has to change for; `google-models`, `bedrock-models`, `openrouter-models`, `alibaba-models`, `fal-image` and `local-image-gen` say why).**

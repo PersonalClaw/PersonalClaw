@@ -247,3 +247,13 @@ async def test_the_chat_says_it_where_it_happened_and_keeps_the_answer(tmp_path,
         f"Conversation compacted: {summary}",
         "Here is what I found.",
     ]
+
+
+def test_a_channel_app_tells_the_loops_own_pass_by_the_sdks_status():
+    """🔴 Red before: the SDK gave a channel app the event kind and not this status, so an app that
+    streams a turn itself (slack-channel) could not tell the loop's own pass from any other status
+    and said nothing. It is the value the loop sends, not a copy that could drift from it."""
+    from personalclaw.sdk.channel import COMPACTION_AUTOMATIC as sdk_status
+    from personalclaw.sdk.channel import EVENT_COMPACTION_STATUS as sdk_kind
+
+    assert (sdk_kind, sdk_status) == (EVENT_COMPACTION_STATUS, COMPACTION_AUTOMATIC)

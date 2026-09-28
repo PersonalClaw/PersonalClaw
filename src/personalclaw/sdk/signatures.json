@@ -519,6 +519,7 @@
  "personalclaw.sdk.channel.BACKGROUND_KEY": {"kind": "value", "type": "str", "value": "'_bg'"},
  "personalclaw.sdk.channel.CANCELLED_STOP_REASONS": {"kind": "value", "type": "tuple", "value": "('cancelled', 'stopped_by_user')"},
  "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code, then send it here to start talking.\""},
+ "personalclaw.sdk.channel.COMPACTION_AUTOMATIC": {"kind": "value", "type": "str", "value": "'automatic'"},
  "personalclaw.sdk.channel.CRED_OWNER_ID": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_OWNER_ID'"},
  "personalclaw.sdk.channel.CRED_SLACK_APP_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_APP_TOKEN'"},
  "personalclaw.sdk.channel.CRED_SLACK_BOT_TOKEN": {"kind": "value", "type": "str", "value": "'SLACK_BOT_TOKEN'"},

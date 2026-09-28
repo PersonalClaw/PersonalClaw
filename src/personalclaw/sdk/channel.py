@@ -180,6 +180,10 @@ from personalclaw.llm.base import (
     LLMEvent,
     ModelProvider,
 )
+
+# The status of a compaction the agent did on its own, between two steps of a turn: a channel that
+# streams the turn itself says so, in the words it gives a `/compact` that did the same.
+from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.llm_helpers import save_conversation_turn
 from personalclaw.mcp_discovery import McpServerInfo, list_servers
 from personalclaw.memory_service import MemoryService
@@ -284,6 +288,7 @@ __all__ = [
     "AutomationToolResult",
     "BACKGROUND_KEY",
     "CANNED_PAIRING_REPLY",
+    "COMPACTION_AUTOMATIC",
     "CRED_OWNER_ID",
     "CRED_SLACK_APP_TOKEN",
     "CRED_SLACK_BOT_TOKEN",
