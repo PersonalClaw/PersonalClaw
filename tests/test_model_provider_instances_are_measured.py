@@ -391,7 +391,14 @@ def test_a_refused_localhost_in_the_container_names_the_hosts_address(
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     copy = connectivity_guidance(refused, endpoint="http://localhost:11434")
     assert copy is not None and "http://localhost:11434" in copy
-    assert "host.docker.internal" in copy and "host.lima.internal" in copy
+    # Each runtime's own way to the host: the documented names where the runtime defines one,
+    # and for Finch or Lima the address, which needs no DNS server to answer for a name.
+    assert "host.docker.internal with Docker Desktop" in copy
+    assert "host.containers.internal with Podman" in copy
+    assert "192.168.5.2 with Finch or Lima on a Mac" in copy
+    assert "--add-host=host.docker.internal:host-gateway" in copy
+    # The name a Finch container was measured unable to resolve is not offered.
+    assert "host.lima.internal" not in copy
     # Only there: a LAN host refusing, or localhost outside a container, is a stopped server.
     assert "host.docker.internal" not in connectivity_guidance(
         refused, endpoint="http://ollama.lan:11434"

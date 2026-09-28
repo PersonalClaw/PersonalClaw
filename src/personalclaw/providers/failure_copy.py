@@ -42,15 +42,35 @@ UNEXPECTED_FAILURE_COPY = (
     "The request failed unexpectedly. Check the provider's logs and try again."
 )
 
+#: The address each container runtime gives the computer it runs on, as a container sees it.
+#:
+#: Docker Desktop's ``host.docker.internal`` and Podman's ``host.containers.internal`` are those
+#: runtimes' own documented names. Finch and Lima on a Mac get an ADDRESS, not a name: measured
+#: from a Finch container, ``192.168.5.2`` (Lima's user-network address for the host) reaches the
+#: host's services, even ones bound to localhost only, while the names ``host.lima.internal`` and
+#: ``host.docker.internal`` resolve only through that network's own DNS server: the container's
+#: second DNS server answers NXDOMAIN for both, and one run found neither name resolvable. Naming
+#: them sent the user to a host name that did not resolve; the address does not depend on DNS.
+#: Docker on Linux defines no name for the host unless the container is started with
+#: ``--add-host=host.docker.internal:host-gateway``, and reaches only a server that listens on
+#: more than loopback, which is why the hint says both.
+CONTAINER_HOST_ADDRESSES: tuple[tuple[str, str], ...] = (
+    ("Docker Desktop", "host.docker.internal"),
+    ("Podman", "host.containers.internal"),
+    ("Finch or Lima on a Mac", "192.168.5.2"),
+)
+
 #: Appended when a loopback endpoint refuses inside the container image. There, localhost is
 #: the container itself, so a server running on the user's computer is never reachable at it —
-#: the one refused connection whose fix is a different hostname, not a running server. The
-#: aliases are the container runtimes' own names for the host (measured working from the
-#: image: ``host.docker.internal`` under Docker, ``host.lima.internal`` under Lima/Finch).
+#: the one refused connection whose fix is a different address, not a running server.
 CONTAINER_LOCALHOST_HINT = (
-    " PersonalClaw is running in a container, where localhost is the container itself — to "
-    "reach a server on your computer, use host.docker.internal (Docker) or host.lima.internal "
-    "(Lima, Colima, Finch) in place of localhost."
+    " PersonalClaw is running in a container, where localhost is the container itself. To reach "
+    "a server on your computer, use your computer's address as the container sees it, in place "
+    "of localhost: "
+    + ", ".join(f"{address} with {runtime}" for runtime, address in CONTAINER_HOST_ADDRESSES)
+    + ". With Docker on Linux, start the container with "
+    "--add-host=host.docker.internal:host-gateway, and have the server listen on more than "
+    "localhost."
 )
 
 

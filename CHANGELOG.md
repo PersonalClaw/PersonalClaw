@@ -295,6 +295,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An idle tab no longer floods the gateway and the security log.**
 - **The attention surfaces agree with each other.**
 - **The container image can offer and fetch its default chat model, keeps your workspace on its volume, and says when a project's folder is gone.**
+- **In a container, a refused `localhost` names the address your container runtime gives your computer, such as `192.168.5.2` for Finch and Lima, instead of a host name that may not resolve there.**
 - **Apps with Python dependencies install on the published Docker image, and keep working after `docker rm` + `docker run`.**
 - **Generated chat titles no longer keep the model's label.**
 - **A room at its member ceiling no longer offers another agent.**

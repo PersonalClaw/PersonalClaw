@@ -357,3 +357,11 @@ knows an owner id it can reach), it lands in the Inbox with a sentence saying wh
 - **`personalclaw token` says the gateway isn't running** — check
   `docker compose ps` shows `personalclaw-gateway` healthy; the healthcheck hits
   `/api/healthz`.
+- **A server on your computer is refused at `localhost`** — such as a local model server
+  entered as `http://localhost:<port>`. Inside the container, `localhost` is the container
+  itself. Use your computer's address as the container sees it: `host.docker.internal` with
+  Docker Desktop, `host.containers.internal` with Podman, `192.168.5.2` with Finch or Lima on
+  a Mac (Lima's address for the host; it reaches servers that listen on localhost only, too).
+  With Docker on Linux, add `--add-host=host.docker.internal:host-gateway` to the container's
+  command, and have the server listen on more than localhost. PersonalClaw says the same when
+  such an endpoint refuses.
