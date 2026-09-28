@@ -469,9 +469,11 @@ class Provisioned:
 
     `ok=False` with `fatal=True` is a REFUSAL — the spec declared something that cannot be
     honored (an unknown mode, a greedy preserve pattern), and running anyway would run in a mode
-    nobody chose. Everything else degrades: a worktree that could not be created falls back to
-    the project workspace WITH the reason recorded, because refusing a run because git is
-    unavailable would make `mode: worktree` unusable on a non-repo workspace.
+    nobody chose. Everything else degrades: a worktree or a container that could not be made
+    falls back to a scratch folder of the run's own WITH the reason recorded, because refusing a
+    run because git is unavailable would make `mode: worktree` unusable on a non-repo workspace.
+    That folder is the run's workspace from then on: `isolated` holds, the run's steps work in it
+    and `degraded_reason` says why it is not the one declared.
     """
 
     mode: Mode = Mode.SCRATCH
@@ -612,14 +614,21 @@ async def provision(
     if spec.mode is Mode.CONTAINER and root:
         await _provision_container(spec, out, run_id=run_id, from_snapshot=from_snapshot)
         degraded = out.degraded_reason
-    if degraded:
-        # An isolated mode that could not isolate is reported as NOT isolated. The board's
-        # suspend/resume decision reads this: claiming isolation we do not have would make the
-        # boot sweep offer a Resume into a substrate that was never separate from the process.
-        out.isolated = False
     if not root:
+        # No folder at all, not even the scratch folder a fallback makes, so the run has no
+        # workspace of its own: it is not isolated, and its reason claims no folder it lacks.
         out.ok = False
+        out.isolated = False
         return out
+    if degraded:
+        # The worktree or container the run declared could not be made, and every reason for
+        # that falls back to a scratch folder of the run's own (`_create_worktree`,
+        # `_provision_container`). That folder is as separate from the project's tree as a
+        # declared scratch workspace, and it is the run's workspace: its steps work in it
+        # (`run_start`), the spawn allowlist admits it (`run_workdir`), and a restart finds it
+        # recoverable like any scratch run's. So the run stays isolated, and its reason says
+        # where it works, once, whatever made the fallback.
+        out.degraded_reason = f"{degraded}; using a scratch dir"
 
     # preserve → setup. Both only for an isolated workspace: an in-place run is already IN the
     # tree the patterns would copy from, so copying would be a file onto itself.
@@ -660,15 +669,13 @@ async def _provision_container(
         # specs written directly to disk, land here — same message, later surface.
         out.degraded_reason = (
             "; ".join(i.message for i in fatal)
-            or "container mode declared with no environment manifest; using an isolated "
-            "scratch dir"
+            or "container mode declared with no environment manifest"
         )
         return
     backend = detect_backend()
     if backend is None:
         out.degraded_reason = (
-            "no container backend available (docker, nerdctl, or Apple's container CLI); "
-            "using an isolated scratch dir"
+            "no container backend available (docker, nerdctl, or Apple's container CLI)"
         )
         return
     result = await backend.provision(
@@ -757,19 +764,11 @@ def _create_worktree(run_id: str, *, project_id: str, workspace_dir: str) -> tup
     if not workspace_dir:
         return _scratch_dir(run_id, "", None), "", "no workspace is bound to this run's project"
     if not loop_worktree.git_available():
-        return _scratch_dir(run_id, "", None), "", "git is not on PATH; using a scratch dir"
+        return _scratch_dir(run_id, "", None), "", "git is not on PATH"
     if not loop_worktree.is_git_repo(workspace_dir):
-        return (
-            _scratch_dir(run_id, "", None),
-            "",
-            "the bound workspace is not a git repo; using a scratch dir",
-        )
+        return _scratch_dir(run_id, "", None), "", "the bound workspace is not a git repo"
     if not loop_worktree.ensure_base_commit(workspace_dir):
-        return (
-            _scratch_dir(run_id, "", None),
-            "",
-            "the repo has no commit to branch from; using a scratch dir",
-        )
+        return _scratch_dir(run_id, "", None), "", "the repo has no commit to branch from"
     path = loop_worktree.add_worktree(workspace_dir, run_id, project_id)
     if not path:
         return _scratch_dir(run_id, "", None), "", "git could not create a worktree"
@@ -840,7 +839,8 @@ def run_workdir(run_id: str) -> str:
 
     * a run with an isolated workspace: the path its record says it was given, and only when that
       path is the one this module makes for the run: its scratch folder (the named one it
-      declared, for a named workspace) or its own git worktree;
+      declared, for a named workspace), its own git worktree, or the scratch folder a worktree or
+      a container it could not make fell back to;
     * a project's run that works in place: the folder its project is bound to, read from the
       project's record (:func:`project_tree`) and never from the path the run's record carries;
     * any other project's run: that project's context folder, which is where the engine puts
@@ -876,26 +876,37 @@ def run_workdir(run_id: str) -> str:
 
 
 def _own_isolated_dir(run: Any, recorded: str, state: dict[str, Any]) -> str:
-    """*recorded* when it is the isolated folder this module makes for *run*, else ``""``."""
-    from personalclaw.config.loader import config_dir
-    from personalclaw.loop import worktree as loop_worktree
-
+    """*recorded* when it is the isolated folder this module makes for *run*, else ``""``: its
+    own git worktree, or its scratch folder (the one it declared, or the one a worktree or a
+    container it could not make fell back to)."""
     try:
         real = Path(os.path.realpath(recorded))
-        if str(state.get("mode", "") or "") == Mode.WORKTREE.value:
-            project_id = str(getattr(run, "project_id", "") or "")
-            if project_id:
-                own = Path(os.path.realpath(loop_worktree.worktree_path("", run.id, project_id)))
-                return recorded if real == own else ""
-            # A project-less run's worktree sits under a root keyed by the tree it branched from,
-            # which the record does not name: it is this run's when it is the run's own name in
-            # one of those roots.
-            roots = Path(os.path.realpath(config_dir() / "code" / "worktrees"))
-            return recorded if real.name == run.id and real.parent.parent == roots else ""
-        own = Path(os.path.realpath(scratch_location(run.id, str(state.get("name", "") or ""))))
+        mode = str(state.get("mode", "") or "")
+        if mode == Mode.WORKTREE.value and not state.get("degraded_reason"):
+            return recorded if _is_own_worktree(run, real) else ""
+        # A worktree that could not be made falls back to the run's unnamed scratch folder
+        # (`_create_worktree`). A container works in the scratch folder its declaration names,
+        # made or not, as a declared scratch workspace does.
+        name = "" if mode == Mode.WORKTREE.value else str(state.get("name", "") or "")
+        own = Path(os.path.realpath(scratch_location(run.id, name)))
         return recorded if real == own else ""
     except (OSError, ValueError):
         return ""
+
+
+def _is_own_worktree(run: Any, real: Path) -> bool:
+    """Whether *real* is the git worktree this module makes for *run*."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.loop import worktree as loop_worktree
+
+    project_id = str(getattr(run, "project_id", "") or "")
+    if project_id:
+        return real == Path(os.path.realpath(loop_worktree.worktree_path("", run.id, project_id)))
+    # A project-less run's worktree sits under a root keyed by the tree it branched from, which
+    # the record does not name: it is this run's when it is the run's own name in one of those
+    # roots.
+    roots = Path(os.path.realpath(config_dir() / "code" / "worktrees"))
+    return real.name == run.id and real.parent.parent == roots
 
 
 def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:

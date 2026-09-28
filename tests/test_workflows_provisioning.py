@@ -317,7 +317,12 @@ class TestDegradation:
     ) -> None:
         """A user who declared `worktree` wanted isolation, and the isolation is deliverable
         without git. Refusing would trade the property they asked for against the mechanism they
-        did not."""
+        did not.
+
+        The scratch folder it falls back to is the run's workspace from then on, as separate
+        from the tree as a declared scratch workspace, so the run is isolated and the reason
+        says where it works. 🔴 It read `isolated: False` before, while its steps worked in
+        neither the scratch folder nor a worktree."""
         plain = tmp_path / "not-a-repo"
         plain.mkdir()
         run = _run()
@@ -325,8 +330,11 @@ class TestDegradation:
             WorkspaceSpec(mode=Mode.WORKTREE), run_id=run.id, workspace_dir=str(plain)
         )
         assert result.ok is True
-        assert result.path and "not a git repo" in result.degraded_reason
-        assert result.isolated is False, "an isolated mode that could not isolate reports honestly"
+        assert result.path == str(provisioning.scratch_location(run.id)), result.path
+        assert (
+            result.degraded_reason == "the bound workspace is not a git repo; using a scratch dir"
+        )
+        assert result.isolated is True, "the scratch folder it fell back to is its own"
 
     async def test_container_mode_degrades_rather_than_refusing(self, home, repo) -> None:
         """WF2WOR-12 shipped container mode with the no-environment posture unchanged: a bare
@@ -337,8 +345,24 @@ class TestDegradation:
             WorkspaceSpec(mode=Mode.CONTAINER), run_id=run.id, workspace_dir=str(repo)
         )
         assert result.ok is True and result.path
-        assert "no environment manifest" in result.degraded_reason
+        assert result.degraded_reason == (
+            "container mode declared with no environment manifest; using a scratch dir"
+        )
         assert result.container_id == "" and result.container_backend == ""
+        assert result.isolated is True
+
+    async def test_a_fallback_that_cannot_make_its_scratch_folder_claims_none(
+        self, home, monkeypatch
+    ) -> None:
+        """With not even the scratch folder made, the run has no workspace of its own: it is not
+        isolated, and its reason does not say it is using a folder it does not have."""
+        monkeypatch.setattr(provisioning, "_scratch_dir", lambda *a, **k: "")
+        run = _run(project_id="p-1")
+        result = await provisioning.provision(
+            WorkspaceSpec(mode=Mode.WORKTREE), run_id=run.id, project_id="p-1"
+        )
+        assert (result.ok, result.path, result.isolated) == (False, "", False)
+        assert result.degraded_reason == "no workspace is bound to this run's project"
 
     async def test_in_place_reports_the_REAL_tree_and_is_not_isolated(self, home, repo) -> None:
         """Inventing a path would hide from every surface that the run worked in the user's tree —
@@ -369,6 +393,27 @@ class TestRunRecord:
         assert reloaded is not None
         assert reloaded.extra["worktree_path"] == result.path
         assert reloaded.extra["workspace"]["mode"] == "scratch"
+
+    async def test_a_run_that_fell_back_to_scratch_is_recoverable_like_a_scratch_run(
+        self, home, tmp_path
+    ) -> None:
+        """Its steps work in the scratch folder it fell back to, so a restart must find that
+        folder the way it finds a declared scratch workspace: recorded where the boot sweep
+        reads it, and suspended with a Resume while it is on disk."""
+        from personalclaw.workflows.controller import EngineServices
+        from personalclaw.workflows.watchdog import WorkflowWatchdog
+
+        plain = tmp_path / "not-a-repo"
+        plain.mkdir()
+        run = _run(status=RunStatus.RUNNING)
+        spec = WorkspaceSpec(mode=Mode.WORKTREE)
+        result = await provisioning.provision(spec, run_id=run.id, workspace_dir=str(plain))
+        provisioning.stamp_run(run, result, spec)
+        store.save(run)
+
+        assert run.extra["worktree_path"] == result.path
+        substrate = WorkflowWatchdog(None, EngineServices())._substrate_for(run)
+        assert substrate.isolated and substrate.alive, substrate
 
     async def test_the_stamped_env_carries_PRESENCE_only(self, home, repo) -> None:
         """A run record is read by the cockpit, the export archive and a bug report. It must not be

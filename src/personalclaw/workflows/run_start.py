@@ -119,10 +119,11 @@ async def provision_workspace(ctl: RunController) -> bool:
     ctl.journal.workspace_provisioned(result.to_dict())
     if result.path and (result.isolated or result.mode is Mode.IN_PLACE):
         # The stage dispatcher's cwd, so a code-kind run's subagents actually work IN the
-        # worktree. Without this the isolation would be a directory nothing ran in — the
-        # mechanism would look provisioned and be decorative. An in-place run's path is the tree
-        # its project is bound to, which is what in place means: without this its steps worked
-        # in the project's context folder (`bind_project_memory_cwd`) instead.
+        # worktree, or in the scratch folder a run declared or fell back to when its worktree or
+        # container could not be made. Without this the isolation would be a directory nothing
+        # ran in — the mechanism would look provisioned and be decorative. An in-place run's path
+        # is the tree its project is bound to, which is what in place means: without this its
+        # steps worked in the project's context folder (`bind_project_memory_cwd`) instead.
         ctl.services.cwd = result.path
     return True
 

@@ -290,11 +290,15 @@ class TestProvisioningChain:
         assert fake.provision_calls[0]["workspace_dir"] == result.path
 
     async def test_no_backend_degrades_with_the_reason_recorded(self, home, monkeypatch):
+        """The run works in the scratch folder the container would have mounted, as separate
+        from the project's tree as a declared scratch workspace, so it is isolated and its
+        reason says where it works."""
         monkeypatch.setattr(container_env, "detect_backend", lambda: None)
         result = await provisioning.provision(_container_spec(), run_id="r2")
         assert result.ok and result.path, "the run must stay startable"
         assert "no container backend" in result.degraded_reason
-        assert result.container_id == "" and result.isolated is False
+        assert result.degraded_reason.endswith("; using a scratch dir"), result.degraded_reason
+        assert result.container_id == "" and result.isolated is True
 
     async def test_backend_failure_degrades_with_the_backend_reason(self, home, monkeypatch):
         fake = _FakeBackend(provision_ok=False)

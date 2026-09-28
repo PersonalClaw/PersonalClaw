@@ -5,7 +5,8 @@ The engine spawns every step of a run in one folder, and which folder depends on
 * a run whose template declares a scratch workspace: a folder of its own under its run directory
   (a compiled batch declares one, so this is every batch run);
 * a run whose template declares a worktree: its own git worktree of the codebase its project
-  binds;
+  binds, or, when that worktree (or a declared container) cannot be made, the scratch folder of
+  its own it falls back to;
 * a run whose template declares it works in place: the folder its project is bound to, the real
   tree;
 * a project's run with none of those: that project's context folder, where the engine keeps a
@@ -16,7 +17,9 @@ the folders the owner added, and none of those folders is either. So every step 
 was refused (``cwd is not in the workspace ... or under any allowed root``), and the run failed on
 its first step. An in-place run was not even pointed at its tree: the engine gave a run its
 workspace as the folder to work in only when that workspace was isolated, so an in-place run's
-steps worked in the project's context folder.
+steps worked in the project's context folder. And a run whose worktree or container fell back to
+a scratch folder was recorded as not isolated, so its steps did not work in that folder either:
+they worked in its project's context folder, while its record named the scratch folder.
 
 The allowlist now admits the folder of the run a step belongs to, and nothing broader: the folder
 comes from that run's own record (for an in-place run, from its project's record), never from the
@@ -186,17 +189,37 @@ def test_a_step_of_a_worktree_run_with_no_project_works_in_the_runs_own_worktree
     _works_in(controller, manager, worktree_path(str(codebase), controller.run.id))
 
 
-def test_a_worktree_run_whose_project_binds_no_codebase_works_in_the_projects_context_folder():
-    """The worktree could not be made, so the run is not isolated, and the engine puts its step
-    in the project's context folder rather than the scratch folder the run fell back to."""
+def test_a_worktree_run_that_falls_back_works_in_the_scratch_folder_it_fell_back_to():
+    """🔴 Red before the fix: the run was recorded as not isolated, so the engine put its step in
+    the project's context folder while the record named the scratch folder. The project binds no
+    codebase, so no worktree can be made; the run works in its scratch folder and says so."""
     from personalclaw import projects
 
     project = _project("Garden Planner")
     controller, manager = _controller(_spec({"mode": "worktree"}), project_id=project.id)
-    _works_in(controller, manager, projects.context_dir(project.id))
+    scratch = provisioning.scratch_location(controller.run.id)
+    _works_in(controller, manager, scratch)
+
+    record = store.get(controller.run.id)
+    recorded = provisioning.workspace_state(record)
+    assert recorded["isolated"] is True and recorded["path"] == str(scratch), recorded
+    assert recorded["degraded_reason"] == (
+        "no workspace is bound to this run's project; using a scratch dir"
+    )
+    # A restart finds it where it finds any scratch run's workspace.
+    assert record.extra["worktree_path"] == str(scratch)
+    assert _refused(projects.context_dir(project.id), provisioning.run_workdir(record.id))
+
+
+def test_a_container_run_that_falls_back_works_in_the_scratch_folder_it_fell_back_to():
+    """🔴 Red before the fix, as for a worktree. A container declared with no environment
+    manifest is not made, and the run works in the scratch folder the container would have
+    mounted."""
+    controller, manager = _controller(_spec({"mode": "container"}))
+    _works_in(controller, manager, provisioning.scratch_location(controller.run.id))
     recorded = provisioning.workspace_state(store.get(controller.run.id))
-    assert recorded["isolated"] is False and recorded["degraded_reason"], recorded
-    assert _refused(recorded["path"], provisioning.run_workdir(controller.run.id))
+    assert recorded["isolated"] is True and recorded["container_id"] == "", recorded
+    assert recorded["degraded_reason"].endswith("; using a scratch dir"), recorded
 
 
 def test_a_step_of_an_in_place_run_works_in_the_tree_its_project_is_bound_to(codebase):
@@ -271,6 +294,35 @@ def test_a_worktree_run_admits_only_its_own_worktree(codebase):
         Path(forged).mkdir(parents=True, exist_ok=True)
         _record_path(run_id, forged)
         assert provisioning.run_workdir(run_id) == "", forged
+
+
+def test_a_run_that_fell_back_admits_only_its_own_scratch_folder(codebase):
+    """The fallback folder is the run's own scratch folder, and only a run whose record says it
+    fell back gets it: a worktree run that got its worktree is not admitted to its scratch
+    location, and a fallback's record forged to another run's scratch folder admits nothing."""
+    from personalclaw.loop.worktree import worktree_path
+
+    bare = _project("Garden Planner")
+    fell_back, _manager = _controller(_spec({"mode": "worktree"}), project_id=bare.id)
+    asyncio.run(fell_back.run_to_completion(timeout=25.0))
+    own = provisioning.scratch_location(fell_back.run.id)
+    assert provisioning.run_workdir(fell_back.run.id) == str(own)
+    assert not _refused(own, str(own))
+
+    other = store.create(WorkflowRun(id="", workflow_name="another-run"))
+    elsewhere = provisioning.scratch_location(other.id)
+    elsewhere.mkdir(parents=True)
+    _record_path(fell_back.run.id, elsewhere)
+    assert provisioning.run_workdir(fell_back.run.id) == ""
+
+    bound = _project("Reading List", workspace_dir=str(codebase))
+    made, _manager = _controller(_spec({"mode": "worktree"}), project_id=bound.id)
+    asyncio.run(made.run_to_completion(timeout=25.0))
+    assert provisioning.run_workdir(made.run.id) == worktree_path("", made.run.id, bound.id)
+    unused = provisioning.scratch_location(made.run.id)
+    unused.mkdir(parents=True)
+    _record_path(made.run.id, unused)
+    assert provisioning.run_workdir(made.run.id) == "", "it got its worktree, not a fallback"
 
 
 def test_a_worktree_run_with_no_project_admits_only_its_own_worktree(codebase):

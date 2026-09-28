@@ -120,6 +120,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A workflow run that works in place runs its steps in the folder its project is bound to, instead of in the project's context folder.**
 
+- **A workflow run whose worktree or container could not be made works in the scratch folder it falls back to, and its record says so.**
+
 - **Git over ssh signs in through your SSH agent, and the service install keeps git's own certificate settings.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
