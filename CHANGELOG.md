@@ -94,6 +94,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The per-site browse "profile key", which nothing used; a key an earlier release stored is deleted at start.**
 
+- **The README's coverage badge, so the job that measures coverage no longer holds a token that can write the repository.**
+
 ### Fixed
 
 - **Stopping PersonalClaw, a workflow run, a loop or a channel no longer waits forever on a task that will not stop: it waits a few seconds, logs what did not finish, and goes on.**

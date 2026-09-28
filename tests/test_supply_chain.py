@@ -10,8 +10,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MAKEFILE = REPO_ROOT / "Makefile"
 README = REPO_ROOT / "README.md"
-RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
-FULL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "full.yml"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+FULL_WORKFLOW = WORKFLOWS / "full.yml"
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -128,30 +129,58 @@ def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     assert "build-provenance attestations** for the wheel and images" in readme
 
 
-def test_readme_coverage_badge_reads_the_branch_the_workflow_publishes() -> None:
+def _jobs_that_run_the_suite() -> list[tuple[str, str, object]]:
+    """``(workflow, job, permissions it holds)`` for every job with a step that runs pytest."""
+    found: list[tuple[str, str, object]] = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(workflow, dict)
+        default = workflow.get("permissions")
+        jobs = workflow.get("jobs")
+        assert isinstance(jobs, dict)
+        for name, job in jobs.items():
+            steps = job.get("steps") if isinstance(job, dict) else None
+            if not isinstance(steps, list):
+                continue
+            if any(isinstance(s, dict) and "pytest" in str(s.get("run", "")) for s in steps):
+                found.append((path.name, name, job.get("permissions", default)))
+    return found
+
+
+def test_no_job_that_runs_the_suite_holds_a_token_that_can_write() -> None:
+    """The suite runs code nobody here wrote: every locked third-party package, in every test.
+    So a job that runs it holds a read-only token. The coverage job held ``contents: write``
+    only to push a coverage badge to a branch, and the badge is gone. A job with no
+    ``permissions`` anywhere would get the repository's default, which is not known here."""
+    jobs = _jobs_that_run_the_suite()
+    assert len(jobs) >= 8, f"only {len(jobs)} jobs run pytest: the scan lost the workflows"
+    can_write = [
+        f"{workflow}:{job} -> {held}"
+        for workflow, job, held in jobs
+        if not isinstance(held, dict) or "write" in held.values()
+    ]
+    assert not can_write, can_write
+
+
+def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
     workflow = _full_workflow()
     jobs = workflow.get("jobs")
     assert isinstance(jobs, dict)
     coverage = jobs.get("coverage")
     assert isinstance(coverage, dict)
+    steps = coverage.get("steps")
+    assert isinstance(steps, list)
+    runs = [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
+    assert any("--cov=personalclaw" in run and "--cov-report=xml" in run for run in runs)
+    upload = _step(coverage, name="Upload coverage artifacts").get("with")
+    assert isinstance(upload, dict)
+    assert upload.get("path") == "coverage.xml"
+    assert not any("git push" in run for run in runs), "the coverage job publishes nothing"
 
-    publish = _step(coverage, name="Publish coverage badge")
-    environment = publish.get("env")
-    script = publish.get("run")
-    assert isinstance(environment, dict)
-    assert isinstance(script, str)
-    branch = environment.get("BADGE_BRANCH")
-    assert isinstance(branch, str)
-    assert "refs/heads/${BADGE_BRANCH}" in script
 
+def test_the_readme_shows_no_badge_that_nothing_publishes() -> None:
     readme = README.read_text(encoding="utf-8")
-    badge = re.search(
-        r"https://img\.shields\.io/endpoint\?url=https://raw\.githubusercontent\.com/"
-        r"PersonalClaw/PersonalClaw/([^/\s)]+)/coverage-badge\.json",
-        readme,
-    )
-    assert badge is not None
-    assert badge.group(1) == branch
+    assert "coverage-badge.json" not in readme, "that badge read a branch nothing writes any more"
 
 
 # ---------------------------------------------------------------------------

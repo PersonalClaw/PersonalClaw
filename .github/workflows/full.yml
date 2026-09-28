@@ -289,8 +289,8 @@ jobs:
           retention-days: 7
 
   coverage:
-    permissions:
-      contents: write
+    # No `permissions:` of its own: it runs the whole suite, third-party packages included, so it
+    # holds the workflow's read-only token and publishes nothing but its artifacts.
     runs-on: ubuntu-latest
     # Above the job's own ~90-min measured runtime — see the cap rationale on matrix-shard.
     timeout-minutes: 130
@@ -321,47 +321,11 @@ jobs:
           path: reports/junit-coverage.xml
           if-no-files-found: ignore
           retention-days: 7
-      - name: Coverage badge (self-owned shields JSON — no third-party service)
-        run: |
-          uv run python - <<'PY'
-          import json, xml.etree.ElementTree as ET
-          rate = float(ET.parse("coverage.xml").getroot().get("line-rate", "0")) * 100
-          color = "brightgreen" if rate >= 85 else "green" if rate >= 70 else "yellow" if rate >= 50 else "red"
-          json.dump({"schemaVersion": 1, "label": "coverage",
-                     "message": f"{rate:.0f}%", "color": color},
-                    open("coverage-badge.json", "w"))
-          print(f"coverage {rate:.1f}%")
-          PY
-      - name: Publish coverage badge
-        if: github.ref == 'refs/heads/main'
-        env:
-          BADGE_BRANCH: badges
-        run: |
-          set -euo pipefail
-          published_badge="$(mktemp)"
-          if git fetch --quiet --no-tags origin "refs/heads/${BADGE_BRANCH}" 2>/dev/null &&
-             git show "FETCH_HEAD:coverage-badge.json" >"$published_badge" 2>/dev/null &&
-             cmp -s coverage-badge.json "$published_badge"; then
-            echo "coverage badge is unchanged"
-            exit 0
-          fi
-
-          blob="$(git hash-object -w coverage-badge.json)"
-          tree="$(printf '100644 blob %s\tcoverage-badge.json\n' "$blob" | git mktree)"
-          commit="$(
-            printf '%s\n' 'chore(ci): update coverage badge' |
-              git -c user.name='github-actions[bot]' \
-                  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-                  commit-tree "$tree"
-          )"
-          git push --force origin "${commit}:refs/heads/${BADGE_BRANCH}"
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
         with:
           name: coverage
-          path: |
-            coverage.xml
-            coverage-badge.json
+          path: coverage.xml
           if-no-files-found: warn
 
   install-smoke:
