@@ -59,6 +59,13 @@ class FakeEventSource {
 }
 /** The stream this step has open now. */
 const stream = () => FakeEventSource.all.filter((es) => !es.closed).at(-1)!
+/** Push a frame through the stream the step has open, once it has opened one. The step opens its
+ *  stream in an effect, and under load that effect can run after the render a test has just
+ *  waited for, so a frame pushed at once can find no stream yet. */
+async function emit(ev: string, data: unknown) {
+  await waitFor(() => expect(stream()).toBeDefined())
+  stream().emit(ev, data)
+}
 
 const onDone = vi.fn()
 const onSkip = vi.fn()
@@ -905,7 +912,7 @@ describe('while conversations are still being read in full', () => {
       item('c3', 'conversations', 'projects/a/3.jsonl', { title: 'Long paste first' }),
     ])
     onboardingImportScan.mockResolvedValueOnce({ ...final, categories: [...CATEGORIES, 'conversations'], reading: { running: false, read: 12, of: 12 } })
-    stream().emit('status', { reading: { running: false, read: 12, of: 12 }, job: null })
+    await emit('status', { reading: { running: false, read: 12, of: 12 }, job: null })
     await waitFor(() => expect(onboardingImportScan).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByText(/Still reading your conversations/)).toBeNull())
     importNow()
@@ -925,7 +932,7 @@ describe('the import runs as a job the step watches', () => {
     await mounted()
     importNow()
     await screen.findByRole('button', { name: 'Stop importing' })
-    stream().emit('status', {
+    await emit('status', {
       reading: { running: false, read: 0, of: 0 },
       job: job({ done: 2, counts: { imported: 1, existing: 1, conflict: 0, rejected: 0 }, current: 'weather' }),
     })
@@ -934,9 +941,10 @@ describe('the import runs as a job the step watches', () => {
     expect(screen.getByText('1 imported · 1 already here')).toBeTruthy()
     expect(screen.getByText('Now: weather')).toBeTruthy()
     onboardingImportJob.mockResolvedValue(finished(report([IMPORTED_ROW])))
-    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'done', phase: 'finished', done: 4 }) })
+    await emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'done', phase: 'finished', done: 4 }) })
     expect(await screen.findByRole('group', { name: 'Brought over' })).toBeTruthy()
-    expect(FakeEventSource.all.every((es) => es.closed)).toBe(true)
+    // The stream is closed by the same effect, so it too can close after the report's render.
+    await waitFor(() => expect(FakeEventSource.all.every((es) => es.closed)).toBe(true))
   })
 
   it('a stop asks the gateway, says it is stopping, and the report names what was not reached', async () => {
@@ -950,7 +958,7 @@ describe('the import runs as a job the step watches', () => {
       status: 'stopped', phase: 'finished', done: 1,
       report: report([IMPORTED_ROW], { not_reached: ['f3', 'f4'] }),
     }))
-    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'stopped', phase: 'finished' }) })
+    await emit('status', { reading: { running: false, read: 0, of: 0 }, job: job({ status: 'stopped', phase: 'finished' }) })
     const section = await screen.findByRole('group', { name: 'Not reached, because you stopped' })
     expect(section.textContent).toContain('The import stopped before 2 items you picked, so nothing was written for them. Importing again brings them over.')
     expect(section.textContent).toContain('MCP servers · github')
@@ -964,7 +972,7 @@ describe('the import runs as a job the step watches', () => {
     importNow()
     await screen.findByRole('button', { name: 'Stop importing' })
     // After the restart the stream reconnects to a gateway that has run no import.
-    stream().emit('status', { reading: { running: false, read: 0, of: 0 }, job: null })
+    await emit('status', { reading: { running: false, read: 0, of: 0 }, job: null })
     expect(await screen.findByText('The import stopped when PersonalClaw restarted.')).toBeTruthy()
     expect(screen.getByText(/Everything that landed before it stopped is kept, and nothing is half written\./)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Scan again' }))
@@ -983,7 +991,7 @@ describe('the import runs as a job the step watches', () => {
     await mounted()
     importNow()
     await screen.findByRole('button', { name: 'Stop importing' })
-    stream().emit('status', {
+    await emit('status', {
       reading: { running: false, read: 0, of: 0 },
       job: job({ status: 'failed', phase: 'finished', error: 'The import stopped after a write failed: disk full.' }),
     })
