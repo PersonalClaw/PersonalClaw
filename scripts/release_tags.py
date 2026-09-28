@@ -19,11 +19,11 @@ Each was wrong in its own way, and the two failures compounded:
   anywhere in the ref and nothing else, so `v0.3.0-beta.2` was published as a
   full, non-prerelease GitHub Release — which `stable`'s
   `self_update.select_target` then offered to every user as an upgrade.
-* **The moving tags the updater pulls were never pushed at all.** RUM-7 shipped
-  `self_update.select_image_tag`, which resolves `stable` -> the moving minor
-  `:X.Y` and `beta` -> `:beta`; `docs/guides/containers.md` documents both. No
-  job ever created either tag, so the commands the Updates panel printed
-  resolved to an image that does not exist.
+* **The moving tags the updater pulls were never pushed at all.** The updater
+  (`self_update.select_image`) resolves `stable` -> the moving minor `:X.Y` and
+  `beta` -> `:beta`; `docs/guides/containers.md` documents both. No job ever
+  created either tag, so the commands the Updates panel printed resolved to an
+  image that does not exist.
 
 So the rule lives here, once, and both the workflow and
 `tests/test_release_tag_semantics.py` read it from this module. A test that
@@ -31,7 +31,7 @@ re-implemented the rule in order to check it would pass while the workflow did
 something else — which is precisely the bug above.
 
 **The scheme** (tag convention §3.6; the consumer half is
-`self_update.select_image_tag`):
+`self_update.select_image`):
 
 | Ref | GitHub Release | Image tags |
 |---|---|---|
@@ -55,7 +55,7 @@ cannot classify must never fall through to "push the moving tags anyway":
 * a ref without the `v` prefix, or not `X.Y.Z` (`main`, `1.2.3`, `v1.2`);
 * **build metadata** (`v1.2.3+build.5`). A `+` is not legal in a Docker tag
   (`[A-Za-z0-9_][A-Za-z0-9._-]*`), and the conventional `+`->`_` rewrite would
-  mint a tag no consumer can ask for: `select_image_tag`'s pin arm returns
+  mint a tag no consumer can ask for: `select_image`'s pin arm returns
   `normalize_version(tag)`, which keeps the `+`. Publisher and consumer have to
   agree on the spelling, so this shape is rejected rather than mangled.
 

@@ -4759,13 +4759,7 @@ class GatewayOrchestrator:
                     if self.dashboard_state:
                         self.dashboard_state.clear_update_progress()
                     return
-                tgt_norm = self_update.normalize_version(target)
-                already = self_update.version_tuple(tgt_norm) <= self_update.version_tuple(
-                    self_update.normalize_version(_cur_version)
-                )
-                if (not pin and already) or (
-                    pin and tgt_norm == self_update.normalize_version(_cur_version)
-                ):
+                if not self_update.moves_to(target, _cur_version, pin):
                     if self.dashboard_state:
                         self.dashboard_state.clear_update_progress()
                     return

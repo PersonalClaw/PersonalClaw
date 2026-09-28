@@ -79,6 +79,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
 - **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**
+- **`personalclaw update` in a container says you're on the newest release when nothing newer is published, and no update offers or installs an older release; release candidates compare in order.**
+- **On the beta channel, a container's update commands pull an image that exists: `:beta` only while a release candidate is the newest release.**
+- **With update checks off, a container's Settings → Updates makes no call to GitHub.**
 
 - **In a container, `personalclaw service`, `stop` and `restart` say the container runtime runs the gateway, print the host command, and change nothing.**
 

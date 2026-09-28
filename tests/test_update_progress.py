@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -501,6 +502,65 @@ class TestUpdateApplyPipeline:
         assert "restarting" in steps_seen
         assert "pulling" not in steps_seen
         assert not any("pull" in a for a in pulled)
+        assert upd._apply_in_flight is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "running, target, pin, note",
+        [
+            # Ahead of every release: it said "On the latest release (v0.1.3)" to 0.2.0.
+            ("0.2.0", "v0.1.3", "", "You're on v0.2.0, newer than the newest release (v0.1.3)"),
+            # A running candidate IS its tag, however each is spelled: nothing to check out.
+            ("0.3.0rc1", "v0.3.0-rc.1", "", "You're on the newest release (v0.3.0-rc.1)"),
+            (
+                "0.3.0rc1",
+                "v0.3.0-rc.1",
+                "0.3.0-rc.1",
+                "Already on the pinned release (v0.3.0-rc.1)",
+            ),
+        ],
+    )
+    async def test_nothing_to_advance_says_what_is_running(
+        self, monkeypatch, tmp_path, package_in_checkout, running, target, pin, note
+    ) -> None:
+        """A release that is no move restarts only, and the note names the version RUNNING.
+
+        The first row said it was "On the latest release (v0.1.3)" to a checkout running 0.2.0.
+        The candidate rows checked the tag out again on every apply: the tag spells the version
+        ``0.3.0-rc.1`` and the running package ``0.3.0rc1``, and the two were compared as text,
+        or with the suffix dropped."""
+        package_in_checkout(tmp_path)
+        import personalclaw.dashboard.handlers.updates as upd
+
+        monkeypatch.setattr(upd, "_apply_in_flight", False)
+        monkeypatch.setattr(upd, "_local_version", running)
+        _pin_updates(monkeypatch, upd, channel="stable", pin=pin)
+        monkeypatch.setattr(su, "resolve_target", AsyncMock(return_value=target))
+        state = _make_state(monkeypatch, tmp_path)
+        git_calls: list[list[str]] = []
+
+        def fake_git(args, *, cwd, timeout):  # type: ignore[no-untyped-def]
+            git_calls.append(list(args))
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+
+        async def fake_exec(*args, **kwargs):  # type: ignore[no-untyped-def]
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(su, "_run_git", fake_git)
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(upd, "build_frontend_async", AsyncMock())
+        monkeypatch.setattr(upd, "_graceful_reexec", AsyncMock())
+
+        resp = await upd.api_update_apply(self._make_request(state))
+        data = json.loads(resp.body)
+        await asyncio.sleep(0.05)
+
+        assert data.get("status") == "restarting", data
+        assert data["detail"] == f"{note} — restarting…"
+        assert not any(c[:1] == ["checkout"] for c in git_calls), git_calls
         assert upd._apply_in_flight is False
 
     async def _run_nothing_to_pull(self, monkeypatch, tmp_path, package_in_checkout, *, rev_list):

@@ -583,13 +583,7 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    target_v = self_update.normalize_version(target)
-    if pin:
-        if target_v == self_update.normalize_version(__version__):
-            print(f"\n✅ Already on the pinned release (v{target_v}).")
-            return
-    elif _is_current(target_v):
-        print(f"\n✅ Already on the latest release (v{target_v}).")
+    if _already_there(target, pin):
         return
 
     tracked = self_update.git_tracked_changes(git_dir)
@@ -664,18 +658,12 @@ def _update_pip() -> None:
         )
         sys.exit(1)
 
-    target_v = self_update.normalize_version(target)
-    if pin:
-        if target_v == self_update.normalize_version(__version__):
-            print(f"\n✅ Already on the pinned release (v{target_v}).")
-            return
-    elif _is_current(target_v):
-        print(f"\n✅ Already on the latest release (v{target_v}).")
+    if _already_there(target, pin):
         return
 
     spec = self_update.upgrade_spec(target)
-    if target_v:
-        print(f"  ⬆️  v{__version__} → v{target_v}")
+    if target:
+        print(_move_line(target))
     _install(["-U", spec, "--quiet"], cwd="", label=f"install -U {spec}")
 
     print("\n✅ PersonalClaw updated!")
@@ -685,30 +673,35 @@ def _update_pip() -> None:
 
 
 def _update_container() -> None:
-    """A container image cannot be updated in place — print the host's commands.
+    """A container image cannot be updated in place — print the host's commands, or say
+    there is nothing newer.
 
-    They are the documented install's own (``container_host.update_commands``): the README's
-    pull, remove and ``docker run``, or the compose file's pull and ``up -d``. They ride the
-    ``updates`` channel/pin, carrying the resolved image tag —
-    ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``, a pin -> the
-    exact ``:X.Y.Z``. A pin naming no release REFUSES and exits 1 (mirrors
-    ``_update_pip``'s pin-miss) rather than pulling ``latest`` behind the user's back.
+    The release is the one the ``updates`` channel/pin resolves to, and it is compared with the
+    running version exactly as the other kinds compare theirs (:func:`_already_there`): nothing
+    newer on the channel, or already on the pinned release, is said and prints no commands. The
+    commands are the documented install's own (``container_host.update_commands``): the README's
+    pull, remove and ``docker run``, or the compose file's pull and ``up -d``, carrying the image
+    tag of that same release — ``stable`` -> the moving minor ``:X.Y``, ``beta`` -> ``:beta``
+    while a candidate is its newest release, a pin -> the exact ``:X.Y.Z``.
 
-    Otherwise the exit code is 0 (see `_update`): the install is healthy and correctly
-    configured, and the command did the only thing it can do here — say exactly
-    how to become current.
+    Exit 1 when there is no release to compare with: a pin naming none REFUSES (mirrors
+    ``_update_pip``'s pin-miss) rather than pulling ``latest`` behind the user's back, and with
+    no release list at all nothing can be said to be newer — the git kind's answer to the same
+    case. Otherwise the exit code is 0 (see `_update`): the install is healthy and correctly
+    configured, and the command did the only thing it can do here — say whether it is current,
+    and exactly how to become current when it is not.
     """
     import asyncio
 
     cfg = AppConfig.load()
     pin = cfg.updates.pin
     try:
-        image_tag = asyncio.run(self_update.resolve_image_tag(cfg.updates.channel, pin))
+        target, image_tag = asyncio.run(self_update.resolve_image(cfg.updates.channel, pin))
     except Exception:
-        logging.getLogger(__name__).debug("resolve_image_tag failed", exc_info=True)
-        image_tag = ""
+        logging.getLogger(__name__).debug("resolve_image failed", exc_info=True)
+        target, image_tag = "", ""
 
-    if pin and not image_tag:
+    if pin and not target:
         # A pin naming no release must NEVER silently pull the latest image.
         print(
             "\n⚠️  No release matches the pinned version (offline?).\n"
@@ -716,7 +709,17 @@ def _update_container() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if not target:
+        print(
+            "\n⚠️  No matching release found for this channel (offline?).\n"
+            "   Nothing to update to — try again when a release is reachable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if _already_there(target, pin):
+        return
 
+    print(_move_line(target))
     print("  📦 This is a container install — the image is replaced, not patched.")
     print("  Run these on the host:\n")
     for cmd in container_host.update_commands(image_tag):
@@ -745,15 +748,30 @@ def _update_desktop() -> None:
     print("  https://github.com/PersonalClaw/PersonalClaw/releases")
 
 
-def _is_current(latest: str) -> bool:
-    """True when *latest* is known and not newer than the running version.
+def _already_there(target: str, pin: str) -> bool:
+    """Say so, and return True, when installing release *target* would not move this install.
 
-    An UNKNOWN latest (offline, or no release ever published) is deliberately not
-    "current": the update proceeds rather than claiming a state it cannot see.
+    The one answer for every kind the CLI updates — the git checkout, the wheel and the
+    container — so none of them can install, check out or print commands for a release that is
+    not a move (:func:`self_update.moves_to`): the pinned release when it is already the one
+    running, or on a channel, a release that is not newer than it. The sentence names the
+    version running, so a build ahead of every release is told it is ahead rather than "already
+    on" a release it does not run.
+
+    An UNKNOWN target (offline, or no release ever published) is deliberately not "there": the
+    caller decides what finding no release means for its kind, rather than this claiming a
+    state it cannot see.
     """
-    return bool(latest) and self_update.version_tuple(latest) <= self_update.version_tuple(
-        __version__
-    )
+    if not target or self_update.moves_to(target, __version__, pin):
+        return False
+    print(f"\n✅ {self_update.up_to_date_sentence(target, __version__, pin)}.")
+    return True
+
+
+def _move_line(target: str) -> str:
+    """``v<running> → v<target>``, with an arrow for the way the move goes (a pin can go back)."""
+    arrow = "⬆️ " if self_update.is_newer(target, __version__) else "⏪"
+    return f"  {arrow} v{__version__} → v{self_update.normalize_version(target)}"
 
 
 def _install(args: list[str], *, cwd: str, label: str) -> None:
@@ -792,7 +810,7 @@ def _pin_before_update(to: str) -> None:
     the reason the pin exists: a bare downgrade would be undone by the next scheduled
     check, which would resolve the channel's newest release and offer to jump straight
     back to the version the user just left. Pinning first means the resolvers already
-    in place — :func:`select_target`, ``resolve_wheel_target``, ``select_image_tag`` —
+    in place — :func:`select_target`, ``resolve_wheel_target``, ``select_image`` —
     do the work on every surface, so there is no downgrade-specific install path
     anywhere.
 
@@ -806,7 +824,7 @@ def _pin_before_update(to: str) -> None:
         print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.", file=sys.stderr)
         sys.exit(1)
     print(f"  📌 Pinned updates.pin = {target} (clear it to follow the channel again)")
-    if self_update.version_tuple(target) < self_update.version_tuple(__version__):
+    if self_update.is_newer(__version__, target):
         # A downgrade can meet state written by the newer build. Pre-1.0 there is no
         # migration machinery either way, so the honest advice is a snapshot.
         print(f"  ⏪ Rolling BACK: v{__version__} → v{target}")
@@ -825,7 +843,8 @@ def _update(to: str = "") -> None:
     | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
     |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |
     | container | prints the host's pull + recreate for the documented | 0; 1 on a pin naming no |
-    |  | install (`container_host.update_commands`) | release |
+    |  | install (`container_host.update_commands`), or says it is | release, or no release |
+    |  | on the newest release | found |
     | desktop | defers to the app's own updater | 0 |
     | *unmapped* | names what it detected and refuses to guess | 1 |
 

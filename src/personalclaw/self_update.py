@@ -69,6 +69,8 @@ import time
 from pathlib import Path
 from typing import Literal, get_args
 
+from packaging.version import InvalidVersion, Version
+
 from personalclaw.cancellation import kill_timed_out
 
 logger = logging.getLogger(__name__)
@@ -231,13 +233,75 @@ def normalize_version(v: str) -> str:
     return v[1:] if v[:1] == "v" else v
 
 
-def version_tuple(v: str) -> tuple[int, ...]:
-    """Parse a dotted version to a tuple for numeric comparison (best-effort)."""
-    core = normalize_version(v).split("+", 1)[0].split("-", 1)[0]
+def parse_version(v: str) -> Version | None:
+    """*v* as an orderable version, or ``None`` when it is not a version.
+
+    One version reaches this module spelled two ways, and both have to read as it: a release
+    TAG spells a pre-release ``v0.3.0-rc.1``, while the installed package reports the same
+    version as ``0.3.0rc1`` (the build normalizes it). PEP 440 reads both, and orders a
+    pre-release before its release — ``0.3.0-rc.1 < 0.3.0-rc.2 < 0.3.0`` — the order the release
+    lines ship in.
+
+    Dropping the suffix instead, which is what this replaced, made every candidate of a line
+    equal to the others and to its own release, and read the installed spelling as no version
+    at all: a running candidate compared lower than everything, so every release, older ones
+    included, was offered to it as an update.
+    """
     try:
-        return tuple(int(x) for x in core.split("."))
-    except (ValueError, AttributeError):
-        return (0,)
+        return Version(normalize_version(v))
+    except InvalidVersion:
+        return None
+
+
+def is_newer(candidate: str, current: str) -> bool:
+    """True only when *candidate* is a later version than *current*.
+
+    An empty or unreadable side is never newer: a release this cannot order against the running
+    one is not a release to offer.
+    """
+    new, now = parse_version(candidate), parse_version(current)
+    return new is not None and now is not None and new > now
+
+
+def same_version(a: str, b: str) -> bool:
+    """True when *a* and *b* are one version, however each is spelled.
+
+    ``v0.3.0-rc.1`` (a tag) and ``0.3.0rc1`` (what that release reports once installed) are one.
+    """
+    version = parse_version(a)
+    return version is not None and version == parse_version(b)
+
+
+def moves_to(target: str, current: str, pin: str = "") -> bool:
+    """Whether installing release *target* moves an install running *current* the way it asked.
+
+    The one answer for every surface that installs, pulls or checks out a resolved release — the
+    dashboard's apply, the CLI's, and the staged auto-apply — so none of them acts on a release
+    that is no move at all. A pin names one exact release, so any OTHER version is a move to it:
+    a pin to an older release is the rollback. A channel only ever moves forward, so only a NEWER
+    release is a move, and a build newer than every release is not taken back to the newest one.
+    No target is no move; each caller decides what finding no release means for its kind.
+    """
+    if not normalize_version(target):
+        return False
+    if (pin or "").strip():
+        return not same_version(target, current)
+    return is_newer(target, current)
+
+
+def up_to_date_sentence(target: str, current: str, pin: str = "") -> str:
+    """What a surface says when installing *target* would not move the install (``moves_to``).
+
+    It names what is RUNNING, not only what resolved: a build newer than every published
+    release is told it is ahead of that release, not that it is "already on" a release it
+    does not run.
+    """
+    target, current = normalize_version(target), normalize_version(current)
+    if (pin or "").strip():
+        return f"Already on the pinned release (v{target})"
+    if same_version(target, current):
+        return f"You're on the newest release (v{target})"
+    return f"You're on v{current}, newer than the newest release (v{target})"
 
 
 def _cache_path() -> Path:
@@ -429,7 +493,7 @@ def set_version_pin(version: str) -> bool:
     The one write behind ``personalclaw update --to <version>`` and the dashboard's
     rollback control (which reaches the same field through the config PATCH). A pin
     already OVERRIDES the channel in every resolver — :func:`select_target`,
-    :func:`resolve_wheel_target`, :func:`select_image_tag` — so pinning IS the
+    :func:`resolve_wheel_target`, :func:`select_image` — so pinning IS the
     rollback mechanism; nothing else needs a downgrade-specific code path.
 
     *version* goes through :func:`normalize_pin`, the rule the PATCH boundary applies to
@@ -509,9 +573,10 @@ async def build_update_status(current: str) -> dict[str, object]:
     ``current`` is ``importlib.metadata.version("personalclaw")`` (the caller
     passes ``personalclaw.__version__``). ``latest`` names the release this
     install's channel/pin RESOLVES to, and ``release_name``/``release_notes``
-    describe that same release; ``update_available`` compares it with ``current``
-    numerically. The git kind additionally surfaces ``commits_behind`` as secondary
-    info; the container kind carries ``instructions``.
+    describe that same release; ``update_available`` says whether it is newer than
+    ``current`` (:func:`is_newer`, pre-releases in order). The git kind additionally
+    surfaces ``commits_behind`` as secondary info; the container kind carries
+    ``instructions``, the commands that pull that same release.
 
     **Why the resolved release and not ``releases/latest``** (RUM-10). The probe
     ``releases/latest`` answers only "the newest NON-prerelease", so on the ``beta``
@@ -577,7 +642,7 @@ async def build_update_status(current: str) -> dict[str, object]:
     latest_tag = str(release.get("tag") or "")
     latest = normalize_version(latest_tag)
 
-    update_available = bool(latest) and version_tuple(latest) > version_tuple(current)
+    update_available = is_newer(latest, current)
 
     commits_behind: int | None = None
     if kind == "git":
@@ -588,18 +653,22 @@ async def build_update_status(current: str) -> dict[str, object]:
             except Exception:
                 commits_behind = None
 
-    # The container kind rides the `updates` channel/pin: the pull+recreate
-    # commands carry the resolved image tag, not a bare `latest`. A pin naming no
-    # release resolves to "" — emit NO commands (the panel/CLI say why) rather than
-    # silently offering `latest`, mirroring the pip pin-miss refusal. The commands are the
-    # documented install's own (`container_host`), for whichever of the two ran it.
+    # The container kind's pull+recreate commands carry the image tag of the release compared
+    # ABOVE, so the check cannot name one release while its commands pull another, and no second
+    # probe of the releases list runs (a second one ignored `check_enabled`). They exist only for
+    # a move (`moves_to`, the CLI's answer too): no commands to pull the release that already
+    # runs, or an older one a channel never asks for. No release — a pin naming none, or nothing
+    # fetched or cached — means no tag and no commands, never a silent `latest`, mirroring the
+    # pip pin-miss refusal. The commands are the documented install's own (`container_host`),
+    # for whichever of the two ran it.
     image_tag = ""
     instructions: list[str] = []
     if kind == "container":
         from personalclaw import container_host
 
-        image_tag = await resolve_image_tag(channel, pin)
-        instructions = container_host.update_commands(image_tag) if image_tag else []
+        image_tag = _image_tag_for(release, pin)
+        if image_tag and moves_to(latest, current, pin):
+            instructions = container_host.update_commands(image_tag)
 
     return {
         "kind": kind,
@@ -701,8 +770,10 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
     * ``nightly`` — ``""``: nightly tracks the checked-out branch, not a release
       tag (the git kind follows the branch — RUM-4), so there is no tag to name.
 
-    "Newest" is the highest :func:`version_tuple`, ties broken toward the stable
-    release (so a published ``v0.3.0`` beats its own ``v0.3.0-rc.1`` on ``beta``).
+    "Newest" is the highest version in pre-release order (:func:`parse_version`), so the
+    answer does not depend on the order of the list: ``v0.3.0-rc.2`` beats ``v0.3.0-rc.1``,
+    and a published ``v0.3.0`` beats both on ``beta``. A tag that is not a version is never
+    selected, because it cannot be ordered against the others or the running version.
     Returns ``""`` when no candidate matches. Never raises — every field access is
     defensive, so a malformed cache degrades to ``""`` rather than an exception on
     the update path. An unrecognized channel falls to the ``stable`` arm (safest).
@@ -724,14 +795,14 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
         candidates = [r for r in releases if not _is_prerelease(r)]
 
     best_tag = ""
-    best_key: tuple[tuple[int, ...], bool] | None = None
+    best: Version | None = None
     for rel in candidates:
         tag = str(rel.get("tag") or "")
-        if not tag:
+        version = parse_version(tag)
+        if version is None:
             continue
-        key = (version_tuple(tag), not _is_prerelease(rel))
-        if best_key is None or key > best_key:
-            best_key, best_tag = key, tag
+        if best is None or version > best:
+            best, best_tag = version, tag
     return best_tag
 
 
@@ -813,55 +884,66 @@ async def resolve_wheel_target(channel: str, pin: str = "") -> str:
 # A container install advances by pulling a new image and recreating: the README's
 # ``docker run`` names the tag on the image ref, and the compose file picks it from
 # ``${PERSONALCLAW_IMAGE_TAG:-latest}`` (``container_host.update_commands`` spells both). So
-# the container analogue of :func:`resolve_wheel_target` maps the ``updates``
-# channel/pin onto that IMAGE tag rather than a release tag. The tag scheme is
-# ``:X.Y.Z`` (immutable, for a pin), ``:X.Y`` (moving minor, for stable),
-# ``:beta`` (moving prerelease line), ``:latest`` (stable fallback). RUM-8 publishes
-# the moving ``:X.Y`` / ``:beta`` tags in the release pipeline; RUM-7 emits them.
+# the container analogue of :func:`resolve_wheel_target` resolves the ``updates`` channel/pin
+# to a release and names the IMAGE tag that carries it. The release pipeline publishes
+# ``:X.Y.Z`` for every release (immutable, what a pin pulls), and moves ``:X.Y`` and
+# ``:latest`` for a stable release and ``:beta`` for a prerelease (``scripts/release_tags.py``).
 
 
 def _moving_minor(tag: str) -> str:
     """The ``X.Y`` moving-minor image tag for a release *tag*, or "" if unparseable."""
-    vt = version_tuple(tag)
-    return f"{vt[0]}.{vt[1]}" if tag and len(vt) >= 2 else ""
+    version = parse_version(tag)
+    if version is None or len(version.release) < 2:
+        return ""
+    return f"{version.major}.{version.minor}"
 
 
-def select_image_tag(releases: list[dict[str, object]], channel: str, pin: str = "") -> str:
-    """The container IMAGE tag a *channel*/*pin* selects from *releases* (pure, no I/O).
+def _image_tag_for(release: dict[str, object], pin: str = "") -> str:
+    """The image tag that carries *release* for a container on the ``updates`` channel/pin.
 
-    Maps RUM-2's release selection onto the container tag scheme §3.6:
-
-    * a non-empty ``pin`` -> the exact ``X.Y.Z`` of the pinned release, or ``""``
-      when no release matches it — a pin-miss must REFUSE, never ride ``latest``
-      (mirrors the pip/wheel pin-miss refusal, RUM-6);
-    * ``beta`` -> the moving ``beta`` tag (newest prerelease line);
-    * ``stable`` — and ``nightly``/unknown, which have no container image of their
-      own — the moving minor ``X.Y`` of the newest stable release, or ``latest``
-      when none resolves (offline / no cache).
-
-    ``""`` is returned ONLY for a pin-miss: every channel path yields a tag, so a
-    caller reads ``""`` as "refuse", never as "offline". Never raises — a malformed
-    cache degrades through :func:`select_target`'s defensive field access.
+    A pin pulls the release's exact, immutable ``X.Y.Z``. A channel pulls the moving tag that
+    release itself moved: ``beta`` for a prerelease, the moving minor ``X.Y`` for a stable
+    release. So ``beta`` names ``:beta`` only while a candidate is its newest release; once a
+    stable release is newer, ``:beta`` still carries the older candidate (a stable release never
+    moves it, and before the first candidate it does not exist), and the channel follows that
+    release's ``:X.Y`` like ``stable`` does. ``""`` when there is no release to carry.
     """
-    pin = (pin or "").strip()
-    if pin:
-        tag = select_target(releases, "stable", pin)  # a pin overrides the channel
-        return normalize_version(tag) if tag else ""
-    if channel == "beta":
+    tag = str(release.get("tag") or "")
+    if not tag:
+        return ""
+    if (pin or "").strip():
+        return normalize_version(tag)
+    if _is_prerelease(release):
         return "beta"
-    return _moving_minor(select_target(releases, "stable", "")) or "latest"
+    return _moving_minor(tag)
 
 
-async def resolve_image_tag(channel: str, pin: str = "") -> str:
-    """The container image tag for *channel*/*pin*, from the ETag-cached list.
+def select_image(releases: list[dict[str, object]], channel: str, pin: str = "") -> tuple[str, str]:
+    """The release a container on *channel*/*pin* moves to, and the image tag that carries it.
 
-    The container analogue of :func:`resolve_wheel_target`: fetches the releases
-    list (offline-tolerant) and applies :func:`select_image_tag`. Never raises;
-    returns ``""`` only on a pin-miss (a pinned version naming no release must not
-    silently pull ``latest``).
+    Pure, no I/O. ``(release tag, image tag)`` from ONE selection, so the release an update
+    compares with the running version and the image its commands pull cannot be two different
+    releases. The release is :func:`select_target`'s: a ``pin`` overrides the channel, ``beta``
+    includes prereleases, and ``stable`` — like ``nightly`` and any unknown channel, which have
+    no image of their own — rides the stable line. The tag is :func:`_image_tag_for`'s.
+
+    ``("", "")`` when nothing resolves: a pin naming no release (which must refuse, never ride
+    ``latest``), or no release known at all (offline with nothing cached). Never raises — a
+    malformed cache degrades through :func:`select_target`'s defensive field access.
     """
+    line = "beta" if channel == "beta" else "stable"
+    tag = select_target(releases, line, pin)
+    if not tag:
+        return "", ""
+    bare: dict[str, object] = {"tag": tag}
+    release = next((r for r in releases if str(r.get("tag") or "") == tag), bare)
+    return tag, _image_tag_for(release, pin)
+
+
+async def resolve_image(channel: str, pin: str = "") -> tuple[str, str]:
+    """:func:`select_image` over the ETag-cached releases list (offline-tolerant). Never raises."""
     releases = await fetch_releases()
-    return select_image_tag(releases, channel, pin)
+    return select_image(releases, channel, pin)
 
 
 # ── Installer diagnostics ───────────────────────────────────────────────────

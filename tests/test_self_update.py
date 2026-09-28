@@ -99,10 +99,13 @@ def test_normalize_version_strips_leading_v() -> None:
     assert uk.normalize_version("  v1.2.0 ") == "1.2.0"
 
 
-def test_version_tuple_orders_numerically() -> None:
-    assert uk.version_tuple("v0.2.0") > uk.version_tuple("0.1.9")
-    assert uk.version_tuple("0.1.10") > uk.version_tuple("0.1.9")
-    assert uk.version_tuple("garbage") == (0,)
+def test_versions_order_numerically_not_as_text() -> None:
+    assert uk.is_newer("v0.2.0", "0.1.9")
+    assert uk.is_newer("0.1.10", "0.1.9")  # 10 > 9, which text order gets wrong
+    assert uk.parse_version("garbage") is None
+    # A side that is not a version is never newer, in either position.
+    assert not uk.is_newer("garbage", "0.1.0")
+    assert not uk.is_newer("0.1.0", "garbage")
 
 
 def test_cache_round_trip(monkeypatch, tmp_path) -> None:
@@ -1170,47 +1173,46 @@ def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(tmp_path
 #
 # Reuses _FAKE_RELEASES (adversarial). Over it the container tag mapping resolves
 # to THREE DIFFERENT tags — stable -> "0.2" (moving minor of v0.2.1), beta ->
-# "beta", pin 0.2.0 -> "0.2.0" — and a pin-miss -> "". A "return latest" or any
+# "beta", pin 0.2.0 -> "0.2.0" — and a pin-miss -> nothing. A "return latest" or any
 # single-constant implementation fails at least two rows, so the mapping is
 # non-vacuous. That distinctness is the named vacuity floor for this change.
 
 
-def test_select_image_tag_maps_channel_pin_to_distinct_tags() -> None:
+def test_select_image_maps_channel_pin_to_distinct_tags() -> None:
     # stable -> the moving minor of the newest stable release (v0.2.1 -> 0.2)
-    assert uk.select_image_tag(_FAKE_RELEASES, "stable") == "0.2"
-    # beta -> the moving prerelease tag
-    assert uk.select_image_tag(_FAKE_RELEASES, "beta") == "beta"
+    assert uk.select_image(_FAKE_RELEASES, "stable") == ("v0.2.1", "0.2")
+    # beta -> the moving prerelease tag, while a candidate is its newest release
+    assert uk.select_image(_FAKE_RELEASES, "beta") == ("v0.3.0-rc.1", "beta")
     # a pin -> the exact immutable version, overriding the channel (even an older one)
-    assert uk.select_image_tag(_FAKE_RELEASES, "stable", "0.2.0") == "0.2.0"
-    assert uk.select_image_tag(_FAKE_RELEASES, "beta", "v0.2.0") == "0.2.0"  # v-tolerant
+    assert uk.select_image(_FAKE_RELEASES, "stable", "0.2.0") == ("v0.2.0", "0.2.0")
+    assert uk.select_image(_FAKE_RELEASES, "beta", "v0.2.0") == ("v0.2.0", "0.2.0")
     # the three channel/pin answers are DIFFERENT — the vacuity floor
     assert len({"0.2", "beta", "0.2.0"}) == 3
     # nightly/unknown have no container image of their own -> ride the stable line
-    assert uk.select_image_tag(_FAKE_RELEASES, "nightly") == "0.2"
-    assert uk.select_image_tag(_FAKE_RELEASES, "whatever") == "0.2"
+    assert uk.select_image(_FAKE_RELEASES, "nightly") == ("v0.2.1", "0.2")
+    assert uk.select_image(_FAKE_RELEASES, "whatever") == ("v0.2.1", "0.2")
 
 
-def test_select_image_tag_pin_miss_refuses_and_empty_is_only_a_pin_miss() -> None:
-    # A pin naming no release -> "" (REFUSE) — never the stable/latest tag.
-    assert uk.select_image_tag(_FAKE_RELEASES, "stable", "9.9.9") == ""
-    assert uk.select_image_tag(_FAKE_RELEASES, "beta", "9.9.9") == ""
-    # ...and "" is ONLY ever a pin-miss: with no releases every channel still yields
-    # a tag (latest / beta), so a caller reads "" as "refuse", not "offline".
-    assert uk.select_image_tag([], "stable") == "latest"
-    assert uk.select_image_tag([], "beta") == "beta"
-    assert uk.select_image_tag([], "nightly") == "latest"
+def test_select_image_resolves_nothing_for_a_pin_miss_or_no_release() -> None:
+    # A pin naming no release -> nothing (REFUSE) — never the stable/latest tag.
+    assert uk.select_image(_FAKE_RELEASES, "stable", "9.9.9") == ("", "")
+    assert uk.select_image(_FAKE_RELEASES, "beta", "9.9.9") == ("", "")
+    # ...and with no release known there is nothing to compare or to pull: no channel falls
+    # back to a moving tag nothing says is newer than the image that runs.
+    for channel in ("stable", "beta", "nightly"):
+        assert uk.select_image([], channel) == ("", "")
 
 
 @pytest.mark.asyncio
-async def test_resolve_image_tag_over_the_release_list(monkeypatch) -> None:
+async def test_resolve_image_over_the_release_list(monkeypatch) -> None:
     async def _fake_releases() -> list[dict[str, object]]:
         return _FAKE_RELEASES
 
     monkeypatch.setattr(uk, "fetch_releases", _fake_releases)
-    assert await uk.resolve_image_tag("stable") == "0.2"
-    assert await uk.resolve_image_tag("beta") == "beta"
-    assert await uk.resolve_image_tag("stable", "0.2.0") == "0.2.0"
-    assert await uk.resolve_image_tag("stable", "9.9.9") == ""  # pin-miss refuses
+    assert await uk.resolve_image("stable") == ("v0.2.1", "0.2")
+    assert await uk.resolve_image("beta") == ("v0.3.0-rc.1", "beta")
+    assert await uk.resolve_image("stable", "0.2.0") == ("v0.2.0", "0.2.0")
+    assert await uk.resolve_image("stable", "9.9.9") == ("", "")  # pin-miss refuses
 
 
 def _fake_container_config(monkeypatch, channel: str, pin: str = "") -> None:

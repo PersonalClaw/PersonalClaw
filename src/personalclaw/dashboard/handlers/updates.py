@@ -106,9 +106,9 @@ async def api_update_check(request: web.Request) -> web.Response:
     merged["auto"] = cfg.updates.auto
     merged["channel"] = cfg.updates.channel
     # `pin` + the container `image_tag` (from build_update_status) let the panel render
-    # the exact channel/pin-resolved container commands, and distinguish a pin-miss
-    # (empty `image_tag`/`instructions` with a non-empty `pin`) from a transient
-    # status failure — so it never silently falls back to a bare `latest`.
+    # the exact channel/pin-resolved container commands. Empty `instructions` mean there is
+    # nothing to move to; an empty `image_tag` too means no release resolved — a pin-miss
+    # (`pin_miss` says which) or nothing fetched — so it never silently falls back to `latest`.
     merged["pin"] = cfg.updates.pin
     # The remaining `updates` fields the Settings > Updates screen edits. The panel
     # reads its controls' current values from THIS payload rather than a second
@@ -271,12 +271,7 @@ async def _do_update_check() -> None:
             )
             if m:
                 remote_version = m.group(1)
-            available = (
-                self_update.version_tuple(remote_version)
-                > self_update.version_tuple(_local_version)
-                if remote_version
-                else False
-            )
+            available = self_update.is_newer(remote_version, _local_version)
 
         changes = ""
         if available:
@@ -405,6 +400,14 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                     "error", "No release matches the pinned version — check updates.pin."
                 )
                 return
+            if target and not self_update.moves_to(target, _local_version, cfg.updates.pin):
+                # Nothing to install. `-U personalclaw==<target>` for a release that is not
+                # newer is a DOWNGRADE carried out under the name "update". No restart either:
+                # unlike a checkout, a wheel has no local change for a restart to pick up.
+                sentence = self_update.up_to_date_sentence(target, _local_version, cfg.updates.pin)
+                state.push_update_progress("done", f"{sentence}.")
+                state.clear_update_progress()
+                return
             spec = self_update.upgrade_spec(target)
 
             # Resolve the installer instead of assuming stdlib pip — a uv venv has
@@ -505,8 +508,9 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 "kind": kind,
                 "apply_method": status.get("apply_method", ""),
                 "instructions": status.get("instructions", []),
-                # The channel/pin-resolved container image tag; "" for desktop
-                # or a container pin-miss (empty `instructions` say the same thing).
+                # The channel/pin-resolved container image tag; "" for desktop, or when no
+                # release resolved for a container. `instructions` are empty then too, and
+                # whenever that release is no move from the one running.
                 "image_tag": status.get("image_tag", ""),
                 # The desktop wording says what the shell ACTUALLY does today. It shipped
                 # claiming "the app updates itself", which described the electron-updater
@@ -586,15 +590,11 @@ async def api_update_apply(request: web.Request) -> web.Response:
             advance = True
             note = ""
     else:
-        _tgt_norm = self_update.normalize_version(_target_tag)
         if not _target_tag:
             note = "No newer release found — restarting…"
-        elif not _pin and self_update.version_tuple(_tgt_norm) <= self_update.version_tuple(
-            self_update.normalize_version(_local_version)
-        ):
-            note = f"On the latest release ({_target_tag}) — restarting…"
-        elif _pin and _tgt_norm == self_update.normalize_version(_local_version):
-            note = f"Already on the pinned release ({_target_tag}) — restarting…"
+        elif not self_update.moves_to(_target_tag, _local_version, _pin):
+            sentence = self_update.up_to_date_sentence(_target_tag, _local_version, _pin)
+            note = f"{sentence} — restarting…"
         else:
             advance = True
             note = ""

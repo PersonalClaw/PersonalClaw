@@ -35,6 +35,9 @@ class _StateStub:
     def push_update_progress(self, step: str, detail: str = "") -> None:
         self.progress.append((step, detail))
 
+    def clear_update_progress(self) -> None:
+        self.progress.append(("cleared", ""))
+
 
 class _Proc:
     """Stand-in for the upgrade subprocess."""
@@ -67,7 +70,14 @@ def spawn(monkeypatch):
 
 
 async def _run_apply(
-    state, monkeypatch, *, latest="0.1.2", channel="stable", pin="", releases=None
+    state,
+    monkeypatch,
+    *,
+    latest="0.1.2",
+    channel="stable",
+    pin="",
+    releases=None,
+    running="0.0.1",
 ):
     """Drive _apply_pip_update's inner coroutine with a stubbed release list + re-exec.
 
@@ -77,12 +87,18 @@ async def _run_apply(
     ``latest``"; a caller that needs channel/pin distinctions passes an explicit list.
     Only the network seam (`fetch_releases`) is stubbed — the real
     `resolve_wheel_target`/`select_target` run.
+
+    The apply installs only a release that is a move from the version *running*, so that is
+    fixed here rather than inherited from the project: ``0.0.1`` is below every release these
+    tests name, where the project's own version would make each row fail on the one release
+    that equals it.
     """
     import types
 
     if releases is None:
         releases = [{"tag": f"v{latest}", "prerelease": False}] if latest else []
 
+    monkeypatch.setattr(upd, "_local_version", running)
     cfg = types.SimpleNamespace(updates=types.SimpleNamespace(channel=channel, pin=pin))
     monkeypatch.setattr(upd.AppConfig, "load", staticmethod(lambda: cfg))
 
@@ -208,6 +224,44 @@ async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch,
     assert not seen, f"installed despite an unmatched pin: {seen}"
     errors = [d for s, d in state.progress if s == "error"]
     assert errors and "pin" in errors[0].lower(), f"progress={state.progress}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "running, channel, pin, said",
+    [
+        # A build ahead of every release: `==0.2.1` would take it BACK a minor line.
+        ("0.3.0", "stable", "", "You're on v0.3.0, newer than the newest release (v0.2.1)."),
+        # A running candidate, in the spelling an installed wheel reports, ahead of stable.
+        ("0.3.0rc1", "stable", "", "You're on v0.3.0rc1, newer than the newest release (v0.2.1)."),
+        # The same candidate on beta IS the newest release, however each side spells it.
+        ("0.3.0rc1", "beta", "", "You're on the newest release (v0.3.0-rc.1)."),
+        # Pinned to the candidate it runs: nothing to reinstall.
+        ("0.3.0rc1", "stable", "0.3.0-rc.1", "Already on the pinned release (v0.3.0-rc.1)."),
+    ],
+)
+async def test_pip_apply_installs_nothing_that_is_not_a_move(
+    monkeypatch, spawn, running, channel, pin, said
+):
+    """POST /api/update on a wheel installs the resolved release only when it is a move.
+
+    It installed `personalclaw==<resolved>` whatever that was, so an install ahead of the
+    channel's newest release was DOWNGRADED by "update", and a pinned candidate was reinstalled
+    on every apply because its tag and its installed version are spelled differently. Nothing
+    restarts either: a wheel has no local change for a restart to pick up.
+    """
+    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
+    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    seen = spawn(_Proc(0))
+    state = _StateStub()
+
+    await _run_apply(
+        state, monkeypatch, channel=channel, pin=pin, releases=_RUM6_RELEASES, running=running
+    )
+
+    assert not seen, f"installed a release that is not a move: {seen}"
+    assert ("done", said) in state.progress, f"progress={state.progress}"
+    assert ("reexec", "") not in state.progress
 
 
 # ── the UI-facing error summary ────────────────────────────────────────────────

@@ -264,9 +264,9 @@ jobs:
       # rendered by the same `scripts/release_tags.py` the tag-parse test asserts,
       # so a `tags:` block can no longer say something the test does not check —
       # the hardcoded `:latest` that used to sit here moved `latest` onto every
-      # release candidate. `:X.Y` and `:beta` are the tags RUM-7's
-      # `select_image_tag` already resolves for the `stable`/`beta` channels and
-      # `docs/guides/containers.md` documents; before this step nothing created them.
+      # release candidate. `:X.Y` and `:beta` are the tags `self_update.select_image`
+      # resolves for the `stable`/`beta` channels and `docs/guides/containers.md`
+      # documents; before this step nothing created them.
       - name: Plan this tag's image tags (RUM-8)
         id: imagetags
         env:

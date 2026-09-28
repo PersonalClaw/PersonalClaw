@@ -196,7 +196,8 @@ def test_git_release_channel_on_latest_tag_rides_tags_not_commits(
     cli_server._update()
 
     out = capsys.readouterr().out
-    assert "Already on the latest release" in out
+    # It names what is RUNNING: this checkout is ahead of the newest release, not "on" it.
+    assert "You're on v9.9.9, newer than the newest release (v0.0.1)" in out
     assert not git.calls and not spawns
 
 
@@ -374,7 +375,7 @@ def test_pip_kind_already_current_skips_the_installer(
 
     cli_server._update()
 
-    assert "Already on the latest release" in capsys.readouterr().out
+    assert "You're on v9.9.9, newer than the newest release (v0.0.1)" in capsys.readouterr().out
     assert not spawns
 
 
@@ -449,12 +450,12 @@ _RUM6_RELEASES = [
 #: The running version the rows execute against, FIXED here instead of inherited
 #: from the project's own ``__version__``.
 #:
-#: ``_update_pip`` only installs a resolved target that DIFFERS from what is running (it
-#: short-circuits on "Already on the pinned/latest release"), so "the running version is
-#: not one of these tags" is a precondition of every row below. Inheriting it from the
+#: ``_update_pip`` (and ``_update_container``) only act on a resolved target that is a MOVE
+#: from what is running (``_already_there`` short-circuits otherwise), so "the running version
+#: is older than these tags" is a precondition of every row below. Inheriting it from the
 #: project turned each row into a landmine that fires on one specific future release —
 #: the pin row on v0.2.0 (equality), the stable row on v0.2.1 and the beta row on v0.3.0
-#: (``_is_current``) — i.e. a fixture that self-destructs exactly when the project ships
+#: (not newer) — i.e. a fixture that self-destructs exactly when the project ships
 #: the version it hard-codes. Bumping the literals would only move those landmines one
 #: release along; pinning the running version removes the project's version from the
 #: fixture altogether, so these rows are version-INDEPENDENT rather than
@@ -517,13 +518,12 @@ def test_pip_installs_the_channel_pin_resolved_spec(
     _fake_installer(monkeypatch)
 
     # The precondition for this row's assertion being REACHABLE, proven not assumed. Both
-    # comparisons are load-bearing: the pin branch short-circuits on normalized-string
-    # equality, and the channel branch on `_is_current`'s tuple ordering — which drops the
-    # prerelease suffix, so `0.3.0-rc.1` and `0.3.0` are equal tuples but distinct strings.
+    # comparisons are load-bearing: the pin branch short-circuits when the pinned release is
+    # the version running, and the channel branch when the release is not newer than it.
     want = expected.split("==", 1)[1]
     running = cli_server.__version__
-    assert su.normalize_version(want) != su.normalize_version(running)
-    assert su.version_tuple(want) > su.version_tuple(running)
+    assert not su.same_version(want, running)
+    assert su.is_newer(want, running)
 
     cli_server._update()
 
@@ -558,21 +558,23 @@ def test_pip_pin_miss_refuses_and_never_installs_latest(
 def test_container_kind_prints_the_readme_installs_commands_and_exits_zero(
     monkeypatch: pytest.MonkeyPatch, capsys, spawns
 ) -> None:
-    # Default config (stable/no-pin) + the autouse offline `fetch_releases`->[] means
-    # the resolver degrades to the `latest` fallback: the commands still print
-    # and carry `:latest`, exit 0. They are the README's `docker run` install's, which
-    # is what a container started without the compose file is.
+    # Default config (stable/no-pin) over `_RUM6_RELEASES`, on a running version older than
+    # all of them: the commands print, carry the moving minor `:0.2`, exit 0. They are the
+    # README's `docker run` install's, which is what a container started without the compose
+    # file is.
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
+    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    _fake_release_list(monkeypatch)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
 
     cli_server._update()  # returns, i.e. exit status 0 — see _update's docstring
 
     out = capsys.readouterr().out
-    for cmd in container_host.update_commands("latest"):
+    for cmd in container_host.update_commands("0.2"):
         assert cmd in out
-    assert container_host.run_command("latest") in out
+    assert container_host.run_command("0.2") in out
     assert "docker compose" not in out
     assert not git.calls and not spawns
 
@@ -591,10 +593,12 @@ def test_container_prints_the_channel_pin_resolved_tag(
     """RUM-7 core: the container commands carry the channel/pin-resolved image tag,
     never a bare `latest`. Non-vacuous — over `_RUM6_RELEASES` stable/beta/pin resolve
     to DIFFERENT tags (0.2 / beta / 0.2.0), so a constant-`latest` implementation fails
-    the beta and pin rows. Drives the REAL `resolve_image_tag`/`select_image_tag` (only
-    `fetch_releases` is stubbed)."""
+    the beta and pin rows. Drives the REAL `resolve_image`/`select_image` (only
+    `fetch_releases` is stubbed). The running version is `_RUM6_RUNNING_VERSION` for the
+    reason the pip rows pin it: every resolved release has to be a move from it."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
+    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
     _channel(monkeypatch, channel, pin)
     _fake_release_list(monkeypatch)
     git = _Git()
@@ -654,6 +658,8 @@ def test_container_env_beats_a_git_tree(
     """A container built from a checkout must not run the git pipeline."""
     _as_git_checkout(monkeypatch, tmp_path)
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
+    monkeypatch.setattr(cli_server, "__version__", _RUM6_RUNNING_VERSION)
+    _fake_release_list(monkeypatch)
     git = _Git()
     monkeypatch.setattr(su, "_run_git", git)
 

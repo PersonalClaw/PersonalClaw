@@ -14,7 +14,7 @@ step decided "is this a prerelease?" with
   `select_target` offered it to every user as an upgrade.
 
 And the moving tags the updater *pulls* were never pushed by anything:
-`self_update.select_image_tag` resolves `stable` -> `:X.Y` and `beta` ->
+`self_update.select_image` resolves `stable` -> `:X.Y` and `beta` ->
 `:beta`, `docs/guides/containers.md` documents both, and no job created either —
 so the commands the Updates panel printed named an image that does not exist.
 
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.self_update import select_image_tag
+from personalclaw.self_update import select_image
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "release_tags.py"
@@ -86,7 +86,7 @@ REFUSED: list[tuple[str, str]] = [
     ("vX.Y.Z", "not a release tag"),
     ("", "empty ref"),
     # Build metadata: `+` is illegal in a Docker tag, and the conventional `+`->`_`
-    # rewrite would mint a tag `select_image_tag`'s pin arm can never ask for.
+    # rewrite would mint a tag `select_image`'s pin arm can never ask for.
     ("v1.2.3+build.5", "build metadata"),
     ("v1.2.3-rc.1+build.5", "build metadata"),
 ]
@@ -285,7 +285,7 @@ def test_the_version_is_derived_exactly_once(release_yml: str) -> None:
 
 # ── 5. publisher/consumer coherence — RUM-7 pulls what RUM-8 pushes ───────────
 #
-# `select_image_tag` is the PRODUCTION consumer (the Updates panel and
+# `select_image` is the PRODUCTION consumer (the Updates panel and
 # `personalclaw update` on a container install both route through it). Every tag
 # it can name has to be a tag some release actually published, or the commands the
 # panel prints 404. That was the state on `main`: it resolved `:X.Y` and `:beta`,
@@ -304,13 +304,13 @@ RELEASES = [
 
 
 def test_the_stable_channels_moving_minor_is_published_by_that_release() -> None:
-    want = select_image_tag(RELEASES, "stable")
+    _, want = select_image(RELEASES, "stable")
     assert want == "0.2"  # the consumer's answer, unchanged by this change
     assert f"{IMAGE}:{want}" in rt.image_tags(rt.parse_release_ref("v0.2.1"), IMAGE)
 
 
 def test_the_beta_channels_moving_tag_is_published_by_a_prerelease() -> None:
-    want = select_image_tag(RELEASES, "beta")
+    _, want = select_image(RELEASES, "beta")
     assert want == "beta"
     assert f"{IMAGE}:{want}" in rt.image_tags(rt.parse_release_ref("v0.3.0-rc.1"), IMAGE)
     # ...and NOT by a stable cut: `:beta` must not be dragged back onto a stable image.
@@ -319,11 +319,46 @@ def test_the_beta_channels_moving_tag_is_published_by_a_prerelease() -> None:
 
 def test_a_version_pin_resolves_to_a_tag_the_pipeline_published() -> None:
     for pin, ref in (("0.2.1", "v0.2.1"), ("0.3.0-rc.1", "v0.3.0-rc.1")):
-        want = select_image_tag(RELEASES, "stable", pin)
+        _, want = select_image(RELEASES, "stable", pin)
         assert want, f"pin {pin} resolved to nothing"
         assert f"{IMAGE}:{want}" in rt.image_tags(
             rt.parse_release_ref(ref), IMAGE
         ), f"pin {pin} names image tag :{want}, which {ref} does not publish"
+
+
+#: Release lists the property below must hold over, each a real moment in a release cycle —
+#: the three a container on the beta channel meets between one release and the next.
+_CYCLE_MOMENTS = {
+    "a candidate is the newest release": RELEASES,
+    "no candidate was ever cut": [_view("v0.2.1"), _view("v0.2.0")],
+    "the release is out, newer than its candidates": [
+        _view("v0.3.0"),
+        _view("v0.3.0-rc.2", prerelease=True),
+        _view("v0.3.0-rc.1", prerelease=True),
+    ],
+}
+
+
+@pytest.mark.parametrize("channel", ["stable", "beta"])
+@pytest.mark.parametrize("moment", sorted(_CYCLE_MOMENTS))
+def test_the_image_a_channel_names_is_published_by_the_release_it_resolved(
+    moment: str, channel: str
+) -> None:
+    """What an update compares with the running version and what its commands pull are ONE
+    release.
+
+    `:beta` is moved only by a prerelease, so it is not the image of a stable release, and
+    before the first candidate it names nothing at all. A beta channel that always answered
+    `:beta` compared the running version with the newest release and then pulled an older
+    candidate, or a tag that does not exist.
+    """
+    release_tag, image_tag = select_image(_CYCLE_MOMENTS[moment], channel)
+    assert release_tag, f"{channel} resolved no release when {moment}"
+    published = rt.image_tags(rt.parse_release_ref(release_tag), IMAGE)
+    assert f"{IMAGE}:{image_tag}" in published, (
+        f"{channel} names :{image_tag} for {release_tag} when {moment}, "
+        f"and that release published {published}"
+    )
 
 
 def test_the_compose_default_tag_is_published_by_stable() -> None:

@@ -232,11 +232,17 @@ stopped container too. Take a snapshot before every upgrade.
 Container installs update by pulling the new image and recreating — there is no
 in-place self-update. The app's Updates panel (and `personalclaw update`) show
 exactly the commands for the image tag your `updates` channel/pin resolves to, for the
-way the container was started (see [Environment](#environment-env)):
+way the container was started (see [Environment](#environment-env)). `personalclaw update`
+prints them only when there is a release to move to: one newer than the image you run, or
+the release you pinned while you do not run it yet. Otherwise it says you are on the newest
+(or the pinned) release and prints nothing to run, and the Updates panel shows commands only
+for a newer release. Release candidates count: `0.3.0-rc.2` is newer than `0.3.0-rc.1`, and
+`0.3.0` is newer than both.
 
 - **stable** (default) → the moving minor `:X.Y` (e.g. `:0.2`) — stays on the
   0.2.x line;
-- **beta** → `:beta` — the newest prerelease line;
+- **beta** → `:beta` while a release candidate is the newest release. Once a release is
+  newer than every candidate, beta follows that release's `:X.Y`, as stable does;
 - a **pin** (`updates.pin=0.1.3`) → that exact immutable `:0.1.3`. A pin must be a
   release version (`0.1.3`, or `0.3.0-rc.1` for a release candidate) — anything else
   is refused when you save it. A well-formed pin that matches no published release
@@ -263,8 +269,8 @@ PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml pull
 PERSONALCLAW_IMAGE_TAG=0.2 docker compose -f deploy/compose/compose.yaml up -d
 ```
 
-You can still pin the tag yourself in `.env` (`PERSONALCLAW_IMAGE_TAG=vX.Y.Z`) and
-run the bare `docker compose … pull` / `up -d`.
+You can still pin the tag yourself in `.env` (`PERSONALCLAW_IMAGE_TAG=X.Y.Z` — image tags
+carry no `v`) and run the bare `docker compose … pull` / `up -d`.
 
 State in `personalclaw_home` carries across the recreation. Snapshot before
 upgrading (see [Backups](#backups)); the [CHANGELOG](../../CHANGELOG.md) lists what

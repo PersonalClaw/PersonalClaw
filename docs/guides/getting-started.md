@@ -255,9 +255,10 @@ The gateway comes up on `http://127.0.0.1:10000` with a persistent
 ## Updating
 
 `personalclaw update` advances whichever way you installed — it upgrades the wheel,
-checks out the release tag in a git clone, or prints the `docker compose` commands for a
-container. Everything below is the same on every install kind, and all of it lives in
-**Settings → Updates** as well as in `config.json`.
+checks out the release tag in a git clone, or prints the commands that replace a
+container's image. When nothing newer is published it says you are on the newest release
+and changes nothing. Everything below is the same on every install kind, and all of it lives
+in **Settings → Updates** as well as in `config.json`.
 
 **Channels** (`updates.channel`) — which release line you follow:
 
