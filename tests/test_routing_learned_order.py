@@ -24,7 +24,8 @@ _LOCAL_A = "ollama:llama3.1-8b"
 _LOCAL_B = "ollama:qwen2.5-7b"
 _LOCAL_C = "ollama:phi4-14b"
 _CLOUD = "openai:gpt-4o"
-_LOCAL_KEYS = {"ollama"}
+#: The refs served on this machine, as ``policy.is_local_ref`` answers for each.
+_LOCAL_REFS = frozenset({_LOCAL_A, _LOCAL_B, _LOCAL_C})
 
 
 def _row(n: int, success: Any, *, feedback: float = 0.0, feedback_n: int = 0) -> dict[str, Any]:
@@ -54,7 +55,7 @@ def _call(refs: list[str], fold: Any, **over: Any) -> list[str]:
         "stats": fold,
         "hysteresis": 0.05,
         "cloud_quality_margin": 0.10,
-        "local_keys": _LOCAL_KEYS,
+        "local_refs": _LOCAL_REFS,
         "min_samples": 5,
     }
     kwargs.update(over)

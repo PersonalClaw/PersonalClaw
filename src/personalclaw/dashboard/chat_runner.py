@@ -811,8 +811,8 @@ def _record_turn_usage(
     vendor-cost-wins / honest-unpriced / fail-open logic)."""
     from personalclaw.usage_ledger import record_from_event
 
-    # estimate_if_missing=False: the chat EVENT_COMPLETE handler already resolved
-    # event.cost_usd via estimate_cost, so re-estimating here would double-count it.
+    # The chat EVENT_COMPLETE handler already priced the turn into event.cost_usd, which the
+    # ledger reads as the figure rather than pricing the turn twice.
     record_from_event(
         event,
         source=source,
@@ -820,7 +820,6 @@ def _record_turn_usage(
         agent=agent,
         provider=provider,
         model=model,
-        estimate_if_missing=False,
     )
 
 
@@ -3316,18 +3315,19 @@ async def run_chat(
         # _turn_tool_call_count is initialized before the try (the finally's done-branch
         # reads it on turns that raise before this block — #2856); set from the event below.
         # Cost/token accounting for the same "Turn complete" line. Captured
-        # at EVENT_COMPLETE; _turn_priced is False only when the model has no price
-        # row AND the provider reported no cost → render "unpriced", never $0.00.
+        # at EVENT_COMPLETE; _turn_priced is False only when nothing prices the turn
+        # (`routing.rates.price_event`) → render "unpriced", never $0.00.
         _turn_input_tokens = 0
         _turn_output_tokens = 0
         # Kept SPLIT, never pre-summed: reads are the saving, writes are what
         # it cost — one total can express neither the hit rate nor the saved USD.
         _turn_cache_read_tokens = 0
         _turn_cache_creation_tokens = 0
-        # The model the cache saving is priced against. `_record_model` is resolved
-        # INSIDE the EVENT_COMPLETE branch, so it is unbound on a turn that never
-        # reported usage — this carries it out to the broadcast without that hazard.
+        # The provider entry and model the cache saving is priced against. `_record_model` is
+        # resolved INSIDE the EVENT_COMPLETE branch, so it is unbound on a turn that never
+        # reported usage — these carry it out to the broadcast without that hazard.
         _turn_model = ""
+        _turn_provider = ""
         _turn_cost_usd = 0.0
         _turn_priced = False
         # How long the turn took, for the persisted per-turn record. Most
@@ -4769,28 +4769,25 @@ async def run_chat(
                     # the estimate, never write it onto session.model (the user's selection);
                     # the ACP CLI's internal model would clobber the user's choice with a model
                     # no model-provider offers.
-                    from personalclaw.usage_ledger import answered_model
+                    from personalclaw.routing.rates import price_event
+                    from personalclaw.usage_ledger import answered_model, answered_provider
 
                     _record_model = answered_model(event, session.model)
                     if not _record_model:
                         _prov_model = getattr(getattr(client, "client", None), "_model", "") or ""
                         if isinstance(_prov_model, str) and _prov_model and _prov_model != "auto":
                             _record_model = _prov_model
-                    # Derive cost from the pricing table when the provider didn't
-                    # report one (most set cost_usd=0.0). Now that the model is
-                    # resolved, estimate from token counts so the cost ticker +
-                    # usage ledger show a real number. Unknown model → 0.0 (honest
-                    # unpriced), so the provider-reported value (if any) always wins.
-                    if not event.cost_usd and _record_model:
-                        from personalclaw.pricing import estimate_cost
-
-                        event.cost_usd = estimate_cost(
-                            _record_model,
-                            input_tokens=event.input_tokens,
-                            output_tokens=event.output_tokens,
-                            cache_read_tokens=event.cache_read_tokens,
-                            cache_creation_tokens=event.cache_creation_tokens,
-                        )
+                    # The provider entry that answered, which the rate is found by (a rate the
+                    # owner set for it, its endpoint on this machine, its app's declaration); an
+                    # agent CLI names none and keeps the runtime it ran on.
+                    _record_provider = answered_provider(event, provider_kind or "")
+                    # Price the turn now that the model is resolved: the cost the provider
+                    # reported (most set cost_usd=0.0), else its tokens at the effective rate,
+                    # so the cost ticker + usage ledger show a real number. Nothing prices it →
+                    # 0.0 and priced False (honest unpriced), never a free turn.
+                    _turn_price = price_event(event, provider=_record_provider, model=_record_model)
+                    if not event.cost_usd and _turn_price.dollars:
+                        event.cost_usd = _turn_price.dollars
                     if event.cost_usd:
                         stats.inc_cost_usd(event.cost_usd)
                     # Durable per-turn ledger (COST-AND-TOKEN-OBSERVABILITY C2, chat
@@ -4803,17 +4800,16 @@ async def run_chat(
                         provider=provider_kind or "",
                         model=_record_model or "",
                     )
-                    # Capture for the "Turn complete" cost line. priced is
-                    # False only with no price row AND no provider cost → "unpriced".
-                    from personalclaw.pricing import has_pricing as _has_pricing
-
+                    # Capture for the "Turn complete" cost line. priced is False only when
+                    # nothing priced the turn → "unpriced".
                     _turn_input_tokens = int(event.input_tokens or 0)
                     _turn_output_tokens = int(event.output_tokens or 0)
                     _turn_cache_read_tokens = int(event.cache_read_tokens or 0)
                     _turn_cache_creation_tokens = int(event.cache_creation_tokens or 0)
                     _turn_cost_usd = float(event.cost_usd or 0.0)
-                    _turn_priced = bool(_turn_cost_usd) or _has_pricing(_record_model)
+                    _turn_priced = _turn_price.priced
                     _turn_model = _record_model or ""
+                    _turn_provider = _record_provider
                 _stop_reason = event.stop_reason
                 _turn_event_count = event.event_count
                 _turn_tool_call_count = event.tool_call_count
@@ -4970,8 +4966,9 @@ async def run_chat(
         # details still say it after a reload. PCS-7: both derived cache numbers come from
         # the shared primitives, and both helpers answer None rather than guessing: an
         # unpriced model has no saving to state, and a turn with no denominator has no hit
-        # rate. The renderer keeps those Nones honest.
-        from personalclaw.pricing import cache_savings_usd
+        # rate. The renderer keeps those Nones honest. The saving is priced at the rate the
+        # turn's cost was.
+        from personalclaw.routing.rates import cache_savings_usd
         from personalclaw.stats import cache_hit_pct
 
         _turn_line = _turn_complete_line(
@@ -4990,6 +4987,7 @@ async def run_chat(
                 input_tokens=_turn_input_tokens,
             ),
             cache_saved_usd=cache_savings_usd(
+                _turn_provider,
                 _turn_model,
                 cache_read_tokens=_turn_cache_read_tokens,
                 cache_creation_tokens=_turn_cache_creation_tokens,

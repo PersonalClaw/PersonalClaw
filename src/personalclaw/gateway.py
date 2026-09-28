@@ -126,6 +126,7 @@ if TYPE_CHECKING:
     from personalclaw.channel_transports.base import ChannelMessage
     from personalclaw.channel_trust import TrustVerdict
     from personalclaw.dashboard.state import _ChatSession
+    from personalclaw.guardrails.policy import SafetyProfile
     from personalclaw.inbox_service import InboxService
     from personalclaw.llm_helpers import ToolApprovalPolicy
     from personalclaw.loop.watchdog import LoopWatchdog
@@ -275,6 +276,34 @@ def announce_axis(thread_channel: str | None) -> str:
     subagent rode.
     """
     return "" if thread_channel else "orchestration"
+
+
+def announce_profile(parent_key: str, thread_channel: str | None) -> "SafetyProfile | None":
+    """The profile whose tool grants a finished subagent's announce turn is held to, or ``None``.
+
+    The announcement hands the parent session a subagent's result, text a model wrote from
+    whatever it read, and the parent's turn acts on it. A parent nobody watches (a scheduled
+    job's session, an Inbox sweep, a side session, a webhook's turn, a loop) resolves the
+    headless profile, whose grants admit a call only when its tool declares it reads, so the
+    turn is held to them as a webhook's own turn is (``dashboard.handlers.hooks``). It was held
+    to nothing: its calls met only the approval policy, whose hooks approve a hook-neutral write.
+
+    ``None`` for a parent a person is in: one linked to a channel thread (their conversation
+    there, whose chat binding :func:`announce_axis` keeps) and one no unattended key names. A
+    ceiling that cannot be read raises here, and the announce fails closed.
+    """
+    from personalclaw.guardrails.policy import is_unattended_session, profile_for_session
+
+    if thread_channel or not is_unattended_session(parent_key):
+        return None
+    return profile_for_session(parent_key)
+
+
+class AnnounceRefused(Exception):
+    """An announce turn its parent's runtime cannot be held to the grants for: said as it is.
+
+    Not retried: the runtime is what it is on the next attempt too.
+    """
 
 
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
@@ -3923,6 +3952,35 @@ class GatewayOrchestrator:
                 msg: str,
                 parent_key: str,
                 label: str,
+                *,
+                thread_channel: str | None = None,
+            ) -> str | None:
+                """The announce turn, held to the parent's tool grants when nobody watches the
+                parent (:func:`announce_profile`), and given back what it held after.
+
+                Raises :class:`AnnounceRefused` when the parent's runtime cannot be held: an agent
+                CLI runs its tools where the host never sees them, so the result is not handed to
+                a turn the grants cannot bound.
+                """
+                from personalclaw.guardrails.policy import tool_grants_held
+
+                profile = announce_profile(parent_key, thread_channel)
+                if profile is None:
+                    return await _stream_with_retry(client, msg, parent_key, label)
+                with tool_grants_held(client, profile) as held:
+                    if not held:
+                        raise AnnounceRefused(
+                            "the session it reports to runs on an agent CLI, which runs tools the "
+                            "host never sees, so the result was not handed to it: a turn nobody "
+                            f"watches is held to the {profile.name} profile's tool grants"
+                        )
+                    return await _stream_with_retry(client, msg, parent_key, label)
+
+            async def _stream_with_retry(
+                client,
+                msg: str,
+                parent_key: str,
+                label: str,
             ) -> str | None:
                 """Retry stream_and_collect up to 3 times on AcpError.
 
@@ -4031,6 +4089,9 @@ class GatewayOrchestrator:
                 )
 
             told = all([_reported(m) for m in batch])
+            # Why the parent was not handed the result, when its announce was refused
+            # (`AnnounceRefused`): news a trigger's own note does not carry.
+            _refusal = ""
 
             # Build ONE announce covering every completion in the batch. A
             # burst of 8 completions becomes a single parent turn listing all 8,
@@ -4259,7 +4320,13 @@ class GatewayOrchestrator:
                         else:
                             msg = announce
                         response = await asyncio.wait_for(
-                            _inject_with_retry(client, msg, parent_key, _announce_source),
+                            _inject_with_retry(
+                                client,
+                                msg,
+                                parent_key,
+                                _announce_source,
+                                thread_channel=_thread_channel,
+                            ),
                             timeout=INJECTION_TIMEOUT,
                         )
                         _injected = True  # LLM processed result; channel posting is best-effort
@@ -4325,6 +4392,11 @@ class GatewayOrchestrator:
                                 )
                         if _attempt < _MAX_INJECT_ATTEMPTS:
                             _sleep_before_retry = True
+                    except AnnounceRefused as refused:
+                        _channel_failure_reasons.append(str(refused))
+                        _refusal = str(refused)
+                        logger.warning("Subagent %s: %s", info.id, refused)
+                        break
                     except Exception as exc:
                         _channel_failure_reasons.append(f"attempt {_attempt} failed: {exc}")
                         logger.exception("Subagent %s channel injection failed", info.id)
@@ -4368,12 +4440,14 @@ class GatewayOrchestrator:
                         _last_failure_reason,
                     )
                     _notify_all_failed(_last_failure_reason)
-                # Dashboard notification
-                if self.dashboard_state and not told:
+                # Dashboard notification. A refused announce says so beside the result it carries,
+                # even when every member's trigger already said how the work went: the owner reads
+                # there that the session did not act on it, and why.
+                if self.dashboard_state and (not told or _refusal):
                     self.dashboard_state.notify(
                         notification_kinds.SUBAGENT,
                         title,
-                        body,
+                        f"{body}\n\nNot acted on: {_refusal}." if _refusal else body,
                         meta=notice_meta,
                     )
                 return
@@ -4409,6 +4483,11 @@ class GatewayOrchestrator:
                         _inject_with_retry(client, msg, parent_key, "cron"),
                         timeout=INJECTION_TIMEOUT,
                     )
+                except AnnounceRefused as refused:
+                    logger.warning("Subagent %s: %s", info.id, refused)
+                    _notify_all_failed(str(refused))
+                    _refusal = str(refused)
+                    body = f"{body}\n\nNot acted on: {refused}."
                 except asyncio.TimeoutError:
                     logger.error(
                         "Subagent %s: cron injection timed out after %.0fs",
@@ -4465,8 +4544,8 @@ class GatewayOrchestrator:
                         )
 
             # Dashboard notification — suppressed only when EVERY member is silent, or every one
-            # has just said how it went on its trigger's route.
-            if self.dashboard_state and not all(m.silent for m in batch) and not told:
+            # has just said how it went on its trigger's route and the announce was not refused.
+            if self.dashboard_state and not all(m.silent for m in batch) and (not told or _refusal):
                 self.dashboard_state.notify(
                     notification_kinds.SUBAGENT,
                     title,

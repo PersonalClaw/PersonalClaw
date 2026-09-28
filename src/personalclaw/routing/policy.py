@@ -294,46 +294,24 @@ def model_of(ref: str) -> str:
     return parts[1] if len(parts) == 2 else ""
 
 
-def _local_provider_keys() -> set[str]:
-    """Normalized keys of the registered local-model providers.
+def is_local_ref(ref: str) -> bool:
+    """Whether ``ref`` names a model served on this machine: its provider entry's endpoint is here.
 
-    The local-model registry is APP-name keyed (the documented spelling gotcha, §7): the app
-    registers under its app name while ``active_models.json`` refs carry the *config entry* name.
-    Both are normalized (lowercased, punctuation stripped) and matched by prefix in
-    :func:`is_local_ref`, which absorbs that spelling difference without hardcoding any vendor.
+    The one rule for "local" (``llm.registry.served_on_this_machine``), the one the rate table
+    prices a local model free by and the model-call guard scans by: where the entry's endpoint is,
+    never what the provider is called. It was decided by the name, matched against the local-model
+    apps', so an Ollama on another machine, which bills and sends prompts off this one, was ordered
+    first as a free local model, and ``LocalOllama`` on this machine, whose name matches no app's,
+    was ordered as cloud.
+
+    Conservative: an entry that names no endpoint, and a name no configured entry has, are CLOUD.
+    Mis-labeling a cloud ref as local would order a paid, off-machine provider ahead of a free
+    on-machine one under a local-first policy — the one direction of error that costs the user
+    money and privacy.
     """
-    try:
-        from personalclaw.local_models.registry import registered
+    from personalclaw.llm.registry import served_on_this_machine
 
-        return {_norm(k) for k, _ in registered() if k}
-    except Exception:  # noqa: BLE001 — an unreadable registry means "assume cloud"
-        return set()
-
-
-def is_local_ref(ref: str, *, local_keys: set[str] | None = None) -> bool:
-    """Whether ``ref`` names a locally-served model, per local-model-registry membership (§7).
-
-    Conservative: an unknown provider is treated as CLOUD. Mis-labeling a cloud ref as local would
-    order a paid, off-machine provider ahead of a free on-machine one under a local-first policy —
-    the one direction of error that costs the user money and privacy.
-    """
-    prov = _norm(provider_of(ref))
-    if not prov:
-        return False
-    keys = _local_provider_keys() if local_keys is None else local_keys
-    for key in keys:
-        if not key:
-            continue
-        # Either spelling may be the longer one ("ollama" vs "ollama-models"), so accept a prefix
-        # match in either direction, with a floor on the shared prefix so two unrelated short names
-        # can't collide.
-        if key == prov:
-            return True
-        if len(prov) >= 4 and key.startswith(prov):
-            return True
-        if len(key) >= 4 and prov.startswith(key):
-            return True
-    return False
+    return served_on_this_machine(provider_of(ref))
 
 
 def _structured_providers() -> set[str]:
@@ -376,13 +354,13 @@ def size_hint_b(ref: str) -> float:
 # ── the reorder ─────────────────────────────────────────────────────────────────
 
 
-def _pin_rank(ref: str, pin: str, *, local_keys: set[str]) -> int:
+def _pin_rank(ref: str, pin: str, *, local_refs: frozenset[str]) -> int:
     """0 for a ref the pin hoists, 1 otherwise. A pin never drops anything — an unmatchable pin
     (e.g. ``local`` with no local ref bound) ranks everything 1, i.e. leaves the order alone."""
     if pin == "local":
-        return 0 if is_local_ref(ref, local_keys=local_keys) else 1
+        return 0 if ref in local_refs else 1
     if pin == "cloud":
-        return 0 if not is_local_ref(ref, local_keys=local_keys) else 1
+        return 0 if ref not in local_refs else 1
     return 0 if ref == pin else 1
 
 
@@ -390,7 +368,7 @@ def _heuristic_rank(
     ref: str,
     query_class: str,
     *,
-    local_keys: set[str],
+    local_refs: frozenset[str],
     structured: set[str],
 ) -> tuple[int, int]:
     """The §4.1 rank for one ref. Lower sorts earlier; ties fall through to the input order.
@@ -402,7 +380,7 @@ def _heuristic_rank(
       the wrong tool for long reasoning, and trying it first only spends the timeout);
     * local-first — a local ref is free and private, so it leads (§4.1, §5.2).
     """
-    local = is_local_ref(ref, local_keys=local_keys)
+    local = ref in local_refs
     exception = 0
     if query_class == _CLASS_STRUCTURED:
         exception = 0 if _norm(provider_of(ref)) in structured else 1
@@ -413,11 +391,21 @@ def _heuristic_rank(
     return (exception, 0 if local else 1)
 
 
+def _local_refs(refs: list[str]) -> frozenset[str]:
+    """The refs among *refs* served on this machine (:func:`is_local_ref`), asked once per decision
+    so every stage of it ranks by one answer. Any failure reads as none local: cloud is the
+    conservative direction."""
+    try:
+        return frozenset(ref for ref in refs if is_local_ref(ref))
+    except Exception:  # noqa: BLE001 — an unreadable registry means "assume cloud"
+        logger.debug("local-ref classification failed — treating every ref as cloud", exc_info=True)
+        return frozenset()
+
+
 def _learned_order(
     ordered: list[str],
     use_case: str,
     query_class: str,
-    local_keys: set[str],
     *,
     home: Path | None = None,
 ) -> list[str]:
@@ -456,7 +444,7 @@ def _learned_order(
         stats=fold,
         hysteresis=float(cfg["hysteresis"]),
         cloud_quality_margin=float(cfg["cloud_quality_margin"]),
-        local_keys=local_keys,
+        local_refs=_local_refs(ordered),
         cost_of=_cost_of(resolved),
         min_samples=int(cfg["min_samples"]),
     )
@@ -511,19 +499,20 @@ def _cost_of(home: Path) -> "Callable[[str], float]":
     """A per-ref cost probe for the learned stage's within-band ordering.
 
     A fixed nominal token shape, because the stage compares refs against each OTHER — the absolute
-    dollars are irrelevant and a per-call token count is not known at ordering time. An unpriced
-    model returns ``inf`` rather than ``0.0``: unknown must not read as free, or an unpriced cloud
-    model wins every cost tie.
+    dollars are irrelevant and a per-call token count is not known at ordering time. Priced by the
+    one pricing function (``rates.price_call``) every dollar is. An unpriced model returns ``inf``
+    rather than ``0.0``: unknown must not read as free, or an unpriced cloud model wins every cost
+    tie.
     """
-    from personalclaw.routing.rates import cost_for
+    from personalclaw.routing.rates import price_call
 
     def probe(ref: str) -> float:
         provider, _, model = ref.partition(":")
         try:
-            got = cost_for(provider, model, input_tokens=1000, output_tokens=500, home=home)
+            price = price_call(provider, model, input_tokens=1000, output_tokens=500, home=home)
         except Exception:  # noqa: BLE001 — an unpriced or unreadable rate is "unknown", not free
             return float("inf")
-        return float("inf") if got is None else float(got)
+        return float(price.dollars) if price.priced else float("inf")
 
     return probe
 
@@ -553,13 +542,13 @@ def route_refs(
         if mode == "off":
             return ordered
 
-        local_keys = _local_provider_keys()
+        local_refs = _local_refs(ordered)
 
         # Lever 2 — a user pin short-circuits the heuristic entirely. Learned scoring may
         # keep accumulating under a pin, but it never reorders.
         pin = pin_for(use_case, home=home)
         if pin:
-            return _stable_by(ordered, lambda r: (_pin_rank(r, pin, local_keys=local_keys),))
+            return _stable_by(ordered, lambda r: (_pin_rank(r, pin, local_refs=local_refs),))
 
         # Lever 3 / the learned table — an explicitly recorded order wins over the heuristic.
         # Refs the table doesn't list rank after the listed ones, keeping their relative order, so
@@ -577,7 +566,7 @@ def route_refs(
         # which is what makes "deleting routing_stats.json degrades to heuristic" true by
         # construction rather than by a catch.
         if mode == "learned":
-            learned_ranked = _learned_order(ordered, use_case, query_class, local_keys, home=home)
+            learned_ranked = _learned_order(ordered, use_case, query_class, home=home)
             if learned_ranked != ordered:
                 return learned_ranked
 
@@ -585,7 +574,7 @@ def route_refs(
         structured = _structured_providers() if query_class == _CLASS_STRUCTURED else set()
         return _stable_by(
             ordered,
-            lambda r: _heuristic_rank(r, query_class, local_keys=local_keys, structured=structured),
+            lambda r: _heuristic_rank(r, query_class, local_refs=local_refs, structured=structured),
         )
     except Exception:  # noqa: BLE001 — a routing decision must never fail a resolution
         logger.debug("route_refs failed for %s/%s — keeping bound order", use_case, query_class)

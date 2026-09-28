@@ -1698,23 +1698,28 @@ class TestModelBackfillOnComplete:
     stays empty. The fix re-reads client._model at EVENT_COMPLETE into a local
     ``_record_model`` used for the cost estimate — WITHOUT writing it onto
     session.model (the user's selection). These tests observe that resolved
-    model via ``estimate_cost`` (its surviving consumer; the token-shard
-    persistence was removed with the usage subsystem) and assert session.model
-    is never clobbered — the mid-session model-switch regression guard.
+    model through the pricing function (``routing.rates.price_event``, which prices
+    the turn by it) and assert session.model is never clobbered — the mid-session
+    model-switch regression guard.
     """
 
     @staticmethod
     def _capture_estimate_model(monkeypatch):
-        """Patch estimate_cost to record the model it's called with. It fires only
-        when the provider reported no cost AND a non-empty model resolved — exactly
-        the ``_record_model`` the backfill produces. Returns the capture list."""
+        """Record every model the turn is priced by: the ``_record_model`` the backfill
+        produces, which the chat prices its cost line by and the usage row is written
+        (and priced) for. A turn with no resolved model is priced by none. Returns the
+        capture list, with the unresolved ("") pricings left out."""
+        from personalclaw.routing import rates
+
         captured: list = []
+        real = rates.price_event
 
-        def _fake_estimate(model, **kw):
-            captured.append(model)
-            return 0.0
+        def _record(event, *, provider, model, home=None):
+            if model:
+                captured.append(model)
+            return real(event, provider=provider, model=model, home=home)
 
-        monkeypatch.setattr("personalclaw.pricing.estimate_cost", _fake_estimate)
+        monkeypatch.setattr(rates, "price_event", _record)
         return captured
 
     @staticmethod
@@ -1805,7 +1810,7 @@ class TestModelBackfillOnComplete:
 
         await run_chat(state, session, "hello")
 
-        assert captured == ["opus"], "the cost estimate should reflect the model that ran"
+        assert captured and set(captured) == {"opus"}, "the turn is priced by the model that ran"
         # session.model (the USER'S selection) must stay on "auto" — the provider's
         # internal model is used for the estimate only, never written back. Writing
         # it back clobbered the user's selection with an ACP CLI's default model
@@ -1837,7 +1842,7 @@ class TestModelBackfillOnComplete:
 
         await run_chat(state, session, "hello")
 
-        # 'auto' is not a real model → no resolved model → estimate never runs.
+        # 'auto' is not a real model → no resolved model → nothing prices the turn by one.
         assert captured == []
         assert session.model == ""
 
@@ -1868,8 +1873,8 @@ class TestModelBackfillOnComplete:
 
         await run_chat(state, session, "hello")
 
-        # The cost estimate reflects the model that ran...
-        assert captured == ["claude-opus-4-8"]
+        # The turn is priced by the model that ran...
+        assert captured and set(captured) == {"claude-opus-4-8"}
         # ...but the user's selection ("auto") is preserved, NOT clobbered.
         assert session.model == ""
 
@@ -1899,8 +1904,8 @@ class TestModelBackfillOnComplete:
 
         await run_chat(state, session, "hello")
 
-        # The estimate uses the already-set session.model, not the provider default.
-        assert captured == ["claude-opus-4.6"]
+        # The turn is priced by the already-set session.model, not the provider default.
+        assert captured and set(captured) == {"claude-opus-4.6"}
         assert session.model == "claude-opus-4.6"
 
 

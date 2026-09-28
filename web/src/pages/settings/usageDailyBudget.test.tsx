@@ -12,6 +12,7 @@ import { act, render } from '@testing-library/react'
 const BUDGET = {
   spent_dollars: 0.25,
   spent_tokens: 1200,
+  unpriced_calls: 0,
   max_dollars_per_day: 1,
   max_tokens_per_day: 0,
   cap_unreadable: false,
@@ -51,6 +52,28 @@ describe('Daily budget', () => {
     expect(text).toContain('Unattended spend today: $0.2500 of your $1.00 daily cap')
     expect(text).not.toContain('$9.00 of your')
     expect(text).toContain('Your chat turns are not capped.')
+  })
+
+  it('says how many calls the dollar total leaves out, rather than letting them read as free', async () => {
+    // A call nothing priced is charged as one the cap could not count. Shown as the whole spend,
+    // $0.2500 told the owner those calls were free.
+    const { container } = await mount({ ...BUDGET, unpriced_calls: 3 })
+    const text = container.textContent ?? ''
+    expect(text).toContain('Unattended spend today: $0.2500 of your $1.00 daily cap')
+    expect(text).toContain(
+      '3 unattended calls today had no price, so the dollar cap could not count them: '
+      + 'set a rate for their models in ~/.personalclaw/model_rates.json.',
+    )
+    const one = (await mount({ ...BUDGET, unpriced_calls: 1 })).container.textContent ?? ''
+    expect(one).toContain('1 unattended call today had no price, so the dollar cap could not count it:')
+  })
+
+  it('says nothing of unpriced calls when there are none, or no dollar cap to count them', async () => {
+    const none = (await mount(BUDGET)).container.textContent ?? ''
+    expect(none).not.toContain('had no price')
+    const tokensOnly = await mount({ ...BUDGET, unpriced_calls: 3, max_dollars_per_day: 0, max_tokens_per_day: 50000 })
+    // Tokens are known whatever the price, so a token cap counts every call.
+    expect(tokensOnly.container.textContent ?? '').not.toContain('had no price')
   })
 
   it('states a token cap with its own metered count', async () => {

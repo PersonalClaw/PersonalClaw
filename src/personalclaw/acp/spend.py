@@ -10,8 +10,9 @@ So an ACP provider acquired on a metered axis (``provider_bridge.METERED_AXES``,
 ``SessionManager`` through :meth:`AcpTurnMeter.set_spend_axis`) meters each of its turns the way
 the guard meters a call: refused before the prompt is sent once the day's or the run's ceiling is
 spent (``guardrails.model_call.spent_refusal``), charged at the turn's ``EVENT_COMPLETE`` with the
-cost the CLI reports (priced from its tokens when it reports none), recorded in the model-call
-log, and named on that event (``audit_ids``) so the turn's usage row joins it. A provider on no
+cost the CLI reports (priced from its tokens by ``routing.rates.price_event`` when it reports none,
+and charged as unpriced when nothing prices them), recorded in the model-call log, and named on that
+event (``audit_ids``) so the turn's usage row joins it. A provider on no
 metered axis (a person's chat on an agent CLI) is left alone, as the chat binding is.
 
 What it does not do is the guard's other half: no hard timeout (an agent's turn runs tools and
@@ -91,11 +92,11 @@ class AcpTurnMeter:
         from personalclaw.guardrails.budgets import current_run_key, get_meter
         from personalclaw.guardrails.failure import FailureMode
         from personalclaw.guardrails.model_call import (
-            call_dollars,
             naming_the_call,
             new_audit_id,
             spent_refusal,
         )
+        from personalclaw.routing.rates import price_event
 
         provider = str(getattr(self, "provider_id", "") or "acp")
         model = str(getattr(self, "agent_model", "") or "")
@@ -132,15 +133,20 @@ class AcpTurnMeter:
             if event.kind == EVENT_COMPLETE and not charged:
                 tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                 tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                dollars = call_dollars(event, model, tokens_in, tokens_out)
-                meter.charge(tokens_in + tokens_out, dollars, run_key=current_run_key() or None)
+                price = price_event(event, provider=provider, model=model)
+                meter.charge(
+                    tokens_in + tokens_out,
+                    price.dollars,
+                    run_key=current_run_key() or None,
+                    priced=price.priced,
+                )
                 _record(
                     FailureMode.NONE,
                     latency_ms=round(now_ms() - started, 1),
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
-                    dollars_est=round(dollars, 6),
-                    estimated=not float(getattr(event, "cost_usd", 0.0) or 0.0),
+                    dollars_est=round(price.dollars, 6),
+                    estimated=price.source != "reported",
                     passed=True,
                 )
                 charged = True

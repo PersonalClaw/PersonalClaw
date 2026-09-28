@@ -23,6 +23,7 @@ from personalclaw.guardrails.calls import (
 )
 from personalclaw.guardrails.model_call import wrap_model_call_guard
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
 
 class _Adapter:
@@ -54,8 +55,19 @@ class _LoopbackAdapter(_Adapter):
     _base_url = "http://127.0.0.1:11434"
 
 
-async def _call(adapter, *, model: str = "unlisted-model-x") -> str:
-    guard = wrap_model_call_guard(adapter, use_case="background", provider_name="p", model=model)
+def _configured(name: str, endpoint: str) -> str:
+    """Register the provider entry *name* with *endpoint*, as the config sync does; conftest drops
+    it after the test."""
+    get_default_registry().register_entry(
+        ProviderEntry(name=name, type="ollama", model="", options={"endpoint": endpoint})
+    )
+    return name
+
+
+async def _call(adapter, *, model: str = "unlisted-model-x", provider: str = "p") -> str:
+    guard = wrap_model_call_guard(
+        adapter, use_case="background", provider_name=provider, model=model
+    )
     chunks = []
     async for event in guard.stream("hi"):
         if event.kind == EVENT_TEXT_CHUNK:
@@ -158,10 +170,28 @@ async def test_the_guard_records_usage_model_and_the_temperature_it_sent():
 
 @pytest.mark.asyncio
 async def test_a_local_models_zero_is_a_measurement():
+    """Priced by the one pricing function, which knows a local model's $0 by where its entry
+    sends (``llm.registry.served_on_this_machine``)."""
+    local = _configured("local-box", "http://127.0.0.1:11434")
     with capture_model_calls() as log:
-        await _call(_LoopbackAdapter())
+        await _call(_LoopbackAdapter(), provider=local)
     assert log.calls[0].priced is True
     assert log.cost_usd == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_rate_the_owner_set_prices_the_published_call(tmp_path, monkeypatch):
+    """The record a workflow step reads its cost from carries the rate the owner set, where it
+    carried the shipped table's answer alone (none, for this model)."""
+    import personalclaw.config.loader as loader
+    from personalclaw.routing.rates import save_overlay
+
+    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    save_overlay({"p:unlisted-model-x": {"in_per_mtok": 1.0, "out_per_mtok": 2.0}}, home=tmp_path)
+    with capture_model_calls() as log:
+        await _call(_Adapter(usage=(1_000_000, 500_000)))
+    assert log.calls[0].priced is True
+    assert log.cost_usd == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio

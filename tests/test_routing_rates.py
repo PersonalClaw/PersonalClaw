@@ -20,15 +20,15 @@ import json
 import pytest
 
 import personalclaw.sdk.model  # noqa: F401 — ensure package import order (sdk.model first)
-from personalclaw.llm.registry import ProviderEntry, get_default_registry
+from personalclaw.llm.registry import ProviderEntry, get_default_registry, served_on_this_machine
 from personalclaw.routing import rates as rates_mod
 from personalclaw.routing.rates import (
+    CallPrice,
     ModelRate,
-    cost_for,
     load_overlay,
+    price_call,
     rate_for,
     save_overlay,
-    served_on_this_machine,
 )
 from personalclaw.sdk.provider_helpers import BrandedProviderSpec
 
@@ -91,6 +91,7 @@ def registered_pricing(monkeypatch):
 def test_overlay_wins_over_app_default(tmp_path, registered_pricing):
     """Tier 1 beats tier 3: the user's correction is mightier than the app's shipped price."""
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
+    _configured("acme", "acme")
     save_overlay({"acme:acme-large": {"in_per_mtok": 1.0, "out_per_mtok": 2.0}}, home=tmp_path)
 
     rate = rate_for("acme", "acme-large", home=tmp_path)
@@ -101,6 +102,7 @@ def test_overlay_wins_over_app_default(tmp_path, registered_pricing):
 
 def test_app_default_answers_when_no_overlay(tmp_path, registered_pricing):
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
+    _configured("acme", "acme")
 
     rate = rate_for("acme", "acme-large", home=tmp_path)
 
@@ -113,7 +115,8 @@ def test_absent_is_none_not_a_free_model(tmp_path):
     rate = rate_for("acme", "totally-unpriced-model", home=tmp_path)
 
     assert rate is None
-    assert cost_for("acme", "totally-unpriced-model", input_tokens=10_000, home=tmp_path) is None
+    price = price_call("acme", "totally-unpriced-model", input_tokens=10_000, home=tmp_path)
+    assert price == CallPrice(0.0, False, "")
 
 
 @pytest.mark.parametrize("endpoint", _HERE)
@@ -125,7 +128,8 @@ def test_a_model_server_on_this_machine_prices_zero_and_is_not_absent(tmp_path, 
 
     assert rate == ModelRate(0.0, 0.0)
     assert rate is not None and rate.source == "local"
-    assert cost_for("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path) == 0.0
+    price = price_call("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path)
+    assert price == CallPrice(0.0, True, "local")
 
 
 @pytest.mark.parametrize("endpoint", _ELSEWHERE)
@@ -136,7 +140,7 @@ def test_a_model_server_on_another_machine_is_not_free(tmp_path, endpoint):
 
     assert served_on_this_machine("ollama") is False
     assert rate_for("ollama", _UNPRICED, home=tmp_path) is None
-    assert cost_for("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path) is None
+    assert not price_call("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path).priced
 
 
 def test_a_model_server_on_another_machine_prices_at_its_configured_rate(tmp_path):
@@ -220,6 +224,7 @@ def test_app_default_beats_builtin(tmp_path, registered_pricing):
 
     priced = next(m for m in pricing._PRICES if not m.startswith("_"))
     registered_pricing("acme", {priced: {"in_per_mtok": 999.0, "out_per_mtok": 999.0}})
+    _configured("acme", "acme")
 
     rate = rate_for("acme", priced, home=tmp_path)
 
@@ -295,6 +300,7 @@ def test_corrupt_overlay_fails_open_to_the_app_default(tmp_path, registered_pric
     """A broken overlay must degrade to the next tier (log + continue), never crash a routing
     decision. This is the fail-open half of the precedence contract."""
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
+    _configured("acme", "acme")
     (tmp_path / "model_rates.json").write_text("{not json at all", encoding="utf-8")
 
     rate = rate_for("acme", "acme-large", home=tmp_path)
@@ -306,6 +312,7 @@ def test_corrupt_overlay_fails_open_to_the_app_default(tmp_path, registered_pric
 
 def test_overlay_missing_rates_object_fails_open(tmp_path, registered_pricing):
     registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
+    _configured("acme", "acme")
     (tmp_path / "model_rates.json").write_text('{"version": 1}', encoding="utf-8")
 
     assert rate_for("acme", "acme-large", home=tmp_path) == ModelRate(3.0, 15.0)
@@ -333,15 +340,95 @@ def test_default_home_comes_from_config_dir(tmp_path, monkeypatch):
     assert rate_for("acme", "acme-large") == ModelRate(6.0, 7.0)
 
 
-# ── cost_for ─────────────────────────────────────────────────────────────────────────────
+# ── price_call: the one pricing function ─────────────────────────────────────────────────
 
 
-def test_cost_for_applies_the_effective_rate(tmp_path):
+def test_price_call_applies_the_effective_rate(tmp_path):
     save_overlay({"acme:acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}}, home=tmp_path)
 
-    cost = cost_for("acme", "acme-large", input_tokens=1_000, output_tokens=2_000, home=tmp_path)
+    price = price_call("acme", "acme-large", input_tokens=1_000, output_tokens=2_000, home=tmp_path)
 
-    assert cost == pytest.approx(0.003 + 0.030)
+    assert price.dollars == pytest.approx(0.003 + 0.030)
+    assert (price.priced, price.source) == (True, "overlay")
+
+
+def test_a_reported_cost_wins_over_every_rate(tmp_path):
+    """The provider's own figure is a charge, where a rate is an estimate."""
+    save_overlay({"acme:acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}}, home=tmp_path)
+
+    price = price_call("acme", "acme-large", input_tokens=1_000, reported_usd=0.42, home=tmp_path)
+
+    assert price == CallPrice(0.42, True, "reported")
+
+
+def test_a_rate_that_names_no_cache_rate_bills_cached_tokens_as_input(tmp_path):
+    """A cache discount is the provider's to state: a row that states none bills a cached token as
+    the input token it is, never as a free one."""
+    save_overlay({"acme:acme-large": {"in_per_mtok": 2.0, "out_per_mtok": 8.0}}, home=tmp_path)
+
+    price = price_call(
+        "acme",
+        "acme-large",
+        cache_read_tokens=1_000_000,
+        cache_creation_tokens=1_000_000,
+        home=tmp_path,
+    )
+
+    assert price.dollars == pytest.approx(4.0)
+
+
+def test_a_rate_that_names_its_cache_rates_bills_by_them(tmp_path):
+    save_overlay(
+        {
+            "acme:acme-large": {
+                "in_per_mtok": 2.0,
+                "out_per_mtok": 8.0,
+                "cache_read_per_mtok": 0.2,
+                "cache_write_per_mtok": 2.5,
+            }
+        },
+        home=tmp_path,
+    )
+
+    price = price_call(
+        "acme",
+        "acme-large",
+        cache_read_tokens=1_000_000,
+        cache_creation_tokens=1_000_000,
+        home=tmp_path,
+    )
+
+    assert price.dollars == pytest.approx(2.7)
+
+
+def test_the_builtin_tier_bills_each_bucket_as_the_shipped_table_does(tmp_path):
+    """The shipped table's cache rates survive the move behind the pricing function: every bucket
+    of a builtin-priced call costs what ``pricing.estimate_cost`` says it does."""
+    from personalclaw import pricing
+
+    model = "claude-sonnet-4.6"
+    buckets = dict(
+        input_tokens=12_345,
+        output_tokens=6_789,
+        cache_read_tokens=100_000,
+        cache_creation_tokens=20_000,
+    )
+
+    price = price_call("some-cloud", model, home=tmp_path, **buckets)
+
+    assert price.source == "builtin"
+    assert price.dollars == pricing.estimate_cost(model, **buckets)
+
+
+def test_a_lookup_that_fails_is_unpriced_not_free(tmp_path, monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr(rates_mod, "rate_for", _boom)
+
+    assert price_call("acme", "acme-large", input_tokens=10, home=tmp_path) == CallPrice(
+        0.0, False, ""
+    )
 
 
 def test_model_rate_source_is_not_part_of_equality():

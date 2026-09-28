@@ -225,16 +225,19 @@ def test_spec_with_pricing_is_still_hashable():
     assert {spec}  # usable in a set
 
 
-def test_registered_spec_and_spec_pricing_resolve_a_named_instance(monkeypatch):
-    """``spec_pricing`` answers for the provider TYPE and for a user-named instance of it, and
-    returns an empty map (never a rate) for an unknown provider."""
+def test_registered_spec_and_spec_pricing_answer_for_the_type_alone(monkeypatch):
+    """``spec_pricing`` answers for the provider TYPE the app registered, and returns an empty map
+    (never a rate) for anything else. A name that spells a type is not that type: an entry named
+    ``acme-work`` may be of any type, and its type is what ``routing.rates`` asks with."""
     spec = BrandedProviderSpec(type="acme", pricing={"acme-large": {"in_per_mtok": 3.0}})
     monkeypatch.setattr(branded_specs, "_REGISTERED_SPECS", {"acme": spec})
 
     assert branded_specs.registered_spec("acme") is spec
-    assert branded_specs.registered_spec("acme-work") is spec  # named instance of the type
+    assert branded_specs.registered_spec("acme-work") is None
+    assert branded_specs.registered_spec("ACME") is None
     assert branded_specs.registered_spec("unknown") is None
     assert branded_specs.spec_pricing("acme") == {"acme-large": {"in_per_mtok": 3.0}}
+    assert branded_specs.spec_pricing("acme-work") == {}
     assert branded_specs.spec_pricing("unknown") == {}
 
 

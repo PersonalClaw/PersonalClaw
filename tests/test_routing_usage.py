@@ -425,6 +425,45 @@ def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path):
     assert cells["nonesuch:no-such-model-xyz"]["interactive"]["unpriced_calls"] == 1
 
 
+def test_a_local_turn_is_never_unpriced_whatever_its_row_says(tmp_path):
+    """The defect: a row's ``priced: false`` won even for a model served on this machine, whose
+    price is a known $0, and every local turn written before local turns were priced carries it.
+    Counted unpriced, those turns made the recap call the month's total a floor for turns known to
+    have cost nothing. A remote row that says it is still counts (the control)."""
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+    registry = get_default_registry()
+    for name, endpoint in (
+        ("ollama", "http://localhost:11434"),
+        ("gpu-box", "http://gpu.example.test:11434"),
+    ):
+        registry.register_entry(
+            ProviderEntry(name=name, type="ollama", model="", options={"endpoint": endpoint})
+        )
+    look = U._rate_lookup(tmp_path)
+    base = {
+        "ts": f"{DAY1}T00:00:00+00:00",
+        "source": "chat",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cost_usd": 0.0,
+        "priced": False,
+    }
+
+    local = U.empty_fold()
+    U.fold_turn_row(local, {**base, "provider": "ollama", "model": "qwen3:8b"}, look=look)
+    cell = local["days"][DAY1]["ollama:qwen3:8b"]["interactive"]
+    assert (cell["local_calls"], cell["unpriced_calls"]) == (1, 0)
+    recap = U.usage_recap(DAY1[:7], fold=local)
+    assert "100% of those turns ran locally at $0." in recap
+    assert "no price row" not in recap and "floor" not in recap
+
+    remote = U.empty_fold()
+    U.fold_turn_row(remote, {**base, "provider": "gpu-box", "model": "qwen3:8b"}, look=look)
+    assert remote["days"][DAY1]["gpu-box:qwen3:8b"]["interactive"]["unpriced_calls"] == 1
+    assert "so the total is a floor" in U.usage_recap(DAY1[:7], fold=remote)
+
+
 def test_an_empty_or_missing_jsonl_is_an_empty_fold_not_an_error(tmp_path):
     fold = U.rebuild(
         tmp_path, audit_path=tmp_path / "nope.jsonl", ledger_path=tmp_path / "no.jsonl"

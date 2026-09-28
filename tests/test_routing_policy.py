@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import policy
 
 BRIDGE = Path(__file__).resolve().parents[1] / "src/personalclaw/providers/provider_bridge.py"
@@ -48,8 +49,25 @@ def _enable(monkeypatch: pytest.MonkeyPatch, mode: str = "heuristic", pin: str =
     monkeypatch.setattr(policy, "_settings_for", lambda _uc: dict(settings))
 
 
-def _locals_are(monkeypatch: pytest.MonkeyPatch, *keys: str) -> None:
-    monkeypatch.setattr(policy, "_local_provider_keys", lambda: {policy._norm(k) for k in keys})
+#: This machine, and another one, as an entry's endpoint names them.
+_HERE = "http://localhost:11434"
+_ELSEWHERE = "http://192.0.2.10:11434"
+
+
+def _entry(name: str, endpoint: str) -> None:
+    """Register the provider entry *name* with *endpoint*, as the config sync does; conftest drops
+    it after the test."""
+    get_default_registry().register_entry(
+        ProviderEntry(name=name, type="ollama", model="", options={"endpoint": endpoint})
+    )
+
+
+def _locals_are(*names: str) -> None:
+    """Configure each named entry with an endpoint on this machine, which is what makes its refs
+    local (``llm.registry.served_on_this_machine``). Every other ref names no configured entry,
+    so it is cloud."""
+    for name in names:
+        _entry(name, _HERE)
 
 
 # ── 1. the purity contract ──────────────────────────────────────────────────────
@@ -70,7 +88,7 @@ def test_route_refs_is_a_pure_reorder(
     set-equality alone would miss a dropped duplicate. Together they pin the multiset.
     """
     _enable(monkeypatch, mode=mode, pin=pin)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     refs = [CLOUD_A, LOCAL, CLOUD_B, LOCAL_TINY]
     out = policy.route_refs("reasoning", query_class, refs)
     assert sorted(out) == sorted(refs), "route_refs changed the candidate SET"
@@ -81,7 +99,7 @@ def test_route_refs_is_a_pure_reorder(
 def test_route_refs_preserves_duplicates(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A repeated ref survives as a repeat — the invariant is on the multiset, not the set."""
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     refs = [CLOUD_A, LOCAL, CLOUD_A]
     out = policy.route_refs("reasoning", "code", refs)
     assert sorted(out) == sorted(refs)
@@ -93,7 +111,7 @@ def test_route_refs_is_deterministic_and_stable(
 ) -> None:
     """Equal-ranked refs keep their bound order (the documented tie-break), every time."""
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     refs = [CLOUD_B, CLOUD_A, LOCAL]
     first = policy.route_refs("reasoning", "short_chat", refs)
     for _ in range(5):
@@ -108,7 +126,7 @@ def test_route_refs_is_deterministic_and_stable(
 def test_off_is_identity(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The default. With routing off the bound order is returned byte-for-byte."""
     _enable(monkeypatch, mode="off")
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     refs = [CLOUD_A, LOCAL]
     assert policy.route_refs("reasoning", "summarize", refs) == refs
 
@@ -124,7 +142,7 @@ def test_master_switch_off_beats_a_use_case_mode(
 
 def test_heuristic_orders_local_first(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     assert policy.route_refs("reasoning", "summarize", [CLOUD_A, LOCAL]) == [LOCAL, CLOUD_A]
 
 
@@ -134,7 +152,7 @@ def test_learned_mode_falls_back_to_the_heuristic(
     """MRT-5 owns learned scoring; until then ``learned`` behaves as the heuristic floor —
     it must not error and must not silently mean 'off'."""
     _enable(monkeypatch, mode="learned")
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     assert policy.route_refs("reasoning", "summarize", [CLOUD_A, LOCAL]) == [LOCAL, CLOUD_A]
 
 
@@ -143,7 +161,7 @@ def test_long_reasoning_demotes_a_small_local_model(
 ) -> None:
     """A 1B local model is the wrong tool for long reasoning; the 8B one still leads."""
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     out = policy.route_refs("reasoning", "long_reasoning", [CLOUD_A, LOCAL_TINY, LOCAL])
     assert out[0] == LOCAL
     assert out.index(LOCAL_TINY) > out.index(CLOUD_A)
@@ -152,7 +170,7 @@ def test_long_reasoning_demotes_a_small_local_model(
 def test_no_size_hint_is_not_treated_as_small(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An id that exposes no size is UNKNOWN, not tiny — it keeps its local-first slot."""
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     unsized = "ollama-models:some-model"
     assert policy.size_hint_b(unsized) == 0.0
     assert policy.route_refs("reasoning", "long_reasoning", [CLOUD_A, unsized])[0] == unsized
@@ -162,7 +180,7 @@ def test_structured_class_prefers_a_declaring_provider(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     monkeypatch.setattr(policy, "_structured_providers", lambda: {policy._norm("CloudB")})
     out = policy.route_refs("reasoning", "extract_structured", [CLOUD_A, LOCAL, CLOUD_B])
     assert out[0] == CLOUD_B
@@ -171,13 +189,13 @@ def test_structured_class_prefers_a_declaring_provider(
 def test_pin_short_circuits_the_heuristic(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A user pin is mightier than the policy: pin=cloud beats local-first outright."""
     _enable(monkeypatch, pin="cloud")
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     assert policy.route_refs("reasoning", "summarize", [LOCAL, CLOUD_A]) == [CLOUD_A, LOCAL]
 
 
 def test_explicit_ref_pin_hoists_that_ref(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _enable(monkeypatch, pin=CLOUD_B)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     assert policy.route_refs("reasoning", "code", [LOCAL, CLOUD_A, CLOUD_B])[0] == CLOUD_B
 
 
@@ -186,7 +204,7 @@ def test_unmatchable_pin_leaves_the_order_alone(
 ) -> None:
     """pin=local with nothing local bound must not drop or scramble anything."""
     _enable(monkeypatch, pin="local")
-    _locals_are(monkeypatch)  # no local providers registered
+    _locals_are()  # no local providers registered
     refs = [CLOUD_A, CLOUD_B]
     assert policy.route_refs("reasoning", "code", refs) == refs
 
@@ -197,7 +215,7 @@ def test_recorded_table_order_wins_and_keeps_unlisted_refs(
     """A recorded order applies, and a ref bound AFTER the table was written is moved to the
     end — never lost (that would be the drop this whole change guards against)."""
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     policy.save_policy(
         home,
         {
@@ -243,10 +261,10 @@ def test_a_raising_ranking_input_returns_the_original_order(
     """The fail-open rail: a routing decision must never fail because a read did."""
     _enable(monkeypatch)
 
-    def _boom() -> set[str]:
+    def _boom(_ref: str) -> bool:
         raise RuntimeError("registry unavailable")
 
-    monkeypatch.setattr(policy, "_local_provider_keys", _boom)
+    monkeypatch.setattr(policy, "is_local_ref", _boom)
     refs = [CLOUD_A, LOCAL]
     assert policy.route_refs("reasoning", "summarize", refs) == refs
 
@@ -269,12 +287,33 @@ def test_single_candidate_is_returned_unchanged(
 
 def test_unknown_provider_is_treated_as_cloud(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Conservative direction: mislabeling cloud as local would order a paid, off-machine
-    provider ahead of a free on-machine one."""
-    _locals_are(monkeypatch, "ollama-models")
+    provider ahead of a free on-machine one. A name no configured entry has names no machine."""
+    _locals_are("ollama-models")
     assert policy.is_local_ref(CLOUD_A) is False
     assert policy.is_local_ref(LOCAL) is True
-    # The APP-name/config-name spelling difference is absorbed (§7 gotcha).
-    assert policy.is_local_ref("Ollama:qwen3:8b") is True
+    assert policy.is_local_ref("Ollama:qwen3:8b") is False
+
+
+def test_local_is_where_the_entry_sends_never_what_it_is_called(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The defect: a ref was local when its provider's NAME matched a local-model app's. So an
+    Ollama on another machine, which bills and takes the prompt off this one, led a local-first
+    order as free and private, and one on this machine under a name of the owner's choosing was
+    ordered as cloud. Local is the endpoint's rule, the one the rate table and the guard use."""
+    _entry("ollama", _ELSEWHERE)
+    _entry("ollama-models", _ELSEWHERE)
+    _entry("gpu", _HERE)
+    assert policy.is_local_ref("ollama:qwen3:8b") is False
+    assert policy.is_local_ref("ollama-models:qwen3:8b") is False
+    assert policy.is_local_ref("gpu:qwen3:8b") is True
+    _enable(monkeypatch)
+    refs = ["ollama:qwen3:8b", CLOUD_A, "gpu:qwen3:8b"]
+    assert policy.route_refs("reasoning", "summarize", refs) == [
+        "gpu:qwen3:8b",
+        "ollama:qwen3:8b",
+        CLOUD_A,
+    ]
 
 
 # ── 4. the call site is real (not merely defined) ───────────────────────────────
@@ -451,7 +490,7 @@ def test_seam_walks_the_routed_order_and_stamps_routed(
     LOCAL ref is attempted first and the attempt carries ``routed`` provenance."""
     pb, calls = seam
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
     pb.resolve_provider_for_use_case("reasoning")
     assert [c["model"] for c in calls] == ["qwen3:8b"], "local-first order was not walked"
@@ -467,7 +506,7 @@ def test_a_cloud_rescue_of_the_routed_local_bet_stamps_routed_fallback(
     stamped ``routed_fallback``. One pass over the chain: no extra attempt, no stacked timeout."""
     pb, calls = seam
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
 
     class _OpenBreaker:
@@ -498,7 +537,7 @@ def test_routing_off_stamps_no_provenance(
     order, and no ``routed`` stamp to make an unrouted call look routed."""
     pb, calls = seam
     _enable(monkeypatch, mode="off")
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
     pb.resolve_provider_for_use_case("reasoning")
     assert [c["hint"] for c in calls] == ["CloudA"]
@@ -512,7 +551,7 @@ def test_model_override_bypasses_routing_entirely(
     routed — the provenance says truthfully that the CALLER chose, not the router."""
     pb, calls = seam
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
     pb.resolve_provider_for_use_case("reasoning", model_override="CloudB:big-model-2")
     assert len(calls) == 1
@@ -526,7 +565,7 @@ def test_pin_short_circuit_is_visible_in_what_the_seam_walks(
     (routing decided the order — the user's pin is what it decided WITH)."""
     pb, calls = seam
     _enable(monkeypatch, pin="cloud")
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [LOCAL, CLOUD_A])
     pb.resolve_provider_for_use_case("reasoning")
     assert [c["hint"] for c in calls] == ["CloudA"]
@@ -542,7 +581,7 @@ def test_unresolvable_routed_first_ref_still_raises(
     from personalclaw.providers import provider_bridge as pb
 
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
     monkeypatch.setattr(pb, "_resolve_from_config_registry", lambda *_a, **_k: None)
     with pytest.raises(pb.ProviderResolutionError) as exc:
@@ -559,7 +598,7 @@ def test_a_ref_removed_from_active_models_drops_from_candidates(
     unbinding a ref removes it on the next load. Nothing in routing caches a pool."""
     pb, calls = seam
     _enable(monkeypatch)
-    _locals_are(monkeypatch, "ollama-models")
+    _locals_are("ollama-models")
     _bind(monkeypatch, [CLOUD_A, LOCAL])
     pb.resolve_provider_for_use_case("reasoning")
     assert calls[0]["hint"] == "ollama-models"

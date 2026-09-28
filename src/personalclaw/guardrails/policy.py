@@ -26,7 +26,10 @@ template; the tier vocabulary and its enforcement are already here.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, HOOK_SESSION_PREFIX
@@ -510,3 +513,28 @@ def declared_tool_grant_denial(
         declared, tool_name, tool_kind, tool_input, proposes=proposes
     ) or (owner_notices and tells_owner)
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)
+
+
+@contextmanager
+def tool_grants_held(runtime: object, profile: SafetyProfile) -> Iterator[bool]:
+    """Hold *runtime*'s tool calls to *profile*'s tool grants for the turn run inside, then give
+    it back the grants it held before.
+
+    Asked in the runtime before approval (``NativeAgentRuntime.set_tool_grants``), since an approval
+    the runtime answers itself never reaches the host, so a call whose tool the grants do not cover
+    is refused whatever would approve it. Restored after, because the runtime is a session's and
+    outlives the turn: left in place, one turn's hold would bound the session's own later turns.
+
+    Yields False, holding nothing, when *runtime* cannot be held: an agent CLI runs its tools where
+    the host never sees them, so a caller that needs the hold refuses the turn instead.
+    """
+    hold = getattr(runtime, "set_tool_grants", None)
+    if not callable(hold):
+        yield False
+        return
+    prior = getattr(runtime, "tool_grants", None)
+    hold(partial(declared_tool_grant_denial, profile))
+    try:
+        yield True
+    finally:
+        hold(prior)

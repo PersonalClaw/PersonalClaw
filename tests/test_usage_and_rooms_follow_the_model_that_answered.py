@@ -220,6 +220,56 @@ async def test_a_subagent_with_no_model_of_its_own_is_priced_by_the_model_that_r
     assert _usage_by_model() == [("gpt-4o", _price("gpt-4o"), True)]
 
 
+#: A rate the owner sets for the model that answers, far from the shipped table's gpt-4o row.
+_OWNER_RATE = {"in_per_mtok": 1.0, "out_per_mtok": 2.0}
+_OWNER_COST = round((TOKENS_IN * 1.0 + TOKENS_OUT * 2.0) / 1_000_000, 6)
+
+
+def _owner_prices(ref: str) -> None:
+    from personalclaw.routing import rates
+
+    rates._overlay_cache = None
+    rates.save_overlay({ref: dict(_OWNER_RATE)})
+
+
+async def test_a_chat_turn_is_priced_at_the_rate_the_owner_set(world, tmp_path):
+    """🔴 Red before: the chat priced its turn from the shipped table alone, so the rate the owner
+    set in ``model_rates.json`` reached neither the turn's cost line nor its usage row."""
+    world.active["chat"] = [UP_REF]
+    _owner_prices(UP_REF)
+    assert _OWNER_COST != _price("gpt-4o"), "premise: the two rates differ"
+    rt = await _runtime(session_key="dashboard:chat-priced")
+
+    reply = await _chat_turn(rt, tmp_path)
+
+    assert _usage_by_model() == [("gpt-4o", _OWNER_COST, True)]
+    assert reply["meta"]["turn_telemetry"]["cost_usd"] == _OWNER_COST
+
+
+async def test_a_subagent_is_priced_at_the_rate_the_owner_set(world):
+    """🔴 Red before: a child's cost, which its fan-out's run budget is charged, came from the
+    shipped table whatever rate the owner set."""
+    from test_subagent import _mock_ctx_builder, _mock_sessions
+
+    from personalclaw.subagent import SubagentManager
+
+    world.active["chat"] = [UP_REF]
+    _owner_prices(UP_REF)
+    rt = await _runtime(session_key="subagent:priced")
+    sessions = _mock_sessions()
+    sessions.get_or_create = AsyncMock(return_value=(rt, True, False))
+    manager = SubagentManager(
+        sessions=sessions, ctx_builder=_mock_ctx_builder(), is_yolo=lambda: True
+    )
+    with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+        info = manager.spawn("Name a colour.", parent_session_key="dashboard:parent")
+        assert info is not None
+        await manager._tasks[info.id]
+
+    assert info.cost_usd == _OWNER_COST
+    assert _usage_by_model() == [("gpt-4o", _OWNER_COST, True)]
+
+
 async def test_every_write_site_records_the_model_the_event_names():
     """🔴 Red on main: the ledger's one seam wrote whatever model its caller passed, so a
     heartbeat or a cron fire on the native loop, whose caller reads no model, read "unpriced"."""

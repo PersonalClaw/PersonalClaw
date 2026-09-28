@@ -10,8 +10,8 @@ dropped before it could reach `LLMEvent`, and the turn reported a flat `0`.
 
 THE PART THAT IS NOT A FIELD COPY, and the reason this file is long. `LLMEvent`'s three prompt
 buckets are contractually DISJOINT — `stats.cache_hit_pct` ADDS all three to recover the whole
-prompt (`stats.py:160-162`) and `pricing.estimate_cost` bills them additively
-(`pricing.py:106-113`). Anthropic's wire satisfies that natively. OpenAI's does not:
+prompt (`stats.py:160-162`) and the one pricing function bills them additively
+(`routing/rates.py::ModelRate.cost`). Anthropic's wire satisfies that natively. OpenAI's does not:
 `prompt_tokens_details.cached_tokens` is a BREAKDOWN of `prompt_tokens`, so the same tokens are
 counted in both. Copying the field straight across therefore double-bills the cached span and
 halves the reported hit rate — corrupting the exact two numbers this change exists to prove. The
@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from personalclaw.llm.openai import _read_cache_usage, _uncached_prompt_tokens
-from personalclaw.pricing import cache_savings_usd, estimate_cost
+from personalclaw.routing.rates import cache_savings_usd, price_call
 from personalclaw.stats import cache_hit_pct
 
 # The measured vendor pair this file is built on, recorded live against api.openai.com on
@@ -41,6 +41,8 @@ _PROMPT_TOKENS = 5218
 _CACHED_TOKENS = 5120
 _UNCACHED_REMAINDER = _PROMPT_TOKENS - _CACHED_TOKENS  # 98
 _MODEL = "gpt-4o-mini"  # priced: in 0.15 / cache_read 0.075 / cache_write 0.0
+#: A provider entry no tier knows, so the shipped table prices the model.
+_CLOUD = "some-cloud"
 
 
 # ── the reader ─────────────────────────────────────────────────────────────────────────
@@ -383,22 +385,29 @@ class TestTheDisjointnessContract:
     async def test_the_turn_is_not_billed_for_the_cached_span_twice(
         self, fake_openai: None
     ) -> None:
-        """`estimate_cost` bills the buckets additively, so an overlap inflates the turn."""
+        """The pricing function bills the buckets additively, so an overlap inflates the turn."""
         event = await _terminal_event(
             _provider(_chunks(_usage(_PROMPT_TOKENS, 7, cached=_CACHED_TOKENS)))
         )
-        actual = estimate_cost(
+        actual = price_call(
+            _CLOUD,
             _MODEL,
-            event.input_tokens,
-            event.output_tokens,
-            event.cache_read_tokens,
-            event.cache_creation_tokens,
-        )
-        naive = estimate_cost(_MODEL, _PROMPT_TOKENS, event.output_tokens, _CACHED_TOKENS, 0)
+            input_tokens=event.input_tokens,
+            output_tokens=event.output_tokens,
+            cache_read_tokens=event.cache_read_tokens,
+            cache_creation_tokens=event.cache_creation_tokens,
+        ).dollars
+        naive = price_call(
+            _CLOUD,
+            _MODEL,
+            input_tokens=_PROMPT_TOKENS,
+            output_tokens=event.output_tokens,
+            cache_read_tokens=_CACHED_TOKENS,
+        ).dollars
 
         # The honest bill: the uncached remainder at the input rate + the cached span at the
         # discounted read rate. Nothing counted twice. Rounded to 6dp because
-        # `estimate_cost` rounds its result there (`pricing.py:115`).
+        # `ModelRate.cost` rounds its result there.
         expected = round(
             (_UNCACHED_REMAINDER * 0.15 + 7 * 0.6 + _CACHED_TOKENS * 0.075) / 1_000_000, 6
         )
@@ -439,6 +448,7 @@ class TestTheDisjointnessContract:
             _provider(_chunks(_usage(_PROMPT_TOKENS, 7, cached=_CACHED_TOKENS)))
         )
         saved = cache_savings_usd(
+            _CLOUD,
             _MODEL,
             cache_read_tokens=event.cache_read_tokens,
             cache_creation_tokens=event.cache_creation_tokens,
@@ -457,6 +467,7 @@ class TestTheDisjointnessContract:
         """Honest-zero: a priced model with no cache activity saved 0.0, which is a real answer."""
         event = await _terminal_event(_provider(_chunks(_usage(_PROMPT_TOKENS, 7, cached=None))))
         saved = cache_savings_usd(
+            _CLOUD,
             _MODEL,
             cache_read_tokens=event.cache_read_tokens,
             cache_creation_tokens=event.cache_creation_tokens,

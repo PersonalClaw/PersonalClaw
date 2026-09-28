@@ -2520,6 +2520,12 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._tool_grants = denial
 
     @property
+    def tool_grants(self) -> Callable[..., str] | None:
+        """The check :meth:`set_tool_grants` set, or ``None`` when this run is granted every tool:
+        what a host that holds one turn to other grants restores when the turn ends."""
+        return self._tool_grants
+
+    @property
     def agent_model(self) -> str:
         return self._definition.model or getattr(self._model, "_model", "") or ""
 

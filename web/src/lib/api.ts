@@ -6456,10 +6456,12 @@ export interface UsageFold {
  *  The spend meter charges the model calls PersonalClaw makes on its own (automations, loops,
  *  subagents, background work) over the host's local day; chat turns are not metered. A cap of
  *  0 is unlimited. `cap_unreadable` means the configured cap could not be read, and the caps are
- *  then `null`. */
+ *  then `null`. `unpriced_calls` counts today's metered calls that had no price: their dollars
+ *  are not in `spent_dollars`, so the dollar figure is a floor whenever it is above zero. */
 export interface UsageBudget {
   spent_dollars: number
   spent_tokens: number
+  unpriced_calls: number
   max_dollars_per_day: number | null
   max_tokens_per_day: number | null
   cap_unreadable: boolean

@@ -86,18 +86,19 @@ def _uncached_prompt_tokens(
     copy. ``LLMEvent``'s three prompt buckets are contractually DISJOINT: ``input_tokens``
     EXCLUDES the cached tokens. That is why ``stats.cache_hit_pct`` ADDS all three to recover
     the whole prompt (``stats.py:160-162``, which states the invariant and cites its
-    evidence) and why ``pricing.estimate_cost`` bills them additively (``pricing.py:106-113``).
+    evidence) and why the one pricing function bills them additively
+    (``routing/rates.py::ModelRate.cost``).
     Anthropic's wire satisfies the contract natively — ``usage.input_tokens`` and the
     ``usage.cache_*_input_tokens`` fields are separate populations. **OpenAI's does not:**
     ``prompt_tokens_details`` is a BREAKDOWN of ``prompt_tokens``, not a sibling of it, so the
     cached tokens are counted inside ``prompt_tokens`` as well.
 
     Copying the field straight across would therefore bill the cached span twice, inflate
-    ``cache_hit_pct``'s denominator, and — worst — inflate ``pricing.cache_savings_usd``,
-    whose counterfactual re-bills ``input + cache_read + cache_creation`` at the full input
-    rate (``pricing.py:166-171``). An overstated saving is worse than the honest zero it
-    replaces, so the vendor's overlap is resolved HERE, in the adapter that owns the dialect,
-    and core keeps the single contract it documents.
+    ``cache_hit_pct``'s denominator, and — worst — inflate the cache saving
+    (``routing/rates.py::cache_savings_usd``), whose counterfactual re-bills
+    ``input + cache_read + cache_creation`` at the full input rate. An overstated saving is
+    worse than the honest zero it replaces, so the vendor's overlap is resolved HERE, in the
+    adapter that owns the dialect, and core keeps the single contract it documents.
 
     Clamped at ``0``: an endpoint that ever reports a cached span wider than the prompt yields
     an honest ``0`` remainder rather than a negative token count.

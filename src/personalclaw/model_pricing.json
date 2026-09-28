@@ -1,5 +1,5 @@
 {
-  "_comment": "Model -> USD price per 1,000,000 tokens. Keys: in (input/prompt), out (output/completion), cache_read (cached-input read), cache_write (cache-creation write). Used by personalclaw.pricing.estimate_cost to derive cost_usd when a provider does not report one. A model absent here costs 0.0 (honest: we never invent a price). Keep keys aligned with model_tokens.json. List prices are approximate and drift \u2014 update as vendors change them.",
+  "_comment": "Model -> USD price per 1,000,000 tokens. Keys: in (input/prompt), out (output/completion), cache_read (cached-input read), cache_write (cache-creation write). The builtin tier of personalclaw.routing.rates, which prices a call from it when the provider reports no cost and no rate the owner set, local endpoint or app declaration answers first. A model absent here is unpriced (honest: we never invent a price), and no row prices a model free by its name: an open-weight model costs what the machine serving it bills. Keep keys aligned with model_tokens.json. List prices are approximate and drift \u2014 update as vendors change them.",
   "claude-opus-4.7": {
     "in": 15.0,
     "out": 75.0,
@@ -169,25 +169,5 @@
   "gpt-3.5-turbo": {
     "in": 0.5,
     "out": 1.5
-  },
-  "llama3.1": {
-    "in": 0.0,
-    "out": 0.0
-  },
-  "llama3.2": {
-    "in": 0.0,
-    "out": 0.0
-  },
-  "mistral": {
-    "in": 0.0,
-    "out": 0.0
-  },
-  "phi3": {
-    "in": 0.0,
-    "out": 0.0
-  },
-  "qwen2.5": {
-    "in": 0.0,
-    "out": 0.0
   }
 }

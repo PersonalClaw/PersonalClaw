@@ -418,10 +418,32 @@ async def test_the_daily_budget_is_the_meters_spend_beside_the_cap(_home):
         assert await r.json() == {
             "spent_dollars": 0.25,
             "spent_tokens": 1200,
+            "unpriced_calls": 0,
             "max_dollars_per_day": 1.0,
             "max_tokens_per_day": 0,
             "cap_unreadable": False,
         }
+    finally:
+        await c.close()
+
+
+@pytest.mark.asyncio
+async def test_the_daily_budget_says_how_many_calls_its_dollars_leave_out(_home):
+    """A metered call nothing priced is charged as one the dollar cap could not count, never as
+    free spend: the route says how many there were, so the page can say the total leaves them
+    out. Its tokens are counted as any call's are."""
+    from personalclaw.guardrails.budgets import get_meter
+
+    get_meter().charge(1200, 0.25)
+    get_meter().charge(800, 0.0, priced=False)
+    get_meter().charge(0, 0.0, priced=False)  # an unpriced call that reported no tokens
+    _cap(_home, max_dollars_per_day=1.0)
+    c = await _client()
+    try:
+        body = await (await c.get("/api/usage/budget")).json()
+        assert body["spent_dollars"] == 0.25
+        assert body["spent_tokens"] == 2000
+        assert body["unpriced_calls"] == 2
     finally:
         await c.close()
 

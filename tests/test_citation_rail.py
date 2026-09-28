@@ -85,14 +85,14 @@ _CITATIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "_read_cache_usage",
         ('return _int("cache_creation_input_tokens"), _int("cache_read_input_tokens")',),
     ),
-    # The bill adds the three buckets, each at its own rate.
+    # The bill adds the three buckets, each at its own rate: the one pricing function's.
     (
-        "pricing.py",
-        "estimate_cost",
+        "routing/rates.py",
+        "ModelRate.cost",
         (
-            "(input_tokens or 0) * in_rate",
-            "+ (cache_read_tokens or 0) * cache_read_rate",
-            "+ (cache_creation_tokens or 0) * cache_write_rate",
+            "(input_tokens or 0) * self.in_per_mtok",
+            "+ (cache_read_tokens or 0) * read_rate",
+            "+ (cache_creation_tokens or 0) * write_rate",
         ),
     ),
     # The ledger folds the three into three separate aggregate keys.
@@ -107,7 +107,7 @@ _CITATIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     # Its own counterpart, which adds the same three.
     (
-        "pricing.py",
+        "routing/rates.py",
         "cache_savings_usd",
         ("(input_tokens or 0) + (cache_read_tokens or 0) + (cache_creation_tokens or 0)",),
     ),

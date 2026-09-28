@@ -9,10 +9,11 @@ for a call made for an :class:`Attribution`.
 Soul guardrails this module enforces:
 - **Observation only, never enforcement.** A ledger records; it can never block,
   throttle, or refuse a turn. Budget caps live in ``guardrails`` (``SpendMeter``).
-- **Honest zero over invented precision.** A model with no ``model_pricing.json``
-  row records its tokens with ``cost_usd = 0.0`` and ``priced = False`` — a caller
-  MUST render "unpriced", never ``$0.00``. A rollup whose total mixes any unpriced
-  row reports ``priced = False`` so a partial total can't present as complete.
+- **Honest zero over invented precision.** A turn nothing prices (no reported cost,
+  and no rate for its model: ``routing.rates.price_call``) records its tokens with
+  ``cost_usd = 0.0`` and ``priced = False`` — a caller MUST render "unpriced", never
+  ``$0.00``. A rollup whose total mixes any unpriced row reports ``priced = False`` so a
+  partial total can't present as complete.
 - **Fail-open.** :func:`record_turn` never raises into a turn — a ledger write
   failure degrades to a DEBUG log. This is a user-facing availability surface, not
   a security control.
@@ -40,8 +41,9 @@ _GROUP_KEYS = ("model", "source", "agent", "provider", "day")
 class TurnUsage:
     """One model turn's token + cost accounting (§C1).
 
-    ``priced`` is False ⇒ there was no ``model_pricing.json`` row AND the provider
-    reported no cost, so ``cost_usd`` is an honest 0.0 that MUST render "unpriced".
+    ``priced`` is False ⇒ the provider reported no cost AND no rate prices the model
+    (``routing.rates.price_call``), so ``cost_usd`` is an honest 0.0 that MUST render
+    "unpriced".
     """
 
     ts: str  # ISO-UTC, matching the SEL timestamp convention
@@ -51,7 +53,7 @@ class TurnUsage:
     # The provider entry the answer came from (``FakeUp`` of ``FakeUp:gpt-4o``); for an ACP agent
     # CLI, which names none, the runtime it ran on (``acp:claude-code``).
     provider: str
-    model: str  # resolved model id — the join key to model_pricing.json
+    model: str  # the resolved model id the turn was priced by
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -182,25 +184,22 @@ def record_from_event(
     agent: str = "",
     provider: str = "",
     model: str = "",
-    estimate_if_missing: bool = True,
 ) -> None:
     """Record one ledger row from a terminal ``EVENT_COMPLETE`` LLM event (C2).
 
-    The one seam every write-site shares: it reads the token counts + provider cost
-    off the event, derives cost via ``pricing.estimate_cost`` ONLY when the provider
-    reported none (vendor cost wins when present), and sets ``priced`` False only when
-    the model has no price row AND the provider reported no cost — then ``cost_usd`` is
-    an honest 0.0 the UI renders "unpriced". Fail-open through :func:`record_turn`.
+    The one seam every write-site shares: it reads the token counts + provider cost off the
+    event and prices the turn through the one pricing function (``routing.rates.price_event``):
+    the provider's reported cost when it reported one, else its tokens at the effective rate —
+    a rate the owner set, a local model's known zero, a rate the serving app declared, the
+    shipped table. ``priced`` is False only when nothing prices it; then ``cost_usd`` is an
+    honest 0.0 the UI renders "unpriced". Fail-open through :func:`record_turn`.
 
     ``model`` is the model the caller chose and ``provider`` the runtime it ran on; the row is
     written for the model that answered, and the provider entry it came from, whenever the event
-    names them (:func:`answered_model`, :func:`answered_provider`).
+    names them (:func:`answered_model`, :func:`answered_provider`), and priced by them.
 
-    ``estimate_if_missing=False`` skips the fallback estimate — for a caller (the chat
-    write-site) that ALREADY resolved ``event.cost_usd`` via ``estimate_cost`` itself,
-    so re-estimating here would both waste the call and double-count it. ``priced`` still
-    reflects the price table (``has_pricing``) so an unpriced model with a caller-supplied
-    0.0 renders "unpriced", not a free turn.
+    A caller that already priced the turn (the chat write-site, for its cost line) wrote the
+    price into ``event.cost_usd``, so it reads here as the figure and is not priced twice.
 
     The row keeps the ids of the guarded model calls the event says its usage came from
     (``LLMEvent.audit_ids``), so the usage fold's census of ``model_calls.jsonl`` does not
@@ -208,7 +207,7 @@ def record_from_event(
     """
     from datetime import datetime, timezone
 
-    from personalclaw.pricing import estimate_cost, has_pricing
+    from personalclaw.routing.rates import price_event
 
     model = answered_model(event, model)
     provider = answered_provider(event, provider)
@@ -216,15 +215,7 @@ def record_from_event(
     output_tokens = int(getattr(event, "output_tokens", 0) or 0)
     cache_read = int(getattr(event, "cache_read_tokens", 0) or 0)
     cache_creation = int(getattr(event, "cache_creation_tokens", 0) or 0)
-    cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-    if not cost and model and estimate_if_missing:
-        cost = estimate_cost(
-            model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_creation,
-        )
+    price = price_event(event, provider=provider, model=model)
     record_turn(
         TurnUsage(
             ts=datetime.now(timezone.utc).isoformat(),
@@ -237,8 +228,8 @@ def record_from_event(
             output_tokens=output_tokens,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
-            cost_usd=cost,
-            priced=bool(cost) or has_pricing(model),
+            cost_usd=price.dollars,
+            priced=price.priced,
             duration_ms=int(getattr(event, "duration_ms", 0) or 0),
             audit_ids=_audit_ids(event),
         )

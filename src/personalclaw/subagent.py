@@ -2367,24 +2367,19 @@ class SubagentManager:
             elif event.kind == EVENT_COMPLETE:
                 # Capture the child's token/cost accounting before breaking — S2k
                 # discarded it here (subagent site).
-                from personalclaw.usage_ledger import answered_model
+                from personalclaw.routing.rates import price_event
+                from personalclaw.usage_ledger import answered_model, answered_provider
 
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
-                cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
-                # Priced by the model that answered, which a spawn with no model of its own
-                # never named: its child ran on the chain's head and was charged nothing.
-                priced_by = answered_model(event, info.model)
-                if not cost and priced_by:
-                    from personalclaw.pricing import estimate_cost
-
-                    cost = estimate_cost(
-                        priced_by,
-                        input_tokens=info.input_tokens,
-                        output_tokens=info.output_tokens,
-                        cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-                        cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-                    )
+                # Priced by the entry and model that answered, which a spawn with no model of its
+                # own never named: its child ran on the chain's head and was charged nothing. An
+                # ACP child names neither, and is priced by its runtime and the model it chose.
+                cost = price_event(
+                    event,
+                    provider=answered_provider(event, "acp"),
+                    model=answered_model(event, info.model),
+                ).dollars
                 info.cost_usd = cost
                 # Write the resolved cost back so the ledger records it without a
                 # redundant second estimate (see _record_subagent_usage).

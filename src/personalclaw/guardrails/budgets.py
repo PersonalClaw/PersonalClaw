@@ -14,10 +14,12 @@ Two scopes matter for a personal gateway:
   ``~/.personalclaw/spend.json`` (atomic_write, pruned >30 days) so it survives a
   restart. It is the real cost guardrail.
 
-Dollar estimates reuse ``pricing.estimate_cost`` (provider-reported cost preferred
-by the caller; this is the heuristic fallback, flagged ``estimated``). Budgets
-compare against the conservative (higher) estimate — a token ceiling and a dollar
-ceiling both apply, either can bite.
+Dollars come from ``routing.rates.price_call``, the one pricing function: the cost the provider
+reported, else the call's tokens at the effective rate (a rate the owner set, a local model's
+zero, a rate the serving app declared, the shipped table). A token ceiling and a dollar ceiling
+both apply, either can bite. A call nothing prices is counted as a call the dollar ceilings could
+not count (``unpriced``), never as a free one: its tokens still count against a token ceiling,
+and every place a dollar total is set against a ceiling says how many calls it leaves out.
 
 This is harness mechanics: ``spend.json`` is a file under the config dir, NOT a
 memory entry or knowledge item (§7 boundary).
@@ -101,6 +103,16 @@ def _today_key() -> str:
 class _ScopeTotal:
     tokens: int = 0
     dollars: float = 0.0
+    #: Calls charged with no price: their dollars are unknown, so ``dollars`` leaves them out.
+    unpriced: int = 0
+
+
+def unpriced_clause(count: int) -> str:
+    """What a dollar total set against a ceiling leaves out, as a person reads it, or ``""``."""
+    if count <= 0:
+        return ""
+    calls = "1 call" if count == 1 else f"{count} calls"
+    return f"not counting {calls} that had no price"
 
 
 class SpendMeter:
@@ -156,12 +168,24 @@ class SpendMeter:
 
     # ── Recording spend ─────────────────────────────────────────────────
 
-    def charge(self, tokens: int, dollars: float, *, run_key: str | None = None) -> None:
+    def charge(
+        self,
+        tokens: int,
+        dollars: float,
+        *,
+        run_key: str | None = None,
+        priced: bool = True,
+    ) -> None:
         """Record ``tokens`` + ``dollars`` of spend against the day scope (always)
-        and a run scope (when ``run_key`` is given). Best-effort; never raises."""
+        and a run scope (when ``run_key`` is given). Best-effort; never raises.
+
+        ``priced=False`` is a call nothing priced (``routing.rates.CallPrice``): its dollars are
+        unknown, so it is counted as an unpriced call rather than as free spend, and a call that
+        reported no tokens is still counted. Its tokens count as any call's do."""
         tokens = max(0, int(tokens or 0))
-        dollars = max(0.0, float(dollars or 0.0))
-        if tokens == 0 and dollars == 0.0:
+        dollars = max(0.0, float(dollars or 0.0)) if priced else 0.0
+        unpriced = 0 if priced else 1
+        if tokens == 0 and dollars == 0.0 and not unpriced:
             return
         with self._lock:
             # Day scope (persisted).
@@ -172,6 +196,7 @@ class SpendMeter:
             data[day] = {
                 "tokens": int(prev.get("tokens", 0)) + tokens,
                 "dollars": round(float(prev.get("dollars", 0.0)) + dollars, 6),
+                "unpriced": int(prev.get("unpriced", 0) or 0) + unpriced,
             }
             self._save_day(data)
             # Run scope (in-memory).
@@ -179,6 +204,7 @@ class SpendMeter:
                 rt = self._run_totals.setdefault(run_key, _ScopeTotal())
                 rt.tokens += tokens
                 rt.dollars += dollars
+                rt.unpriced += unpriced
 
     def charge_run(self, run_key: str, tokens: int, dollars: float) -> None:
         """Record spend against ``run_key``'s run scope ONLY — spend the day scope has already
@@ -204,12 +230,18 @@ class SpendMeter:
     def day_totals(self) -> _ScopeTotal:
         with self._lock:
             row = self._load_day().get(_today_key(), {})
-        return _ScopeTotal(tokens=int(row.get("tokens", 0)), dollars=float(row.get("dollars", 0.0)))
+        return _ScopeTotal(
+            tokens=int(row.get("tokens", 0)),
+            dollars=float(row.get("dollars", 0.0)),
+            unpriced=int(row.get("unpriced", 0) or 0),
+        )
 
     def run_totals(self, run_key: str) -> _ScopeTotal:
         with self._lock:
             rt = self._run_totals.get(run_key)
-            return _ScopeTotal(tokens=rt.tokens, dollars=rt.dollars) if rt else _ScopeTotal()
+            if rt is None:
+                return _ScopeTotal()
+            return _ScopeTotal(tokens=rt.tokens, dollars=rt.dollars, unpriced=rt.unpriced)
 
     def check_day(self, budget: Budget) -> tuple[BudgetVerdict, str]:
         """Verdict the CURRENT day total against ``budget`` (before a new charge).
@@ -241,16 +273,21 @@ class SpendMeter:
                     f"{scope} token budget at {total.tokens}/{budget.max_tokens}",
                 )
         if budget.max_dollars > 0.0:
+            # The dollar total leaves out every call that had no price, and says so: a ceiling
+            # that holds such calls holds spend it could not count.
+            left_out = unpriced_clause(total.unpriced)
+            left_out = f", {left_out}" if left_out else ""
             if total.dollars >= budget.max_dollars:
                 return (
                     BudgetVerdict.EXCEEDED,
                     f"{scope} dollar budget exceeded "
-                    f"(${total.dollars:.4g}/${budget.max_dollars:.4g})",
+                    f"(${total.dollars:.4g}/${budget.max_dollars:.4g}{left_out})",
                 )
             if total.dollars >= budget.max_dollars * _WARN_FRACTION:
                 verdict, reason = (
                     BudgetVerdict.WARN,
-                    f"{scope} dollar budget at ${total.dollars:.4g}/${budget.max_dollars:.4g}",
+                    f"{scope} dollar budget at "
+                    f"${total.dollars:.4g}/${budget.max_dollars:.4g}{left_out}",
                 )
         return verdict, reason
 

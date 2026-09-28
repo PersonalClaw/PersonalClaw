@@ -121,7 +121,9 @@ def reaches_this_machine(url: str) -> bool:
     the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine
     through. An address on the network, any other name (it may point anywhere), a URL that does
     not parse and no URL at all are not this machine. The one answer for "is this model server
-    local": the model-call guard's outbound scan and the rate table's free local tier both ask it.
+    local": the model-call guard's outbound scan asks it of the provider it wraps, and the rate
+    table's free local tier and the router's local-first ordering ask it of an entry's endpoints
+    (``llm.registry.served_on_this_machine``).
     """
     text = str(url or "").strip()
     if not text:

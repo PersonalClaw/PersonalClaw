@@ -106,6 +106,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The spend caps, the Usage page and every turn's cost price a call at the rate you set in `model_rates.json`, and a cap says how many calls it could not price rather than counting them as free.**
+
+- **An open-weight model is free only on this machine: `mistral-large` and a `llama3.1` served elsewhere are no longer priced at $0 by their names.**
+
+- **A rate a provider app declares prices that app's instances whatever you named them, and never another provider's.**
+
+- **Routing orders a model first as local only when its provider's endpoint is on this machine, whatever the provider is called.**
+
+- **The monthly usage recap no longer calls its total a floor for turns that ran on this machine.**
+
 - **Stopping PersonalClaw, a workflow run, a loop or a channel no longer waits forever on a task that will not stop: it waits a few seconds, logs what did not finish, and goes on.**
 
 - **A generated image or video larger than 10 MB is saved whole instead of cut off, and one that can't be saved says why.**
@@ -559,6 +569,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The skill search answers every refusal in the shared error shape, and an unusable `limit` is refused instead of failing.**
 
 ### Security
+
+- **A subagent's report into a scheduled job or an Inbox sweep runs with read tools only, as every turn nobody watches does, and is not handed to an agent CLI.**
 
 - **A webhook's agent turn runs unattended with read tools only, as every turn nobody watches does, and does not run on an agent CLI.**
 

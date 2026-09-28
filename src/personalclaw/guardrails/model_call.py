@@ -31,6 +31,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
@@ -60,6 +61,9 @@ from personalclaw.llm.base import (
     ModelProvider,
     ModelSubstitution,
 )
+
+if TYPE_CHECKING:
+    from personalclaw.routing.rates import CallPrice
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +109,9 @@ def spent_refusal(meter: SpendMeter, day: Budget, run: Budget) -> BudgetExceeded
             dim = "tokens" if "token" in reason else "dollars"
             limit = day.max_tokens if dim == "tokens" else day.max_dollars
             spent = totals.tokens if dim == "tokens" else totals.dollars
-            return BudgetExceededError("day", dim, float(limit), float(spent))
+            return BudgetExceededError(
+                "day", dim, float(limit), float(spent), unpriced=totals.unpriced
+            )
     run_key = current_run_key()
     ceiling = current_run_budget()
     if ceiling.is_unlimited:
@@ -117,29 +123,10 @@ def spent_refusal(meter: SpendMeter, day: Budget, run: Budget) -> BudgetExceeded
             dim = "tokens" if "token" in reason else "dollars"
             limit = ceiling.max_tokens if dim == "tokens" else ceiling.max_dollars
             spent = totals.tokens if dim == "tokens" else totals.dollars
-            return BudgetExceededError("run", dim, float(limit), float(spent))
+            return BudgetExceededError(
+                "run", dim, float(limit), float(spent), unpriced=totals.unpriced
+            )
     return None
-
-
-def call_dollars(event: LLMEvent, model: str, tokens_in: int, tokens_out: int) -> float:
-    """Dollar estimate for one completed call. Provider-reported ``cost_usd`` wins when present
-    (non-zero); otherwise the static pricing table (``pricing.estimate_cost``) derives it from
-    *model* — 0.0 for an unpriced model, an honest 'unknown', never a guess."""
-    reported = float(getattr(event, "cost_usd", 0.0) or 0.0)
-    if reported > 0.0:
-        return reported
-    try:
-        from personalclaw.pricing import estimate_cost
-
-        return estimate_cost(
-            model,
-            input_tokens=tokens_in,
-            output_tokens=tokens_out,
-            cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-            cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-        )
-    except Exception:
-        return 0.0
 
 
 def _mark(call: ModelCall | None, state: str) -> None:
@@ -241,8 +228,8 @@ class ModelCallGuard(ModelProvider):
         # Mirror the wrapped provider's tool support so the loop treats the guard
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
-        # A local model's calls are PRICED at zero (nothing is billed); a hosted model with no
-        # price row is unpriced. Decided once, the way the scan mode's local rule is.
+        # Whether this provider's requests stay on this machine: its outbound scan is then
+        # forced to warn, since the prompt never leaves it. Decided once, from where it sends.
         self._local = _is_local_provider(inner)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
@@ -504,7 +491,7 @@ class ModelCallGuard(ModelProvider):
                     # events a provider might still emit.
                     tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                     tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                    dollars = call_dollars(event, self._model, tokens_in, tokens_out)
+                    price = self._price(event)
                     self._breaker.record_success()
                     # Charge the DAY scope always, and the ambient RUN scope when one is
                     # bound. `charge` has accepted `run_key=` since guardrails landed
@@ -513,8 +500,12 @@ class ModelCallGuard(ModelProvider):
                     # Read from a ContextVar rather than a parameter because the guard is
                     # built by `provider_bridge` from provider config and has no run identity;
                     # threading one in would touch all 33 call sites reaching the bridge.
+                    # An unpriced call is charged as one the dollar caps could not count.
                     self._meter.charge(
-                        tokens_in + tokens_out, dollars, run_key=current_run_key() or None
+                        tokens_in + tokens_out,
+                        price.dollars,
+                        run_key=current_run_key() or None,
+                        priced=price.priced,
                     )
                     self._audit(
                         audit_id,
@@ -525,9 +516,10 @@ class ModelCallGuard(ModelProvider):
                         tokens_out,
                         True,
                         strategy,
-                        dollars=dollars,
+                        dollars=price.dollars,
+                        estimated=price.source != "reported",
                     )
-                    self._settle_call(call, event, tokens_in, tokens_out, dollars)
+                    self._settle_call(call, tokens_in, tokens_out, price)
                     recorded = True
                     # The usage this event carries is this call's, and the row a caller writes
                     # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
@@ -588,37 +580,36 @@ class ModelCallGuard(ModelProvider):
                 True,
                 strategy,
             )
-            self._settle_call(call, None, tokens_in, tokens_out, 0.0)
+            self._settle_call(call, tokens_in, tokens_out, self._price(None))
+
+    def _price(self, event: LLMEvent | None) -> "CallPrice":
+        """What this call cost (``routing.rates.price_event``, the one pricing function): the
+        provider's reported cost, else its tokens at the effective rate for this entry and model,
+        else unpriced. A stream that ended with no terminal event reported nothing to price."""
+        from personalclaw.routing.rates import price_event
+
+        return price_event(event, provider=self._provider_name, model=self._model)
 
     def _settle_call(
         self,
         call: ModelCall | None,
-        event: LLMEvent | None,
         tokens_in: int,
         tokens_out: int,
-        dollars: float,
+        price: "CallPrice",
     ) -> None:
-        """Close the published call record with what the provider reported.
+        """Close the published call record with what the provider reported and what it cost.
 
-        ``priced`` follows ``usage_ledger.record_turn``'s rule (a provider-reported cost, or a
-        price-table row) plus the one fact only this layer holds: a LOCAL model bills nothing,
-        so its zero is a measurement rather than an unpriced blank.
+        ``priced`` is the price's own (:class:`~personalclaw.routing.rates.CallPrice`): the one
+        pricing function knows a local model's known zero from an unpriced blank.
         """
         if call is None:
             return
-        reported_cost = float(getattr(event, "cost_usd", 0.0) or 0.0) if event else 0.0
-        try:
-            from personalclaw.pricing import has_pricing
-
-            listed = has_pricing(self._model)
-        except Exception:  # noqa: BLE001 — pricing is telemetry, never load-bearing
-            listed = False
         call.state = DONE
         call.input_tokens = int(tokens_in)
         call.output_tokens = int(tokens_out)
         call.usage_reported = bool(tokens_in or tokens_out)
-        call.cost_usd = float(dollars)
-        call.priced = self._local or reported_cost > 0.0 or listed
+        call.cost_usd = float(price.dollars)
+        call.priced = price.priced
 
     def _audit(
         self,
@@ -632,6 +623,7 @@ class ModelCallGuard(ModelProvider):
         strategy: str,
         *,
         dollars: float = 0.0,
+        estimated: bool = True,
     ) -> None:
         rec = AttemptRecord(
             audit_id=audit_id,
@@ -645,9 +637,9 @@ class ModelCallGuard(ModelProvider):
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             dollars_est=round(dollars, 6),
-            # Estimated unless the provider reported a real cost_usd (which
-            # call_dollars prefers); a heuristic-derived value is flagged.
-            estimated=True,
+            # Estimated unless the provider reported a real cost_usd (which the price
+            # prefers); a rate-derived value is flagged.
+            estimated=estimated,
             passed=passed,
             strategy=strategy,
             query_class=self._query_class,

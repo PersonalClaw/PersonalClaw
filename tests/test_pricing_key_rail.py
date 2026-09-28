@@ -20,6 +20,12 @@ from personalclaw.pricing import _canonical, estimate_cost, has_pricing
 SRC = Path(pricing.__file__).resolve().parent
 
 
+#: Open-weight families: no vendor list price, because whoever serves one bills for it (or does
+#: not). A model server on this machine prices them at a known $0 (the rate table's local tier,
+#: by where the entry's endpoint is); one elsewhere takes a rate set or declared for it.
+_PRICED_WHERE_THEY_RUN = ("llama3.1", "llama3.2", "qwen2.5", "mistral", "phi3")
+
+
 def _census() -> list[str]:
     """The live catalog census: every id model_tokens.json knows about."""
     tokens = json.loads((SRC / "model_tokens.json").read_text(encoding="utf-8"))
@@ -32,11 +38,12 @@ class TestTheRail:
     def test_every_catalog_id_resolves_to_a_price_row(self) -> None:
         """The rail: an id the app serves but cannot price is a regression.
 
-        A model that is genuinely free (local runtime) carries an explicit
-        zero row — a REAL price — rather than being absent, so absence always
-        means 'someone added a model and forgot the price table'.
+        Every id but an open-weight family's, which has no list price to carry, so absence
+        always means 'someone added a model and forgot the price table'.
         """
-        unresolved = [m for m in _census() if not has_pricing(m)]
+        census = _census()
+        assert set(_PRICED_WHERE_THEY_RUN) <= set(census), "premise: the families are catalogued"
+        unresolved = [m for m in census if m not in _PRICED_WHERE_THEY_RUN and not has_pricing(m)]
         assert not unresolved, (
             "catalog ids with no resolvable price row (add a row to "
             f"model_pricing.json or fix _canonical): {unresolved}"
@@ -53,11 +60,16 @@ class TestTheRail:
             cost = estimate_cost(form, input_tokens=1_000_000, output_tokens=0)
             assert cost > 0.0, f"{form!r} priced at 0 — the ceiling is inert again"
 
-    def test_local_models_price_to_a_real_zero(self) -> None:
-        """A local model is free: priced (has a row) AND zero — never 'unpriced'."""
-        for m in ("llama3.1", "mistral", "phi3"):
-            assert has_pricing(m), f"{m} lost its explicit zero row"
-            assert estimate_cost(m, input_tokens=1_000_000) == 0.0
+    def test_no_row_prices_a_model_free_by_its_name(self) -> None:
+        """The defect: an explicit zero row per open-weight family made the model free wherever
+        it ran, and the row matched by prefix. So an Ollama on another machine serving
+        ``llama3.1`` counted $0 against the daily cap, and so did every model of Mistral's
+        billed API (``mistral-large-latest`` starts with ``mistral``). A local model's $0 is
+        the rate table's, decided by where its entry sends (``tests/test_routing_rates.py``)."""
+        for m in _PRICED_WHERE_THEY_RUN:
+            assert not has_pricing(m), f"{m} has a row, which prices it the same on any machine"
+        for billed in ("mistral-large-latest", "mistral-small-2503", "qwen2.5-72b-instruct"):
+            assert not has_pricing(billed), f"{billed} matched a free family's row by prefix"
 
 
 class TestTheNormalizationPin:

@@ -411,9 +411,7 @@ async def _run_hook_inner(
     once, since nobody would see the prompt. A runtime that cannot be held to the grants (an agent
     CLI runs tools the host never sees) is refused before the message is sent.
     """
-    from functools import partial
-
-    from personalclaw.guardrails.policy import declared_tool_grant_denial, profile_for_session
+    from personalclaw.guardrails.policy import profile_for_session, tool_grants_held
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK  # noqa: F811
 
     # The headless profile, the operator's ceiling applied. Read before anything starts: a ceiling
@@ -425,39 +423,38 @@ async def _run_hook_inner(
     client, is_new, resumed = await state.sessions.get_or_create(
         session_key, agent=agent, model_axis="orchestration", unattended=True
     )
-    hold_to = getattr(client, "set_tool_grants", None)
-    if not callable(hold_to):
-        raise HookTurnRefused(
-            f"{agent or 'The default agent'} runs on an agent CLI, which runs tools the host "
-            f"never sees, so a webhook's turn on it cannot be held to the {profile.name} "
-            "profile's tool grants. Point the webhook at an agent on the native runtime."
-        )
-    hold_to(partial(declared_tool_grant_denial, profile))
-    full_message = message
-    if is_new and state.context_builder:
-        from personalclaw.context_headroom import resolve_window
+    with tool_grants_held(client, profile) as held:
+        if not held:
+            raise HookTurnRefused(
+                f"{agent or 'The default agent'} runs on an agent CLI, which runs tools the host "
+                f"never sees, so a webhook's turn on it cannot be held to the {profile.name} "
+                "profile's tool grants. Point the webhook at an agent on the native runtime."
+            )
+        full_message = message
+        if is_new and state.context_builder:
+            from personalclaw.context_headroom import resolve_window
 
-        full_message, _ = state.context_builder.build_message(
-            message,
-            is_new,
-            session_key,
-            agent=agent,
-            resumed=resumed,
-            window=await resolve_window(serving=client),
-        )
-    from personalclaw.usage_ledger import Attribution, recorder
+            full_message, _ = state.context_builder.build_message(
+                message,
+                is_new,
+                session_key,
+                agent=agent,
+                resumed=resumed,
+                window=await resolve_window(serving=client),
+            )
+        from personalclaw.usage_ledger import Attribution, recorder
 
-    # Unattended: an outside system asked, and nobody watches the turn.
-    record = recorder(
-        client, Attribution(source="background", session_key=session_key, agent=agent or "")
-    )
-    result_text = ""
-    async for event in client.stream(full_message):
-        if event.kind == EVENT_TEXT_CHUNK:
-            result_text += event.text
-        elif event.kind == EVENT_COMPLETE:
-            record(event)
-            break
+        # Unattended: an outside system asked, and nobody watches the turn.
+        record = recorder(
+            client, Attribution(source="background", session_key=session_key, agent=agent or "")
+        )
+        result_text = ""
+        async for event in client.stream(full_message):
+            if event.kind == EVENT_TEXT_CHUNK:
+                result_text += event.text
+            elif event.kind == EVENT_COMPLETE:
+                record(event)
+                break
     state.sessions.record_success(session_key)  # sync; record_failure is async
     return result_text
 

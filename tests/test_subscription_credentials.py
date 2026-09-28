@@ -745,16 +745,16 @@ def test_credential_source_defaults_empty_so_an_older_serialized_spec_still_load
     assert BrandedProviderSpec.from_dict(payload) == spec
 
 
-def test_spec_credential_source_answers_for_a_named_instance_and_never_guesses() -> None:
-    """Mirrors ``spec_pricing``: resolves a user-named INSTANCE of a type, and returns ``""``
-    (never a source id) for an unknown provider."""
+def test_spec_credential_source_answers_for_its_type_and_never_guesses() -> None:
+    """Mirrors ``spec_pricing``: answers for the provider TYPE the app registered, and returns
+    ``""`` (never a source id) for anything else, a name that spells the type included."""
     from personalclaw.llm import branded_specs
 
     spec = BrandedProviderSpec(type="acme", credential_source="acme-cli")
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(branded_specs, "_REGISTERED_SPECS", {"acme": spec})
         assert spec_credential_source("acme") == "acme-cli"
-        assert spec_credential_source("acme-work") == "acme-cli"
+        assert spec_credential_source("acme-work") == ""
         assert spec_credential_source("unknown") == ""
 
 

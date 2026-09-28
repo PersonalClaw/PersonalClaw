@@ -505,6 +505,32 @@ def reset_default_registry() -> None:
     _default_registry = None
 
 
+def served_on_this_machine(name: str) -> bool:
+    """Whether the provider entry named *name* sends its requests to this machine.
+
+    THE one answer to "is this model local", asked wherever it matters: the rate table's free
+    local tier (``routing.rates``) and the router's local-first ordering (``routing.policy``),
+    by the rule the model-call guard's outbound scan applies to the provider it wraps
+    (``net.guard.reaches_this_machine``). Where the entry's endpoint is decides it, never what
+    kind of provider it is or what it is called: a model server of any kind can run on another
+    machine, and one there can be billed for, and its prompts leave this one.
+
+    So local means the entry names an endpoint (:attr:`ProviderEntry.endpoints`) and every
+    endpoint it names is on this machine. An entry that names none, a name no configured entry
+    has, and an endpoint anywhere else are not local.
+    """
+    from personalclaw.net.guard import reaches_this_machine
+
+    key = str(name or "").strip()
+    if not key:
+        return False
+    try:
+        endpoints = get_default_registry().get_entry(key).endpoints
+    except ProviderResolutionError:
+        return False
+    return bool(endpoints) and all(reaches_this_machine(url) for url in endpoints)
+
+
 # Config-type → base-registry-type aliases. EMPTY after the model-provider-as-app
 # migration (Phase B): every provider type — the two generic protocols
 # (``openai_compatible``/``anthropic_compatible``) AND every branded provider

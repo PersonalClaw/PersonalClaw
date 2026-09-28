@@ -59,8 +59,10 @@ class BrandedProviderSpec:
     # in USD per 1,000,000 tokens, where model_pattern is a model id or a glob
     # ("claude-sonnet-*"). Prices belong beside default_model/capabilities — the same place the
     # rest of an app's model facts live. Read by routing/rates.py:rate_for as the app-default
-    # tier, under the user's ~/.personalclaw/model_rates.json overlay. Empty means
-    # "this app declares no prices", which resolves to a lower tier and never to a free model.
+    # tier for an entry of this type, under the user's ~/.personalclaw/model_rates.json overlay.
+    # A row may also name cache_read_per_mtok / cache_write_per_mtok; one that names neither
+    # bills cached tokens as plain input. Empty means "this app declares no prices", which
+    # resolves to a lower tier and never to a free model.
     # ``hash=False`` keeps the frozen dataclass hashable despite the dict (equality still counts
     # it); treat the map as read-only, like every other field on a frozen spec.
     pricing: dict[str, dict[str, float]] = field(default_factory=dict, hash=False)
@@ -272,44 +274,37 @@ def resolve_spec_secret(
 _REGISTERED_SPECS: dict[str, BrandedProviderSpec] = {}
 
 
-def registered_spec(provider: str) -> BrandedProviderSpec | None:
-    """The registered spec for ``provider``, or None.
+def registered_spec(provider_type: str) -> BrandedProviderSpec | None:
+    """The spec the app registering the provider TYPE ``provider_type`` declared, or None.
 
-    ``provider`` may be a provider TYPE ("groq") or a user-named INSTANCE of one ("groq-work" —
-    instances are named freely in ``active_models.json``). Resolution: exact type, then
-    case-insensitive type, then — only when EXACTLY ONE registered type appears in the name — that
-    type. An ambiguous or unrecognized name resolves to None rather than to a guess.
+    Matched on the type exactly, never on a name: a configured entry names its type
+    (``ProviderEntry.type``), and an entry's own name says nothing about what serves it —
+    ``acme-proxy`` may be an OpenAI-compatible entry, and ``work`` an Acme one. It matched an
+    entry's name by the registered types spelled inside it, so a rate or a credential ladder was
+    read from an app that did not serve the entry, and an entry named for anything else found
+    none. A caller holding an entry's name looks the entry up and asks with its type.
     """
-    name = str(provider or "").strip()
-    if not name:
-        return None
-    spec = _REGISTERED_SPECS.get(name)
-    if spec is not None:
-        return spec
-    lowered = name.lower()
-    for known, known_spec in _REGISTERED_SPECS.items():
-        if known.lower() == lowered:
-            return known_spec
-    hits = [s for known, s in _REGISTERED_SPECS.items() if known and known.lower() in lowered]
-    return hits[0] if len(hits) == 1 else None
+    return _REGISTERED_SPECS.get(str(provider_type or "").strip())
 
 
-def spec_pricing(provider: str) -> dict[str, dict[str, float]]:
-    """The app-declared ``{model_pattern: {in_per_mtok, out_per_mtok}}`` map for ``provider``, or
-    an empty map when the provider is unknown or declares no prices (never a fabricated rate)."""
-    spec = registered_spec(provider)
+def spec_pricing(provider_type: str) -> dict[str, dict[str, float]]:
+    """The app-declared ``{model_pattern: {in_per_mtok, out_per_mtok}}`` map for the provider
+    TYPE ``provider_type``, or an empty map when no app registered that type or it declares no
+    prices (never a fabricated rate)."""
+    spec = registered_spec(provider_type)
     return dict(spec.pricing) if spec is not None and spec.pricing else {}
 
 
-def spec_credential_source(provider: str) -> str:
-    """The app-declared subscription ``credential_source`` for ``provider``, or ``""``.
+def spec_credential_source(provider_type: str) -> str:
+    """The app-declared subscription ``credential_source`` for the provider TYPE
+    ``provider_type``, or ``""``.
 
     The core-facing reader that lets ``providers/loader.py`` derive an ``availability()``
     probe for a subscription provider app without importing the app or knowing its vendor.
     Same shape and precedent as :func:`spec_pricing`: one narrow question answered from the
-    registered spec, keeping :func:`registered_spec` module-internal.
+    registered spec, by type.
     """
-    spec = registered_spec(provider)
+    spec = registered_spec(provider_type)
     return str(spec.credential_source) if spec is not None and spec.credential_source else ""
 
 

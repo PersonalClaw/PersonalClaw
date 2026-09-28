@@ -778,7 +778,6 @@ class TestARealDrivenStop:
             agent="t",
             provider="scripted",
             model="scripted",
-            estimate_if_missing=False,
         )
         spend = usage_ledger.totals(session_key="dashboard:stoptest")
         assert spend["turns"] == 1, "the stopped turn must appear in the usage ledger"

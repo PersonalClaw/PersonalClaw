@@ -58,8 +58,8 @@ carries it, because a fold that discards rows produces a plausible number for ev
 * ``unpriced_calls`` / ``priced`` — calls whose model has NO rate at all (``priced: false`` on the
   turn, or ``rates.rate_for`` → ``None``). Their dollars are structurally 0, so a total containing
   them is a FLOOR. An unpriced model must never read as "$0 spent". Locally-served refs are
-  different and legitimate: they price 0.0 with ``source="local"`` and are counted in
-  ``local_calls``.
+  different and legitimate: they price 0.0 with ``source="local"``, are counted in
+  ``local_calls``, and are never counted unpriced, whatever an older row says.
 
 Rebuild: :func:`rebuild` refolds from scratch — the ``--rebuild`` discipline applied to this
 fold (``routing.stats.rebuild`` is its sibling over the audit JSONL). Note that flag does not exist
@@ -291,9 +291,12 @@ def fold_turn_row(
 
     rate_unpriced, local = look(provider, model)
     # ``priced`` is the ledger's own disclosure and wins when present; the rate table is the
-    # fallback for a row written before that field existed.
+    # fallback for a row written before that field existed. A turn on a model served on this
+    # machine is never unpriced: its price is a known $0, and a row written before local turns
+    # were priced says ``priced: false`` for it. Counted unpriced, it made the recap call a
+    # total a floor for turns known to have cost nothing.
     priced = row.get("priced")
-    unpriced = (not bool(priced)) if priced is not None else rate_unpriced
+    unpriced = not local and ((not bool(priced)) if priced is not None else rate_unpriced)
     dollars = float(row.get("cost_usd", 0.0) or 0.0)
     # TurnUsage has no estimated flag, so a rate-derived cost is indistinguishable from a
     # provider-reported one. Treated as an estimate deliberately (see the module docstring).

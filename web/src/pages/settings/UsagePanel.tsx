@@ -269,7 +269,20 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
  *  Both numbers come from `GET /api/usage/budget`: the spend meter's day total and the cap it is
  *  compared with. This line used to set the ledger's total for the page's "Today" beside the cap:
  *  chat turns included (no cap covers them), on a UTC day (the cap resets on the host's), so it
- *  could read a cap as spent that was not, and the reverse. A cap of 0 is unlimited and not shown. */
+ *  could read a cap as spent that was not, and the reverse. A cap of 0 is unlimited and not shown.
+ *
+ *  A metered call nothing priced is not in the dollar total, and the line says how many there
+ *  were: shown as the whole spend, the total told the owner those calls were free, and the cap
+ *  cannot hold spend it cannot count. */
+/** Today's metered calls the dollar total leaves out, as a person reads it: none of them had a
+ *  price, and where one is set. */
+function unpricedCallsSentence(n: number): string {
+  const one = n === 1
+  const calls = one ? '1 unattended call' : `${n.toLocaleString()} unattended calls`
+  return `${calls} today had no price, so the dollar cap could not count ${one ? 'it' : 'them'}: `
+    + `set a rate for ${one ? 'its model' : 'their models'} in ~/.personalclaw/model_rates.json.`
+}
+
 export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
   const dollarCap = budget.max_dollars_per_day ?? 0
   const tokenCap = budget.max_tokens_per_day ?? 0
@@ -289,6 +302,7 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
                 <span className="tabular-nums text-on-surface">${dollarCap.toFixed(2)}</span> daily cap
               </span>
             )}
+            {dollarCap > 0 && budget.unpriced_calls > 0 && <span>{unpricedCallsSentence(budget.unpriced_calls)}</span>}
             {tokenCap > 0 && (
               <span>
                 Unattended tokens today:{' '}

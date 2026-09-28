@@ -148,6 +148,10 @@ async def api_usage_budget(request: web.Request) -> web.Response:
 
     ``cap_unreadable`` is True when the configured ceiling could not be read; the caps are then
     ``null``, never an unlimited 0 nobody chose.
+
+    ``unpriced_calls`` is how many of today's metered calls had no price: nothing priced their
+    model, so their dollars are not in ``spent_dollars`` and the dollar cap could not count them.
+    The page says so beside the total, rather than letting them read as free.
     """
     from personalclaw.guardrails.budgets import (
         BudgetConfigUnreadable,
@@ -169,6 +173,7 @@ async def api_usage_budget(request: web.Request) -> web.Response:
         {
             "spent_dollars": round(float(spent.dollars), 6),
             "spent_tokens": int(spent.tokens),
+            "unpriced_calls": int(spent.unpriced),
             "max_dollars_per_day": max_dollars,
             "max_tokens_per_day": max_tokens,
             "cap_unreadable": unreadable,

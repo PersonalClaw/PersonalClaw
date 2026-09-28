@@ -144,17 +144,32 @@ class BudgetExceededError(GuardError):
 
     Carries the ``scope`` (``run`` | ``day``), the ``dimension`` (``tokens`` |
     ``dollars``), and the offending ``limit`` so the caller (and the pause-into-
-    needs-input path) can explain exactly which ceiling bit.
+    needs-input path) can explain exactly which ceiling bit. ``unpriced`` is how many
+    calls in that scope had no price, which a dollar total cannot count: the refusal says
+    so, rather than presenting what it counted as all that was spent.
     """
 
     mode = FailureMode.BUDGET_EXCEEDED
 
-    def __init__(self, scope: str, dimension: str, limit: float, spent: float) -> None:
+    def __init__(
+        self, scope: str, dimension: str, limit: float, spent: float, *, unpriced: int = 0
+    ) -> None:
         self.scope = scope
         self.dimension = dimension
         self.limit = limit
         self.spent = spent
-        super().__init__(f"{scope} {dimension} budget exceeded: spent {spent:.4g} of {limit:.4g}")
+        self.unpriced = max(0, int(unpriced or 0))
+        left_out = self._left_out()
+        super().__init__(
+            f"{scope} {dimension} budget exceeded: spent {spent:.4g} of {limit:.4g}"
+            + (f", {left_out}" if left_out else "")
+        )
+
+    def _left_out(self) -> str:
+        """What a dollar figure leaves out; nothing for a token one, which counts every call."""
+        from personalclaw.guardrails.budgets import unpriced_clause
+
+        return unpriced_clause(self.unpriced) if self.dimension == "dollars" else ""
 
     def sentence(self) -> str:
         """The refusal as a person reads it: which ceiling stopped the run, what was spent
@@ -165,6 +180,9 @@ class BudgetExceededError(GuardError):
             unit = "token"
         else:
             figure = f"${self.spent:.2f} of ${self.limit:.2f}"
+            left_out = self._left_out()
+            if left_out:
+                figure = f"{figure}, {left_out}"
             unit = "dollar"
         fix = "raise it in Settings → Guardrails"
         if self.scope == "day":

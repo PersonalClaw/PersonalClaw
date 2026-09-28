@@ -164,14 +164,15 @@ def learned_order(
     stats: dict,
     hysteresis: float,
     cloud_quality_margin: float,
-    local_keys: set[str],
+    local_refs: frozenset[str],
     cost_of: Callable[[str], float] | None = None,
     min_samples: int = 5,
 ) -> list[str]:
     """Refs reordered by learned score. Returns them UNCHANGED when the fold cannot decide.
 
-    ``stats`` is a loaded ``routing_stats.json`` fold; ``local_keys`` are normalized local-provider
-    keys as ``policy._local_provider_keys()`` produces them; ``cost_of`` maps a ref to dollars for
+    ``stats`` is a loaded ``routing_stats.json`` fold; ``local_refs`` are the refs served on this
+    machine, as ``policy.is_local_ref`` answers for each (handed in, so this stays pure and
+    classifies by the one rule the rest of routing uses); ``cost_of`` maps a ref to dollars for
     the within-band comparison and may be omitted (then cost never reorders anything).
 
     The result is always a permutation of ``refs`` — never a different set, never a different
@@ -184,20 +185,16 @@ def learned_order(
         rows = _rows_for(stats, use_case, query_class)
         if not rows:
             return ordered
-        # Lazy import: ``policy`` imports this module, and re-deriving local-vs-cloud here would
-        # mint a second classifier that could disagree with the one the rest of routing uses.
-        from personalclaw.routing.policy import is_local_ref
-
         margin = max(0.0, float(cloud_quality_margin))
         width = max(0.0, float(hysteresis))
-        keys = set(local_keys)
+        local = frozenset(local_refs)
 
         scores: dict[int, float] = {}
         for index, ref in enumerate(ordered):
             opinion = _opinion(rows.get(ref), min_samples=min_samples)
             if opinion is None:
                 continue  # no opinion — this slot is frozen (see the module docstring)
-            if not is_local_ref(ref, local_keys=keys):
+            if ref not in local:
                 opinion -= margin  # asymmetric: cloud must beat local BY the margin
             scores[index] = opinion
         if len(scores) < 2:

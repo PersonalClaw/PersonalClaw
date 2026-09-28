@@ -305,9 +305,8 @@ class TestOnlyWhenTheFindingIsNotInEffect:
         propose against itself forever."""
         _table(home, "learned")
         _decisive(home)
-        keys = policy._local_provider_keys()
-        once = policy._learned_order(REFS, UC, QC, keys, home=home)
-        assert policy._learned_order(once, UC, QC, keys, home=home) == once
+        once = policy._learned_order(REFS, UC, QC, home=home)
+        assert policy._learned_order(once, UC, QC, home=home) == once
 
     def test_a_recorded_order_the_evidence_outgrew_is_a_gap(self, home: Path) -> None:
         """A recorded order wins over the learned stage (lever 3 short-circuits lever 4), so once

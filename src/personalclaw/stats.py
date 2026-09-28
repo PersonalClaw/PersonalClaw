@@ -168,15 +168,15 @@ def cache_hit_pct(
       come from the SDK's separate ``cache_creation_input_tokens`` /
       ``cache_read_input_tokens`` fields via ``llm/anthropic.py::_read_cache_usage``.
       No arithmetic ever relates the three.
-    * ``pricing.py::estimate_cost`` bills them additively — ``input * in_rate +
+    * ``routing/rates.py::ModelRate.cost`` bills them additively — ``input * in_rate +
       cache_read * cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
-      already contained the cached tokens, the shipped cost model would double-bill
+      already contained the cached tokens, the one pricing function would double-bill
       every cached turn.
     * ``usage_ledger.py::_fold`` sums the three into three SEPARATE
       aggregate keys, side by side. A subset relation would make that fold
       double-count on every cached turn, so the persisted ledger's own arithmetic
       only balances if the buckets are disjoint. Cited over PCS-7's own
-      ``pricing.py::cache_savings_usd``, which adds the same three but is this module's
+      ``routing/rates.py::cache_savings_usd``, which adds the same three but is this module's
       counterpart — evidence for a premise must not be the code the premise
       justifies.
 

@@ -1,14 +1,16 @@
-"""Model cost estimation from a static per-token price table.
+"""The shipped model price table, ``model_pricing.json`` — the rate table's builtin tier.
 
-Providers report token counts but not always a dollar cost (most set
-``cost_usd=0.0``). ``estimate_cost`` derives a cost from
-``model_pricing.json`` (USD per 1,000,000 tokens) so the dashboard's cost
-ticker and the usage ledger show a real number.
+Providers report token counts but not always a dollar cost (most set ``cost_usd=0.0``). This
+module reads the table core ships (USD per 1,000,000 tokens per bucket) for
+:mod:`personalclaw.routing.rates`, which prices every call: the table is its fourth tier, under a
+rate the owner set, a local model's known zero and a rate the serving app declared. Nothing else
+reads it (``tests/test_every_dollar_is_priced_by_one_function.py``), because a consumer that did
+priced by this table alone, which never sees those three.
 
-Design: ONE source of truth for prices (the JSON), ONE function to apply it.
-The caller prefers a provider-reported cost when it has one and only falls back
-to this estimate when it's zero. A model absent from the table costs ``0.0`` —
-we never invent a price for an unknown model.
+A model absent from the table has no row: ``has_pricing`` is False and the rate table reads it as
+unpriced. We never invent a price for an unknown model. And no row prices a model free by its
+name: an open-weight family (``llama3.1``, ``mistral``) costs whatever the machine serving it
+bills, which is the rate table's local tier's question, not this table's.
 """
 
 from __future__ import annotations
@@ -94,11 +96,10 @@ def estimate_cost(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
 ) -> float:
-    """Estimate USD cost for one turn's token usage.
+    """USD for one call's token usage at *model*'s row, the builtin tier's rate.
 
-    Returns 0.0 for an unknown model (no row in ``model_pricing.json``) — an
-    honest "unpriced", never a guess. Cache-read/write default to the input
-    rate / 0 when the row omits them.
+    0.0 for a model with no row; the rate table asks :func:`has_pricing` first, so that 0.0 is
+    never read as a price. Cache-read/write default to the input rate / 0 when the row omits them.
     """
     rates = _rates(model)
     if rates is None:
@@ -117,56 +118,5 @@ def estimate_cost(
 
 
 def has_pricing(model: str) -> bool:
-    """True if *model* has a price row (used to decide whether to estimate)."""
+    """True if *model* has a row in the shipped table."""
     return _rates(model) is not None
-
-
-def cache_savings_usd(
-    model: str,
-    *,
-    cache_read_tokens: int = 0,
-    cache_creation_tokens: int = 0,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-) -> float | None:
-    """USD the prompt cache saved (or cost) on one turn — counterfactual minus actual.
-
-    Both sides are computed through :func:`estimate_cost` itself, never from a
-    hand-derived rate delta: one function owns the rate lookup, so the two paths
-    cannot drift when a price row gains a field or a default changes.
-
-    * ``actual`` — what this turn cost with its real cache split.
-    * ``counterfactual`` — the same turn with NO prompt cache at all: every
-      cached token re-billed at the plain input rate
-      (``input + cache_read + cache_creation`` as input, cache buckets zero).
-      Sound because the three token buckets are DISJOINT populations, not
-      overlapping views of one number — see :func:`cache_hit_pct`'s docstring in
-      ``stats.py`` for the file:line evidence.
-
-    Returns ``None`` — never ``0.0`` — when *model* has no price row. An unpriced
-    model must be reportable as *unpriced*: a ``0.0`` would be indistinguishable
-    from a priced model that saved nothing, and this is exactly the "never
-    estimates when the provider reported nothing" clause. A priced model with no
-    cache activity at all returns ``0.0``, which is a real measurement.
-
-    The result is NEGATIVE on a first turn that only WROTE the cache (every real
-    row prices ``cache_write`` above ``in`` — a 25% write premium for Anthropic
-    rows), and that negative is returned as-is rather than clamped to zero. A
-    cache write genuinely costs more than the uncached call it replaces; hiding
-    it would make the cache look free on the one turn where it is not, and the
-    saving only materializes on the later reads.
-    """
-    if _rates(model) is None:
-        return None
-    actual = estimate_cost(
-        model,
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_creation_tokens,
-    )
-    uncached_prompt_tokens = (
-        (input_tokens or 0) + (cache_read_tokens or 0) + (cache_creation_tokens or 0)
-    )
-    counterfactual = estimate_cost(model, uncached_prompt_tokens, output_tokens, 0, 0)
-    return round(counterfactual - actual, 6)

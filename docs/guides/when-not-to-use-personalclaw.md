@@ -253,18 +253,34 @@ it survives a restart. That is a genuine control. Three things about it are wort
   (`src/personalclaw/guardrails/model_call.py`). That is a defensible line for a stream you
   are sitting in front of, but it means `max_dollars_per_day` is **not** a whole-install
   cap. Goal loops, cron fires and subagents are metered; typing into chat is not.
-- **The dollar ceiling is an estimate, not a bill.** It *"use[s] provider-reported usage
-  where available, else a conservative heuristic"*, and the meter compares against the
-  higher of the two. PersonalClaw never sees your provider invoice, so an estimated ceiling
-  cannot be an authoritative one.
+- **The dollar ceiling is an estimate, not a bill.** A call costs what its provider reports,
+  else its tokens at its model's rate: one you set in `~/.personalclaw/model_rates.json`, a
+  known $0 for a model server on this machine, the rate its provider app declares, or the
+  shipped price list (`price_call` in `src/personalclaw/routing/rates.py`, which prices every
+  dollar the caps and the Usage page count). A call none of those prices is not in the dollar
+  total: the meter counts it as a call the cap could not count, and Settings → Usage, a
+  refusal and a warning each say how many there were. PersonalClaw never sees your provider
+  invoice, so an estimated ceiling cannot be an authoritative one.
 
 What you *do* get for free is visibility rather than control: every model turn is recorded
 to a per-turn cost/token ledger (`src/personalclaw/usage_ledger.py`) and rolled up under
 **Settings → Usage**. It is deliberately *"observation only, never enforcement"*, and it is
-honest about what it cannot price — a model with no pricing row records `priced = False` and
+honest about what it cannot price — a turn nothing prices records `priced = False` and
 renders as **unpriced**, never as `$0.00`, and any rollup containing one reports itself
-incomplete. So you can always answer "what did that cost me", and a local model costs
-nothing either way.
+incomplete. So you can always answer "what did that cost me", and a model served on this
+machine costs nothing either way.
+
+To price a model the shipped list does not know, or correct one it has wrong, add it to
+`model_rates.json` in your PersonalClaw home. A key is a `provider:model` ref, a bare model
+id, or a glob of either; a rate is USD per million tokens, and may name the cache rates too:
+
+```json
+{"version": 1, "rates": {"my-gpu:qwen3:8b": {"in_per_mtok": 0.2, "out_per_mtok": 0.4},
+                         "claude-sonnet-*": {"in_per_mtok": 3, "out_per_mtok": 15,
+                                             "cache_read_per_mtok": 0.3}}}
+```
+
+It is read on every call, so an edit counts from the next one.
 
 **What to do instead, if you stay:** set the ceilings before you leave anything running,
 and set a hard spend limit **at your provider** as the real backstop — that is the only cap

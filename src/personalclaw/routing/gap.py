@@ -202,9 +202,7 @@ def detect_gap(
 
     refs = sorted(rows)
     current = policy.route_refs(use_case, query_class, refs, home=home)
-    proposed = policy._learned_order(
-        current, use_case, query_class, policy._local_provider_keys(), home=home
-    )
+    proposed = policy._learned_order(current, use_case, query_class, home=home)
     if proposed == current:
         return None  # the learned finding is already what routing does — nothing to decide
 
