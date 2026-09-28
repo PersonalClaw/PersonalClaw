@@ -55,10 +55,27 @@ def home(tmp_path, monkeypatch):
         f'chmod +x "$prefix/node_modules/.bin/{BIN}"\n',
         encoding="utf-8",
     )
-    for tool in ("node", "npm"):
+    (node_dir / "npx").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")  # looked up, never run
+    for tool in ("node", "npm", "npx"):
         (node_dir / tool).chmod(0o755)
     monkeypatch.setattr(cli_resolve, "resolve_node_ge", lambda *a, **k: str(node_dir / "node"))
+    # What a load asked for is kept for the process; each test starts with nothing asked.
+    monkeypatch.setattr(cli_resolve, "_WANTED", set())
     return tmp_path
+
+
+def _npx_runtime(home: Path, command: list[str] | None = None):
+    """The registry entry of a runtime that runs through npx for want of the adapter."""
+    from personalclaw.llm.registry import ProviderEntry
+
+    npx = str(home / "node" / "bin" / "npx")
+    return ProviderEntry(
+        name="acp:fake",
+        type="acp_agent",
+        model="",
+        options={"command": command or [npx, "-y", PKG], "dialect": "default"},
+        credential=None,
+    )
 
 
 def _npm_runs(home: Path) -> list[str]:
@@ -168,20 +185,13 @@ def test_every_way_an_install_can_fail_is_kept_with_a_reason(home, monkeypatch, 
 def test_the_runtime_row_and_doctor_say_why_while_it_runs_through_npx(home, capsys):
     from personalclaw.agents import runtime_tests
     from personalclaw.cli_doctor import _report_acp_agent
-    from personalclaw.llm.registry import ProviderEntry
 
     (home / "npm-fails").touch()
     with cli_resolve.adapter_installs_allowed():
         cli_resolve.provision_acp_adapter(PKG, [BIN])
-    entry = ProviderEntry(
-        name="acp:fake",
-        type="acp_agent",
-        model="",
-        options={"command": ["npx", "-y", PKG], "dialect": "default"},
-        credential=None,
-    )
-    failed = runtime_tests.adapter_install_failed(entry)
-    assert failed is not None and "404 Not Found" in failed["error"]
+    entry = _npx_runtime(home)
+    offered = runtime_tests.adapter_install(entry)
+    assert offered is not None and "404 Not Found" in str(offered["error"]) and offered["at"]
 
     issues: list[str] = []
     _report_acp_agent(entry, "acp:fake (acp_agent)", issues, start=False)
@@ -193,14 +203,55 @@ def test_the_runtime_row_and_doctor_say_why_while_it_runs_through_npx(home, caps
     ]
 
     # Installed some other way (the runtime no longer goes through npx), nothing is said.
-    installed = ProviderEntry(
-        name="acp:fake",
-        type="acp_agent",
-        model="",
-        options={"command": ["/opt/example/fake-acp-adapter"], "dialect": "default"},
-        credential=None,
-    )
-    assert runtime_tests.adapter_install_failed(installed) is None
+    installed = _npx_runtime(home, ["/opt/example/fake-acp-adapter"])
+    assert runtime_tests.adapter_install(installed) is None
+
+
+def test_a_missing_adapter_with_no_failure_on_record_is_offered_the_same_retry(home, capsys):
+    """The adapter is gone and no install of it failed: the copy installed at enable was removed
+    (or the app was enabled before installs waited for that moment). A gateway start asks for it
+    and installs nothing; the runtime row offers the same Retry, and Retry installs it."""
+    from personalclaw.agents import runtime_tests
+    from personalclaw.cli_doctor import _report_acp_agent
+    from personalclaw.llm.acp_agent import AcpAgentProvider
+
+    assert app_manager.install(_make_adapter_app(home), confirm=True).ok
+    (home / "acp-adapters" / "node_modules" / ".bin" / BIN).unlink()
+    entry = _npx_runtime(home)
+    assert runtime_tests.adapter_install(entry) is None, "control: nothing asked for it yet"
+    untested = AcpAgentProvider.presence(dict(entry.options))
+    assert "fetches it with npx first" in untested.detail, "control: the detail says npx"
+
+    app_runtime.start_installed()
+
+    assert len(_npm_runs(home)) == 1, "a gateway start installed the adapter"
+    assert cli_resolve.adapter_install_failure(PKG) is None
+    assert runtime_tests.adapter_install(entry) == {"error": None, "at": None}
+    # Said once: the adapter row says it, so the readiness detail no longer repeats it.
+    assert "npx" not in AcpAgentProvider.presence(dict(entry.options)).detail
+    issues: list[str] = []
+    _report_acp_agent(entry, "acp:fake (acp_agent)", issues, start=False)
+    out = capsys.readouterr().out
+    assert "is not installed here, so it runs through npx" in out
+    assert not [i for i in issues if "ACP adapter" in i], "a missing adapter is not a failure"
+
+    assert app_manager.enable("adapter-app")  # the card's Retry
+    assert len(_npm_runs(home)) == 2
+    assert runtime_tests.adapter_install(entry) is None, "installed: nothing left to offer"
+
+
+def test_no_retry_is_offered_when_enabling_again_would_install_nothing(home, monkeypatch):
+    from personalclaw.agents import runtime_tests
+
+    app_runtime.start_installed()
+    assert runtime_tests.adapter_install(_npx_runtime(home)) is None, "no app asked for it"
+
+    assert app_manager.install(_make_adapter_app(home), confirm=True).ok
+    (home / "acp-adapters" / "node_modules" / ".bin" / BIN).unlink()
+    app_runtime.start_installed()
+    assert runtime_tests.adapter_install(_npx_runtime(home)) is not None, "control"
+    monkeypatch.setenv("PERSONALCLAW_ACP_NO_PROVISION", "1")
+    assert runtime_tests.adapter_install(_npx_runtime(home)) is None, "installs are turned off"
 
 
 def test_the_npx_package_is_read_off_the_argv():

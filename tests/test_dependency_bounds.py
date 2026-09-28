@@ -22,6 +22,10 @@ legitimate ones included. Hence the second pair of rails below: the *declared* s
 range and the classifier list are both derived from the matrix that actually runs the
 suite, so widening one without widening the other is a red rather than a promise nothing
 keeps.
+
+The last rail is the other end of a bound: a floor a behaviour needs. An app can declare its own
+floor, but an install through the extra that carries the same library resolves what the extra
+says, and CI installs what the lock recorded for it, so both hold it too.
 """
 
 from __future__ import annotations
@@ -189,3 +193,43 @@ def test_python_classifiers_name_exactly_the_verified_interpreters() -> None:
         f"{sorted(verified)} — every version-specific classifier must be an interpreter the "
         "suite actually runs on, and every verified interpreter must be advertised"
     )
+
+
+#: A distribution whose floor a behaviour needs, wherever pyproject declares it: the floor, a
+#: version just below it, and why.
+_MUST_KEEP_A_FLOOR = {
+    "sentence-transformers": (
+        "5.6",
+        "5.5.99",
+        "5.6 is the oldest release checked for the local-only model card the sentence-transformers "
+        "app hands a model it loads (SentenceTransformerModelCardData(local_files_only=True))",
+    ),
+}
+
+
+def test_a_floor_a_behaviour_needs_holds_in_pyproject_and_in_the_lock() -> None:
+    from packaging.requirements import Requirement
+
+    with (_REPO_ROOT / "uv.lock").open("rb") as fh:
+        [ours] = [p for p in tomllib.load(fh)["package"] if p["name"] == "personalclaw"]
+    locked = {
+        (entry["name"], entry.get("marker", "")): entry.get("specifier", "")
+        for entry in ours["metadata"]["requires-dist"]
+    }
+    for dist, (floor, below, reason) in _MUST_KEEP_A_FLOOR.items():
+        declared = [
+            (where, Requirement(spec))
+            for where, specs in _declarations().items()
+            for spec in specs
+            if Requirement(spec).name == dist
+        ]
+        assert declared, f"pyproject.toml no longer declares {dist!r}"
+        for where, req in declared:
+            assert req.specifier.contains(floor), f"{where}: {req} refuses {floor} itself"
+            assert not req.specifier.contains(below), f"{where}: {req} admits {below}: {reason}"
+            marker = "" if where == "dependencies" else f"extra == '{where}'"
+            recorded = locked.get((dist, marker))
+            assert recorded == str(req.specifier), (
+                f"uv.lock records {dist}{recorded or ''} for {where} but pyproject declares "
+                f"{req}: run `uv lock` and commit the result in the same change"
+            )

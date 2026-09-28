@@ -100,9 +100,10 @@ pin shapes is withdrawn: the pins did not govern either one.
 
 **The adapters are installed per-home — but they are not necessarily *run* from there.** PersonalClaw
 provisions them into `<PERSONALCLAW_HOME>/acp-adapters/node_modules/.bin/` as you install or enable
-the app, never at a gateway start (a failed install is kept with its reason, shown on the runtime's
-card with Retry, and reported by `personalclaw doctor`). On a host with no global copy that is the
-only place they exist, so a reader who checks only `PATH` can wrongly conclude they are missing. **The converse is the trap that actually bit a sweep:** where a global or
+the app, never at a gateway start. One that is missing is shown on the runtime's card with Retry,
+which enables the app again, and reported by `personalclaw doctor`; a failed install is kept with
+its reason, shown there too. On a host with no global copy that is the only place they exist, so a
+reader who checks only `PATH` can wrongly conclude they are missing. **The converse is the trap that actually bit a sweep:** where a global or
 node-manager copy *does* resolve (mise shims, `npm -g`), the resolver prefers it, the per-home
 provisioning never runs, and the pinned per-home version is inert. On the 2026-09-19 drive both
 adapters ran from the global mise node install — `claude-agent-acp 0.74.0` while the per-home prefix

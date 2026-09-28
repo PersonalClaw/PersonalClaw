@@ -150,14 +150,20 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
       {signingIn && runtime && runtime.state === 'needs_login' && (
         <div role="status" data-type="caption" className="mt-1 text-on-surface-low">When the sign-in in the terminal finishes, press Test to check it.</div>
       )}
-      {/* Its ACP adapter installs when the app is enabled and never behind the user's back, so a
-          failed install stays failed until they say again: Retry enables the app again, which is
-          that moment. */}
-      {runtime?.adapter_install_failed && !unavailable && (
+      {/* Its ACP adapter installs when the app is enabled and never behind the user's back, so one
+          that is missing waits until they say again, whether an install failed or none is on
+          record: Retry enables the app again, which is that moment. */}
+      {runtime?.adapter_install && !unavailable && (
         <div className="mt-2 flex items-start gap-2">
-          <p data-type="caption" className="flex flex-1 items-start gap-1.5" style={{ color: 'var(--color-danger)' }}>
-            <AlertTriangle size={12} className="mt-0.5 shrink-0" /> Its ACP adapter didn't install when you enabled it: {runtime.adapter_install_failed.error}
-          </p>
+          {runtime.adapter_install.error ? (
+            <p data-type="caption" className="flex flex-1 items-start gap-1.5" style={{ color: 'var(--color-danger)' }}>
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" /> Its ACP adapter didn't install when you enabled it: {runtime.adapter_install.error}
+            </p>
+          ) : (
+            <p data-type="caption" className="flex flex-1 items-start gap-1.5 text-on-surface-low">
+              <TerminalSquare size={12} className="mt-0.5 shrink-0" /> Its ACP adapter isn't installed here, so it runs through npx.
+            </p>
+          )}
           <Button size="xs" variant="secondary" className="shrink-0" loading={retrying} loadingLabel="Installing…"
             ariaLabel={`Retry installing the adapter: ${who}`} title={`Enables ${who} again, which installs its ACP adapter`}
             onClick={async () => {

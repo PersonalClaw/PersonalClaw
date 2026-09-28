@@ -263,9 +263,9 @@ def _runtime_row(entry: Any, readiness: dict[str, Any]) -> dict[str, Any]:
         "type": entry.type,
         "extension": dict(entry.options or {}).get("extension"),
         **readiness,
-        # Why installing its ACP adapter failed when its app was enabled, while it still runs
-        # through npx for want of it: the card says so and offers Retry (enabling the app again).
-        "adapter_install_failed": runtime_tests.adapter_install_failed(entry),
+        # Its ACP adapter is not installed, so it runs through npx, and enabling its app again
+        # installs it: the card offers Retry, and says why when the last install failed.
+        "adapter_install": runtime_tests.adapter_install(entry),
     }
 
 
@@ -280,9 +280,10 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
     runtime's last Test reported ``needs_login``.
 
     Returns ``{agent_providers: [{name, provider_id, type, extension, ready,
-    state, detail, login_command, tested_at, adapter_install_failed}]}`` where
-    ``adapter_install_failed`` is ``{error, at}`` when installing the runtime's ACP adapter
-    failed as its app was enabled (nothing retries it until the app is enabled again), and
+    state, detail, login_command, tested_at, adapter_install}]}`` where
+    ``adapter_install`` is ``{error, at}`` when the runtime's ACP adapter is not installed and
+    enabling its app again installs it (``error``/``at`` say why the last install failed, or are
+    null when none is on record; nothing tries until the app is enabled again), and
     ``extension`` (when present) is the
     bundle name the row's enable/config card is keyed by, so the frontend can
     merge readiness onto the extension card instead of rendering two sections.
@@ -308,7 +309,7 @@ async def api_agent_providers_list(request: web.Request) -> web.Response:
             "detail": "In-process agent runtime (no external CLI).",
             "login_command": None,
             "tested_at": None,
-            "adapter_install_failed": None,
+            "adapter_install": None,
         }
     ]
     # ── acp:<cli> runtimes registered by bundles ─────────────────────────

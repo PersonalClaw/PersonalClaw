@@ -76,29 +76,39 @@ describe("an agent runtime's card", () => {
   })
 })
 
-// ── Its ACP adapter installs when you enable the app, and a failed install waits for you ────────
+// ── Its ACP adapter installs when you enable the app, and a missing one waits for you ─────────────
 //
 // The adapter used to be npm-installed at every gateway start while it was missing, silently, and
-// a failure left no trace. It now installs only as the app is enabled; a failure is kept with its
-// reason, the card says it, and Retry — enabling the app again, the same moment — is what tries
-// once more.
+// a failure left no trace. It now installs only as the app is enabled. A missing one — a failed
+// install, whose reason is kept, or none on record — is said on the card, and Retry (enabling the
+// app again, the same moment) is what tries.
 
-describe("an agent runtime whose ACP adapter did not install", () => {
+describe("an agent runtime whose ACP adapter is not installed", () => {
   const failed = { error: 'npm install exited 1: npm ERR! 404 Not Found', at: '2026-09-28T10:00:00+00:00' }
 
-  it('says why, and offers a Retry that enables the app again', async () => {
+  async function retries(adapter_install: { error: string | null; at: string | null }) {
     const { api } = await import('../../lib/api')
     const enable = vi.spyOn(api, 'enableApp').mockResolvedValue({ ok: true, providerErrors: [] })
-    mount(runtime({ adapter_install_failed: failed }))
-    expect(screen.getByText(/didn't install when you enabled it: npm install exited 1: npm ERR! 404 Not Found/)).toBeTruthy()
+    mount(runtime({ adapter_install }))
     const retry = screen.getByRole('button', { name: 'Retry installing the adapter: Demo CLI' })
     expect(retry.getAttribute('title')).toBe('Enables Demo CLI again, which installs its ACP adapter')
     expect(enable, 'nothing retries it by itself').not.toHaveBeenCalled()
     await act(async () => { fireEvent.click(retry) })
     expect(enable).toHaveBeenCalledWith('demo-cli-agent')
+  }
+
+  it('says why a failed install failed, and offers a Retry that enables the app again', async () => {
+    await retries(failed)
+    expect(screen.getByText(/didn't install when you enabled it: npm install exited 1: npm ERR! 404 Not Found/)).toBeTruthy()
   })
 
-  it('offers no Retry when nothing failed', () => {
+  it('offers the same Retry when no failed install is on record', async () => {
+    await retries({ error: null, at: null })
+    expect(screen.getByText(/isn't installed here, so it runs through npx/)).toBeTruthy()
+    expect(screen.queryByText(/didn't install/), 'no failure is claimed').toBeNull()
+  })
+
+  it('offers no Retry when there is nothing to install', () => {
     mount(runtime())
     expect(screen.queryByRole('button', { name: /^Retry installing the adapter/ })).toBeNull()
   })

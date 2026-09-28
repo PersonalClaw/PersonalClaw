@@ -48,6 +48,8 @@ __all__ = [
     "provision_acp_adapter",
     "adapter_installs_allowed",
     "adapter_install_failure",
+    "adapter_install_state",
+    "adapter_install_wanted",
 ]
 
 logger = logging.getLogger(__name__)
@@ -321,6 +323,10 @@ _INSTALLS_ALLOWED: contextvars.ContextVar[bool] = contextvars.ContextVar(
 #: Beside the provenance lock in the managed prefix: why the last install of each adapter failed.
 INSTALL_FAILURES_NAME = ".pclaw-install-failures.json"
 
+#: The adapters an app asked for in this process at a load that was not an install or an enable,
+#: and did not find installed: enabling the app again installs each (its card offers Retry).
+_WANTED: set[str] = set()
+
 
 @contextlib.contextmanager
 def adapter_installs_allowed() -> Iterator[None]:
@@ -375,6 +381,15 @@ def _install_succeeded(npm_pkg: str) -> None:
         _write_install_failures(failures)
 
 
+def adapter_install_wanted(npm_pkg: str) -> bool:
+    """Whether an app asked for *npm_pkg* in this process and it is not installed, so enabling
+    the app again would install it. False while installs are turned off
+    (``PERSONALCLAW_ACP_NO_PROVISION``): enabling the app again would install nothing then."""
+    if os.environ.get("PERSONALCLAW_ACP_NO_PROVISION") == "1":
+        return False
+    return bool(npm_pkg) and npm_pkg in _WANTED
+
+
 def adapter_install_failure(npm_pkg: str) -> dict | None:
     """``{"error", "at"}`` for the last failed install of *npm_pkg*, or ``None``.
 
@@ -383,6 +398,22 @@ def adapter_install_failure(npm_pkg: str) -> dict | None:
     if not isinstance(found, dict) or not found.get("error"):
         return None
     return {"error": str(found["error"]), "at": str(found.get("at") or "")}
+
+
+def adapter_install_state(argv: list[str] | None) -> dict[str, str | None] | None:
+    """For a runtime that runs *argv*: ``{"error", "at"}`` when it runs through ``npx`` because
+    its ACP adapter is not installed, and enabling its app again installs it — else ``None``.
+    ``error`` and ``at`` say why the last install failed, or are ``None`` when no failed install
+    is on record (the app was enabled before installs waited for that moment, or the installed
+    copy was removed). ``None`` too when enabling the app again would install nothing: installs
+    are turned off, or the app never asked for its adapter. A read: it installs nothing."""
+    package = npx_package(argv)
+    if not package:
+        return None
+    failed = adapter_install_failure(package)
+    if failed is not None:
+        return {"error": failed["error"], "at": failed["at"]}
+    return {"error": None, "at": None} if adapter_install_wanted(package) else None
 
 
 def provision_acp_adapter(
@@ -434,6 +465,7 @@ def provision_acp_adapter(
         return None
 
     if not _INSTALLS_ALLOWED.get():
+        _WANTED.add(npm_pkg)
         logger.debug(
             "acp adapter %s: not installing — an adapter installs only when you enable its app",
             npm_pkg,
@@ -532,6 +564,7 @@ def provision_acp_adapter(
         if cand.exists() and os.access(cand, os.X_OK):
             logger.info("acp adapter %s: provisioned → %s", npm_pkg, cand)
             _install_succeeded(npm_pkg)
+            _WANTED.discard(npm_pkg)
             return str(cand)
     _install_failed(
         npm_pkg, f"npm installed it, but no {' or '.join(bin_names)} command came with it"

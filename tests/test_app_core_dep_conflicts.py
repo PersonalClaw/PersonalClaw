@@ -206,7 +206,7 @@ def test_every_real_first_party_dep_declaration_passes_the_guard(no_pip) -> None
         "openai-models": ["openai>=1.0"],
         "openrouter-models": ["openai>=1.0"],
         "piper-tts": ["piper-tts>=1.2", "huggingface-hub>=0.23"],
-        "sentence-transformers": ["sentence-transformers>=3.0", "faiss-cpu>=1.7"],
+        "sentence-transformers": ["sentence-transformers>=5.6", "faiss-cpu>=1.7"],
         "slack-channel": ["slack-sdk>=3.27,<4"],
         "together-models": ["openai>=1.0"],
         "vllm-models": ["openai>=1.0"],

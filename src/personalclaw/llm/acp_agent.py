@@ -157,7 +157,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
         """
         import shutil
 
-        from personalclaw.acp.cli_resolve import is_npx_fallback
+        from personalclaw.acp.cli_resolve import adapter_install_state, is_npx_fallback
         from personalclaw.agents.provider import ReadinessStatus
 
         command = options.get("command")
@@ -204,7 +204,9 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
                 )
 
         detail = UNTESTED_DETAIL
-        if is_npx_fallback(command):
+        # Where enabling the app again installs the adapter, the runtime's adapter row says it is
+        # missing (with Retry, and why when an install failed), so this does not say it twice.
+        if is_npx_fallback(command) and adapter_install_state(command) is None:
             detail += " Its adapter is not installed here, so a Test fetches it with npx first."
         return ReadinessStatus(ready=False, state="untested", detail=detail)
 

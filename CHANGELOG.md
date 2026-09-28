@@ -165,6 +165,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The last lines the gateway prints as it stops reach its log.**
 
+- **An agent runtime whose ACP adapter isn't installed offers Retry on its card even when no install of it failed.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**
@@ -484,6 +486,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A research report from another machine arrives switched off, and sync never brings in another machine's project trust, autonomy grants or integration clients.**
 - **The keys that are not sign-ins have a lifetime: an app's proxy secret is new each time its backend starts, the 2FA secret is deleted when 2FA is turned off, and a trigger's question can be answered for a week.**
+
+- **The `embeddings` extra needs sentence-transformers 5.6 or newer, the oldest release checked for a model card that stays local.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

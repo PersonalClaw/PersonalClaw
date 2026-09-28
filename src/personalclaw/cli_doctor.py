@@ -124,14 +124,19 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
     # A CLI nobody started is not a failure — only a check that ran, and failed, is.
     if not readiness.get("ready") and state != "untested":
         issues.append(f"{label}: {state}")
-    failed = runtime_tests.adapter_install_failed(entry)
-    if failed:
-        # Said, and never retried here: enabling the app again is what installs it.
+    adapter = runtime_tests.adapter_install(entry)
+    # Said, and never installed here: enabling the app again (Retry on its card) is what does.
+    if adapter and adapter["error"]:
         print(
-            f"      its ACP adapter did not install when its app was enabled: {failed['error']}. "
-            "Retry on its card in Settings → Providers installs it again."
+            "      its ACP adapter did not install when its app was enabled: "
+            f"{adapter['error']}. Retry on its card in Settings → Providers installs it again."
         )
         issues.append(f"{label}: ACP adapter not installed")
+    elif adapter:
+        print(
+            "      its ACP adapter is not installed here, so it runs through npx. Retry on its "
+            "card in Settings → Providers installs it."
+        )
 
 
 def _doctor_paths() -> None:
