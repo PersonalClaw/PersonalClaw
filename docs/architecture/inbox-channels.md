@@ -557,6 +557,12 @@ remain in core — is covered in [provider-boundary.md](provider-boundary.md).
 - Dashboard-side link/handoff routes are `dashboard/chat_channel.py`
   (`POST /api/chat/sessions/{session}/channel-link`,
   `GET /api/channels/reply-targets`) — provider-blind, `ChannelDelivery` only.
+  A link and a handoff both record the chat through one function
+  (`_continue_there`): the thread's key where the inbound door reads it, and the
+  channel the chat is now on, so its answers and notices go to the thread and a
+  reply there continues it. A thread target opens on the channel `provider`
+  names, else the one channel that issued its id (`channel_of_id`); an id two
+  channels could take is refused, and nothing is posted.
 - `sync_bridge.py` hands a dashboard conversation off to a channel thread
   (`handoff_to_channel`); `voice_reply.py` uploads TTS voice replies
   (`upload_voice_to_channel`).

@@ -166,6 +166,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A conversation held on Telegram, Discord, email or Slack is told there when it is compacted, as its dashboard chat is: a `/compact`'s result, the agent compacting on its own, and a restart at the context threshold.**
 
+- **A chat linked to a channel thread (`POST /api/chat/sessions/{session}/channel-link`) continues there, as a handed-off chat does: its answers and notices go to the thread, a reply there continues it, and the thread opens on the channel that issued its id.**
+
 - **A message to a chat or user id with no channel named goes out on the channel that id belongs to, and an id two channels could take is refused with both (`email-channel` takes only an address).**
 
 - **The Triggers page checks a send-message action's chat channel when you save it.**
