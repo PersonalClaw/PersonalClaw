@@ -29,6 +29,7 @@ import ast
 import importlib.util
 import json
 import os
+import py_compile
 import re
 import subprocess
 import sys
@@ -252,6 +253,73 @@ def test_generated_app_passes_the_apps_repo_checks(provider_type: str, tmp_path:
     _check_files(app)
     _check_license(app, manifest)
     _check_no_credentials(app)
+
+
+#: What a test run, a virtualenv, a UI build, a coverage run and an editor leave behind in an
+#: app's directory. None of it is the app, and every one of these has been committed by hand.
+_RESIDUE = (
+    ".pytest_cache/v/cache/nodeids",
+    ".mypy_cache/3.13/provider.meta.json",
+    ".venv/pyvenv.cfg",
+    "node_modules/left-pad/index.js",
+    "dist/index.js",
+    "build/lib/provider.py",
+    ".coverage",
+    ".env",
+    ".DS_Store",
+)
+
+
+@pytest.mark.parametrize("provider_type", ALL_TYPES)
+def test_a_scaffolded_app_commits_none_of_its_build_or_test_residue(
+    provider_type: str, tmp_path: Path
+) -> None:
+    """The leak this closes: an app scaffolded, tested in its own directory and committed with
+    ``git add -A`` published its ``__pycache__/``. Compiled bytecode records the absolute path
+    it was compiled from, so the author's home directory went public with the app.
+
+    Driven through git itself rather than by reading ``.gitignore``'s text, so a pattern that
+    is present but spelled so that it matches nothing reds here too. The bundle an app ships
+    (``ui/bundle/``) is the positive control: an ignore file that swallowed it would publish an
+    app with no UI.
+    """
+    app = _generate(provider_type, tmp_path)
+    # Bytecode written where a test run in the app's own directory writes it. The explicit
+    # `cfile` is deliberate: this suite's interpreter redirects its own bytecode elsewhere.
+    for py in sorted(app.glob("*.py")):
+        cache = app / "__pycache__" / f"{py.stem}.{sys.implementation.cache_tag}.pyc"
+        py_compile.compile(str(py), cfile=str(cache), doraise=True)
+    pyc = sorted(app.rglob("*.pyc"))
+    # Vacuity: the bytecode exists, and it really does carry this machine's path.
+    assert pyc, "compiling the app produced no bytecode, so nothing below is measured"
+    assert str(app).encode() in pyc[0].read_bytes()
+    for rel in _RESIDUE:
+        (app / rel).parent.mkdir(parents=True, exist_ok=True)
+        (app / rel).write_text("residue\n", encoding="utf-8")
+    shipped_ui = app / "ui" / "bundle" / "index.mjs"
+    shipped_ui.parent.mkdir(parents=True)
+    shipped_ui.write_text("export {}\n", encoding="utf-8")
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=app, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=app, check=True)
+    staged = set(
+        subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=app,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+    )
+
+    leaked = sorted(
+        path
+        for path in staged
+        if "__pycache__" in path or path.endswith(".pyc") or path in _RESIDUE
+    )
+    assert leaked == [], f"a first commit of a scaffolded app would publish: {leaked}"
+    assert set(SCAFFOLD_FILES) <= staged, sorted(set(SCAFFOLD_FILES) - staged)
+    assert "ui/bundle/index.mjs" in staged, "the ignore file swallowed the app's shipped UI bundle"
 
 
 def test_a_scaffold_without_an_author_never_names_the_app_as_the_holder(tmp_path: Path) -> None:

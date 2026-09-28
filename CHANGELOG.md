@@ -84,6 +84,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`personalclaw app new` writes a `.gitignore`, so an app's first commit no longer publishes its compiled bytecode and the path it was built on.**
+
 - **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
 - **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**
 - **`personalclaw update` in a container says you're on the newest release when nothing newer is published, and no update offers or installs an older release; release candidates compare in order.**

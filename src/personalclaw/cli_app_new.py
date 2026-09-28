@@ -22,10 +22,11 @@ Two halves, and the split is the point:
   the two vendor seams it was missing (issue #2577). The kit call ships with a negative
   test beside it, because a kit call that can never fail is the same silence relocated.
 
-Generated output is MIT-licensed, carries no credentials or placeholder secrets, and is
-validated against the REAL manifest validator (:meth:`AppManifest.validate`) before
-``scaffold`` returns — a generator that can emit an invalid app.json is a generator that
-ships broken apps.
+Generated output is MIT-licensed, carries no credentials or placeholder secrets, ignores
+what a build or a test run leaves behind (compiled bytecode records the absolute path it
+was compiled from), and is validated against the REAL manifest validator
+(:meth:`AppManifest.validate`) before ``scaffold`` returns — a generator that can emit an
+invalid app.json is a generator that ships broken apps.
 
 ``--from-template`` is the third path: fetch the published template repo instead of
 generating. It is the one part of this module that touches the network, so it is written
@@ -60,6 +61,7 @@ SCAFFOLD_FILES = (
     "test_provider.py",
     "README.md",
     "LICENSE",
+    ".gitignore",
 )
 
 _KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -567,6 +569,50 @@ def resolve_kit(type_name: str) -> ConformanceKit | None:
 #: cannot be mistaken for a real holder, and `app_cmd` says so out loud. Angle brackets are
 #: the MIT template's own convention for a field the licensor must complete.
 _UNFILLED_COPYRIGHT_HOLDER = "<your name>"
+
+#: What every scaffolded app keeps out of git: what a build, a test run or an editor leaves
+#: behind. The generated tests are meant to be run in the app's own directory, and the first
+#: ``git add -A`` after that stages ``__pycache__/`` unless something says not to. Compiled
+#: bytecode records the absolute path it was compiled from, so committing it publishes the
+#: author's home directory and machine layout. ``dist/`` is a UI's scratch build: the bundle an
+#: app ships is built into ``ui/bundle/``, which stays tracked.
+_GITIGNORE = """\
+# What a build, a test run or an editor leaves behind. Compiled bytecode records the absolute
+# path it was compiled from, so committing it publishes your home directory.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+
+# Virtual environments
+.venv/
+venv/
+
+# A UI's dependencies and scratch build (the shipped bundle is built into ui/bundle/)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets
+.env
+.env.local
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+*~
+*.swp
+"""
 
 
 def _license_text(holder: str, year: int) -> str:
@@ -1079,6 +1125,7 @@ def scaffold(
         "LICENSE": _license_text(
             author or _UNFILLED_COPYRIGHT_HOLDER, year or _dt.date.today().year
         ),
+        ".gitignore": _GITIGNORE,
     }
     target.mkdir(parents=True, exist_ok=True)
     for rel, content in files.items():
