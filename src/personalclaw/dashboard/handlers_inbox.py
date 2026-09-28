@@ -627,10 +627,9 @@ async def api_inbox_pair(request: web.Request) -> web.Response:
             {"error": "Only a message from someone new can pair its sender."}, status=409
         )
     name = item.sender_name if item.sender_name != item.sender_id else ""
-    try:
-        body = await request.json() if request.can_read_body else {}
-    except Exception:
-        body = {}
+    # No body is no answer yet, so it asks; a body that does not parse is refused, never read
+    # as a missing yes that asks again.
+    body = await json_object_body(request)
     if not confirm_granted(body):
         title, consent = sender_consent(provider, name or item.sender_id)
         return consent_required("sender", consent, title=title)

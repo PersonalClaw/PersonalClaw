@@ -301,17 +301,25 @@ async def test_a_chat_channels_stranger_is_not_held(tmp_path):
 
 def _app(state) -> web.Application:
     from personalclaw.dashboard import handlers_inbox as H
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application()
+    # The boundary the gateway installs (`server.py`): it answers a body the one reader refused.
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app.router.add_post("/api/inbox/send", H.api_inbox_send)
     app.router.add_post("/api/inbox/{id}/pair", H.api_inbox_pair)
     app["state"] = state
     return app
 
 
-async def _post(state, path: str, body: dict | None = None) -> tuple[int, dict]:
+async def _post(
+    state, path: str, body: dict | None = None, *, raw: bytes | None = None
+) -> tuple[int, dict]:
+    """POST ``body`` as JSON, or ``raw`` bytes exactly as given (a body that may not parse)."""
     async with TestClient(TestServer(_app(state))) as client:
-        resp = await client.post(path, json=body or {})
+        if raw is None:
+            resp = await client.post(path, json=body or {})
+        else:
+            resp = await client.post(path, data=raw, headers={"Content-Type": "application/json"})
         return resp.status, await resp.json()
 
 
@@ -361,6 +369,29 @@ async def test_pair_asks_your_consent_before_anyone_new_is_let_in(tmp_path):
     assert status == 400, body
     assert body["error"]["code"] == "confirmation_required"
     assert body["error"]["detail"]["title"] == "Let Pat Example talk to your agent on Email?"
+    assert ct.is_allowed_sender("email", STRANGER) is False
+    assert state._inbox_store.items[row.id].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_pair_with_no_body_at_all_asks_your_consent_too(tmp_path):
+    state, row = await _held(tmp_path)
+
+    status, body = await _post(state, f"/api/inbox/{row.id}/pair", raw=b"")
+
+    assert status == 400 and body["error"]["code"] == "confirmation_required", body
+    assert ct.is_allowed_sender("email", STRANGER) is False
+
+
+@pytest.mark.asyncio
+async def test_a_pair_whose_body_does_not_parse_is_refused_and_lets_no_one_in(tmp_path):
+    """🔴 Before: a body that did not parse was read as no answer, so a broken request was asked
+    for the consent again, as if it had given none, instead of being told it was broken."""
+    state, row = await _held(tmp_path)
+
+    status, body = await _post(state, f"/api/inbox/{row.id}/pair", raw=b'{"confirm": tru')
+
+    assert status == 400 and body["error"]["code"] == "invalid_json", body
     assert ct.is_allowed_sender("email", STRANGER) is False
     assert state._inbox_store.items[row.id].status == "pending"
 

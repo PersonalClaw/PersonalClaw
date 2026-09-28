@@ -82,14 +82,24 @@ def _asked(state: DashboardState) -> dict[str, Any]:
     return note
 
 
-async def _answer(state: DashboardState, body: dict[str, Any]) -> tuple[int, dict]:
+async def _answer(state: DashboardState, body: dict[str, Any] | bytes) -> tuple[int, dict]:
+    """POST ``body`` as JSON, or as the exact bytes given (a body that may not parse)."""
     from personalclaw.dashboard.handlers import api_notification_trust
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application()
+    # The boundary the gateway installs (`server.py`): it answers a body the one reader refused.
+    app = web.Application(middlewares=[request_boundary_middleware()])
     app.router.add_post("/api/notifications/trust", api_notification_trust)
     app["state"] = state
     async with TestClient(TestServer(app)) as client:
-        resp = await client.post("/api/notifications/trust", json=body)
+        if isinstance(body, bytes):
+            resp = await client.post(
+                "/api/notifications/trust",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
+        else:
+            resp = await client.post("/api/notifications/trust", json=body)
         return resp.status, await resp.json()
 
 
@@ -213,7 +223,13 @@ def test_no_emitter_raises_a_note_already_answered(tmp_path):
         ({"action": "allow"}, 400, "sender_answer_invalid"),
         ({"ts": "x", "action": "maybe"}, 400, "sender_answer_invalid"),
         ({"ts": "2026-01-01T00:00:00+00:00", "action": "deny"}, 404, "not_found"),
+        # Read by the one body reader: no body is no answer, and one that does not parse, or is
+        # not an object, is refused as that.
+        (b"", 400, "sender_answer_invalid"),
+        (b'{"ts": "x", "action": "allow"', 400, "invalid_json"),
+        (b'["allow"]', 400, "invalid_body"),
     ],
+    ids=["no-ts", "no-such-action", "no-such-note", "no-body", "not-json", "not-an-object"],
 )
 async def test_what_is_no_answer(tmp_path, body, status, code):
     got_status, got = await _answer(_state(tmp_path), body)

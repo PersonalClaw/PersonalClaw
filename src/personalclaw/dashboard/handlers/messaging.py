@@ -360,15 +360,11 @@ async def api_notification_trust(request: web.Request) -> web.Response:
     """
     from personalclaw import channel_trust
     from personalclaw.http_errors import consent_required, json_error
+    from personalclaw.request_validation import json_object_body
     from personalclaw.safety_flags import confirm_granted
 
     state: DashboardState = request.app["state"]
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
-    if not isinstance(body, dict):
-        return json_error("invalid_body", status=400)
+    body = await json_object_body(request)
     ts = str(body.get("ts") or "")
     answer = _SENDER_ANSWERS.get(str(body.get("action") or "").strip().lower(), "")
     if not ts or not answer:
