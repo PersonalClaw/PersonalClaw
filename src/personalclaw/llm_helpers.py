@@ -920,6 +920,10 @@ def _describe_unexplained_failure(exc: object) -> str:
     )
 
 
+#: The most of a failure's own words the sentence for an unrecognized failure carries.
+_OWN_WORDS_CAP = 500
+
+
 def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     """Turn a raw LLM-provider exception into a short, actionable user-facing line.
 
@@ -928,9 +932,15 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     'error', 'error': {'message': 'Your credit balance is too low…'}}``). Shown raw
     in the chat error bubble that's noise, not guidance. Map the common, recognizable
     classes — billing/credits, auth, rate-limit, model-not-found, overload — to a
-    concise hint; pass anything unrecognized through (trimmed) so we never HIDE a
-    real error, just clean up the ones we know. Pure string heuristics (provider SDKs
-    don't share a typed error taxonomy), matched on the lowercased message.
+    concise hint. Pure string heuristics (provider SDKs don't share a typed error
+    taxonomy), matched on the lowercased message.
+
+    **An unrecognized failure is never shown bare, and never hidden.** Its own words are an
+    SDK's, and they name no next step: relayed as the whole message, one terse SDK line or a
+    JSON dump was all a user had to go on. So it is said as a failure PersonalClaw does not
+    recognize, with the one step that holds for any failure, and its own words (trimmed) come
+    after that as the detail. A model app that knows the fix raises its own sentence instead
+    (the SDK's ``ProviderResolutionError``, below).
 
     Never returns an empty string: an exception with no message is described from its
     class instead (:func:`_describe_unexplained_failure`).
@@ -967,6 +977,18 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     surface-neutral and is the same words either way; with no member, every word is exactly the
     chat's.
     """
+    known = _known_failure_sentence(exc, room_member=room_member)
+    if known is not None:
+        return known
+    return (
+        "The turn failed with an error PersonalClaw doesn't recognize. Try again; if it keeps "
+        f"failing, check the gateway log. Details: {_own_words(exc)}"
+    )
+
+
+def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None:
+    """:func:`humanize_provider_error`'s sentence for a failure it recognizes, or ``None`` for
+    one that carries a message it recognizes nothing in."""
     from personalclaw.guardrails.failure import (
         NoModelAnswered,
         PromptExceedsWindow,
@@ -1079,8 +1101,13 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     for needles, friendly in _MAP:
         if any(_mentions(low, n) for n in needles):
             return friendly
-    # Unrecognized — return the raw text (trimmed) so no real error is hidden.
-    return raw if len(raw) <= 500 else raw[:500] + "…"
+    return None
+
+
+def _own_words(exc: object) -> str:
+    """A failure's own message, trimmed to :data:`_OWN_WORDS_CAP` characters."""
+    raw = str(exc or "").strip()
+    return raw if len(raw) <= _OWN_WORDS_CAP else raw[:_OWN_WORDS_CAP] + "…"
 
 
 def _mentions(text: str, needle: str) -> bool:
@@ -1105,9 +1132,11 @@ def failure_clause(exc: BaseException) -> str:
     without its closing stop, its first letter lowered when it starts a sentence ("The model
     provider…" → "the model provider…", while "HTTP 500" stays as it is), and cut at a word past
     :data:`_CLAUSE_CAP` characters. One reading of a failure, so a fallback's line and the
-    error the same failure shows cannot describe it differently.
+    error the same failure shows cannot describe it differently. For a failure that reading does
+    not recognize, the clause is the failure's own words — the detail the chat shows it with —
+    since "doesn't recognize" says nothing about what failed in a line that names each model.
     """
-    text = humanize_provider_error(exc).strip()
+    text = (_known_failure_sentence(exc) or _own_words(exc)).strip()
     first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].rstrip(".!?")
     if len(first) > _CLAUSE_CAP:
         first = first[:_CLAUSE_CAP].rsplit(" ", 1)[0] + "…"

@@ -576,8 +576,8 @@ class TestOneShotNativeStructuredOutput:
 
 
 class TestHumanizeProviderError:
-    """humanize_provider_error — clean, actionable text for known provider failures,
-    passthrough for the rest (never hide a real error)."""
+    """humanize_provider_error — clean, actionable text for known provider failures; for the
+    rest, what to do, with the failure's own words kept after it (never hide a real error)."""
 
     def test_billing_credits_mapped(self):
         raw = (
@@ -599,15 +599,30 @@ class TestHumanizeProviderError:
     def test_model_not_found_mapped(self):
         assert "model id" in humanize_provider_error(Exception("model not found: x")).lower()
 
-    def test_unrecognized_passes_through(self):
-        # A real, novel error must NOT be hidden — returned verbatim.
+    def test_an_unrecognized_failure_says_what_to_do_and_keeps_its_own_words(self):
+        """🔴 Red on main: the SDK's own line was the whole message, with nothing about what to
+        do. A real, novel error is still never hidden: its words come after the step, as the
+        detail."""
         raw = "some brand new failure mode nobody mapped"
-        assert humanize_provider_error(Exception(raw)) == raw
+        assert humanize_provider_error(Exception(raw)) == (
+            "The turn failed with an error PersonalClaw doesn't recognize. Try again; if it keeps "
+            f"failing, check the gateway log. Details: {raw}"
+        )
 
-    def test_overlong_unrecognized_is_trimmed(self):
+    def test_an_overlong_unrecognized_failure_keeps_a_trimmed_detail(self):
         raw = "x" * 900
         out = humanize_provider_error(Exception(raw))
-        assert len(out) <= 501 and out.endswith("…")
+        detail = out.split(" Details: ", 1)[1]
+        assert len(detail) == 501 and detail.endswith("…")
+
+    def test_a_fallback_line_names_an_unrecognized_failure_by_its_own_words(self):
+        """The fail-over line says what each model's failure WAS; "doesn't recognize" is not
+        that, so an unrecognized failure's clause is its own words, as before."""
+        from personalclaw.llm_helpers import failure_clause
+
+        assert failure_clause(Exception("connection refused by the model host")) == (
+            "connection refused by the model host"
+        )
 
     def test_none_safe(self):
         out = humanize_provider_error(None)

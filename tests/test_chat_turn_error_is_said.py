@@ -75,7 +75,9 @@ async def test_a_timed_out_turn_is_said_not_blank(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_message_bearing_error_still_reaches_the_user_verbatim(tmp_path):
-    # The falsifiability control: the fix only fills an EMPTY message. A real one is
-    # still shown as the provider said it, not replaced by a composed sentence.
+    # The falsifiability control: the fix only fills an EMPTY message. A real one still reaches
+    # the user as the provider said it — never replaced — after the sentence that says what it
+    # is and what to do, since an SDK's own words name no next step.
     content = await _run_failing_turn(tmp_path, RuntimeError("upstream said something specific"))
-    assert content == "upstream said something specific"
+    assert content.startswith("The turn failed with an error PersonalClaw doesn't recognize. ")
+    assert content.endswith(" Details: upstream said something specific")

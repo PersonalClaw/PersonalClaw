@@ -384,10 +384,14 @@ async def test_a_permission_error_names_access_to_the_model_not_the_api_key(raw)
     ],
 )
 async def test_a_status_code_inside_a_longer_number_is_not_that_status(raw):
-    """🔴 Red on main: each was read as a rate limit or a bad key."""
+    """🔴 Red on main: each was read as a rate limit or a bad key. Read as nothing it
+    recognizes, each is said as that, with its own words after the step."""
     from personalclaw.llm_helpers import humanize_provider_error
 
-    assert humanize_provider_error(RuntimeError(raw)) == raw
+    assert humanize_provider_error(RuntimeError(raw)) == (
+        "The turn failed with an error PersonalClaw doesn't recognize. Try again; if it keeps "
+        f"failing, check the gateway log. Details: {raw}"
+    )
 
 
 async def test_a_status_code_standing_alone_still_reads_as_one():

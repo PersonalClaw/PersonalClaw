@@ -806,7 +806,12 @@ def test_a_failed_turn_is_said_in_the_room_and_is_not_an_exchange(enabled):
     assert spoke == [] and _spoken(room.id) == []
     assert store.require_room(room.id).rounds_used == 0, "a failed turn is not an exchange"
     assert _notes(room.id) == [
-        ("analyst", "analyst could not take its turn. the provider died mid-turn")
+        (
+            "analyst",
+            "analyst could not take its turn. The turn failed with an error PersonalClaw doesn't "
+            "recognize. Try again; if it keeps failing, check the gateway log. Details: the "
+            "provider died mid-turn",
+        )
     ]
 
 

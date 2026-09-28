@@ -66,6 +66,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**
