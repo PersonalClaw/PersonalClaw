@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 
 // ── A streamed answer renders ONCE and WHOLE, whatever React batches and whenever it reloads ──
 //
@@ -265,17 +266,33 @@ describe('a reload in the middle of an answer', () => {
 
 // ── 3. the session-create remount ───────────────────────────────────────────────────────────
 
-/** Send the first message from a new chat, then remount on the created key — what the router
- *  does when `ensureSession` navigates. Returns the send's client stamp. */
+/** The page as the app's router holds it: `navigate` swaps the route at once, as `useHashRoute`
+ *  applies a replace. So the session-create remount happens when `ensureSession` navigates, as it
+ *  does in the app. Remounting it later, whenever the test next got round to it, kept the chat it
+ *  replaces alive and streaming for that long — on a loaded host, past a tick of that chat's own
+ *  stall reconciler, which then read the session beside the remount's read. */
+function Routed({ start, query }: { start: string; query: Record<string, string> }) {
+  const [route, setRoute] = useState({ sub: start, query })
+  const navigate = (path: string) => {
+    const [where, search = ''] = path.replace(/^#?\/?/, '').split('?')
+    setRoute({ sub: where.replace(/^chat\/?/, ''), query: Object.fromEntries(new URLSearchParams(search)) })
+  }
+  return (
+    <AppearanceProvider>
+      <ChatPage sub={route.sub} navigate={navigate} query={route.query} setQuery={() => {}} />
+    </AppearanceProvider>
+  )
+}
+
+/** Send the first message from a new chat, which remounts the page on the created key as the
+ *  send navigates to it. Returns the send's client stamp. */
 async function sendFromNewChat() {
   const user = userEvent.setup()
-  const view = render(page('new', { seed: 'Count, please.' }))
+  render(<Routed start="new" query={{ seed: 'Count, please.' }} />)
   await waitFor(() => expect(primaryAction()).toBe('Send message'))
   await user.click(screen.getByRole('button', { name: 'Send message' }))
   await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-  const ts = String(h.sendChat.mock.calls[0][2]?.client_ts)
-  view.rerender(page(SESSION))
-  return ts
+  return String(h.sendChat.mock.calls[0][2]?.client_ts)
 }
 
 describe("a new chat's first turn across the session-create remount", () => {
@@ -314,15 +331,38 @@ describe("a new chat's first turn across the session-create remount", () => {
 const PAST_THE_HOLD_MS = 4_300
 const wait = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)))
 
+/** How long a held answer may take to flow live: the hold bound, with room for a loaded host. A
+ *  ceiling on the wait, not a wait: the check below passes the moment the answer paints. */
+const FLOWS_LIVE_WITHIN_MS = 12_000
+
+/** `paintFrames` for inside `waitFor`, which runs its checks outside `act`: the frames' renders
+ *  land on React's own schedule, and the next check sees them. */
+function paintFramesUnwrapped(n = 30) {
+  for (let i = 0; i < n && rafQueue.length; i++) {
+    const due = rafQueue; rafQueue = []
+    rafClock += 20
+    due.forEach((cb) => cb(rafClock))
+  }
+}
+
+/** Paint frames on every check until `assert` holds. The checks run on `waitFor`'s interval alone:
+ *  it is given a node nothing renders into, because a check on every change to the page would
+ *  paint on every change, and painting changes the page, so the checks would run back to back and
+ *  never let the page's own timers fire. */
+const paintUntil = (assert: () => void, timeout: number) =>
+  waitFor(() => { paintFramesUnwrapped(); assert() }, { container: document.createElement('div'), timeout })
+
 describe('a session read slower than the hold', () => {
   it('lets the answer flow live, and repaints it once when the late snapshot lands', async () => {
     // The first turn of a new chat, which paints from its seed while the remount's read is out.
     const ts = await sendFromNewChat()
     await waitFor(() => expect(h.detailCalls).toHaveLength(1))
     for (const f of chunks(WHOLE, 1)) act(() => { deliver(f) })
-    await wait(PAST_THE_HOLD_MS)
-    paintFrames()
-    expect(screen.getAllByText(WHOLE), 'the frames stayed held behind the slow read').toHaveLength(1)
+    // The read outlasts the hold, so the hold runs out and the frames flow live: the answer paints
+    // from them before the read lands.
+    await paintUntil(() => {
+      expect(screen.queryAllByText(WHOLE), 'the frames stayed held behind the slow read').toHaveLength(1)
+    }, FLOWS_LIVE_WITHIN_MS)
     act(() => { deliver(DONE) })
     expect(primaryAction()).toBe('Send message')
     // The late snapshot was taken mid-answer, so it describes the turn as running and holds only
