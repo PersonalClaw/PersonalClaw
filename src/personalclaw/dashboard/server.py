@@ -2069,27 +2069,42 @@ async def start_dashboard(
 
     app.on_startup.append(_model_providers_startup)
 
-    async def _resume_interrupted_reindex_startup(app_: web.Application) -> None:
-        """Auto-resume an INTERRUPTED or model-swap-orphaned embedding re-index.
+    async def _embedding_watch_startup(app_: web.Application) -> None:
+        """Watch the embedding binding (``embedding_reindex.watch_embedding_binding``).
 
-        A gateway that died mid-re-index (crash/kill/OOM) leaves knowledge items with text but no
-        embedding, or an old wrong-width vector, and memory vectors of the previous model; an
-        update that started recording each memory vector's model leaves every memory vector naming
-        none. Either way the store is read by keyword against the model bound now, with no
-        recovery short of a rebind. On boot, once that model is resolvable,
-        ``resume_interrupted_reindex`` detects both and finishes the re-index. Runs AFTER
-        _model_providers_startup so the embedder is wired; fully best-effort — never blocks or
-        crashes startup."""
+        Its first pass is the start's check: a gateway that died mid-re-index (crash/kill/OOM)
+        leaves knowledge items with text but no embedding, or an old wrong-width vector, and memory
+        vectors of the previous model; an update that started recording each memory vector's model
+        leaves every memory vector naming none. Either way the store is read by keyword against the
+        model bound now, and the check finishes the re-index. After that it takes the one path
+        whenever the binding changes by a way this process did not make and whenever a model that
+        was not ready is due another look, so a model bound before its provider was up — at this
+        start or later — is re-indexed once it is. In the background, so a slow provider's probe
+        never holds the start; runs AFTER _model_providers_startup, so its first pass sees the
+        providers that registers."""
+        registry = app_["state"].embedding_reindex()
+        if registry.watch is None:
+            from personalclaw.dashboard.handlers.embedding_reindex import watch_embedding_binding
+
+            registry.watch = asyncio.ensure_future(watch_embedding_binding(app_))
+
+    app.on_startup.append(_embedding_watch_startup)
+
+    async def _embedding_watch_shutdown(app_: web.Application) -> None:
+        """Stop the watch on gateway stop, so it does not outlive the gateway that started it."""
+        registry = app_["state"].embedding_reindex()
+        task, registry.watch = registry.watch, None
+        if task is None:
+            return
+        task.cancel()
         try:
-            from personalclaw.dashboard.handlers.embedding_reindex import (
-                resume_interrupted_reindex,
-            )
-
-            resume_interrupted_reindex(app_)
+            await task
+        except asyncio.CancelledError:
+            pass
         except Exception:
-            logger.exception("Failed to check/resume interrupted embedding re-index")
+            logger.debug("embedding binding watch shutdown failed", exc_info=True)
 
-    app.on_startup.append(_resume_interrupted_reindex_startup)
+    app.on_cleanup.append(_embedding_watch_shutdown)
 
     # Chunk the items that predate chunking from the graph-maintenance host, NOT a
     # boot hook. Chunk-level retrieval only reaches items that HAVE chunks, and a hook only

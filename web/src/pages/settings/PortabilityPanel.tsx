@@ -172,10 +172,12 @@ export function PortabilityPanel() {
       const r = await api.durabilityImport(file, 'merge')
       if (r.ok) {
         const what = r.summary?.items?.join(', ') || 'nothing to merge'
+        // The server's own sentence: a merge into a running gateway is picked up whole once it restarts.
+        const restart = r.restart ? ` ${r.restart}` : ''
         // Both channels, deliberately: the toast ANNOUNCES it (an on-demand `role="status"` span is not
         // reliably observed), and the line beside the button is what is still readable a minute later.
-        setImportResult(`Import complete: ${what}.`)
-        notify(`Import complete: ${what}`, 'success')
+        setImportResult(`Import complete: ${what}.${restart}`)
+        notify(`Import complete: ${what}.${restart}`, 'success')
       } else notify(`Import failed: ${r.error?.message || 'the server gave no reason'}`, 'error')
     } catch (e) {
       notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`, 'error')

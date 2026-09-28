@@ -4319,9 +4319,12 @@ class KnowledgeStore:
         the write-that-reported-success-and-did-not-land failure RET-4 exists to remove.
 
         Chunk ids are preserved (an UPDATE, not a delete+insert), so citations and any other
-        reference to a chunk id survive a re-index. The ANN index is re-synced per affected
-        item afterwards: the vectors changed under unchanged ids, and the index's
-        row-count reconciliation cannot see that — the counts still match.
+        reference to a chunk id survive a re-index. Each item is written as soon as every one
+        of its passages in the pass has been embedded (:meth:`_write_reembedded_chunks`): the
+        ANN index and the bound external store first, its rows last. A pass that stops
+        anywhere — the gateway stopped, the machine off — leaves the rows it re-stamped with
+        both copies already holding their new vectors, and the rest still stale, which the next
+        pass re-embeds.
         """
         fp = active_fingerprint()
         if fp is None:
@@ -4346,7 +4349,6 @@ class KnowledgeStore:
         rows = self.db.execute(sql, params).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
-        touched: set[str] = set()
 
         from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
         from personalclaw.knowledge.embedder import floats_to_bytes
@@ -4366,6 +4368,10 @@ class KnowledgeStore:
                 "fingerprint": str(fp),
             }
         size = batch_size_from_config()
+        # An item's new vectors wait here until every one of its passages in the pass has been
+        # embedded, so each item is written once, whole. The rows are in item order, so only the
+        # item the next group goes on with can still be waiting for more.
+        waiting: dict[str, dict[str, bytes]] = {}
 
         for start in range(0, total, size):
             group = rows[start : start + size]
@@ -4383,46 +4389,15 @@ class KnowledgeStore:
                     vectors[i] = vec
             for r, vec in zip(group, vectors):
                 if vec:
-                    # The fingerprint is written in the SAME statement as the vector, so a
-                    # crash can never leave a new vector wearing the old model's name.
-                    self.db.execute(
-                        "UPDATE chunks SET embedding = ?, embedding_model_id = ?, "
-                        "embedding_provider = ? WHERE id = ?",
-                        (floats_to_bytes(vec), fp.model_id, fp.provider, r["id"]),
-                    )
-                    reembedded += 1
-                    touched.add(str(r["item_id"]))
+                    waiting.setdefault(str(r["item_id"]), {})[r["id"]] = floats_to_bytes(vec)
                 else:
                     failed += 1
                 done += 1
                 if on_progress is not None:
                     on_progress(done, total)
-        self.db.commit()
-
-        # Re-sync the ANN index for every item whose vectors changed. ``sync_item`` deletes
-        # the item's chunk keys from every dimension table and re-inserts the live blobs, so
-        # a same-dimension swap (where the row COUNTS match and reconciliation therefore
-        # sees nothing wrong) still ends with the index holding the new vectors.
-        #
-        # The SELECT carries `_EXTERNAL_ROW_COLUMNS`, not the two columns ``sync_item`` needs,
-        # because the external mirror below reads the same rows positionally over eight.
-        for item_id in sorted(touched):
-            live = self.db.execute(
-                f"SELECT {_EXTERNAL_ROW_COLUMNS} FROM chunks "  # noqa: S608 — literal constant
-                "WHERE item_id = ? ORDER BY chunk_index",
-                (item_id,),
-            ).fetchall()
-            self.vec_index.sync_item(item_id, [(r["id"], r["embedding"]) for r in live])
-            # KBVS-1/#3139 — the FOURTH chunk-vector write site, and the only one that rewrites
-            # vectors under UNCHANGED chunk ids. Because the ids are preserved, an external store
-            # left alone here keeps the PREVIOUS model's vectors under ids whose local rows have
-            # just been re-stamped fresh — so the freshness join, which reads the LOCAL row,
-            # then certifies those stale vectors as comparable. That is confident wrong recall
-            # with a citation attached, not degraded recall, which is why this mirrors in the
-            # same loop as the local index rather than in a later reconciliation.
-            _external_replace_item(item_id, live)
-        if touched:
-            self.db.commit()
+            goes_on = str(rows[start + size]["item_id"]) if start + size < total else None
+            for item_id in [i for i in waiting if i != goes_on]:
+                reembedded += self._write_reembedded_chunks(item_id, waiting.pop(item_id), fp)
 
         return {
             "reembedded": reembedded,
@@ -4431,6 +4406,44 @@ class KnowledgeStore:
             "stale_remaining": count_stale_chunks(self.db, fp),
             "fingerprint": str(fp),
         }
+
+    def _write_reembedded_chunks(
+        self, item_id: str, vectors: dict[str, bytes], fp: EmbeddingFingerprint
+    ) -> int:
+        """Write one item's re-embedded passage vectors (``{chunk id: vector}``), made by *fp*.
+
+        The copies first, the rows last. The ANN index and the bound external store are each
+        given the item's passages as they are about to be — these vectors, the rest as they are
+        — and only then do the rows take the vectors, each with the model's name in the same
+        statement. The row is what says a vector can be compared (the freshness join reads the
+        row), and the chunk ids do not change, so a copy written after its rows could be left
+        holding the previous model's vector under an id whose row says the new model: the index's
+        row-count reconciliation cannot see that, and an external store's hits, scored against
+        the previous model's vectors, would be taken as the new model's. A stop between the two
+        instead leaves rows that still read stale, with their old vectors, which the next pass
+        re-embeds and writes again. Returns the rows written.
+        """
+        live = [
+            tuple(r)
+            for r in self.db.execute(
+                f"SELECT {_EXTERNAL_ROW_COLUMNS} FROM chunks "  # noqa: S608 — literal constant
+                "WHERE item_id = ? ORDER BY chunk_index",
+                (item_id,),
+            ).fetchall()
+        ]
+        about_to_be = [
+            (*r[:4], vectors[r[0]], *r[5:8], fp.model_id, fp.provider) if r[0] in vectors else r
+            for r in live
+        ]
+        self.vec_index.sync_item(item_id, [(r[0], r[4]) for r in about_to_be])
+        _external_replace_item(item_id, about_to_be)
+        written = [(vectors[r[0]], fp.model_id, fp.provider, r[0]) for r in live if r[0] in vectors]
+        self.db.executemany(
+            "UPDATE chunks SET embedding = ?, embedding_model_id = ?, embedding_provider = ? "
+            "WHERE id = ?",
+            written,
+        )
+        return len(written)
 
     def reindex_external_vector_store(self, *, force: bool = False) -> dict:
         """Push the WHOLE corpus's chunk vectors into the bound external store (#3139).

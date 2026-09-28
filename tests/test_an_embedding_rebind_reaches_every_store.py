@@ -508,7 +508,7 @@ def test_the_gateway_start_re_embeds_what_an_update_or_a_stop_left(recorded, tmp
     model, since none names one yet."""
     from personalclaw.config.loader import config_dir
     from personalclaw.dashboard.embedding_reindex import ReindexRegistry
-    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+    from personalclaw.dashboard.handlers.embedding_reindex import reindex_for_binding
 
     state = _main_state(config_dir())
     _bind(A)
@@ -524,7 +524,7 @@ def test_the_gateway_start_re_embeds_what_an_update_or_a_stop_left(recorded, tmp
     state.embedding_reindex = lambda: jobs
 
     async def _start() -> dict[str, Any]:
-        job = resume_interrupted_reindex({"state": state})
+        job = await reindex_for_binding({"state": state})
         assert job is not None, "a re-index starts"
         for _ in range(500):
             if job.status != "running":
@@ -545,7 +545,7 @@ def test_the_gateway_start_leaves_whole_stores_alone(recorded, tmp_path):
     """Nothing to re-embed, nothing started: the check runs at every start."""
     from personalclaw.config.loader import config_dir
     from personalclaw.dashboard.embedding_reindex import ReindexRegistry
-    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+    from personalclaw.dashboard.handlers.embedding_reindex import reindex_for_binding
 
     state = _main_state(config_dir())
     _bind(A)
@@ -553,7 +553,7 @@ def test_the_gateway_start_leaves_whole_stores_alone(recorded, tmp_path):
     jobs = ReindexRegistry()
     state.embedding_reindex = lambda: jobs
 
-    assert resume_interrupted_reindex({"state": state}) is None
+    assert asyncio.run(reindex_for_binding({"state": state})) is None
     assert jobs.list() == []
 
 
@@ -605,7 +605,9 @@ async def _put_embedding(state, model: str) -> None:
 
     req.json = _json  # type: ignore[method-assign]
     assert (await mr.api_models_active_set(req)).status == 200
-    for task in list(getattr(mr, "_BINDING_REINDEXES", ())):
+    from personalclaw.dashboard.handlers import embedding_reindex as er
+
+    for task in list(er.BINDING_CHECKS):
         await task
     for _ in range(500):
         running = state.embedding_reindex().active()
@@ -661,7 +663,7 @@ def test_the_gateway_start_embeds_the_memories_no_model_embedded(recorded, tmp_p
     while nothing was bound stayed unembedded however often the gateway restarted."""
     from personalclaw.config.loader import config_dir
     from personalclaw.dashboard.embedding_reindex import ReindexRegistry
-    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+    from personalclaw.dashboard.handlers.embedding_reindex import reindex_for_binding
 
     state = _main_state(config_dir())
     _main_service(state).write_episodic(OSPREY, source="user_explicit")  # nothing bound
@@ -670,7 +672,7 @@ def test_the_gateway_start_embeds_the_memories_no_model_embedded(recorded, tmp_p
     state.embedding_reindex = lambda: jobs
 
     async def _start() -> dict[str, Any]:
-        job = resume_interrupted_reindex({"state": state})
+        job = await reindex_for_binding({"state": state})
         assert job is not None, "a re-index starts"
         for _ in range(500):
             if job.status != "running":
@@ -757,7 +759,7 @@ def test_the_gateway_start_finishes_a_reindex_a_stop_left_in_its_passage_phase(r
     search, until someone re-indexed by hand."""
     from personalclaw.config.loader import config_dir
     from personalclaw.dashboard.embedding_reindex import ReindexRegistry
-    from personalclaw.dashboard.handlers.embedding_reindex import resume_interrupted_reindex
+    from personalclaw.dashboard.handlers.embedding_reindex import reindex_for_binding
     from personalclaw.knowledge.embedder import create_embedder_from_config
 
     state = _main_state(config_dir())
@@ -772,7 +774,7 @@ def test_the_gateway_start_finishes_a_reindex_a_stop_left_in_its_passage_phase(r
     state.embedding_reindex = lambda: jobs
 
     async def _start() -> dict[str, Any]:
-        job = resume_interrupted_reindex({"state": state})
+        job = await reindex_for_binding({"state": state})
         assert job is not None, "the start resumes the re-index"
         for _ in range(500):
             if job.status != "running":
@@ -882,3 +884,237 @@ def test_a_rebuild_on_another_thread_never_pairs_its_ids_with_the_index_a_search
 
     assert [(r["text"], r["cosine_sim"]) for r in found] == [(KESTREL, 0.0)], found
     store.close()
+
+
+# ── a re-embed that stops keeps what it did, and leaves nothing that reads as done ──────────
+
+
+def test_a_memory_re_embed_keeps_what_it_wrote_as_it_goes(recorded, tmp_path, monkeypatch):
+    """🔴 Red before: the pass committed its memories once, at its end, so a stop partway — the
+    gateway stopped, the machine off — kept none of them, and each re-index began again from the
+    first memory. Read from another connection while the pass runs, as a restart would read it."""
+    import sqlite3
+
+    from personalclaw import vector_memory
+    from personalclaw.config.loader import config_dir
+
+    state = _main_state(config_dir())
+    _bind(A)
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    _main_service(state).write_episodic(KESTREL, source="user_explicit")
+    store = state.context_builder.memory.vector_store
+    monkeypatch.setattr(vector_memory, "_REEMBED_COMMIT_EVERY", 1)
+    _bind(C)
+    on_disk: list[int] = []
+
+    def _read_from_another_connection(_done: int, _total: int) -> None:
+        conn = sqlite3.connect(store.db_path)
+        try:
+            (count,) = conn.execute(
+                "SELECT COUNT(*) FROM episodic_memories WHERE embedding_model = ?",
+                (f"{ENTRY}:{C}",),
+            ).fetchone()
+        finally:
+            conn.close()
+        on_disk.append(count)
+
+    assert store.reembed_stale(on_progress=_read_from_another_connection)["reembedded"] == 2
+    assert on_disk == [1, 2]
+
+
+def test_an_index_file_a_stopped_re_embed_left_is_not_read_as_the_new_models(recorded, tmp_path):
+    """🔴 Red before: the memory index file was trusted when it held the right memories at the
+    right width. A re-embed to another model of the same width that stopped after writing its
+    memories and before saving the index left a file of the previous model's vectors that reads
+    exactly so, and every search after the restart was scored against those."""
+    import sqlite3
+
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("faiss")
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    db = tmp_path / "memory.db"
+    _bind(A)
+    store = VectorMemoryStore(db_path=db)
+    store.init()
+    assert store.write_episodic(OSPREY, source="user_explicit")
+    assert store.write_episodic(KESTREL, source="user_explicit")
+    store.close()  # the index file holds A's vectors
+    _bind(C)
+    # What the stopped re-embed wrote: C's vector on every memory, and no index saved after it.
+    conn = sqlite3.connect(db)
+    for memory_id, text in conn.execute("SELECT id, text FROM episodic_memories").fetchall():
+        vector = np.array(_vector(C, text), dtype=np.float32)
+        conn.execute(
+            "UPDATE episodic_memories SET embedding = ?, embedding_model = ? WHERE id = ?",
+            ((vector / np.linalg.norm(vector)).tobytes(), f"{ENTRY}:{C}", memory_id),
+        )
+    conn.commit()
+    conn.close()
+
+    reopened = VectorMemoryStore(db_path=db)
+    reopened.init()
+    found = reopened.search_episodic(query_embedding=_vector(C, "osprey"), mmr=False)
+    reopened.close()
+
+    assert [(r["text"], r["cosine_sim"]) for r in found][:1] == [(OSPREY, 1.0)], found
+
+
+# ── every change of the model takes the one path to the re-index ─────────────────────────
+
+
+async def _until(condition, *, what: str) -> None:
+    """Wait for *condition* as long as a re-index of a few memories can take."""
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{what} never came")
+
+
+def _finished(jobs) -> list[tuple[str, str]]:
+    return [(job.model, job.status) for job in jobs.list() if job.status != "running"]
+
+
+async def _watching(state, until) -> None:
+    """Run the gateway's watch on the binding (:func:`watch_embedding_binding`, at a pass every
+    10 ms) for as long as *until* takes, then stop it as the gateway's stop does."""
+    import contextlib
+
+    from personalclaw.dashboard.handlers.embedding_reindex import watch_embedding_binding
+
+    watch = asyncio.ensure_future(watch_embedding_binding({"state": state}, every=0.01))
+    try:
+        await until()
+    finally:
+        watch.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watch
+
+
+def test_removing_the_provider_embedding_is_bound_to_re_embeds_with_the_next_model(
+    recorded, tmp_path, monkeypatch
+):
+    """🔴 Red before: removing the provider whose model Embedding was bound to bound the next
+    model in its chain and started nothing, so every memory kept the removed model's vector and
+    was read by keyword until someone re-indexed by hand."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.config.loader import config_dir, config_path
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+    from personalclaw.dashboard.handlers import embedding_reindex as er
+    from personalclaw.dashboard.handlers import providers
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+    from personalclaw.providers.use_cases import load_active_models, save_active_models
+
+    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    monkeypatch.setattr(providers, "_refresh_media_registries", lambda: None)
+    following = f"{ENTRY}-next"
+    get_default_registry().register_entry(
+        ProviderEntry(name=following, type=ENTRY, model="", options={"endpoint": "http://two"})
+    )
+    config_path().write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {"name": ENTRY, "type": ENTRY, "model": ""},
+                    {"name": following, "type": ENTRY, "model": ""},
+                ]
+            }
+        )
+    )
+    save_active_models({**load_active_models(), "embedding": [f"{ENTRY}:{A}", f"{following}:{C}"]})
+    state = _main_state(config_dir())
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    store = state.context_builder.memory.vector_store
+
+    async def _remove() -> None:
+        app = web.Application()
+        app["state"] = state
+        request = make_mocked_request(
+            "DELETE", f"/api/model-providers/{ENTRY}", match_info={"name": ENTRY}, app=app
+        )
+        assert (await providers.api_provider_delete(request)).status == 200
+        for task in list(er.BINDING_CHECKS):
+            await task
+        await _until(lambda: jobs.active() is None, what="the re-index's end")
+
+    asyncio.run(_remove())
+
+    assert _finished(jobs) == [(f"{following}:{C}", "done")]
+    assert store.memory_stats()["embedded_stale"] == 0
+    assert (C, OSPREY) in [(model, text) for model, _endpoint, text in recorded]
+
+
+def test_a_binding_another_process_wrote_is_re_embedded_without_a_restart(recorded, tmp_path):
+    """🔴 Red before: a binding reached the re-index only when this gateway saved it. One another
+    process wrote — ``personalclaw gateway --seed-local-model`` binds before the gateway it starts
+    is up, and a hand edit binds whenever — waited for the next start, read by keyword."""
+    import time
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+    state = _main_state(config_dir())
+    _bind(A)
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    store = state.context_builder.memory.vector_store
+
+    async def _another_process_binds() -> None:
+        await _until(
+            lambda: not jobs.check_due(f"{ENTRY}:{A}", time.monotonic()), what="the first look"
+        )
+        assert jobs.list() == [], "the memory is the bound model's: nothing to do"
+        _bind(C)  # a write to the binding's file, and no call into this process
+        await _until(lambda: _finished(jobs), what="the re-index")
+
+    asyncio.run(_watching(state, _another_process_binds))
+
+    assert _finished(jobs) == [(f"{ENTRY}:{C}", "done")]
+    assert store.memory_stats()["embedded_stale"] == 0
+
+
+def test_a_model_bound_before_it_can_embed_is_re_embedded_once_it_can(
+    recorded, tmp_path, monkeypatch
+):
+    """🔴 Red before: a model bound while it could not embed yet — still downloading, its provider
+    not up — was looked at once, when it was bound. Its re-index was refused as not ready and
+    nothing looked again until the gateway restarted, so every memory stayed read by keyword."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.dashboard import embedding_reindex as reindex_jobs
+    from personalclaw.dashboard.embedding_reindex import ReindexRegistry
+
+    monkeypatch.setattr(reindex_jobs, "RECHECK_FIRST_SECS", 0.0)  # look again at every pass
+    ready = {C: False}
+    embed = _Recorded.embed
+
+    async def _embed_once_ready(self, inputs):
+        if not ready.get(self._model, True):
+            raise ConnectionError("the model is still downloading")
+        return await embed(self, inputs)
+
+    monkeypatch.setattr(_Recorded, "embed", _embed_once_ready)
+    state = _main_state(config_dir())
+    _bind(A)
+    _main_service(state).write_episodic(OSPREY, source="user_explicit")
+    jobs = ReindexRegistry()
+    state.embedding_reindex = lambda: jobs
+    store = state.context_builder.memory.vector_store
+    _bind(C)
+
+    async def _the_model_becomes_ready() -> None:
+        await _until(lambda: jobs.waiting(f"{ENTRY}:{C}"), what="a look at the model")
+        assert jobs.list() == [], "nothing starts while the model cannot embed"
+        assert store.memory_stats()["embedded_stale"] == 1
+        ready[C] = True
+        await _until(lambda: _finished(jobs), what="the re-index")
+
+    asyncio.run(_watching(state, _the_model_becomes_ready))
+
+    assert _finished(jobs) == [(f"{ENTRY}:{C}", "done")]
+    assert store.memory_stats()["embedded_stale"] == 0

@@ -14,11 +14,12 @@ it; neither is ever an installed app's business, and least privilege here is the
 own session or nothing. The plan does not name a caller for these routes, so this is the
 *restrictive* reading of that silence, stated rather than assumed.
 
-**Confirmation contract.** Both destructive verbs are two-step by construction:
+**Confirmation contract.** Both writing verbs are two-step by construction:
 omitting ``mode`` returns the PLAN and changes nothing (the shape
-``api_durability_restore`` already established), and ``mode=replace`` additionally
-requires ``confirm: true`` — the one verb that deletes a user's current state should not
-be reachable by a single mistyped field.
+``api_durability_restore`` already established). A **replace** is not reachable here at
+all, from either verb (:func:`_replace_refused`): it rewrites state this gateway holds
+open, so it runs at a terminal with the gateway stopped. A **merge** only fills in what
+the home lacks, and runs here.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from aiohttp.multipart import BodyPartReader
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
-from personalclaw.safety_flags import confirm_granted, confirm_granted_query
+from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,28 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
         tmp.close()
         Path(tmp.name).unlink(missing_ok=True)
         raise
+
+
+def _replace_refused(request: web.Request, operation: str, *, what: str, path: str) -> web.Response:
+    """The one answer both routes give a replace: ``409 gateway_running``, naming the command that
+    does it.
+
+    A replace moves the live home aside and writes the incoming one in its place, under a gateway
+    that holds that state open — databases, caches and stores it writes back. Serving this request
+    is proof the gateway is up, so the answer is known without asking the network (a socket probe
+    got it wrong on any non-default port). ``personalclaw restore`` takes a snapshot or an export
+    archive, with the gateway stopped, and there is no ``force`` over HTTP: overriding the guard
+    is a local operator decision at a terminal. *path* is quoted for a shell, or a placeholder.
+    """
+    _audit_api(request, operation, "denied", "gateway_running")
+    return json_error(
+        "gateway_running",
+        message=(
+            f"a replace {what} rewrites state this gateway holds open; stop the gateway "
+            f"and run `personalclaw restore {path} --mode replace` instead"
+        ),
+        status=409,
+    )
 
 
 def _reject_app(request: web.Request) -> web.Response | None:
@@ -255,10 +278,12 @@ async def api_durability_export(request: web.Request) -> web.Response:
 async def api_durability_import(request: web.Request) -> web.Response:
     """POST /api/durability/import — validate, then apply, an export zip (§6).
 
-    Multipart with a ``file`` field. ``mode`` (query or form) is ``merge`` | ``replace``;
-    **omitting it validates and returns the manifest, changing nothing** — the same
-    plan-first contract ``api_durability_restore`` uses, because both verbs can rewrite
-    a home. ``mode=replace`` additionally requires ``confirm=true``.
+    Multipart with a ``file`` field. **Omitting ``mode`` validates and returns the manifest,
+    changing nothing** — the same plan-first contract the archive restore uses. ``mode=merge``
+    fills in what the home lacks. ``mode=replace`` is refused, as the archive restore refuses
+    one and for the same reason (:func:`_replace_refused`): the message names the command
+    that replaces the home from the archive, with the gateway stopped. It is refused before
+    the upload is read, so a replace never even stages the archive here.
 
     Accepts MANIFEST v1, v2 and v3. A v3 archive is checksum-VERIFIED before anything is
     written (its manifest declares per-member sha256); v1/v2 carry no hashes, so they
@@ -270,7 +295,6 @@ async def api_durability_import(request: web.Request) -> web.Response:
     from personalclaw.portability import apply_import_zip, validate_import_zip
 
     mode = request.query.get("mode")
-    confirm = confirm_granted_query(request.query)
     if mode is not None:
         mode = mode.strip().lower()
         if mode not in ("merge", "replace"):
@@ -278,15 +302,9 @@ async def api_durability_import(request: web.Request) -> web.Response:
                 {"error": {"code": "bad_mode", "message": "mode must be merge or replace"}},
                 status=400,
             )
-        if mode == "replace" and not confirm:
-            return web.json_response(
-                {
-                    "error": {
-                        "code": "confirm_required",
-                        "message": ("mode=replace overwrites this home; resend with confirm=true"),
-                    }
-                },
-                status=409,
+        if mode == "replace":
+            return _replace_refused(
+                request, "durability.import", what="import", path="<export.zip>"
             )
 
     zip_path, err_resp = await _read_upload_file(request)
@@ -313,8 +331,16 @@ async def api_durability_import(request: web.Request) -> web.Response:
             "allowed",
             f"mode={mode},items={len(summary.get('items', []))}",
         )
+        from personalclaw.snapshot import MERGE_RESTART_NOTE
+
         return web.json_response(
-            {"ok": True, "applied": True, "summary": summary, "manifest": manifest}
+            {
+                "ok": True,
+                "applied": True,
+                "summary": summary,
+                "manifest": manifest,
+                "restart": MERGE_RESTART_NOTE,
+            }
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("durability import failed")
@@ -420,25 +446,19 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
     archaeology").
 
     **Omitting `mode` returns the PLAN and changes nothing.** That is the safe default for an
-    endpoint that can overwrite a home: a caller must see what would happen and then ask again
-    with an explicit
-    mode. `mode=replace` is therefore always deliberate, never inferred — and it now also
-    requires ``confirm: true``, so the one verb that deletes the user's current state takes two
-    independent signals, not one field.
+    endpoint that writes into a home: a caller must see what would happen and then ask again
+    with an explicit mode, so a write is always deliberate, never inferred — and ``mode=merge``
+    also requires ``confirm: true``, one signal to look and two to write.
 
-    🔴 **`mode=replace` IS REFUSED HERE, UNCONDITIONALLY** — not delegated to
-    `snapshot.restore_apply`'s guard. DISCOVERED BY DRIVING IT (DAS-10): a
+    🔴 **`mode=replace` IS REFUSED HERE, UNCONDITIONALLY**, by the rule the import refuses one
+    by (:func:`_replace_refused`). Found by driving it: a
     `mode=replace&confirm=true` request to a gateway on ``--port 10188`` returned **200 and
-    performed the replace**, over the live home, while serving the request. Cause:
-    `snapshot._is_gateway_running()` probes ``DASHBOARD_PORT`` — the *configured* port — so on
-    any non-default port the guard probes a socket nobody is listening on and reports "not
-    running". The docstring it inherited claimed the opposite.
+    performed the replace**, over the live home, while serving the request, because a socket
+    probe of the *configured* port reported "not running". This handler executing IS proof the
+    gateway is up, so refusing here is exact and cannot be defeated by a port.
 
-    A socket probe is the wrong instrument from inside the process anyway: this handler
-    executing IS proof the gateway is up, so the answer is known without asking the network.
-    Refusing here is exact and cannot be defeated by a port. There is no ``--force`` mirror on
-    purpose: overriding it is a local operator decision at a terminal (`personalclaw restore
-    <archive> --mode replace --force`), never an HTTP parameter.
+    ``mode=merge`` merges (`snapshot.restore_merge`). It used to reach a restore that probed for
+    a running gateway first, and found this one: the Merge-restore button refused every time.
 
     Replaces ``POST /api/durability/restore``: the archive id moves into the path, which is
     where §6 puts it and what makes the archive browser's rows addressable.
@@ -476,27 +496,14 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
                 status=400,
             )
         if mode == "replace":
-            # See the docstring: the gateway is provably up (we are it), so a replace here
-            # would rewrite state this process holds open. Refused before the confirm check
-            # so the message names the real reason rather than sending the caller to add a
-            # flag that still cannot work.
-            _audit_api(request, "durability_restore:replace", "denied", "gateway_running")
+            # Refused before the confirm check, so the message names the real reason rather
+            # than sending the caller to add a flag that still cannot work.
             archive = _snapshot_archive(raw)
             # Quoted, and only for an archive this directory holds: the message is a command a
             # user will paste into a shell, and the id came in on the request.
             path = shlex.quote(str(archive)) if archive else "<archive>"
-            return web.json_response(
-                {
-                    "error": {
-                        "code": "gateway_running",
-                        "message": (
-                            "a replace restore rewrites state this gateway holds open; stop "
-                            f"the gateway and run `personalclaw restore {path} --mode replace` "
-                            "instead"
-                        ),
-                    }
-                },
-                status=409,
+            return _replace_refused(
+                request, "durability_restore:replace", what="restore", path=path
             )
         if not confirm_granted(body):
             # `merge` is non-destructive (copy-if-missing) but still writes into the live
@@ -553,15 +560,15 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
     def _run() -> dict:
         if mode is None:
             return snap_mod.restore_plan(candidate, components)
-        return snap_mod.restore_apply(candidate, mode, components)
+        return snap_mod.restore_merge(candidate, components)
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(None, _run)
     except Exception as exc:  # noqa: BLE001
-        # A raise here is a CRASH, not a refusal: restore_apply reports its designed
-        # refusals (gateway running, bad archive shape) as ok:false VALUES on the result
-        # path below. So this answers 500 with guidance, and the exception text stays in
-        # the log and audit row — internals are not user copy.
+        # A raise here is a CRASH, not a refusal: restore_merge reports its designed
+        # refusal (a bad archive shape) as an ok:false VALUE on the result path below. So
+        # this answers 500 with guidance, and the exception text stays in the log and audit
+        # row — internals are not user copy.
         logger.warning("durability restore failed", exc_info=True)
         _audit_api(request, "durability.restore", "error", str(exc))
         return json_error(
@@ -611,7 +618,14 @@ async def api_durability_conflicts(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     from personalclaw.durability import conflicts as conflicts_mod
+    from personalclaw.durability import inventory as inv
     from personalclaw.durability import service
+
+    def _listed(rec: conflicts_mod.ConflictRecord) -> dict:
+        # `arrival`: what taking the other machine's version makes of it here, for a store that
+        # brings another home's rows in by a rule, so the confirmation can say it before the write.
+        entry = inv.by_id(rec.entry_id)
+        return {**rec.to_dict(), "arrival": entry.arrival if entry is not None else ""}
 
     surface = str(request.query.get("surface", "") or "").strip()
     status = str(request.query.get("status", "") or "").strip()
@@ -633,7 +647,7 @@ async def api_durability_conflicts(request: web.Request) -> web.Response:
         # encryption tri-state and is the one shape the panel's sync section reads.
         sync = dict(service.status().get("sync") or {})
         return {
-            "conflicts": [rec.to_dict() for rec in selected[-limit:]],
+            "conflicts": [_listed(rec) for rec in selected[-limit:]],
             "truncated": len(selected) > limit,
             "counts": {
                 "total": len(everything),
@@ -728,6 +742,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "unknown_entry": 409,
             "unsupported_kind": 409,
             "no_version": 409,
+            "not_a_record": 409,
             "write_failed": 500,
         }.get(outcome.code, 400)
         _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:{outcome.code}")
@@ -744,6 +759,9 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "written": outcome.written,
             "removed": outcome.removed,
             "conflict": outcome.record,
+            # What the version written is like here, for a store that brings another machine's
+            # in by a rule (an automation arrives switched off); "" otherwise.
+            "note": outcome.note,
         }
     )
 

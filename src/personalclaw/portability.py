@@ -46,6 +46,7 @@ from personalclaw.snapshot import (
     _do_replace,
     _merge_crons,
     _merge_event_triggers,
+    _merge_hooks,
     _merge_memory,
     _merge_notifications,
     _merge_triggers,
@@ -960,13 +961,13 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 shutil.copy2(str(snap / "learning.db"), str(pc / "learning.db"))
                 summary["items"].append("learning staging (copied)")
 
+            # The automations and hooks an archive brings arrive by the rule a row from another
+            # home arrives by — switched off, with no grant and nothing of what happened to them
+            # there — into a home without a store too: copied in whole, they came in switched on
+            # and granted, to run here on the next event.
             if (snap / "triggers.json").is_file():
-                if (pc / "triggers.json").is_file():
-                    _merge_triggers(snap / "triggers.json", pc / "triggers.json")
-                    summary["items"].append("automations (merged)")
-                else:
-                    shutil.copy2(str(snap / "triggers.json"), str(pc / "triggers.json"))
-                    summary["items"].append("automations (copied)")
+                _merge_triggers(snap / "triggers.json", pc / "triggers.json")
+                summary["items"].append("automations (merged)")
 
             if (snap / "event_triggers.json").is_file():
                 if (pc / "event_triggers.json").is_file():
@@ -985,11 +986,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     summary["items"].append("crons (copied)")
 
             if (snap / "hooks.json").is_file():
-                if not (pc / "hooks.json").is_file():
-                    shutil.copy2(str(snap / "hooks.json"), str(pc / "hooks.json"))
-                    summary["items"].append("hooks (copied)")
-                else:
-                    summary["items"].append("hooks (skipped, already exists)")
+                summary["items"].append(
+                    f"hooks ({_merge_hooks(snap / 'hooks.json', pc / 'hooks.json')} merged)"
+                )
 
             if (snap / "config.json").is_file() and not (pc / "config.json").is_file():
                 shutil.copy2(str(snap / "config.json"), str(pc / "config.json"))

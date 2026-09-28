@@ -27,6 +27,12 @@ with SSE progress, mirroring :mod:`personalclaw.dashboard.model_downloads`:
 A single job at a time (re-indexing twice concurrently would race the stores);
 ``start`` returns the running job if one is already in flight. Progress frames
 publish on the per-job SSE hub keyed ``reindex:<id>``.
+
+Every change of the embedding model reaches the job by ONE path,
+``handlers.embedding_reindex.reindex_for_binding``, and the registry remembers what that path last
+settled (:meth:`ReindexRegistry.settle`, :meth:`ReindexRegistry.check_again`), so the gateway's
+watch on the binding knows when to take it again: a binding that changed, and a model that had
+work waiting and could not yet do it.
 """
 
 from __future__ import annotations
@@ -45,6 +51,14 @@ logger = logging.getLogger(__name__)
 def registry_key(job_id: str) -> str:
     """The SSE hub key for a re-index job's progress stream."""
     return f"reindex:{job_id}"
+
+
+#: How soon a model with work waiting is looked at again after it could not do it — not ready,
+#: or another model's re-index still running — and the longest that wait grows to. A local model
+#: that finishes downloading, or a provider that comes back, is found within these, and a model
+#: that stays unreachable is probed a few times an hour rather than on every pass.
+RECHECK_FIRST_SECS = 30.0
+RECHECK_MAX_SECS = 600.0
 
 
 @dataclass
@@ -109,6 +123,48 @@ class ReindexRegistry:
         self._running: dict[str, _Running] = {}
         self._sse = SseRegistry()
         self._counter = 0
+        # What the one path last settled: the model it started a re-index for or found nothing
+        # waiting for (`""` names none bound), and when to look again at one it could not.
+        # `None` until the first check, so the gateway's start is always one.
+        self._settled: str | None = None
+        self._recheck_at = 0.0
+        self._recheck_delay = RECHECK_FIRST_SECS
+        #: The gateway's watch on the binding (`handlers.embedding_reindex`), stopped with it.
+        self.watch: asyncio.Task | None = None  # type: ignore[type-arg]
+
+    # ── what the one path last settled ──
+
+    def check_due(self, ref: str, now: float) -> bool:
+        """Whether the model bound now (*ref*, ``""`` for none) needs the one path taken: it is not
+        the model last settled, or a look again that was asked for is due. Never while a re-index
+        runs: what it leaves is what the next check counts."""
+        if self.active() is not None:
+            return False
+        if ref != self._settled:
+            return True
+        return bool(self._recheck_at) and now >= self._recheck_at
+
+    def waiting(self, ref: str) -> bool:
+        """Whether *ref* is the model already waiting to be looked at again, whose wait the log
+        has said."""
+        return self._settled == ref and bool(self._recheck_at)
+
+    def settle(self, ref: str) -> None:
+        """*ref*'s re-index is started, or it had nothing waiting: nothing to do until the binding
+        changes."""
+        self._settled = ref
+        self._recheck_at = 0.0
+        self._recheck_delay = RECHECK_FIRST_SECS
+
+    def check_again(self, ref: str, now: float) -> None:
+        """*ref* has work waiting and could not do it now: look again after a wait that doubles
+        each time the same model is still waiting, from :data:`RECHECK_FIRST_SECS` to
+        :data:`RECHECK_MAX_SECS`."""
+        if not self.waiting(ref):
+            self._recheck_delay = RECHECK_FIRST_SECS
+        self._settled = ref
+        self._recheck_at = now + self._recheck_delay
+        self._recheck_delay = min(self._recheck_delay * 2, RECHECK_MAX_SECS)
 
     @property
     def sse(self) -> SseRegistry:

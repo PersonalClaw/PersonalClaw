@@ -109,8 +109,11 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
 
     Body: ``{"endpoint": "http://…:11434"}``. Mirrors ``--seed-local-model``: writes
     the ``providers[]`` entry and the chat binding with NO credential, only after a
-    live re-probe confirms a bindable model.
+    live re-probe confirms a bindable model. When the endpoint serves an embedding model it
+    binds Embedding too, and that change takes the one path every change of the embedding
+    model takes (``embedding_reindex.reindex_for_binding``).
     """
+    from personalclaw.embedding_providers.registry import BoundEmbedding
     from personalclaw.seed_local_model import bind_local_model
 
     try:
@@ -130,11 +133,18 @@ async def api_local_model_bind(request: web.Request) -> web.Response:
             status=400,
         )
 
+    embedding_before = BoundEmbedding.ref()
     result = await asyncio.to_thread(bind_local_model, endpoint=endpoint)
     if result.ok:
         from personalclaw.llm.registry import sync_entries_from_config
 
         sync_entries_from_config()
+        if BoundEmbedding.ref() != embedding_before:
+            from personalclaw.dashboard.handlers.embedding_reindex import (
+                schedule_reindex_for_binding,
+            )
+
+            schedule_reindex_for_binding(request.app)
         sel().log_api_access(
             caller=_caller(request),
             operation="onboarding.local_model.bind",

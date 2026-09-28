@@ -1198,8 +1198,16 @@ async def api_provider_update(request: web.Request) -> web.Response:
 
 
 async def api_provider_delete(request: web.Request) -> web.Response:
-    """DELETE /api/model-providers/{name} — remove a provider from config."""
+    """DELETE /api/model-providers/{name} — remove a provider from config.
+
+    Removing the provider whose model Embedding is bound to binds the next model in its chain, so
+    what the removed one embedded is another model's now: the removal takes the one path every
+    change of the embedding model takes (``embedding_reindex.reindex_for_binding``).
+    """
+    from personalclaw.embedding_providers.registry import BoundEmbedding
+
     name = request.match_info["name"]
+    embedding_before = BoundEmbedding.ref()
 
     def _delete(data: dict) -> None:
         providers = data.get("providers")
@@ -1241,6 +1249,12 @@ async def api_provider_delete(request: web.Request) -> web.Response:
 
     get_connection_board().forget(name)
     _refresh_media_registries()
+    if BoundEmbedding.ref() != embedding_before:
+        from personalclaw.dashboard.handlers.embedding_reindex import (
+            schedule_reindex_for_binding,
+        )
+
+        schedule_reindex_for_binding(request.app)
 
     return web.json_response({"ok": True})
 

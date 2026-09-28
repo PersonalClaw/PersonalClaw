@@ -4,12 +4,17 @@ Switching the active embedding model invalidates every stored vector. A POST
 here re-resolves the (already-applied) active embedding model, gates on its
 availability, and starts a background re-index of the knowledge store and every
 memory store with SSE progress. Mirrors the download-job route shape.
+
+Every change of the model reaches the re-index by one path, :func:`reindex_for_binding`,
+whether it is saved here, comes from a provider's removal, is written by another process, or
+waits for the model to be ready; :func:`watch_embedding_binding` takes it whenever it is due.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -132,35 +137,88 @@ async def api_reindex_stream(request: web.Request) -> web.StreamResponse:
     )
 
 
-def resume_interrupted_reindex(app) -> Any:
-    """At the gateway's start, run the re-index an interrupted or orphaned one left to do.
+async def reindex_for_binding(app) -> Any:
+    """THE path every change of the embedding model takes to the re-index: embed what the model
+    bound now has not.
 
-    Knowledge: an item the model bound now has not embedded — no vector, one another model wrote,
-    or one written before items recorded their model — or one at another width than the model
-    writes (the gateway died between a model change and the end of its re-index), and a passage
-    vector another model wrote (it died in the re-index's passage phase, after the items). Memory: a
-    vector in any memory store that is not the bound model's — another model's, from the same
-    kind of stop, or one written before each vector recorded its model — and a memory no model
-    embedded, written while none was bound. Until embedded they are read by keyword.
+    Whichever way the model changed — Embedding bound in Settings → Models or by any caller of
+    ``PUT /api/models/active/embedding``, a provider removed so the next model in the chain is
+    bound instead, a binding another process wrote (``--seed-local-model``, an edit by hand), or
+    the gateway starting over what a stop or an update left — this counts what the model bound
+    now has not embedded, in the knowledge store and every memory store, and starts the one
+    re-index for it. Knowledge: an item with no vector, one another model wrote or one written
+    before items recorded their model, one at another width than the model writes, and a passage
+    vector another model wrote. Memory: a vector that is not the bound model's, and a memory no
+    model embedded. Until embedded they are read by keyword.
 
-    Returns the job started, or None. Blocking (it probes the model once), so the start runs it
-    before serving; a binding runs :func:`reindex_after_binding` instead. Best-effort: it logs and
-    returns on any refusal.
+    A model that cannot embed yet — not downloaded, its provider not up, its app not loaded — is
+    looked at again later (``ReindexRegistry.check_again``, taken by
+    :func:`watch_embedding_binding`), so its re-index runs once it is ready rather than at the
+    next restart. The probe and the counts run off the event loop. Returns the job started, or
+    None, and never raises: the change it follows has already been saved.
     """
-    return _start_pending(app, _pending_reembed(app))
+    from personalclaw.embedding_providers.registry import BoundEmbedding
 
-
-async def reindex_after_binding(app) -> Any:
-    """Once Embedding is bound to a model (``PUT /api/models/active/embedding``), embed what it
-    has not: every memory no model embedded joins semantic search then, not at the next re-index
-    someone starts. The probe and the counts run off the event loop. Returns the job, or None,
-    and never raises: the binding it follows has already been saved.
-    """
+    registry = app["state"].embedding_reindex()
     try:
-        return _start_pending(app, await asyncio.to_thread(_pending_reembed, app))
-    except Exception:  # noqa: BLE001 — the start and the next re-index retry; the log says why
-        logger.warning("The re-index after an Embedding binding could not start", exc_info=True)
+        pending = await asyncio.to_thread(_pending_reembed, app)
+        job = _start_pending(app, pending, said=registry.waiting(pending.model))
+    except Exception:  # noqa: BLE001 — looked at again, and the log says why
+        logger.warning("The embedding re-index check failed; it is tried again", exc_info=True)
+        registry.check_again(BoundEmbedding.ref() or "", time.monotonic())
         return None
+    waiting = pending.knowledge > 0 or pending.passages > 0 or pending.memory > 0
+    if not waiting or (job is not None and job.model == pending.model):
+        registry.settle(pending.model)
+    else:
+        # Not ready, refused, or another model's re-index is running: its end is not this one.
+        registry.check_again(pending.model, time.monotonic())
+    return job
+
+
+#: The checks a change of the binding made in this process runs (:func:`schedule_reindex_for_
+#: binding`), held until they finish — a bare task can be collected — and what a caller that must
+#: see one through awaits.
+BINDING_CHECKS: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def schedule_reindex_for_binding(app) -> None:
+    """Take the one path now, in the background: what a change of the embedding binding made in
+    this process calls — a binding saved, a provider removed — so its re-index starts at once
+    rather than at the watch's next pass. A no-op for an app with no re-index registry."""
+    state = app.get("state") if hasattr(app, "get") else None
+    if state is None or not callable(getattr(state, "embedding_reindex", None)):
+        return
+    task = asyncio.ensure_future(reindex_for_binding(app))
+    BINDING_CHECKS.add(task)
+    task.add_done_callback(BINDING_CHECKS.discard)
+
+
+#: How often the gateway's watch reads the binding (one small file read; no probe unless due).
+WATCH_SECS = 30.0
+
+
+async def watch_embedding_binding(app, *, every: float = WATCH_SECS) -> None:
+    """The gateway's watch on the embedding binding, from its start to its stop.
+
+    Takes :func:`reindex_for_binding` at once — the start's check, for what a stop or an update
+    left — and then whenever the model bound now is not the one it last settled, or a look again
+    it asked for is due (``ReindexRegistry.check_due``). Reading the binding is a file read, so the
+    watch sees a change nothing in this process made, such as a binding another process wrote, and
+    it probes a model only when one of those is so.
+    """
+    from personalclaw.embedding_providers.registry import BoundEmbedding
+
+    registry = app["state"].embedding_reindex()
+    while True:
+        try:
+            if registry.check_due(BoundEmbedding.ref() or "", time.monotonic()):
+                await reindex_for_binding(app)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one failed pass must not end the watch
+            logger.warning("The embedding binding watch could not read the binding", exc_info=True)
+        await asyncio.sleep(every)
 
 
 @dataclass(frozen=True)
@@ -205,18 +263,21 @@ def _pending_reembed(app) -> _Pending:
     )
 
 
-def _start_pending(app, pending: _Pending) -> Any:
-    """Start the re-index *pending* calls for, on the event loop's thread; None when none is."""
+def _start_pending(app, pending: _Pending, *, said: bool = False) -> Any:
+    """Start the re-index *pending* calls for, on the event loop's thread; None when none is.
+
+    *said*: the model is already waiting to be ready and the log has said so, so each look again
+    after that is not another warning."""
     from personalclaw.dashboard.handlers.memory import _get_provider
 
     knowledge = pending.knowledge > 0 or pending.passages > 0
     if not knowledge and pending.memory <= 0:
         return None  # nothing bound, or every store is whole (or empty)
     if not pending.ready:
-        logger.warning(
+        (logger.debug if said else logger.warning)(
             "Embedding re-index needed (%d knowledge item(s), %d passage vector(s), %d memory "
             "vector(s)), but the bound embedding model (%s) isn't ready: they stay "
-            "keyword-searchable until it is.",
+            "keyword-searchable until it is, and the re-index runs once it is.",
             pending.knowledge,
             pending.passages,
             pending.memory,

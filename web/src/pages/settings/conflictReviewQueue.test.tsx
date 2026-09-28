@@ -43,8 +43,22 @@ function conflict(over: Partial<DurabilityConflict> = {}): DurabilityConflict {
     proposal_error: '',
     resolution: '',
     resolved_at: '',
+    arrival: '',
     ...over,
   }
+}
+
+/** An automation both machines changed: the store brings another machine's in switched off. */
+const ARRIVAL = 'An automation from another machine arrives switched off, without what happened to it there. Switching it on here asks first for what it runs.'
+function automationConflict(): DurabilityConflict {
+  return conflict({
+    entry_id: 'triggers',
+    entity_id: 'clock:morning-digest',
+    domain: 'automation',
+    local_row: { id: 'clock:morning-digest', name: 'Morning digest', spec: { kind: 'cron', expr: '0 8 * * *' } },
+    remote_row: { id: 'clock:morning-digest', name: 'Morning digest', spec: { kind: 'cron', expr: '0 7 * * *' } },
+    arrival: ARRIVAL,
+  })
 }
 
 function queue(over: Partial<DurabilityConflicts> = {}): DurabilityConflicts {
@@ -88,7 +102,7 @@ function stubPanel(conflicts: () => Promise<DurabilityConflicts>) {
   vi.spyOn(api, 'durabilityConflicts').mockImplementation(conflicts)
   resolveCall = vi.spyOn(api, 'resolveDurabilityConflict').mockResolvedValue({
     ok: true, choice: 'take_remote', id: 'c0ffee1234567890', written: 1, removed: 0,
-    conflict: conflict({ status: 'resolved', resolution: 'take_remote' }),
+    conflict: conflict({ status: 'resolved', resolution: 'take_remote' }), note: '',
   })
 }
 
@@ -187,6 +201,43 @@ describe('resolving is confirmed, and never silent', () => {
     const go = Array.from(dialog.querySelectorAll('button')).find((b) => /write it/i.test(b.textContent ?? ''))
     fireEvent.click(go!)
     await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
+  })
+
+  it('keeping this machine’s version says nothing is written', async () => {
+    // It writes nothing: the row is kept as it is now, with what changed here since the conflict
+    // was found. The dialog said it "will be written", which is what the server used to do with a
+    // copy from the moment of detection, undoing those changes.
+    stubPanel(() => Promise.resolve(queue()))
+    mount()
+    await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /keep this machine/i }))
+    const text = (await screen.findByRole('alertdialog')).textContent ?? ''
+    expect(text).toMatch(/stays in tasks as it is; nothing is written/)
+    expect(text).not.toMatch(/will be written/)
+  })
+
+  it('taking the other machine’s automation says it arrives switched off, before and after', async () => {
+    stubPanel(() => Promise.resolve(queue({ conflicts: [automationConflict()] })))
+    resolveCall.mockResolvedValue({
+      ok: true, choice: 'take_remote', id: 'c0ffee1234567890', written: 1, removed: 0,
+      conflict: automationConflict(), note: ARRIVAL,
+    })
+    const toasts: string[] = []
+    const onToast = (e: Event) => { toasts.push(String((e as CustomEvent<{ message: string }>).detail.message)) }
+    window.addEventListener('ne:toast', onToast)
+    try {
+      mount()
+      await waitFor(() => expect(screen.getByText('clock:morning-digest')).toBeTruthy())
+      fireEvent.click(screen.getByRole('button', { name: /take the other machine/i }))
+      const dialog = await screen.findByRole('alertdialog')
+      expect(dialog.textContent ?? '').toContain(ARRIVAL)
+      const go = Array.from(dialog.querySelectorAll('button')).find((b) => /write it/i.test(b.textContent ?? ''))
+      fireEvent.click(go!)
+      await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
+      await waitFor(() => expect(toasts.some((t) => t.includes(ARRIVAL))).toBe(true))
+    } finally {
+      window.removeEventListener('ne:toast', onToast)
+    }
   })
 })
 

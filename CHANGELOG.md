@@ -76,6 +76,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw stop` needs neither `lsof` nor `ps`, stops only this home's gateway and waits for it to exit, and `restart` never starts a second gateway beside one it could not stop.**
 
 - **On a host without `ps`, the container image included, an app update names the processes still running its previous version.**
+- **Sync brings another machine's automations and hooks into a home that has its own, and a run on either machine is not a conflict.**
+
+- **Keeping this machine's version of a sync conflict leaves it as it is.**
+
+- **An import in Settings → Import / Export merges; a replace, which rewrites what the running gateway holds open, runs from `personalclaw restore <archive> --mode replace` with the gateway stopped.**
+
+- **Merging a snapshot in Settings → Backups runs, where the gateway it runs in used to refuse it.**
+
+- **`personalclaw restore` takes an export archive as well as a snapshot.**
+
+- **Searching your chats as you type reads a bounded amount per keystroke, and a chat found by reading it shows why it matched.**
+
+- **Every change of the embedding model re-embeds what it has not: its provider removed, a local model bound in setup, a binding another process wrote, and a model not ready yet, once it is.**
+
+- **A re-embed that stops partway keeps what it did, and leaves no search index holding the previous model's vectors.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
@@ -356,6 +371,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **What a run recorded shows under the schedule panel's Run button at full strength.**
 
 ### Security
+
+- **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

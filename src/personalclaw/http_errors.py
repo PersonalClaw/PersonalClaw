@@ -144,6 +144,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # refusals travel as ok:false result VALUES, never through these codes ──
     "import_failed": "A snapshot import failed. The gateway log carries the failure detail.",
     "restore_failed": "A restore attempt failed. The gateway log carries the failure detail.",
+    # ── what only a stopped gateway may do: the dashboard's import and restore refuse a
+    # replace with it, and the message names the command that does it at a terminal ──
+    "gateway_running": (
+        "The operation rewrites state the running gateway holds open; run it at a terminal "
+        "with the gateway stopped."
+    ),
     # ── API version negotiation (dashboard/api_version_gate.py) ──
     # The `error` object additionally carries client_version, server_version,
     # min_supported_version and upgrade ("client"|"server") — a refusal that named

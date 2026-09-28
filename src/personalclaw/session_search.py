@@ -1030,6 +1030,13 @@ def stats() -> dict:
 #: The newest chats the direct read covers when the index finds nothing, or is unavailable.
 SCAN_WINDOW = 500
 
+#: How much of those newest chats that read takes, by the size of their transcripts: the newest,
+#: whole, for as long as the next one still fits. A search runs on every pause in typing, and the
+#: window used to be read whole however large its chats were — 500 of them on every keystroke that
+#: found nothing. At what a direct read costs (:data:`LONG_READ_BYTES`), this is about 50 ms a
+#: search; asking for the rest reads every chat regardless.
+SCAN_READ_BYTES = 8_000_000
+
 
 @dataclass
 class Answer:
@@ -1084,9 +1091,11 @@ def search(
     counts the chats it could not look in whole — those not in the index yet, and the long ones
     past that bound — and ``rest`` reads exactly those directly: the one way a search is
     complete while the index is still being built, or past the bound. When nothing is found,
-    the newest :data:`SCAN_WINDOW` chats are read directly as well, which also matches inside
-    words; with no index at all, that window is all a search reads unless ``rest`` asks for
-    every chat.
+    the newest :data:`SCAN_WINDOW` chats are read directly as well, as far as
+    :data:`SCAN_READ_BYTES` goes (:func:`_newest_within`), which also matches inside words; with
+    no index at all, that window is all a search reads unless ``rest`` asks for every chat. A
+    chat a direct read found carries the passage where it was said, marked, as an index hit
+    does (``history.match_snippet``).
     """
     text = (query or "").strip()
     listed = [
@@ -1101,7 +1110,7 @@ def search(
     home = len(text) >= MIN_QUERY_CHARS and log.is_home_log()
     conn = _connect() if home else None
     if conn is None:
-        window = chats if rest else chats[:SCAN_WINDOW]
+        window = chats if rest else _newest_within(log, chats[:SCAN_WINDOW])
         read = log.search_sessions(text, _EVERY, keys=window) if text else []
         return Answer(read[:limit], "scan", len(window), of, matched=len(read))
     INDEXER.ensure_checked(wait=3.0)
@@ -1142,7 +1151,7 @@ def search(
     if hits or read:
         source = "index+scan" if hits and read else "scan" if read else "index"
         return Answer(_merged(hits, read, limit), source, covered, of, index, len(found))
-    window = [key for key in chats[:SCAN_WINDOW] if key not in set(whole)]
+    window = _newest_within(log, [key for key in chats[:SCAN_WINDOW] if key not in set(whole)])
     read = log.search_sessions(text, _EVERY, keys=window)
     found |= {meta["key"] for meta in read}
     covered += len(set(window) & unread)
@@ -1155,6 +1164,24 @@ def search(
 #: ceiling (:data:`_MAX_SESSION_CHARS`) stays: it bounds the index's size and what a save
 #: re-reads, and these chats are few.
 LONG_READ_BYTES = 8_000_000
+
+
+def _newest_within(log, keys: list[str]) -> list[str]:
+    """The newest of *keys* (they come newest first) that a search reads whole on its own: in
+    order, while their transcripts fit in :data:`SCAN_READ_BYTES`, stopping at the first that
+    does not. So they are the newest, which is what an answer that did not read the rest says it
+    read. A chat with no transcript to read is passed over."""
+    chosen: list[str] = []
+    spent = 0
+    for key in keys:
+        size = _source_stamp(log, key)[1]
+        if size < 0:
+            continue
+        if spent + size > SCAN_READ_BYTES:
+            break
+        chosen.append(key)
+        spent += size
+    return chosen
 
 
 def _read_whole(log, keys: list[str]) -> list[str]:

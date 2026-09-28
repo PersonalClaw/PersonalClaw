@@ -745,6 +745,50 @@ class ScriptHook:
         )
 
 
+#: A hook's fields that belong to one home, not to what the hook IS: whether it runs there, the
+#: owner's yes to what it runs there (``capabilities``, `triggers.grants`), and what happened when
+#: it ran. The hook counterpart of ``triggers.store.RUNTIME_FIELDS``, for the same two rules: a hook
+#: from another home arrives without them (:func:`hook_arrived_from_another_home`), and two homes
+#: never compare them (:func:`hook_what_it_is`). Every `ScriptHook` field is here or part of what
+#: the hook is, and a test fails on one that is neither.
+HOOK_RUNTIME_FIELDS: tuple[str, ...] = (
+    "enabled",
+    "capabilities",
+    "last_run",
+    "last_status",
+    "run_count",
+)
+
+
+def hook_what_it_is(row: dict) -> dict:
+    """A ``hooks.json`` row as a person made it: without :data:`HOOK_RUNTIME_FIELDS`, and without
+    the provider-config keys that loosen whether its agent asks (`automation_posture`), which like
+    a grant are the owner's yes in one home. What two homes compare, and all that a hook from
+    another home brings with it."""
+    from personalclaw.automation_posture import loosened_keys
+
+    kept = {name: value for name, value in row.items() if name not in HOOK_RUNTIME_FIELDS}
+    config = kept.get("provider_config")
+    if isinstance(config, dict):
+        dropped = loosened_keys(config)
+        if dropped:
+            kept["provider_config"] = {k: v for k, v in config.items() if k not in dropped}
+    return kept
+
+
+def hook_arrived_from_another_home(row: dict) -> dict:
+    """A hook from another home, as it is brought into this one: what it is
+    (:func:`hook_what_it_is`), switched off. A hook runs on the agent's own events — every prompt,
+    every tool call — so one from elsewhere runs here only once someone here switches it on, which
+    asks first for what it runs (``dashboard.handlers.triggers._switch_on_grant``). The rule every
+    way one arrives applies: a snapshot or archive merge (``snapshot._merge_hooks``), a device sync
+    (the ``hooks`` inventory entry's ``arrives``), and a sync conflict resolved with the other
+    machine's version or a drafted merge."""
+    arrived = hook_what_it_is(row)
+    arrived["enabled"] = False
+    return arrived
+
+
 @dataclass
 class ScriptHookResult:
     """Result of executing a script hook."""

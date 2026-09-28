@@ -158,19 +158,34 @@ def _step(workflow: dict[str, Any]) -> dict[str, Any]:
     return inline if isinstance(inline, dict) else workflow
 
 
-def _drop_loosened_keys(trigger: Any) -> None:
+def without_loosened_keys(workflow: Any) -> Any:
+    """*workflow* without the step keys that loosen whether its agent asks
+    (`automation_posture.loosened_keys`): a copy, or *workflow* itself when its step holds none.
+
+    What a row that reaches a home without the owner writing it keeps of its step (:func:`_step`)
+    — an import here, and a row from another home (`triggers.store.what_it_is`): a tightening
+    value stays, and so does every key that is not a posture key.
+    """
     from personalclaw.automation_posture import loosened_keys
 
-    workflow = getattr(trigger, "workflow", None)
     if not isinstance(workflow, dict):
-        return
+        return workflow
     step = _step(workflow)
     config = step.get("config")
     if not isinstance(config, dict):
-        return
+        return workflow
     dropped = loosened_keys(config)
-    if dropped:
-        step["config"] = {k: v for k, v in config.items() if k not in dropped}
+    if not dropped:
+        return workflow
+    kept = {**step, "config": {k: v for k, v in config.items() if k not in dropped}}
+    return {**workflow, "inline": kept} if step is not workflow else kept
+
+
+def _drop_loosened_keys(trigger: Any) -> None:
+    workflow = getattr(trigger, "workflow", None)
+    kept = without_loosened_keys(workflow)
+    if kept is not workflow:
+        trigger.workflow = kept
 
 
 # ── the review item ──

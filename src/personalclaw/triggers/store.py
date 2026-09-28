@@ -454,10 +454,11 @@ class TriggerStore(TriggerStoreProvider):
         return payload
 
 
-#: Fields that belong to what has HAPPENED to a trigger in one home, not to what it IS — the
-#: fields a snapshot merge and a device sync drop from a row they bring in from another home
-#: (:func:`arrived_from_another_home`), so an armed fire or a run count from elsewhere never
-#: arrives here as if it had happened here.
+#: Fields that belong to one home rather than to what a trigger IS: what has HAPPENED to it there,
+#: and what the owner decided about it there. A row brought in from another home arrives without
+#: them (:func:`arrived_from_another_home`), and two homes never compare them (:func:`what_it_is`),
+#: so an armed fire, a run count or a switch from elsewhere is neither taken in as if it had
+#: happened here nor read as an edit to review.
 #:
 #: Every `Trigger` field is either here or part of what the trigger is, and
 #: `test_trigger_runtime_fields.py` fails on a field that is neither, so a new stamp cannot ride a
@@ -484,36 +485,48 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     # Whether an automation is switched on is a fact about what has happened TO a trigger — a
     # person turned it on or off — and another home's switch is not this one's (#461).
     "enabled",
+    # The owner's yes to what its action runs (`triggers.grants`). A yes is given where the owner is
+    # shown what runs, so another home's is not this one's: an automation that arrives without one
+    # is asked about here when it is switched on, as the Triggers page's switch asks of any row
+    # that holds no grant.
+    "capabilities",
 )
 
 
-def arrived_from_another_home(row: dict[str, Any]) -> dict[str, Any]:
-    """A trigger row from another home, as it is brought into this one: the rule a snapshot merge
-    (``snapshot._merge_triggers``) and a device sync (:func:`store_arrived_from_another_home`)
-    both apply.
+def what_it_is(row: dict[str, Any]) -> dict[str, Any]:
+    """A trigger row as a person made it: without :data:`RUNTIME_FIELDS`, and without the step
+    keys that loosen whether its agent asks (``legacy_import.without_loosened_keys``), which like a
+    grant are the owner's yes in one home.
 
-    Without :data:`RUNTIME_FIELDS`, so an armed fire, a run count, a park or an alert dedupe from
-    elsewhere never arrives as if it had happened here; and switched off, so it does not fire
-    until someone here switches it on (the boot sweep arms it then). Both halves are needed:
-    dropping the fields discards what the OTHER home said, and ``enabled: False`` states what THIS
-    home means. With the field merely absent, ``parse_trigger``'s default (on) would decide.
+    What two homes compare to tell whether either changed a trigger, so a fire, a switch or a yes
+    in one home is never an edit the other must review; and all that a row from another home
+    brings with it (:func:`arrived_from_another_home`).
     """
-    arrived = {name: value for name, value in row.items() if name not in RUNTIME_FIELDS}
+    from personalclaw.triggers.legacy_import import without_loosened_keys
+
+    kept = {name: value for name, value in row.items() if name not in RUNTIME_FIELDS}
+    if "workflow" in kept:
+        kept["workflow"] = without_loosened_keys(kept["workflow"])
+    return kept
+
+
+def arrived_from_another_home(row: dict[str, Any]) -> dict[str, Any]:
+    """A trigger row from another home, as it is brought into this one. The one rule for every way
+    one arrives: a snapshot or archive merge (``snapshot._merge_triggers``), a device sync (the
+    ``triggers`` inventory entry's ``arrives``, applied to each automation a peer's store holds),
+    and a sync conflict resolved with the other machine's version or a drafted merge
+    (``durability.conflict_resolve``).
+
+    What it is (:func:`what_it_is`) and nothing else: no armed fire, run count, park or alert
+    dedupe from elsewhere, and no grant or loosened posture another home's owner gave; and switched
+    off, so it does not fire until someone here switches it on, which asks first for what it runs
+    (the boot sweep arms it then). Both halves are needed: dropping the fields discards what the
+    OTHER home said, and ``enabled: False`` states what THIS home means. With the field merely
+    absent, ``parse_trigger``'s default (on) would decide.
+    """
+    arrived = what_it_is(row)
     arrived["enabled"] = False
     return arrived
-
-
-def store_arrived_from_another_home(document: dict[str, Any]) -> dict[str, Any]:
-    """Another home's whole ``triggers.json``, as a device sync brings it in: every automation in
-    it as :func:`arrived_from_another_home` brings one. A document that is not a trigger store is
-    returned as it is, for the store's own load to report."""
-    rows = document.get("triggers")
-    if not isinstance(rows, list):
-        return document
-    return {
-        **document,
-        "triggers": [arrived_from_another_home(r) if isinstance(r, dict) else r for r in rows],
-    }
 
 
 #: 🔴 `health(store)` USED TO LIVE HERE, and it was the third place this store's warnings went to

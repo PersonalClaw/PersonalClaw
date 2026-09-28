@@ -24,7 +24,9 @@ from personalclaw.triggers.models import Trigger, parse_trigger
 from personalclaw.triggers.store import RUNTIME_FIELDS
 
 #: What a trigger IS — authored, or attributed where it was made — and so what a merge carries into
-#: another home. Everything else on the entity is what has happened to it (`RUNTIME_FIELDS`).
+#: another home. Everything else on the entity is one home's (`RUNTIME_FIELDS`): what has happened
+#: to it there, and the owner's switch and grant there. The grant (`capabilities`) is not here: a
+#: yes is given where the owner is shown what runs, so it does not travel.
 DEFINITION_FIELDS = frozenset(
     {
         "id",
@@ -35,7 +37,6 @@ DEFINITION_FIELDS = frozenset(
         "origin_harness",
         "spec",
         "gates",
-        "capabilities",
         "workflow",
         "overlap",
         "session",

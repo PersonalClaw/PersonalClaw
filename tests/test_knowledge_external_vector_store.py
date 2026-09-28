@@ -736,6 +736,109 @@ def test_a_row_narrower_than_the_helper_reads_raises_instead_of_swallowing(store
         _external_replace_item(iid, rows)
 
 
+# ── a re-embed that stops partway ─────────────────────────────────────────────────────
+
+_VEC_A = [1.0, 0.0, 0.0, 0.0]
+_VEC_B = [0.0, 1.0, 0.0, 0.0]
+
+
+class _Stopped(BaseException):
+    """The pass stopping where a gateway stop or a power cut would stop it: not an error the
+    store handles, so nothing after it runs."""
+
+
+def _passage_of(store, item_id: str) -> tuple[str, str | None, list[float]]:
+    """``(chunk id, the model its row names, its vector)`` for *item_id*'s one passage."""
+    chunk_id, blob, model = store.db.execute(
+        "SELECT id, embedding, embedding_model_id FROM chunks WHERE item_id = ?", (item_id,)
+    ).fetchone()
+    return chunk_id, model, list(struct.unpack(f"{_DIM}f", blob))
+
+
+def _ann_index(store) -> dict[str, bytes] | None:
+    """The ANN index's vector for each chunk id, or None where sqlite-vec cannot load."""
+    if not store.vec_index.enabled:
+        return None
+    rows = store.db.execute(f"SELECT chunk_id, embedding FROM chunk_vec_{_DIM}").fetchall()
+    return {r[0]: bytes(r[1]) for r in rows}
+
+
+def test_a_reembed_that_stops_partway_leaves_no_row_newer_than_its_copies(store, monkeypatch):
+    """🔴 Red before: the pass wrote each passage's row as it went, and the ANN index and the
+    external store after its last one. A pass that stopped partway left rows that named the new
+    model over copies still holding the previous model's vectors, under the same chunk ids —
+    where the index's row-count check sees nothing wrong, and no later pass looks, because those
+    rows no longer read stale."""
+    _bind_embedding_model(monkeypatch, _MODEL_A)
+    ext = FakeExternalStore()
+    _bind(ext)
+    one = _add_doc(store, "Zzqqxx alpha", "alpha", vectors=[tuple(_VEC_A)])
+    two = _add_doc(store, "Zzqqxx beta", "beta", vectors=[tuple(_VEC_A)])
+    first, second = sorted((one, two))  # the pass takes the items in id order
+    _bind_embedding_model(monkeypatch, _MODEL_B)
+    monkeypatch.setattr("personalclaw.knowledge.embed_batch.batch_size_from_config", lambda: 1)
+
+    def _stop_at_the_second(done: int, _total: int) -> None:
+        if done == 2:
+            raise _Stopped
+
+    with pytest.raises(_Stopped):
+        store.reembed_stale_chunks(_ModelEmbedder(_VEC_B), on_progress=_stop_at_the_second)
+
+    indexed = _ann_index(store)
+    for item_id in (first, second):
+        chunk_id, model, vector = _passage_of(store, item_id)
+        held = _VEC_B if model == _MODEL_B[0] else _VEC_A
+        assert vector == held
+        assert ext.rows[chunk_id].vector == held, f"the external store's copy of {model}'s row"
+        if indexed is not None:
+            assert indexed[chunk_id] == _v(*held), f"the ANN index's copy of {model}'s row"
+    assert _passage_of(store, first)[1] == _MODEL_B[0], "what the pass did before it stopped stays"
+    assert _passage_of(store, second)[1] == _MODEL_A[0]
+
+    again = store.reembed_stale_chunks(_ModelEmbedder(_VEC_B))
+
+    assert (again["reembedded"], again["stale_remaining"]) == (1, 0), "only the rest, then none"
+    assert ext.rows[_passage_of(store, second)[0]].vector == _VEC_B
+
+
+def test_a_stop_while_an_items_copies_are_written_leaves_its_rows_to_the_next_pass(
+    store, monkeypatch
+):
+    """The order that makes a stop safe: the copies first, the rows last. A pass stopped while it
+    writes an item's copies has not written the item's rows, so they still read stale — skipped
+    by search, and re-embedded by the next pass — instead of naming the new model over a copy
+    that never got its vector."""
+
+    class _StopsInTheWrite(FakeExternalStore):
+        stop = False
+
+        def upsert(self, records) -> int:
+            if self.stop:
+                raise _Stopped
+            return super().upsert(records)
+
+    _bind_embedding_model(monkeypatch, _MODEL_A)
+    ext = _StopsInTheWrite()
+    _bind(ext)
+    item_id = _add_doc(store, "Zzqqxx alpha", "alpha", vectors=[tuple(_VEC_A)])
+    _bind_embedding_model(monkeypatch, _MODEL_B)
+    ext.stop = True
+
+    with pytest.raises(_Stopped):
+        store.reembed_stale_chunks(_ModelEmbedder(_VEC_B))
+
+    chunk_id, model, vector = _passage_of(store, item_id)
+    assert (model, vector) == (_MODEL_A[0], _VEC_A), "the row still reads stale, as it was"
+    assert store.count_stale_chunk_vectors() == 1
+    ext.stop = False
+
+    again = store.reembed_stale_chunks(_ModelEmbedder(_VEC_B))
+
+    assert (again["reembedded"], again["stale_remaining"]) == (1, 0)
+    assert ext.rows[chunk_id].vector == _VEC_B
+
+
 # ── #3139: binding a backend over a corpus that already exists ────────────────────────
 
 

@@ -18,6 +18,13 @@ abort the whole pull; the caller advances its cursor past it rather than looping
 
 Reads the local rows exactly as ``shards.export_shards`` would, so the merge sees the same
 row shapes on both sides — the invariant that makes convergence hold (criterion 4).
+
+A ``json_file`` that is a list of records (``StateEntry.records``: the automations in
+``triggers.json``, the hooks in ``hooks.json``) is exported as one row, the whole file, but
+reconciled record by record (:func:`entity_rows`): each record is an entity with its own id,
+conflict and common ancestor, and the merged records are written back into the one file, each
+where this home keeps it (:func:`_write_records`). Merged as one row, the file this home already
+had won whole, so a peer's records reached only a home that had none.
 """
 
 from __future__ import annotations
@@ -100,6 +107,127 @@ def handles_kind(kind: str) -> bool:
     return kind in _ROW_KINDS
 
 
+def _record_id(record: object) -> str:
+    """A record's id, or ``""`` for one without a string id (which nothing can tell apart)."""
+    rid = record.get("id") if isinstance(record, dict) else None
+    return rid if isinstance(rid, str) else ""
+
+
+def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
+    """The entities a sync reconciles among *rows* — the exporter's rows for *entry*, this home's
+    or a peer's: the rows themselves, or for a store of records (``StateEntry.records``) the
+    records its one document holds.
+
+    Only records with an id: one without cannot be told from another, so it is never merged. This
+    home's stays where it is in the file (:func:`_write_records`); a peer's is not taken in.
+    """
+    if not entry.records:
+        return rows
+    out: list[dict] = []
+    for row in rows:
+        data = row.get("data")
+        items = data.get(entry.records) if isinstance(data, dict) else None
+        if isinstance(items, list):
+            out.extend(item for item in items if _record_id(item))
+    return out
+
+
+def is_record(entry: inv.StateEntry, row: object) -> bool:
+    """Whether *row* can be written as one of the records of *entry* (a store of records): it has
+    an id and is not a whole document of them. A conflict recorded before the store was reconciled
+    record by record holds the whole file as each version, and writing that into the file as one
+    record would break it."""
+    if not isinstance(row, dict) or not _record_id(row):
+        return False
+    data = row.get("data")
+    return not (isinstance(data, dict) and entry.records in data)
+
+
+def _local_document(entry: inv.StateEntry, dest: Path, stored: list[dict]) -> dict | None:
+    """This home's document for a store of records, or ``None`` when it has none.
+
+    Raises when the file is there and is not a list of records under the store's key — unreadable,
+    or another shape: a write built without it would replace records it could not see, so the file
+    is left for its owner to inspect, as the store's own reader leaves it.
+    """
+    if not stored:
+        if dest.exists():
+            raise ValueError(f"{entry.path} could not be read here, so it is left as it is")
+        return None
+    data = stored[0].get("data")
+    if not isinstance(data, dict) or not isinstance(data.get(entry.records), list):
+        raise ValueError(
+            f"{entry.path} holds no list of {entry.records} here, so it is left as it is"
+        )
+    return data
+
+
+def _write_records(
+    entry: inv.StateEntry,
+    dest: Path,
+    document: dict | None,
+    peer_rows: list[dict],
+    arrived_order: list[str],
+    merged: list[dict],
+) -> writeback.ApplyResult:
+    """Write *merged* (a store's records after a merge) back into its one document.
+
+    Each record where this home keeps it, and the ones that arrived after them in the order the
+    peer keeps them, so a sync never reorders the list a person sees. A record the merge did not
+    take — one with no id, or a second with an id already placed — stays as it is. Nothing is
+    written when the document would not change: a pull that brings nothing leaves the file exactly
+    as the store wrote it.
+    """
+    by_id = {_record_id(r): r for r in merged if _record_id(r)}
+    items: list[object] = []
+    placed: set[str] = set()
+    for item in (document or {}).get(entry.records, []):
+        rid = _record_id(item)
+        if rid in by_id and rid not in placed:
+            items.append(by_id[rid])
+            placed.add(rid)
+        else:
+            items.append(item)
+    for rid in arrived_order:
+        if rid in by_id and rid not in placed:
+            items.append(by_id[rid])
+            placed.add(rid)
+    if document is None:
+        if not items:
+            return writeback.ApplyResult()
+        # No store here yet: the peer's envelope around the records, as its store writes one.
+        peer: dict = next((r["data"] for r in peer_rows if isinstance(r.get("data"), dict)), {})
+        base = {key: value for key, value in peer.items() if key != entry.records}
+    else:
+        base = document
+    updated = {**base, entry.records: items}
+    if updated == document:
+        return writeback.ApplyResult()
+    return writeback.apply_rows(entry.kind, dest, [{"id": dest.name, "data": updated}])
+
+
+def write_record(
+    entry: inv.StateEntry, dest: Path, entity_id: str, record: dict
+) -> writeback.ApplyResult:
+    """Put *record* in place of *entity_id*'s in a store of records, or after the others when this
+    home has none — the conflict resolver's write, through the same document read and the same
+    guard as a sync's (:func:`_local_document`)."""
+    document = _local_document(entry, dest, read_local_rows(entry, dest))
+    items: list[object] = []
+    placed = False
+    for item in (document or {}).get(entry.records, []):
+        if _record_id(item) == entity_id:
+            if not placed:
+                items.append(record)
+                placed = True
+            continue
+        items.append(item)
+    if not placed:
+        items.append(record)
+    updated = {**(document or {}), entry.records: items}
+    return writeback.apply_rows(entry.kind, dest, [{"id": dest.name, "data": updated}])
+
+
 def reconcile_entry(
     home: Path,
     entry: inv.StateEntry,
@@ -130,10 +258,13 @@ def reconcile_entry(
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
     dest = Path(home) / entry.path
     try:
-        local = read_local_rows(entry, dest)
-        held, recorded = _record_conflicts(entry, local, remote_rows, ancestors, queue, now)
+        stored = read_local_rows(entry, dest)
+        document = _local_document(entry, dest, stored) if entry.records else None
+        local = entity_rows(entry, stored)
+        remote = entity_rows(entry, remote_rows)
+        held, recorded = _record_conflicts(entry, local, remote, ancestors, queue, now)
         effective_remote = (
-            [r for r in remote_rows if conflicts_mod.row_id(r) not in held] if held else remote_rows
+            [r for r in remote if conflicts_mod.row_id(r) not in held] if held else remote
         )
         merged = merge_rows(
             entry.merge,
@@ -142,7 +273,11 @@ def reconcile_entry(
             tombstones=entry.tombstones,
             dedup_key="id",
         )
-        applied = writeback.apply_rows(entry.kind, dest, merged.rows)
+        if entry.records:
+            arrived_order = [conflicts_mod.row_id(r) for r in effective_remote]
+            applied = _write_records(entry, dest, document, remote_rows, arrived_order, merged.rows)
+        else:
+            applied = writeback.apply_rows(entry.kind, dest, merged.rows)
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
         logger.warning("reconcile: %s failed (%s) — advancing past it", entry.id, exc)
         return ReconcileResult(entry.id, verdict=PAYLOAD_BAD, detail=str(exc))
@@ -157,7 +292,7 @@ def reconcile_entry(
         removed=applied.removed,
         detail=detail,
         conflicts=recorded,
-        new_ancestors=_agreed_shas(effective_remote, merged.rows, held),
+        new_ancestors=_agreed_shas(entry, effective_remote, merged.rows, held),
     )
 
 
@@ -166,19 +301,24 @@ def _as_they_arrive(entry: inv.StateEntry, remote_rows: list[dict]) -> list[dict
     a deletion rather than a row, and passes as it is.
 
     Only the merge sees them: the conflict check and :func:`_agreed_shas` read the rows the peer
-    published, so a row brought in changed is never recorded as one the two homes agree on."""
+    published, through what two homes compare of them (``conflicts.compared``)."""
     if entry.arrives is None:
         return remote_rows
     return [row if _is_tombstone(row) else entry.arrives(row) for row in remote_rows]
 
 
 def _agreed_shas(
-    remote_rows: list[dict], merged_rows: list[dict], held: set[str]
+    entry: inv.StateEntry, remote_rows: list[dict], merged_rows: list[dict], held: set[str]
 ) -> dict[str, str]:
-    """The ids whose merged row is byte-identical to the row the peer published — the only
-    ones we can honestly call a common ancestor (see ``ReconcileResult.new_ancestors``)."""
+    """The ids whose merged row is the row the peer published, as two homes compare it
+    (``conflicts.compared``) — the only ones we can honestly call a common ancestor (see
+    ``ReconcileResult.new_ancestors``).
+
+    For a store that holds what is one home's, a row it brought in is not the peer's byte for byte
+    (``StateEntry.arrives``), and what both homes do with it afterwards changes it on each; what a
+    person makes of it is the same on both, which is what the next divergence is measured from."""
     remote_shas = {
-        conflicts_mod.row_id(r): conflicts_mod.row_sha(r)
+        conflicts_mod.row_id(r): conflicts_mod.row_sha(conflicts_mod.compared(entry, r))
         for r in remote_rows
         if conflicts_mod.row_id(r)
     }
@@ -187,7 +327,7 @@ def _agreed_shas(
         rid = conflicts_mod.row_id(row)
         if not rid or rid in held:
             continue
-        sha = conflicts_mod.row_sha(row)
+        sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
         if remote_shas.get(rid) == sha:
             out[rid] = sha
     return out

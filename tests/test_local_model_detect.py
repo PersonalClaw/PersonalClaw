@@ -332,6 +332,46 @@ async def test_bind_makes_chat_resolvable_without_a_restart(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("embedding_model", "reindexes"), [("nomic-embed-text", 1), ("", 0)])
+async def test_a_bind_that_binds_embedding_takes_the_reindex_path(
+    monkeypatch, embedding_model, reindexes
+):
+    """🔴 Red before: when the endpoint served an embedding model the one-click bind bound
+    Embedding to it and started no re-index, so what was written before stayed read by keyword.
+    A bind of chat alone changes no embedding model, and starts nothing."""
+    from personalclaw.dashboard.handlers import embedding_reindex
+    from personalclaw.llm import registry as llm_registry
+
+    monkeypatch.setattr(llm_registry, "_default_registry", llm_registry.ProviderRegistry())
+    scheduled: list[object] = []
+    monkeypatch.setattr(embedding_reindex, "schedule_reindex_for_binding", scheduled.append)
+
+    def bind_and_persist(*, endpoint):
+        slm._write_provider_entry(  # noqa: SLF001 — reproduce the successful bind's writes
+            endpoint=endpoint, model="llama3.2:3b", embedding_model=embedding_model
+        )
+        slm._write_active_models(  # noqa: SLF001
+            model="llama3.2:3b", embedding_model=embedding_model
+        )
+        return BindResult(
+            status=BOUND,
+            detail="bound",
+            endpoint=endpoint,
+            model="llama3.2:3b",
+            provider_name=slm.PROVIDER_ENTRY_NAME,
+        )
+
+    monkeypatch.setattr(slm, "bind_local_model", bind_and_persist)
+    async with TestClient(TestServer(_app())) as c:
+        resp = await c.post(
+            "/api/onboarding/local-model/bind", json={"endpoint": "http://localhost:11434"}
+        )
+        assert resp.status == 200
+
+    assert len(scheduled) == reindexes
+
+
+@pytest.mark.asyncio
 async def test_bind_reports_a_skip_as_a_failure_with_its_reason(monkeypatch):
     monkeypatch.setattr(
         slm,

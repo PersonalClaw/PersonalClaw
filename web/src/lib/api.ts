@@ -388,6 +388,10 @@ export interface DurabilityConflict {
   proposal_error: string
   resolution: string
   resolved_at: string
+  /** What taking the other machine's version (or the drafted merge) makes of it here, for a store
+   *  that brings another machine's rows in by a rule — an automation arrives switched off. `''` when
+   *  the version is written as it is. */
+  arrival: string
 }
 /** One tracked state tree in the time-travel history. */
 export interface DurabilityHistoryRoot {
@@ -4284,18 +4288,19 @@ export interface DurabilityImportResult {
   ok: boolean
   applied?: boolean
   error?: { code: string; message: string }
-  /** A replace names its backup folder, the apps that kept the engine they had here
-   *  (`engines_kept`) and each engine left in that folder with an app the archive does not have. */
-  summary?: {
-    mode: string; items: string[]; refused?: string[]; pre_restore?: string
-    engines_kept?: string[]; engines_set_aside?: Array<{ app: string; bytes: number }>
-  }
+  /** What the merge brought in (`items`) and what the archive held that an import never writes. */
+  summary?: { mode: string; items: string[]; refused?: string[] }
   manifest?: PortabilityManifest
+  /** After a merge: the sentence saying the gateway picks up everything it brought in once it
+   *  restarts. */
+  restart?: string
 }
 export interface DurabilityRestoreResult {
   ok?: boolean
   plan?: boolean
   error?: { code: string; message: string }
+  /** After a merge, as on an import's. */
+  restart?: string
   [k: string]: unknown
 }
 // One project's archive. `refused` names what did not arrive (a partial import is the normal case
@@ -7028,15 +7033,17 @@ export const api = {
       return r.blob()
     }),
   /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
-   *  home-overwriting verb in this API uses. `replace` additionally needs confirm. */
-  durabilityImport: (file: File, mode?: 'merge' | 'replace') => {
+   *  home-writing verb in this API uses. There is no replace here: the gateway refuses one while
+   *  it runs (`409 gateway_running`, naming `personalclaw restore … --mode replace`). */
+  durabilityImport: (file: File, mode?: 'merge') => {
     const fd = new FormData(); fd.append('file', file)
-    const qs = mode ? `?mode=${mode}${mode === 'replace' ? '&confirm=true' : ''}` : ''
+    const qs = mode ? `?mode=${mode}` : ''
     return fetch(`/api/durability/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd })
       .then(j<DurabilityImportResult>)
   },
-  /** `mode` omitted returns the restore PLAN and changes nothing. */
-  durabilityArchiveRestore: (id: string, body: { mode?: 'merge' | 'replace'; components?: string[]; confirm?: boolean } = {}) =>
+  /** `mode` omitted returns the restore PLAN and changes nothing. A replace is refused while the
+   *  gateway runs, as on an import, so the client offers only the merge. */
+  durabilityArchiveRestore: (id: string, body: { mode?: 'merge'; components?: string[]; confirm?: boolean } = {}) =>
     post<DurabilityRestoreResult>(`/api/durability/archive/${encodeURIComponent(id)}/restore`, body),
   // ── §4.2 the conflict review queue ──
   /** `surface` omitted returns every surface's records; the counts always cover all of them
@@ -7089,7 +7096,7 @@ export const api = {
   /** Writes the chosen version into the live store. `confirm: true` is required for every
    *  choice — the server refuses without it, so this never sends it implicitly. */
   resolveDurabilityConflict: (id: string, choice: DurabilityConflictChoice) =>
-    post<{ ok: boolean; choice: string; id: string; written: number; removed: number; conflict: DurabilityConflict }>(
+    post<{ ok: boolean; choice: string; id: string; written: number; removed: number; conflict: DurabilityConflict; note: string }>(
       `/api/durability/conflicts/${encodeURIComponent(id)}/resolve`, { choice, confirm: true },
     ),
   // ── Confirm-gated fixes + surfacing simulator ──
@@ -7196,8 +7203,9 @@ export const api = {
   deleteLesson: (rule: string) => fetch('/api/lessons', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──
-  // `snippet` carries the matching passage with `<<`/`>>` around the matched terms
-  // (present on FTS-index hits; absent when the linear-scan fallback answered).
+  // `snippet` carries the matching passage with `<<`/`>>` around the matched terms, whether the
+  // index or a direct read of the transcript found it; a chat that matched by its title alone
+  // carries none, since the title shows.
   // Returns the answer VERBATIM — `source` reports which path answered, and `searched` /
   // `complete` how much of the history it covered (see `SessionSearchAnswer`). `rest` reads
   // directly every chat the index cannot answer for whole.

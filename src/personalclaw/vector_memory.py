@@ -171,6 +171,8 @@ _EPISODIC_LONG_TEXT_THRESHOLD = 0.42  # relaxed threshold for long entries
 _EPISODIC_TEXT_MIN = 10
 _EPISODIC_TEXT_MAX = 2000
 _FAISS_SAVE_INTERVAL = 100  # save index every N writes
+#: How many memories a re-embed writes between commits (``VectorMemoryStore.reembed_stale``).
+_REEMBED_COMMIT_EVERY = 50
 _MAX_SEMANTIC_PER_CONSOLIDATION = 20
 _MAX_EPISODIC_PER_CONSOLIDATION = 10
 _MMR_LAMBDA = 0.6  # relevance vs diversity tradeoff (higher = more relevance)
@@ -599,7 +601,7 @@ def _migrate_v11(db: sqlite3.Connection) -> None:
     produced its vector, and stamping it with the one bound now would invent the answer. So an
     upgraded store's vectors read as stale, which is the true statement, until they are
     re-embedded: the gateway's next start does that, in the background
-    (``dashboard.handlers.embedding_reindex.resume_interrupted_reindex``). Idempotent (ADD COLUMN
+    (``dashboard.handlers.embedding_reindex.watch_embedding_binding``). Idempotent (ADD COLUMN
     guarded).
     """
     for table in ("semantic_memory", "episodic_memories"):
@@ -715,6 +717,16 @@ class _Index:
     #: The model the index holds the vectors of (``_OF_MODEL``'s parameter), or None before the
     #: first build: the index never holds two models' vectors at once.
     ref: str | None
+
+
+def _holds_the_vectors(index: Any, ids: list[str], vectors: dict[str, bytes]) -> bool:
+    """Whether a FAISS index read from its file holds exactly *vectors* (``{id: stored vector}``),
+    row by row in *ids*' order. The index holds each vector as it is stored, so equal is exact."""
+    if not ids:
+        return True
+    held = index.reconstruct_n(0, len(ids))
+    stored = np.frombuffer(b"".join(vectors[i] for i in ids), dtype=np.float32)
+    return bool(np.array_equal(held, stored.reshape(len(ids), -1)))
 
 
 _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
@@ -2514,6 +2526,11 @@ class VectorMemoryStore(MemoryProvider):
         ``on_progress(done, total)`` is invoked after each row so a job runner can stream
         progress. A row the model returns nothing for keeps what it had and stays stale, so it
         is still read by keyword and counted. Returns ``{reembedded, failed, total}``.
+
+        Committed every :data:`_REEMBED_COMMIT_EVERY` rows, and again when the pass ends, however
+        it ends: each row is right on its own, so a pass that is stopped keeps what it wrote and
+        the next re-embeds only the rest rather than starting over. The index file a stop leaves
+        behind is checked against these rows when the store next opens (:meth:`load_faiss_index`).
         """
         fn, model = self._embedder()
         if fn is None:
@@ -2522,24 +2539,32 @@ class VectorMemoryStore(MemoryProvider):
         episodic, semantic = self._to_reembed(fn, space)
         total = len(episodic) + len(semantic)
         done = reembedded = 0
-        for row in episodic:
-            if self._store_reembedding(row["id"], self._try_embed(row["text"], fn), model):
-                reembedded += 1
+
+        def _step() -> None:
+            nonlocal done
             done += 1
+            if done % _REEMBED_COMMIT_EVERY == 0:
+                self.db.commit()
             if on_progress is not None:
                 on_progress(done, total)
-        for row in semantic:
-            vec = self._try_embed(str(json.loads(row["value_json"])), fn)
-            if vec:
-                self.db.execute(
-                    "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
-                    (struct.pack(f"{len(vec)}f", *vec), model or None, row["key"]),
-                )
-                reembedded += 1
-            done += 1
-            if on_progress is not None:
-                on_progress(done, total)
-        self.db.commit()
+
+        try:
+            for row in episodic:
+                if self._store_reembedding(row["id"], self._try_embed(row["text"], fn), model):
+                    reembedded += 1
+                _step()
+            for row in semantic:
+                vec = self._try_embed(str(json.loads(row["value_json"])), fn)
+                if vec:
+                    self.db.execute(
+                        "UPDATE semantic_memory SET embedding = ?, embedding_model = ? "
+                        "WHERE key = ?",
+                        (struct.pack(f"{len(vec)}f", *vec), model or None, row["key"]),
+                    )
+                    reembedded += 1
+                _step()
+        finally:
+            self.db.commit()
         with self._index_lock:
             self._build_index_for(space)
             self.save_faiss_index()
@@ -2646,6 +2671,11 @@ class VectorMemoryStore(MemoryProvider):
         exactly the live vectors of the model compared under now, at their width; anything else
         is rebuilt from the database AND saved, so the next open — and the Doctor's check of the
         file — read what recall actually has.
+
+        Exactly those vectors, not only their ids: a re-embed to another model of the same width
+        that stopped after its rows were written and before the index was saved leaves a file
+        with the right ids at the right width holding the previous model's vectors, which would
+        score every search against vectors of another model.
         """
         if not faiss_available():
             return False
@@ -2658,18 +2688,21 @@ class VectorMemoryStore(MemoryProvider):
                     id_map = json.loads(id_map_path.read_text(encoding="utf-8"))
                     rows = self._embedded_rows(space)
                     dim = self._data_dimension(rows)
-                    expected = {r["id"] for r in rows if len(r["embedding"]) // 4 == dim}
+                    expected = {
+                        r["id"]: r["embedding"] for r in rows if len(r["embedding"]) // 4 == dim
+                    }
                     if (
                         int(index.d) == dim
                         and int(index.ntotal) == len(id_map)
-                        and set(id_map) == expected
+                        and set(id_map) == set(expected)
+                        and _holds_the_vectors(index, id_map, expected)
                     ):
                         self._index = _Index(faiss=index, ids=id_map, dim=dim, ref=space)
                         logger.info("Loaded FAISS index: %d vectors", len(id_map))
                         return True
                     logger.info(
-                        "FAISS index on disk is stale (%d vectors at %d-dim; %d rows embedded at "
-                        "%d-dim) — rebuilding it from the database",
+                        "FAISS index on disk does not hold the database's vectors (%d vectors at "
+                        "%d-dim; %d rows embedded at %d-dim) — rebuilding it from the database",
                         int(index.ntotal),
                         int(index.d),
                         len(expected),

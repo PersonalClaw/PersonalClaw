@@ -11,6 +11,7 @@ import socket
 import sys
 import tarfile
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import TextIO
@@ -1093,11 +1094,20 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
     it here once it is switched on — which is also why importing cannot resurrect a fire that should
     have happened during the move. The rule is `triggers.store.arrived_from_another_home`, the one a
     device sync applies to a peer's trigger store too.
+
+    A home with no store gets the archive's, with every automation in it brought in by the same
+    rule: copying the file in whole brought each one in switched on, armed and granted. A home
+    that has one is written only when an automation arrives.
     """
     from personalclaw.triggers.store import arrived_from_another_home
 
     src = json.loads(src_path.read_text())
-    dst = json.loads(dst_path.read_text())
+    here = dst_path.is_file()
+    dst: dict = (
+        json.loads(dst_path.read_text())
+        if here
+        else {**{key: value for key, value in src.items() if key != "triggers"}, "triggers": []}
+    )
     existing_names = {str(t.get("name") or "") for t in dst.get("triggers", [])}
     existing_ids = {str(t.get("id") or "") for t in dst.get("triggers", [])}
     imported = 0
@@ -1117,12 +1127,51 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
         existing_names.add(name)
         dst.setdefault("triggers", []).append(row)
         imported += 1
-    atomic_write(dst_path, json.dumps(dst, indent=2))
+    if imported or not here:
+        atomic_write(dst_path, json.dumps(dst, indent=2))
     total = len(src.get("triggers", []))
     print(
         f"  Automations imported: {imported} (skipped {total - imported} duplicates) "
         f"— imported rows arrive PAUSED; review and enable them"
     )
+
+
+def _merge_hooks(src_path: Path, dst_path: Path) -> int:
+    """Merge an imported `hooks.json` into the live one, skipping hooks this home has by id.
+    Returns how many were imported.
+
+    A hook runs on the agent's own events, so one from an archive arrives as an automation does
+    (`hooks.hook_arrived_from_another_home`): switched off, with no grant and nothing of what
+    happened to it where the archive was made. A home with no `hooks.json` gets the archive's,
+    with every hook in it brought in by the same rule — copying the file in whole brought each
+    one in switched on with the other home's yes, to run on the next prompt. A home that has one
+    is written only when a hook arrives.
+    """
+    from personalclaw.hooks import hook_arrived_from_another_home
+
+    src = json.loads(src_path.read_text(encoding="utf-8"))
+    arriving = src.get("hooks") if isinstance(src, dict) else None
+    here = dst_path.is_file()
+    if here:
+        dst = json.loads(dst_path.read_text(encoding="utf-8"))
+        held = dst.get("hooks") if isinstance(dst, dict) else None
+    else:
+        dst = {k: v for k, v in src.items() if k != "hooks"} if isinstance(src, dict) else {}
+        held = []
+    if not isinstance(arriving, list) or not isinstance(held, list):
+        # A hand-edited or truncated file: leaving the live copy untouched is the safe direction.
+        return 0
+    existing = {str(h.get("id") or "") for h in held if isinstance(h, dict)}
+    added: list[dict] = []
+    for hook in arriving:
+        hook_id = str(hook.get("id") or "") if isinstance(hook, dict) else ""
+        if not hook_id or hook_id in existing:
+            continue
+        added.append(hook_arrived_from_another_home(hook))
+        existing.add(hook_id)
+    if added or not here:
+        atomic_write(dst_path, json.dumps({**dst, "hooks": held + added}, indent=2))
+    return len(added)
 
 
 def _merge_event_triggers(src_path: Path, dst_path: Path) -> None:
@@ -1716,11 +1765,13 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
 
     rows: list[dict] = []
 
-    def _add(path: str, strategy: str, detail: str = "") -> None:
+    def _add(path: str, strategy: str, detail: str = "", *, by_rule: bool = False) -> None:
+        # `by_rule`: a store whose rows arrive by a rule (`_merge_triggers`, `_merge_hooks`) is
+        # merged into a home without one too, never copied in whole.
         src, dst = snap / path, pc / path
         if not src.exists():
             return
-        if not dst.exists():
+        if not dst.exists() and not by_rule:
             action = "copy"
         elif strategy == inv.MERGE_REPLACE_ONLY:
             action = "keep-local"
@@ -1733,14 +1784,23 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
     if _want(components, "memory"):
         _add("memory.db", inv.MERGE_SQLITE_ATTACH_IGNORE, "4-table allowlist, is_deleted=0 only")
     if _want(components, "crons"):
-        for name in ("triggers.json", "event_triggers.json", "crons.json"):
+        _add(
+            "triggers.json",
+            inv.MERGE_UNION_BY_ID,
+            "by name; automations arrive switched off",
+            by_rule=True,
+        )
+        for name in ("event_triggers.json", "crons.json"):
             _add(name, inv.MERGE_UNION_BY_ID, "by job/trigger id")
         _add("cron-history", inv.MERGE_APPEND_DEDUP, "per-shard, dedup on run_id")
     if _want(components, "config"):
         for name in CORE_FILES["config"]:
+            if name == "hooks.json":
+                continue
             # The contract gap (3) names: an existing config.json is NEVER overwritten. Saying so in
             # the plan is the point — it was true but unstated, so a user could not know it.
             _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing; never overwritten")
+        _add("hooks.json", inv.MERGE_UNION_BY_ID, "by id; hooks arrive switched off", by_rule=True)
     if _want(components, "notifications"):
         _add("notifications.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on ts")
         _add("feedback.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on id")
@@ -1828,11 +1888,8 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     if _want(components, "crons"):
         st, dt = snap / "triggers.json", pc / "triggers.json"
         if st.is_file():
-            if dt.is_file():
-                _merge_triggers(st, dt)
-            else:
-                shutil.copy2(str(st), str(dt))
-                print("  Automations: copied (no existing store)")
+            # Into a home with no store too: every automation arrives by the one rule.
+            _merge_triggers(st, dt)
         se, de = snap / "event_triggers.json", pc / "event_triggers.json"
         if se.is_file():
             if de.is_file():
@@ -1851,10 +1908,19 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
 
     if _want(components, "config"):
         for f in CORE_FILES["config"]:
+            if f == "hooks.json":
+                continue  # merged below, by the rule a hook from elsewhere arrives by
             s, d = snap / f, pc / f
             if s.is_file() and not d.is_file():
                 shutil.copy2(str(s), str(d))
                 print(f"  {f}: restored (was missing)")
+        if (snap / "hooks.json").is_file():
+            n = _merge_hooks(snap / "hooks.json", pc / "hooks.json")
+            if n:
+                print(
+                    f"  hooks.json: {n} imported — hooks arrive switched off; "
+                    "review and enable them"
+                )
         print("  ✅ config")
 
     # 🔴 The run history, whose declared `append_dedup` had no executor. Grouped with
@@ -1936,7 +2002,6 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
     # against a real home.
     if _want(components, "everything"):
         for rel, wrapper, key in (
-            ("hooks.json", "hooks", "id"),
             ("inbox.json", "items", "id"),
             ("tags.json", None, "id"),
             ("tag_boards.json", None, "id"),
@@ -2042,15 +2107,22 @@ def restore_plan(archive: Path, components: list[str] | None) -> dict:
         }
 
 
-def restore_apply(archive: Path, mode: str, components: list[str] | None) -> dict:
-    """Perform a restore. Refuses while the gateway runs, exactly as the CLI does.
+#: What a merge that runs inside the gateway leaves to its next start: the stores it keeps open and
+#: indexed — memory's vector index, the search indexes, what it caches — read what a merge wrote
+#: into them once it starts again. Both of the dashboard's merges say it.
+MERGE_RESTART_NOTE = "Restart the gateway to pick up everything the merge brought in."
 
-    No `force` parameter on purpose: overriding the running-gateway guard is a local operator
-    decision at a terminal, not something to expose over HTTP.
+
+def restore_merge(archive: Path, components: list[str] | None) -> dict:
+    """Merge `archive` into this home: the dashboard's restore.
+
+    A merge only fills in what the home lacks, so it runs inside the gateway, as an archive
+    import's merge does. A replace does not run here at all: it rewrites state the gateway holds
+    open, so the route refuses one and names `personalclaw restore … --mode replace`, which runs
+    with the gateway stopped (`dashboard.handlers.durability._replace_refused`). This used to
+    probe for a running gateway first and refuse — and from inside the gateway the probe always
+    found one, so a merge from the dashboard never ran.
     """
-    if _is_gateway_running():
-        _audit("state_restore_rejected", "reason=gateway_running")
-        return {"ok": False, "error": "gateway is running — stop it before restoring"}
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
         with tarfile.open(str(archive), "r:gz") as tar:
@@ -2060,19 +2132,59 @@ def restore_apply(archive: Path, mode: str, components: list[str] | None) -> dic
             return {"ok": False, "error": "invalid snapshot format"}
         pc = _pc_dir()
         pc.mkdir(parents=True, exist_ok=True)
-        replaced: dict = {}
+        _do_merge(roots[0], pc, components)
+    _audit("state_restored", f"mode=merge snapshot={archive.name}")
+    return {"ok": True, "mode": "merge", "snapshot": archive.name, "restart": MERGE_RESTART_NOTE}
+
+
+def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
+    """`personalclaw restore <export.zip>`: put an export archive (Settings → Import / Export)
+    back into this home — merged, as the dashboard's Import does, or replacing the home, which the
+    dashboard refuses while it runs and names this command for. The running-gateway guard has
+    already been asked (`restore_main`). The archive is checked as the dashboard checks it
+    (`portability.validate_import_zip`) before anything is written, and applied by the same
+    `portability.apply_import_zip`, so the two cannot restore an archive differently.
+    """
+    from personalclaw.portability import apply_import_zip, validate_import_zip
+
+    if args.components:
+        print(
+            "❌ --components selects parts of a snapshot; an export archive is restored whole",
+            file=sys.stderr,
+        )
+        return 2
+    ok, error, manifest = validate_import_zip(archive)
+    if not ok:
+        print(f"❌ {error}", file=sys.stderr)
+        return 1
+    pc = _pc_dir()
+    populated = home_is_populated(pc)
+    mode = args.mode or ("merge" if populated else "replace")
+    if args.mode is None and populated:
+        print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
+        print("   Use --mode replace to overwrite instead (previous state is kept aside).")
+    checked = "checksums verified" if manifest.get("verified") else "no checksums to verify"
+    print(f"📦 Export archive {archive.name} (format v{manifest.get('version')}, {checked})")
+    if args.dry_run:
+        print(f"\n🔍 Dry run — would import it into {pc} in {mode} mode")
         if mode == "replace":
-            replaced = _do_replace(roots[0], pc, components)
-        else:
-            _do_merge(roots[0], pc, components)
-    _audit("state_restored", f"mode={mode} snapshot={archive.name}")
-    return {"ok": True, "mode": mode, "snapshot": archive.name, **replaced}
+            print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
+        return 0
+
+    pc.mkdir(parents=True, exist_ok=True)
+    # A replace says where it set the previous state aside as it does it (`_do_replace`).
+    summary = apply_import_zip(archive, mode)
+    _audit("state_restored", f"mode={mode} components=all from={archive.name}")
+    print(f"✅ Imported ({mode}): {', '.join(summary.get('items', [])) or 'nothing to add'}")
+    print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
+    return 0
 
 
 def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None) -> int:
     if parsed is None:
         p = argparse.ArgumentParser(
-            prog="personalclaw-restore", description="Restore PersonalClaw state from a snapshot."
+            prog="personalclaw-restore",
+            description="Restore PersonalClaw state from a snapshot or an export archive.",
         )
         p.add_argument("snapshot", nargs="?")
         p.add_argument("--mode", choices=("replace", "merge"))
@@ -2107,6 +2219,8 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     if not snap_path.is_file():
         print(f"❌ File not found: {snap_path}", file=sys.stderr)
         return 1
+    if zipfile.is_zipfile(snap_path):
+        return _restore_export_archive(snap_path, args)
 
     # Parse components
     components: list[str] | None = None

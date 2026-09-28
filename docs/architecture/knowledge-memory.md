@@ -109,7 +109,11 @@ running job (`GET /api/models/embedding/reindex`) and follow its progress throug
 (`POST /api/models/embedding/reindex` answers the running job rather than a second).
 Its knowledge half is resumable because its backlog is derived from the rows: a
 cleared item holds no vector and a stale passage records another model, so the
-next start finds both.
+next start finds both. A stop anywhere also leaves no passage whose row names the
+new model while a copy of its vector still holds the previous model's: each item's
+re-embedded passages go to the ANN index and the bound external store first and to
+their rows last (`KnowledgeStore._write_reembedded_chunks`), so what a stop cuts off
+still reads stale and the next pass writes it again.
 
 ### Search
 
@@ -190,10 +194,19 @@ item vector).
     disclosure, the Memory page's Embedded stat, the Doctor's `memory.store` row and the
     gateway's start all read and state in one sentence (`memory_ranking.keyword_read_note`),
     and embedded by the re-index (`dashboard/embedding_reindex.py`), which visits every
-    memory store, open or not. Binding Embedding starts it
-    (`PUT /api/models/active/embedding` → `reindex_after_binding`, whoever calls it),
-    and so does the gateway's start when any store holds what the bound model has not
-    embedded (`dashboard/handlers/embedding_reindex.py::resume_interrupted_reindex`). A
+    memory store, open or not. Every change of the embedding model reaches it by one
+    path (`dashboard/handlers/embedding_reindex.py::reindex_for_binding`): binding
+    Embedding (`PUT /api/models/active/embedding`, whoever calls it), removing the
+    provider whose model was bound so the next in its chain is bound instead, the setup
+    wizard's one-click local model bind, a binding another process wrote
+    (`--seed-local-model`, an edit by hand), and the gateway's start when any store holds
+    what the bound model has not embedded. The gateway's watch on the binding
+    (`watch_embedding_binding`) takes the path at its start, whenever the binding changes,
+    and again later for a model that was not ready, backing off from 30 seconds to 10
+    minutes, so a model bound before it could embed is re-indexed once it can. The memory
+    re-embed commits as it goes (`reembed_stale`, every 50 memories), so a stop keeps what
+    it did, and the index file is used only when it holds exactly the vectors the database
+    does, so a file saved before a stop is rebuilt rather than read as the new model's. A
     vector written before models were recorded names none and is stale once a model is
     bound, by the same rule as the knowledge chunks' fingerprint, so the first start
     after that update re-embeds every memory once, in the background. The index is one

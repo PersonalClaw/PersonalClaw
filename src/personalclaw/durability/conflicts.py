@@ -97,6 +97,18 @@ def row_sha(row: dict) -> str:
     return hashlib.sha256(canonical_json(row).encode("utf-8")).hexdigest()
 
 
+def compared(entry: inv.StateEntry, row: dict) -> dict:
+    """What of *row* two homes compare: the part a person makes (``StateEntry.compared``), or the
+    whole row for a store that holds nothing of one home's.
+
+    Every sha that says whether two homes agree on a row is taken over this — detection here, and
+    the common ancestors a reconcile records — so they cannot disagree about what counts as an
+    edit. An automation's run, switch or grant changes it in ONE home, and read as an edit it made
+    every pull a conflict once both homes had run anything.
+    """
+    return row if entry.compared is None else entry.compared(row)
+
+
 @dataclass
 class ConflictRecord:
     """One unresolved divergence: both versions, all three shas, and where it is reviewed."""
@@ -203,6 +215,10 @@ def detect_conflicts(
     all three differ                    **CONFLICT** — a record, local held
     ==================================  ==========================================
 
+    Rows are compared, and recorded, as :func:`compared` projects them: the part a person makes.
+    That is also what the review shows and what a resolution writes, so a record never holds a
+    difference that is not the conflict.
+
     Pure: no I/O, no clock (``now`` is passed), deterministic order (sorted by entity id),
     so a re-detection of unchanged state produces byte-identical records.
     """
@@ -215,7 +231,7 @@ def detect_conflicts(
         ancestor = str(ancestors.get(rid, "") or "")
         if not ancestor:
             continue  # no common ancestor on record → not provably a both-sides edit
-        lrow, rrow = local_by_id[rid], remote_by_id[rid]
+        lrow, rrow = compared(entry, local_by_id[rid]), compared(entry, remote_by_id[rid])
         lsha, rsha = row_sha(lrow), row_sha(rrow)
         if lsha == rsha:
             continue  # converged

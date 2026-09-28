@@ -56,25 +56,6 @@ def _sel_log(
         pass
 
 
-#: The re-index starts a binding schedules, held until they finish (a bare task can be collected).
-_BINDING_REINDEXES: set[asyncio.Task] = set()  # type: ignore[type-arg]
-
-
-def _reindex_after_binding(request: web.Request) -> None:
-    """Embed what a newly bound Embedding model has not, in the background (``reindex_after_
-    binding``): a memory written while no model was bound joins semantic search now, whichever
-    caller bound it. Settings → Models also starts the re-index after its save; the job registry
-    runs one at a time, so both reach the same job."""
-    state = request.app.get("state") if hasattr(request.app, "get") else None
-    if state is None or not callable(getattr(state, "embedding_reindex", None)):
-        return
-    from personalclaw.dashboard.handlers.embedding_reindex import reindex_after_binding
-
-    task = asyncio.ensure_future(reindex_after_binding(request.app))
-    _BINDING_REINDEXES.add(task)
-    task.add_done_callback(_BINDING_REINDEXES.discard)
-
-
 def _names_no_model(entry: object) -> str:
     """The sentence ``PUT /api/models/active`` refuses a chain entry that names no model with."""
     if not isinstance(entry, str):
@@ -686,7 +667,16 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         request,
     )
     if use_case == "embedding" and active[use_case]:
-        _reindex_after_binding(request)
+        # Embed what the model bound now has not, in the background, by the one path every change
+        # of the model takes: a memory written while no model was bound joins semantic search now,
+        # whichever caller bound it, and a model not ready yet is re-indexed once it is. Settings →
+        # Models also starts the re-index after its save; the registry runs one job at a time, so
+        # both reach the same job.
+        from personalclaw.dashboard.handlers.embedding_reindex import (
+            schedule_reindex_for_binding,
+        )
+
+        schedule_reindex_for_binding(request.app)
     # The new revision, so a panel that stays open saves its next edit over this one.
     return web.json_response(
         {

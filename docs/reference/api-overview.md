@@ -173,11 +173,14 @@ has cost someone a debugging session.
   with the reason in `providerErrors`, the provider's row in `GET /api/providers` is off
   with the same sentence in `error`, and the security log has an `outcome=refused` row.
 - **`POST /api/durability/import` validates when you omit `mode`.** Omitting it changes
-  nothing at all; `?mode=merge` applies copy-if-missing; `?mode=replace&confirm=true`
-  overwrites. `POST /api/durability/archive/{id}/restore` is the same shape — no `mode`
-  returns the plan, and `mode=replace` additionally requires `confirm: true` and is
-  refused while the gateway is running. Credentials and rebuildable caches never travel
-  in an export.
+  nothing at all, and `?mode=merge` fills in what the home lacks.
+  `POST /api/durability/archive/{id}/restore` is the same shape: no `mode` returns the plan,
+  and `mode=merge` (with `confirm: true`) merges. Both refuse a replace the same way,
+  `409 gateway_running`: a replace rewrites state the running gateway holds open, so the
+  message names `personalclaw restore <archive> --mode replace`, which takes a snapshot or an
+  export archive with the gateway stopped. A merge's answer carries `restart`, the sentence
+  saying that the gateway picks up everything it brought in once it restarts. Credentials and
+  rebuildable caches never travel in an export.
 - **Secret values are write-only.** `/api/secrets` returns presence flags, names and
   derived consumer links — never a value — and there is deliberately no per-secret read
   endpoint. The credential-store migrate/rollback routes likewise carry key names and

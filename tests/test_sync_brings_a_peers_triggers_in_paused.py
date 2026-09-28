@@ -1,11 +1,11 @@
 """Device sync brings another home's automations in the way a snapshot merge does: paused, with
 nothing of what happened to them there.
 
-The trigger store syncs as one `json_file` row, the whole `triggers.json`, merged `union_by_id`
-(`durability/merge.py`). A home with no trigger store took the peer's row as it was, so every
-automation arrived switched on and armed with the peer's `next_fire_at`, run count, health and
-alert dedupe: the new machine fired the peer's schedule alongside it, and its first alert of a
-failure could be swallowed by the peer's. A snapshot merge already drops those fields
+The trigger store is exported as one `json_file` row, the whole `triggers.json`, and reconciled one
+automation at a time (`StateEntry.records`). A home with no trigger store took the peer's row as it
+was, so every automation arrived switched on and armed with the peer's `next_fire_at`, run count,
+health and alert dedupe: the new machine fired the peer's schedule alongside it, and its first
+alert of a failure could be swallowed by the peer's. A snapshot merge already drops those fields
 (`triggers.store.RUNTIME_FIELDS`, #3774) and brings each automation in switched off; a sync now
 applies the same rule, declared on the inventory entry (`StateEntry.arrives`).
 """
@@ -106,11 +106,17 @@ def test_a_sync_and_a_snapshot_merge_bring_an_automation_in_alike(tmp_path) -> N
     assert by_sync == by_snapshot
 
 
-def test_the_arrived_store_is_not_recorded_as_agreed_with_the_peer(tmp_path) -> None:
-    """🔴 Red on main: the store written here was the peer's row byte for byte, so it became the
-    two homes' common ancestor, and once each ran its automations every pull was a conflict.
-    What is written here now is not what the peer holds, so it is not an ancestor."""
-    assert _synced(tmp_path).new_ancestors == {}
+def test_the_arrived_automation_is_agreed_by_what_it_is(tmp_path) -> None:
+    """The row written here is not the peer's byte for byte (switched off, no runtime state), yet
+    the two homes do agree on the automation: what a person made of it is the same on both
+    (`triggers.store.what_it_is`). That is what the ancestor records, per automation, so a run in
+    either home later is not a divergence and an edit in both still is."""
+    from personalclaw.durability import conflicts as conflicts_mod
+    from personalclaw.triggers.store import what_it_is
+
+    ancestors = _synced(tmp_path).new_ancestors
+
+    assert ancestors == {"clock:morning-digest": conflicts_mod.row_sha(what_it_is(_peer_trigger()))}
 
 
 def test_through_the_peers_own_export(tmp_path) -> None:
@@ -135,8 +141,10 @@ def test_through_the_peers_own_export(tmp_path) -> None:
     assert arrived["name"] == "Morning digest"
 
 
-def test_a_store_already_here_keeps_its_own_automations(tmp_path) -> None:
-    """CONTROL: the whole-file union keeps this home's store, switches and stamps included."""
+def test_a_store_already_here_keeps_its_own_automations_and_takes_the_peers_in(tmp_path) -> None:
+    """CONTROL: this home's automations stay exactly as they are, switches and stamps included,
+    and the peer's arrives beside them, paused (it used to be dropped: the whole-file union kept
+    this home's file)."""
     local = Trigger(
         id="clock:local",
         name="Local only",
@@ -146,6 +154,7 @@ def test_a_store_already_here_keeps_its_own_automations(tmp_path) -> None:
     row = local.to_dict() | {"enabled": True, "run_count": 3}
     (tmp_path / "triggers.json").write_text(json.dumps({"version": 1, "triggers": [row]}))
     result = _synced(tmp_path)
-    assert result.added == 0
-    (kept,) = json.loads((tmp_path / "triggers.json").read_text())["triggers"]
+    assert result.added == 1
+    kept, arrived = json.loads((tmp_path / "triggers.json").read_text())["triggers"]
     assert (kept["name"], kept["enabled"], kept["run_count"]) == ("Local only", True, 3)
+    assert (arrived["name"], arrived["enabled"]) == ("Morning digest", False)

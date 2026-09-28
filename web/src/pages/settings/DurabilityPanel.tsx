@@ -714,7 +714,12 @@ function ArchiveSection({ snaps, onChanged }: {
     setBusy(a.id)
     try {
       const r = await api.durabilityArchiveRestore(a.id, { mode: 'merge', confirm: true })
-      notify(r.ok === false ? `Restore refused: ${r.error?.message ?? 'unknown reason'}` : `Merged ${a.name}`, r.ok === false ? 'error' : 'success')
+      notify(
+        r.ok === false
+          ? `Restore refused: ${r.error?.message ?? 'unknown reason'}`
+          : `Merged ${a.name}.${r.restart ? ` ${r.restart}` : ''}`,
+        r.ok === false ? 'error' : 'success',
+      )
       onChanged()
     } catch (e) {
       notify(`Restore failed: ${String((e as Error)?.message || e)}`, 'error')
@@ -967,9 +972,14 @@ function ConflictsSection({ read, onChanged }: {
       //
       // So the sentence now names what it is actually discarding. Overstating reversibility on a
       // both-sides-edited row is the one direction that costs a user the edit they meant to keep.
+      //
+      // Keeping this machine's version writes nothing: it is kept as it is now, with every change
+      // made here since the conflict was found. The other two bring the version in the way a sync
+      // brings that store's rows in, and `c.arrival` says what that makes of it (an automation
+      // arrives switched off), so the dialog says it before anything is written.
       body: choice === 'keep_local'
-        ? `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine. The other machine's version stays in the shared store, so you can still decide differently from that side.`
-        : `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine, replacing this machine's copy. That copy is not kept anywhere else — only a snapshot has it.`,
+        ? `This machine's version of ${c.entity_id} stays in ${c.entry_id} as it is; nothing is written. The other machine's version stays in the shared store, so you can still decide differently from that side.`
+        : `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine, replacing this machine's copy. That copy is not kept anywhere else — only a snapshot has it.${c.arrival ? ` ${c.arrival}` : ''}`,
       confirmLabel: 'Write it',
       // Danger tone, so the shell raises it as an alertdialog: two of the three choices
       // overwrite a row the other machine also edited.
@@ -978,7 +988,12 @@ function ConflictsSection({ read, onChanged }: {
     setBusy(c.id)
     try {
       const r = await api.resolveDurabilityConflict(c.id, choice)
-      notify(`Resolved ${c.entity_id}: ${CHOICE_LABELS[choice].toLowerCase()} version written (${r.written} written).`, 'success')
+      notify(
+        choice === 'keep_local'
+          ? `Resolved ${c.entity_id}: this machine's version is kept as it is.`
+          : `Resolved ${c.entity_id}: ${CHOICE_LABELS[choice].toLowerCase()} version written.${r.note ? ` ${r.note}` : ''}`,
+        'success',
+      )
       onChanged()
     } catch (e) {
       // The server refuses a resolve it cannot apply — an undrafted merge, a record already

@@ -705,8 +705,14 @@ Examples:
         "--json", action="store_true", help="Emit the trajectory diff as JSON instead of text"
     )
 
-    rest_parser = sub.add_parser("restore", help="Restore PersonalClaw state from a snapshot")
-    rest_parser.add_argument("snapshot", nargs="?", help="Path to snapshot .tar.gz")
+    rest_parser = sub.add_parser(
+        "restore", help="Restore PersonalClaw state from a snapshot or an export archive"
+    )
+    rest_parser.add_argument(
+        "snapshot",
+        nargs="?",
+        help="Path to a snapshot .tar.gz, or an export .zip from Settings → Import / Export",
+    )
     rest_parser.add_argument("--mode", choices=("replace", "merge"))
     rest_parser.add_argument("--dry-run", action="store_true")
     rest_parser.add_argument("--components", help="Comma-separated components to restore")

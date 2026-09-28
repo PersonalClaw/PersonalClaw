@@ -180,19 +180,58 @@ async def test_import_merge_applies(home, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_import_replace_without_confirm_is_refused(home, tmp_path):
-    """`replace` overwrites the home, so it takes two independent signals.
+@pytest.mark.parametrize("query", ["mode=replace", "mode=replace&confirm=true"])
+async def test_an_import_that_replaces_is_refused_as_the_archive_restore_refuses_one(
+    home, tmp_path, query
+):
+    """🔴 Red before: `mode=replace&confirm=true` moved the live home aside and wrote the archive in
+    its place, under the running gateway — the replace the archive restore refuses. One rule for
+    both: refused, `gateway_running`, before the upload is read, naming the command that does it
+    with the gateway stopped — and that command runs."""
+    import re
+    import shlex
 
-    Refused BEFORE the upload is read, so a mistyped request cannot even stage the
-    archive.
-    """
+    from personalclaw.cli import build_parser
+
     archive = _archive(tmp_path)
     async with TestClient(TestServer(_app())) as client:
-        resp = await client.post("/api/durability/import?mode=replace", data=_multipart(archive))
+        resp = await client.post(f"/api/durability/import?{query}", data=_multipart(archive))
         body = await resp.json()
     assert resp.status == 409
-    assert body["error"]["code"] == "confirm_required"
+    assert body["error"]["code"] == "gateway_running"
     assert json.loads((home / "config.json").read_text())["theme"] == "dark"
+    assert not list(home.glob("pre-restore-*")), "nothing was moved aside"
+    command = re.search(r"`(personalclaw restore [^`]+)`", body["error"]["message"])
+    assert command, body["error"]["message"]
+    args = build_parser().parse_args(shlex.split(command.group(1))[1:])
+    assert (args.command, args.mode, args.snapshot) == ("restore", "replace", "<export.zip>")
+
+
+@pytest.mark.asyncio
+async def test_the_archive_merge_restore_runs_while_the_gateway_is_up(home, tmp_path, monkeypatch):
+    """🔴 Red before: the merge reached a restore that probed for a running gateway of this home,
+    and inside the gateway it always found one — Merge-restore answered 409 every time. It merges
+    now, as an import's merge does, and says the gateway picks everything up once restarted."""
+    from personalclaw import snapshot as snap_mod
+
+    snaps = tmp_path / "snaps"
+    monkeypatch.setattr(snap_mod, "_default_snapshot_dir", lambda: str(snaps))
+    (home / "tasks" / "from-snap.json").write_text(json.dumps({"id": "from-snap"}))
+    assert snap_mod.snapshot_main([str(snaps)]) == 0
+    (archive,) = snaps.glob("*.tar.gz")
+    (home / "tasks" / "from-snap.json").unlink()
+    monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)  # as it is, serving this
+
+    async with TestClient(TestServer(_app())) as client:
+        resp = await client.post(
+            f"/api/durability/archive/{archive.name}/restore",
+            json={"mode": "merge", "confirm": True},
+        )
+        body = await resp.json()
+
+    assert resp.status == 200, body
+    assert body["ok"] is True and body["restart"] == snap_mod.MERGE_RESTART_NOTE
+    assert (home / "tasks" / "from-snap.json").is_file(), "the snapshot's row came back"
 
 
 @pytest.mark.asyncio

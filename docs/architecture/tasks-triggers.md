@@ -217,15 +217,30 @@ to read the trigger's health rollup, which says how the automation has been
 going and nothing about this run.
 
 **An automation from another home arrives switched off, with nothing of what
-happened to it there.** A snapshot merge (`snapshot._merge_triggers`) and a
-device sync (the `triggers` inventory entry's `arrives`, applied by
-`durability.reconcile`) bring a row in by one rule,
-`triggers.store.arrived_from_another_home`: it drops `RUNTIME_FIELDS` (its armed
+happened to it there and no grant.** Every way a row from another home comes in
+applies one rule, `triggers.store.arrived_from_another_home`: a snapshot restore's
+or archive import's merge (`snapshot._merge_triggers`, into a home with no store
+too), a device sync (the `triggers` inventory entry's `arrives`, applied by
+`durability.reconcile`), and a sync conflict resolved with the other machine's
+version or a drafted merge (`durability.conflict_resolve`). It keeps what the
+automation is (`triggers.store.what_it_is`) and drops `RUNTIME_FIELDS`: its armed
 fire, run count, success, failure and waiting stamps, debounce and park stamps,
-alert dedupe, health and state) and sets `enabled: false`. A sync brings the
-peer's `triggers.json` in only to a home that has none (the store merges
-`union_by_id` as one document), and what it writes is not recorded as a common
-ancestor with the peer, because it is not the peer's row.
+alert dedupe, health and state, its switch, and its grant (`capabilities`), with
+the step keys that loosen whether its agent asks. So it arrives with
+`enabled: false`, and switching it on here asks first for what it runs, as the
+Triggers page asks of any row that holds no grant: a yes is given where the owner
+is shown what runs. A lifecycle hook from another home arrives by the same rule
+(`hooks.hook_arrived_from_another_home`, `HOOK_RUNTIME_FIELDS`), through
+`snapshot._merge_hooks` and the `hooks` inventory entry.
+
+A sync reconciles `triggers.json` and `hooks.json` one entry at a time
+(`StateEntry.records`), although each is exported as one file: a peer's
+automation lands in a home that has automations of its own, each where this home
+keeps it and the new ones after them, and a pull that brings nothing leaves the
+file as the store wrote it. Two homes compare only what a person makes of an
+automation (`StateEntry.compared`), so a fire, a switch or a grant in either is
+never an edit to review; an edit in both is a conflict on that one automation.
+"Keep this machine's" writes nothing: the automation stays as it is now.
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.

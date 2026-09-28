@@ -103,22 +103,55 @@ class StateEntry:
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
     derived_within: tuple[str, ...] = field(default_factory=tuple)
-    # How a device sync brings a peer's row into this store, for a store whose rows also record
-    # what happened to them in ONE home (`reconcile.reconcile_entry` applies it to every peer row
-    # but a tombstone, before the merge). `None`: a peer's row arrives as the peer wrote it.
+    # For a ``json_file`` that is a list of records under one key (``triggers.json``'s
+    # ``triggers``): that key. A device sync then reconciles each record as an entity of its own —
+    # its own id, conflict and common ancestor (`reconcile.entity_rows`) — rather than the file as
+    # one row, which kept whichever file a home already had and brought a peer's in only to a home
+    # with none. ``""``: the file is one row.
+    records: str = ""
+    # How a peer's row (for a ``records`` store, each record) comes into this store, for a store
+    # whose rows also hold what is ONE home's: what happened to them there, or the owner's yes
+    # there. Applied to every peer row but a tombstone by every path one arrives by: the sync's
+    # merge (`reconcile.reconcile_entry`) and a conflict resolved with the other machine's version
+    # or a drafted merge (`conflict_resolve`). `None`: a peer's row arrives as the peer wrote it.
     arrives: Callable[[dict], dict] | None = None
+    # What of a row two homes compare, for the same stores: the part a person makes, without what
+    # is one home's. Conflict detection and the common ancestors read it (`conflicts.compared`),
+    # so a run, a switch or a yes in one home is never an edit to review. `None`: the whole row.
+    compared: Callable[[dict], dict] | None = None
+    # What a row brought in by ``arrives`` is like here, in the words the conflict review shows
+    # before and after a person takes the other machine's version.
+    arrival: str = ""
 
 
-def _trigger_store_arrives(row: dict) -> dict:
-    """A peer's ``triggers.json`` row, as this home takes it in: every automation without the
-    peer's runtime state and switched off (``triggers.store.arrived_from_another_home``, the rule a
-    snapshot merge applies too)."""
-    from personalclaw.triggers.store import store_arrived_from_another_home
+def _trigger_arrives(row: dict) -> dict:
+    """One automation from a peer's ``triggers.json``, as this home takes it in
+    (``triggers.store.arrived_from_another_home``, the rule every path one arrives by applies)."""
+    from personalclaw.triggers.store import arrived_from_another_home
 
-    data = row.get("data")
-    if not isinstance(data, dict):
-        return row
-    return {**row, "data": store_arrived_from_another_home(data)}
+    return arrived_from_another_home(row)
+
+
+def _trigger_compared(row: dict) -> dict:
+    """What two homes compare of an automation (``triggers.store.what_it_is``)."""
+    from personalclaw.triggers.store import what_it_is
+
+    return what_it_is(row)
+
+
+def _hook_arrives(row: dict) -> dict:
+    """One hook from a peer's ``hooks.json``, as this home takes it in
+    (``hooks.hook_arrived_from_another_home``)."""
+    from personalclaw.hooks import hook_arrived_from_another_home
+
+    return hook_arrived_from_another_home(row)
+
+
+def _hook_compared(row: dict) -> dict:
+    """What two homes compare of a hook (``hooks.hook_what_it_is``)."""
+    from personalclaw.hooks import hook_what_it_is
+
+    return hook_what_it_is(row)
 
 
 # ── the manifest ────────────────────────────────────────────────────────────
@@ -372,9 +405,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
         help="the one trigger store (automations, event triggers, hooks)",
-        # A peer's automations arrive switched off and with nothing of what happened to them there:
-        # its armed fires, run counts, health and alert dedupe are the peer's, not this home's.
-        arrives=_trigger_store_arrives,
+        # Synced one automation at a time. A peer's arrive switched off, with nothing of what
+        # happened to them there and no grant its owner gave there: its armed fires, run counts,
+        # health, alert dedupe and yes are the peer's, not this home's.
+        records="triggers",
+        arrives=_trigger_arrives,
+        compared=_trigger_compared,
+        arrival=(
+            "An automation from another machine arrives switched off, without what happened to it "
+            "there. Switching it on here asks first for what it runs."
+        ),
     ),
     StateEntry(
         id="crons",
@@ -418,6 +458,15 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
         help="lifecycle triggers",
+        # A hook runs on every prompt or tool call it matches, so one from a peer arrives as an
+        # automation does: switched off, with no grant and nothing of what happened to it there.
+        records="hooks",
+        arrives=_hook_arrives,
+        compared=_hook_compared,
+        arrival=(
+            "A hook from another machine arrives switched off, without what happened to it there. "
+            "Switching it on here asks first for what it runs."
+        ),
     ),
     StateEntry(
         id="event_triggers",

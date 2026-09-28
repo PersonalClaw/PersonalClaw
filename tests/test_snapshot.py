@@ -2585,22 +2585,29 @@ def test_RESTORE_PLAN_writes_nothing_and_shares_the_CLI_plan(tmp_path, monkeypat
     assert _digest() == before, "a plan request mutated the home"
 
 
-def test_RESTORE_APPLY_refuses_while_the_gateway_runs(tmp_path, monkeypatch) -> None:
-    """The CLI's guard, mirrored. This handler IS the gateway, so a restore under it would rewrite
-    state the running process holds open. There is no `force` mirror on purpose: overriding is a
-    local operator decision at a terminal, not something to expose over HTTP."""
+def test_the_dashboards_MERGE_RESTORE_runs_under_the_gateway_it_is_served_by(
+    tmp_path, monkeypatch
+) -> None:
+    """🔴 Red before: the restore the dashboard runs probed for a running gateway of this home and
+    refused — and from inside the gateway it always found one, so Merge-restore never merged. A
+    merge fills in only what the home lacks and runs there, as an archive import's merge does; a
+    replace is what the routes refuse (`dashboard.handlers.durability._replace_refused`)."""
     from personalclaw import snapshot as snap_mod
 
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
     (home / "config.json").write_text("{}", encoding="utf-8")
+    (home / "tasks").mkdir()
+    (home / "tasks" / "from-snap.json").write_text('{"id":"FROM-SNAP"}', encoding="utf-8")
     out = tmp_path / "snaps"
     snap_mod.snapshot_main([str(out)])
     archive = sorted(out.glob("*.tar.gz"))[0]
+    (home / "tasks" / "from-snap.json").unlink()
 
     monkeypatch.setattr(snap_mod, "_is_gateway_running", lambda: True)
-    result = snap_mod.restore_apply(archive, "merge", None)
+    result = snap_mod.restore_merge(archive, None)
 
-    assert result["ok"] is False
-    assert "gateway is running" in result["error"]
+    assert result["ok"] is True, result
+    assert (home / "tasks" / "from-snap.json").is_file(), "the snapshot's row came back"
+    assert result["restart"] == snap_mod.MERGE_RESTART_NOTE

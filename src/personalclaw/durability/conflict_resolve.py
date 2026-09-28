@@ -14,7 +14,9 @@ picked so that every failure leaves a state a repeat of the same request fixes:
    :func:`durability.writeback.apply_rows` — the same path the sync cycle itself uses. Every
    local row is read, the one reviewed row is substituted by entity id, and the full set is
    written back atomically (temp file + rename). A single-row ``apply_rows`` would truncate a
-   ``jsonl_append`` stream to one event, so the substitution is not an optimisation to skip.
+   ``jsonl_append`` stream to one event, so the substitution is not an optimisation to skip. A
+   store of records (``StateEntry.records``) has the one record substituted in its document
+   (``reconcile.write_record``).
 2. The queue record flips to ``resolved`` only AFTER that write returns.
 
 So a failed write leaves the record ``needs-review`` and the store untouched (the caller sees
@@ -29,13 +31,23 @@ converges on its own schedule, and it does so differently per choice:
   function that never consults the queue) detects the same divergence next cycle and HOLDS the
   id again, so the local row keeps winning. ``queue.record`` dedups on the record id, so the
   resolved record is not resurrected as a new needs-review row. The decision sticks.
-* ``take_remote`` — local becomes the remote sha, so the two sides are converged and the
-  divergence stops being detected at all.
+* ``take_remote`` — local becomes the remote sha, as two homes compare a row
+  (``conflicts.compared``), so the two sides are converged and the divergence stops being
+  detected at all.
 * ``accept_proposal`` — local becomes a THIRD sha the peer has never seen, so once the peer's
   export is pulled the divergence is genuinely new (different local sha → different record id)
   and a fresh review item appears until the peer has the merged row. That is honest rather
   than convenient: a proposal the peer hasn't seen is not agreement, and pretending otherwise
   is how a merge silently loses the other machine's edit.
+
+**The other machine's version arrives the way a sync brings anything in.** Taking it, or the
+merge drafted from it, writes a row the other machine wrote, so the row goes through the entry's
+own arrival rule (``StateEntry.arrives``) first — the rule the sync's merge applies to the same
+store. An automation or a hook taken this way is switched off, with no grant and nothing of what
+happened to it on the other machine, exactly as if it had arrived by a pull; writing the peer's
+row as it was put another home's switch, armed fire and yes into this one. Keeping this machine's
+version writes nothing: the row the record holds is a copy from when the divergence was found,
+and writing it back would undo every change this machine has made to the row since.
 """
 
 from __future__ import annotations
@@ -76,6 +88,9 @@ class ResolveOutcome:
     removed: int = 0
     #: The record as it now stands (resolved on success, untouched on a refusal).
     record: dict | None = None
+    #: What the version written is like here when the store brings another machine's in by a
+    #: rule (``StateEntry.arrival``): the sentence the review shows once it is written.
+    note: str = ""
 
 
 def _refuse(code: str, message: str, *, choice: str = "", record_id: str = "") -> ResolveOutcome:
@@ -111,6 +126,8 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
     ``unknown_entry``   the record names an inventory entry that no longer exists
     ``unsupported_kind``the entry is not a row-merge kind (sqlite/tree have their own path)
     ``no_version``      the chosen version is absent — typically an undrafted proposal
+    ``not_a_record``    the version is not one record of a store of records (a conflict
+                        recorded over the whole file); only keeping this machine's resolves it
     ``write_failed``    the store write raised; the record stays needs-review
     ==================  ==========================================================
     """
@@ -160,17 +177,30 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             record_id=record_id,
         )
 
-    dest = Path(home) / entry.path
-    try:
-        applied = _write_chosen_row(entry, dest, rec.entity_id, row)
-    except Exception as exc:  # noqa: BLE001 — a failed write must leave the review open
-        logger.warning("conflict resolve: write failed for %s", record_id, exc_info=True)
-        return _refuse(
-            "write_failed",
-            f"nothing was applied: {exc}",
-            choice=choice,
-            record_id=record_id,
-        )
+    applied = writeback.ApplyResult()
+    if choice != CHOICE_KEEP_LOCAL:
+        if entry.records and not all(reconcile.is_record(entry, r) for r in (rec.remote_row, row)):
+            return _refuse(
+                "not_a_record",
+                (
+                    f"this conflict was recorded over the whole of {entry.path}, which is now "
+                    "compared one entry at a time; keep this machine's version to close it, and "
+                    "the next sync brings in, one at a time, what only the other machine has"
+                ),
+                choice=choice,
+                record_id=record_id,
+            )
+        dest = Path(home) / entry.path
+        try:
+            applied = _write_chosen_row(entry, dest, rec.entity_id, _as_it_arrives(entry, row))
+        except Exception as exc:  # noqa: BLE001 — a failed write must leave the review open
+            logger.warning("conflict resolve: write failed for %s", record_id, exc_info=True)
+            return _refuse(
+                "write_failed",
+                f"nothing was applied: {exc}",
+                choice=choice,
+                record_id=record_id,
+            )
 
     rec.status = conflicts_mod.STATUS_RESOLVED
     rec.resolution = choice
@@ -194,7 +224,15 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
         written=applied.written,
         removed=applied.removed,
         record=rec.to_dict(),
+        note=entry.arrival if choice != CHOICE_KEEP_LOCAL and entry.arrives is not None else "",
     )
+
+
+def _as_it_arrives(entry: inv.StateEntry, row: dict) -> dict:
+    """The other machine's version, or a merge drafted from it, as this store takes a row from
+    another home in (``StateEntry.arrives``) — the rule the sync's merge applies to the same
+    store."""
+    return row if entry.arrives is None else entry.arrives(row)
 
 
 def _write_chosen_row(
@@ -205,8 +243,11 @@ def _write_chosen_row(
     Whole-entry, not row-at-a-time, because :func:`writeback.apply_rows` writes the SET it is
     given: handing it one row rewrites a ``jsonl_append`` stream down to that single event.
     Reading through :func:`reconcile.read_local_rows` keeps the row shape identical to the
-    one the conflict was detected in, so a resolution cannot reshape the store.
+    one the conflict was detected in, so a resolution cannot reshape the store. A store of
+    records has the one record substituted in its document (``reconcile.write_record``).
     """
+    if entry.records:
+        return reconcile.write_record(entry, dest, entity_id, row)
     rows = reconcile.read_local_rows(entry, dest)
     out = [r for r in rows if conflicts_mod.row_id(r) != entity_id]
     out.append(row)

@@ -74,7 +74,7 @@ async def test_import_crash_answers_guidance_not_the_exception(monkeypatch, tmp_
 
 @pytest.mark.asyncio
 async def test_restore_crash_is_a_500_failure_not_a_refused_400(monkeypatch, tmp_path):
-    """restore_apply reports designed refusals as ok:false VALUES; a raise is a crash.
+    """restore_merge reports a designed refusal as an ok:false VALUE; a raise is a crash.
     The route must answer restore_failed 500 with guidance — not the old
     restore_refused 400 carrying the exception's own words."""
     import personalclaw.snapshot as snap_mod
@@ -87,7 +87,7 @@ async def test_restore_crash_is_a_500_failure_not_a_refused_400(monkeypatch, tmp
     def _boom(*a, **k):
         raise RuntimeError(SECRET)
 
-    monkeypatch.setattr(snap_mod, "restore_apply", _boom)
+    monkeypatch.setattr(snap_mod, "restore_merge", _boom)
 
     client = TestClient(TestServer(_durability_app()))
     await client.start_server()
