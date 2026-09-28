@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import trace_recorder as _trace
+from personalclaw.cancellation import cancel_and_wait
 
 if TYPE_CHECKING:
     from personalclaw.tool_providers.base import RiskLevel
@@ -291,13 +292,10 @@ class McpServerConn:
         return ok, output
 
     async def shutdown(self) -> None:
+        """Close the connection. Its task may be starting the server's process, which a cancel
+        cannot always interrupt, so the wait for it is bounded (``cancel_and_wait``)."""
         self._closing = True
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+        await cancel_and_wait([self._task], what=f"MCP server '{self.name}'")
 
     # ── actor body ──────────────────────────────────────────────────────────
 

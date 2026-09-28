@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import approval_grants
 from personalclaw.approval_grants import ToolDecision, decision_of
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, fire_tool_hooks, safe_read_file
@@ -2512,15 +2513,10 @@ class SubagentManager:
         return len(victims)
 
     async def cancel_all(self) -> None:
-        """Cancel all running subagents and wait for cleanup."""
+        """Cancel all running subagents and wait a bounded time for their cleanup: one cancelled
+        while it starts its agent's process may never leave (``cancel_and_wait``)."""
         if self._reaper_task and not self._reaper_task.done():
             self._reaper_task.cancel()
             self._reaper_task = None
-        tasks_to_await: list[asyncio.Task] = []  # type: ignore[type-arg]
-        for agent_id, task in list(self._tasks.items()):
-            if not task.done():
-                task.cancel()
-                tasks_to_await.append(task)
-        if tasks_to_await:
-            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+        await cancel_and_wait(list(self._tasks.values()), what="subagents")
         self._tasks.clear()

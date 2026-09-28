@@ -40,7 +40,7 @@ from personalclaw import (
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
-from personalclaw.cancellation import kill_timed_out
+from personalclaw.cancellation import cancel_and_wait, kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -4678,11 +4678,10 @@ class GatewayOrchestrator:
             save_all_sessions_to_history(self.dashboard_state)
             self.dashboard_state.file_indexes.stop_all()
 
-        # Cancel in-flight handler tasks
-        for t in list(self._handler_tasks):
-            t.cancel()
-        if self._handler_tasks:
-            await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+        # Cancel in-flight handler tasks. Every wait below on a task it cancelled is bounded: a
+        # task cancelled while it starts a process may never leave (`cancel_and_wait`), and the
+        # stop has to finish anyway.
+        await cancel_and_wait(list(self._handler_tasks), what="in-flight channel messages")
 
         # Stop services
         if self.loop_watchdog:
@@ -4692,21 +4691,17 @@ class GatewayOrchestrator:
         # Detached first, so an event reported during shutdown is spooled for the next boot rather
         # than handed to a loop that is about to stop.
         self._stop_event_triggers()
-        for _task in (
-            self._file_watch_task,
-            self._web_watch_task,
-            self._clock_task,
-            self._reaper_task,
-            self._task_due_task,
-            self._staged_apply_task,
-        ):
-            if _task is None:
-                continue
-            _task.cancel()
-            try:
-                await _task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown is best-effort
-                pass
+        await cancel_and_wait(
+            [
+                self._file_watch_task,
+                self._web_watch_task,
+                self._clock_task,
+                self._reaper_task,
+                self._task_due_task,
+                self._staged_apply_task,
+            ],
+            what="gateway background services",
+        )
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
         from personalclaw import session_search

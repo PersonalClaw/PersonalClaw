@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import config_dir
 from personalclaw.dashboard import (
     chat,
@@ -2100,15 +2101,9 @@ async def start_dashboard(
         """Stop the watch on gateway stop, so it does not outlive the gateway that started it."""
         registry = app_["state"].embedding_reindex()
         task, registry.watch = registry.watch, None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.debug("embedding binding watch shutdown failed", exc_info=True)
+        # Bounded: a re-index runs the bound embedding provider's code, which may be starting a
+        # process that a cancel cannot always interrupt (`cancel_and_wait`).
+        await cancel_and_wait([task], what="embedding binding watch")
 
     app.on_cleanup.append(_embedding_watch_shutdown)
 

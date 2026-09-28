@@ -96,6 +96,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Stopping PersonalClaw, a workflow run, a loop or a channel no longer waits forever on a task that will not stop: it waits a few seconds, logs what did not finish, and goes on.**
+
 - **Settings → Models keeps an image or video provider that can't generate in its row, with the reason it gives.**
 
 - **Voice input shows the reason speech-to-text can't run instead of setup advice for a model already chosen, and the loop composer says why a recording did not become text.**

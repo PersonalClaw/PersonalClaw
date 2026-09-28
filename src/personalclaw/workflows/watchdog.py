@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import concurrency, shutdown_event
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.workflows import containers, overlap, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
@@ -109,10 +110,7 @@ class WorkflowWatchdog:
         # events in it are the LAST ones a watching client sees before shutdown.
         with contextlib.suppress(Exception):
             self._coalescer.flush_all()
-        if self._task and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        await cancel_and_wait([self._task], what="workflow watchdog")
         self._task = None
 
     # ── controller registry ──

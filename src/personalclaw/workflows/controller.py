@@ -49,6 +49,7 @@ from typing import Any
 
 from personalclaw import approval_answer, review_triage
 from personalclaw.approval_answer import Principal
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
 from personalclaw.workflows import (
     attention,
@@ -505,10 +506,9 @@ class RunController:
         for entry in list(self._inflight.values()):
             entry.task.cancel()
         self._inflight.clear()
-        if self._task and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+        # Bounded: the loop may be preparing the run's workspace, which starts processes that a
+        # cancel cannot always interrupt (`cancel_and_wait`).
+        await cancel_and_wait([self._task], what=f"workflow run {self.run.id}")
         self._task = None
 
     def request_cancel(self) -> None:

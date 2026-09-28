@@ -27,6 +27,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterable
 
+from personalclaw.cancellation import cancel_and_wait
+
 if TYPE_CHECKING:
     from personalclaw.channel_transports.base import ChannelTransportProvider
 
@@ -329,8 +331,10 @@ async def _retire(name: str) -> None:
     if receiver is None:
         return
     if receiver.starting:
-        receiver.start.cancel()
-        await asyncio.wait({receiver.start})
+        # Bounded: a channel's start is its app's code, which may be starting a process that a
+        # cancel cannot interrupt (`cancel_and_wait`). A start still running reads as no failure,
+        # so the receiver is stopped below, under its own bound.
+        await cancel_and_wait([receiver.start], what=f"channel {name}'s receiver start")
     if not receiver.failure:  # a failed start already stopped what it had begun
         await _stop(receiver.transport)
 

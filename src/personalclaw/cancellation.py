@@ -38,7 +38,7 @@ import logging
 import os
 import signal
 from dataclasses import asdict, dataclass
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +322,63 @@ async def kill_timed_out(proc: Any, *, grace: float = REAP_GRACE_SECS) -> bool:
             "cancel: timed-out child %s not reaped within %ss", getattr(proc, "pid", "?"), grace
         )
         return False
+
+
+#: How long a stop waits for the tasks it cancelled before it carries on without them. It clears
+#: both of :func:`terminate_and_reap`'s waits (SIGTERM, then SIGKILL), the longest a task that is
+#: putting its child away should need. Read when a wait starts, so a test can shorten it.
+CANCEL_GRACE_SECS = 5.0
+
+
+async def cancel_and_wait(
+    tasks: Iterable[asyncio.Future[Any] | None], *, what: str, grace: float | None = None
+) -> set[asyncio.Future[Any]]:
+    """Cancel *tasks*, wait at most *grace* seconds for them to finish, and return the ones that
+    did not. Each of those is named in the log, and the caller carries on without it.
+
+    A stop that awaited a task it had cancelled waited for the task to LEAVE, and nothing bounded
+    how long that took. A task can outlive its cancel in ways it cannot help: on Python 3.12 a
+    cancel that lands while asyncio starts a child process and connects its pipes, together with
+    asyncio's own task connecting them, leaves the start waiting for a wake-up that never comes
+    (3.13 fixed it); a task whose cleanup waits for its child's pipes waits for as long as a
+    grandchild that inherited them runs; and a task can catch the cancel. Any of them held the
+    stop forever. What did not finish here keeps running until the process exits.
+
+    ``None`` entries are skipped, and a task already done is not cancelled. A finished task's
+    exception is taken, so it is never reported as unretrieved, and logged at debug: a stop is
+    best-effort. The CALLER being cancelled while it waits is not swallowed.
+    """
+    if grace is None:
+        grace = CANCEL_GRACE_SECS
+    given = [task for task in tasks if task is not None]
+    pending = {task for task in given if not task.done()}
+    for task in pending:
+        task.cancel()
+    left: set[asyncio.Future[Any]] = set()
+    if pending:
+        _finished, left = await asyncio.wait(pending, timeout=grace)
+    for task in given:
+        error = task.exception() if task.done() and not task.cancelled() else None
+        if error is not None:
+            logger.debug("%s: a task ended with an error as it stopped", what, exc_info=error)
+    if left:
+        logger.warning(
+            "%s: %d task(s) had not finished %.1fs after being cancelled; carrying on without "
+            "them: %s",
+            what,
+            len(left),
+            grace,
+            ", ".join(sorted(_task_label(task) for task in left)),
+        )
+    return left
+
+
+def _task_label(task: asyncio.Future[Any]) -> str:
+    """``Task-12 (AvailabilityBoard._drain)``: the task's name and what it runs."""
+    coro = task.get_coro() if isinstance(task, asyncio.Task) else None
+    runs = getattr(coro, "__qualname__", "") or type(task).__name__
+    name = task.get_name() if isinstance(task, asyncio.Task) else "future"
+    return f"{name} ({runs})"
 
 
 # ── ambient binding (so a deep spawn site is stoppable without a parameter) ──

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from aiohttp import web
 
 from personalclaw import approval_answer
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
@@ -284,11 +285,9 @@ async def _remove_session_for_history_key(state: DashboardState, key: str) -> No
     live_key = _live_session_key(state, key)
     session = state._sessions.pop(live_key, None) if live_key is not None else None
     if session and session.running and session.task is not None:
-        session.task.cancel()
-        try:
-            await asyncio.wait_for(session.task, timeout=2.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-            pass
+        # `wait_for` on a task it cancelled is no bound: at its timeout it cancels the task again
+        # and waits for THAT, and a turn starting an agent's process may not leave for either.
+        await cancel_and_wait([session.task], what=f"chat {live_key}", grace=2.0)
     # Kill the ACP agent subprocess to free resources
     if session:
         try:

@@ -68,6 +68,7 @@ from typing import Any, Literal
 
 from personalclaw import shutdown_event
 from personalclaw.agents.defaults import LITE_AGENT_NAME
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import default_workspace_dir
 from personalclaw.llm.base import CancelOutcome, ModelProvider
@@ -1676,13 +1677,11 @@ class SessionManager:
         if self._cleanup_task:
             self._cleanup_task.cancel()
 
-        # Cancel background spawn tasks (may be blocked in _INIT_TIMEOUT waits)
+        # Cancel background spawn tasks (may be blocked in _INIT_TIMEOUT waits), and wait for them
+        # a bounded time: one cancelled while it starts an agent's process may never leave.
         # _pool_health_task is included via _background_tasks registration.
-        for t in list(self._background_tasks):
-            t.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
-            self._background_tasks.clear()
+        await cancel_and_wait(list(self._background_tasks), what="background agent starts")
+        self._background_tasks.clear()
 
         # Drain warm pool — shut down pre-spawned processes
         pool_providers: list[ModelProvider] = []

@@ -42,7 +42,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from personalclaw.cancellation import kill_timed_out, terminate_and_reap
+from personalclaw.cancellation import cancel_and_wait, kill_timed_out, terminate_and_reap
 from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
@@ -204,16 +204,14 @@ class AvailabilityBoard:
         self._whole_app.pop(name, None)
 
     async def shutdown(self) -> None:
-        """Stop measuring: cancel the drain and kill a running child."""
+        """Stop measuring: kill a running child and cancel the drain, waiting a bounded time for
+        it: a drain cancelled while it starts the child may never leave (``cancel_and_wait``)."""
         task, self._task = self._task, None
         self._pending.clear()
         proc = self._proc
         if proc is not None:
             await terminate_and_reap(proc)
-        if task is not None and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+        await cancel_and_wait([task], what="provider availability check")
 
     def _schedule(self, names: list[str], *, force: bool = False) -> None:
         wanted = {n for n in names if n and (force or n not in self._inflight)}

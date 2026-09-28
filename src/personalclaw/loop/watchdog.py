@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import concurrency, notification_kinds, shutdown_event
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import instrument, kinds, manager, store, supervisor
@@ -251,12 +252,9 @@ class LoopWatchdog:
             logger.info("loop watchdog started")
 
     async def stop(self) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        """Stop polling. Bounded: a poll can be running a loop's check command, a process a
+        cancel cannot always interrupt (``cancel_and_wait``)."""
+        await cancel_and_wait([self._task], what="loop watchdog")
         self._task = None
 
     def record_turn_outcome(self, loop_id: str, *, ok: bool) -> None:
