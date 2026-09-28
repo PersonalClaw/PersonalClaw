@@ -43,10 +43,6 @@ EXEMPT: dict[tuple[str, str], str] = {
         "a file the owner uploads into a folder they chose, streamed to disk chunk by chunk and "
         "capped as it arrives; the shared writer takes the whole content in memory"
     ),
-    ("uploads/store.py", "write_part"): (
-        "one part of a resumable upload, streamed to disk chunk by chunk; the shared writer takes "
-        "the whole content in memory"
-    ),
     ("service/macos.py", "_write_plist_atomic"): (
         "launchd's own file, in ~/Library/LaunchAgents, outside the home: not a store"
     ),

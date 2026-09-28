@@ -48,8 +48,9 @@ function conflict(over: Partial<DurabilityConflict> = {}): DurabilityConflict {
   }
 }
 
-/** An automation both machines changed: the store brings another machine's in switched off. */
-const ARRIVAL = 'An automation from another machine arrives switched off, without what happened to it there. Switching it on here asks first for what it runs.'
+/** An automation both machines changed: taking the other machine's version is taking its edit in,
+ *  and the gateway says what that makes of the automation here (`StateEntry.edit_arrival`). */
+const ARRIVAL = 'The automation stays switched on or off as it is here, with what happened to it here. What you allowed it to run stays allowed only where it still runs the same; anything it runs differently asks you first.'
 function automationConflict(): DurabilityConflict {
   return conflict({
     entry_id: 'triggers',
@@ -216,7 +217,7 @@ describe('resolving is confirmed, and never silent', () => {
     expect(text).not.toMatch(/will be written/)
   })
 
-  it('taking the other machine’s automation says it arrives switched off, before and after', async () => {
+  it('taking the other machine’s automation says what that makes of it here, before and after', async () => {
     stubPanel(() => Promise.resolve(queue({ conflicts: [automationConflict()] })))
     resolveCall.mockResolvedValue({
       ok: true, choice: 'take_remote', id: 'c0ffee1234567890', written: 1, removed: 0,
@@ -230,11 +231,21 @@ describe('resolving is confirmed, and never silent', () => {
       await waitFor(() => expect(screen.getByText('clock:morning-digest')).toBeTruthy())
       fireEvent.click(screen.getByRole('button', { name: /take the other machine/i }))
       const dialog = await screen.findByRole('alertdialog')
-      expect(dialog.textContent ?? '').toContain(ARRIVAL)
+      const text = dialog.textContent ?? ''
+      // The version is taken in as the other machine's edit, not as the row replaced: the body
+      // names the edit it writes over, then what this machine keeps of the automation.
+      expect(text).toContain(
+        "The other machine’s version of clock:morning-digest will be written into triggers on this machine in place of this machine's edit",
+      )
+      expect(text).not.toMatch(/replacing this machine's copy/)
+      expect(text).toContain(ARRIVAL)
       const go = Array.from(dialog.querySelectorAll('button')).find((b) => /write it/i.test(b.textContent ?? ''))
       fireEvent.click(go!)
       await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
       await waitFor(() => expect(toasts.some((t) => t.includes(ARRIVAL))).toBe(true))
+      expect(toasts.find((t) => t.includes(ARRIVAL))).toMatch(
+        /^Resolved clock:morning-digest: the other machine’s version is written\. /,
+      )
     } finally {
       window.removeEventListener('ne:toast', onToast)
     }

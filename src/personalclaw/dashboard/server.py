@@ -890,6 +890,7 @@ async def start_dashboard(
         api_agent_provider_agents,
         api_agent_provider_test,
         api_agent_providers_list,
+        api_agent_runner_allow,
         api_agent_runner_check,
         api_agent_runners_list,
         api_provider_create,
@@ -912,6 +913,7 @@ async def start_dashboard(
     app.router.add_get("/api/agent-providers/{id}/agents", api_agent_provider_agents)
     app.router.add_get("/api/agent-runners", api_agent_runners_list)
     app.router.add_post("/api/agent-runners/{id}/check", api_agent_runner_check)
+    app.router.add_post("/api/agent-runners/{id}/allow", api_agent_runner_allow)
     app.router.add_post("/api/model-providers", api_provider_create)
     app.router.add_put("/api/model-providers/{name}", api_provider_update)
     app.router.add_delete("/api/model-providers/{name}", api_provider_delete)

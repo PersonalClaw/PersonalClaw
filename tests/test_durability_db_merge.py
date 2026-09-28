@@ -192,7 +192,7 @@ class TestEndToEndThroughPullEngine:
             def stage(self, home, peer_id, seq):
                 with tempfile.TemporaryDirectory() as t:
                     out = Path(t)
-                    export_shards(home, out, include_databases=True)  # DB copies staged
+                    export_shards(home, out, for_sync=True)  # DB copies staged
                     pre = shard_prefix(peer_id, seq)
                     for p in out.rglob("*"):
                         if p.is_file():

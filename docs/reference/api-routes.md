@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **889 registrations** over **721 distinct paths** — 882 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **890 registrations** over **722 distinct paths** — 883 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -79,6 +79,7 @@ The 128 families the surface divides into, largest first.
 | `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
 | `/api/agent-providers` | 3 | 3 |
+| `/api/agent-runners` | 3 | 3 |
 | `/api/incident` | 3 | 2 |
 | `/api/lessons` | 3 | 1 |
 | `/api/logs` | 3 | 2 |
@@ -89,7 +90,6 @@ The 128 families the surface divides into, largest first.
 | `/api/terminal` | 3 | 2 |
 | `/api/agent` | 2 | 1 |
 | `/api/agent-hooks` | 2 | 2 |
-| `/api/agent-runners` | 2 | 2 |
 | `/api/approvals` | 2 | 2 |
 | `/api/channel` | 2 | 2 |
 | `/api/computer-use` | 2 | 2 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 882 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 883 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -177,6 +177,7 @@ The 882 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/agent-providers/{id}/agents` | the agents a runtime offered at its last Test. |
 | `POST` | `/api/agent-providers/{id}/test` | start one agent CLI once, because you asked. |
 | `GET` | `/api/agent-runners` | the runner catalog, with the health each one was last checked at. |
+| `POST` | `/api/agent-runners/{id}/allow` | the owner's yes to a runner definition that waits. |
 | `POST` | `/api/agent-runners/{id}/check` | run one runner's CLI for its version, because you asked. |
 | `GET` | `/api/agent/config` | read or write the installed agent config. |
 | `PUT` | `/api/agent/config` | read or write the installed agent config. |

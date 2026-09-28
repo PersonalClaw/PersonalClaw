@@ -1203,7 +1203,8 @@ async def api_agent_runner_check(request: web.Request) -> web.Response:
     Runs ``<bin> <version_args>`` (``--version`` for every shipped row) and nothing else, for
     the ONE runner it names, and only one that is set up here. A CLI nothing set up — no
     installed agent app, no provider entry of the owner's — is refused with
-    ``runner_not_set_up`` and never run, not even for its version.
+    ``runner_not_set_up`` and never run, not even for its version. A definition of yours that
+    waits for your Allow here (``runner_grants``) is refused with ``runner_waiting``.
 
     Returns ``{runner: <row>}``, the row ``GET /api/agent-runners`` lists, with this Check's
     measured health.
@@ -1226,8 +1227,77 @@ async def api_agent_runner_check(request: web.Request) -> web.Response:
             ),
             status=409,
         )
+    from personalclaw.agents import runner_grants
+
+    if not runner_grants.allowed(defn):
+        return json_error("runner_waiting", message=runner_grants.WAITING_REASON, status=409)
     loop = asyncio.get_running_loop()
     # One subprocess with a bounded budget; off the loop so a slow CLI stalls nothing else.
     await loop.run_in_executor(None, runner_catalog.probe_runner, defn)
+    row = await loop.run_in_executor(None, runner_catalog.runner_row, defn)
+    return web.json_response({"runner": row.to_dict()})
+
+
+async def api_agent_runner_allow(request: web.Request) -> web.Response:
+    """POST /api/agent-runners/{id}/allow — the owner's yes to a runner definition that waits.
+
+    A definition under ``runners/`` waits when nothing the owner allowed covers what it runs now
+    (``runner_grants``): a device sync brought it, or another machine's edit to it, an agent wrote
+    it, or it changed since. The body names ``revision``, the row's ``allow_revision``, so a yes is
+    never given to a definition that changed after the page read it (``409 stale_write``). Without
+    ``"confirm": true`` the answer is ``400 confirmation_required`` with the sentence saying what
+    it runs. Owner-only: no app declaration reaches it (``apps/permissions``). Both answers are
+    written to the security audit. Returns ``{runner: <row>}``; it runs nothing.
+    """
+    from personalclaw.agents import runner_grants
+    from personalclaw.agents import runners as runner_catalog
+    from personalclaw.http_errors import consent_required, json_error
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.sel import sel
+
+    runner_id = request.match_info.get("id", "")
+    defn = runner_catalog.catalog().get(runner_id)
+    if defn is None:
+        return json_error(
+            "not_found", message=f"No runner {runner_id!r} is in the catalog.", status=404
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_request", message="The body must be a JSON object.", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_request", message="The body must be a JSON object.", status=400)
+    caller = request.get("user", "dashboard")
+    resource = f"runners.{defn.id}"
+    if not runner_grants.allowed(defn):
+        if body.get("revision") != runner_grants.revision(defn):
+            return json_error(
+                "stale_write",
+                message=(
+                    f"What {defn.display_name} runs changed after this page read it, so nothing "
+                    "was allowed. Look at it again, then allow it."
+                ),
+                status=409,
+            )
+        if not confirm_granted(body):
+            sel().log_api_access(
+                caller=caller,
+                operation="runner.grant",
+                outcome="denied",
+                source="dashboard",
+                resources=f"{resource}: allowing without confirm",
+            )
+            return consent_required(
+                resource, runner_grants.consent(defn), title=runner_grants.CONSENT_TITLE
+            )
+        runner_grants.give(defn)
+        sel().log_api_access(
+            caller=caller,
+            operation="runner.grant",
+            outcome="success",
+            source="dashboard",
+            resources=resource,
+        )
+    loop = asyncio.get_running_loop()
     row = await loop.run_in_executor(None, runner_catalog.runner_row, defn)
     return web.json_response({"runner": row.to_dict()})

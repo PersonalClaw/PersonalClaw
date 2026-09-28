@@ -6,7 +6,7 @@ The orchestrator that assembles every piece built in 6c-i … 6c-ii-h into the l
     registry = read the shared registry.json from the remote     (transport.pull of REGISTRY_KEY)
     pull_from_peers(transport, home, registry, cursor,            # 6c-ii-e + the 6c-ii-h db_merger
                     db_merger=make_db_merger(home), ancestors=…)  # merged against each peer's base
-    export_shards(home, out, include_databases=True)              # 6b + 6c-ii-g (DB copies)
+    export_shards(home, out, for_sync=True)                       # 6b + 6c-ii-g (DB copies)
     ancestors.publish(…) per record store                         # what this home published
     publish_export(transport, out, registry, outbox, …)           # 6c-ii-f (+ CAS registry bump)
 
@@ -76,7 +76,11 @@ def _record_published(ancestors: Ancestors, home: Path) -> None:
     (:meth:`ancestors.Ancestors.publish`): a peer that takes one of these versions and hands it
     back is then read as behind, not as having edited it."""
     for entry in inv.INVENTORY:
-        if reconcile.handles_kind(entry.kind) and entry.merge in ID_KEYED_MERGES:
+        if (
+            reconcile.handles_kind(entry.kind)
+            and entry.merge in ID_KEYED_MERGES
+            and not entry.machine_local
+        ):
             ancestors.publish(entry.id, reconcile.held_shas(home, entry))
     ancestors.save()
 
@@ -176,7 +180,7 @@ def run_sync_cycle(
     try:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
-            export_shards(home, out, include_databases=True)
+            export_shards(home, out, for_sync=True)
             _record_published(ancestors, home)
             report.pushed = publish_export(
                 transport,

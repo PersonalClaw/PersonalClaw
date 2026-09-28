@@ -24,6 +24,7 @@ The spec table below is the one list of per-automation posture keys; the rail
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -138,3 +139,79 @@ def unconsented_workflow_loosening(
         if loosened is not None:
             return loosened
     return None
+
+
+# ── another machine's definitions (a device sync) ────────────────────────────
+
+
+def _raw_steps(node: Any, path: str = "root") -> list[tuple[str, dict[str, Any]]]:
+    """``(path, the dict a step keeps its posture in)`` for every step of a RAW spec node, in the
+    shape :func:`workflow_steps` reads — a ``stage``'s own config, an ``action``'s ``with`` (or
+    ``config``) — keyed by the same instance path, so a change can be made where it is read."""
+    if not isinstance(node, dict):
+        return []
+    out: list[tuple[str, dict[str, Any]]] = []
+    config = node.get("config")
+    kind = str(node.get("kind", "")).strip()
+    if isinstance(config, dict):
+        if kind == "stage":
+            out.append((path, config))
+        elif kind == "action":
+            action = config.get("with") or config.get("config")
+            if isinstance(action, dict):
+                out.append((path, action))
+    for index, child in enumerate(node.get("children") or []):
+        out.extend(_raw_steps(child, f"{path}.children[{index}]"))
+    out.extend(_raw_steps(node.get("body"), f"{path}.body"))
+    cases = node.get("cases")
+    for label, case in (cases if isinstance(cases, dict) else {}).items():
+        out.extend(_raw_steps(case, f"{path}.cases[{label}]"))
+    out.extend(_raw_steps(node.get("default"), f"{path}.default"))
+    return out
+
+
+def _runs_the_same(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    """Whether two versions of one step run the same, whatever each says of its posture."""
+    return {k: v for k, v in before.items() if k not in POSTURE_SPECS} == {
+        k: v for k, v in after.items() if k not in POSTURE_SPECS
+    }
+
+
+def workflow_what_it_is(document: Mapping[str, Any]) -> dict[str, Any]:
+    """*document* — a workflow definition as a file holds it, its steps under ``root`` — without
+    the step keys that loosen whether a step's agent asks (:func:`loosened_keys`): a copy, or the
+    document as it is when it has no such step.
+
+    A loosening value is the owner's yes, given where they are shown the step (``confirm: true``
+    on a save), so another machine's is not this one's. What a device sync compares of a
+    definition, and all that one from another machine brings: a tightening value stays, and so
+    does every key that is not a posture key.
+    """
+    if not any(loosened_keys(step) for _, step in _raw_steps(document.get("root"))):
+        return dict(document)
+    kept = copy.deepcopy(dict(document))
+    for _, step in _raw_steps(kept.get("root")):
+        for key in loosened_keys(step):
+            step.pop(key, None)
+    return kept
+
+
+def workflow_edit_arrived(here: Mapping[str, Any], edited: Mapping[str, Any]) -> dict[str, Any]:
+    """*edited* — a definition this home has (*here*), with the edit another machine made to it
+    taken in, loosening keys and all left out (:func:`workflow_what_it_is`) — as this home writes
+    it: each step that still runs as it ran here keeps what this home's owner allowed it (its
+    loosening keys here), unless the edit set the key itself, which only a tightening value
+    survives to do; a step the edit changed keeps none, so it asks again until the owner here
+    allows it — the rule an automation's grant follows (``triggers.grants.narrow``). A step is the
+    one at the same path, as the save's consent check reads it
+    (:func:`unconsented_workflow_loosening`)."""
+    allowed = {path: step for path, step in _raw_steps(here.get("root")) if loosened_keys(step)}
+    if not allowed:
+        return dict(edited)
+    out = copy.deepcopy(dict(edited))
+    for path, step in _raw_steps(out.get("root")):
+        before = allowed.get(path)
+        if before is not None and _runs_the_same(before, step):
+            for key in loosened_keys(before):
+                step.setdefault(key, before[key])
+    return out

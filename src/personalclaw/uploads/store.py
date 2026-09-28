@@ -9,7 +9,9 @@ the destination handler (chat attach / knowledge / workspace) exactly as the
 single-POST path does.
 
 Bytes never sit in memory: each part streams chunk-by-chunk to disk, and assembly
-copies part→final in bounded chunks. Disk strategy is adaptive (see
+copies part→final in bounded chunks. Every file here is written through
+``atomic_write.open_streamed``, 0600 in 0700 directories under the home, as the shared writer
+writes a file there: what someone uploads is theirs alone. Disk strategy is adaptive (see
 :meth:`UploadStore.init`): with ≥2× headroom parts are separate files concatenated
 at complete (robust resume — each part independently re-PUTtable); when tighter,
 parts append into one growing final file (~1× disk). Abandoned sessions are swept
@@ -26,7 +28,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from personalclaw.atomic_write import atomic_json_write
+from personalclaw.atomic_write import atomic_json_write, ensure_private_dir, open_streamed
 from personalclaw.local_models.fit import free_disk_bytes
 from personalclaw.uploads.policy import check_upload
 
@@ -88,7 +90,7 @@ class UploadStore:
 
     def __init__(self, root: Path):
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.root)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -146,10 +148,11 @@ class UploadStore:
             created_at=time.time(),
             updated_at=time.time(),
         )
-        self._dir(sid).mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self._dir(sid))
         if append_mode:
             # Pre-create the growing final file so part PUTs seek+write into it.
-            (self._dir(sid) / "assembled").touch()
+            with open_streamed(self._dir(sid) / "assembled", "wb"):
+                pass
         self._save_meta(sess)
         return sess
 
@@ -176,13 +179,13 @@ class UploadStore:
         if sess.append_mode:
             # Seek to this part's offset in the single growing file and overwrite.
             final = self._dir(sid) / "assembled"
-            with open(final, "r+b") as fh:
+            with open_streamed(final, "r+b") as fh:
                 fh.seek(index * sess.part_size)
                 written = await _stream_to(part_reader, fh, cap=expected)
         else:
             part_path = self._dir(sid) / f"part_{index:06d}"
             tmp = self._dir(sid) / f".part_{index:06d}.tmp"
-            with open(tmp, "wb") as fh:
+            with open_streamed(tmp, "wb") as fh:
                 written = await _stream_to(part_reader, fh, cap=expected)
             os.replace(tmp, part_path)
 
@@ -212,7 +215,7 @@ class UploadStore:
         final = self._dir(sid) / "assembled"
         if not sess.append_mode:
             # Concatenate the separate part files, streamed, into `assembled`.
-            with open(final, "wb") as out:
+            with open_streamed(final, "wb") as out:
                 for i in range(sess.total_parts):
                     part_path = self._dir(sid) / f"part_{i:06d}"
                     with open(part_path, "rb") as pf:

@@ -511,8 +511,9 @@ def arrived_from_another_home(row: dict[str, Any]) -> dict[str, Any]:
     """A trigger row from another home, as it is brought into this one. The one rule for every way
     one arrives: a snapshot or archive merge (``snapshot._merge_triggers``), a device sync (the
     ``triggers`` inventory entry's ``arrives``, applied to each automation a peer's store holds),
-    and a sync conflict resolved with the other machine's version or a drafted merge
-    (``durability.conflict_resolve``).
+    and a sync conflict resolved with the other machine's version or a drafted merge of an
+    automation this home no longer has (``durability.conflict_resolve``; one it has takes the
+    version in as an edit, :func:`edit_arrived_from_another_home`).
 
     What it is (:func:`what_it_is`) and nothing else: no armed fire, run count, park or alert
     dedupe from elsewhere, and no grant or loosened posture another home's owner gave; and switched

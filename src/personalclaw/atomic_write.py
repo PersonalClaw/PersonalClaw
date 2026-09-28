@@ -17,11 +17,12 @@ than at each writer because the settings and credential stores funnel through ``
 chokepoint covers the writers that exist and the ones that do not yet, and no enumeration of
 "files that can hold a secret" can drift out of date. The three single-secret files with writers
 of their own — ``.local_secret``, ``telemetry_salt`` and an app's ``.app_secret`` — create
-theirs 0600. A file written any other way (a log, a lock, a SQLite database, a few
-``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what shields it. An
-explicit mode wider than 0600 for a home path is REFUSED, not honoured — that refusal is the
-rail. Outside the home (an export the user saves into Downloads) the umask default still
-applies: that file is theirs to share.
+theirs 0600. A file too large to write whole — an upload's parts, streamed chunk by chunk — gets
+the same mode through :func:`open_streamed`. A file written any other way (a log, a lock, a SQLite
+database, a few ``write_text`` caches) keeps the umask mode; the 0700 home it sits in is what
+shields it. An explicit mode wider than 0600 for a home path is REFUSED, not honoured — that
+refusal is the rail. Outside the home (an export the user saves into Downloads) the umask default
+still applies: that file is theirs to share.
 """
 
 import json
@@ -212,6 +213,44 @@ def atomic_write_bytes(
     not pass through text encoding.
     """
     _atomic_write(path, data, text=False, fsync=fsync, mode=mode)
+
+
+#: The open flags :func:`open_streamed` takes for each mode it serves.
+_STREAMED_FLAGS: dict[str, int] = {
+    "wb": os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+    "ab": os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+    "r+b": os.O_RDWR,
+}
+
+
+def open_streamed(path: Path | str, mode: str = "wb") -> Any:
+    """Open *path* for a write that streams its content chunk by chunk, too large to hold whole
+    for :func:`atomic_write_bytes`: an upload's parts and the file they are assembled into.
+
+    The file gets the mode the shared writer gives one there: 0600 in a 0700 directory under the
+    home, set on the open descriptor, so a file that existed at a looser mode is tightened too;
+    elsewhere the umask's, as ``open`` gives it. Not atomic and not announced: the caller owns what
+    a half-written file means (an upload's part is written again on a resume). *mode* is ``"wb"``,
+    ``"ab"`` or ``"r+b"``.
+    """
+    flags = _STREAMED_FLAGS.get(mode)
+    if flags is None:
+        raise ValueError(
+            f"open_streamed writes bytes: mode {mode!r} is not one of {_STREAMED_FLAGS}"
+        )
+    path = Path(path)
+    home_mode = private_mode_for(path)
+    if home_mode is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return open(path, mode)  # noqa: SIM115 — the caller's `with` closes it
+    ensure_private_dir(path.parent)
+    fd = os.open(str(path), flags | getattr(os, "O_CLOEXEC", 0), home_mode)
+    try:
+        os.fchmod(fd, home_mode)
+        return os.fdopen(fd, mode)
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def atomic_json_write(path: Path | str, data: Any) -> None:

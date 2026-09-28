@@ -113,9 +113,10 @@ def _register(name: str, command: list[str]) -> ProviderEntry:
     return entry
 
 
-def _runner(runner_id: str, bin_name: str) -> None:
-    """A runner-catalog row of the owner's own (``<home>/runners/<id>.json``)."""
-    from personalclaw.agents import runners
+def _runner(runner_id: str, bin_name: str, *, allowed: bool = True) -> None:
+    """A runner-catalog row of the owner's own (``<home>/runners/<id>.json``), which they allowed
+    here unless *allowed* is False — as one a sync brought, or an agent wrote, waits."""
+    from personalclaw.agents import runner_grants, runners
 
     folder = runners.user_catalog_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -131,6 +132,8 @@ def _runner(runner_id: str, bin_name: str) -> None:
         ),
         encoding="utf-8",
     )
+    if allowed:
+        runner_grants.give(runners.catalog()[runner_id])
 
 
 async def _get(handler, path: str, **match) -> tuple[int, dict]:
@@ -138,8 +141,15 @@ async def _get(handler, path: str, **match) -> tuple[int, dict]:
     return resp.status, json.loads(resp.body.decode())
 
 
-async def _post(handler, path: str, **match) -> tuple[int, dict]:
-    resp = await handler(make_mocked_request("POST", path, match_info=match))
+async def _post(handler, path: str, body: dict | None = None, **match) -> tuple[int, dict]:
+    request = make_mocked_request("POST", path, match_info=match)
+    request["user"] = "owner"
+
+    async def _json() -> dict:
+        return body or {}
+
+    request.json = _json  # type: ignore[method-assign]
+    resp = await handler(request)
     return resp.status, json.loads(resp.body.decode())
 
 
@@ -270,13 +280,92 @@ async def test_a_runner_check_runs_its_version_for_that_runner_and_never_a_cli_n
     assert body["runner"]["id"] == "stub-agent" and body["runner"]["health"]["ok"] is True
 
 
+@pytest.mark.asyncio
+async def test_a_runner_definition_that_waits_runs_nothing_until_you_allow_it(stubs):
+    """🔴 Red before: a definition written into ``runners/`` by anyone — a device sync, an agent's
+    shell — ran its CLI as the file said. It now waits for the owner's Allow, sealed to what it
+    runs, and Allow asks first, with what it runs, and names the revision the page read."""
+    from personalclaw.agents import runner_grants
+    from personalclaw.dashboard.handlers.providers import (
+        api_agent_runner_allow,
+        api_agent_runner_check,
+        api_agent_runners_list,
+    )
+
+    _register("acp:stub-agent", [str(stubs.make("stub-agent")), "acp"])
+    _runner("stub-agent", "stub-agent", allowed=False)
+    _status, listed = await _get(api_agent_runners_list, "/api/agent-runners")
+    row = next(r for r in listed["runners"] if r["id"] == "stub-agent")
+    assert row["waiting"] is True and row["allow_revision"]
+
+    check = "/api/agent-runners/stub-agent/check"
+    status, body = await _post(api_agent_runner_check, check, id="stub-agent")
+    assert status == 409 and body["error"]["code"] == "runner_waiting"
+    assert stubs.starts() == [], "a runner definition nobody here allowed was run"
+
+    allow = "/api/agent-runners/stub-agent/allow"
+    status, body = await _post(
+        api_agent_runner_allow, allow, {"revision": row["allow_revision"]}, id="stub-agent"
+    )
+    assert status == 400 and body["error"]["code"] == "confirmation_required"
+    assert "“stub-agent”" in body["error"]["detail"]["consent"]
+    assert body["error"]["detail"]["title"] == runner_grants.CONSENT_TITLE
+    status, body = await _post(
+        api_agent_runner_allow,
+        allow,
+        {"revision": "not-what-was-read", "confirm": True},
+        id="stub-agent",
+    )
+    assert status == 409 and body["error"]["code"] == "stale_write"
+    assert stubs.starts() == []
+
+    status, body = await _post(
+        api_agent_runner_allow,
+        allow,
+        {"revision": row["allow_revision"], "confirm": True},
+        id="stub-agent",
+    )
+    assert status == 200 and body["runner"]["waiting"] is False
+    assert stubs.starts() == [], "Allow runs nothing"
+    status, body = await _post(api_agent_runner_check, check, id="stub-agent")
+    assert status == 200 and stubs.starts() == ["stub-agent --version"]
+
+
+@pytest.mark.asyncio
+async def test_an_edit_to_what_an_allowed_runner_runs_waits_for_you_again(stubs):
+    """Another machine's edit, or anyone's, to a definition the owner allowed: a new question."""
+    from personalclaw.agents import runners
+    from personalclaw.dashboard.handlers.providers import api_agent_runner_check
+
+    _register("acp:stub-agent", [str(stubs.make("stub-agent")), "acp"])
+    stubs.make("other-bin")
+    _runner("stub-agent", "stub-agent")
+    path = runners.user_catalog_dir() / "stub-agent.json"
+    definition = json.loads(path.read_text())
+    path.write_text(json.dumps({**definition, "bin_names": ["other-bin"]}))
+
+    status, body = await _post(
+        api_agent_runner_check, "/api/agent-runners/stub-agent/check", id="stub-agent"
+    )
+    assert status == 409 and body["error"]["code"] == "runner_waiting"
+    assert stubs.starts() == []
+    # CONTROL: the edit back to what was allowed runs again without asking.
+    path.write_text(json.dumps(definition))
+    status, _body = await _post(
+        api_agent_runner_check, "/api/agent-runners/stub-agent/check", id="stub-agent"
+    )
+    assert status == 200 and stubs.starts() == ["stub-agent --version"]
+
+
 def test_apps_cannot_start_an_agent_cli():
-    """Both starts are the owner's: no app token reaches them, whatever it declared."""
+    """Every start, and every yes to one, is the owner's: no app token reaches them, whatever it
+    declared."""
     from personalclaw.apps.permissions import owner_only_api_reason
 
     for method, route, path in (
         ("POST", "/api/agent-providers/{id}/test", "/api/agent-providers/acp:x/test"),
         ("POST", "/api/agent-runners/{id}/check", "/api/agent-runners/x/check"),
+        ("POST", "/api/agent-runners/{id}/allow", "/api/agent-runners/x/allow"),
     ):
         assert owner_only_api_reason(path, method=method, route=route), route
 

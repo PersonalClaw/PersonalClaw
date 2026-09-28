@@ -125,7 +125,7 @@ class DbCopy:
     The diffable row shards store byte/embedding columns as size placeholders, so they
     can't rebuild a DB losslessly; a sync export additionally stages the real DB file
     (backup-API copy, WAL-checkpointed) under ``db/<entry_id>.db`` so the merger can
-    ATTACH it. Only written when ``export_shards(include_databases=True)`` — the hourly
+    ATTACH it. Only written for a sync (``export_shards(for_sync=True)``) — the hourly
     incremental backup never carries these, so its determinism is untouched.
     """
 
@@ -414,7 +414,7 @@ def export_shards(
     out_dir: Path,
     *,
     entries: list[str] | None = None,
-    include_databases: bool = False,
+    for_sync: bool = False,
 ) -> ExportResult:
     """Export state to deterministic shards under ``out_dir``.
 
@@ -422,11 +422,13 @@ def export_shards(
     incremental path exports only dirty entries). Secrets and derived data are
     never exported.
 
-    ``include_databases`` (sync only) additionally stages a consistent whole-DB copy for
-    each ``KIND_SQLITE`` entry under ``db/<entry_id>.db``, because the diffable row shards
-    store embedding/byte columns as placeholders and can't rebuild a DB losslessly. The
-    hourly incremental backup leaves this False, so its byte-for-byte determinism (and its
-    tests) are unaffected — DB copies are not byte-identical across runs by nature.
+    ``for_sync`` is a sync's export, for another machine. It leaves out what stays on this one
+    (``StateEntry.machine_local`` and ``machine_local_within``), and additionally stages a
+    consistent whole-DB copy for each ``KIND_SQLITE`` entry under ``db/<entry_id>.db``, because
+    the diffable row shards store embedding/byte columns as placeholders and can't rebuild a DB
+    losslessly. A backup leaves it False, so it carries this machine's own stores, and its
+    byte-for-byte determinism (and its tests) are unaffected — DB copies are not byte-identical
+    across runs by nature.
     """
     result = ExportResult()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -436,6 +438,8 @@ def export_shards(
         workdir = Path(tmp)
         for entry in inv.export_entries():  # excludes secret + derived
             if wanted is not None and entry.id not in wanted:
+                continue
+            if for_sync and entry.machine_local:
                 continue
             src = home / entry.path
             if not src.exists():
@@ -454,13 +458,15 @@ def export_shards(
                 for table in tables:
                     rows = _sqlite_rows(copy, table)
                     result.shards.extend(_write_shard(out_dir, f"{entry.id}/{table}.jsonl", rows))
-                if include_databases:
+                if for_sync:
                     # Sync also needs the real DB (embeddings/blobs the row shards drop).
                     staged = _stage_db_copy(out_dir, entry.id, copy)
                     if staged is not None:
                         result.databases.append(staged)
             elif entry.kind == inv.KIND_JSON_ENTITY_DIR:
                 rows = _json_rows_from_entity_dir(src) if src.is_dir() else []
+                if for_sync and entry.machine_local_within:
+                    rows = [r for r in rows if not inv.stays_here(entry, str(r.get("id", "")))]
                 if entry.tombstones and src.is_dir():
                     # Fold the hard-delete side-log so a deleted row's marker rides the
                     # export. Only for tombstone entries; a no-op otherwise.

@@ -515,17 +515,19 @@ describe('the stop-project dialog, and the file delete', () => {
 
 describe('the conflict-resolve body, per choice', () => {
   const ui = () => web('pages/settings/DurabilityPanel.tsx')
+  /** The question's body for the two choices that write: bounded by what ends it, not by a guess. */
+  const writingBody = () => pyBetween(ui(), "body: choice === 'keep_local'", "confirmLabel: 'Write it'")
 
   it('promises reversibility ONLY for the choice that earns it', () => {
     // 🔴 It said "The version you don't pick stays in the shared store" for all three choices. Only
     // `keep_local` discards the REMOTE row — the one the shared store actually holds. The other two
-    // discard THIS machine's row, which no store keeps.
+    // discard THIS machine's edit, which no store keeps.
     expect(ui()).toMatch(/choice === 'keep_local'/)
     expect(ui(), 'the reversible branch names the other side').toContain(
       "The other machine's version stays in the shared store, so you can still decide differently from that side.",
     )
-    expect(ui(), 'and the destructive branch says what is gone').toContain(
-      "That copy is not kept anywhere else — only a snapshot has it.",
+    expect(writingBody(), 'and the destructive branch says what is gone').toContain(
+      "in place of this machine's edit, which is not kept anywhere else — only a snapshot has it.",
     )
     expect(ui(), 'the unconditional promise must not come back').not.toContain(
       "The version you don't pick stays in the shared store",
@@ -543,16 +545,63 @@ describe('the conflict-resolve body, per choice', () => {
     expect(keepLocal, 'the divergence is detected and held again').toMatch(/HOLDS the\s+id again/)
   })
 
-  it('take_remote and accept_proposal really do overwrite this machine\'s row', () => {
+  it('take_remote and accept_proposal converge the two machines on what they compare', () => {
     const mod = py('durability/conflict_resolve.py')
     expect(pyBetween(mod, '``take_remote``', '``accept_proposal``'), 'take_remote converges onto the remote sha')
-      .toMatch(/local becomes the remote sha/)
-    const proposal = mod.slice(mod.indexOf('``accept_proposal``'))
-    expect(proposal.slice(0, proposal.indexOf('"' + '""')), 'accept_proposal writes a third sha')
+      .toMatch(/local becomes the remote sha, as two homes compare a row/)
+    expect(pyBetween(mod, '``accept_proposal``', '**The other machine'), 'accept_proposal writes a third sha')
       .toMatch(/local becomes a THIRD sha/)
-    // The write is whole-entry substitution of the chosen row — nothing archives the old one.
-    expect(pyMethod(mod, 'def _write_chosen_row'), 'the old row is simply replaced')
-      .toMatch(/Substitute ``row`` for ``entity_id``/)
+  })
+
+  it('take_remote and accept_proposal write the other machine\'s edit, and this machine keeps its own part', () => {
+    // 🔴 The body said the other version is written "replacing this machine's copy". The write takes
+    // it in the way a sync takes an edit only the other machine made: what the two machines compare
+    // becomes the other machine's, and what is this machine's own stays — an automation's switch,
+    // what happened to it here, the grant where it still runs the same. So each link of that rule is
+    // read where it is implemented, and the body is checked for the sentence that is true of it.
+    const write = pyMethod(py('durability/conflict_resolve.py'), 'def resolve_conflict')
+    expect(write, 'the resolve writes through the take-in, and nothing else').toContain(
+      'reconcile.take_in(entry, dest, rec.entity_id, row)',
+    )
+    expect(write, 'there is no whole-row writer of its own left beside it').not.toMatch(/writeback\.apply_rows\(/)
+
+    const reconcile = py('durability/reconcile.py')
+    const takeIn = pyMethod(reconcile, 'def take_in')
+    expect(takeIn, 'a row this home has takes the other machine\'s version in as an edit').toMatch(
+      /return _edited_there\(entry, here, there\), True/,
+    )
+    expect(takeIn, 'a row this home no longer has comes in by the store\'s arrival rule').toMatch(
+      /entry\.arrives\(there\)/,
+    )
+    const edited = pyMethod(reconcile, 'def _edited_there')
+    expect(edited, 'the edit is taken over what the two homes compare').toContain(
+      'forward(here, there, compared=entry.compared)',
+    )
+    expect(edited, 'and then by the store\'s own rule for what follows from it').toContain(
+      'entry.edit_arrives(here, edited)',
+    )
+    const forward = pyMethod(py('durability/merge.py'), 'def forward')
+    expect(forward, 'the result starts from THIS home\'s row').toMatch(/out = dict\(local\)/)
+    expect(forward, 'and only the compared keys become the peer\'s').toMatch(
+      /every other key stays as\s+this home has it/,
+    )
+
+    // The automation store is one of those whose rows hold a part that is one machine's: the switch
+    // and what happened to it are not what two homes compare, so the take-in leaves them here.
+    const triggers = pyBetween(py('durability/inventory.py'), 'id="triggers"', 'id="crons"')
+    expect(triggers, 'the automation store compares what a person made').toContain('compared=_trigger_compared')
+    expect(triggers, 'and has a rule for an edit that arrives').toContain('edit_arrives=_trigger_edit_arrives')
+    const store = py('triggers/store.py')
+    expect(pyMethod(store, 'def what_it_is'), 'what two homes compare leaves the runtime fields out')
+      .toMatch(/name not in RUNTIME_FIELDS/)
+    const runtime = pyBetween(store, 'RUNTIME_FIELDS: tuple[str, ...] = (', '\n)')
+    expect(runtime, 'and they are the switch and what happened to it').toContain('"enabled"')
+    expect(runtime).toContain('"run_count"')
+
+    const body = writingBody()
+    expect(body, 'the body names the edit it writes over').toMatch(/in place of this machine's edit/)
+    expect(body, 'and says, per store, what this machine keeps').toMatch(/\$\{c\.arrival \? ` \$\{c\.arrival\}` : ''\}/)
+    expect(body, 'the whole-row claim must not come back').not.toMatch(/replacing this machine's copy/)
   })
 
   it('a resolved record is never silently re-applied — the other half of "decide again"', () => {

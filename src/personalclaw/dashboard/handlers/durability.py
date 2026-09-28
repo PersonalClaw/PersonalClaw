@@ -612,15 +612,14 @@ async def api_durability_conflicts(request: web.Request) -> web.Response:
     denied = _reject_app(request)
     if denied is not None:
         return denied
+    from personalclaw.durability import conflict_resolve as resolver
     from personalclaw.durability import conflicts as conflicts_mod
-    from personalclaw.durability import inventory as inv
     from personalclaw.durability import service
 
-    def _listed(rec: conflicts_mod.ConflictRecord) -> dict:
+    def _listed(home: Path, rec: conflicts_mod.ConflictRecord) -> dict:
         # `arrival`: what taking the other machine's version makes of it here, for a store that
-        # brings another home's rows in by a rule, so the confirmation can say it before the write.
-        entry = inv.by_id(rec.entry_id)
-        return {**rec.to_dict(), "arrival": entry.arrival if entry is not None else ""}
+        # takes another home's rows in by a rule, so the confirmation can say it before the write.
+        return {**rec.to_dict(), "arrival": resolver.taking_it_here(home, rec)}
 
     surface = str(request.query.get("surface", "") or "").strip()
     status = str(request.query.get("status", "") or "").strip()
@@ -642,7 +641,7 @@ async def api_durability_conflicts(request: web.Request) -> web.Response:
         # encryption tri-state and is the one shape the panel's sync section reads.
         sync = dict(service.status().get("sync") or {})
         return {
-            "conflicts": [_listed(rec) for rec in selected[-limit:]],
+            "conflicts": [_listed(home, rec) for rec in selected[-limit:]],
             "truncated": len(selected) > limit,
             "counts": {
                 "total": len(everything),
@@ -738,6 +737,7 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "unsupported_kind": 409,
             "no_version": 409,
             "not_a_record": 409,
+            "machine_local": 409,
             "write_failed": 500,
         }.get(outcome.code, 400)
         _audit_api(request, "durability_conflict_resolve", "denied", f"{record_id}:{outcome.code}")
@@ -754,8 +754,9 @@ async def api_durability_conflict_resolve(request: web.Request) -> web.Response:
             "written": outcome.written,
             "removed": outcome.removed,
             "conflict": outcome.record,
-            # What the version written is like here, for a store that brings another machine's
-            # in by a rule (an automation arrives switched off); "" otherwise.
+            # What the version written is like here, for a store that takes another machine's in
+            # by a rule (an automation keeps this machine's switch, and its grant only where it
+            # still runs the same); "" otherwise.
             "note": outcome.note,
         }
     )

@@ -16,7 +16,7 @@ picked so that every failure leaves a state a repeat of the same request fixes:
    written back atomically (temp file + rename). A single-row ``apply_rows`` would truncate a
    ``jsonl_append`` stream to one event, so the substitution is not an optimisation to skip. A
    store of records (``StateEntry.records``) has the one record substituted in its document,
-   under the file's lock (``reconcile.write_record``).
+   under the file's lock (``reconcile.take_in``).
 2. The queue record flips to ``resolved`` only AFTER that write returns.
 
 So a failed write leaves the record ``needs-review`` and the store untouched (the caller sees
@@ -40,12 +40,16 @@ converges on its own schedule, and it does so differently per choice:
   than convenient: a proposal the peer hasn't seen is not agreement, and pretending otherwise
   is how a merge silently loses the other machine's edit.
 
-**The other machine's version arrives the way a sync brings anything in.** Taking it, or the
-merge drafted from it, writes a row the other machine wrote, so the row goes through the entry's
-own arrival rule (``StateEntry.arrives``) first — the rule the sync's merge applies to a row this
-home does not have. An automation or a hook taken this way is switched off, with no grant and
-nothing of what happened to it on the other machine, exactly as one that arrives new by a pull;
-writing the peer's row as it was put another home's switch, armed fire and yes into this one.
+**The other machine's version comes in the way a sync brings it in** (``reconcile.take_in``).
+Taking it, or the merge drafted from it, is the other machine's edit to a row this home has, so it
+is taken in as the sync takes an edit only the other machine made (``StateEntry.edit_arrives``):
+what a person makes of the row is the other machine's, and this home's own part stays. An
+automation or a hook stays switched on or off as it is here, with what happened to it here, and
+its grant keeps only what the edited version still runs as it ran here, so what runs differently
+asks the owner first; a workflow keeps what its steps were allowed here only on the steps the edit
+left as they were. It used to come in as a row this home did not have — an automation switched
+off with no grant, one the owner had running here stopped by the review. A row this home no longer
+has comes in by the store's arrival rule (``StateEntry.arrives``), as a pull brings a new one.
 Keeping this machine's version writes nothing: the row the record holds is a copy from when the
 divergence was found, and writing it back would undo every change this machine has made to the
 row since.
@@ -89,8 +93,9 @@ class ResolveOutcome:
     removed: int = 0
     #: The record as it now stands (resolved on success, untouched on a refusal).
     record: dict | None = None
-    #: What the version written is like here when the store brings another machine's in by a
-    #: rule (``StateEntry.arrival``): the sentence the review shows once it is written.
+    #: What the version written is like here, for a store that takes another machine's in by a
+    #: rule (``StateEntry.edit_arrival``, or ``arrival`` for a row this home no longer had): the
+    #: sentence the review shows once it is written.
     note: str = ""
 
 
@@ -129,6 +134,9 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
     ``no_version``      the chosen version is absent — typically an undrafted proposal
     ``not_a_record``    the version is not one record of a store of records (a conflict
                         recorded over the whole file); only keeping this machine's resolves it
+    ``machine_local``   the store, or this file of it, is one machine's own and never takes
+                        another machine's (``StateEntry.machine_local``); a conflict recorded
+                        before it was declared so closes by keeping this machine's
     ``write_failed``    the store write raised; the record stays needs-review
     ==================  ==========================================================
     """
@@ -165,6 +173,18 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             choice=choice,
             record_id=record_id,
         )
+    if choice != CHOICE_KEEP_LOCAL and (
+        entry.machine_local or inv.stays_here(entry, rec.entity_id)
+    ):
+        return _refuse(
+            "machine_local",
+            (
+                f"{entry.path} is this machine's own and never takes another machine's version; "
+                "keep this machine's to close the conflict"
+            ),
+            choice=choice,
+            record_id=record_id,
+        )
     row = chosen_row(rec, choice)
     if row is None:
         return _refuse(
@@ -179,6 +199,7 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
         )
 
     applied = writeback.ApplyResult()
+    edited = False
     if choice != CHOICE_KEEP_LOCAL:
         if entry.records is not None and not all(
             reconcile.is_record(entry, r) for r in (rec.remote_row, row)
@@ -195,7 +216,7 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             )
         dest = Path(home) / entry.path
         try:
-            applied = _write_chosen_row(entry, dest, rec.entity_id, _as_it_arrives(entry, row))
+            applied, edited = reconcile.take_in(entry, dest, rec.entity_id, row)
         except Exception as exc:  # noqa: BLE001 — a failed write must leave the review open
             logger.warning("conflict resolve: write failed for %s", record_id, exc_info=True)
             return _refuse(
@@ -227,31 +248,24 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
         written=applied.written,
         removed=applied.removed,
         record=rec.to_dict(),
-        note=entry.arrival if choice != CHOICE_KEEP_LOCAL and entry.arrives is not None else "",
+        note=(
+            "" if choice == CHOICE_KEEP_LOCAL else (entry.edit_arrival if edited else entry.arrival)
+        ),
     )
 
 
-def _as_it_arrives(entry: inv.StateEntry, row: dict) -> dict:
-    """The other machine's version, or a merge drafted from it, as this store takes a row from
-    another home in (``StateEntry.arrives``) — the rule the sync's merge applies to the same
-    store."""
-    return row if entry.arrives is None else entry.arrives(row)
-
-
-def _write_chosen_row(
-    entry: inv.StateEntry, dest: Path, entity_id: str, row: dict
-) -> writeback.ApplyResult:
-    """Substitute ``row`` for ``entity_id`` in ``entry``'s live rows and write them all back.
-
-    Whole-entry, not row-at-a-time, because :func:`writeback.apply_rows` writes the SET it is
-    given: handing it one row rewrites a ``jsonl_append`` stream down to that single event.
-    Reading through :func:`reconcile.read_local_rows` keeps the row shape identical to the
-    one the conflict was detected in, so a resolution cannot reshape the store. A store of
-    records has the one record substituted in its document (``reconcile.write_record``).
-    """
-    if entry.records is not None:
-        return reconcile.write_record(entry, dest, entity_id, row)
-    rows = reconcile.read_local_rows(entry, dest)
-    out = [r for r in rows if conflicts_mod.row_id(r) != entity_id]
-    out.append(row)
-    return writeback.apply_rows(entry.kind, dest, out)
+def taking_it_here(home: Path, rec: conflicts_mod.ConflictRecord) -> str:
+    """What taking the other machine's version of *rec*, or the merge drafted from it, makes of it
+    here, in the words the review shows before anything is written: ``StateEntry.edit_arrival``
+    when this home has the row (the review takes the version in as an edit), ``arrival`` when it
+    no longer does; ``""`` when neither can be taken, or the store takes it as written."""
+    entry = inv.by_id(rec.entry_id)
+    if entry is None or entry.machine_local or inv.stays_here(entry, rec.entity_id):
+        return ""
+    if not reconcile.handles_kind(entry.kind):
+        return ""
+    try:
+        has = reconcile.holds(entry, Path(home) / entry.path, rec.entity_id)
+    except (OSError, ValueError):
+        return ""
+    return entry.edit_arrival if has else entry.arrival

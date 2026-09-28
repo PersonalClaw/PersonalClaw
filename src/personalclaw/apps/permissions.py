@@ -573,8 +573,10 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #:
 #: **Another agent's CLI runs only when you say so.** The Test on an agent runtime's card starts
 #: that CLI once, signed in as you, and a runner's Check runs its CLI for its version; nothing
-#: else in ``/api/agent-providers`` or ``/api/agent-runners`` runs anything. Both writes are the
-#: owner's, so no app can start your agent CLIs by calling them; the reads stay the allowlist's.
+#: else in ``/api/agent-providers`` or ``/api/agent-runners`` runs anything. Allow on a runner
+#: definition of yours is your yes to the CLI it names (``agents.runner_grants``). Every write is
+#: the owner's, so no app can start your agent CLIs by calling them, or allow one; the reads stay
+#: the allowlist's.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -858,6 +860,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/agent-runners/{id}/check": OwnerOnly(
         "running an agent CLI you installed to read its version"
+    ),
+    "POST /api/agent-runners/{id}/allow": OwnerOnly(
+        "allowing a runner definition of yours to run the CLI it names, as you"
     ),
     # ── model providers (yours: where your model calls go, and with which key) ──
     "GET /api/model-providers": OwnerOnly(

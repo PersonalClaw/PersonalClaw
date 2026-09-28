@@ -172,6 +172,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Keeping this machine's version of a sync conflict leaves it as it is.**
 
+- **Sync leaves each machine's own counters, model spend, scheduler state and runner health on it: two machines' copies no longer turn every pull into a conflict to review.**
+
 - **An import in Settings → Import / Export merges; a replace, which rewrites what the running gateway holds open, runs from `personalclaw restore <archive> --mode replace` with the gateway stopped.**
 
 - **Merging a snapshot in Settings → Backups runs, where the gateway it runs in used to refuse it.**
@@ -574,7 +576,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A webhook's agent turn runs unattended with read tools only, as every turn nobody watches does, and does not run on an agent CLI.**
 
-- **An automation or hook edited on another machine keeps its switch here, and its yes only for what it still runs as it ran here; a new schedule re-arms its next fire.**
+- **An automation or hook edited on another machine keeps its switch here, and its yes only for what it still runs as it ran here, whether a sync brings the edit or you take the other machine's version of a conflict; a new schedule re-arms its next fire.**
+
+- **A workflow from another machine arrives with every step asking before it acts and without write access, and another machine's edit keeps what you allowed its steps here only on the steps it left as they were.**
+
+- **A runner definition runs its CLI only once you allow what it runs on this machine: one from another machine, or changed since you allowed it, waits for Allow in Settings → Agent defaults.**
+
+- **Sync never brings another machine's agent CLI runtime config: the tools it runs without asking and the servers it starts are this machine's.**
+
+- **What you upload is written 0600, in folders only you can open, like every other file PersonalClaw keeps in its home.**
 
 - **Sync's shared registry names none of your records: what each machine last agreed on with another stays on that machine.**
 
@@ -582,7 +592,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Switching one chat to Trust answers that chat's pending approvals and its own agents', not every other chat's and every background run's.**
 
-- **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
+- **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a merge restore or an import.**
 - **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**
 
 - **A model server on another machine is scanned like a hosted provider: only one at `localhost`, a loopback address or `0.0.0.0` counts as local.**

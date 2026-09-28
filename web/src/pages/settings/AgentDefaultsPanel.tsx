@@ -257,8 +257,9 @@ function RunnersSection() {
 
   useEffect(() => { load() }, [load])
 
-  // A Check answers with the one row it measured; it replaces that row and no other.
-  const onChecked = useCallback((row: RunnerRow) => {
+  // A Check answers with the one row it measured, and an Allow with the row it allowed; each
+  // replaces that row and no other.
+  const onRow = useCallback((row: RunnerRow) => {
     setRows((cur) => (cur ?? []).map((r) => (r.id === row.id ? row : r)))
   }, [])
 
@@ -273,7 +274,7 @@ function RunnersSection() {
           </p>
         ) : (
           <ul className="divide-y divide-outline-variant overflow-hidden rounded-lg bg-surface-container">
-            {rows.map((r) => <RunnerRowItem key={r.id} row={r} onChecked={onChecked} />)}
+            {rows.map((r) => <RunnerRowItem key={r.id} row={r} onRow={onRow} />)}
           </ul>
         )}
     </Section>
@@ -293,8 +294,9 @@ function Chip({ children, tone = 'neutral' }: { children: React.ReactNode; tone?
   return <span data-type="caption" className={`${base} bg-surface-high ${toneCx}`}>{children}</span>
 }
 
-function RunnerRowItem({ row, onChecked }: { row: RunnerRow; onChecked: (row: RunnerRow) => void }) {
+function RunnerRowItem({ row, onRow }: { row: RunnerRow; onRow: (row: RunnerRow) => void }) {
   const [checking, setChecking] = useState(false)
+  const [allowing, setAllowing] = useState(false)
   const h = row.health
   const caps = row.capabilities
   // What a Check runs, said before anyone presses it: the CLI's name and its version flag.
@@ -302,8 +304,16 @@ function RunnerRowItem({ row, onChecked }: { row: RunnerRow; onChecked: (row: Ru
   const check = async () => {
     setChecking(true)
     try {
-      await reportingWrite(`check ${row.display_name}`, async () => onChecked(await api.checkAgentRunner(row.id)))
+      await reportingWrite(`check ${row.display_name}`, async () => onRow(await api.checkAgentRunner(row.id)))
     } finally { setChecking(false) }
+  }
+  // The gateway asks first, in its own words, with what the definition runs; a declined question
+  // writes nothing.
+  const allow = async () => {
+    setAllowing(true)
+    try {
+      await reportingWrite(`allow ${row.display_name}`, async () => onRow(await api.allowAgentRunner(row.id, row.allow_revision)))
+    } finally { setAllowing(false) }
   }
   return (
     <li className="px-4 py-3">
@@ -321,7 +331,15 @@ function RunnerRowItem({ row, onChecked }: { row: RunnerRow; onChecked: (row: Ru
             start a chat on right now. The backend has already dropped an expired lease, so
             a chip here always names a CURRENT holder. */}
         {row.lease !== null && <Chip>held by {row.lease.holder}</Chip>}
-        {row.set_up && (
+        {/* A definition of yours that came from another machine, or changed since you allowed it:
+            nothing runs its CLI, a Check included, until you allow what it runs here. */}
+        {row.waiting && <Chip tone="bad">waiting for you</Chip>}
+        {row.waiting ? (
+          <Button size="xs" variant="secondary" className="ml-auto" loading={allowing} loadingLabel="Allowing…"
+            ariaLabel={`Allow: ${row.display_name}`} onClick={allow}>
+            Allow
+          </Button>
+        ) : row.set_up && (
           <Button size="xs" variant="secondary" className="ml-auto" loading={checking} loadingLabel="Checking…"
             ariaLabel={`Check version: ${row.display_name}`} title={`Runs ${command}`} onClick={check}>
             Check version
@@ -331,9 +349,11 @@ function RunnerRowItem({ row, onChecked }: { row: RunnerRow; onChecked: (row: Ru
       {/* What runs, and when — on every row, so a runner's CLI never runs without the row having
           said so first. A runner nothing set up here is never run, not even for its version. */}
       <div data-type="caption" className="mt-1.5 text-on-surface-low">
-        {row.set_up
-          ? <>Check version runs <code className="font-mono">{command}</code> and nothing else, only when you press it.</>
-          : 'Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it.'}
+        {row.waiting
+          ? 'Your definition of this runner came from another machine, or changed since you allowed it, so PersonalClaw runs its CLI only after you allow what it runs here.'
+          : row.set_up
+            ? <>Check version runs <code className="font-mono">{command}</code> and nothing else, only when you press it.</>
+            : 'Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it.'}
       </div>
       {/* The lease detail, only when there is a lease. "for Ns" is the age of the hold and
           "released in Ns" is when idle-release takes it back — together they tell a user

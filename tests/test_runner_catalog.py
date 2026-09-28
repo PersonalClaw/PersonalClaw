@@ -84,6 +84,16 @@ def _byo(defn_dict: dict) -> Path:
     return p
 
 
+def _byo_allowed(defn_dict: dict) -> Path:
+    """A definition of the owner's that they allowed here, as Allow records it
+    (``runner_grants``): only such a one runs anything."""
+    from personalclaw.agents import runner_grants
+
+    path = _byo(defn_dict)
+    runner_grants.give(runners.catalog()[defn_dict["id"]])
+    return path
+
+
 def _provisioned_adapter(tmp_path: Path, npm_pkg: str, *, record: bool = True) -> Path:
     """Fake a PersonalClaw-provisioned adapter: a real bin + npm's own lock record."""
     prefix = runners.managed_adapter_prefix()
@@ -264,7 +274,7 @@ async def test_verbatim_error_survives_to_the_api_response():
     """
     from personalclaw.dashboard.handlers.providers import api_agent_runners_list
 
-    _byo(
+    _byo_allowed(
         {
             "id": "fake-runner",
             "display_name": "Fake Runner",
@@ -510,8 +520,9 @@ class _FakeProvider:
         return None
 
 
-def _gate_fixture(monkeypatch, *, flag: bool, verified: bool, tmp_path: Path):
-    """Catalog a runner, set the flag, and return (manager, calls) for get_or_create."""
+def _gate_fixture(monkeypatch, *, flag: bool, verified: bool, tmp_path: Path, allowed: bool = True):
+    """Catalog a runner, set the flag, and return (manager, calls) for get_or_create. The
+    definition is one the owner allowed here unless *allowed* is False."""
     adapter: dict | None
     if verified:
         adapter_bin = _provisioned_adapter(tmp_path, "@fake/adapter")
@@ -529,7 +540,7 @@ def _gate_fixture(monkeypatch, *, flag: bool, verified: bool, tmp_path: Path):
             "env_var": "FAKE_ADAPTER_BIN",
             "bin_names": ["definitely-not-installed-acp"],
         }
-    _byo(
+    (_byo_allowed if allowed else _byo)(
         {
             "id": "fake-runner",
             "display_name": "Fake Runner",
@@ -602,6 +613,25 @@ async def test_verified_adapter_lets_an_unattended_spawn_proceed(monkeypatch, tm
         "unattended:ei5-verified", provider_kind="acp:fake-runner", unattended=True
     )
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_definition_nobody_here_allowed_is_refused_even_with_a_verified_adapter(
+    monkeypatch, tmp_path
+):
+    """A definition that waits for the owner's Allow here — one a sync brought, or changed since
+    — names an adapter nobody here vouched for, so the gate refuses it before verifying it. The
+    positive control is ``test_verified_adapter_lets_an_unattended_spawn_proceed``: the same
+    definition, allowed, proceeds."""
+    mgr, calls = _gate_fixture(
+        monkeypatch, flag=True, verified=True, tmp_path=tmp_path, allowed=False
+    )
+    with pytest.raises(runners.UnverifiedAdapterError) as exc:
+        await mgr.get_or_create(
+            "unattended:ei5-waiting", provider_kind="acp:fake-runner", unattended=True
+        )
+    assert "is not allowed here" in str(exc.value)
+    assert calls == []
 
 
 @pytest.mark.asyncio

@@ -281,7 +281,9 @@ def what_it_is(row: dict) -> dict:
 
 def arrived_from_another_home(row: dict) -> dict:
     """A stored report from another home, as it is brought into this one: by a sync, a restore's
-    merge or an import, and a sync conflict resolved with the other machine's version.
+    merge or an import, and a sync conflict resolved with the other machine's version of a report
+    this home no longer has (one it has takes the version in as an edit: its switch and runs here
+    stay).
 
     What it is (:func:`what_it_is`), switched off: it runs on its cadence, unattended, and each run
     is a model call, so it runs here only once someone here switches it on — which saves it here,

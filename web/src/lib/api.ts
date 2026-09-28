@@ -5144,6 +5144,12 @@ export interface RunnerRow {
   /** Whether an installed agent app (or a provider entry of yours) set this runner up here —
    *  only then is a Check offered, and only then does the server run it. */
   set_up: boolean
+  /** Whether your definition of it waits for your Allow on this machine: it came from another
+   *  machine, or changed since you allowed it. Nothing runs its CLI until then, a Check included.
+   *  `allow_revision` is what Allow names (`''` when it does not wait), so a yes is never to a
+   *  definition that changed after this row was read. */
+  waiting: boolean
+  allow_revision: string
   health: RunnerHealth | null
   // Whether `health` is still current per `agent.runner_health_check_secs`. `null` is
   // unknown (never probed, or a timestamp the backend could not parse) — distinct from
@@ -7517,9 +7523,16 @@ export const api = {
   // BYO runner catalog rows: the health each runner's last Check measured (no spawns).
   agentRunners: () => get<{ runners: RunnerRow[] }>('/api/agent-runners').then((d) => d.runners),
   // A runner's Check: runs `<bin> <version_args>` for that ONE runner, and only when it is set up
-  // here (`set_up`) — the server refuses any other with `runner_not_set_up`.
+  // here (`set_up`) — the server refuses any other with `runner_not_set_up`, and a definition that
+  // waits for your Allow (`waiting`) with `runner_waiting`.
   checkAgentRunner: (id: string) =>
     post<{ runner: RunnerRow }>(`/api/agent-runners/${encodeURIComponent(id)}/check`).then((d) => d.runner),
+  // Your yes to a runner definition that waits: the gateway asks with what it runs, then answers
+  // with the row. It runs nothing itself.
+  allowAgentRunner: (id: string, revision: string) =>
+    withSecurityConsent((c) => post<{ runner: RunnerRow }>(
+      `/api/agent-runners/${encodeURIComponent(id)}/allow`, c ? { revision, confirm: true } : { revision },
+    )).then((d) => d.runner),
   // generic multi-instance CRUD (any multiInstance=true provider — MCP/OpenAI tools, …).
   providerInstances: (name: string) => get<{ instances: ProviderInstance[] }>(`/api/providers/${encodeURIComponent(name)}/instances`).then((d) => d.instances),
   // An MCP Tool Servers instance is an MCP server: creating one, or changing what it runs, is asked

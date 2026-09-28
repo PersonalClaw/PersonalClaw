@@ -17,6 +17,7 @@ import { AgentDefaultsPanel } from './AgentDefaultsPanel'
 
 const agentRunners = vi.fn()
 const checkAgentRunner = vi.fn()
+const allowAgentRunner = vi.fn()
 const personalclawConfig = vi.fn()
 
 const VERBATIM = "'gemini' not found on PATH (looked for: gemini); set GEMINI_CLI_EXECUTABLE to override"
@@ -25,6 +26,7 @@ vi.mock('../../lib/api', () => ({
   api: {
     agentRunners: () => agentRunners(),
     checkAgentRunner: (id: string) => checkAgentRunner(id),
+    allowAgentRunner: (id: string, revision: string) => allowAgentRunner(id, revision),
     personalclawConfig: () => personalclawConfig(),
     patchConfig: () => Promise.resolve({}),
     agents: () => Promise.resolve({ default_agent: '' }),
@@ -54,6 +56,7 @@ vi.mock('../../lib/data', () => ({
 const unhealthyRow = {
   id: 'gemini-cli', display_name: 'Gemini CLI', runtime_id: 'acp:gemini-cli', source: 'builtin',
   dialect: '', bin_names: ['gemini'], version_args: ['--version'], set_up: false,
+  waiting: false, allow_revision: '',
   health: {
     ok: false, probe: 'path', checked_at: '2026-08-17T10:00:00+00:00',
     version: null, latency_ms: null, error: VERBATIM, resolved_command: [],
@@ -67,6 +70,7 @@ const unhealthyRow = {
 const healthyRow = {
   id: 'claude-code', display_name: 'Claude Code', runtime_id: 'acp:claude-code', source: 'builtin',
   dialect: 'claude-code', bin_names: ['claude'], version_args: ['--version'], set_up: true,
+  waiting: false, allow_revision: '',
   health: {
     ok: true, probe: 'version', checked_at: '2026-08-17T10:00:00+00:00',
     version: '2.1.233', latency_ms: 58, error: null, resolved_command: ['/usr/bin/claude'],
@@ -85,6 +89,7 @@ describe('the runner rows in Settings → Agent defaults', () => {
     personalclawConfig.mockResolvedValue({ agent: { unattended_requires_verified_adapter: false } })
     agentRunners.mockResolvedValue([healthyRow, unhealthyRow])
     checkAgentRunner.mockReset()
+    allowAgentRunner.mockReset()
   })
 
   // ── what runs, and when: a runner's CLI runs only for its own Check ─────────────────────────
@@ -111,6 +116,45 @@ describe('the runner rows in Settings → Agent defaults', () => {
     await waitFor(() => expect(screen.getByText('v2.2.0')).toBeTruthy())
     expect(checkAgentRunner).toHaveBeenCalledTimes(1)
     expect(checkAgentRunner).toHaveBeenCalledWith('claude-code')
+  })
+
+  // ── a definition of yours that waits: it came from another machine, or changed since ────────
+  //
+  // Its CLI runs for nothing, a Check included, until you allow what it runs here. The row says so
+  // and offers Allow in place of the Check; the server would refuse the Check (`runner_waiting`).
+
+  const waitingRow = {
+    ...healthyRow, id: 'my-cli', display_name: 'My CLI', runtime_id: 'acp:claude-code',
+    source: 'user', bin_names: ['my-cli'], waiting: true, allow_revision: 'rev-1',
+  }
+
+  it('a runner definition that waits offers Allow and no Check, and says why', async () => {
+    agentRunners.mockResolvedValue([waitingRow])
+    render(<AgentDefaultsPanel />)
+    await screen.findByRole('button', { name: 'Allow: My CLI' })
+    expect(screen.getByText('waiting for you')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Check version: My CLI' })).toBeNull()
+    expect(screen.getByText(/came from another machine, or changed since you allowed it/)).toBeTruthy()
+    expect(checkAgentRunner).not.toHaveBeenCalled()
+  })
+
+  it('Allow names the revision it was shown, and the allowed row replaces the waiting one', async () => {
+    agentRunners.mockResolvedValue([waitingRow])
+    allowAgentRunner.mockResolvedValue({ ...waitingRow, waiting: false, allow_revision: '' })
+    render(<AgentDefaultsPanel />)
+    const allow = await screen.findByRole('button', { name: 'Allow: My CLI' })
+    await act(async () => { fireEvent.click(allow) })
+    await screen.findByRole('button', { name: 'Check version: My CLI' })
+    expect(allowAgentRunner).toHaveBeenCalledWith('my-cli', 'rev-1')
+    expect(screen.queryByText('waiting for you')).toBeNull()
+  })
+
+  it('a runner that does not wait offers no Allow', async () => {
+    // VACUITY FLOOR: an Allow on every row would ask the owner about shipped runners too.
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: /^Allow:/ })).toBeNull()
+    expect(screen.queryByText('waiting for you')).toBeNull()
   })
 
   it('a runner nothing set up offers no Check and says PersonalClaw never runs it', async () => {

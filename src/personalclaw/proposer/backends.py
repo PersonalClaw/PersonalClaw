@@ -19,6 +19,7 @@ import contextlib
 import time
 from datetime import datetime, timezone
 
+from personalclaw.agents import runner_grants
 from personalclaw.agents.runners import RunnerDefinition, resolve_runner_command
 from personalclaw.proposer.brief import HandoffBrief
 from personalclaw.proposer.contract import (
@@ -106,6 +107,9 @@ class RunnerProposerBackend:
         return self._defn.id
 
     async def prepare(self, brief: HandoffBrief) -> PreparedInvocation:
+        if not runner_grants.allowed(self._defn):
+            # Selection already passes over it; this is where its binary would be resolved.
+            raise ProposerUnavailable(f"runner {self._defn.id!r}: {runner_grants.WAITING_REASON}")
         dialect = one_shot(self._defn.dialect, self._defn.id)
         if dialect is None:
             raise ProposerUnavailable(

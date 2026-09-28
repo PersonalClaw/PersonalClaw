@@ -244,7 +244,8 @@ applies one rule, `triggers.store.arrived_from_another_home`: a snapshot restore
 or archive import's merge (`snapshot._merge_triggers`, into a home with no store
 too), a device sync (the `triggers` inventory entry's `arrives`, applied by
 `durability.reconcile`), and a sync conflict resolved with the other machine's
-version or a drafted merge (`durability.conflict_resolve`). It keeps what the
+version or a drafted merge (`durability.conflict_resolve`) for an automation this
+home no longer has. It keeps what the
 automation is (`triggers.store.what_it_is`) and drops `RUNTIME_FIELDS`: its armed
 fire, run count, success, failure and waiting stamps, debounce and park stamps,
 alert dedupe, health and state, its switch, and its grant (`capabilities`), with
@@ -277,7 +278,26 @@ its switch, what happened to it here, and its grant, which keeps only what the
 edited action still runs as it ran here, so a changed command waits for the
 owner's yes here (`triggers.store.edit_arrived_from_another_home`,
 `hooks.hook_edit_arrived_from_another_home`). A new cadence re-arms the next
-fire, as the editor's save does (`arm.cadence_fingerprint`).
+fire, as the editor's save does (`arm.cadence_fingerprint`). "Take the other
+machine's version" in the conflict review, and its drafted merge, take the
+version in by the same rule (`durability.reconcile.take_in`): the automation stays
+switched on or off as it is here, and what it runs differently asks first. It
+used to come in as an automation this home did not have, switched off, so taking
+the other machine's schedule stopped one that ran here.
+
+**What another machine's owner allowed is theirs.** A workflow step's
+`approval_mode: auto` and `capability: mutating` are the owner's yes, given where
+a save shows them, so a workflow definition from another machine arrives without
+either on any step, and another machine's edit keeps what this home allowed only
+on the steps it left as they were (`automation_posture.workflow_what_it_is`,
+`workflow_edit_arrived`); a tightening value comes as written. A runner
+definition under `runners/` names the program PersonalClaw runs for a Check and a
+second opinion, so it runs only once this home's owner allowed what it runs,
+sealed to it (`agents.runner_grants`, in `grants/`, which no sync or export
+carries): one from another machine waits for Allow on its row in Settings →
+Agent defaults, and so does another machine's edit to one allowed here. An agent
+file's `approval_mode` does nothing until the owner here adds the agent, which
+asks first for a looser one.
 
 Every writer of `triggers.json` holds the trigger store's own lock
 (`.triggers.lock`, `record_files.locked`) and re-reads the file under it: the
@@ -298,6 +318,24 @@ without asking and their undo handles (`autonomy_rungs.json`,
 `autonomy_reversals.json`), and which integrations may connect
 (`inbound_clients.json`, `inbound_tokens.json`). They are `replace_only`, as the
 configuration is: restored whole or not at all, and left as they are by a pull.
+
+**What is one machine's own stays on it.** Its model spend by day, which its
+budget caps count (`spend.json`), its tool counters (`tool_usage.json`), its
+context-savings ledger (`tokenjuice_savings.json`), when its own backups and
+syncs last ran (`durability_state.json`), which due-date notices it sent
+(`task_due_notices.json`), and the legacy files each home imports once
+(`crons.json`, `event_triggers.json`, `autonudge.json`) are `machine_local`: a
+snapshot and a backup carry them, a sync never does, a pull leaves this
+machine's as they are even from a peer that still sends one, and the review
+closes an old conflict on one only by keeping this machine's. Merged as one row,
+two machines could never agree on a counter, so once both had moved every pull
+was a conflict to review. The same holds for files of a synced folder
+(`machine_local_within`): the agent CLI's runtime config
+(`agents/personalclaw.json`), which lists what this machine's owner lets it run
+without asking and the servers it starts, each runner's health as this machine
+measured it (`agent-metadata/*.runner.json`), which picks the runner a second
+opinion fires, and the template nudges' counters and candidates
+(`workflows/template_nudges.json`, `workflows/template_candidates.json`).
 
 **One notification per fire.** A fire's completion report ("X finished" /
 "X failed", `triggers/delivery.py`) carries `statusUrl` back to the trigger.

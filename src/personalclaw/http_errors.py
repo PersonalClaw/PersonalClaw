@@ -785,6 +785,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "Nothing sets this runner up here — no installed agent app or provider entry registers "
         "its runtime — so PersonalClaw does not run its CLI."
     ),
+    # 409: a runner definition of the owner's waits for their Allow on this machine
+    # (`agents.runner_grants`) — one another machine's sync brought, or changed since it was
+    # allowed — so PersonalClaw does not run its CLI, a Check included.
+    "runner_waiting": (
+        "This runner's definition waits for you to allow what it runs on this machine, so "
+        "PersonalClaw does not run its CLI."
+    ),
     # ── per-run policy overrides (workflows/handlers.py) ──
     # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
     # `json_error` call site, but registered here all the same: these are wire codes a

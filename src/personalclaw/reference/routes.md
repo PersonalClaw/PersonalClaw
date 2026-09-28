@@ -24,6 +24,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/agent-providers/{id}/agents` — the agents a runtime offered at its last Test.
 - `POST /api/agent-providers/{id}/test` — start one agent CLI once, because you asked.
 - `GET /api/agent-runners` — the runner catalog, with the health each one was last checked at.
+- `POST /api/agent-runners/{id}/allow` — the owner's yes to a runner definition that waits.
 - `POST /api/agent-runners/{id}/check` — run one runner's CLI for its version, because you asked.
 - `GET /api/agent/config` — read or write the installed agent config.
 - `PUT /api/agent/config` — read or write the installed agent config.

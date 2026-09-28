@@ -2,9 +2,12 @@
 
 A row from another home comes in by four paths: a device sync's merge, a sync conflict resolved
 with the other machine's version or a drafted merge, a snapshot restore's merge and an archive
-import's merge. Each automation (and each lifecycle hook) arrives the same way on all of them:
-switched off, with nothing of what happened to it in the other home, and with no grant that home's
-owner gave, so switching it on here asks first for what it runs.
+import's merge. Each automation (and each lifecycle hook) this home does not have arrives the same
+way on all of them: switched off, with nothing of what happened to it in the other home, and with
+no grant that home's owner gave, so switching it on here asks first for what it runs. One this
+home has takes the other machine's edit in by the sync's rule for it, the conflict review's
+"Take the other machine's version" included: this home's switch, runs and grant stay, and the
+grant keeps only what the edited action still runs as it ran here.
 
 Three ways that failed, each measured on the code before this change:
 
@@ -17,6 +20,8 @@ Three ways that failed, each measured on the code before this change:
   and granted by the peer's owner. "Keep mine" wrote back the copy taken when the conflict was
   found, undoing whatever this home had done to the automation since. The snapshot and archive
   merges copied a store in whole into a home with none, switched on and granted.
+* **Then "take theirs" brought the automation in as a new one,** switched off with no grant, so
+  taking the other machine's schedule for an automation the owner had running here stopped it.
 """
 
 from __future__ import annotations
@@ -224,9 +229,29 @@ def test_a_peers_hook_lands_switched_off_and_without_its_grant(tmp_path):
 # ── a conflict's resolution ──────────────────────────────────────────────────────────────────
 
 
-def test_taking_the_other_machines_automation_brings_it_in_switched_off(tmp_path):
-    """🔴 Red before: "take theirs" wrote the peer's row as it was — switched on, armed with the
-    peer's next fire and carrying the peer's health."""
+def _conflict_on_the_command(home: Path) -> conflicts_mod.ConflictRecord:
+    """A granted automation both homes agreed on; then this home moved its schedule and the other
+    changed the command it runs — the real detector's conflict, through two real syncs."""
+    queue = conflicts_mod.ConflictQueue(home)
+    agreed = _granted(BACKUP, "Nightly backup", **RAN_HERE)
+    _write_store(home, agreed)
+    first = _sync(home, _peer(agreed), queue=queue)
+    assert first.new_ancestors, "the two homes agree on the automation"
+    _write_store(home, {**agreed, "spec": {"kind": "cron", "expr": "0 3 * * *"}})
+    theirs = _granted(BACKUP, "Nightly backup", **RAN_THERE)
+    theirs["workflow"] = {
+        "inline": {"provider": "bash", "config": {"command": "/nonexistent/pc-x"}}
+    }
+    second = _sync(home, _peer(theirs, saved_at=2.0), ancestors=first.new_ancestors, queue=queue)
+    assert second.conflicts == 1
+    (rec,) = queue.items()
+    return rec
+
+
+def test_taking_the_other_machines_version_keeps_this_machines_switch_and_runs(tmp_path):
+    """🔴 Red before: "take theirs" brought the automation in as one this home did not have —
+    switched off and without its runs here, so taking the other machine's schedule for an
+    automation running here stopped it. Before that, it wrote the peer's row as it was."""
     rec = _conflict_on_the_schedule(tmp_path)
 
     out = resolver.resolve_conflict(tmp_path, rec.id, resolver.CHOICE_TAKE_REMOTE, now="NOW")
@@ -234,17 +259,49 @@ def test_taking_the_other_machines_automation_brings_it_in_switched_off(tmp_path
     assert out.ok, out.message
     taken = _stored(tmp_path)[DIGEST]
     assert taken["spec"]["expr"] == "0 7 * * *", "the other machine's version"
-    assert taken["enabled"] is False
-    assert not set(taken) & set(RUNTIME_FIELDS) - {"enabled"}, sorted(taken)
+    assert taken["enabled"] is True, "this machine's switch"
+    assert (taken["run_count"], taken["last_success_at"]) == (3, RAN_HERE["last_success_at"])
+    assert taken.get("health_status") != RAN_THERE["health_status"], "the other machine's outage"
+    assert taken.get("last_error_summary") != RAN_THERE["last_error_summary"]
+    # A new cadence re-arms the next fire, as the editor's save does: neither home's old one.
+    assert taken["next_fire_at"] not in (RAN_HERE["next_fire_at"], RAN_THERE["next_fire_at"])
     entry = inv.by_id("triggers")
-    assert entry is not None and out.note == entry.arrival and "switched off" in out.note
+    assert entry is not None and out.note == entry.edit_arrival
 
 
-def test_a_drafted_merge_arrives_by_the_same_rule(tmp_path):
-    """The drafted merge is built from the other machine's version, so it comes in the same way —
-    whatever the draft carried of a run or a switch."""
+def test_taking_the_other_machines_version_keeps_a_grant_only_for_what_runs_the_same(tmp_path):
+    """The other machine changed the command; its owner's yes to that is not this one's, and this
+    home's yes was to the old command, so the automation asks before it runs the new one."""
+    rec = _conflict_on_the_command(tmp_path)
+
+    out = resolver.resolve_conflict(tmp_path, rec.id, resolver.CHOICE_TAKE_REMOTE)
+
+    assert out.ok, out.message
+    taken = _stored(tmp_path)[BACKUP]
+    assert taken["workflow"]["inline"]["config"]["command"] == "/nonexistent/pc-x"
+    assert taken["enabled"] is True
+    trigger, _ = parse_trigger(taken)
+    assert screen.ungranted_providers(trigger) == ["bash"], "the new command waits for a yes here"
+
+
+def test_a_grant_stays_when_the_other_machines_version_runs_the_same(tmp_path):
+    """CONTROL for the one above: a version that leaves the command as it is keeps the grant."""
+    rec = _conflict_on_the_command(tmp_path)
+    rec.remote_row = {**rec.remote_row, "workflow": rec.local_row["workflow"], "name": "Backup"}
+    assert conflicts_mod.ConflictQueue(tmp_path).update(rec)
+
+    assert resolver.resolve_conflict(tmp_path, rec.id, resolver.CHOICE_TAKE_REMOTE).ok
+    taken = _stored(tmp_path)[BACKUP]
+    trigger, _ = parse_trigger(taken)
+    assert taken["name"] == "Backup" and screen.ungranted_providers(trigger) == []
+
+
+def test_a_drafted_merge_comes_in_by_the_same_rule(tmp_path):
+    """The drafted merge is the other machine's edit too, so it comes in the same way — whatever
+    the draft carried of a run or a switch."""
     rec = _conflict_on_the_schedule(tmp_path)
     rec.proposal = {**rec.remote_row, "name": "Morning digest (merged)", **RAN_THERE}
+    rec.proposal["enabled"] = False
     assert conflicts_mod.ConflictQueue(tmp_path).update(rec)
 
     out = resolver.resolve_conflict(tmp_path, rec.id, resolver.CHOICE_ACCEPT_PROPOSAL)
@@ -252,8 +309,36 @@ def test_a_drafted_merge_arrives_by_the_same_rule(tmp_path):
     assert out.ok, out.message
     taken = _stored(tmp_path)[DIGEST]
     assert taken["name"] == "Morning digest (merged)"
-    assert taken["enabled"] is False
+    assert taken["enabled"] is True and taken["run_count"] == 3, "this machine's own"
+    assert taken.get("health_status") != RAN_THERE["health_status"]
+
+
+def test_an_automation_this_home_no_longer_has_comes_in_switched_off(tmp_path):
+    """Deleted here after the conflict was found, the other machine's version is one this home does
+    not have, so it arrives as a pull brings a new one — and the review says so before and after."""
+    rec = _conflict_on_the_schedule(tmp_path)
+    _write_store(tmp_path, _automation(BACKUP, "Nightly backup"))
+    entry = inv.by_id("triggers")
+    assert entry is not None
+    assert resolver.taking_it_here(tmp_path, rec) == entry.arrival
+
+    out = resolver.resolve_conflict(tmp_path, rec.id, resolver.CHOICE_TAKE_REMOTE)
+
+    assert out.ok, out.message
+    taken = _stored(tmp_path)[DIGEST]
+    assert taken["spec"]["expr"] == "0 7 * * *" and taken["enabled"] is False
     assert not set(taken) & set(RUNTIME_FIELDS) - {"enabled"}
+    assert out.note == entry.arrival and "switched off" in out.note
+
+
+def test_the_review_says_what_taking_it_makes_of_it_before_anything_is_written(tmp_path):
+    rec = _conflict_on_the_schedule(tmp_path)
+    before = (tmp_path / "triggers.json").read_bytes()
+    entry = inv.by_id("triggers")
+    assert entry is not None
+
+    assert resolver.taking_it_here(tmp_path, rec) == entry.edit_arrival
+    assert (tmp_path / "triggers.json").read_bytes() == before
 
 
 def test_keeping_this_machines_version_writes_nothing(tmp_path):

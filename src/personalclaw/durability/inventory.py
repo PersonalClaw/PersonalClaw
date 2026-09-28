@@ -96,6 +96,15 @@ class StateEntry:
     secret: bool = False  # never leaves this machine
     credential: bool = False  # holds credential VALUES — not even a snapshot captures it
     derived: bool = False  # rebuildable index/cache — excluded from exports
+    # One machine's own account of itself — what it spent, what it last ran, which notices it
+    # sent, the legacy files it imported once. A snapshot, a backup and an export carry it; a sync
+    # never does, and never merges another machine's into it: merged, each machine's counters were
+    # the other's to overwrite, and once both had moved every pull was a conflict to review.
+    machine_local: bool = False
+    # Paths inside `path` (globs, relative to it) with the same rule, for an entity directory
+    # whose other files do sync: `agents/personalclaw.json`, the agent runtime config this home
+    # rebuilds from its own configuration, which holds what its owner allowed here.
+    machine_local_within: tuple[str, ...] = field(default_factory=tuple)
     tombstones: bool = False  # deletes need markers to survive a sync merge
     # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
     # undeclared-DB audit cannot match them by exact path and must accept the whole subtree. Opt-in
@@ -118,23 +127,28 @@ class StateEntry:
     # whose rows also hold what is ONE home's: what happened to them there, or the owner's yes
     # there. Applied to every peer row but a tombstone by every path one arrives by: the sync's
     # merge (`reconcile.reconcile_entry`), a restore's merge and an import (`reconcile.bring_in`),
-    # and a conflict resolved with the other machine's version or a drafted merge
-    # (`conflict_resolve`). `None`: a peer's row arrives as the peer wrote it.
+    # and a conflict resolved with the other machine's version or a drafted merge of a row this
+    # home no longer has (`reconcile.take_in`). `None`: a peer's row arrives as the peer wrote it.
     arrives: Callable[[dict], dict] | None = None
     # What of a row two homes compare, for the same stores: the part a person makes, without what
     # is one home's. Conflict detection and the common ancestors read it (`conflicts.compared`),
     # so a run, a switch or a yes in one home is never an edit to review. `None`: the whole row.
     compared: Callable[[dict], dict] | None = None
     # What follows in this home from an edit another machine made to a row it has, which a sync
-    # takes in (`reconcile._edited_there`): called with this home's row and the row with the
-    # peer's edit taken in (`merge.forward`: what two homes compare is the peer's, the rest stays
-    # this home's), and returns the row to write. An automation's grant keeps only what its edited
-    # action still runs as it ran here, and a new cadence re-arms its next fire. `None`: the row
-    # with the edit taken in, as it is.
+    # takes in (`reconcile._edited_there`), and the conflict review when a person takes the other
+    # machine's version or a drafted merge (`reconcile.take_in`): called with this home's row and
+    # the row with the peer's edit taken in (`merge.forward`: what two homes compare is the
+    # peer's, the rest stays this home's), and returns the row to write. An automation's grant
+    # keeps only what its edited action still runs as it ran here, and a new cadence re-arms its
+    # next fire. `None`: the row with the edit taken in, as it is.
     edit_arrives: Callable[[dict, dict], dict] | None = None
-    # What a row brought in by ``arrives`` is like here, in the words the conflict review shows
-    # before and after a person takes the other machine's version.
+    # What a row another machine wrote is like here, in the words the conflict review shows before
+    # and after a person takes the other machine's version: ``arrival`` for one this home does not
+    # have (``arrives``), ``edit_arrival`` for another machine's edit to one it has, which the
+    # review takes in as a sync takes one in (``edit_arrives``). ``""``: as the other machine wrote
+    # it.
     arrival: str = ""
+    edit_arrival: str = ""
 
 
 def _trigger_arrives(row: dict) -> dict:
@@ -196,6 +210,38 @@ def _report_compared(row: dict) -> dict:
     from personalclaw.knowledge.research_reports import what_it_is
 
     return what_it_is(row)
+
+
+def _workflow_definition(row: dict) -> dict | None:
+    """What *row* — one file of ``workflows/``, as the entity-dir exporter names it — holds when it
+    is a definition (``defs/<name>/workflow``): the one file a run here starts from. ``None`` for
+    any other file: a version snapshot, which nothing runs, or a run's own record."""
+    parts = str(row.get("id", "")).split("/")
+    data = row.get("data")
+    if len(parts) == 3 and parts[0] == "defs" and parts[2] == "workflow" and isinstance(data, dict):
+        return data
+    return None
+
+
+def _workflow_compared(row: dict) -> dict:
+    """What two homes compare of a workflow file, and all that one from another machine brings: a
+    definition without the step keys that loosen whether a step's agent asks
+    (``automation_posture.workflow_what_it_is``); any other file as it is."""
+    from personalclaw.automation_posture import workflow_what_it_is
+
+    definition = _workflow_definition(row)
+    return row if definition is None else {**row, "data": workflow_what_it_is(definition)}
+
+
+def _workflow_edit_arrives(here: dict, edited: dict) -> dict:
+    """A workflow definition this home has, with another machine's edit taken in
+    (``automation_posture.workflow_edit_arrived``)."""
+    from personalclaw.automation_posture import workflow_edit_arrived
+
+    mine, theirs = _workflow_definition(here), _workflow_definition(edited)
+    if mine is None or theirs is None:
+        return edited
+    return {**edited, "data": workflow_edit_arrived(mine, theirs)}
 
 
 def _inbox_compared(row: dict) -> dict:
@@ -516,6 +562,11 @@ INVENTORY: tuple[StateEntry, ...] = (
             "An automation from another machine arrives switched off, without what happened to it "
             "there. Switching it on here asks first for what it runs."
         ),
+        edit_arrival=(
+            "The automation stays switched on or off as it is here, with what happened to it here. "
+            "What you allowed it to run stays allowed only where it still runs the same; anything "
+            "it runs differently asks you first."
+        ),
     ),
     StateEntry(
         id="crons",
@@ -524,6 +575,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
         help="scheduled jobs (legacy; imported into triggers.json once per home at boot)",
+        machine_local=True,
     ),
     # 🔴 The script-cron store, and it was never declared here. `schedule_script.py` requires
     # every zero-token script job to live under `crons/` ("no escape"), and `triggers.json` —
@@ -569,6 +621,11 @@ INVENTORY: tuple[StateEntry, ...] = (
             "A hook from another machine arrives switched off, without what happened to it there. "
             "Switching it on here asks first for what it runs."
         ),
+        edit_arrival=(
+            "The hook stays switched on or off as it is here, with what happened to it here. What "
+            "you allowed it to run stays allowed only where it still runs the same; anything it "
+            "runs differently asks you first."
+        ),
     ),
     StateEntry(
         id="event_triggers",
@@ -580,6 +637,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         # the next boot, once per home, and renamed `.imported-<date>`
         # (`triggers/legacy_import.py`).
         help="legacy data-event triggers, imported into triggers.json once per home at boot",
+        machine_local=True,
     ),
     StateEntry(
         id="autonudge",
@@ -588,6 +646,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_LWW,
         help="legacy auto-nudge loops, imported into triggers.json once per home at start",
+        machine_local=True,
     ),
     StateEntry(
         id="cron_history",
@@ -604,6 +663,26 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_AUTOMATION,
         merge=MERGE_UNION_BY_ID,
         help="workflows and SOPs",
+        # A step's `approval_mode: auto` or `capability: mutating` is the owner's yes, given where
+        # the save shows it, so another machine's is not this one's: a definition from another
+        # machine arrives without them, and its edit keeps this home's only on the steps it left
+        # as they were (`automation_posture.workflow_what_it_is`, `workflow_edit_arrived`).
+        compared=_workflow_compared,
+        arrives=_workflow_compared,
+        edit_arrives=_workflow_edit_arrives,
+        arrival=(
+            "A workflow from another machine arrives with every step asking before it acts and "
+            "without write access, whatever the other machine allowed its steps. Allowing either "
+            "here asks you first."
+        ),
+        edit_arrival=(
+            "What you allowed the workflow's steps here — acting without asking, write access — "
+            "stays only on the steps the other machine left as they were; a step it changed asks "
+            "you first."
+        ),
+        # The template nudges' counters and the session's candidate templates: this machine's
+        # own account of its chats.
+        machine_local_within=("template_nudges.json", "template_candidates.json"),
     ),
     # ── platform ──
     StateEntry(
@@ -622,6 +701,14 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
         help="agent definitions",
+        # `personalclaw.json` is the agent CLI's runtime config, which each home rebuilds from its
+        # own configuration and keeps as the base of the next rebuild
+        # (`agent.rebuild_agent_config`): the tools it runs without asking and the servers it
+        # starts are what this home's owner allowed. Another machine's would have run here as
+        # written. An agent FILE syncs, and its `approval_mode` does nothing until the owner here
+        # adds the agent, which asks first for a looser one
+        # (`dashboard.handlers.agents._do_agents_sync`).
+        machine_local_within=("personalclaw.json",),
     ),
     StateEntry(
         id="prompts",
@@ -840,6 +927,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="per-day model spend (drives the budget caps)",
+        machine_local=True,
     ),
     StateEntry(
         # Per-project Trust/Preview decisions keyed by resolved dir. Every record here is a grant
@@ -953,6 +1041,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_WORK,
         merge=MERGE_UNION_BY_ID,
         help="per-agent metadata records",
+        # A runner's health and capabilities as a Check and a handshake MEASURED them on this
+        # machine (`agents.runners`): another machine's CLI is not this one's, and a second opinion
+        # picks the runner it fires by this reading.
+        machine_local_within=("*.runner.json",),
     ),
     StateEntry(
         id="learning_proposals",
@@ -969,6 +1061,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="the durability scheduler's own last-run state",
+        machine_local=True,
     ),
     StateEntry(
         id="folders",
@@ -995,6 +1088,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="tool usage counters",
+        machine_local=True,
     ),
     StateEntry(
         id="tokenjuice_savings",
@@ -1003,6 +1097,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_LWW,
         help="context-savings ledger",
+        machine_local=True,
     ),
     StateEntry(
         id="feedback",
@@ -1030,6 +1125,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         # local one. A lost entry costs one repeated reminder, and entries expire on their own.
         merge=MERGE_LWW,
         help="which task due dates have had their notice (tasks/due_notices.py)",
+        machine_local=True,
     ),
     # ── config ──
     StateEntry(
@@ -1493,6 +1589,9 @@ INVENTORY: tuple[StateEntry, ...] = (
             "A report from another machine arrives switched off, without what happened to it "
             "there."
         ),
+        edit_arrival=(
+            "The report stays switched on or off as it is here, with what happened to it here."
+        ),
     ),
     StateEntry(
         id="runners",
@@ -1501,6 +1600,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
         help="bring-your-own agent runner definitions, one JSON per runner id",
+        # A definition names the CLI PersonalClaw runs, so it runs only once this home's owner
+        # allowed what it runs, sealed to it (`agents.runner_grants`, machine-local): one from
+        # another machine, and another machine's edit to one, waits for the owner here.
+        arrival=(
+            "The runner's CLI runs here only after you allow what it runs: Allow, on the runner in "
+            "Settings → Agent defaults."
+        ),
+        edit_arrival=(
+            "If the other machine's version changes what the runner runs, its CLI runs here only "
+            "after you allow the new definition: Allow, on the runner in Settings → Agent "
+            "defaults."
+        ),
     ),
     # The LEGACY MCP store (`settings/mcp.json`). UT3 made `mcp.json` canonical; every
     # release since folded this file in at start and emptied it, so on a home that has run
@@ -2070,6 +2181,15 @@ def backup_entries(*, include_derived: bool = False) -> tuple[StateEntry, ...]:
     Derived indexes are skipped unless asked for, since they rebuild and a stale index paired
     with a newer store is worse than none."""
     return tuple(e for e in INVENTORY if not e.credential and (include_derived or not e.derived))
+
+
+def stays_here(entry: StateEntry, row_id: str) -> bool:
+    """Whether the row *row_id* of *entry* — an entity directory's file, named as its exporter
+    names it, the path under the directory without ``.json`` — is one a sync never carries
+    (``StateEntry.machine_local_within``)."""
+    from fnmatch import fnmatchcase
+
+    return any(fnmatchcase(f"{row_id}.json", glob) for glob in entry.machine_local_within)
 
 
 def export_entries() -> tuple[StateEntry, ...]:

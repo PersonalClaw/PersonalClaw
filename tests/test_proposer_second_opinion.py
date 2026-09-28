@@ -154,6 +154,46 @@ def test_unhealthy_and_unprobed_runners_are_not_credible_second_opinions(
     assert select_target(exclude_runner="codex").runner_id == "gemini-cli"
 
 
+def _byo_runner(home: Path, runner_id: str = "my-cli") -> None:
+    """A runner definition of the owner's, as a sync brings one or an agent writes one."""
+    folder = home / "runners"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{runner_id}.json").write_text(
+        json.dumps({"id": runner_id, "display_name": "My CLI", "bin_names": ["/nonexistent/my"]})
+    )
+
+
+def test_a_runner_definition_nobody_here_allowed_is_never_a_second_opinion(
+    isolated_home: Path,
+) -> None:
+    """🔴 Red before: a definition in ``runners/`` with a healthy reading was fired as written —
+    whoever wrote it. It waits for the owner's Allow here first, and is passed over until then."""
+    from personalclaw.agents import runner_grants
+    from personalclaw.agents.runners import catalog
+
+    _byo_runner(isolated_home)
+    _mark_healthy("my-cli")
+    selection = select_target(exclude_runner="codex")
+    assert selection.target is None
+    reasons = {c.runner_id: c.reason for c in selection.considered}
+    assert reasons["my-cli"] == runner_grants.WAITING_REASON
+    # Floor: the same definition, allowed here, is selectable — the yes is the discriminator.
+    runner_grants.give(catalog()["my-cli"])
+    assert select_target(exclude_runner="codex").runner_id == "my-cli"
+
+
+def test_the_runner_backend_refuses_a_definition_that_waits(isolated_home: Path) -> None:
+    """Where the binary would be resolved, the same rule: nothing is launched."""
+    from personalclaw.agents.runners import catalog
+    from personalclaw.proposer.backends import ProposerUnavailable
+
+    _byo_runner(isolated_home)
+    backend = RunnerProposerBackend(catalog()["my-cli"])
+    brief = build_brief(goal="g", stuck_at="s", workspace=str(isolated_home), origin_runner="codex")
+    with pytest.raises(ProposerUnavailable, match="Not allowed to run yet"):
+        asyncio.run(backend.prepare(brief))
+
+
 def test_every_cataloged_runner_is_considered(isolated_home: Path) -> None:
     """The considered set covers the whole catalog — a runner silently missing from the census
     would be one the exclusion never had to exclude."""

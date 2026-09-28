@@ -30,7 +30,10 @@ only a home that had none. A restore's merge and an import bring an archive's re
 same rule (:func:`bring_in`).
 
 A ``replace_only`` entry is restored whole or not at all — the configuration, and the stores
-whose every record is a grant this home's owner gave — so a sync leaves it exactly as it is.
+whose every record is a grant this home's owner gave — so a sync leaves it exactly as it is. It
+leaves a ``machine_local`` entry as it is too, and the files of an entity directory that stay on
+each machine (``StateEntry.machine_local_within``): another machine's copy is never merged in,
+whether or not a peer still sends one.
 
 **An edit made on one machine reaches the other** (:func:`_one_side_changed`). A merge keyed by
 id kept this home's copy of every record it already had, so a record edited on one machine stayed
@@ -210,31 +213,62 @@ def _merged_document(
     return None if updated == document else updated
 
 
-def write_record(
-    entry: inv.StateEntry, dest: Path, entity_id: str, record: dict
-) -> writeback.ApplyResult:
-    """Put *record* in place of *entity_id*'s in a store of records, or after the others when this
-    home has none — the conflict resolver's write, through the file's lock and the same guard as a
-    sync's (:func:`_here`)."""
-    assert entry.records is not None
+def take_in(
+    entry: inv.StateEntry, dest: Path, entity_id: str, there: dict
+) -> tuple[writeback.ApplyResult, bool]:
+    """Write *there* — another machine's version of *entity_id*, or a merge drafted from it — into
+    *entry*'s store at *dest* as a sync takes one in, and say whether it was an edit.
+
+    Over the row this home has, it is the edit only the other machine made (:func:`_edited_there`):
+    what a person makes of the row is the other machine's, and this home's own part stays — an
+    automation's switch and what happened to it here, and its grant, which keeps only what the
+    edit still runs as it ran here. A row this home does not have (or deleted) comes in by the
+    store's arrival rule (``StateEntry.arrives``). The conflict review's write: the row this home
+    has is read at the write, under the file's lock for a store of records and through the same
+    guard as a sync's (:func:`_here`), never the copy the conflict recorded when it was found.
+    """
+
+    def taken(here: dict | None) -> tuple[dict, bool]:
+        if here is None or _is_tombstone(here):
+            return (there if entry.arrives is None else entry.arrives(there)), False
+        return _edited_there(entry, here, there), True
+
+    if entry.records is None:
+        rows = read_local_rows(entry, dest)
+        row, edited = taken(next((r for r in rows if conflicts_mod.row_id(r) == entity_id), None))
+        # Whole-entry, as the sync writes it: handed one row, `apply_rows` would write that set.
+        out = [r for r in rows if conflicts_mod.row_id(r) != entity_id]
+        out.append(row)
+        return writeback.apply_rows(entry.kind, dest, out), edited
     shape = entry.records
+    edited = False
 
     def change(document: Any) -> Any:
+        nonlocal edited
         items: list[object] = []
         placed = False
         for item in _here(entry, document):
             if record_files.record_id(item) == entity_id:
                 if not placed:
-                    items.append(record)
+                    row, edited = taken(item if isinstance(item, dict) else None)
+                    items.append(row)
                     placed = True
                 continue
             items.append(item)
         if not placed:
-            items.append(record)
+            row, edited = taken(None)
+            items.append(row)
         return shape.document(document, items)
 
     wrote = record_files.rewrite(dest, change)
-    return writeback.ApplyResult(written=1 if wrote else 0)
+    return writeback.ApplyResult(written=1 if wrote else 0), edited
+
+
+def holds(entry: inv.StateEntry, dest: Path, entity_id: str) -> bool:
+    """Whether this home's store at *dest* has *entity_id* (and has not deleted it): whether taking
+    another machine's version of it would be an edit (:func:`take_in`)."""
+    rows = entity_rows(entry, read_local_rows(entry, dest))
+    return any(conflicts_mod.row_id(r) == entity_id and not _is_tombstone(r) for r in rows)
 
 
 def bring_in(home: Path, entry: inv.StateEntry, archived: Path) -> int:
@@ -313,7 +347,11 @@ def reconcile_entry(
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
     if entry.merge == inv.MERGE_REPLACE_ONLY:
         return ReconcileResult(entry.id, detail="restored whole or not at all; left as it is")
+    if entry.machine_local:
+        return ReconcileResult(entry.id, detail="this machine's own; left as it is")
     dest = Path(home) / entry.path
+    if entry.machine_local_within:
+        remote_rows = _without_what_stays_here(entry, remote_rows)
     remote = entity_rows(entry, remote_rows)
     bases, handed_back = _in_common(entry, remote, ancestors or {}, published or {})
     outcome: dict[str, Any] = {}
@@ -352,7 +390,9 @@ def reconcile_entry(
             record_files.rewrite(dest, change)
             removed = 0
         else:
-            merged = merge_into(read_local_rows(entry, dest))
+            # This machine's own files of the folder are not the merge's: left out of what it
+            # writes back, so the pull never touches them (a write of theirs made meanwhile stays).
+            merged = merge_into(_without_what_stays_here(entry, read_local_rows(entry, dest)))
             outcome["merged"] = merged
             removed = writeback.apply_rows(entry.kind, dest, merged.rows).removed
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
@@ -376,6 +416,14 @@ def reconcile_entry(
             **_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),
         },
     )
+
+
+def _without_what_stays_here(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
+    """*rows* of *entry* but its files that stay on each machine
+    (``StateEntry.machine_local_within``)."""
+    if not entry.machine_local_within:
+        return rows
+    return [r for r in rows if not inv.stays_here(entry, conflicts_mod.row_id(r))]
 
 
 def _in_common(
@@ -416,7 +464,7 @@ def held_shas(home: Path, entry: inv.StateEntry) -> dict[str, str]:
     rows = entity_rows(entry, read_local_rows(entry, Path(home) / entry.path))
     return {
         conflicts_mod.row_id(row): conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
-        for row in rows
+        for row in _without_what_stays_here(entry, rows)
         if conflicts_mod.row_id(row)
     }
 
@@ -436,15 +484,11 @@ def _one_side_changed(
     the peer's ``updated_at`` reads later — as it does whenever the machine that made the edit
     has a clock behind the other's.
 
-    Only the records a person edits one at a time: an entity dir's rows and a store of records
-    (``StateEntry.records``). A file that is one row is one machine's own account of itself — what
-    it spent, what it last ran — and another machine's is never taken over it. A tombstone on
-    either side is a deletion, which the merge's tombstone rule decides, and an id held under a
-    conflict is not among ``remote``.
+    A tombstone on either side is a deletion, which the merge's tombstone rule decides, and an id
+    held under a conflict is not among ``remote``. (A file that is one machine's own account of
+    itself — what it spent, what it last ran — never reaches this: it is ``machine_local``.)
     """
     if not ancestors or entry.merge not in conflicts_mod.ID_KEYED_MERGES:
-        return {}, set()
-    if entry.kind == inv.KIND_JSON_FILE and entry.records is None:
         return {}, set()
     here = {conflicts_mod.row_id(r): r for r in local if conflicts_mod.row_id(r)}
     ahead: dict[str, dict] = {}

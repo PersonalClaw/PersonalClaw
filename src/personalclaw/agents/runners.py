@@ -45,7 +45,10 @@ Probe posture: the health probe runs ``<bin> --version`` (or the row's
 and writes nothing outside the sidecar — so probing the catalog cannot touch a
 workspace. It still runs another agent's CLI, so it runs only for a runner's Check,
 which the user presses, and only on a runner something set up here (:func:`is_set_up`):
-reading the catalog runs nothing.
+reading the catalog runs nothing. A definition under ``runners/`` runs only once the owner allowed
+what it runs here (:mod:`personalclaw.agents.runner_grants`): one brought from another machine, or
+changed since, waits (:class:`RunnerWaitingError`), for a Check, a second opinion and the
+unattended-spawn gate alike.
 
 A shipped row's ``runtime_id`` MUST be the id a bundle actually registers — the
 CANONICAL provider name, never one of :data:`personalclaw.acp.permission_authority.
@@ -81,6 +84,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw.agents import runner_grants
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -88,6 +93,7 @@ __all__ = [
     "AdapterVerification",
     "HealthEvidence",
     "RunnerDefinition",
+    "RunnerWaitingError",
     "UnverifiedAdapterError",
     "adapter_lock_path",
     "catalog",
@@ -99,6 +105,7 @@ __all__ = [
     "probe_runner",
     "record_capabilities",
     "record_provenance",
+    "runner_env_var",
     "runner_row",
     "runner_rows",
     "runtime_id_for_agent",
@@ -124,6 +131,11 @@ PROBE_TIMEOUT_SECS = 12.0
 
 class UnverifiedAdapterError(RuntimeError):
     """An unattended spawn was refused because the runner's adapter is unverified."""
+
+
+class RunnerWaitingError(RuntimeError):
+    """A runner definition of the owner's waits for their Allow here (``runner_grants``), so
+    nothing runs its CLI."""
 
 
 @dataclass(frozen=True)
@@ -455,6 +467,12 @@ def record_capabilities(
         return None
 
 
+def runner_env_var(defn: RunnerDefinition) -> str:
+    """The variable that points :func:`resolve_runner_command` at another program than the
+    binary names: the definition's own, or one named for its id."""
+    return defn.env_var or f"PERSONALCLAW_RUNNER_{defn.id.upper().replace('-', '_')}_BIN"
+
+
 def resolve_runner_command(defn: RunnerDefinition) -> list[str] | None:
     """Resolve the runner's OWN CLI (not its ACP adapter), or ``None`` if absent.
 
@@ -466,7 +484,7 @@ def resolve_runner_command(defn: RunnerDefinition) -> list[str] | None:
     from personalclaw.acp.cli_resolve import resolve_acp_cli
 
     return resolve_acp_cli(
-        env_var=defn.env_var or f"PERSONALCLAW_RUNNER_{defn.id.upper().replace('-', '_')}_BIN",
+        env_var=runner_env_var(defn),
         bin_names=list(defn.bin_names),
         npm_pkg=None,
     )
@@ -502,7 +520,12 @@ def probe_runner(defn: RunnerDefinition, *, persist: bool = True) -> HealthEvide
     or OS error yields the exception verbatim. ``latency_ms`` is populated ONLY when a
     process actually ran and was timed; ``version`` only when the output contained a
     version to parse.
+
+    Raises :class:`RunnerWaitingError`, running nothing and recording nothing, for a definition
+    that waits for the owner's Allow here: that is not a reading of the CLI.
     """
+    if not runner_grants.allowed(defn):
+        raise RunnerWaitingError(runner_grants.WAITING_REASON)
     argv = resolve_runner_command(defn)
     if not argv:
         names = ", ".join(defn.bin_names)
@@ -867,6 +890,14 @@ def guard_unattended_spawn(runtime_id: str, *, unattended: bool) -> None:
             f"{USER_CATALOG_DIR_NAME}/<id>.json, or turn off "
             "agents.unattended_requires_verified_adapter."
         )
+    # A definition nobody here allowed names an adapter nobody here vouched for, so verifying it
+    # proves nothing about what runs.
+    if not runner_grants.allowed(defn):
+        raise UnverifiedAdapterError(
+            f"Unattended spawn refused: the definition of {defn.display_name} in "
+            f"{USER_CATALOG_DIR_NAME}/{defn.id}.json is not allowed here. "
+            f"{runner_grants.WAITING_REASON}"
+        )
     verdict = verify_adapter(defn)
     if verdict.verified:
         return
@@ -895,6 +926,9 @@ class RunnerRow:
     #: Whether something set this runner up here (:func:`is_set_up`) — the only runners whose
     #: CLI a Check runs.
     set_up: bool = False
+    #: Whether its definition waits for the owner's Allow here (``runner_grants``): one from
+    #: another machine, or changed since it was allowed. Nothing runs its CLI until then.
+    waiting: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         ev = self.evidence
@@ -909,6 +943,11 @@ class RunnerRow:
             # control can say what it runs before anyone presses it.
             "version_args": list(self.definition.version_args),
             "set_up": self.set_up,
+            # Whether the definition waits for the owner's Allow here, and the revision of what
+            # Allow is asked about (`runner_grants.revision`), so a yes is never to a definition
+            # that changed after the page read it.
+            "waiting": self.waiting,
+            "allow_revision": runner_grants.revision(self.definition) if self.waiting else "",
             # Health is either measured evidence or explicitly absent. There is no
             # third "assume it's fine" shape: an unprobed runner reports null.
             "health": ev.to_dict() if ev is not None else None,
@@ -961,6 +1000,7 @@ def runner_row(defn: RunnerDefinition) -> RunnerRow:
         adapter=verdict,
         lease=lease,
         set_up=is_set_up(defn),
+        waiting=not runner_grants.allowed(defn),
     )
 
 

@@ -1,7 +1,7 @@
 """DURABILITY-AND-SYNC §4.1 / DAS-6c-ii-g — sync-only whole-DB copies in the shard format.
 
 The diffable row shards store embedding/byte columns as size placeholders, so they can't
-rebuild a DB losslessly. A SYNC export (include_databases=True) additionally stages the real
+rebuild a DB losslessly. A SYNC export (for_sync=True) additionally stages the real
 DB file under db/<entry>.db; the hourly incremental backup leaves it off, so its byte-identical
 determinism is untouched. validate() checks the DB copies; import_shards surfaces them.
 """
@@ -41,7 +41,7 @@ class TestDbCopyExport:
     def test_sync_export_stages_the_real_db(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        result = shards.export_shards(home, out, include_databases=True)
+        result = shards.export_shards(home, out, for_sync=True)
         assert len(result.databases) == 1
         db = result.databases[0]
         assert db.entry_id == "memory_db" and db.path == "db/memory_db.db"
@@ -56,7 +56,7 @@ class TestDbCopyExport:
     def test_row_shards_still_written_alongside_the_db(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         # The diffable rows are still there (human review); the db is the merge source.
         assert (out / "memory_db" / "semantic_memory.jsonl").is_file()
         assert (out / "tasks" / "entities.jsonl").is_file()
@@ -66,7 +66,7 @@ class TestManifestAndValidate:
     def test_manifest_declares_databases(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         manifest = json.loads((out / "manifest.json").read_text())
         assert manifest["databases"][0]["entry_id"] == "memory_db"
         assert "sha256" in manifest["databases"][0]
@@ -74,13 +74,13 @@ class TestManifestAndValidate:
     def test_validate_passes_a_db_export(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         assert shards.validate(out).ok
 
     def test_validate_catches_a_corrupted_db_copy(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         # Flip a byte in the staged DB — validate must name it.
         db = out / "db" / "memory_db.db"
         data = bytearray(db.read_bytes())
@@ -94,7 +94,7 @@ class TestManifestAndValidate:
         # A manifest with no `databases` field (incremental/row-only) is still valid.
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out)  # no include_databases
+        shards.export_shards(home, out)  # not a sync's export
         manifest = json.loads((out / "manifest.json").read_text())
         assert manifest["databases"] == []  # present but empty
         assert shards.validate(out).ok
@@ -104,7 +104,7 @@ class TestImportSurfacesDatabases:
     def test_import_maps_entry_to_db_path(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         imported = shards.import_shards(out)
         assert imported.databases == {"memory_db": "db/memory_db.db"}
         # And the row shards still import as rows for the same entry.
@@ -113,7 +113,7 @@ class TestImportSurfacesDatabases:
     def test_import_respects_entries_filter_for_databases(self, tmp_path):
         home = _home(tmp_path)
         out = tmp_path / "s"
-        shards.export_shards(home, out, include_databases=True)
+        shards.export_shards(home, out, for_sync=True)
         imported = shards.import_shards(out, entries=["tasks"])
         assert imported.databases == {}  # memory_db filtered out
 

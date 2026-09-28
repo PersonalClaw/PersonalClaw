@@ -11,10 +11,13 @@ Filters, in order:
 
 1. **exclusion** — the origin runner, matched on both catalog id and ``runtime_id`` so
    ``acp:gemini-cli`` and ``gemini-cli`` name the same exclusion.
-2. **health evidence** — a runner with no recorded probe, a failing probe, or stale evidence is
+2. **the owner's yes** — a definition of the owner's that waits for their Allow here
+   (``agents.runner_grants``: one from another machine, or changed since) runs nothing, a second
+   opinion included, whoever asks for it.
+3. **health evidence** — a runner with no recorded probe, a failing probe, or stale evidence is
    not a credible second opinion. ``None`` evidence means NOT MEASURED, never "fine".
-3. **required capabilities** — persisted from the runner's own discovery handshake.
-4. **binding order** — the user's preference breaks remaining ties; unlisted candidates follow
+4. **required capabilities** — persisted from the runner's own discovery handshake.
+5. **binding order** — the user's preference breaks remaining ties; unlisted candidates follow
    in catalog order.
 """
 
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from personalclaw.agents import runner_grants
 from personalclaw.agents.runners import (
     HealthEvidence,
     RunnerDefinition,
@@ -112,6 +116,11 @@ def select_target(
                         "from somewhere else"
                     ),
                 )
+            )
+            continue
+        if not runner_grants.allowed(defn):
+            considered.append(
+                Candidate(runner_id=runner_id, eligible=False, reason=runner_grants.WAITING_REASON)
             )
             continue
         evidence = load_evidence(runner_id)

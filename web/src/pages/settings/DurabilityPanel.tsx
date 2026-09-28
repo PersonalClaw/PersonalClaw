@@ -902,6 +902,12 @@ const CHOICE_LABELS: Record<DurabilityConflictChoice, string> = {
   accept_proposal: 'Accept the drafted merge',
 }
 
+/** What each of the two writing choices writes, as the question and the toast name it. */
+const WRITTEN: Record<Exclude<DurabilityConflictChoice, 'keep_local'>, string> = {
+  take_remote: 'The other machine’s version',
+  accept_proposal: 'The drafted merge',
+}
+
 /** Where a both-sides-edited divergence gets decided (§4.2 item 2).
  *
  *  The queue itself shipped with the sync engine — a detector, a durable JSONL, and the rule
@@ -915,7 +921,7 @@ const CHOICE_LABELS: Record<DurabilityConflictChoice, string> = {
  *   · sync runs and nothing diverged → the good empty state.
  *
  *  Nothing here auto-applies: each decision names the version it writes and takes a
- *  confirmation, because two of the three overwrite a row the other machine also edited. */
+ *  confirmation, because two of the three write over an edit this machine made. */
 function ConflictsSection({ read, onChanged }: {
   read: Settled<DurabilityConflicts>
   onChanged: () => void
@@ -957,32 +963,35 @@ function ConflictsSection({ read, onChanged }: {
     if (!(await confirm({
       title: 'Write this version?',
       // 🔴 THE REASSURANCE WAS UNCONDITIONAL AND ONLY ONE CHOICE IN THREE EARNS IT — on a dialog whose
-      // own comment already notes "two of the three choices overwrite a row the other machine also
-      // edited". Traced through `conflict_resolve`, which pushes nothing ("Nothing is pushed from here"),
+      // own comment already notes that two of the three choices write over an edit this machine
+      // made. Traced through `conflict_resolve`, which pushes nothing ("Nothing is pushed from here"),
       // so what the shared store keeps depends entirely on WHICH version you discarded:
       //
       //   keep_local       discards the REMOTE row, which the shared store still holds → genuinely
       //                    reversible, and the detector "HOLDS the id again" next cycle so the other
       //                    side can still decide differently.
-      //   take_remote      discards THIS machine's row and overwrites it locally. The shared store holds
-      //                    the remote version, not the local one — so the discarded version is in no
-      //                    store at all, only in a snapshot.
-      //   accept_proposal  writes a THIRD row; the remote survives in the shared store, this machine's
-      //                    original does not.
+      //   take_remote      discards THIS machine's edit and writes the other machine's over it. The
+      //                    shared store holds the remote version, not the local one — so the discarded
+      //                    edit is in no store at all, only in a snapshot.
+      //   accept_proposal  writes a THIRD version; the remote survives in the shared store, this
+      //                    machine's edit does not.
       //
       // So the sentence now names what it is actually discarding. Overstating reversibility on a
       // both-sides-edited row is the one direction that costs a user the edit they meant to keep.
       //
       // Keeping this machine's version writes nothing: it is kept as it is now, with every change
-      // made here since the conflict was found. The other two bring the version in the way a sync
-      // brings that store's rows in, and `c.arrival` says what that makes of it (an automation
-      // arrives switched off), so the dialog says it before anything is written.
+      // made here since the conflict was found. The other two take the version in the way a sync
+      // takes the other machine's edit in: what the two machines compare (what a person made of
+      // it) becomes the other machine's, and what is this machine's own stays. It is not "the row
+      // replaced" — an automation keeps this machine's switch and what happened to it here, and
+      // its grant only where it still runs the same. `c.arrival` names that part for the store,
+      // so the dialog says it before anything is written.
       body: choice === 'keep_local'
         ? `This machine's version of ${c.entity_id} stays in ${c.entry_id} as it is; nothing is written. The other machine's version stays in the shared store, so you can still decide differently from that side.`
-        : `${CHOICE_LABELS[choice]} version of ${c.entity_id} will be written into ${c.entry_id} on this machine, replacing this machine's copy. That copy is not kept anywhere else — only a snapshot has it.${c.arrival ? ` ${c.arrival}` : ''}`,
+        : `${WRITTEN[choice]} of ${c.entity_id} will be written into ${c.entry_id} on this machine in place of this machine's edit, which is not kept anywhere else — only a snapshot has it.${c.arrival ? ` ${c.arrival}` : ''}`,
       confirmLabel: 'Write it',
       // Danger tone, so the shell raises it as an alertdialog: two of the three choices
-      // overwrite a row the other machine also edited.
+      // write over an edit this machine made.
       danger: true,
     }))) return
     setBusy(c.id)
@@ -991,7 +1000,7 @@ function ConflictsSection({ read, onChanged }: {
       notify(
         choice === 'keep_local'
           ? `Resolved ${c.entity_id}: this machine's version is kept as it is.`
-          : `Resolved ${c.entity_id}: ${CHOICE_LABELS[choice].toLowerCase()} version written.${r.note ? ` ${r.note}` : ''}`,
+          : `Resolved ${c.entity_id}: ${WRITTEN[choice].toLowerCase()} is written.${r.note ? ` ${r.note}` : ''}`,
         'success',
       )
       onChanged()
