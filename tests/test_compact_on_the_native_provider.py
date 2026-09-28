@@ -261,26 +261,31 @@ class TestTheReportedSentence:
             ("failed", "disk full", "Compaction failed: disk full"),
         ],
     )
-    def test_each_terminal_status_has_its_own_sentence(self, status, title, expected):
+    @pytest.mark.asyncio
+    async def test_each_terminal_status_has_its_own_sentence(self, status, title, expected):
         session = _FakeSession()
         state = _FakeState()
-        text = _broadcast_compaction_result(
+        text = await _broadcast_compaction_result(
             state, session, AgentEvent(kind=EVENT_COMPACTION_STATUS, text=status, title=title)
         )
         assert text is not None and text.startswith(expected)
         assert session.appended and session.appended[0][1] == text
+        assert state.told == [("dashboard:s1", text)], "the linked channel is told the same"
 
-    def test_an_unknown_status_is_not_reported_at_all(self):
+    @pytest.mark.asyncio
+    async def test_an_unknown_status_is_not_reported_at_all(self):
         """The `None` return is what tells the chat runner `saw_compaction` did NOT happen,
         so an in-progress frame must not consume the outcome."""
+        state = _FakeState()
         assert (
-            _broadcast_compaction_result(
-                _FakeState(),
+            await _broadcast_compaction_result(
+                state,
                 _FakeSession(),
                 AgentEvent(kind=EVENT_COMPACTION_STATUS, text="started"),
             )
             is None
         )
+        assert state.told == []
 
 
 class _FakeSession:
@@ -296,9 +301,14 @@ class _FakeSession:
 class _FakeState:
     def __init__(self) -> None:
         self.sent: list[tuple[str, Any]] = []
+        self.told: list[tuple[str, str]] = []
 
     def broadcast_ws(self, kind: str, payload: Any) -> None:
         self.sent.append((kind, payload))
+
+    async def tell_linked_channel(self, session_key: str, text: str) -> bool:
+        self.told.append((session_key, text))
+        return False
 
 
 # ── the advertisement, tied to the capability ─────────────────────────────────

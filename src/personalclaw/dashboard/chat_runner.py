@@ -54,6 +54,7 @@ from personalclaw.dashboard.chat_utils import (
     _normalize_model,
     _project_context_preamble,
     _redact_for_display,
+    _say_compaction_notice,
     _validate_tool_name,
     chat_usage,
     model_substitution_notice,
@@ -4684,8 +4685,8 @@ async def run_chat(
                     if assistant_text:
                         _flush_segment(state, session, assistant_text)
                         assistant_text = ""
-                    _broadcast_compaction_result(state, session, event)
-                elif _broadcast_compaction_result(state, session, event):
+                    await _broadcast_compaction_result(state, session, event)
+                elif await _broadcast_compaction_result(state, session, event):
                     saw_compaction = True
                     # What streamed before the result was the agent's compaction chatter,
                     # not an answer: the result message above replaces it.
@@ -4893,11 +4894,7 @@ async def run_chat(
                 msg = "Compaction failed."
             else:
                 msg = "Compaction timed out."
-            session.append("assistant", msg, "msg msg-a")
-            state.broadcast_ws(
-                "chat_message",
-                {"session": session.key, "role": "assistant", "content": msg},
-            )
+            await _say_compaction_notice(state, session, msg)
             # Update context usage after compaction
             pct = client.context_usage_pct()
             state.broadcast_ws(

@@ -418,10 +418,22 @@ def _broadcast_auto_tool(state: DashboardState, session: _ChatSession, event: "L
     return title
 
 
-def _broadcast_compaction_result(
+async def _say_compaction_notice(state: DashboardState, session: _ChatSession, text: str) -> None:
+    """Say a compaction's outcome where the conversation is: its dashboard chat, and the channel
+    thread it is linked to (``DashboardState.tell_linked_channel``), where its replies go."""
+    session.append("assistant", text, "msg msg-a")
+    state.broadcast_ws(
+        "chat_message",
+        {"session": session.key, "role": "assistant", "content": text},
+    )
+    await state.tell_linked_channel(_history_key_for(session.key), text)
+
+
+async def _broadcast_compaction_result(
     state: DashboardState, session: _ChatSession, event: "LLMEvent"
 ) -> str | None:
-    """Broadcast a compaction outcome to the session. Returns message text or None.
+    """Say a compaction outcome in the conversation (:func:`_say_compaction_notice`). Returns the
+    message text, or None for a status that is no outcome.
 
     Three terminal statuses, and the third is the one worth reading. ``noop`` says the pass
     ran and found nothing to reclaim — a short conversation is already compact. It is NOT a
@@ -447,11 +459,7 @@ def _broadcast_compaction_result(
         msg_text = f"Compaction failed: {error}"
     else:
         return None
-    session.append("assistant", msg_text, "msg msg-a")
-    state.broadcast_ws(
-        "chat_message",
-        {"session": session.key, "role": "assistant", "content": msg_text},
-    )
+    await _say_compaction_notice(state, session, msg_text)
     return msg_text
 
 

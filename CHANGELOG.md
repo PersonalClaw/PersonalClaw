@@ -151,6 +151,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An automation that runs an agent or a workflow says it finished when it has, not when it started.**
 
+- **A conversation held on Telegram, Discord, email or Slack is told there when it is compacted, as its dashboard chat is: a `/compact`'s result, the agent compacting on its own, and a restart at the context threshold.**
+
 - **A message to a chat or user id with no channel named goes out on the channel that id belongs to, and an id two channels could take is refused with both (`email-channel` takes only an address).**
 
 - **The Triggers page checks a send-message action's chat channel when you save it.**

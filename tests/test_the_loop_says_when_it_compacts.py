@@ -102,9 +102,11 @@ def _convo(rounds: int = 10) -> list[dict]:
     return msgs
 
 
-def _said(event: AgentEvent) -> str | None:
+async def _said(event: AgentEvent) -> str | None:
     """What the chat posts for *event*."""
-    return _broadcast_compaction_result(MagicMock(), MagicMock(key="s1"), event)
+    state = MagicMock()
+    state.tell_linked_channel = AsyncMock(return_value=False)
+    return await _broadcast_compaction_result(state, MagicMock(key="s1"), event)
 
 
 class TestTheLoopAnnouncesItsOwnPass:
@@ -168,7 +170,8 @@ class TestTheLoopAnnouncesItsOwnPass:
         (command,) = [ev async for ev in by_command.stream_command("/compact")]
 
         assert automatic.title == command.title
-        assert _said(automatic) == _said(command) == f"Conversation compacted: {command.title}"
+        said = f"Conversation compacted: {command.title}"
+        assert await _said(automatic) == await _said(command) == said
 
 
 # ── the chat: said where it happened, and the answer before it stays ─────────────────────────

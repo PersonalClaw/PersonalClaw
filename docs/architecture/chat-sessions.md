@@ -123,7 +123,12 @@ chat, channel thread, loop worker, webhook, subagent).
    and the chat says so where it happened, in `/compact`'s words
    ("Conversation compacted: freed 42% of the conversation (…)"): a
    `compaction_status` of `automatic` (`llm/events.COMPACTION_AUTOMATIC`),
-   which keeps the answer streamed before it.
+   which keeps the answer streamed before it. Every compaction notice (a
+   `/compact`'s result, the loop's own pass, and the session manager's
+   restart of a session at the threshold) is also said on the channel thread
+   the conversation is linked to, where its replies go
+   (`DashboardState.tell_linked_channel`): a chat that came from a channel on
+   that channel, and a channel's own thread on the channel that issued its id.
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →
    Prompts for the turn's context (`chat`, or `background` for unattended runs).

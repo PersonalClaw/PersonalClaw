@@ -1145,32 +1145,70 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return self._last_spoken.get(str(session_key or ""), "")
 
     def wire_session_compact_callback(self) -> None:
-        """Register the dashboard's compaction callback on the session manager."""
+        """Register the one notice the session manager raises when it restarts a session at the
+        context threshold: said in the session's dashboard chat when it is one, and on the
+        channel thread it is linked to (:meth:`tell_linked_channel`), whoever runs its turns."""
 
         async def _on_compacted(session_key: str, pct: float) -> None:
-            if not session_key.startswith("dashboard:"):
-                return
-            session_name = session_key[len("dashboard:") :]
-            session = self.get_session(session_name)
-            if session is None:
-                return
             message = _AUTO_COMPACT_NOTICE.format(pct=pct)
-            try:
-                session.append("assistant", message, "msg msg-a")
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Failed to append compact notice to session %s", session_name
-                )
-            try:
-                # ``None``, not 0.0: a compaction shrank the window but nothing has
-                # re-measured it yet, so the honest chip is absent rather than "0%".
-                self.broadcast_ws("context_usage", {"session": session_name, "pct": None})
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Failed to broadcast context_usage for session %s", session_name
-                )
+            if session_key.startswith(DASHBOARD_SESSION_PREFIX):
+                self._say_restarted(session_key.removeprefix(DASHBOARD_SESSION_PREFIX), message)
+            await self.tell_linked_channel(session_key, message)
 
         self.sessions.set_compact_callback(_on_compacted)
+
+    def _say_restarted(self, session_name: str, message: str) -> None:
+        """The restart notice in a dashboard chat, and its context gauge cleared."""
+        session = self.get_session(session_name)
+        if session is None:
+            return
+        try:
+            session.append("assistant", message, "msg msg-a")
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to append compact notice to session %s", session_name
+            )
+        try:
+            # ``None``, not 0.0: a compaction shrank the window but nothing has
+            # re-measured it yet, so the honest chip is absent rather than "0%".
+            self.broadcast_ws("context_usage", {"session": session_name, "pct": None})
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Failed to broadcast context_usage for session %s", session_name
+            )
+
+    async def tell_linked_channel(self, session_key: str, text: str) -> bool:
+        """Say *text* on the channel thread a conversation is linked to, where its replies go.
+
+        For a notice PersonalClaw adds to a conversation, not the agent's answer: a compaction's
+        outcome, a restart at the context threshold. A chat that came from a channel is told on
+        that channel (:meth:`channel_provider_for`, the rule its replies follow), and a channel's
+        own thread, which is no chat here (a Slack thread its app runs), on the channel that issued
+        the thread's id (``channel_delivery.channel_of_id``), never on one that merely happens to
+        be connected. With no linked thread, or that channel not connected, nothing is sent. The
+        handle masks the text. Returns whether it went out; a notice that cannot go out is logged
+        and fails nothing else.
+        """
+        from personalclaw.channel_delivery import channel_of_id
+
+        try:
+            thread_ts, channel_id = self.sessions.get_channel_link(session_key)
+            if not channel_id:
+                return False
+            if session_key.startswith(DASHBOARD_SESSION_PREFIX):
+                provider = self.channel_provider_for(session_key)
+            else:
+                provider, problem = channel_of_id(channel_id)
+                if problem:
+                    logger.info("not telling %s's channel: %s", session_key, problem)
+            delivery = self.delivery_for(provider)
+            if delivery is None:
+                return False
+            await delivery.deliver_text(channel_id, text, thread_ts or "")
+            return True
+        except Exception:  # noqa: BLE001 - see the docstring: a notice fails nothing else
+            logger.warning("could not tell the channel of %s", session_key, exc_info=True)
+            return False
 
     def trigger_counts(self) -> dict[str, int]:
         """`{total, enabled, broken}` across the unified store (S107).
