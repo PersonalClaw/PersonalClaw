@@ -9,8 +9,9 @@ ONE extractor for both the ``web_fetch`` tool and the knowledge web-url connecto
   ③ recover a title (trafilatura metadata → <title>).
 
 Content fetched from the web is untrusted: sanitization runs FIRST so a malicious page
-can't smuggle script/markup through the extractor. Everything degrades gracefully when
-an optional dependency is missing, so extraction never hard-fails.
+can't smuggle script/markup through the extractor. The extractor degrades when trafilatura
+is missing; the sanitizer does not. Without nh3 it refuses (:class:`SanitizerUnavailable`),
+so extraction fails with the reason instead of reading markup nothing cleaned.
 """
 
 import logging
@@ -27,7 +28,12 @@ except ImportError:
 try:
     import nh3 as _nh3
 except ImportError:
+    # A required dependency: an install without it has no sanitizer, and says so when asked for one.
     _nh3 = None  # type: ignore[assignment]
+
+
+class SanitizerUnavailable(RuntimeError):
+    """Untrusted HTML was to be sanitized, and nh3, the sanitizer, could not be imported."""
 
 
 @dataclass
@@ -43,17 +49,18 @@ class ExtractedDoc:
 def sanitize_html(html: str) -> str:
     """Strip scripts/styles/dangerous markup from untrusted HTML before extraction.
 
-    nh3 (ammonia) drops ``<script>``/``<style>``/event handlers and unsafe URLs. When
-    nh3 is unavailable, a minimal regex strips the two highest-risk tags so we never
-    feed raw script into a downstream parser.
+    nh3 (ammonia) drops ``<script>``/``<style>``/event handlers and unsafe URLs. It is the only
+    sanitizer: when nh3 cannot be imported this raises :class:`SanitizerUnavailable` rather than
+    clean the markup with a weaker pass, so no caller is handed markup nothing sanitized.
     """
     if not html:
         return ""
-    if _nh3 is not None:
-        return _nh3.clean(html)
-    # Minimal fallback: drop script/style blocks (content + tags).
-    out = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", html, flags=re.IGNORECASE | re.DOTALL)
-    return out
+    if _nh3 is None:
+        raise SanitizerUnavailable(
+            "HTML cannot be sanitized: nh3, a package PersonalClaw requires, could not be "
+            "imported. Reinstall PersonalClaw to restore it."
+        )
+    return _nh3.clean(html)
 
 
 def extract_main_content(html: str, *, url: str = "") -> ExtractedDoc:

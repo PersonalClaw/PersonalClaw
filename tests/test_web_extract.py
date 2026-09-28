@@ -1,11 +1,13 @@
-"""WS5b — the shared web content extractor (web/extract.py).
+"""The shared web content extractor (web/extract.py).
 
-Covers sanitization of untrusted HTML, main-content extraction (trafilatura when
-present, html2text fallback), title recovery, and graceful empty handling. Does not
-hit the network — extraction is pure over an HTML string.
+Covers sanitization of untrusted HTML and its refusal without nh3, main-content extraction
+(trafilatura when present, html2text fallback), title recovery, and graceful empty handling.
+Does not hit the network — extraction is pure over an HTML string.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from personalclaw.web import extract as ex
 from personalclaw.web.extract import ExtractedDoc, extract_main_content, sanitize_html
@@ -81,11 +83,45 @@ def test_fallback_title_from_title_tag(monkeypatch):
     assert doc.title == "Just A Title"
 
 
-def test_sanitize_fallback_without_nh3(monkeypatch):
+#: Markup a weaker pass than nh3 lets through: an event handler and a ``javascript:`` link.
+_UNCLEAN = '<p>Body.</p><img src=x onerror="alert(1)"><a href="javascript:alert(2)">link</a>'
+
+
+def test_without_nh3_the_sanitizer_refuses_and_says_why(monkeypatch):
+    """Proves the sanitizer has no weaker pass to fall back on: with nh3 missing it raises a
+    refusal that names nh3 and the fix, and never returns the markup."""
     monkeypatch.setattr(ex, "_nh3", None)
-    out = sanitize_html("<p>ok</p><script>bad()</script>")
-    assert "bad()" not in out
-    assert "ok" in out
+
+    with pytest.raises(RuntimeError, match="nh3") as refused:
+        sanitize_html(_UNCLEAN)
+
+    assert isinstance(refused.value, ex.SanitizerUnavailable)
+    assert "Reinstall PersonalClaw" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "entry", ["sanitize_markup", "extract_main_content", "document_from_html", "report_text"]
+)
+def test_without_nh3_no_way_into_the_sanitizer_hands_the_markup_on(monkeypatch, entry):
+    """Proves none of the sanitizer's callers has a fallback of its own: with nh3 missing, each
+    raises the refusal instead of returning the markup, or text made from it."""
+    from personalclaw.documents.from_markup import document_from_html
+    from personalclaw.knowledge.reports import _text as report_text
+    from personalclaw.knowledge_providers.web_source import sanitize_markup
+
+    monkeypatch.setattr(ex, "_nh3", None)
+    page = f"<html><body><article>{_UNCLEAN}</article></body></html>"
+    call = {
+        "sanitize_markup": lambda: sanitize_markup(_UNCLEAN),
+        "extract_main_content": lambda: extract_main_content(page, url="https://example.com/p"),
+        "document_from_html": lambda: document_from_html(_UNCLEAN),
+        "report_text": lambda: report_text(_UNCLEAN),
+    }[entry]
+
+    with pytest.raises(RuntimeError, match="nh3") as refused:
+        call()
+
+    assert isinstance(refused.value, ex.SanitizerUnavailable)
 
 
 # ── meta-refresh redirect stubs (#265) ──────────────────────────────────────────

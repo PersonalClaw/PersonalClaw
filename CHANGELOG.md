@@ -611,6 +611,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Markup a web source's sanitizer fails on is withheld instead of stored as the page sent it, and every text PersonalClaw withholds because it could not mask it says so in the same words.**
 
+- **An install that cannot load its HTML sanitizer refuses a page's markup and says why, instead of cleaning it with a weaker pass that kept event handlers and `javascript:` links.**
+
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 
 - **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**

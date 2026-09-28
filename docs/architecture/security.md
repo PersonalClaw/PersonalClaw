@@ -702,7 +702,11 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
   The maskers that withheld before these did (a confirmation preview, a batch's recall view, the
   capture store and the capture proxy's failure line) say it in the same words. A web source's
   sanitizer is held to the same rule: markup it fails on is withheld as
-  `[sanitizing failed; content withheld]` and never stored as the page sent it.
+  `[sanitizing failed; content withheld]` and never stored as the page sent it. The sanitizer is
+  nh3 alone (`web/extract.py`): an install that cannot import it refuses to sanitize
+  (`SanitizerUnavailable`) instead of cleaning markup with a weaker pass, so a web source
+  withholds the field, and a fetch, a document made from HTML or a report whose text carries
+  markup fails with the reason.
   `tests/test_a_text_that_cannot_be_masked_is_withheld.py` holds every try in the tree that masks
   or sanitizes a text to returning a placeholder or raising when the masker does.
 - Portability export (`portability.py`) always excludes credentials: `.env`,

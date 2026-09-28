@@ -427,8 +427,9 @@ class _Budget:
 
 
 def sanitize_markup(html: str) -> str:
-    """§2.2's default-ON sanitizer, reusing ``web/extract.py``'s nh3 path so there is one
-    sanitizer in the codebase rather than a second opinion about what is safe markup."""
+    """The chain's default-ON sanitizer, reusing ``web/extract.py``'s nh3 path so there is one
+    sanitizer in the codebase rather than a second opinion about what is safe markup. Without nh3
+    it raises, and the chain withholds the field (:func:`_sanitized`)."""
     from personalclaw.web.extract import sanitize_html as _sanitize
 
     return _sanitize(html)

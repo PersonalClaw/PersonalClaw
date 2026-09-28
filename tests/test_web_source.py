@@ -694,6 +694,26 @@ async def test_markup_the_sanitizer_fails_on_is_withheld_never_stored(store, mon
     assert got.items[0].title == "A perfectly good headline"
 
 
+@pytest.mark.asyncio
+async def test_without_nh3_a_fields_markup_is_withheld_not_half_cleaned(store, monkeypatch):
+    """Proves a web source stores no markup that only a weaker pass than nh3 cleaned: with nh3
+    missing, the field the sanitizer runs on is withheld whole, event handler and all, and the
+    item keeps its title."""
+    from personalclaw.web import extract
+
+    monkeypatch.setattr(extract, "_nh3", None)
+
+    got = await WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_SCRIPTY_PAGE))).preview(
+        {"url": PAGE_URL, "extraction": _HTML_EXTRACTION}
+    )
+
+    assert len(got.items) == 1, "the item stays: its title was never markup"
+    content = got.items[0].content
+    assert "onerror" not in content and "alert(" not in content, content
+    assert content == _UNSANITIZED
+    assert got.items[0].title == "A perfectly good headline"
+
+
 def test_the_steps_after_a_failed_sanitize_have_nothing_to_work_on(monkeypatch):
     from personalclaw.knowledge_providers.web_source import apply_post_process
     from personalclaw.web import extract
