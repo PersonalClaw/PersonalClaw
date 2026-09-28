@@ -13,7 +13,7 @@ import socket
 
 import pytest
 
-from personalclaw.net.guard import classify_host, evaluate
+from personalclaw.net.guard import classify_host, evaluate, reaches_this_machine
 from personalclaw.net.policy import (
     CONNECTOR,
     LOOPBACK_INTERNAL,
@@ -76,6 +76,47 @@ def test_classify_ipv4_mapped_public_stays_public():
 
 def test_classify_invalid_ip_fails_closed():
     assert classify_host("not-an-ip").public is False
+
+
+# ── reaches_this_machine: is this model server local ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:11434",
+        "http://LOCALHOST.:11434/api",
+        "http://127.0.0.1:1234/v1",
+        "http://127.8.9.10:8000",
+        "http://[::1]:8000/v1",
+        "http://[::ffff:127.0.0.1]:8000",
+        # A connection to the unspecified address reaches this machine.
+        "http://0.0.0.0:8000/v1",
+        "http://[::]:8000/v1",
+    ],
+)
+def test_a_url_on_this_machine_reaches_it(url):
+    assert reaches_this_machine(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://gpu.example.test:11434",
+        "http://localhost.example.test:8000/v1",
+        "https://api.example.com/v1?via=127.0.0.1",
+        "http://192.0.2.10:11434",
+        "http://10.0.0.5:11434",
+        "http://[2001:db8::1]:8000/v1",
+        "http://[::ffff:10.0.0.1]:8000",
+        # No scheme: the host cannot be read, so it is not known to be this machine.
+        "localhost:11434",
+        "http://[::1",
+        "",
+    ],
+)
+def test_a_url_anywhere_else_or_unreadable_does_not(url):
+    assert reaches_this_machine(url) is False
 
 
 # ── evaluate: URL → decision (STRICT) ──────────────────────────────────────────

@@ -6781,6 +6781,7 @@
   },
   "kind": "dataclass",
   "members": {
+   "endpoints": {"kind": "property", "returns": "tuple[str, ...]", "settable": false},
    "own_model": {"kind": "property", "returns": "str", "settable": false}
   }
  },
@@ -8446,6 +8447,54 @@
   "returns": "bool"
  },
  "personalclaw.sdk.sync.sync_egress_policy": {"kind": "alias", "of": "personalclaw.sdk.net.sync_egress_policy"},
+ "personalclaw.sdk.testing.PortGuard": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "Iterable[int]", "kind": "positional_or_keyword", "name": "ports"},
+    {"annotation": "str", "kind": "keyword_only", "name": "what"}
+   ],
+   "returns": "None"
+  },
+  "kind": "class",
+  "members": {
+   "check": {
+    "kind": "method",
+    "params": [
+     {"annotation": "socket.socket", "kind": "positional_or_keyword", "name": "sock"},
+     {"annotation": "object", "kind": "positional_or_keyword", "name": "address"}
+    ],
+    "returns": "None"
+   },
+   "install": {
+    "kind": "method",
+    "params": [],
+    "returns": "None"
+   },
+   "listened": {
+    "kind": "method",
+    "params": [
+     {"annotation": "socket.socket", "kind": "positional_or_keyword", "name": "sock"}
+    ],
+    "returns": "None"
+   },
+   "own_ports": {
+    "kind": "method",
+    "params": [],
+    "returns": "set[int]"
+   },
+   "take": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
+   },
+   "undo": {
+    "kind": "method",
+    "params": [],
+    "returns": "None"
+   }
+  }
+ },
  "personalclaw.sdk.testing.keychain_off": {
   "kind": "function",
   "params": [],
@@ -8459,6 +8508,14 @@
    {"annotation": "float", "default": "60.0", "kind": "keyword_only", "name": "timeout"}
   ],
   "returns": "int"
+ },
+ "personalclaw.sdk.testing.refuse_ports": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Iterable[int]", "kind": "positional_or_keyword", "name": "ports"},
+   {"annotation": "str", "kind": "keyword_only", "name": "what"}
+  ],
+  "returns": "PortGuard"
  },
  "personalclaw.sdk.tool.AgentError": {"kind": "alias", "of": "personalclaw.sdk.action.AgentError"},
  "personalclaw.sdk.tool.DEFAULT_TOOL_OUTPUT_CAP": {"kind": "value", "type": "int", "value": "60000"},

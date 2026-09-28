@@ -1008,7 +1008,6 @@ def test_removing_the_provider_embedding_is_bound_to_re_embeds_with_the_next_mod
     from personalclaw.llm.registry import ProviderEntry, get_default_registry
     from personalclaw.providers.use_cases import load_active_models, save_active_models
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(providers, "_refresh_media_registries", lambda: None)
     following = f"{ENTRY}-next"
     get_default_registry().register_entry(

@@ -39,6 +39,7 @@ from typing import Any
 
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
+from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.tool_providers.base import BUILDS_META_KEY, PROPOSES_META_KEY, tool_failure
 
 
@@ -1236,7 +1237,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         hook_id_safe, _ = redact_exfiltration_urls(hook_id)
         hook_id_safe, _ = redact_credentials(hook_id_safe)
-        session_key_safe = f"{webhook_callbacks.SESSION_PREFIX}{hook_id_safe}"
+        session_key_safe = f"{HOOK_SESSION_PREFIX}{hook_id_safe}"
         sel().log_tool_invocation(
             session_key=_resolve_session_key(),
             source="mcp",

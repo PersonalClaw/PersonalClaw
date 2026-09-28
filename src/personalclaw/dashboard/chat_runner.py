@@ -1596,7 +1596,8 @@ async def _describe_screen_frame(data_url: str, *, usage: Attribution) -> str:
     """
     from personalclaw.providers.image_input import resolve_image_reader
 
-    provider = await resolve_image_reader()
+    # The person's own turn reads the frame, so the reading is that turn's: unmetered, like it.
+    provider = await resolve_image_reader(metered=False)
     prompt = (
         "Describe this screenshot of the user's screen factually and in detail: what "
         "application or page is shown, the visible text, and any errors or highlighted "

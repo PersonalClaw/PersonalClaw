@@ -42,7 +42,6 @@ def _isolate(mcp_mod, monkeypatch):
     no-ops. Returns that home's ``mcp.json``."""
     from personalclaw.config import loader as config_loader
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
     monkeypatch.setattr(mcp_mod.sel(), "log_api_access", lambda **kw: None, raising=False)
     return config_loader.config_dir() / "mcp.json"

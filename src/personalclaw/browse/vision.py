@@ -377,7 +377,8 @@ async def _complete(*, data_url: str, description: str) -> str:
     from personalclaw.providers.image_input import resolve_image_reader
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
-    provider = await resolve_image_reader()
+    # A browse step's reading is the tool's own call, automation's spend: behind the guard.
+    provider = await resolve_image_reader(metered=True)
     # The step's own model call, which no turn's row carries: recorded as a tool's one-shot is.
     record = recorder(provider, UNATTENDED)
     messages = [

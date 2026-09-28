@@ -371,12 +371,13 @@ def test_purpose_mapping_covers_every_documented_ledger_source():
 def test_the_guarded_use_cases_are_all_accounted_for_in_the_census():
     """`provider_bridge` decides which use_cases reach the attempt audit. They are censused, not
     folded, so this rail only has to prove the set is still the one the docstring names."""
-    src = Path(__import__("personalclaw.providers.provider_bridge", fromlist=["x"]).__file__)
-    text = src.read_text(encoding="utf-8")
-    m = re.search(r'if use_case in \(([^)]*)\):\n\s+kwargs\["_guard_use_case"\]', text)
-    assert m, "the guarded use_case tuple moved — re-read the census rationale before trusting it"
-    guarded = set(re.findall(r'"([^"]+)"', m.group(1)))
-    assert guarded, "vacuity guard: the rail must actually match some use_cases"
+    from personalclaw.providers import provider_bridge
+
+    text = Path(provider_bridge.__file__).read_text(encoding="utf-8")
+    assert re.search(
+        r'if _metered or use_case in METERED_AXES:\n\s+kwargs\["_guard_use_case"\]', text
+    ), "the guard's attach point moved — re-read the census rationale before trusting it"
+    guarded = set(provider_bridge.METERED_AXES)
     assert guarded == {"reasoning", "background", "loops", "orchestration"}, guarded
     # `loops` being in that set is exactly why a union would double-count.
     assert "loops" in guarded
@@ -395,15 +396,32 @@ def test_priced_false_wins_over_the_rate_table(tmp_path, stub_rates):
 
 
 def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path):
-    """The stubbed fixture proves the arithmetic; this proves the fold actually asks rates.py."""
+    """The stubbed fixture proves the arithmetic; this proves the fold actually asks rates.py.
+
+    Two Ollama entries, one on this machine and one on another: only the first ran locally at $0.
+    The second is unpriced, so the month's total says it is a floor rather than counting it free.
+    """
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+    registry = get_default_registry()
+    for name, endpoint in (
+        ("ollama", "http://localhost:11434"),
+        ("gpu-box", "http://gpu.example.test:11434"),
+    ):
+        registry.register_entry(
+            ProviderEntry(name=name, type="ollama", model="", options={"endpoint": endpoint})
+        )
     fold = U.empty_fold()
     look = U._rate_lookup(tmp_path)
     base = {"ts": f"{DAY1}T00:00:00+00:00", "source": "chat", "input_tokens": 1, "output_tokens": 1}
     U.fold_turn_row(fold, {**base, "provider": "ollama", "model": "qwen3:8b"}, look=look)
+    U.fold_turn_row(fold, {**base, "provider": "gpu-box", "model": "qwen3:8b"}, look=look)
     U.fold_turn_row(fold, {**base, "provider": "nonesuch", "model": "no-such-model-xyz"}, look=look)
     cells = fold["days"][DAY1]
     assert cells["ollama:qwen3:8b"]["interactive"]["local_calls"] == 1
     assert cells["ollama:qwen3:8b"]["interactive"]["unpriced_calls"] == 0
+    assert cells["gpu-box:qwen3:8b"]["interactive"]["local_calls"] == 0
+    assert cells["gpu-box:qwen3:8b"]["interactive"]["unpriced_calls"] == 1
     assert cells["nonesuch:no-such-model-xyz"]["interactive"]["unpriced_calls"] == 1
 
 

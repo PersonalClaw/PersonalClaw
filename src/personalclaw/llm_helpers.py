@@ -436,8 +436,8 @@ def _enforces_json_schema_natively(model_ref: str) -> bool:
 # ── Call-failure chain advance ───────────────────────────────────────────────
 # ONE walk, shared by every NON-INTERACTIVE consumer of the use-case chain. It lives
 # here because ``one_shot_completion`` was the first consumer, not because it is the
-# only one: the direct ``resolve_provider_for_use_case`` consumers on the
-# non-interactive axes (the knowledge-pipeline nodes, the loop stage-gate judge) need
+# only one: the other direct consumers of a use case's model on the non-interactive
+# axes (the knowledge-pipeline nodes, the loop stage-gate judge) need
 # exactly this walk, and a second hand-rolled copy of it would be a divergence defect
 # — two answers to "should we try the next model" drifting apart.
 #
@@ -516,10 +516,13 @@ async def run_over_use_case_chain(
     <entry> instead of <head>". The fallback is the user's own configuration and it still
     serves; what changed is that a step and Introspect no longer name the entry that answered
     as if it were the one asked for.
+
+    Every entry resolves metered (``provider_bridge.resolve_metered_model``): each consumer of
+    this walk is automation, whichever axis it walks, so each call counts against the daily cap.
     """
     from personalclaw.llm.base import ModelSubstitution
     from personalclaw.providers.provider_bridge import (
-        resolve_provider_for_use_case,
+        resolve_metered_model,
         stamp_substitution,
         substitution_reason,
     )
@@ -529,7 +532,7 @@ async def run_over_use_case_chain(
     for i, ref in enumerate(chain):
         try:
             kw = await entry_kwargs(ref) if entry_kwargs is not None else {}
-            provider = resolve_provider_for_use_case(use_case, model_override=ref, **kw)
+            provider = resolve_metered_model(use_case, model_override=ref, **kw)
         except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
             last_exc = exc
             if i == 0:
@@ -584,8 +587,10 @@ async def one_shot_completion(
     Resolves the provider through the same use-case bridge the chat path uses —
     which reads the active model selection from ``active_models.json`` (Settings →
     Models) — then builds a temporary instance, streams the response, and returns
-    the collected text. The resolved provider is wrapped in the model-call guard
-    (circuit breaker + hard timeout + attempt audit) at the bridge seam.
+    the collected text. Every resolution path wraps the model in the model-call guard
+    (circuit breaker + hard timeout + attempt audit + the spend budgets): the bridge seam
+    (``provider_bridge.resolve_metered_model``) for the pin, the chain and the plain resolve,
+    and ``provider_bridge.metered`` for the last-resort build, which used to run unguarded.
 
     ``use_case`` names a chat sub-category axis (MODEL-USE-CASES-V2):
     ``"background"`` IS a real axis now (titles/tags/suggestions/digests/
@@ -593,8 +598,8 @@ async def one_shot_completion(
     unbound), as are ``"reasoning"``, ``"loops"``, and ``"orchestration"``. The
     remaining informal label ``"ingestion"`` collapses to ``"background"``; anything
     unrecognized collapses to ``"reasoning"``. ``chat``/``code_tools`` are never
-    used here — they route a native agent through the in-process agent runtime,
-    but a one-shot completion wants a plain model provider.
+    used here: they are the axes a person's own turns run on, and a one-shot call
+    is not one.
 
     On a chain with fallbacks, a ``CircuitOpenError``/provider failure from entry N
     advances to entry N+1 for this call (bounded by chain length) — the
@@ -660,7 +665,7 @@ async def one_shot_completion(
     call here is: an interactive turn never comes through this function. A call used to write no
     row unless its caller asked, and each of those calls was spend Settings → Usage could not show.
     """
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.provider_bridge import metered, resolve_metered_model
     from personalclaw.providers.use_cases import VALID_USE_CASES
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
@@ -763,9 +768,7 @@ async def one_shot_completion(
     # very family the isolation control excluded. Resolve the one model and run it.
     if model:
         return await _run(
-            resolve_provider_for_use_case(
-                resolved_uc, model_override=model, **(await _entry_kw(model))
-            )
+            resolve_metered_model(resolved_uc, model_override=model, **(await _entry_kw(model)))
         )
 
     # Call-failure chain advance: with a multi-entry
@@ -794,7 +797,7 @@ async def one_shot_completion(
     # is one) rather than from nothing — an unbound axis falls back to the window table.
     _plain_ref = _chain[0] if _chain else ""
     try:
-        provider = resolve_provider_for_use_case(resolved_uc, **(await _entry_kw(_plain_ref)))
+        provider = resolve_metered_model(resolved_uc, **(await _entry_kw(_plain_ref)))
     except Exception as exc:  # noqa: BLE001 — the last-resort build below may still serve
         unresolved = exc
         logger.debug(
@@ -843,7 +846,7 @@ async def one_shot_completion(
         fallback_model = fallback.own_model
         fallback_ref = f"{fallback.name}:{fallback_model}" if fallback_model else fallback.name
         try:
-            provider = registry.build(
+            built = registry.build(
                 fallback.name, **{"model": fallback_model, **(await _entry_kw(fallback_ref))}
             )
         except Exception:  # noqa: BLE001 — an unaccepted build kwarg degrades, never blocks
@@ -851,7 +854,10 @@ async def one_shot_completion(
                 "one_shot_completion: last-resort build rejected derived kwargs for %r",
                 fallback.name,
             )
-            provider = registry.build(fallback.name)
+            built = registry.build(fallback.name)
+        provider = metered(
+            built, use_case=resolved_uc, provider_name=fallback.name, model=fallback_model
+        )
 
     return await _run(provider)
 

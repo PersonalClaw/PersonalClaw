@@ -135,7 +135,6 @@ _ROUTES = (
 @contextlib.asynccontextmanager
 async def _tools_page(monkeypatch) -> AsyncIterator[TestClient]:
     """The routes the Tools page calls, over a home that starts with no server at all."""
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
     monkeypatch.setattr(mcp_handlers, "_mcp_probe_cache", [])

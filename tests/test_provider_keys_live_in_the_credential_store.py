@@ -39,7 +39,6 @@ FIXTURE_BASE = "https://fixture-keystore.invalid/v1"
 @pytest.fixture(autouse=True)
 def _home(monkeypatch):
     """The conftest-guarded tmp home, a registered fixture provider type, no OS keychain."""
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(H, "_refresh_media_registries", lambda: None)
     register_branded_app(
         BrandedProviderSpec(type=FIXTURE_TYPE, protocol="openai", default_base_url=FIXTURE_BASE)

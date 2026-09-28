@@ -18,8 +18,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.llm.catalog import FAILURE_DETAIL_CHARS
-from personalclaw.providers.failure_copy import relayed_failure_copy
+from personalclaw.providers.failure_copy import failure_detail, relayed_failure_copy
 from personalclaw.request_validation import json_object_body
 from personalclaw.safety_flags import confirm_granted
 
@@ -608,9 +607,7 @@ def _error_result(exc: object, ms: int) -> dict:
     # connectivity-toast surfaces the failure-copy rail guards. `_mask` keeps a token out of it.
     # Bounded as every other relayed failure is, not at 200 characters: a provider's sentence and
     # the words after it run past 200, and cutting there dropped the next step it names.
-    detail = " ".join(_mask(str(exc)).split()) or type(exc).__name__
-    if len(detail) > FAILURE_DETAIL_CHARS:
-        detail = detail[:FAILURE_DETAIL_CHARS].rstrip() + "…"
+    detail = failure_detail(str(exc)) or type(exc).__name__
     return {"ok": False, "duration_ms": ms, "detail": detail, "reason": reason}
 
 

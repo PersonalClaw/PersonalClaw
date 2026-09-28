@@ -37,8 +37,7 @@ def _key() -> str:
 
 
 @pytest.fixture
-def home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+def home():
     return config_loader.config_dir()
 
 

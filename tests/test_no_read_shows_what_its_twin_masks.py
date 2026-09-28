@@ -685,10 +685,9 @@ def test_the_agent_listing_artifacts_sees_each_tag_masked(artifacts, monkeypatch
 
 
 @pytest.fixture
-def mcp_home(monkeypatch):
+def mcp_home():
     from personalclaw.config import loader as config_loader
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)

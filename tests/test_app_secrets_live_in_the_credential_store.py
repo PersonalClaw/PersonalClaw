@@ -46,8 +46,7 @@ CONFIG_SCHEMA = {
 
 
 @pytest.fixture(autouse=True)
-def home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+def home():
     previous = os.umask(0o022)
     try:
         yield config_loader.config_dir()

@@ -33,6 +33,7 @@ __all__ = [
     "connectivity_guidance",
     "DETAIL_CHARS",
     "endpoint_problem",
+    "failure_detail",
     "relayed_failure_copy",
     "sentence_with_detail",
     "UNEXPECTED_FAILURE_COPY",
@@ -117,6 +118,26 @@ def sentence_with_detail(sentence: str, error: BaseException | str) -> str:
     if len(words) > DETAIL_CHARS:
         words = words[:DETAIL_CHARS].rstrip() + "…"
     return f"{sentence} Details: {words}"
+
+
+def failure_detail(text: str) -> str:
+    """``text``, a failure's own words, as the detail of a check someone asked for (a model's
+    Test, a provider's selftest): masked, on one line, and whole up to
+    :data:`~personalclaw.llm.catalog.FAILURE_DETAIL_CHARS`, the bound every relayed failure has,
+    with "…" where it was cut. Masked BEFORE it is cut, since a credential cut in half would slip
+    past the redactor, and ``""`` when it cannot be masked: an unmasked text is never the answer.
+    """
+    from personalclaw.llm.catalog import FAILURE_DETAIL_CHARS
+
+    try:
+        from personalclaw.security import redact
+
+        words = " ".join(redact(text or "").split())
+    except Exception:  # noqa: BLE001 — a detail that cannot be masked is withheld, never shown
+        return ""
+    if len(words) > FAILURE_DETAIL_CHARS:
+        words = words[:FAILURE_DETAIL_CHARS].rstrip() + "…"
+    return words
 
 
 def endpoint_problem(value: str) -> str | None:

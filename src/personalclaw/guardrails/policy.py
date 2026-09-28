@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX, HOOK_SESSION_PREFIX
 from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS, RUNG_ONE_TAP
 from personalclaw.guardrails.budgets import Budget
 
@@ -209,8 +209,20 @@ _LOOP_PREFIXES = ("loop-", "loop:")
 #: this module answers only the first one.
 INBOUND_PREFIX = "inbound:"
 
+#: A webhook's agent turn (``POST /api/hooks/agent``, ``hook:<id>``): an outside system starts it,
+#: and nobody is watching it run. The route has always said so ("runs unattended") and nothing
+#: here did, so the turn resolved INTERACTIVE, the posture of a chat someone is reading: full
+#: tool grants, and each call that needed approval parked on a prompt nobody would see. Unattended
+#: and not stateless, like ``inbound:`` above: a registered callback resumes its own context.
+_WEBHOOK_PREFIX = HOOK_SESSION_PREFIX
+
 #: Every prefix this module classifies as unattended on top of session.py's own.
-_EXTRA_UNATTENDED_PREFIXES = (*_LOOP_PREFIXES, UNATTENDED_DISPATCH_PREFIX, INBOUND_PREFIX)
+_EXTRA_UNATTENDED_PREFIXES = (
+    *_LOOP_PREFIXES,
+    UNATTENDED_DISPATCH_PREFIX,
+    INBOUND_PREFIX,
+    _WEBHOOK_PREFIX,
+)
 
 
 def unattended_dispatch_key(origin: str) -> str:
@@ -246,9 +258,9 @@ _DASHBOARD_WRAPPER = DASHBOARD_SESSION_PREFIX
 
 def is_unattended_session(session_key: str) -> bool:
     """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker, an ``inbound:`` access surface, a sessionless ``unattended:``
-    dispatch, or the ``_bg`` background key) — the keys that resolve through HEADLESS by
-    construction.
+    side/loop worker, an ``inbound:`` access surface, a webhook's ``hook:`` turn, a
+    sessionless ``unattended:`` dispatch, or the ``_bg`` background key) — the keys that
+    resolve through HEADLESS by construction.
 
     Accepts either the bare session key or the dashboard-wrapped provider form of an
     inbound key (see ``_DASHBOARD_WRAPPER``), so the posture does not depend on which
@@ -270,10 +282,10 @@ def is_unattended_session(session_key: str) -> bool:
 def profile_for_session(session_key: str) -> SafetyProfile:
     """Resolve the safety profile for a session key BY CONSTRUCTION.
 
-    An unattended session (cron/subagent/channel/inbox/side/loop, or a sessionless
-    ``unattended:`` dispatch) resolves to ``HEADLESS`` (read-only default, config-layered
-    budget + scan); everything else is the human-watched ``INTERACTIVE`` posture. This is
-    the single object the gateway's approval pick consults, replacing the ad-hoc
+    An unattended session (cron/subagent/channel/inbox/side/loop, a webhook's turn, or a
+    sessionless ``unattended:`` dispatch) resolves to ``HEADLESS`` (read-only default,
+    config-layered budget + scan); everything else is the human-watched ``INTERACTIVE`` posture.
+    This is the single object the gateway's approval pick consults, replacing the ad-hoc
     AUTO_APPROVE/HOOK_BASED branch. Operator config is layered in via
     ``safety_profile_for``.
 

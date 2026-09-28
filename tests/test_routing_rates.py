@@ -5,6 +5,12 @@ tier is asserted at its boundary AND the absent case is asserted to be ``None`` 
 0.0 would report an unpriced cloud model as free, the one wrong answer a spend meter must never
 give. Every test passes an explicit ``home`` (or monkeypatches ``config_dir``); nothing here may
 touch the real ``~/.personalclaw``.
+
+The local tier is decided by where a provider entry's endpoint is. It was decided by the entry's
+NAME (anything spelled like a local engine, ``ollama`` among them), so an Ollama on another
+machine priced as a free local model: its turns read "ran locally at $0" and the router ranked it
+cheapest. The entries here are registered with the endpoint they are configured with, the way
+``config.json`` gives them to the gateway.
 """
 
 from __future__ import annotations
@@ -14,16 +20,46 @@ import json
 import pytest
 
 import personalclaw.sdk.model  # noqa: F401 — ensure package import order (sdk.model first)
+from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import rates as rates_mod
 from personalclaw.routing.rates import (
     ModelRate,
     cost_for,
-    is_local_provider_type,
     load_overlay,
     rate_for,
     save_overlay,
+    served_on_this_machine,
 )
 from personalclaw.sdk.provider_helpers import BrandedProviderSpec
+
+#: A model no tier prices, so what answers for it is the local tier or nothing.
+_UNPRICED = "qwen3:8b"
+
+#: Where a model server on another machine is (the documentation name, address and prefix).
+_ELSEWHERE = [
+    "http://gpu.example.test:11434",
+    "http://192.0.2.10:11434",
+    "http://[2001:db8::1]:11434",
+    # A LAN address is another machine too, even one the owner runs.
+    "http://10.0.0.5:11434",
+]
+
+#: This machine, as an endpoint can name it.
+_HERE = [
+    "http://localhost:11434",
+    "http://127.0.0.1:11434",
+    "http://[::1]:11434",
+    "http://0.0.0.0:8000",
+]
+
+
+def _configured(name: str, provider_type: str = "ollama", **options: object) -> str:
+    """Register the provider entry *name* with *options*, as the config sync does; conftest drops
+    it after the test."""
+    get_default_registry().register_entry(
+        ProviderEntry(name=name, type=provider_type, model="", options=dict(options))
+    )
+    return name
 
 
 @pytest.fixture(autouse=True)
@@ -80,21 +116,85 @@ def test_absent_is_none_not_a_free_model(tmp_path):
     assert cost_for("acme", "totally-unpriced-model", input_tokens=10_000, home=tmp_path) is None
 
 
-def test_local_provider_prices_zero_and_is_not_absent(tmp_path):
-    """SC #7: a local provider's price is a KNOWN 0.0, distinguishable from an absent rate."""
-    rate = rate_for("ollama-models", "qwen3:8b", home=tmp_path)
+@pytest.mark.parametrize("endpoint", _HERE)
+def test_a_model_server_on_this_machine_prices_zero_and_is_not_absent(tmp_path, endpoint):
+    """A local provider's price is a KNOWN 0.0, distinguishable from an absent rate."""
+    _configured("ollama", endpoint=endpoint)
+
+    rate = rate_for("ollama", _UNPRICED, home=tmp_path)
 
     assert rate == ModelRate(0.0, 0.0)
     assert rate is not None and rate.source == "local"
-    assert cost_for("ollama-models", "qwen3:8b", input_tokens=1_000_000, home=tmp_path) == 0.0
+    assert cost_for("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path) == 0.0
+
+
+@pytest.mark.parametrize("endpoint", _ELSEWHERE)
+def test_a_model_server_on_another_machine_is_not_free(tmp_path, endpoint):
+    """The defect: an Ollama entry named ``ollama``, on another machine, priced 0.0 as local.
+    With nothing that prices its model it is unpriced, never free."""
+    _configured("ollama", endpoint=endpoint)
+
+    assert served_on_this_machine("ollama") is False
+    assert rate_for("ollama", _UNPRICED, home=tmp_path) is None
+    assert cost_for("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path) is None
+
+
+def test_a_model_server_on_another_machine_prices_at_its_configured_rate(tmp_path):
+    _configured("gpu-box", endpoint=_ELSEWHERE[0])
+    save_overlay({"gpu-box:qwen3:8b": {"in_per_mtok": 0.2, "out_per_mtok": 0.4}}, home=tmp_path)
+
+    rate = rate_for("gpu-box", _UNPRICED, home=tmp_path)
+
+    assert rate == ModelRate(0.2, 0.4)
+    assert rate is not None and rate.source == "overlay"
+
+
+def test_a_model_server_on_another_machine_prices_at_its_declared_rate(
+    tmp_path, registered_pricing
+):
+    registered_pricing("acme", {"acme-large": {"in_per_mtok": 3.0, "out_per_mtok": 15.0}})
+    _configured("acme-lab", "acme", base_url="https://models.example.com/v1")
+
+    rate = rate_for("acme-lab", "acme-large", home=tmp_path)
+
+    assert rate == ModelRate(3.0, 15.0)
+    assert rate is not None and rate.source == "app_default"
+
+
+def test_a_name_spelled_like_a_local_engine_is_not_local_by_itself(tmp_path):
+    """What a provider is called never makes it free: a name no configured entry has names no
+    endpoint, and so no machine."""
+    for name in ("ollama", "ollama-models", "lm-studio", "vllm", "llama.cpp"):
+        assert served_on_this_machine(name) is False, name
+        assert rate_for(name, _UNPRICED, home=tmp_path) is None, name
+
+
+def test_an_entry_that_names_no_endpoint_is_not_local(tmp_path):
+    _configured("in-process", "some-runtime")
+
+    assert served_on_this_machine("in-process") is False
+    assert rate_for("in-process", _UNPRICED, home=tmp_path) is None
+
+
+@pytest.mark.parametrize("remote_key", ["endpoint", "base_url"])
+def test_an_entry_is_local_only_when_every_endpoint_it_names_is(tmp_path, remote_key):
+    """Clients differ on which spelling wins when an entry carries both, so one endpoint on
+    another machine is enough for its requests to leave this one."""
+    local_key = "base_url" if remote_key == "endpoint" else "endpoint"
+    _configured("mixed", **{local_key: _HERE[0], remote_key: _ELSEWHERE[0]})
+
+    assert served_on_this_machine("mixed") is False
+    assert rate_for("mixed", _UNPRICED, home=tmp_path) is None
 
 
 def test_overlay_wins_over_local_zero(tmp_path):
     """The overlay is tier 1 — above the local rule, so a user can price local compute if they
     want to. Precedence is total, with no tier exempt from the one above it."""
+    _configured("ollama", endpoint=_HERE[0])
+    assert rate_for("ollama", _UNPRICED, home=tmp_path) == ModelRate(0.0, 0.0), "the local tier"
     save_overlay({"ollama:qwen3:8b": {"in_per_mtok": 0.5, "out_per_mtok": 0.5}}, home=tmp_path)
 
-    rate = rate_for("ollama", "qwen3:8b", home=tmp_path)
+    rate = rate_for("ollama", _UNPRICED, home=tmp_path)
 
     assert rate == ModelRate(0.5, 0.5)
     assert rate is not None and rate.source == "overlay"
@@ -163,14 +263,6 @@ def test_colon_bearing_model_ref_round_trips(tmp_path):
 
 def test_empty_model_is_absent(tmp_path):
     assert rate_for("acme", "", home=tmp_path) is None
-
-
-def test_is_local_provider_type_is_conservative():
-    assert is_local_provider_type("ollama")
-    assert is_local_provider_type("ollama-models")
-    assert is_local_provider_type("LM-Studio")
-    assert not is_local_provider_type("anthropic")
-    assert not is_local_provider_type("")
 
 
 # ── The overlay store: editable live, fail-open when broken ──────────────────────────────

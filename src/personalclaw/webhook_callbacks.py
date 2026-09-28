@@ -26,15 +26,13 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.owner_grants import GrantBook
 
 logger = logging.getLogger(__name__)
 
 #: The file, under the home.
 CALLBACKS_FILE = "webhook_callbacks.json"
-
-#: The session-key prefix `POST /api/hooks/agent` routes on; a callback's key is `hook:<id>`.
-SESSION_PREFIX = "hook:"
 
 #: Where the owner's yes to each callback is kept (`owner_grants`), keyed by the callback's id.
 BOOK = GrantBook("callbacks")
@@ -53,7 +51,7 @@ class Callback:
 
     @property
     def session_key(self) -> str:
-        return f"{SESSION_PREFIX}{self.id}"
+        return f"{HOOK_SESSION_PREFIX}{self.id}"
 
     @classmethod
     def from_dict(cls, data: dict) -> Callback | None:

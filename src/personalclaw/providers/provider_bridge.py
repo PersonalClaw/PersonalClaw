@@ -1175,6 +1175,27 @@ def _diagnose_unbuildable_ref(
     )
 
 
+#: The axes whose every call is automation's, so the spend guard wraps what they resolve to: a call
+#: on any of them counts against the daily cap. A call automation makes on another axis (a
+#: knowledge node on chat, a loop's judge bound to Code) asks :func:`resolve_metered_model`.
+METERED_AXES = ("reasoning", "background", "loops", "orchestration")
+
+
+def resolve_metered_model(use_case: str, **kwargs: Any) -> ModelProvider:
+    """The model *use_case* is bound to, for a call automation makes: the model itself, behind the
+    spend guard whatever the axis.
+
+    The model itself, never an agent runtime: a chat axis otherwise builds the native agent (tools,
+    a turn loop, no ``complete()``) or an agent CLI. Behind the guard, because the call is spend
+    no person typed: the chat axes and the modality axes are left unguarded for the turns a person
+    makes on them, and a knowledge node, a loop's judge or a browse step that resolved them the
+    same way was spend the daily cap never counted.
+    """
+    return resolve_provider_for_use_case(
+        use_case, _force_model_axis=True, _model_axis_only=True, _metered=True, **kwargs
+    )
+
+
 def resolve_provider_for_use_case(
     use_case: str,
     *,
@@ -1218,6 +1239,9 @@ def resolve_provider_for_use_case(
     # ModelProvider) bypasses this so we never recurse. Pop it unconditionally so
     # it never leaks into the downstream model-axis resolvers.
     _force_model_axis = kwargs.pop("_force_model_axis", False)
+    # A call automation makes on ANY axis (``resolve_metered_model``): wrapped by the spend guard
+    # below whatever the axis is. Popped unconditionally so it never reaches a resolver or factory.
+    _metered = bool(kwargs.pop("_metered", False))
     # The caller (chat_runner) resolves the agent's runtime kind from its actual
     # PROFILE (resolve_agent_bindings.provider) and threads it here as
     # ``provider_kind``. Honor it directly — re-deriving from ``agent`` is unsafe
@@ -1334,11 +1358,12 @@ def resolve_provider_for_use_case(
     # registered entry (else it's a bare id that happens to contain a colon, e.g.
     # "gpt-oss:20b").
     capability = parent_capability(use_case)
-    # Model-call guard: every NON-INTERACTIVE text axis
-    # (``reasoning`` / ``background`` / ``loops`` / ``orchestration`` — backing
-    # one_shot_completion, the lite background factory, loop workers/judges/gates,
-    # and every subagent spawn and agent turn nobody typed — the census of those is
-    # tests/test_automation_spend_is_metered.py) routes every resolved provider through
+    # Model-call guard: every NON-INTERACTIVE text axis (:data:`METERED_AXES` — backing the
+    # lite background factory, loop workers and planners, and every subagent spawn and agent
+    # turn nobody typed), and any axis a call automation makes resolves on
+    # (:func:`resolve_metered_model`: one-shot calls, the fallback chain walk, knowledge nodes,
+    # loop judges and gates, a browse step's image reading) — the census of those is
+    # tests/test_automation_spend_is_metered.py — routes every resolved provider through
     # ModelCallGuard (per-provider circuit breaker + hard wall-clock timeout +
     # attempt-level JSONL audit) — so the breaker and the audit see the TRUE axis
     # (MODEL-USE-CASES-V2). The interactive chat/code_tools stream stays OUT OF
@@ -1348,7 +1373,7 @@ def resolve_provider_for_use_case(
     # resolution attempts below wrap identically; _resolve_from_config_registry
     # pops it (never reaches the build factory) and wraps at the single point
     # where the entry name + model are known.
-    if use_case in ("reasoning", "background", "loops", "orchestration"):
+    if _metered or use_case in METERED_AXES:
         kwargs["_guard_use_case"] = use_case
     # A colon-qualified "Provider:model" ref is tried FIRST (below) because its
     # model_id can itself contain a slash (e.g. "nvidia:meta/llama-3.1-8b"); the
@@ -2115,73 +2140,98 @@ def _resolve_from_config_registry(
     served_ref = f"{candidate.name}:{served_model}" if served_model else candidate.name
 
     # §2 chokepoint: wrap the resolved provider for the non-interactive text axis
-    # (breaker + hard timeout + audit + day-budget + outbound scan). Config-derived
-    # tuning is read fail-open — a broken config must never wedge resolution.
+    # (breaker + hard timeout + audit + day-budget + outbound scan).
     if guard_use_case:
-        from personalclaw.guardrails import wrap_model_call_guard
-        from personalclaw.guardrails.breaker import get_breaker
-        from personalclaw.guardrails.budgets import budget_from_config, run_budget_from_config
-
-        scan_mode = "warn"
-        breaker = None
-        budget = None
-        # `max_tokens_per_run` is a user-facing config field with a PATCH allowlist entry
-        # and a builder (`run_budget_from_config`) that had NO production caller — so the
-        # ceiling loaded and bound nothing. Read here beside the day budget because this is
-        # the one seam that already turns guardrails config into a guard.
-        run_budget = None
-        try:
-            from personalclaw.config.loader import AppConfig
-
-            gr = AppConfig.load().guardrails
-            scan_mode = gr.scan_mode
-            breaker = get_breaker(
-                candidate.name,
-                threshold=gr.breaker.failure_threshold,
-                recovery_secs=gr.breaker.recovery_secs,
-            )
-            budget = budget_from_config()
-            run_budget = run_budget_from_config()
-        except Exception:
-            logger.debug("guardrails config read failed; using safe defaults", exc_info=True)
-
-        # A ROUTED local attempt runs under ``routing.local_timeout_secs`` instead of the
-        # guard's generic default — the whole point of ordering a local model first is that it is
-        # cheap to *try*, which is only true if a stalled local model gives up quickly and lets the
-        # chain reach the cloud ref. ONE timeout, on the one attempt: nothing is stacked, because
-        # this replaces the guard's default rather than adding to it, and only for the local leg.
-        _timeout_kw: dict[str, Any] = {}
-        if guard_routed:
-            try:
-                from personalclaw.routing.policy import is_local_ref, local_timeout_secs
-
-                if is_local_ref(candidate.name):
-                    _secs = local_timeout_secs()
-                    if _secs > 0:
-                        _timeout_kw["timeout_secs"] = _secs
-            except Exception:  # noqa: BLE001 — fail-open to the guard's own default
-                logger.debug("routing local timeout read failed", exc_info=True)
-        guarded = wrap_model_call_guard(
+        guarded = metered(
             built,
             use_case=guard_use_case,
             provider_name=candidate.name,
             model=served_model,
-            budget=budget,
-            run_budget=run_budget,
-            scan_mode=scan_mode,
-            breaker=breaker,
             routed=guard_routed,
             routed_fallback=guard_routed_fallback,
-            # Read again at each call: the values above are only where the guard starts.
-            budget_source=budget_from_config,
-            run_budget_source=run_budget_from_config,
-            scan_mode_source=_scan_mode_now,
-            **_timeout_kw,
         )
         _stamp_served_ref(guarded, served_ref)
         return guarded
     _stamp_served_ref(built, served_ref)
     return built
+
+
+def metered(
+    built: ModelProvider,
+    *,
+    use_case: str,
+    provider_name: str,
+    model: str,
+    routed: bool = False,
+    routed_fallback: bool = False,
+) -> ModelProvider:
+    """*built*, behind the spend guard (breaker + hard timeout + audit + day and run budgets +
+    outbound scan), as a call automation makes on *use_case*.
+
+    The one place guardrails config becomes a guard: the resolution seam wraps here, and so does a
+    model built outside it (``one_shot_completion``'s last resort). Config-derived tuning is read
+    fail-open — a broken config must never wedge resolution.
+    """
+    from personalclaw.guardrails import wrap_model_call_guard
+    from personalclaw.guardrails.breaker import get_breaker
+    from personalclaw.guardrails.budgets import budget_from_config, run_budget_from_config
+
+    scan_mode = "warn"
+    breaker = None
+    budget = None
+    # `max_tokens_per_run` is a user-facing config field with a PATCH allowlist entry
+    # and a builder (`run_budget_from_config`) that had NO production caller — so the
+    # ceiling loaded and bound nothing. Read here beside the day budget because this is
+    # the one seam that already turns guardrails config into a guard.
+    run_budget = None
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        gr = AppConfig.load().guardrails
+        scan_mode = gr.scan_mode
+        breaker = get_breaker(
+            provider_name,
+            threshold=gr.breaker.failure_threshold,
+            recovery_secs=gr.breaker.recovery_secs,
+        )
+        budget = budget_from_config()
+        run_budget = run_budget_from_config()
+    except Exception:
+        logger.debug("guardrails config read failed; using safe defaults", exc_info=True)
+
+    # A ROUTED local attempt runs under ``routing.local_timeout_secs`` instead of the
+    # guard's generic default — the whole point of ordering a local model first is that it is
+    # cheap to *try*, which is only true if a stalled local model gives up quickly and lets the
+    # chain reach the cloud ref. ONE timeout, on the one attempt: nothing is stacked, because
+    # this replaces the guard's default rather than adding to it, and only for the local leg.
+    _timeout_kw: dict[str, Any] = {}
+    if routed:
+        try:
+            from personalclaw.routing.policy import is_local_ref, local_timeout_secs
+
+            if is_local_ref(provider_name):
+                _secs = local_timeout_secs()
+                if _secs > 0:
+                    _timeout_kw["timeout_secs"] = _secs
+        except Exception:  # noqa: BLE001 — fail-open to the guard's own default
+            logger.debug("routing local timeout read failed", exc_info=True)
+    return wrap_model_call_guard(
+        built,
+        use_case=use_case,
+        provider_name=provider_name,
+        model=model,
+        budget=budget,
+        run_budget=run_budget,
+        scan_mode=scan_mode,
+        breaker=breaker,
+        routed=routed,
+        routed_fallback=routed_fallback,
+        # Read again at each call: the values above are only where the guard starts.
+        budget_source=budget_from_config,
+        run_budget_source=run_budget_from_config,
+        scan_mode_source=_scan_mode_now,
+        **_timeout_kw,
+    )
 
 
 def _scan_mode_now() -> str:

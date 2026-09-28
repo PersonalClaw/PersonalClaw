@@ -36,12 +36,11 @@ VAULT_VALUE = "ghp-vault-1f2e3d4c-never-reaches-an-app"
 
 
 @pytest.fixture(autouse=True)
-def home(monkeypatch):
+def home():
     """The suite's isolated home, with the OS keychain out of the picture: every value here
     lives in that home's ``.env``."""
     from personalclaw.config import loader
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     return loader.config_dir()
 
 

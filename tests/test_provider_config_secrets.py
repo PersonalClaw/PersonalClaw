@@ -166,14 +166,13 @@ async def test_a_real_new_value_still_overwrites(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_patch_naming_another_owners_key_is_refused(tmp_path, monkeypatch):
+async def test_a_patch_naming_another_owners_key_is_refused(tmp_path):
     """This form writes the same file as the app's Configure page, so the same refusal: a
     reference to a credential another owner holds is a 400 that says what to do, and the
     stored settings are untouched. On main it was saved, and the app then resolved it."""
     from personalclaw.config.credentials import save_credential
     from personalclaw.config.secret_refs import make_ref
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     async with _client(tmp_path) as client:
         await _save(client, {"bot_token": _SECRET})
         before = _config_file(tmp_path).read_text(encoding="utf-8")

@@ -849,20 +849,16 @@ async def api_provider_create(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": name})
 
 
-#: The option keys that carry an endpoint URL — the two spellings core's own protocol
-#: clients read (``sdk.provider_helpers`` pops both, ``base_url`` winning).
-_ENDPOINT_OPTIONS = ("endpoint", "base_url")
-
-
 def _endpoint_refusal(options: dict[str, Any]) -> str | None:
     """Why the endpoint in ``options`` cannot be saved, or ``None``.
 
     Refused at write time: a malformed endpoint used to be saved and only fail later, as
     ``not%20a%20url/api/tags`` — the HTTP client's percent-encoded echo of it.
     """
+    from personalclaw.llm.registry import ENDPOINT_OPTIONS
     from personalclaw.providers.failure_copy import endpoint_problem
 
-    for key in _ENDPOINT_OPTIONS:
+    for key in ENDPOINT_OPTIONS:
         value = options.get(key)
         if isinstance(value, str) and value.strip():
             problem = endpoint_problem(value)

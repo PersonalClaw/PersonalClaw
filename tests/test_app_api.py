@@ -405,7 +405,7 @@ async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(
 
 
 @pytest.mark.asyncio
-async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, monkeypatch):
+async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path):
     """A reference resolves only against its own owner's credentials, so a save that names a
     key another owner holds — a Secrets-panel credential, another app's token — is refused
     with 400 and the sentence that says what to do, and nothing reaches the disk. On main the
@@ -414,7 +414,6 @@ async def test_saving_config_that_names_another_owners_key_is_refused(tmp_path, 
     from personalclaw.config.secret_refs import make_ref, ref_key
     from personalclaw.providers.settings import ProviderSettings
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     schema = {
         "type": "object",
         "properties": {

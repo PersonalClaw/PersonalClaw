@@ -38,8 +38,7 @@ PEM = (
 
 
 @pytest.fixture
-def home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+def home():
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)

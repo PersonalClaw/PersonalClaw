@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.acp.errors import AcpError
 from personalclaw.acp.outcomes import AcpToolOutcomesMixin
+from personalclaw.acp.spend import AcpTurnMeter
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
 from personalclaw.agents.provider import AgentProvider
 from personalclaw.llm.base import CancelOutcome, LLMEvent
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AcpSessionProvider(AcpToolOutcomesMixin, AgentProvider):
+class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
     """One ACP session (on a shared connection) behind the AgentProvider surface.
 
     Construct with a live :class:`AcpConnection` and the :class:`AcpSession` opened on
@@ -117,13 +118,17 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AgentProvider):
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         # Procedural-memory signal — identical to the N=1 client-backed provider:
-        # clean accumulator per turn, every event folded in. See acp/outcomes.py.
+        # clean accumulator per turn, every event folded in, and the turn metered on a
+        # metered axis. See acp/outcomes.py and acp/spend.py.
         self._outcome_accumulator.begin_turn()
-        async for e in self._session.stream_events(message):
-            self._stamp_turn_telemetry(e)
-            event = self._to_llm_event(e)
+        async for event in self._metered(self._events(self._session.stream_events(message))):
             self._outcome_accumulator.observe(event)
             yield event
+
+    async def _events(self, frames: AsyncIterator[Any]) -> AsyncIterator[LLMEvent]:
+        async for e in frames:
+            self._stamp_turn_telemetry(e)
+            yield self._to_llm_event(e)
 
     @property
     def supports_native_commands(self) -> bool:
@@ -138,9 +143,7 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AgentProvider):
 
             raise AcpCommandsUnsupported(command)
         self._outcome_accumulator.begin_turn()
-        async for e in self._session.stream_command(command):
-            self._stamp_turn_telemetry(e)
-            event = self._to_llm_event(e)
+        async for event in self._metered(self._events(self._session.stream_command(command))):
             self._outcome_accumulator.observe(event)
             yield event
 

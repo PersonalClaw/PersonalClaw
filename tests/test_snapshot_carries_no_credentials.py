@@ -57,7 +57,6 @@ async def _coro(v):
 
 @pytest.fixture
 def home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setattr(H, "_refresh_media_registries", lambda: None)
     register_branded_app(
         BrandedProviderSpec(

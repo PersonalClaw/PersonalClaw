@@ -33,7 +33,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from personalclaw.llm.base import ModelProvider
@@ -114,19 +114,29 @@ async def image_reader() -> ImageReader:
     return ImageReader(reason=NO_IMAGE_MODEL)
 
 
-async def resolve_image_reader(**kwargs: Any) -> ModelProvider:
+async def resolve_image_reader(*, metered: bool) -> ModelProvider:
     """Build the provider that reads an image into text, from :func:`image_reader`'s answer.
 
     The one resolution every image reader uses, through the one resolver: the binding resolves as
     the bound use case (its chain walked as every chain is), the chat model as the named ref it
     is, so the provider is built with that model's real name. With nothing to read images the
     resolver's typed ``ERR_MODEL_UNRESOLVED`` refusal is raised, naming Settings → Models.
+
+    *metered* says whose the call is. A reading done inside a person's own chat turn (a screen
+    frame the turn's model cannot see) is that turn's, and is not; a knowledge node's or a browse
+    step's is automation's, behind the spend guard
+    (:func:`~personalclaw.providers.provider_bridge.resolve_metered_model`). Keyword-only and
+    without a default, so every caller says which.
     """
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.provider_bridge import (
+        resolve_metered_model,
+        resolve_provider_for_use_case,
+    )
 
     reader = await image_reader()
     named = reader.ref if reader.ref and not reader.bound else None
-    return resolve_provider_for_use_case(IMAGE_USE_CASE, model_override=named, **kwargs)
+    resolve = resolve_metered_model if metered else resolve_provider_for_use_case
+    return resolve(IMAGE_USE_CASE, model_override=named)
 
 
 def clear_cache() -> None:

@@ -28,21 +28,24 @@ def system_temp(tmp_path, monkeypatch):
 
 
 async def _chat_probe(monkeypatch, reply: str) -> dict:
-    """The selftest's chat row, for a Background model that answers *reply*."""
+    """The selftest's chat row, for a provider whose chat model answers *reply*."""
     import personalclaw.llm_helpers as llm_helpers
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
     async def _one_shot(prompt, **kwargs):
         return reply
 
-    async def _no_voice(_timed):
+    async def _no_voice(_timed, _name):
         return None
 
+    get_default_registry().register_entry(ProviderEntry(name="lab", type="lab", model=""))
     monkeypatch.setattr(llm_helpers, "one_shot_completion", _one_shot)
     monkeypatch.setattr(
-        "personalclaw.providers.provider_bridge.can_resolve_use_case", lambda uc: uc == "chat"
+        "personalclaw.providers.use_cases.active_model_refs",
+        lambda axis: ["lab:lab-large"] if axis == "chat" else [],
     )
     monkeypatch.setattr(doctor, "_tts_clone_probe", _no_voice)
-    return (await doctor._run_selftest("any"))["capabilities"]["chat"]
+    return (await doctor._run_selftest("lab"))["capabilities"]["chat"]
 
 
 @pytest.mark.parametrize("reply", ["", "  \n"], ids=["empty", "whitespace"])
@@ -50,19 +53,17 @@ async def test_an_empty_reply_is_not_a_working_model(monkeypatch, reply):
     """🔴 Red before the fix: `{"ok": True, "detail": "completion returned"}`."""
     assert await _chat_probe(monkeypatch, reply) == {
         "ok": False,
-        "detail": "the Background model answered with an empty reply",
+        "detail": "lab-large answered with an empty reply",
     }
 
 
 async def test_a_reply_with_something_in_it_is(monkeypatch):
     """The positive control: the same probe goes green on a real answer."""
-    assert await _chat_probe(monkeypatch, "pong") == {
-        "ok": True,
-        "detail": "the Background model replied",
-    }
+    assert await _chat_probe(monkeypatch, "pong") == {"ok": True, "detail": "lab-large replied"}
 
 
 class _Engine:
+    name = "voices"
     supports_cloning = False
 
     def __init__(self, *, writes: bytes) -> None:
@@ -86,7 +87,7 @@ async def _tts_probe(monkeypatch, engine: _Engine) -> dict | None:
 
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: {"provider": engine})
     monkeypatch.setattr(reg, "route_synthesis", _route)
-    return await doctor._tts_clone_probe(_timed)
+    return await doctor._tts_clone_probe(_timed, engine.name)
 
 
 async def test_an_engine_that_wrote_no_audio_is_not_green(monkeypatch, system_temp):

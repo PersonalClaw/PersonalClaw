@@ -161,7 +161,6 @@ def remote(request, tmp_path):
 
 @pytest.fixture
 def home(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     # Claude Code's own file is never the real one, whatever a code path under test reads.
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     home = config_loader.config_dir()

@@ -444,12 +444,6 @@ class SubagentInfo:
     # background-agents list lead with it. "" for a run nobody named, which reads by its task. After
     # `trigger_id` for the same reason `trigger_id` is last.
     title: str = ""
-    # Whether the spend guard already charged this child's model calls to the day's spend, call by
-    # call — its completion names the guarded calls it came from (``LLMEvent.audit_ids``). A child
-    # whose calls no guard sees (an agent CLI runs its own) is charged at completion instead
-    # (`_charge_child_and_check_budget`), so the daily cap counts every child exactly once. Set
-    # at completion, never passed in, so it is no part of the constructor apps call.
-    _spend_metered: bool = field(default=False, init=False, repr=False)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1517,11 +1511,11 @@ class SubagentManager:
         an UNREADABLE ceiling, which stops the fan-out (#3458), because the run scope is
         the only thing that bounds N children each spending under one day snapshot.
 
-        The DAY scope counts each child once. A child whose model calls went through the
-        spend guard was charged there, call by call (``_spend_metered``); one whose calls no
-        guard sees — an agent CLI makes its own — is charged here, or the daily cap would
-        never count it. Charging a guarded child here as well counted it twice, so the cap bit
-        at half the real spend and its refusal named a total the day had not spent.
+        The DAY scope is charged where each child's calls are made, once: by the spend guard on
+        a native child's model, and on an agent CLI's own turns (``acp.spend``), since every
+        spawn rides the metered orchestration axis. So only the fan-out's run scope is charged
+        here. Charging the day here as well counted a child twice, so the cap bit at half the
+        real spend and its refusal named a total the day had not spent.
         """
         fkey = _fanout_key(info)
         try:
@@ -1534,8 +1528,6 @@ class SubagentManager:
 
             meter = get_meter()
             tokens = info.input_tokens + info.output_tokens
-            if not info._spend_metered:
-                meter.charge(tokens, info.cost_usd)
             try:
                 budget = run_budget_from_config()
             except BudgetConfigUnreadable as exc:
@@ -2355,7 +2347,6 @@ class SubagentManager:
 
                 info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
                 info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
-                info._spend_metered = bool(getattr(event, "audit_ids", ()) or ())
                 cost = float(getattr(event, "cost_usd", 0.0) or 0.0)
                 # Priced by the model that answered, which a spawn with no model of its own
                 # never named: its child ran on the chain's head and was charged nothing.

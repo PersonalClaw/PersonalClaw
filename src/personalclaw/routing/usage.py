@@ -15,10 +15,11 @@ PersonalClaw records model cost in two places that cannot be safely summed:
   interactive chat — the user's largest line item — so it is THE spend record and the only honest
   input for a "~$X this month" sentence.
 * ``model_calls.jsonl`` (``guardrails/audit.py``) — one row per guarded ``ModelProvider.complete()``
-  ATTEMPT. ``provider_bridge`` attaches the guard only for
-  ``use_case in ("reasoning", "background", "loops", "orchestration")`` and states the exclusion as
-  a design decision ("The interactive chat/code_tools stream stays OUT OF SCOPE … both
-  human-watched"), so this record structurally cannot answer "what did this cost me".
+  ATTEMPT. ``provider_bridge`` attaches the guard to what resolves on a metered axis
+  (``METERED_AXES``: reasoning, background, loops, orchestration) and to a call automation makes
+  on any other (``resolve_metered_model``), and leaves the turns a person makes on the chat axes
+  unguarded as a design decision ("The interactive chat/code_tools stream stays OUT OF SCOPE …
+  both human-watched"), so this record structurally cannot answer "what did this cost me".
 
 A union of the two double-counts: a loop worker's turn is recorded as a ``source="loop"`` turn AND
 its inner inference resolves under the ``loops`` axis into a guarded attempt row, and so do a room's

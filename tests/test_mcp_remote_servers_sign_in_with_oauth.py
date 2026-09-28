@@ -300,7 +300,6 @@ def home(monkeypatch, tmp_path):
     from personalclaw import mcp_client, mcp_discovery
     from personalclaw.dashboard.handlers import mcp as mcp_handlers
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     # Each test's own probe caches and connections. The every-server background probe `GET
     # /api/mcp` starts is stubbed: the rebuild adds PersonalClaw's own stdio server to the agent

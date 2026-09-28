@@ -38,7 +38,12 @@ def system_temp(tmp_path, monkeypatch):
     return folder
 
 
+#: The provider the bound voice is: the one whose selftest runs the TTS probe.
+VOICE = "omni-voice"
+
+
 class _FakeProvider:
+    name = VOICE
     supports_cloning = True
 
     def __init__(self) -> None:
@@ -97,7 +102,7 @@ async def test_a_cloning_provider_is_probed_through_a_real_clip(monkeypatch):
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    result = await _tts_clone_probe(_timed)
+    result = await _tts_clone_probe(_timed, VOICE)
     assert result == {"ok": True, "detail": "clone synthesis returned audio", "cloning": True}
     assert seen_exists["existed"] is True
     # The generated clip is cleaned up after the probe.
@@ -121,7 +126,7 @@ async def test_a_locked_profile_clip_is_never_overridden(monkeypatch):
     )
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    await _tts_clone_probe(_timed)
+    await _tts_clone_probe(_timed, VOICE)
     assert provider.seen["ref_audio"] == "/locked/clip.wav"
 
 
@@ -139,7 +144,7 @@ async def test_a_sidecar_death_surfaces_its_typed_reason(monkeypatch):
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    result = await _tts_clone_probe(_timed)
+    result = await _tts_clone_probe(_timed, VOICE)
     assert result is not None
     assert result["ok"] is False
     assert result["detail"] == "sidecar_crashed:signal_11"
@@ -149,7 +154,7 @@ async def test_no_bound_voice_means_no_tts_row(monkeypatch):
     import personalclaw.tts.registry as reg
 
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: None)
-    assert await _tts_clone_probe(_timed) is None
+    assert await _tts_clone_probe(_timed, VOICE) is None
 
 
 async def test_a_non_cloning_provider_is_probed_without_a_clip(monkeypatch):
@@ -165,7 +170,7 @@ async def test_a_non_cloning_provider_is_probed_without_a_clip(monkeypatch):
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    result = await _tts_clone_probe(_timed)
+    result = await _tts_clone_probe(_timed, VOICE)
     assert result == {"ok": True, "detail": "synthesis returned audio", "cloning": False}
 
 
@@ -190,7 +195,7 @@ async def test_the_probe_leaves_no_clip_behind(monkeypatch, system_temp, cloning
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    result = await _tts_clone_probe(_timed)
+    result = await _tts_clone_probe(_timed, VOICE)
     assert result is not None and result["ok"] is True, result
     assert list(system_temp.iterdir()) == []
 
@@ -207,7 +212,7 @@ async def test_a_clip_the_provider_put_somewhere_else_is_removed_too(monkeypatch
     monkeypatch.setattr(reg, "active_voice_params", lambda **kw: _params(provider))
     monkeypatch.setattr(reg, "route_synthesis", fake_route)
 
-    result = await _tts_clone_probe(_timed)
+    result = await _tts_clone_probe(_timed, VOICE)
     assert result is not None and result["ok"] is True, result
     assert list(system_temp.iterdir()) == []
 

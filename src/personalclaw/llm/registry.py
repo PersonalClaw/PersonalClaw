@@ -91,6 +91,11 @@ class CredentialMissing(ProviderResolutionError):
 #: declares for it.
 DEFAULT_MODEL_OPTION = "default_model"
 
+#: The options that carry the URL an instance sends its requests to: the two spellings core's
+#: protocol clients and the model server apps read (``sdk.provider_helpers`` reads both, with
+#: ``base_url`` winning, and a model server's own client reads ``endpoint``).
+ENDPOINT_OPTIONS = ("endpoint", "base_url")
+
 
 def own_model(model: object, options: object) -> str:
     """The model a provider instance serves when nothing names one, or ``""`` when it names none.
@@ -168,6 +173,16 @@ class ProviderEntry:
     def own_model(self) -> str:
         """The model this entry serves when nothing names one (:func:`own_model`), or ``""``."""
         return own_model(self.model, self.options)
+
+    @property
+    def endpoints(self) -> tuple[str, ...]:
+        """Every endpoint URL this entry's options name (:data:`ENDPOINT_OPTIONS`), or ``()``.
+
+        Each one, because the clients differ on which spelling wins when an entry carries both,
+        so a caller asking where this entry's requests go has to answer for all of them."""
+        options = self.options if isinstance(self.options, dict) else {}
+        found = (options.get(key) for key in ENDPOINT_OPTIONS)
+        return tuple(value.strip() for value in found if isinstance(value, str) and value.strip())
 
 
 class ProviderRegistry:

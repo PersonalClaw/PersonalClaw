@@ -141,6 +141,14 @@ the agent registered names (`webhook_callbacks.py`) starts a turn only once the
 owner allowed that callback: until then the answer is `403 not_allowed`.
 Denials are logged to the Security Event Log.
 
+The turn a webhook starts runs unattended, under the headless profile
+(`guardrails.policy`, a `hook:` session): its tool grants are `read`, so a call
+whose tool does not declare it only reads is refused before anything could
+approve it; a call that needs approval is declined at once, since nobody would
+see the prompt; and no tool that asks a person something is offered. A turn on
+an agent CLI, which runs its tools where the host cannot hold them to those
+grants, is refused before its message is sent, and the owner is told why.
+
 ## Command screening (`security.py`)
 
 - **Deny list** — `BUILTIN_DENIED_COMMAND_PATTERNS` (112 shell patterns) is

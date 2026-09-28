@@ -29,6 +29,7 @@ from typing import Any, Optional
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import failure_detail
 from personalclaw.request_validation import json_object_body
 from personalclaw.resilience import degraded
 from personalclaw.resilience.doctor import DoctorContext, run_capability, run_doctor
@@ -527,67 +528,107 @@ async def api_doctor_simulate_automation(request: web.Request) -> web.Response:
 
 async def api_provider_selftest(request: web.Request) -> web.Response:
     """POST /api/model-providers/{name}/selftest — dispatch a tiny real inference per
-    declared capability (one-token chat / short embed), instead of the availability
-    guess ``test_connection`` gives. User-click only (it costs tokens/compute); never
-    run by a background job. Hard-timeout-bounded per capability."""
+    capability the NAMED provider serves (one-token chat / short embed / a synthesis), instead
+    of the availability guess ``test_connection`` gives. User-click only (it costs
+    tokens/compute); never run by a background job. Hard-timeout-bounded per capability."""
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
     name = request.match_info.get("name", "")
     result = await _run_selftest(name)
+    if result is None:
+        return json_error("not_found", message=f"No model provider is named {name!r}.", status=404)
     return web.json_response(result)
 
 
-async def _run_selftest(name: str) -> dict:
-    """Best-effort per-capability real-inference probe. Each capability is timed out
-    and its failure isolated — the result maps capability → {ok, detail}."""
+def _bound_ref(name: str, axes: tuple[str, ...]) -> str:
+    """The first model of provider *name* bound on one of *axes* (Settings → Models), or ``""``."""
+    from personalclaw.providers.use_cases import active_model_refs, split_ref
+
+    for axis in axes:
+        for ref in active_model_refs(axis):
+            parsed = split_ref(ref)
+            if parsed and parsed[0] == name and parsed[1]:
+                return ref
+    return ""
+
+
+async def _run_selftest(name: str) -> dict | None:
+    """Best-effort per-capability real-inference probe of provider *name*, or ``None`` when no
+    provider is named so. Each capability is timed out and its failure isolated — the result maps
+    capability → {ok, detail}.
+
+    Every probe runs on the named provider: chat on the model of it bound for Chat or one of its
+    sub-uses (else its default model), embedding on its model bound for Embedding, and speech when
+    the voice in use is its own. A capability with none of its models chosen has nothing to run
+    on and is left out. The probe used to ignore the name: it ran the Background model, the
+    active embedder and the active voice, whichever provider served them, and reported the result
+    as this provider's.
+    """
     import asyncio as _asyncio
 
-    from personalclaw.providers.provider_bridge import can_resolve_use_case
+    from personalclaw.llm.capabilities import Capability
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES, split_ref
+
+    registry = get_default_registry()
+    try:
+        entry = registry.get_entry(name)
+    except Exception:  # noqa: BLE001 - an unknown name is a 404, not a probe
+        return None
+    try:
+        serves = registry.capability_of(entry.type).capabilities
+    except Exception:  # noqa: BLE001 - a type nothing registered serves nothing testable
+        serves = frozenset()
 
     out: dict[str, dict] = {}
 
     async def _timed(coro, timeout: float = 15.0):
         return await _asyncio.wait_for(coro, timeout=timeout)
 
-    # chat — one short completion through the Background model (async). The reply has to SAY
+    # chat — one short completion on this provider's model (async). The reply has to SAY
     # something: a model that answers with nothing has not served a completion, and reading only
     # `None` as a failure reported an empty reply as a working model.
-    if can_resolve_use_case("chat"):
+    chat_ref = _bound_ref(name, ("chat", *CHAT_SUBCATEGORIES))
+    if not chat_ref and Capability.CHAT in serves and entry.own_model:
+        chat_ref = f"{name}:{entry.own_model}"
+    if chat_ref:
+        model = (split_ref(chat_ref) or ("", chat_ref))[1]
         try:
             from personalclaw.llm_helpers import one_shot_completion
 
-            txt = await _timed(one_shot_completion("ping", use_case="background"))
+            txt = await _timed(one_shot_completion("ping", use_case="background", model=chat_ref))
             if txt and txt.strip():
-                out["chat"] = {"ok": True, "detail": "the Background model replied"}
+                out["chat"] = {"ok": True, "detail": f"{model} replied"}
             else:
-                out["chat"] = {
-                    "ok": False,
-                    "detail": "the Background model answered with an empty reply",
-                }
+                out["chat"] = {"ok": False, "detail": f"{model} answered with an empty reply"}
         except Exception as exc:
-            out["chat"] = {"ok": False, "detail": str(exc)[:200]}
+            out["chat"] = {"ok": False, "detail": failure_detail(str(exc)) or type(exc).__name__}
 
-    # embedding — a short embed via the active embedder (sync fn, off-thread).
-    if can_resolve_use_case("embedding"):
+    # embedding — a short embed on this provider's embedding model (sync fn, off-thread).
+    embed_ref = _bound_ref(name, ("embedding",))
+    if embed_ref:
         try:
-            from personalclaw.skills.surfacing import _active_embedder
+            from personalclaw.embedding_providers.registry import embed_fn_for
 
-            fn, _model = _active_embedder()
+            fn = embed_fn_for(name, (split_ref(embed_ref) or ("", ""))[1])
             vec = await _timed(_asyncio.to_thread(lambda: fn("ping") if fn else None))
             out["embedding"] = {
                 "ok": bool(vec),
                 "detail": f"{len(vec)} dims" if vec else "no vector",
             }
         except Exception as exc:
-            out["embedding"] = {"ok": False, "detail": str(exc)[:200]}
+            out["embedding"] = {
+                "ok": False,
+                "detail": failure_detail(str(exc)) or type(exc).__name__,
+            }
 
-    # tts — a real synthesis through the active voice (MI-6: the LMM-V2 through-clone
-    # selftest). When the resolved provider supports cloning, the probe conditions on a
-    # generated reference clip so the CLONE path — reference validation, sidecar round
-    # trip, engine inference — is what actually runs, not just the plain-voice path. A
-    # sidecar death surfaces its typed reason (`sidecar_crashed:<why>`) in the detail
-    # rather than a generic failure, which is the tenet the crash boundary exists for.
-    tts_probe = await _tts_clone_probe(_timed)
+    # tts — a real synthesis through the voice in use, when this provider speaks it (the
+    # through-clone selftest). When the provider supports cloning, the probe conditions on
+    # a generated reference clip so the CLONE path — reference validation, sidecar round trip,
+    # engine inference — is what actually runs, not just the plain-voice path. A sidecar death
+    # surfaces its typed reason (`sidecar_crashed:<why>`) in the detail rather than a generic
+    # failure, which is the tenet the crash boundary exists for.
+    tts_probe = await _tts_clone_probe(_timed, name)
     if tts_probe is not None:
         out["tts"] = tts_probe
 
@@ -617,9 +658,10 @@ def _write_reference_clip(path: str) -> None:
         w.writeframes(bytes(frames))
 
 
-async def _tts_clone_probe(_timed) -> dict | None:
+async def _tts_clone_probe(_timed, name: str) -> dict | None:
     """One real synthesis through the active TTS selection, clone-conditioned when the
-    provider can clone. Returns None when no voice is bound (nothing to test)."""
+    provider can clone. Returns None when no voice is bound, or when the voice in use is
+    another provider's than *name* (nothing of this provider's to test)."""
     import os
     import tempfile
 
@@ -632,11 +674,13 @@ async def _tts_clone_probe(_timed) -> dict | None:
     try:
         params = active_voice_params()
     except Exception as exc:
-        return {"ok": False, "detail": f"voice resolution failed: {str(exc)[:160]}"}
+        return {"ok": False, "detail": failure_detail(f"voice resolution failed: {exc}")}
     if not params or not params.get("provider"):
         return None
 
     provider = params["provider"]
+    if str(getattr(provider, "name", "") or "") != name:
+        return None
     clone_capable = bool(getattr(provider, "supports_cloning", False))
     ref_path = ""
     # The clip is the probe's own, handed over as the path to write, and removed below with any
@@ -670,7 +714,7 @@ async def _tts_clone_probe(_timed) -> dict | None:
         typed = getattr(exc, "typed_reason", "")
         return {
             "ok": False,
-            "detail": (typed or str(exc))[:200],
+            "detail": failure_detail(typed or str(exc)) or type(exc).__name__,
             "cloning": clone_capable,
         }
     finally:

@@ -42,6 +42,12 @@ JSONRPC_METHOD_NOT_FOUND = -32601
 #: dependency — core would need the web app stood up to name a session.
 DASHBOARD_SESSION_PREFIX = "dashboard:"
 
+#: The session key of a webhook's agent turn: ``POST /api/hooks/agent`` takes only a ``hook:<id>``
+#: key, and a callback the agent registers is keyed so. One spelling for the route, the callbacks
+#: and the classifier that runs such a turn unattended (``guardrails.policy``): a copy the route
+#: checked and the classifier did not would be a webhook turn run as a watched chat.
+HOOK_SESSION_PREFIX = "hook:"
+
 
 def dashboard_session_key(session_name: str) -> str:
     """Wrap a dashboard chat session's own key into its ``dashboard:`` namespace.

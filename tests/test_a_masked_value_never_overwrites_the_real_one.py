@@ -562,10 +562,9 @@ TOKEN = "fake-github-token-1"
 
 
 @pytest.fixture
-def mcp_home(monkeypatch):
+def mcp_home():
     from personalclaw.config import loader as config_loader
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
@@ -624,12 +623,11 @@ def test_an_mcp_value_that_is_only_the_mask_is_refused_when_nothing_is_stored(mc
     assert set(credential_names()) == before
 
 
-def test_the_credential_store_never_stores_the_display_mask(monkeypatch):
+def test_the_credential_store_never_stores_the_display_mask():
     from personalclaw.apps.secret_fields import SECRET_MASK
     from personalclaw.config.credentials import get_credential, save_credential
     from personalclaw.config.secret_refs import make_ref, provider_owner, store
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     owner = provider_owner("fixture-provider")
     key = owner.key("api_key")
     save_credential(key, TOKEN)

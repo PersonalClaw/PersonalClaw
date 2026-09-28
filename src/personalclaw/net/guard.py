@@ -114,6 +114,27 @@ def classify_host(ip_str: str) -> IpVerdict:
     return IpVerdict(str(ip), True, "public")
 
 
+def reaches_this_machine(url: str) -> bool:
+    """Whether a request to *url* goes to this machine, so what it carries never leaves it.
+
+    Decided by the URL's host alone, and never resolved: ``localhost``, a loopback address, or
+    the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine
+    through. An address on the network, any other name (it may point anywhere), a URL that does
+    not parse and no URL at all are not this machine. The one answer for "is this model server
+    local": the model-call guard's outbound scan and the rate table's free local tier both ask it.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return False
+    try:
+        host = (urlparse(text).hostname or "").rstrip(".")
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    return bool(host) and classify_host(host).category in ("loopback", "unspecified")
+
+
 def host_matches(host: str, patterns: tuple[str, ...]) -> bool:
     """Anthropic-rule host match: a bare domain covers its subdomains.
 

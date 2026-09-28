@@ -45,9 +45,8 @@ env_guard = importlib.import_module("env_guard")
 # From here on a connection to a local model server's port (Ollama's 11434 among them) is refused
 # before it is made, unless this process is listening on it (a test's own fake), and the test that
 # asked fails by name (`_no_test_reaches_a_real_local_model`). Mechanism and what it cannot see:
-# tests/local_model_port_guard.py.
+# tests/local_model_port_guard.py, which installs it as it is imported.
 local_model_port_guard = importlib.import_module("local_model_port_guard")
-local_model_port_guard.GUARD.install()
 
 # ── Imported-checkout provenance rail (#2634) ──────────────────────────
 # An editable install points at a mutable working tree. In a git worktree, that can make

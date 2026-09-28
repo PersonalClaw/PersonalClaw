@@ -92,7 +92,6 @@ class _ExternalMcpTools(ToolProvider):
 @contextlib.asynccontextmanager
 async def _tools_page(spec: dict[str, Any], monkeypatch) -> AsyncIterator[TestClient]:
     """A home with *spec* as the one server in ``mcp.json`` and the routes the Tools page reads."""
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     write_mcp_document(config_loader.config_dir() / "mcp.json", {"mcpServers": {SERVER: spec}})
     allow_configured(SERVER)
     monkeypatch.setattr(mcp_client, "_registry", None)

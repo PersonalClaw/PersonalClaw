@@ -58,8 +58,7 @@ def _digest(value: str) -> str:
 
 
 @pytest.fixture
-def home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+def home():
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)
@@ -415,7 +414,6 @@ def test_a_pack_connector_references_its_credential_and_the_spawn_resolves_it(
 ):
     from personalclaw.packs.connectors import resolve_connector, seed_catalog
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))

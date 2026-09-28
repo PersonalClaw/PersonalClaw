@@ -13,13 +13,21 @@ stub and switches the store on in one call, so switching it on can only reach a 
 
 from __future__ import annotations
 
+import ast
 import sys
 import types
+from pathlib import Path
 
 import keychain_stub
 import pytest
 
 from personalclaw.config import credentials
+
+TESTS = Path(__file__).resolve().parent
+
+#: What only ``keychain_stub`` may touch: the store's switch, and the probe the tests used to
+#: patch one by one before the switch made each of those patches redundant.
+_THE_SWITCH = frozenset({"_keychain_off", "_usable_keyring"})
 
 
 class _MachineKeychain:
@@ -83,3 +91,50 @@ def test_the_stand_in_reaches_its_stub_and_only_for_as_long_as_it_is_in(machine)
         assert stub.calls == ["get SUITE_KEYCHAIN_PROBE"]
     assert credentials.keychain_available() is False
     assert machine.calls == [], "the stand-in reached the stub it was given, nothing else"
+
+
+def _reaches_around(tree: ast.AST) -> list[int]:
+    """Lines of *tree* that name the switch: an attribute read or set
+    (``credentials._keychain_off``), or a name handed to ``monkeypatch.setattr``/``patch`` as a
+    string."""
+    lines = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _THE_SWITCH:
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in _THE_SWITCH or node.value.rsplit(".", 1)[-1] in _THE_SWITCH:
+                lines.append(node.lineno)
+    return lines
+
+
+def test_no_test_switches_the_keychain_but_through_the_stub():
+    """🔴 Thirty-odd tests each patched the store's keyring probe (``_usable_keyring``) for
+    themselves, which the conftest switch made redundant. A test that switches the store on, or
+    patches the probe, anywhere but ``keychain_stub`` is back to a per-test guard: the one that
+    forgets it reaches the machine's keychain."""
+    found = []
+    for path in sorted(TESTS.rglob("*.py")):
+        # The stub is the one door; this file names the switch only to look for it.
+        if path.name in ("keychain_stub.py", Path(__file__).name) or "__pycache__" in path.parts:
+            continue
+        for line in _reaches_around(ast.parse(path.read_text(encoding="utf-8"))):
+            found.append(f"{path.relative_to(TESTS)}:{line}")
+    assert found == [], "switch the keychain only through keychain_stub:\n  " + "\n  ".join(found)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        'monkeypatch.setattr(credentials, "_usable_keyring", lambda: None)',
+        'monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)',
+        "credentials._keychain_off = False",
+        'patch("personalclaw.config.credentials._keychain_off", False)',
+    ],
+)
+def test_the_census_sees_each_way_a_test_could_reach_around_it(planted):
+    assert _reaches_around(ast.parse(planted)) == [1]
+
+
+def test_the_census_reads_the_real_tree():
+    """Vacuity: the stub itself names the switch, where it is allowed to."""
+    assert _reaches_around(ast.parse((TESTS / "keychain_stub.py").read_text(encoding="utf-8")))

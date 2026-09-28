@@ -320,14 +320,13 @@ async def test_a_refused_write_does_not_quote_the_submitted_value_back(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_an_instance_naming_another_owners_key_is_refused(tmp_path, monkeypatch):
+async def test_an_instance_naming_another_owners_key_is_refused(tmp_path):
     """An instance resolves only its own app's credentials, so creating or editing one to
     reference a key another owner holds is a 400 saying what to do instead, and the stored
     record is untouched. On main both were accepted, and the instance was handed the value."""
     from personalclaw.config.credentials import save_credential
     from personalclaw.config.secret_refs import make_ref
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     vault = "ghp-vault-value-never-an-instances"
     async with _client(tmp_path) as client:
         with patch("personalclaw.config.loader.config_dir", return_value=tmp_path):

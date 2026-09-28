@@ -25,6 +25,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
+- **An app's test suite can refuse its tests a real local model server: `personalclaw.sdk.testing.refuse_ports()`.**
+
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
 
 - **Settings → Security sets the sign-in lockout: how many wrong attempts, and how long it lasts.**
@@ -204,6 +206,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A webhook stopped by the spend cap says so, not "internal failure".**
 
 - **A model selftest fails on an empty reply, and a voice selftest on an engine that wrote no audio.**
+
+- **A library's model steps run on the model itself and count against the daily spend cap, so a video's description is written by the model instead of left as its raw transcript.**
+
+- **A loop's judge bound to Chat or Code is the model itself, with no tools, and counts against the daily spend cap.**
+
+- **The daily spend cap counts a loop, a subagent or a webhook's turn on an agent CLI, and refuses its next turn once the day is spent.**
+
+- **A subagent's report back to a webhook's or an app's turn counts against the daily spend cap.**
+
+- **A provider's selftest tests that provider and says a failure whole, and one for a name no provider has is not found.**
+
+- **A model server on another machine is no longer priced as free: only one on this machine is, and any other is priced by a rate set or declared for it, or reads as unpriced.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
@@ -507,6 +521,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The skill search answers every refusal in the shared error shape, and an unusable `limit` is refused instead of failing.**
 
 ### Security
+
+- **A webhook's agent turn runs unattended with read tools only, as every turn nobody watches does, and does not run on an agent CLI.**
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
 - **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**

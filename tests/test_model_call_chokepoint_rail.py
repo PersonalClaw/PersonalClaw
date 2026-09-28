@@ -11,8 +11,9 @@ exists for: silent, invisible, and indistinguishable from correct behaviour at r
 at ZERO because zero is the measured population — not as an aspiration:
 
 * ``wrap_model_call_guard`` is called from exactly ONE place in ``src/`` —
-  ``providers/provider_bridge._resolve_from_config_registry``, which wraps "at the single
-  point where the entry name + model are known" (its own comment).
+  ``providers/provider_bridge.metered``, which ``_resolve_from_config_registry`` calls "at the
+  single point where the entry name + model are known" (its own comment), and which
+  ``one_shot_completion``'s last-resort build calls for the one model built outside the seam.
 * ``resolve_provider_for_use_case`` has five provider-returning paths. Four return a value obtained
   from ``_resolve_from_config_registry``. The fifth is the native-agent branch,
   ``_build_native_runtime``, whose docstring records that "its inference ModelProvider is resolved
@@ -20,9 +21,9 @@ at ZERO because zero is the measured population — not as an aspiration:
   SCOPE comment says the same of the ACP CLI branch.
 
 So the allowlist below has exactly two entries, both verified to funnel into the chokepoint rather
-than taken on trust: :func:`test_the_allowlisted_builder_actually_wraps` asserts the wrap call is
-really inside ``_resolve_from_config_registry``, because an allowlist keyed on a NAME would keep
-passing if that function stopped wrapping.
+than taken on trust: :func:`test_the_allowlisted_builder_actually_wraps` asserts that
+``_resolve_from_config_registry`` really calls ``metered`` and that ``metered`` really wraps,
+because an allowlist keyed on a NAME would keep passing if that function stopped wrapping.
 
 **Why AST and not a regex.** The property is structural — "does this return value come from an
 allowlisted builder" — and a text scan cannot follow ``x = f(); … ; return x``. That indirection is
@@ -55,11 +56,11 @@ ALLOWED_BUILDERS = {
     # native-agent runtime: its INNER inference provider resolves through the same path
     "_build_native_runtime",
     # ACP agent runtime (``acp:<cli>``): an EXTERNAL CLI owns the model call, out of
-    # process and on its own vendor account. There is no host-side inference to meter, so
-    # there is nothing for ModelCallGuard to wrap — the same reason the pooled ACP claim
-    # in SessionManager has never gone through the chokepoint either. The spend it does
-    # incur is the CLI's, and it is unobservable to us by construction (documented in
-    # docs/agents/acp-parity.md as a protocol boundary, not an audit hole we opened).
+    # process and on its own vendor account. There is no host-side inference for
+    # ModelCallGuard to wrap — the same reason the pooled ACP claim in SessionManager has
+    # never gone through the chokepoint either. On a metered axis its turns are metered by
+    # the provider itself (``acp.spend.AcpTurnMeter``: the budgets, the charge and the audit
+    # row, from what the CLI reports at the end of each turn).
     "_build_acp_runtime",
 }
 
@@ -136,7 +137,7 @@ class TestTheChokepointStaysSingle:
         """One wrapping site is what makes the invariant checkable at all.
 
         If a second call site appears, this rail's whole argument — "everything funnels through
-        `_resolve_from_config_registry`" — stops holding, and the reviewer needs to look.
+        `metered`" — stops holding, and the reviewer needs to look.
         Deliberately counts CALLS, not mentions: the `guardrails/__init__` re-export and the
         `__all__` entry are not call sites, and a rail that counted them would have to be loosened
         to a number nobody
@@ -166,18 +167,22 @@ class TestTheChokepointStaysSingle:
     def test_the_allowlisted_builder_actually_wraps(self):
         """The allowlist must not be trusted by NAME.
 
-        `_resolve_from_config_registry` earns its place in ALLOWED_BUILDERS by calling the
-        chokepoint. If it stopped, every path this rail credits would be unguarded while the rail
-        stayed green — the allowlist would have become a blindfold.
+        `_resolve_from_config_registry` earns its place in ALLOWED_BUILDERS by calling `metered`,
+        and `metered` by calling the chokepoint. If either stopped, every path this rail credits
+        would be unguarded while the rail stayed green — the allowlist would have become a
+        blindfold.
         """
         tree = _module()
-        fn = _find_func(tree, "_resolve_from_config_registry")
-        calls = {_call_name(n) for n in ast.walk(fn)}
-        assert CHOKEPOINT in calls, (
-            f"_resolve_from_config_registry() no longer calls {CHOKEPOINT}(), but this rail "
-            f"credits every return that flows from it. Either restore the wrap or remove it from "
-            f"ALLOWED_BUILDERS — leaving both as-is makes the gate vacuous."
-        )
+        for fn_name, wraps_with in (
+            ("_resolve_from_config_registry", "metered"),
+            ("metered", CHOKEPOINT),
+        ):
+            calls = {_call_name(n) for n in ast.walk(_find_func(tree, fn_name))}
+            assert wraps_with in calls, (
+                f"{fn_name}() no longer calls {wraps_with}(), but this rail credits every return "
+                f"that flows from _resolve_from_config_registry(). Either restore the wrap or "
+                f"remove it from ALLOWED_BUILDERS — leaving both as-is makes the gate vacuous."
+            )
 
 
 class TestEveryResolverPathIsGuarded:

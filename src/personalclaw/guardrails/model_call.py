@@ -70,17 +70,76 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_SECS = 300.0
 
 
-def _new_audit_id() -> str:
+def new_audit_id() -> str:
+    """The id one model-call attempt is recorded under (``model_calls.jsonl``)."""
     return uuid.uuid4().hex[:16]
 
 
-def _naming_the_call(event: LLMEvent, audit_id: str) -> LLMEvent:
+def naming_the_call(event: LLMEvent, audit_id: str) -> LLMEvent:
     """*event*, the call's terminal ``EVENT_COMPLETE``, naming the attempt that completed it
     (``LLMEvent.audit_ids``). A copy, so the provider's own event stays as it made it; an event of
     any other type passes through as it came."""
     if not isinstance(event, LLMEvent):
         return event
     return replace(event, audit_ids=(*event.audit_ids, audit_id))
+
+
+def spent_refusal(meter: SpendMeter, day: Budget, run: Budget) -> BudgetExceededError | None:
+    """The refusal a call gets BEFORE it is made, or ``None`` when every ceiling has room.
+
+    The day's ceiling first, then the ambient run's. The guard asks it of each call, and an agent
+    CLI's turn on a metered axis asks it too (``acp.spend``), so the two stop at the same numbers.
+    Cheap (reads spend.json) and skipped entirely for an unlimited ceiling.
+
+    The run's ceiling is read HERE, beside the day's, rather than as a ``firepath`` gate: run
+    totals accrue in-process as the run spends, and the fire path binds a FRESH per-fire key
+    before the first call — so a pre-fire gate would read 0.0 every time and be inert by
+    construction. The AMBIENT ceiling wins when the run bound one: a per-trigger
+    ``max_cost_usd_per_run`` is a tighter, run-specific promise than the operator's
+    ``max_tokens_per_run`` default (*run*), and the run seam is the only place that knows it.
+    """
+    if not day.is_unlimited:
+        verdict, reason = meter.check_day(day)
+        if verdict is BudgetVerdict.EXCEEDED:
+            totals = meter.day_totals()
+            dim = "tokens" if "token" in reason else "dollars"
+            limit = day.max_tokens if dim == "tokens" else day.max_dollars
+            spent = totals.tokens if dim == "tokens" else totals.dollars
+            return BudgetExceededError("day", dim, float(limit), float(spent))
+    run_key = current_run_key()
+    ceiling = current_run_budget()
+    if ceiling.is_unlimited:
+        ceiling = run
+    if run_key and not ceiling.is_unlimited:
+        verdict, reason = meter.check_run(run_key, ceiling)
+        if verdict is BudgetVerdict.EXCEEDED:
+            totals = meter.run_totals(run_key)
+            dim = "tokens" if "token" in reason else "dollars"
+            limit = ceiling.max_tokens if dim == "tokens" else ceiling.max_dollars
+            spent = totals.tokens if dim == "tokens" else totals.dollars
+            return BudgetExceededError("run", dim, float(limit), float(spent))
+    return None
+
+
+def call_dollars(event: LLMEvent, model: str, tokens_in: int, tokens_out: int) -> float:
+    """Dollar estimate for one completed call. Provider-reported ``cost_usd`` wins when present
+    (non-zero); otherwise the static pricing table (``pricing.estimate_cost``) derives it from
+    *model* — 0.0 for an unpriced model, an honest 'unknown', never a guess."""
+    reported = float(getattr(event, "cost_usd", 0.0) or 0.0)
+    if reported > 0.0:
+        return reported
+    try:
+        from personalclaw.pricing import estimate_cost
+
+        return estimate_cost(
+            model,
+            input_tokens=tokens_in,
+            output_tokens=tokens_out,
+            cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
+            cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
+        )
+    except Exception:
+        return 0.0
 
 
 def _mark(call: ModelCall | None, state: str) -> None:
@@ -311,7 +370,7 @@ class ModelCallGuard(ModelProvider):
         )
         if result.blocked:
             mode = FailureMode.INJECTION_BLOCKED if result.injection else FailureMode.SECRET_LEAK
-            self._audit(_new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")
+            self._audit(new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")
             from personalclaw.sel import sel
 
             try:
@@ -380,7 +439,7 @@ class ModelCallGuard(ModelProvider):
         fire exactly once; a stream that ends via ``StopAsyncIteration`` with no
         COMPLETE event still records once at loop-exit.
         """
-        audit_id = _new_audit_id()
+        audit_id = new_audit_id()
         self._refresh_budgets()
 
         # Breaker check BEFORE any prompt work: during an outage this refuses in
@@ -392,49 +451,13 @@ class ModelCallGuard(ModelProvider):
             await self._aclose(source)
             raise CircuitOpenError(self._provider_name, retry_after)
 
-        # Day-scope budget check BEFORE the call: a run that has already crossed the
-        # day ceiling gets its next unattended LLM call refused (§1.1 mid-run pause).
-        # Cheap (reads spend.json) and skipped entirely when the budget is unlimited.
-        if not self._budget.is_unlimited:
-            verdict, reason = self._meter.check_day(self._budget)
-            if verdict is BudgetVerdict.EXCEEDED:
-                self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
-                await self._aclose(source)
-                totals = self._meter.day_totals()
-                dim = "tokens" if "token" in reason else "dollars"
-                limit = self._budget.max_tokens if dim == "tokens" else self._budget.max_dollars
-                spent = totals.tokens if dim == "tokens" else totals.dollars
-                raise BudgetExceededError("day", dim, float(limit), float(spent))
-
-        # 🔴 RUN-scope budget check — the ENFORCEMENT READ S153 left open.
-        # S153 made a fire's spend ATTRIBUTABLE (`charge(run_key=…)`), and measured here:
-        # `check_run` answered "exceeded (200/150)" from the second call onward while four
-        # calls sailed through, because no code asked. `check_run` and
-        # `run_budget_from_config` were both implemented with zero production callers, and
-        # `BudgetExceededError` has always declared a "run" scope — every piece present,
-        # nothing connected.
-        #
-        # It lives HERE, beside the day check, rather than as a `firepath` gate: run totals
-        # accrue in-process as the run spends, and the fire path binds a FRESH per-fire key
-        # before the first call — so a pre-fire gate would read 0.0 every time and be inert
-        # by construction, the exact shape this program keeps finding.
-        run_key = current_run_key()
-        # The AMBIENT ceiling wins when the run bound one: a per-trigger
-        # `max_cost_usd_per_run` is a tighter, run-specific promise than the operator's
-        # `max_tokens_per_run` default, and the run seam is the only place that knows it.
-        rb = current_run_budget()
-        if rb.is_unlimited:
-            rb = self._run_budget
-        if run_key and not rb.is_unlimited:
-            verdict, reason = self._meter.check_run(run_key, rb)
-            if verdict is BudgetVerdict.EXCEEDED:
-                self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
-                await self._aclose(source)
-                totals = self._meter.run_totals(run_key)
-                dim = "tokens" if "token" in reason else "dollars"
-                lim = rb.max_tokens if dim == "tokens" else rb.max_dollars
-                spent = totals.tokens if dim == "tokens" else totals.dollars
-                raise BudgetExceededError("run", dim, float(lim), float(spent))
+        # The day's and the run's ceilings, BEFORE the call (:func:`spent_refusal`): a run that
+        # has already crossed one gets its next unattended call refused.
+        refused = spent_refusal(self._meter, self._budget, self._run_budget)
+        if refused is not None:
+            self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
+            await self._aclose(source)
+            raise refused
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._timeout_secs if self._timeout_secs > 0 else None
@@ -481,7 +504,7 @@ class ModelCallGuard(ModelProvider):
                     # events a provider might still emit.
                     tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                     tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                    dollars = self._estimate_dollars(event, tokens_in, tokens_out)
+                    dollars = call_dollars(event, self._model, tokens_in, tokens_out)
                     self._breaker.record_success()
                     # Charge the DAY scope always, and the ambient RUN scope when one is
                     # bound. `charge` has accepted `run_key=` since guardrails landed
@@ -509,7 +532,7 @@ class ModelCallGuard(ModelProvider):
                     # The usage this event carries is this call's, and the row a caller writes
                     # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
                     # that keeps the model-call census from counting the call a second time.
-                    event = _naming_the_call(event, audit_id)
+                    event = naming_the_call(event, audit_id)
                 yield event
         except TimeoutError:
             self._breaker.record_failure()
@@ -597,27 +620,6 @@ class ModelCallGuard(ModelProvider):
         call.cost_usd = float(dollars)
         call.priced = self._local or reported_cost > 0.0 or listed
 
-    def _estimate_dollars(self, event: LLMEvent, tokens_in: int, tokens_out: int) -> float:
-        """Dollar estimate for one completed call. Provider-reported ``cost_usd``
-        wins when present (non-zero); otherwise the static pricing table
-        (``pricing.estimate_cost``) derives it — 0.0 for an unpriced model, an
-        honest 'unknown', never a guess."""
-        reported = float(getattr(event, "cost_usd", 0.0) or 0.0)
-        if reported > 0.0:
-            return reported
-        try:
-            from personalclaw.pricing import estimate_cost
-
-            return estimate_cost(
-                self._model,
-                input_tokens=tokens_in,
-                output_tokens=tokens_out,
-                cache_read_tokens=int(getattr(event, "cache_read_tokens", 0) or 0),
-                cache_creation_tokens=int(getattr(event, "cache_creation_tokens", 0) or 0),
-            )
-        except Exception:
-            return 0.0
-
     def _audit(
         self,
         audit_id: str,
@@ -644,7 +646,7 @@ class ModelCallGuard(ModelProvider):
             tokens_out=tokens_out,
             dollars_est=round(dollars, 6),
             # Estimated unless the provider reported a real cost_usd (which
-            # _estimate_dollars prefers); a heuristic-derived value is flagged.
+            # call_dollars prefers); a heuristic-derived value is flagged.
             estimated=True,
             passed=passed,
             strategy=strategy,
@@ -756,23 +758,13 @@ def _is_local_provider(provider: ModelProvider) -> bool:
     kind can run on another machine, and its outbound text is then as far from the gateway as a
     hosted provider's. Local means the endpoint's host is ``localhost``, a loopback address, or
     the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine through
-    (``net.guard.classify_host``). An address on the network, any other name, an endpoint that
-    does not parse and no endpoint at all are not local, so they get the scan mode the setting
-    asks for (§2.2); only a local provider's scan is forced to ``warn``."""
-    from urllib.parse import urlparse
+    (``net.guard.reaches_this_machine``, the rule the rate table prices a local model by too). An
+    address on the network, any other name, an endpoint that does not parse and no endpoint at
+    all are not local, so they get the scan mode the setting asks for (§2.2); only a local
+    provider's scan is forced to ``warn``."""
+    from personalclaw.net.guard import reaches_this_machine
 
-    from personalclaw.net.guard import classify_host
-
-    endpoint = _provider_endpoint(provider)
-    if not endpoint:
-        return False
-    try:
-        host = (urlparse(endpoint).hostname or "").rstrip(".")
-    except ValueError:
-        return False
-    if host == "localhost":
-        return True
-    return bool(host) and classify_host(host).category in ("loopback", "unspecified")
+    return reaches_this_machine(_provider_endpoint(provider))
 
 
 def wrap_model_call_guard(

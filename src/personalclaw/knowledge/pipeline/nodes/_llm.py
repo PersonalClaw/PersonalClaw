@@ -1,8 +1,9 @@
 """Shared helpers for model-backed pipeline nodes (#47).
 
 A node resolves its model through a Settings>Models **use-case** (via
-``resolve_provider_for_use_case``; image understanding through the platform's image
-reader, ``providers.image_input.resolve_image_reader``) and runs a one-shot completion.
+``resolve_metered_model``: the model itself, behind the spend guard; image understanding through
+the platform's image reader, ``providers.image_input.resolve_image_reader``) and runs a one-shot
+completion.
 The executor has already verified a model serves the use-case (``registry.unserved_reason``)
 before a model-backed node runs, so these helpers assume a model exists — but still degrade to
 ``""`` on any provider error rather than raising (the node then reports failure and
@@ -37,6 +38,10 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     answers cannot be concatenated, so each attempt replaces rather than extends.
 
     Each completed call writes its usage row, as background work: a library ingests unwatched.
+    And each is metered, whatever the axis (``provider_bridge.resolve_metered_model``, which the
+    chain walk resolves through too), on the model itself: a node on the chat axis used to be
+    handed the native agent, which has no ``complete()``, so video consolidation always fell back
+    to the raw transcript, and none of a node's calls counted against the daily cap.
     """
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
@@ -113,7 +118,7 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
 
 
 async def _single_provider(use_case: str):
-    """The provider a one-entry or unbound *use_case* runs on.
+    """The model a one-entry or unbound *use_case* runs on, metered.
 
     Image understanding asks the platform's image reader — its binding, else a chat model that
     takes images, built by that model's name (``providers.image_input.resolve_image_reader``) —
@@ -121,11 +126,11 @@ async def _single_provider(use_case: str):
     itself.
     """
     from personalclaw.providers.image_input import IMAGE_USE_CASE, resolve_image_reader
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.provider_bridge import resolve_metered_model
 
     if use_case == IMAGE_USE_CASE:
-        return await resolve_image_reader()
-    return resolve_provider_for_use_case(use_case)
+        return await resolve_image_reader(metered=True)
+    return resolve_metered_model(use_case)
 
 
 def _build_messages(prompt: str, images: list[str] | None) -> list[dict]:

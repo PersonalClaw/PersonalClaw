@@ -9,8 +9,9 @@ explicit precedence**:
 1. **overlay** — ``~/.personalclaw/model_rates.json`` (``atomic_write``). Prices drift; a personal
    tool must let its owner correct them without shipping a new app. Read fresh on every call
    (stat-keyed memo), so editing the file changes the answer with **no restart-order dependency**.
-2. **local** — a local provider prices ``0.0`` (SC #7): its cost axis is latency/energy, not
-   dollars. This is a real, known price, NOT an absence.
+2. **local** — a provider entry whose endpoint is on this machine prices ``0.0``: its cost axis
+   is latency/energy, not dollars. This is a real, known price, NOT an absence. Where the
+   endpoint is decides it, never what kind of provider it is (:func:`served_on_this_machine`).
 3. **app default** — the provider app's own declaration:
    :attr:`~personalclaw.sdk.provider_helpers.BrandedProviderSpec.pricing`
    (``{model_pattern: {in_per_mtok, out_per_mtok}}``), read from the live app registration, so a
@@ -47,14 +48,6 @@ logger = logging.getLogger(__name__)
 _OVERLAY_FILE = "model_rates.json"
 #: Bump when the overlay's schema changes.
 RATES_VERSION = 1
-
-#: Provider TYPES that serve models on this machine — content never leaves, and no invoice
-#: arrives. Matched case-insensitively against the type/name, exactly OR as a substring, because
-#: a local app registers several spellings of one engine (``ollama``/``ollama-models``).
-#: Unknown → NOT local (the conservative default: a hosted provider must not be priced free).
-LOCAL_PROVIDER_HINTS: frozenset[str] = frozenset(
-    {"ollama", "lmstudio", "lm-studio", "llamacpp", "llama-cpp", "llama.cpp", "vllm", "localai"}
-)
 
 
 @dataclass(frozen=True)
@@ -108,12 +101,28 @@ def ref_of(provider: str, model: str) -> str:
     return _ref_of(provider, model)
 
 
-def is_local_provider_type(provider: str) -> bool:
-    """Whether ``provider`` (a provider TYPE/name string) serves models locally → price 0.0."""
-    name = str(provider or "").strip().lower()
+def served_on_this_machine(provider: str) -> bool:
+    """Whether the provider entry named ``provider`` sends its requests to this machine, so its
+    models price a known ``0.0`` (tier 2).
+
+    Where the entry's endpoint is decides it, by the rule the model-call guard's outbound scan
+    uses (``net.guard.reaches_this_machine``), never what kind of provider it is: a model server
+    of any kind can run on another machine, and one there can be billed for. So local means the
+    entry names an endpoint and every endpoint it names is on this machine. An entry that names
+    none, a name no configured entry has, and an endpoint anywhere else are not local: they price
+    by the tiers below, a configured or declared rate, or none, which reads as unpriced.
+    """
+    from personalclaw.llm.registry import ProviderResolutionError, get_default_registry
+    from personalclaw.net.guard import reaches_this_machine
+
+    name = str(provider or "").strip()
     if not name:
         return False
-    return any(hint in name for hint in LOCAL_PROVIDER_HINTS)
+    try:
+        endpoints = get_default_registry().get_entry(name).endpoints
+    except ProviderResolutionError:
+        return False
+    return bool(endpoints) and all(reaches_this_machine(url) for url in endpoints)
 
 
 # ── The overlay store ────────────────────────────────────────────────────────────────────
@@ -257,7 +266,7 @@ def rate_for(provider: str, model: str, *, home: Path | None = None) -> ModelRat
     overlay = _overlay_rate(provider, model, home)
     if overlay is not None:
         return overlay
-    if is_local_provider_type(provider):
+    if served_on_this_machine(provider):
         return ModelRate(0.0, 0.0, source="local")
     app_default = _app_default_rate(provider, model)
     if app_default is not None:
@@ -285,13 +294,12 @@ def cost_for(
 
 
 __all__ = [
-    "LOCAL_PROVIDER_HINTS",
     "RATES_VERSION",
     "ModelRate",
     "cost_for",
-    "is_local_provider_type",
     "load_overlay",
     "rate_for",
     "ref_of",
     "save_overlay",
+    "served_on_this_machine",
 ]

@@ -243,6 +243,18 @@ def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
     return f"PERSONALCLAW_READY:{json.dumps(payload)}"
 
 
+def announce_axis(thread_channel: str | None) -> str:
+    """The axis a finished subagent's announce turn rides in a parent that is no dashboard chat.
+
+    A parent linked to a channel thread is a person's conversation there, so the turn keeps the
+    chat binding that thread's own turns use (``""``), which the spend guard leaves alone as it
+    leaves every chat. Any other parent the announcement reaches (a webhook's turn, an app's run,
+    an Inbox sweep) is automation's, and the turn rides ``orchestration``, the metered axis its
+    subagent rode.
+    """
+    return "" if thread_channel else "orchestration"
+
+
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     """Tool-approval policy for a subagent RESULT-INJECTION turn (AUTONOMY-GUARDRAILS §3, AG-11).
 
@@ -3844,7 +3856,7 @@ class GatewayOrchestrator:
                     _m = getattr(getattr(client, "client", None), "_model", "") or ""
                     record_from_event(
                         event,
-                        source=_src,  # "channel" | "cron" — the announce path's label
+                        source=_src,  # "channel" | "background" | "cron" — whose turn it is
                         session_key=_key,
                         provider="acp",
                         model=_m if isinstance(_m, str) and _m != "auto" else "",
@@ -4113,6 +4125,11 @@ class GatewayOrchestrator:
                 # Channel session — inject silently into ACP session (no visible channel message).
                 # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.
                 assert self.sessions is not None
+                # Whose turn the announcement is (`announce_axis`): a channel thread's is a
+                # person's conversation, booked as channel spend; any other parent's is
+                # automation's, metered, and booked as background spend.
+                _thread_channel = self.sessions.get_channel(parent_key)
+                _announce_source = "channel" if _thread_channel else "background"
                 _injected = False
                 _channel_failure_reasons: list[str] = []
                 _sleep_before_retry = False
@@ -4129,7 +4146,9 @@ class GatewayOrchestrator:
                             _MAX_INJECT_ATTEMPTS,
                             parent_key,
                         )
-                        client, is_new, _resumed = await self.sessions.get_or_create(parent_key)
+                        client, is_new, _resumed = await self.sessions.get_or_create(
+                            parent_key, model_axis=announce_axis(_thread_channel)
+                        )
                         _acquired = True
                         if self.ctx_builder:
                             from personalclaw.context_headroom import resolve_window
@@ -4143,7 +4162,7 @@ class GatewayOrchestrator:
                         else:
                             msg = announce
                         response = await asyncio.wait_for(
-                            _inject_with_retry(client, msg, parent_key, "channel"),
+                            _inject_with_retry(client, msg, parent_key, _announce_source),
                             timeout=INJECTION_TIMEOUT,
                         )
                         _injected = True  # LLM processed result; channel posting is best-effort
@@ -4153,9 +4172,7 @@ class GatewayOrchestrator:
                             # The session's own thread when it has one; otherwise the owner's
                             # DM, on the first channel that reaches the owner (the Inbox when
                             # none does).
-                            thread_channel = (
-                                self.sessions.get_channel(parent_key) if self.sessions else None
-                            )
+                            thread_channel = _thread_channel
                             elapsed = (
                                 info.elapsed
                                 if info.elapsed > 0

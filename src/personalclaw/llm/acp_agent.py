@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.acp.client import AcpClient
 from personalclaw.acp.errors import AcpError
 from personalclaw.acp.outcomes import AcpToolOutcomesMixin
+from personalclaw.acp.spend import AcpTurnMeter
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
 from personalclaw.agents.provider import AgentProvider
 from personalclaw.llm.base import (
@@ -94,7 +95,7 @@ def options_env(options: dict) -> dict[str, str]:
     return env
 
 
-class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
+class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
     Spawns the configured ``command`` as a subprocess, completes the open
@@ -636,11 +637,16 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         # Procedural-memory signal: a new turn starts with a clean accumulator,
         # then every event is folded in. See acp/outcomes.py for why the reset is here.
+        # On a metered axis the turn is metered (acp/spend.py): refused before the prompt
+        # goes out once a spend ceiling is reached, and charged at its end.
         self._outcome_accumulator.begin_turn()
-        async for e in self._client.stream_events(message):
-            event = self._to_llm_event(e)
+        async for event in self._metered(self._events(self._client.stream_events(message))):
             self._outcome_accumulator.observe(event)
             yield event
+
+    async def _events(self, frames: AsyncIterator[Any]) -> AsyncIterator[LLMEvent]:
+        async for e in frames:
+            yield self._to_llm_event(e)
 
     @property
     def supports_native_commands(self) -> bool:
@@ -650,8 +656,7 @@ class AcpAgentProvider(AcpToolOutcomesMixin, ModelProvider, AgentProvider):
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         self._outcome_accumulator.begin_turn()
-        async for e in self._client.stream_command(command):
-            event = self._to_llm_event(e)
+        async for event in self._metered(self._events(self._client.stream_command(command))):
             self._outcome_accumulator.observe(event)
             yield event
 

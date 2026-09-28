@@ -257,6 +257,15 @@ def _resolve_acp_spawn_cwd(cwd: str | None) -> Path:
 _WAIVING_POLICIES = frozenset({"auto", "yolo", "acceptEdits"})
 
 
+def _meter_agent_turns(provider: Any, axis: str) -> None:
+    """Hand *provider* the axis it was acquired on when it makes its own model calls (an agent CLI:
+    ``acp.spend``), so its turns are metered on a metered axis. A native runtime's calls are its
+    inner model's, which the resolution seam already meters by the same axis; it has no setter."""
+    setter = getattr(provider, "set_spend_axis", None)
+    if callable(setter):
+        setter(axis)
+
+
 def _bounded_policy(policy: str, *, key: str) -> str:
     """*policy*, unless it waives asking and the operator ceiling does not permit that: then ``""``.
 
@@ -586,6 +595,7 @@ class SessionManager:
             provider = self._provider_factory(
                 BACKGROUND_KEY, agent=LITE_AGENT_NAME, model_axis="background"
             )
+            _meter_agent_turns(provider, "background")
             async with self._start_sem:
                 await provider.start()
         except _PROVIDER_RESOLUTION_ERRORS:
@@ -1342,6 +1352,10 @@ class SessionManager:
         # Invariant: by here provider is set — a warm-pool process, a session on a
         # shared ACP connection, or cold-started via factory() above.
         assert provider is not None
+        # Every one of those three doors, the same way: an agent runtime that makes its own
+        # model calls is told the axis it was acquired on, so its turns are metered when the
+        # axis is. A claimed pool process was built for no axis at all.
+        _meter_agent_turns(provider, str(extra_factory_kwargs.get("model_axis") or ""))
         registered = False
         try:
             # Check if session was resumed

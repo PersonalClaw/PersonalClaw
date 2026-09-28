@@ -453,8 +453,7 @@ SERVER = "files"
 
 
 @pytest.fixture
-def mcp_home(monkeypatch):
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+def mcp_home():
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)

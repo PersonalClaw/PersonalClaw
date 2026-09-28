@@ -261,11 +261,13 @@ class TestConsumerAxes:
 
         gates_src = Path(gates.__file__).read_text(encoding="utf-8")
         judge_src = Path(judge.__file__).read_text(encoding="utf-8")
-        assert 'resolve_provider_for_use_case("loops")' not in gates_src
-        assert 'resolve_provider_for_use_case("loops")' not in judge_src
-        assert "resolve_provider_for_use_case(judge_use_case())" in gates_src
+        for src in (gates_src, judge_src):
+            assert 'resolve_provider_for_use_case("loops")' not in src
+            assert 'resolve_metered_model("loops")' not in src
+        # The axis's model itself, metered whichever axis it is (`resolve_metered_model`).
+        assert "resolve_metered_model(judge_use_case())" in gates_src
         # Both assess_cycle and assess_cycle_skeptic.
-        assert judge_src.count("resolve_provider_for_use_case(judge_use_case())") == 2
+        assert judge_src.count("resolve_metered_model(judge_use_case())") == 2
 
     def test_background_session_factory_passes_axis(self):
         from pathlib import Path

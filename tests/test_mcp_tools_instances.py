@@ -18,12 +18,11 @@ from personalclaw.providers import mcp_instances as mi
 
 
 @pytest.fixture(autouse=True)
-def _home(monkeypatch):
+def _home():
     """The per-test home (conftest redirects it): the card writes its ``mcp.json`` through the
     real document writer, and a delete reaches both documents through the one delete, which
     resolves them there too — a card store pointed somewhere else would test a wiring
     production does not have."""
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     return config_loader.config_dir()
 
 

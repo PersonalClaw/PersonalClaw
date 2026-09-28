@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from personalclaw import notification_kinds
+from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
 
@@ -238,7 +239,6 @@ async def api_agent_hook_allow(request: web.Request) -> web.Response:
 
 # ── Webhook Hooks — external triggers run an agent turn via /hooks/agent ──
 
-_HOOK_SESSION_PREFIX = "hook:"
 _HOOK_TIMEOUT_DEFAULT = 599  # ~10 min — prime to avoid thundering herd with cron intervals
 _HOOK_TIMEOUT_MAX = 3593  # ~1 hour — prime for same reason
 _HOOK_MESSAGE_MAX_LEN = 49_999  # ~50K chars — leave 1 char headroom
@@ -316,9 +316,9 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     session_key = body.get("sessionKey", "")
     if not session_key:
         session_key = f"hook:default:{int(time.time())}"
-    if not session_key.startswith(_HOOK_SESSION_PREFIX):
+    if not session_key.startswith(HOOK_SESSION_PREFIX):
         return web.json_response(
-            {"error": f"sessionKey must start with '{_HOOK_SESSION_PREFIX}'"}, status=400
+            {"error": f"sessionKey must start with '{HOOK_SESSION_PREFIX}'"}, status=400
         )
     # 🔴 A callback the agent registered (`hook_register`) runs only once the owner allowed it
     # (`webhook_callbacks`): its turn starts from context the agent wrote and runs with the agent's
@@ -327,7 +327,7 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     # registered is the owner's own integration and starts from nothing the agent wrote.
     from personalclaw import webhook_callbacks
 
-    callback = webhook_callbacks.get(session_key.removeprefix(_HOOK_SESSION_PREFIX))
+    callback = webhook_callbacks.get(session_key.removeprefix(HOOK_SESSION_PREFIX))
     if callback is not None and not webhook_callbacks.allowed(callback):
         _sel().log_api_access(
             caller="webhook",
@@ -395,18 +395,44 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     return web.json_response({"status": "accepted", "sessionKey": session_key})
 
 
+class HookTurnRefused(Exception):
+    """A webhook's turn that cannot run under the headless profile: its reason, said as it is."""
+
+
 async def _run_hook_inner(
     state: DashboardState, session_key: str, message: str, agent: str | None
 ) -> str:
-    """Inner agent turn — called within timeout wrapper."""
+    """Inner agent turn — called within timeout wrapper.
+
+    It runs under the headless profile, as every turn nobody watches does (a ``hook:`` key is one,
+    ``guardrails.policy``). Its tool grants are the profile's: a call whose tool does not declare
+    it only reads is refused, whatever would approve it. And the runtime runs unattended: a tool
+    that asks a person something is not offered, and a call that needs approval is declined at
+    once, since nobody would see the prompt. A runtime that cannot be held to the grants (an agent
+    CLI runs tools the host never sees) is refused before the message is sent.
+    """
+    from functools import partial
+
+    from personalclaw.guardrails.policy import declared_tool_grant_denial, profile_for_session
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK  # noqa: F811
 
+    # The headless profile, the operator's ceiling applied. Read before anything starts: a ceiling
+    # that cannot be read raises here, and the turn fails closed.
+    profile = profile_for_session(session_key)
     # A webhook's agent turn is automation — an ephemeral agent session, as a subagent is — so it
     # rides the orchestration axis a subagent rides, which is what puts the spend guard on its
     # calls. On the chat binding it had none, and the daily cap never counted a webhook's spend.
     client, is_new, resumed = await state.sessions.get_or_create(
-        session_key, agent=agent, model_axis="orchestration"
+        session_key, agent=agent, model_axis="orchestration", unattended=True
     )
+    hold_to = getattr(client, "set_tool_grants", None)
+    if not callable(hold_to):
+        raise HookTurnRefused(
+            f"{agent or 'The default agent'} runs on an agent CLI, which runs tools the host "
+            f"never sees, so a webhook's turn on it cannot be held to the {profile.name} "
+            "profile's tool grants. Point the webhook at an agent on the native runtime."
+        )
+    hold_to(partial(declared_tool_grant_denial, profile))
     full_message = message
     if is_new and state.context_builder:
         from personalclaw.context_headroom import resolve_window
@@ -487,6 +513,12 @@ async def _run_hook_agent(
         outcome = "refused_budget_exceeded"
         result_text = f"Hook agent stopped: {exc.sentence()}"
         logger.info("Hook agent refused by the spend budget: %s — %s", session_key, exc)
+    except HookTurnRefused as exc:
+        # Not run: the headless profile could not be held (`_run_hook_inner`). A setting to change,
+        # so it is said, and it is no failure of the session.
+        outcome = "refused_not_headless"
+        result_text = f"Hook agent not run: {exc}"
+        logger.info("Hook agent refused: %s — %s", session_key, exc)
     except Exception:
         outcome = "error"
         result_text = f"Hook agent error: internal failure (session {session_key})"

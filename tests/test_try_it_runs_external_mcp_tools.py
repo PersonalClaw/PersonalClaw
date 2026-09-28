@@ -231,7 +231,6 @@ async def _world(
     from personalclaw.config import loader as config_loader
     from personalclaw.dashboard.handlers.tools import api_tool_invoke, api_tools_list
 
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
     workspace = tmp_path / "ws"
     workspace.mkdir()
     monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))

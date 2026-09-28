@@ -337,12 +337,14 @@ async def test_a_model_call_guard_reads_its_ceiling_and_scan_mode_at_each_call(
 
 
 def test_the_bridge_hands_its_guards_where_to_read_them():
-    """The resolution seam is what builds every guard a runtime holds; it passes the readers."""
+    """The resolution seam builds every guard a runtime holds, through the one place a guard is
+    made (``provider_bridge.metered``), and that place passes the readers."""
     import inspect
 
     from personalclaw.providers import provider_bridge
 
-    source = inspect.getsource(provider_bridge._resolve_from_config_registry)
+    assert "metered(" in inspect.getsource(provider_bridge._resolve_from_config_registry)
+    source = inspect.getsource(provider_bridge.metered)
     for wired in (
         "budget_source=budget_from_config",
         "run_budget_source=run_budget_from_config",

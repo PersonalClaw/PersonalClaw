@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import stat
-import sys
 import types
 from pathlib import Path
 
@@ -41,22 +40,6 @@ _KEYS = ("SH2_ALPHA", "SH2_BETA")
 
 
 # ── doubles ──────────────────────────────────────────────────────────────────
-
-
-class _ImportBlocker:
-    """A ``sys.meta_path`` finder that makes ``import keyring`` fail, whatever is installed.
-
-    This is how the headless path is proven: uninstalling a package proves nothing about the
-    code, while a finder that refuses the name reproduces a keyring-less box on any machine.
-    """
-
-    def find_module(self, fullname, path=None):  # pragma: no cover - legacy hook
-        return None
-
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "keyring" or fullname.startswith("keyring."):
-            raise ImportError(f"blocked by the test: {fullname}")
-        return None
 
 
 def _stub_keyring(
@@ -284,8 +267,7 @@ def test_a_headless_box_that_asked_for_a_keychain_refuses_with_the_honest_reason
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_env(home)
-    monkeypatch.setattr(sys, "meta_path", [_ImportBlocker(), *sys.meta_path])
-    monkeypatch.delitem(sys.modules, "keyring", raising=False)
+    keychain_stub.refused(monkeypatch)
     monkeypatch.setenv(CREDENTIAL_BACKEND_ENV, "keychain")
     assert cred.requested_credential_backend() == "keychain"
     assert cred.credential_backend() == "dotenv", "the premise: requested but unavailable"
@@ -477,8 +459,7 @@ def test_status_reports_the_resolved_backend_not_the_request(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_env(home)
-    monkeypatch.setattr(sys, "meta_path", [_ImportBlocker(), *sys.meta_path])
-    monkeypatch.delitem(sys.modules, "keyring", raising=False)
+    keychain_stub.refused(monkeypatch)
     monkeypatch.setenv(CREDENTIAL_BACKEND_ENV, "keychain")
     st = mig.credential_migration_status()
     assert st["requested"] == "keychain" and st["backend"] == "dotenv"

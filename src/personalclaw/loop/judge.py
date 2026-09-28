@@ -57,6 +57,9 @@ def judge_use_case() -> str:
 
     Degrades to ``reasoning`` if config is unreadable: an unreadable config must not
     silently hand judgment back to the worker's binding.
+
+    Whichever axis it is, a judge resolves the axis's model itself, behind the spend guard
+    (``provider_bridge.resolve_metered_model``): a judge is automation's call on any binding.
     """
     try:
         from personalclaw.config.loader import AppConfig
@@ -248,9 +251,9 @@ async def assess_cycle(
     if provider_factory is None:
 
         def provider_factory(_session_key):
-            from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+            from personalclaw.providers.provider_bridge import resolve_metered_model
 
-            return resolve_provider_for_use_case(judge_use_case())
+            return resolve_metered_model(judge_use_case())
 
     from personalclaw.eval.judge import LLMJudge
 
@@ -325,9 +328,9 @@ async def assess_cycle_skeptic(
     if provider_factory is None:
 
         def provider_factory(_session_key):
-            from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+            from personalclaw.providers.provider_bridge import resolve_metered_model
 
-            return resolve_provider_for_use_case(judge_use_case())
+            return resolve_metered_model(judge_use_case())
 
     from personalclaw.eval.judge import LLMJudge
 

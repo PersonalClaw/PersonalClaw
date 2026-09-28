@@ -146,12 +146,14 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
     unchanged.
 
     The verdict's usage row is the loop's (*loop_id*), under the key the loop's spend is read
-    by (``loop.manager.usage_key``)."""
+    by (``loop.manager.usage_key``). The judge is the axis's model itself, behind the spend guard
+    whichever axis the owner put it on (``provider_bridge.resolve_metered_model``): bound to Chat
+    or Code, it used to be handed the native agent, with tools, and its calls counted nowhere."""
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
     from personalclaw.llm_helpers import run_over_use_case_chain, use_case_chain
     from personalclaw.loop.judge import judge_use_case
     from personalclaw.loop.manager import usage_key
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.provider_bridge import resolve_metered_model
     from personalclaw.usage_ledger import Attribution, recorder
 
     who = Attribution(source="loop", session_key=usage_key(loop_id))
@@ -216,7 +218,7 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
             )
             return "".join(partial)
     try:
-        provider = resolve_provider_for_use_case(judge_use_case())
+        provider = resolve_metered_model(judge_use_case())
         await provider.start()
     except Exception:
         logger.warning("loop gate: judge provider unavailable", exc_info=True)

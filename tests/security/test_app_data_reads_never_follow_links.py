@@ -40,8 +40,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     h.mkdir()
     monkeypatch.setattr(loader, "config_dir", lambda: h)
     monkeypatch.setattr(manager, "config_dir", lambda: h)
-    # Secrets land in the home's `.env`, where a search can find them.
-    monkeypatch.setattr("personalclaw.config.credentials._usable_keyring", lambda: None)
+    # Secrets land in the home's `.env` (the suite keeps the OS keychain off), where a search
+    # can find them.
     return h
 
 

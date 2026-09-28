@@ -229,18 +229,29 @@ class TestOneShotCompletion:
     async def test_falls_back_to_first_registry_entry_when_bridge_fails(self) -> None:
         from personalclaw import llm_helpers
 
-        provider = _make_provider(
-            events=[
-                LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello"),
-                LLMEvent(kind=EVENT_COMPLETE),
-            ]
-        )
-        provider.start = AsyncMock()
+        class _Built:
+            """The first configured entry's model as its factory builds it: the one-shot call
+            meters it (`provider_bridge.metered`), so it is a model's shape, not a mock's."""
+
+            supports_tools = False
+
+            async def start(self) -> None:
+                return None
+
+            async def shutdown(self) -> None:
+                return None
+
+            async def stream(self, message: str):
+                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello")
+                yield LLMEvent(kind=EVENT_COMPLETE)
+
         registry = MagicMock()
         entry = MagicMock()
         entry.name = "Bedrock"
+        entry.type = "bedrock"
+        entry.own_model = "claude-x"
         registry.list_entries.return_value = [entry]
-        registry.build.return_value = provider
+        registry.build.return_value = _Built()
         with (
             patch(
                 "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
