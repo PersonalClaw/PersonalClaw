@@ -99,6 +99,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The OpenAI-compatible transcription endpoint no longer puts "Transcription failed:" in front of a provider's own sentence.**
 
 - **`personalclaw app new` writes a `.gitignore`, so an app's first commit no longer publishes its compiled bytecode and the path it was built on.**
+- **First run's Web search lane is ready only once the agent can search: after a search provider, it offers Web Tools, the app that gives the agent its `web_search` tool.**
 
 - **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
 - **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**

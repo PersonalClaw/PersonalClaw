@@ -51,6 +51,9 @@ const startModelDownload = vi.fn()
 const cancelModelDownload = vi.fn()
 // What is INSTALLED — the Store Library's read (`GET /api/apps`). Nothing, by default.
 const apps = vi.fn()
+// The agent's tool list (`GET /api/tools`) — what the Web search lane's "Ready" is read from. No
+// `web_search`, by default: a fresh install has none until the app that ships it is installed.
+const tools = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   // The REAL module under the `api` stub, so a helper the lane imports from it
@@ -60,6 +63,7 @@ vi.mock('../../lib/api', async (orig) => ({
     installApp: (...a: unknown[]) => installApp(...a),
     previewApp: (...a: unknown[]) => previewApp(...a),
     apps: () => apps(),
+    tools: () => tools(),
     appCatalog: () => appCatalog(),
     modelProviderTypes: () => modelProviderTypes(),
     createModelProvider: (...a: unknown[]) => createModelProvider(...a),
@@ -116,15 +120,17 @@ const BRAVE = entry({
 })
 const DISCORD = entry({ name: 'discord-channel', displayName: 'Discord', providerType: 'channel', providerCapabilities: ['messaging'] })
 const EMBEDDER = entry({ name: 'sentence-transformers', providerType: 'model', providerCapabilities: ['embedding'] })
+// The app that ships `web_search`: a TOOL provider, so it belongs to no lane of its own.
+const WEB_TOOLS = entry({ name: 'web-tools', displayName: 'Web Tools', providerType: 'tool', providerCapabilities: ['web'], permissions: { network: true } })
 
-const CATALOG = { bundled: [], gitSources: [], localApps: [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER], remoteApps: [], gitApps: [] }
+const CATALOG = { bundled: [], gitSources: [], localApps: [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER, WEB_TOOLS], remoteApps: [], gitApps: [] }
 
 const DIGEST = 'e'.repeat(64)
 
 /** What the server reads from a card's staged manifest (`POST /api/apps/preview`) — the review
  *  the consent dialog discloses, and the digest a confirmed install sends back. */
 function reviewOf(source: string, over: Partial<AppInstallResult> = {}): AppInstallResult {
-  const e = [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER].find((x) => x.source === source)
+  const e = [OPENAI, WHISPER, PIPER, BRAVE, DISCORD, EMBEDDER, WEB_TOOLS].find((x) => x.source === source)
   if (!e) throw new Error(`no fixture app at ${source}`)
   return {
     ok: false, name: e.name, error: '', needs_consent: true,
@@ -167,7 +173,7 @@ function renderStep(over: Partial<Parameters<typeof EssentialsStep>[0]> = {}) {
 }
 
 /** Each card's Install button names its app. */
-const CARD = { openai: 'OpenAI', brave: 'Brave Search', whisper: 'Faster Whisper', piper: 'Piper TTS', discord: 'Discord' } as const
+const CARD = { openai: 'OpenAI', brave: 'Brave Search', whisper: 'Faster Whisper', piper: 'Piper TTS', discord: 'Discord', webTools: 'Web Tools' } as const
 
 /** A card's own Install: it opens the Store's consent dialog, and nothing is installed yet. */
 async function reviewCard(which: keyof typeof CARD): Promise<HTMLElement> {
@@ -186,10 +192,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   // A COLD cache per test: `useQuery` memoizes module-globally, and a warm entry
   // would hide both the loading and the load-FAILURE branch on every test after the first.
-  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:chat-chain', 'onboarding:local-model', 'apps']) invalidateKeys(k)
+  for (const k of ['onboarding:essentials-catalog', 'onboarding:provider-types', 'onboarding:chat-models', 'onboarding:chat-chain', 'onboarding:local-model', 'apps', 'tools:list']) invalidateKeys(k)
   try { sessionStorage.clear() } catch { /* jsdom always has it */ }
   appCatalog.mockResolvedValue(CATALOG)
   apps.mockResolvedValue([])
+  tools.mockResolvedValue([])
   // OU-13 default: no local Ollama anywhere. Every existing test therefore renders the
   // model lane exactly as before the on-ramp — no bind card, no scan fired.
   detectLocalModel.mockResolvedValue({ detected: false })
@@ -363,7 +370,7 @@ describe('per-app install consent is preserved', () => {
 // it — and the step's cached catalog outlived the install, so it still listed the app.
 
 /** An installed app as `GET /api/apps` lists it. */
-function installedApp(over: { name: string; displayName: string; providerCapabilities?: string[]; enabled?: boolean; native?: boolean }) {
+function installedApp(over: { name: string; displayName: string; providerType?: string; providerCapabilities?: string[]; enabled?: boolean; native?: boolean }) {
   return {
     description: 'desc', version: '1.0.0', origin: 'local', icon: '', hasBackend: false, hasUI: false, uiPages: [],
     isProvider: true, providerType: 'model', providerCapabilities: [], hasConfig: false, permissions: {}, tags: [],
@@ -447,6 +454,121 @@ describe('an installed app shows as installed and is never offered again', () =>
     const notice = await screen.findByTestId('onboarding-installed-unreadable')
     expect(notice.textContent).toMatch(/gateway unavailable/)
     expect(within(notice).getByRole('button', { name: 'Check again' })).toBeTruthy()
+  })
+})
+
+// ── the Web search lane is ready when the agent can search ───────────────────
+//
+// A search provider app registers a PROVIDER — something to search with — and not a tool. The agent
+// searches by calling `web_search`, which ships in an app of its own, so the lane used to read
+// "Ready" on the provider alone while chat still had no way to search. Readiness is read from the
+// tool list by the tool's NAME (the predicate the Search panel and the hub tile already use), and
+// the app that ships the tool is offered as one more card, through the same consent dialog.
+
+const BRAVE_INSTALLED = installedApp({ name: 'brave-search', displayName: 'Brave Search', providerType: 'search', providerCapabilities: ['search'] })
+const WEB_TOOLS_INSTALLED = installedApp({ name: 'web-tools', displayName: 'Web Tools', providerType: 'tool', providerCapabilities: ['web'] })
+const WEB_SEARCH = { name: 'web_search', description: 'Search the web', provider: 'web-tools' }
+const searchLane = () => screen.getByRole('group', { name: 'Web search' })
+const CATALOG_WITHOUT_WEB_TOOLS = { ...CATALOG, localApps: CATALOG.localApps.filter((e) => e.name !== 'web-tools') }
+
+describe('the Web search lane is ready only when the agent can search', () => {
+  it('a search provider alone is not ready: it names the missing tool and offers the app that ships it', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    renderStep()
+    const note = await screen.findByTestId('onboarding-search-tool-note')
+    expect(searchLane().contains(note)).toBe(true)
+    expect(note.textContent).toMatch(/calling the web_search tool, and a search provider doesn’t include it/)
+    expect(note.textContent).toMatch(/Web Tools ships it/)
+    expect(within(searchLane()).getByRole('button', { name: 'Install Web Tools' })).toBeTruthy()
+    expect(within(searchLane()).queryByText('Ready'), 'a provider with no tool to call it is not a search').toBeNull()
+  })
+
+  it('the app installs through the same consent dialog, and the lane is ready once the tool is listed', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    const { onProgress } = renderStep()
+    const dialog = await reviewCard('webTools')
+    expect(previewApp).toHaveBeenCalledWith('/apps/web-tools', undefined, undefined)
+    expect(installApp, 'reviewing the app is not consenting to install it').not.toHaveBeenCalled()
+    installApp.mockResolvedValue({ ok: true, name: 'web-tools', error: '', needs_consent: false, scan: null })
+    tools.mockResolvedValue([WEB_SEARCH])
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Install$/ }))
+    await waitFor(() => expect(installApp).toHaveBeenCalledTimes(1))
+    expect(installApp).toHaveBeenCalledWith('/apps/web-tools', DIGEST, undefined)
+    // The install re-reads the tool list, and the lane is ready on what that read lists.
+    await waitFor(() => expect(within(searchLane()).getByText('Ready')).toBeTruthy())
+    expect(within(searchLane()).getByText('Web Tools')).toBeTruthy()
+    expect(within(searchLane()).getAllByText('Installed')).toHaveLength(2)
+    expect(screen.queryByTestId('onboarding-search-tool-note')).toBeNull()
+    // Recorded as the search lane's own field, and nothing else.
+    expect(onProgress).toHaveBeenCalledWith({ essentials: { search: true } })
+    for (const [patch] of onProgress.mock.calls) expect(Object.keys(patch.essentials)).toEqual(['search'])
+  })
+
+  it('a provider and the tool together are ready, with nothing more offered', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    // Listed by some other app: the predicate is the tool name, not the app that ships it.
+    tools.mockResolvedValue([{ ...WEB_SEARCH, provider: 'another-app' }])
+    renderStep()
+    await waitFor(() => expect(within(searchLane()).getByText('Ready')).toBeTruthy())
+    expect(screen.queryByTestId('onboarding-search-tool-note')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Install Web Tools' })).toBeNull()
+  })
+
+  it('the tool with no provider is not ready either, and the providers stay on offer', async () => {
+    apps.mockResolvedValue([WEB_TOOLS_INSTALLED])
+    tools.mockResolvedValue([WEB_SEARCH])
+    appCatalog.mockResolvedValue(CATALOG_WITHOUT_WEB_TOOLS)
+    renderStep()
+    await waitFor(() => expect(within(searchLane()).getByText('Web Tools')).toBeTruthy())
+    expect(within(searchLane()).getByText('Installed')).toBeTruthy()
+    expect(within(searchLane()).queryByText('Ready')).toBeNull()
+    expect(within(searchLane()).getByRole('button', { name: 'Install Brave Search' })).toBeTruthy()
+  })
+
+  it('an unread tool list is said as unread — never ready, and no app accused of being missing', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    tools.mockRejectedValue(new Error('gateway unavailable'))
+    renderStep()
+    const notice = await screen.findByTestId('onboarding-tools-unreadable')
+    expect(notice.textContent).toMatch(/gateway unavailable/)
+    expect(within(searchLane()).queryByText('Ready')).toBeNull()
+    expect(screen.queryByTestId('onboarding-search-tool-note')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Install Web Tools' })).toBeNull()
+    tools.mockResolvedValue([WEB_SEARCH])
+    fireEvent.click(within(notice).getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(within(searchLane()).getByText('Ready')).toBeTruthy())
+  })
+
+  it('an installed app that is turned off is said so, and not offered again', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED, { ...WEB_TOOLS_INSTALLED, enabled: false }])
+    appCatalog.mockResolvedValue(CATALOG_WITHOUT_WEB_TOOLS)
+    renderStep()
+    const note = await screen.findByTestId('onboarding-search-tool-note')
+    expect(note.textContent).toMatch(/Web Tools, the app that ships it, is turned off/)
+    expect(within(searchLane()).getByText('Installed, turned off in the Store')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Install Web Tools' })).toBeNull()
+    expect(within(searchLane()).queryByText('Ready')).toBeNull()
+  })
+
+  it('Install on the app installed since the list was read shows it installed, not a review', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    renderStep()
+    await screen.findByRole('button', { name: 'Install Web Tools' })
+    apps.mockResolvedValue([BRAVE_INSTALLED, WEB_TOOLS_INSTALLED])
+    tools.mockResolvedValue([WEB_SEARCH])
+    fireEvent.click(screen.getByRole('button', { name: 'Install Web Tools' }))
+    await waitFor(() => expect(within(searchLane()).getByText('Ready')).toBeTruthy())
+    expect(previewApp, 'no review opens for an app that is already installed').not.toHaveBeenCalled()
+    expect(installApp).not.toHaveBeenCalled()
+  })
+
+  it('names the app from the catalog when there is no card to offer', async () => {
+    apps.mockResolvedValue([BRAVE_INSTALLED])
+    appCatalog.mockResolvedValue(CATALOG_WITHOUT_WEB_TOOLS)
+    renderStep()
+    const note = await screen.findByTestId('onboarding-search-tool-note')
+    expect(note.textContent).toMatch(/It ships in the Web Tools app, which none of your app sources lists/)
+    expect(screen.queryByRole('button', { name: 'Install Web Tools' })).toBeNull()
   })
 })
 

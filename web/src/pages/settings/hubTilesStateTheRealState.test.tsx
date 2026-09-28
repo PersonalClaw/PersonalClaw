@@ -71,7 +71,7 @@ describe('the Search tile reads the real state', () => {
     search([PROVIDER('tavily')], [{ name: 'web_fetch', description: '', provider: 'web-tools' }], { 'search-general': ['tavily'] })
     const { container } = await mountTile('search')
     await waitFor(() => expect(container.textContent).toContain('No search tool'))
-    expect(container.textContent).toMatch(/Native Tools \(Web\)/)
+    expect(container.textContent).toMatch(/the Web Tools app/)
     expect(container.textContent, 'a ticked binding would claim a search that cannot run').not.toContain('tavily')
   })
 

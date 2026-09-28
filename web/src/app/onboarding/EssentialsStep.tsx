@@ -12,12 +12,13 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { catalogApps } from '../../lib/appCatalog'
 import { installTargetFor, useAppInstall } from '../../pages/apps/installConsent'
 import { SchemaField, schemaDefaults } from '../../pages/settings/ProviderConfigForm'
+import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from '../../pages/settings/searchTool'
 import { SchemaFields } from '../../pages/tools/schema'
 import { BundledModelOffer } from './BundledModelOffer'
 import { StepActions } from './StepActions'
 import { chatModelSummary } from './chatModelSummary'
 import { checkChatModel, thrownMessage, type ChatModelVerdict } from './checkChatModel'
-import { api, type AppCatalogEntry, type AppSummary, type BundledModelOffer as Offer, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch, type ProviderOptionValue } from '../../lib/api'
+import { api, type AppCatalogEntry, type AppSummary, type BundledModelOffer as Offer, type ChatModelOption, type LocalModelEndpoint, type ModelProviderType, type OnboardingState, type OnboardingStatePatch, type ProviderOptionValue, type ToolItem } from '../../lib/api'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** ONBOARDING-UX S1 T1.2r — the essential-apps step: the flow's first act
@@ -26,8 +27,11 @@ import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
  *
  *  **Four lanes, one required.** A model provider is the required rail (nothing works
  *  without one), so its lane carries the full sub-flow: install → key → Test → chat
- *  binding. Search, speech and channel are opt-in single-step installs; their
- *  configuration belongs in Settings, not in a first run.
+ *  binding. Search, speech and channel are opt-in installs; their configuration belongs
+ *  in Settings, not in a first run. Search can take two: a search provider is something
+ *  to search WITH, and the agent searches by calling the `web_search` tool, which ships
+ *  in an app of its own — so that lane is ready only when the tool list says the agent
+ *  has it (`SearchToolNote`).
  *
  *  **Nothing installs on its own.** A card's Install opens the Store's own consent
  *  dialog (`useAppInstall`), which reviews the app on the server and installs only when
@@ -157,6 +161,24 @@ export function installedByLane(
   return out
 }
 
+/** Where the app that ships `web_search` stands: installed (from the server's list, or by this
+ *  session ahead of that list), or the catalog card to offer, or neither when no app source lists
+ *  it. Looked up by the app's NAME because this picks a card to show — the readiness predicate is
+ *  the tool name (`hasSearchTool`), so an app shipping `web_search` under another name still makes
+ *  the lane ready; it just is not the card offered here. */
+export function searchToolAppState(
+  c: Awaited<ReturnType<typeof api.appCatalog>> | undefined,
+  apps: AppSummary[] | undefined,
+  justInstalled: Record<string, AppCatalogEntry>,
+): { installed?: InstalledApp; offer?: AppCatalogEntry } {
+  const name = SEARCH_TOOL_APP.name
+  const a = (apps ?? []).find((x) => x?.name === name)
+  if (a) return { installed: { name, label: a.displayName || name, description: a.description, on: a.enabled } }
+  const j = justInstalled[name]
+  if (j) return { installed: { name, label: j.displayName || name, description: j.description, on: true } }
+  return { offer: catalogApps(c).find((e) => e?.name === name && !e.refused) }
+}
+
 /** Whether the server lists *name* as installed — asked when its Install is clicked, since the list
  *  the card was drawn from can predate an install made since. A read that fails answers "no": the
  *  review then opens, as it would have before anything asked, and gives the server's own answer. */
@@ -222,6 +244,15 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
 
   const lanes = useMemo(() => candidatesByLane(catalog, installedNames), [catalog, installedNames])
   const installedLanes = useMemo(() => installedByLane(installedApps, justInstalled), [installedApps, justInstalled])
+  // The Web search lane's evidence. A search provider app registers a provider, not a tool, so what
+  // decides whether the agent can search is whether `GET /api/tools` lists `web_search` — the same
+  // read, and the same predicate, the Search panel and the hub's Search tile state it from. No
+  // `.catch` substitute: an unread list is said as unread (`SearchToolNote`), never as a missing app.
+  const { data: tools, error: toolsError, revalidating: toolsReading, refresh: refreshTools } = useQuery<ToolItem[]>(
+    'tools:list', () => api.tools())
+  const searchToolListed = tools !== undefined && hasSearchTool(tools)
+  const searchToolApp = useMemo(
+    () => searchToolAppState(catalog, installedApps, justInstalled), [catalog, installedApps, justInstalled])
   // Which registered types have no catalog card to reach them from (see
   // `typesMissingFromCatalog`'s own doc) — computed against the MODEL lane's own catalog
   // list specifically, since that's the one list a "configure it manually" card could
@@ -279,9 +310,11 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
    *  which provider is configured is genuinely unknown here. */
   const [configured, setConfigured] = useState<{ provider: string; unprobed: string } | null>(null)
 
-  // The card the consent dialog was opened from, so a confirmed install records the lane it
-  // belongs to — the dialog itself only knows the source it installed.
-  const pendingRef = useRef<AppCatalogEntry | null>(null)
+  // The card the consent dialog was opened from and the lane it was offered in, so a confirmed
+  // install records that lane — the dialog itself only knows the source it installed. The lane is
+  // carried rather than re-derived because the search tool's app has none of its own (`laneOf` is
+  // null for a tool app); it is installed FROM the search lane.
+  const pendingRef = useRef<{ entry: AppCatalogEntry; lane: LaneId } | null>(null)
 
   const recordInstall = useCallback((entry: AppCatalogEntry, lane: LaneId) => {
     setJustInstalled((m) => ({ ...m, [entry.name]: entry }))
@@ -292,6 +325,9 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
     invalidateKeys('apps')
     invalidateKeys('app-catalog')
     invalidateKeys('onboarding:essentials-catalog')
+    // …and every read of the tool list, the Tools page's included: an install can add the tool a
+    // lane is waiting on, and the search lane's "Ready" is read from this list.
+    invalidateKeys('tools:', true)
     // Each lane records ONLY its own field — the backend merges at both levels, so no
     // lane has to read back and echo the whole document to avoid clobbering a sibling.
     if (lane === 'model') { setModelApp(entry.name); setPhase('configure'); onProgress({ essentials: { model: entry.name } }) }
@@ -304,9 +340,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // user confirmed in the dialog and the install committed.
   const consent = useAppInstall({
     onInstalled: () => {
-      const entry = pendingRef.current
-      const lane = entry ? laneOf(entry) : null
-      if (entry && lane) recordInstall(entry, lane)
+      const pending = pendingRef.current
+      if (pending) recordInstall(pending.entry, pending.lane)
     },
   })
 
@@ -318,9 +353,8 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   // open on `already installed (use update)`. So the click asks the server first, and an app it
   // already has is shown as installed: to this step that install is done, not an error. Decided by
   // what the server lists, not by reading a refusal's prose, which is a sentence and not a contract.
-  const install = useCallback(async (entry: AppCatalogEntry) => {
-    pendingRef.current = entry
-    const lane = laneOf(entry)
+  const install = useCallback(async (entry: AppCatalogEntry, lane: LaneId | null = laneOf(entry)) => {
+    pendingRef.current = lane ? { entry, lane } : null
     if (lane && await isInstalledOnServer(entry.name)) { recordInstall(entry, lane); return }
     void consent.begin(installTargetFor(entry))
   }, [consent, recordInstall])
@@ -484,7 +518,11 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
         // is where their Configure is — so only the other three lanes list theirs here.
         const have = isModel ? [] : installedLanes[lane.id]
         const shown = expanded[lane.id] ? items : items.slice(0, LANE_PREVIEW)
-        const laneDone = isModel ? modelReady : have.some((a) => a.on)
+        const isSearch = lane.id === 'search'
+        const providerOn = have.some((a) => a.on)
+        // A search provider on its own is something to search WITH, not a search: the lane is ready
+        // once the agent also has the tool that calls it (`SearchToolNote`).
+        const laneDone = isModel ? modelReady : isSearch ? providerOn && searchToolListed : providerOn
         return (
           <section key={lane.id} role="group" className="flex flex-col gap-s" aria-label={lane.title}>
             <div className="flex items-baseline gap-2">
@@ -574,6 +612,11 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
                 {/* What is already installed comes first and says so; the catalog below it never
                     lists it again. */}
                 {have.map((a) => <InstalledAppCard key={a.name} app={a} />)}
+                {isSearch && searchToolApp.installed && <InstalledAppCard app={searchToolApp.installed} />}
+                {isSearch && providerOn && !searchToolListed && (
+                  <SearchToolNote tools={tools} error={toolsError} reading={toolsReading} onRetry={refreshTools}
+                    app={searchToolApp} onInstall={(e) => install(e, 'search')} />
+                )}
                 {shown.map((e) => (
                   <AppCard key={e.name} entry={e} onInstall={() => install(e)} />
                 ))}
@@ -617,6 +660,59 @@ function InstalledAppCard({ app }: { app: InstalledApp }) {
         <span data-type="caption" className="shrink-0 text-on-surface-low">Installed, turned off in the Store</span>
       )}
     </motion.div>
+  )
+}
+
+/** The Web search lane's second half, shown under the installed provider while the tool list has
+ *  no `web_search`. A search provider app registers a provider — something to search with — and
+ *  the agent searches by calling `web_search`, which ships in an app of its own. The lane used to
+ *  read "Ready" on the provider alone, so a first run could end with a user told search was set up
+ *  and an agent that had no way to search.
+ *
+ *  It offers the app that ships the tool as one more card, through the same consent dialog as
+ *  every card on this step, so nothing installs without a click and a confirmation. That app is
+ *  not built in, and not installed alongside the provider, because it carries `web_fetch` too, a
+ *  fetch of any public page the agent names: a user who wants search gets it with one more click,
+ *  and one who does not never has it. */
+function SearchToolNote({ tools, error, reading, onRetry, app, onInstall }: {
+  /** The tool list; `undefined` until it has been read. */
+  tools: ToolItem[] | undefined
+  error: unknown
+  /** A read is on the wire — after an install, the one that will list the new tool. */
+  reading: boolean
+  onRetry: () => void
+  app: { installed?: InstalledApp; offer?: AppCatalogEntry }
+  onInstall: (entry: AppCatalogEntry) => void
+}) {
+  const tool = <code className="text-on-surface">{SEARCH_TOOL}</code>
+  if (tools === undefined) {
+    if (error == null) return null
+    return (
+      <p role="status" data-testid="onboarding-tools-unreadable" data-type="body-s" className="text-on-surface-var">
+        Couldn&rsquo;t check whether the agent has its {tool} tool ({thrownMessage(error) || 'the request failed'}),
+        so this lane can&rsquo;t say search is ready.{' '}
+        <TextLink onClick={onRetry}>Check again</TextLink>
+      </p>
+    )
+  }
+  const { installed, offer } = app
+  // Installed and the list does not show its tool yet: a read is on the wire, so say nothing until
+  // it answers rather than call a tool missing that is a moment from being listed.
+  if (installed && reading) return null
+  const label = installed?.label || offer?.displayName || SEARCH_TOOL_APP.label
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p role="status" data-testid="onboarding-search-tool-note" data-type="body-s" className="text-on-surface-var">
+        {installed && !installed.on
+          ? <>The agent searches by calling the {tool} tool, and {label}, the app that ships it, is turned off, so the agent can&rsquo;t search yet. Turn it on in the Store.</>
+          : installed
+            ? <>{label} is installed, but the agent has no {tool} tool from it, so it can&rsquo;t search yet. Its card in Settings &rarr; Providers says why.</>
+            : offer
+              ? <>One more app: the agent searches by calling the {tool} tool, and a search provider doesn&rsquo;t include it. {label} ships it.</>
+              : <>The agent searches by calling the {tool} tool, and a search provider doesn&rsquo;t include it. It ships in the {label} app, which none of your app sources lists, so install it from the Store when you can.</>}
+      </p>
+      {!installed && offer && <AppCard entry={offer} onInstall={() => onInstall(offer)} />}
+    </div>
   )
 }
 
