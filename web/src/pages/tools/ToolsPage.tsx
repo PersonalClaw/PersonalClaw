@@ -281,7 +281,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     const trusted = readOnlyServers.includes(s.name)
     if (!trusted && !(await confirm({
       title: `Trust "${s.name}" to say which tools only read?`,
-      body: 'Tools this MCP server labels read-only will run in Ask and Plan mode, and without asking you under Trust reads. '
+      body: 'Tools this MCP server labels read-only will run without asking you, and in Ask and Plan mode. '
         + 'If it labels a tool that changes something as read-only, that change happens without anyone being asked. '
         + 'Every other tool of this server still asks. No other server is affected, and open chats take this from their next message.',
       confirmLabel: 'Trust its labels',
@@ -713,7 +713,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
               title={readOnlyTrusted === null
                 ? `Whether ${g.server.name}'s read-only labels are trusted`
                 : readOnlyTrusted
-                  ? "Its tools labelled read-only run as reads: in Ask and Plan mode, and without asking under Trust reads. Its other tools still ask."
+                  ? "Its tools labelled read-only run as reads do: without asking, and in Ask and Plan mode. Its other tools still ask."
                   : "None of its tools is treated as read-only, whatever it says: each one asks, and Ask and Plan mode refuse them."}
               disabled={readOnlyTrusted === null}
               disabledReason="couldn't read which servers' read-only labels you trust, so none can be changed. Reload the page to try again."

@@ -208,6 +208,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "channel_trust_channel_unknown": "That group is not tracked on this channel.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
+    # ── the owner's answer to someone new (handlers/messaging.api_notification_trust) ──
+    "sender_answer_invalid": "Give the notification's ts and allow or deny.",
+    "sender_ask_none": (
+        "That notification asks nothing about someone new, so it has nothing to allow or deny."
+    ),
+    "sender_ask_answered": "That notification has already been answered.",
     # ── a channel's owner and its pairing (handlers/channel_owner.py) ──
     "channel_unknown": "No chat channel by that name is connected.",
     "channel_pairing_unsupported": "That channel cannot pair its owner from the dashboard.",

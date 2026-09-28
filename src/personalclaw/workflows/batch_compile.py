@@ -132,6 +132,9 @@ ORCHESTRATION_TOOLS = frozenset(
         # denial is about the fan-out, not about which door minted the row.
         "workflow_start_draft",
         "workflow_author",
+        # A check is the author's dry run, split out as a read of its own: authoring stays off
+        # a leaf either way.
+        "workflow_check",
         "workflow_plan",
         "workflow_fork",
         "workflow_run_from",

@@ -1616,6 +1616,12 @@ export interface NotificationItem {
    *  `reversal_id` is the RECORD id the undo endpoint takes; `reversal` is the provider's own
    *  opaque handle, carried for the audit trail only and never sent back by the UI. */
   reversal_id?: string; reversal?: string; action_type?: string; rung?: string
+  /** Set on the note the trust gate raises for someone new (`channel_trust.note_unknown_sender`):
+   *  `event: 'channel.unknown_sender'`, who wrote (`sender_id`, `sender_name`) on which chat channel
+   *  (`provider`), and the `actions` it offers. `trust_answer` is the owner's answer once given,
+   *  platform-owned, so a note never arrives answered. */
+  event?: string; provider?: string; sender_id?: string; sender_name?: string; actions?: string[]
+  trust_answer?: 'allowed' | 'denied'
 }
 // Schedule job — the schedule-kind projection of a Trigger (from /api/triggers).
 // Three orthogonal axes: schedule KIND (every/cron/at), the action (provider +
@@ -5015,10 +5021,9 @@ export interface PendingApproval {
   agent: string
   /** The effective risk the chat card shows; "" when the origin did not resolve one. */
   risk: string
-  // The backend's command-screening verdict (`task_modes.read_only_command`), #2821.
-  // `null` when this call runs no shell — the tri-state matters, so decode it with
-  // `readOnlyCommandOf` rather than testing truthiness.
-  is_read_only?: boolean | null
+  // Whether this call is established as a read (`task_modes.reads_only`), #2821: its tool
+  // declares it only reads, or its command screened read-only. Decode it with `readOnlyOf`.
+  is_read_only?: boolean
   grant_agent: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
@@ -8127,6 +8132,11 @@ export const api = {
       summaries?: number; did_ids?: string[]; suppressed_ids?: string[]; suppressed?: number
     }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
   unackNotification: (ts: string) => post('/api/notifications/unack', { ts }),
+  /** Allow or deny someone new, from the notification that says they wrote. Letting them in asks
+   *  your consent first: the server asks, and this confirms. */
+  answerUnknownSender: (ts: string, action: 'allow' | 'deny') =>
+    withSecurityConsent((c) => post<{ ok: boolean; answer: 'allowed' | 'denied' }>(
+      '/api/notifications/trust', c ? { ts, action, confirm: true } : { ts, action })),
   ackAllNotifications: () => post('/api/notifications/ack-all'),
   // DELETE with a body, so it can't use del(); the failure still funnels through apiError like
   // every other thrower — the literal 'delete failed' it threw before surfaced VERBATIM in the
@@ -8994,8 +9004,10 @@ export const api = {
   restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
   // Someone new (a row a channel that speaks as you held back): let them talk to your agent on
   // that channel. Their message itself is not handed to the agent.
+  // Letting them in asks your consent first: the server asks, and this confirms.
   pairInboxSender: (id: string) =>
-    post<{ ok: boolean; paired: boolean }>(`/api/inbox/${encodeURIComponent(id)}/pair`),
+    withSecurityConsent((c) => post<{ ok: boolean; paired: boolean }>(
+      `/api/inbox/${encodeURIComponent(id)}/pair`, c ? { confirm: true } : {})),
   // Approve one proposal through the C6 apply dispatcher. `edited` is the
   // edit-then-approve payload and REPLACES the stored one (server refuses it for a
   // non-editable proposal). Resolves with ok:false on a failed apply — the item is still

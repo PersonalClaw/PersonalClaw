@@ -105,6 +105,7 @@ class InProcessMcpToolProvider(ToolProvider):
         from personalclaw.tool_providers.base import (
             BUILDS_META_KEY,
             PROPOSES_META_KEY,
+            TELLS_OWNER_META_KEY,
             RiskLevel,
             risk_from_annotations,
         )
@@ -141,6 +142,7 @@ class InProcessMcpToolProvider(ToolProvider):
                     risk_level=risk,
                     builds=meta.get(BUILDS_META_KEY) is True,
                     proposes=meta.get(PROPOSES_META_KEY) is True,
+                    tells_owner=_owner_notice_args(meta.get(TELLS_OWNER_META_KEY)),
                 )
             )
         self._tools = defs
@@ -173,6 +175,14 @@ class InProcessMcpToolProvider(ToolProvider):
         except Exception as exc:  # noqa: BLE001 - surface any tool error to the model
             logger.debug("in-process tool %s failed: %s", tool_name, exc, exc_info=True)
             return ToolResult(success=False, error=str(exc))
+
+
+def _owner_notice_args(declared: Any) -> tuple[str, ...]:
+    """The arguments a tool dict declares a call may carry and still only tell the owner
+    (``TELLS_OWNER_META_KEY``); none for a dict that declares no list of names."""
+    if not isinstance(declared, (list, tuple)):
+        return ()
+    return tuple(str(a) for a in declared if isinstance(a, str) and a)
 
 
 def format_tool_result(result: ToolResult) -> str:

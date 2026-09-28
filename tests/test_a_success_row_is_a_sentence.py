@@ -91,7 +91,7 @@ def workflow(monkeypatch):
 
 
 def _start(**config: Any) -> ActionResult:
-    ctx = cast(Any, SimpleNamespace(context="trigger-summary"))
+    ctx = cast(Any, SimpleNamespace(trigger_id="trigger-summary"))
     return asyncio.run(RunWorkflowActionProvider().execute({"workflow": NAME, **config}, ctx))
 
 

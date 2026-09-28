@@ -182,6 +182,11 @@ class EngineServices:
     #: no-ops without `has_vector`. So a terminal-run controller test never touches the real
     #: home, and production wires `MemoryService.over_vector_store(self.vector_memory)` in.
     memory: Any = None
+    #: `(trigger_id, *, error, summary, run_id) -> bool` — says how a run a trigger started went,
+    #: on that trigger's route, once it has ended (`run_finish.report_to_its_trigger`). The
+    #: gateway wires its trigger delivery here, since the fire that started the run only said it
+    #: launched; every test and CLI path leaves it None.
+    report_to_trigger: Any = None
     #: `() -> float` — the wall clock, as a seam. The controller's scheduling decisions
     #: (`_wake_due_nodes` resolving a parked node, and the `now` a `wait` computes its deadline
     #: against) read through this rather than `time.time()` directly, so a replay can substitute
@@ -2188,6 +2193,7 @@ class RunController:
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)
+            run_finish.report_to_its_trigger(self, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
             await run_finish.drain_overlap_queue(self)

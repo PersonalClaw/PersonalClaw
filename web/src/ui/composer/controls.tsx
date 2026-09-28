@@ -10,8 +10,8 @@ import type { ComposerData } from './types'
 import type { ApprovalMode, ReasoningEffort } from '../../lib/api'
 
 const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
-  { id: 'normal', label: 'Normal', hint: 'Ask before every tool' },
-  { id: 'trust_reads', label: 'Trust reads', hint: 'Auto-approve read-only' },
+  { id: 'normal', label: 'Normal', hint: 'Reads run; the rest ask when they need approval' },
+  { id: 'trust_reads', label: 'Trust reads', hint: 'Read-only shell commands run too' },
   { id: 'trust', label: 'Trust', hint: 'Auto-approve in this chat' },
   { id: 'yolo', label: 'YOLO', hint: 'Auto-approve everywhere — auto-expires, re-enable to extend' },
 ]

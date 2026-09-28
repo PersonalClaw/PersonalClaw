@@ -1,13 +1,36 @@
 """Tests for targeted send_message — channel and user routing, plus api_channel_profile."""
 
 import os
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import channel_transports
+from personalclaw.channel_transports.base import ChannelTransportProvider
 from personalclaw.dashboard.handlers import api_channel_profile, api_send_message  # noqa: E402
+
+
+class _SlackTransport(ChannelTransportProvider):
+    """Slack as it is set up here: it knows its own conversation ids, which is how an id sent
+    without naming its channel finds it (`channel_delivery.channel_of_id`)."""
+
+    name = "slack"
+    display_name = "Slack"
+
+    async def connect(self) -> bool:
+        return True
+
+    async def disconnect(self) -> None:
+        return None
+
+    async def send(self, message) -> bool:
+        return True
+
+    def validate_target(self, target: str) -> str:
+        return "" if re.fullmatch(r"[CDGW][A-Z0-9]+", target) else "not a Slack id"
 
 
 def _make_app(state) -> web.Application:
@@ -21,7 +44,8 @@ def _make_app(state) -> web.Application:
 def _mock_state(channel_delivery=None, owner_id=""):
     """A dashboard state whose owner is reached the way the real one reaches it: through the
     channel registry, with the owner id that channel keeps for ITSELF (``reach_owner``). So the
-    delivery is registered as ``slack`` and the owner id stored under Slack's own key."""
+    delivery is registered as ``slack``, Slack is set up as a chat channel, and the owner id is
+    stored under Slack's own key."""
     state = MagicMock()
     state.channel_delivery = channel_delivery
     state.owner_id = owner_id
@@ -29,6 +53,7 @@ def _mock_state(channel_delivery=None, owner_id=""):
         from personalclaw.channel_delivery import register
 
         register(channel_delivery, provider="slack")
+        channel_transports.register_transport(_SlackTransport())
     if owner_id:
         os.environ[_SLACK_OWNER_KEY] = owner_id
     return state
@@ -41,6 +66,7 @@ _SLACK_OWNER_KEY = "PERSONALCLAW_OWNER_ID_SLACK"
 def _forget_the_slack_owner():
     yield
     os.environ.pop(_SLACK_OWNER_KEY, None)
+    channel_transports.unregister_transport("slack")
 
 
 @pytest.fixture
@@ -116,32 +142,32 @@ class TestTargetedUser:
         slack = MagicMock()
         slack.open_dm = AsyncMock(return_value="D_USER_DM")
         slack.deliver_text = AsyncMock(return_value="1712793600.000001")
-        state = _mock_state(channel_delivery=slack, owner_id="U_OWNER")
+        # The owner, as Slack knows them: the one user a message is sent to.
+        state = _mock_state(channel_delivery=slack, owner_id="U0123ABC456")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/send-message",
-                    json={"text": "hello user", "user": "U0123ABC456"},
-                )
-                assert resp.status == 200
-                data = await resp.json()
-                assert data == {
-                    "ok": True,
-                    "channel": True,
-                    "session": False,
-                    "ts": "1712793600.000001",
-                }
-                slack.open_dm.assert_called_once_with("U0123ABC456")
-                slack.deliver_text.assert_called_once_with(
-                    "D_USER_DM",
-                    "hello user",
-                    thread_ts=None,
-                    unfurl_links=None,
-                    unfurl_media=None,
-                    reply_broadcast=None,
-                )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/send-message",
+                json={"text": "hello user", "user": "U0123ABC456"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data == {
+                "ok": True,
+                "channel": True,
+                "session": False,
+                "ts": "1712793600.000001",
+            }
+            slack.open_dm.assert_called_once_with("U0123ABC456")
+            slack.deliver_text.assert_called_once_with(
+                "D_USER_DM",
+                "hello user",
+                thread_ts=None,
+                unfurl_links=None,
+                unfurl_media=None,
+                reply_broadcast=None,
+            )
 
     @pytest.mark.asyncio
     async def test_disallowed_user_returns_403(self, mock_sel):
@@ -150,23 +176,22 @@ class TestTargetedUser:
         state = _mock_state(channel_delivery=slack, owner_id="U_OWNER")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=False):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post(
-                    "/api/send-message",
-                    json={"text": "hello", "user": "UBADUSER01"},
-                )
-                assert resp.status == 403
-                data = await resp.json()
-                assert "allowlist" in data["error"]
-                state.notify.assert_not_called()
-                mock_sel.log_tool_invocation.assert_called_once_with(
-                    session_key="dashboard",
-                    tool_name="send_message",
-                    outcome="denied",
-                    downstream_service="channel",
-                    resources="target_user=UBADUSER01",
-                )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/send-message",
+                json={"text": "hello", "user": "UBADUSER01"},
+            )
+            assert resp.status == 403
+            data = await resp.json()
+            assert "allowlist" in data["error"]
+            state.notify.assert_not_called()
+            mock_sel.log_tool_invocation.assert_called_once_with(
+                session_key="dashboard",
+                tool_name="send_message",
+                outcome="denied",
+                downstream_service="channel",
+                resources="target_user=UBADUSER01",
+            )
 
 
 class TestMutualExclusion:
@@ -352,15 +377,15 @@ class TestSlackProfile:
                 "timezone": "America/Los_Angeles",
             }
         )
-        state = _mock_state(channel_delivery=slack)
+        # The owner, as Slack knows them: the one user whose profile is read.
+        state = _mock_state(channel_delivery=slack, owner_id="U0123ABC456")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 200
-                data = await resp.json()
-                assert data["profile"]["name"] == "testuser"
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["profile"]["name"] == "testuser"
 
     @pytest.mark.asyncio
     async def test_missing_user_returns_400(self, mock_sel):
@@ -379,7 +404,7 @@ class TestSlackProfile:
         app = _make_app(state)
 
         async with TestClient(TestServer(app)) as client:
-            resp = await client.post("/api/channel/profile", json={"user": "not-a-slack-id"})
+            resp = await client.post("/api/channel/profile", json={"user": "not an id"})
             assert resp.status == 400
 
     @pytest.mark.asyncio
@@ -397,51 +422,50 @@ class TestSlackProfile:
         """Slack API failure returns 502 with SEL error log."""
         slack = MagicMock()
         slack.resolve_user_profile = AsyncMock(side_effect=Exception("API down"))
-        state = _mock_state(channel_delivery=slack)
+        # The owner, as Slack knows them: the one user whose profile is read.
+        state = _mock_state(channel_delivery=slack, owner_id="U0123ABC456")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 502
-                mock_sel.log_tool_invocation.assert_called_with(
-                    session_key="dashboard",
-                    tool_name="read_channel_profile",
-                    outcome="error",
-                    downstream_service="channel",
-                    resources="user=U0123ABC456",
-                )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 502
+            mock_sel.log_tool_invocation.assert_called_with(
+                session_key="dashboard",
+                tool_name="read_channel_profile",
+                outcome="error",
+                downstream_service="channel",
+                resources="user=U0123ABC456",
+            )
 
     @pytest.mark.asyncio
     async def test_slack_not_connected_returns_503(self, mock_sel):
-        """Slack not connected returns 503."""
-        state = _mock_state(channel_delivery=None)
+        """Slack set up, and the owner known there, but not connected: 503."""
+        state = _mock_state(channel_delivery=None, owner_id="U0123ABC456")
+        channel_transports.register_transport(_SlackTransport())
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 503
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 503
 
     @pytest.mark.asyncio
     async def test_disallowed_user_returns_403(self, mock_sel):
         """Profile lookup for user not in allowlist returns 403 with SEL denied."""
-        state = _mock_state(channel_delivery=MagicMock())
+        state = _mock_state(channel_delivery=MagicMock(), owner_id="U_OWNER")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=False):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 403
-                data = await resp.json()
-                assert data == {"error": "user not in allowlist"}
-                mock_sel.log_tool_invocation.assert_called_once_with(
-                    session_key="dashboard",
-                    tool_name="read_channel_profile",
-                    outcome="denied",
-                    downstream_service="channel",
-                    resources="user=U0123ABC456",
-                )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 403
+            data = await resp.json()
+            assert data == {"error": "user not in allowlist"}
+            mock_sel.log_tool_invocation.assert_called_once_with(
+                session_key="dashboard",
+                tool_name="read_channel_profile",
+                outcome="denied",
+                downstream_service="channel",
+                resources="user=U0123ABC456",
+            )
 
     @pytest.mark.asyncio
     async def test_rate_limit_logs_sel_denied(self, mock_sel):
@@ -449,22 +473,21 @@ class TestSlackProfile:
         import time
 
         slack = MagicMock()
-        state = _mock_state(channel_delivery=slack)
+        state = _mock_state(channel_delivery=slack, owner_id="U0123ABC456")
         # Pre-fill 5 lookups to trigger rate limit
         state._profile_lookup_times = [time.monotonic()] * 5
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 429
-                mock_sel.log_tool_invocation.assert_called_once_with(
-                    session_key="dashboard",
-                    tool_name="read_channel_profile",
-                    outcome="denied",
-                    downstream_service="channel",
-                    resources="user=U0123ABC456 reason=rate_limit",
-                )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 429
+            mock_sel.log_tool_invocation.assert_called_once_with(
+                session_key="dashboard",
+                tool_name="read_channel_profile",
+                outcome="denied",
+                downstream_service="channel",
+                resources="user=U0123ABC456 reason=rate_limit",
+            )
 
     @pytest.mark.asyncio
     async def test_profile_redaction(self, mock_sel):
@@ -479,18 +502,18 @@ class TestSlackProfile:
                 "status_text": f"check {exfil_url}",
             }
         )
-        state = _mock_state(channel_delivery=slack)
+        # The owner, as Slack knows them: the one user whose profile is read.
+        state = _mock_state(channel_delivery=slack, owner_id="U0123ABC456")
         app = _make_app(state)
 
-        with patch("personalclaw.dashboard.handlers.messaging._is_owner_user", return_value=True):
-            async with TestClient(TestServer(app)) as client:
-                resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
-                assert resp.status == 200
-                data = await resp.json()
-                status = data["profile"].get("status_text", "")
-                # The exfiltration URL payload should be redacted
-                assert "REDACTED" in status
-                assert "A" * 200 not in status
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/channel/profile", json={"user": "U0123ABC456"})
+            assert resp.status == 200
+            data = await resp.json()
+            status = data["profile"].get("status_text", "")
+            # The exfiltration URL payload should be redacted
+            assert "REDACTED" in status
+            assert "A" * 200 not in status
 
 
 class TestThreadTsAndBroadcast:

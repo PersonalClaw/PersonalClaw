@@ -153,7 +153,7 @@ def _state(tmp_path):
 def _wire_services(state, monkeypatch):
     from personalclaw.action_providers import services as svc
 
-    wired = svc.ActionServices(state=state, spawn_background=lambda coro: None)
+    wired = svc.ActionServices(state=state)
     monkeypatch.setattr(svc, "_services", wired)
     assert svc.get_action_services() is wired
     return wired

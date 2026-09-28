@@ -1,18 +1,20 @@
 """``invoke-agent`` hook provider — spawn a child agent on a lifecycle event.
 
 The marquee E3 action: a coder agent's ``Stop`` hook spawns a ``code-reviewer``
-agent. Guarded three ways and always fire-and-forget so the lifecycle never
+agent. Guarded two ways and always fire-and-forget so the lifecycle never
 blocks on the child:
 
 * **Recursion depth cap** (``_HOOK_INVOKE_MAX_DEPTH``): a spawned agent can have
   its own hooks that spawn agents. ``fire_for_ids`` injects ``__hook_depth``
   into the payload from the originating agent's depth; at the cap we refuse.
-* **Concurrency cap** (``_HOOK_INVOKE_MAX_CONCURRENT`` semaphore): bounds total
-  in-flight hook-spawned agents so a wide fan-out can't fork-bomb.
 * **Approval**: spawn is requested with ``approval_mode="auto"`` only when the
   hook opts in (``approval_mode: "auto"``) or the global
   ``auto_approve_subagent_spawn`` is set; otherwise SubagentManager.spawn
   applies its normal approval gate (rejected if no interactive approver).
+
+How many hook-spawned agents run at once is the subagent manager's to bound: past its
+concurrency cap a spawn waits in its queue. A spawn it refuses outright (low memory, an
+incident, the day's budget) is this action's failure.
 
 ``action_config`` shape::
 
@@ -26,7 +28,6 @@ blocks on the child:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -35,7 +36,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
-from personalclaw.action_providers.services import get_action_services
+from personalclaw.action_providers.services import get_action_services, spawn_refusal
 from personalclaw.action_providers.template import render_template
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,6 @@ logger = logging.getLogger(__name__)
 # Depth 0 = the user's top-level agent. A child spawned by a hook is depth 1, its
 # child depth 2, … We refuse at the cap so coder→reviewer→… can't recurse forever.
 _HOOK_INVOKE_MAX_DEPTH = 3
-# Total in-flight hook-spawned agents (matches the webhook path's _HOOK_MAX_CONCURRENT).
-_HOOK_INVOKE_MAX_CONCURRENT = 6
-_invoke_agent_sem = asyncio.Semaphore(_HOOK_INVOKE_MAX_CONCURRENT)
 
 
 class InvokeAgentActionProvider(ActionProvider):
@@ -83,12 +81,6 @@ class InvokeAgentActionProvider(ActionProvider):
         if services is None or services.subagents is None:
             return ActionResult(success=False, error="invoke-agent: subagent manager unavailable")
 
-        if _invoke_agent_sem.locked():
-            return ActionResult(
-                success=False,
-                error=f"invoke-agent capacity reached ({_HOOK_INVOKE_MAX_CONCURRENT} in flight)",
-            )
-
         agent = (action_config.get("agent") or "").strip()
         model = (action_config.get("model") or "").strip() or None
         try:
@@ -117,32 +109,34 @@ class InvokeAgentActionProvider(ActionProvider):
 
         title = run_title(ctx.trigger_id, task)
 
-        async def _spawn() -> None:
-            try:
-                services.subagents.spawn(  # type: ignore[union-attr]
-                    task=task,
-                    parent_session_key=parent_key,
-                    agent=agent,
-                    max_turns=max_turns,
-                    model=model,
-                    approval_mode=approval_mode,
-                    capability_class=capability_class,
-                    silent=False,
-                    # The trigger whose fire this is (`ActionContext.trigger_id`), so an approval
-                    # the agent asks for names it and can be run again from the Inbox.
-                    trigger_id=ctx.trigger_id,
-                    # What the run is called: its trigger's name, else its task's first line.
-                    title=title,
-                )
-            except Exception:
-                logger.warning("invoke-agent: spawn failed", exc_info=True)
-            finally:
-                _invoke_agent_sem.release()
-
-        await _invoke_agent_sem.acquire()
-        # Fire-and-forget: the lifecycle event returns immediately; the child
-        # runs in the background (and the semaphore is released in _spawn).
-        services.spawn_background(_spawn())
+        # Fire-and-forget: spawn() schedules the child and returns at once, so the lifecycle never
+        # waits on it. A spawn it refuses there is this fire's failure: a launch says nothing until
+        # the agent ends, so a refusal nobody reported would leave the trigger silent.
+        try:
+            info = services.subagents.spawn(
+                task=task,
+                parent_session_key=parent_key,
+                agent=agent,
+                max_turns=max_turns,
+                model=model,
+                approval_mode=approval_mode,
+                capability_class=capability_class,
+                silent=False,
+                # The trigger whose fire this is (`ActionContext.trigger_id`): an approval the
+                # agent asks for names it and can be run again from the Inbox, and the agent says
+                # how it went on the trigger's route when it ends.
+                trigger_id=ctx.trigger_id,
+                # What the run is called: its trigger's name, else its task's first line.
+                title=title,
+            )
+        except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
+            logger.warning("invoke-agent: spawn failed", exc_info=True)
+            return ActionResult(
+                success=False, error=f"invoke-agent: the agent did not start: {exc}"
+            )
+        refused = spawn_refusal(info)
+        if refused:
+            return ActionResult(success=False, error=f"invoke-agent: {refused}")
         # "launched", not "succeeded": the spawned agent's real outcome is recorded
         # by its own run, not known here (T7 honest "started ≠ succeeded" status).
         return ActionResult(

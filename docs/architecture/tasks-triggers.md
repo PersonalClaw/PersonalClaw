@@ -191,6 +191,16 @@ stands in. Before, the chat could only make an agent task, and nothing could
 name the channel a message for the owner went out on: it went to the first
 connected channel by name, Discord ahead of Telegram.
 
+**A Send message action is checked where it is saved.** The Triggers page's
+create and edit (`_action_problem`) and the chat's and CLI's `automation_create`
+and `automation_update` (`tools.unsendable_message_refusal`) ask
+`send_message_provider.config_problem`: its **Send on** must be a chat channel
+set up here, a channel id must be one that channel takes, and an id with no
+channel named must be one exactly one chat channel set up here takes, as its
+fire requires (`docs/architecture/inbox-channels.md`, "An id goes out on the
+channel that issued it"). Before, a name for a channel that isn't set up saved,
+and every fire failed.
+
 **A trigger dry run executes nothing and records nothing.** `POST
 /api/triggers/{id}/run {"dry_run": true}` (the **Dry run** button) answers with
 the gate plan a hand-run would apply and `would_run` — the action a real run
@@ -295,6 +305,22 @@ When the action IS a dashboard notification (`notify`), a successful fire
 sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
+
+**Work a fire only started reports when it ends.** An action that starts an
+agent task or a workflow run returns `launched` (or `queued` behind a run in
+flight), and one that stopped for you returns `needs_input`; the fire sends no
+report for any of them (`gateway._reports_later`), since nothing has finished.
+The agent task reports on the trigger's route when it ends
+(`GatewayOrchestrator._report_to_its_trigger`, from the subagent completion):
+"X finished" and the agent's reply, or "X failed" and why, and the plain
+subagent note is not sent as well. A workflow run reports the same way from its
+terminal write (`workflows/run_finish.report_to_its_trigger`, wired as
+`EngineServices.report_to_trigger`) and links to the run; a run that was
+cancelled or declined says nothing, since whoever stopped it knows. A Run now
+that starts either reports the same way. A spawn the subagent manager refuses on
+the spot (low memory, an incident, the day's budget) is the fire's own failure
+(`action_providers.services.spawn_refusal`), and a fire that stopped for you
+asks in the Inbox (`triggers/parks.py`).
 
 **An agent a trigger starts carries the trigger.** Both store-trigger dispatches
 set `ActionContext.trigger_id`, and so does a lifecycle hook's fire and its Test

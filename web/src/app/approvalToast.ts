@@ -25,13 +25,13 @@ export function approvalToastMessage(input: {
   tool: string
   session: string
   risk?: ApprovalRisk
-  /** The backend's command-screening verdict, off the same `approval` frame the card
-   *  reads (#2821). Present so the toast and the card cannot describe one call
-   *  differently — they share the vocabulary, so they must share the inputs too. */
-  readOnlyCommand?: boolean
+  /** The backend's read verdict, off the same `approval` frame the card reads (#2821).
+   *  Present so the toast and the card cannot describe one call differently — they share
+   *  the vocabulary, so they must share the inputs too. */
+  readOnly?: boolean
 }): string {
   const line = blastRadiusLine(
-    deriveBlastRadius({ tool: input.tool, risk: input.risk, readOnlyCommand: input.readOnlyCommand }),
+    deriveBlastRadius({ tool: input.tool, risk: input.risk, readOnly: input.readOnly }),
   )
   const touches = line ? ` (${line})` : ''
   // WHERE TO ANSWER comes from `approvalDestination`, not from the raw session key. The key is

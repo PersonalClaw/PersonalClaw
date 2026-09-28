@@ -115,7 +115,7 @@ def harness(monkeypatch):
 
 async def _fire(**config: Any):
     """One trigger-origin start through the real provider."""
-    ctx = cast(Any, SimpleNamespace(context="trigger-wv14"))
+    ctx = cast(Any, SimpleNamespace(trigger_id="trigger-wv14"))
     return await RunWorkflowActionProvider().execute({"workflow": NAME, **config}, ctx)
 
 

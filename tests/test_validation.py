@@ -3,7 +3,7 @@
 import pytest
 
 from personalclaw.validation import (
-    CHANNEL_ID_RE,
+    CHAT_TARGET_ID_RE,
     LEARN_ADD_SCHEMA,
     MCP_AUTOMATION_SCHEMAS,
     SEND_MESSAGE_SCHEMA,
@@ -400,27 +400,34 @@ class TestValidateStringField:
             validate_string_field({"x": "c"}, "x", allowed=allowed)
 
 
-# ── Channel ID Regex ──
+# ── A chat target id: the shape every platform's shares ──
 
 
 @pytest.mark.parametrize(
-    "channel_id,valid",
+    "target,valid",
     [
-        ("C01ABC23DEF", True),  # standard channel
-        ("G01ABC23DEF", True),  # legacy private channel
-        ("D01ABC23DEF", True),  # DM channel
-        ("W01ABC23DEF", True),  # cross-org shared channel
-        ("X01ABC23DEF", False),  # invalid prefix
-        ("C", False),  # too short
-        ("c01abc", False),  # lowercase rejected
+        ("C01ABC23DEF", True),  # a Slack channel
+        ("-1001234567890", True),  # a Telegram group chat
+        ("@example_channel", True),  # a public Telegram channel
+        ("123456789012345678", True),  # a Discord channel
+        ("owner@example.com", True),  # an email address
         ("", False),  # empty
+        ("C01 ABC", False),  # a space
+        ("C01\x07ABC", False),  # a control character
+        ("x" * 257, False),  # longer than any platform's
     ],
 )
-def test_channel_id_re(channel_id, valid):
-    assert bool(CHANNEL_ID_RE.match(channel_id)) == valid
+def test_chat_target_id_re(target, valid):
+    """🔴 Before: a Slack-shaped pattern, so every other channel's ids were refused."""
+    assert bool(CHAT_TARGET_ID_RE.match(target)) == valid
 
 
 class TestSendMessageSchema:
+    @pytest.mark.parametrize("field", ["channel", "user"])
+    def test_another_channels_id_passes(self, field):
+        result = validate_tool_args({"text": "hi", field: "-1001234567890"}, SEND_MESSAGE_SCHEMA)
+        assert result[field] == "-1001234567890"
+
     def test_thread_ts_valid(self):
         result = validate_tool_args(
             {"text": "hi", "thread_ts": "1712793600.123456"}, SEND_MESSAGE_SCHEMA

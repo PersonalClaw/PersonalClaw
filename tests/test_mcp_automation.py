@@ -119,7 +119,7 @@ def test_a_dry_run_needs_no_gateway_and_executes_nothing(home):
         "automation_create",
         {"name": "Notes", "when": "when a file in ~/notes changes", "message": "go"},
     )
-    out = A._call_tool("automation_run", {"id": "file:notes", "dry_run": True})
+    out = A._call_tool("automation_dry_run", {"id": "file:notes"})
     assert "nothing was executed" in out
     assert _data(out)["plan"]["executes"] is False
 

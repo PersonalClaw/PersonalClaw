@@ -159,9 +159,10 @@ reads that entry:
 | The Inbox | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}` |
 
 The entry carries enough to act on: which chat (`session`, `session_title`), which agent
-(`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`,
-`is_read_only`). `_hold_approval` is the one registration and writes all of the above together;
-there is no path by which a surface learns of an approval another does not list. A chat
+(`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`, and
+`is_read_only`: whether the call is established as a read, true or false, from
+`task_modes.reads_only`). `_hold_approval` is the one registration and writes all of the above
+together; there is no path by which a surface learns of an approval another does not list. A chat
 approval used to broadcast its own frame and register nowhere else, so it reached only its own
 chat.
 
@@ -480,6 +481,19 @@ Inbox ending "This was for <channel> only, and it could not go out there: …". 
 never stands in for the one named. A name that is not a chat channel set up here is refused
 with the ones that are (`channel_delivery.named_chat_channel`), so the owner can be asked.
 
+**An id goes out on the channel that issued it.** A chat, channel or user id sent without
+naming its channel (`notify`'s and `send-message`'s `channel` and `user`, a heartbeat's
+`channel:<chan>:<ts>`, a chat's thread) goes to the one chat channel set up here that takes it:
+each is asked whether the id is one of its own (`validate_target`), and for a user id whether it
+is the owner's id there (`owner_id_for`), the owner being the one user core messages
+(`channel_delivery.channel_of_id`). Core knows no platform's id shape: the only check it makes
+itself is the one every id shares, no spaces or control characters and no longer than any
+platform's (`id_problem`). An id no channel set up here takes, or more than one takes (an
+18-digit number is a Telegram chat and a Discord channel alike), is refused with the channels
+to choose from, and nothing is sent; naming the channel (`via`) settles it. The tracked-channel
+allowlist asked is that channel's own. It used to go to whichever channel sorted first, which
+posted another platform's id there, and only a Slack-shaped id got past the route at all.
+
 **Someone new, on a channel that speaks as the owner.** A channel whose messages go out as
 the owner themselves, from their own mailbox, declares `ChannelCapabilities.speaks_as_owner`.
 The gate hands it no pairing note for a stranger, and the door holds the stranger's direct
@@ -492,6 +506,17 @@ row raises no inbox event, so a sender the gate refused arms no automation. The 
 message first (the door hands it `hold_for_owner`) and composes the owner's once-a-day notice
 from what was held: a message the Inbox kept out raises no notice and leaves the window open,
 so the notice never names a message that is not there.
+
+**You answer someone new from the notification.** The note the gate raises for someone new
+(`channel_trust.note_unknown_sender`, `event: channel.unknown_sender`) offers **Allow** and
+**Deny** on the Notifications page (`POST /api/notifications/trust`, owner-only). The sender is
+read off the stored note, never the request, and only a sender the gate recorded telling you
+about is answered (`channel_trust.owner_was_asked_about`): a note another emitter wrote, or one
+an app raised, lets no one in. An Allow asks your consent first, and so does the Inbox's
+**Pair**, in the same words (`channel_trust.sender_consent`): whoever is let in is read as you
+are. A Deny asks nothing. The answer goes through `channel_trust.apply_trust_action`, which
+writes the security audit (`sender_paired` / `sender_denied`), and is recorded on the note
+(`trust_answer`, platform-owned), which then offers neither again.
 
 ### Vendor-blind grammar
 

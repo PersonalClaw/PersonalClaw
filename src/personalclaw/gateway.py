@@ -153,6 +153,28 @@ _AUTOUPDATE_PIP_TIMEOUT = 400.0  # `pip install -e .` — forks build backends
 # being cut mid-word (as the old 200-char slice did, dropping FIX from every sink).
 _ERROR_SUMMARY_MAX = 512
 
+
+def _delivery_owning(channel_id: str) -> Any:
+    """The connected channel that issued *channel_id* (`channel_delivery.channel_of_id`), or None
+    when no channel set up here, or more than one, could have: never whichever sorts first."""
+    from personalclaw.channel_delivery import channel_of_id, delivery_for
+
+    provider, problem = channel_of_id(channel_id)
+    if problem:
+        logger.info("channel id %s: %s", channel_id, problem)
+    return delivery_for(provider) if provider else None
+
+
+def _reports_later(result: Any) -> bool:
+    """Whether a fire's action only started or parked its work (``launched``, ``queued``,
+    ``needs_input``: `Outcome.DEFERRED`), so its trigger hears how it went when that work ends
+    or is answered, not now."""
+    from personalclaw.triggers.executor import Outcome, classify
+
+    outcome, _ = classify(str(getattr(result, "outcome", "") or ""))
+    return outcome == Outcome.DEFERRED.value
+
+
 # How often the earned-autonomy promotion scan runs. Six hours, not the poll
 # interval it rides: one pass reads the SEL tail once per declared action type, and a rung
 # is earned over DAYS, so a faster clock would buy nothing and cost a file scan a minute.
@@ -618,6 +640,7 @@ class GatewayOrchestrator:
                                 # a channel a second time.
                                 asked_on_channel=True,
                                 risk_level=event.risk_level,
+                                tool_kind=event.tool_kind,
                             )
                         )
 
@@ -687,6 +710,7 @@ class GatewayOrchestrator:
                     session=asked_in,
                     trigger=asked_by,
                     risk_level=event.risk_level,
+                    tool_kind=event.tool_kind,
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel). Approving was always the answer here, and
@@ -1622,11 +1646,16 @@ class GatewayOrchestrator:
             # A failure's own reason, as the raise path below sends its envelope: without it an
             # action that RETURNED its failure reached the inbox as "<name> failed", nothing more.
             fired_ok = bool(getattr(result, "success", True))
-            self._deliver_fire_outcome(
-                trigger,
-                ok=fired_ok,
-                error="" if fired_ok else str(getattr(result, "error", "") or ""),
-            )
+            # An action that only STARTED its work (an agent task, a workflow run) or parked it
+            # says nothing yet: "<name> finished" went out the moment the agent started. The work
+            # reports on the trigger's route when it ends (`_report_to_its_trigger`), and a
+            # parked one asks in the Inbox.
+            if not (fired_ok and _reports_later(result)):
+                self._deliver_fire_outcome(
+                    trigger,
+                    ok=fired_ok,
+                    error="" if fired_ok else str(getattr(result, "error", "") or ""),
+                )
         except asyncio.CancelledError:
             # 🔴 A STOP OR A RESTART CUT THIS FIRE OFF. It cancels the loop the fire runs in, and a
             # cancellation is not an `Exception`: the branch below never saw it, the executor gave
@@ -2023,8 +2052,48 @@ class GatewayOrchestrator:
             logger.debug("failure dedup check failed for %s", trigger, exc_info=True)
             return False
 
-    def _deliver_fire_outcome(self, trigger: Any, *, ok: bool, error: str = "") -> None:
+    def _report_to_its_trigger(
+        self, trigger_id: str, *, error: str = "", summary: str = "", run_id: str = ""
+    ) -> bool:
+        """Say how the work a trigger started went, on that trigger's route, once it has ended:
+        "<name> finished" and what it produced, or "<name> failed" and ``error``.
+
+        For an agent task (`_subagent_done`) and a workflow run (`EngineServices.
+        report_to_trigger`): the fire, or the Run now, that started either said nothing, since
+        nothing had happened yet (`_reports_later`). Returns whether a note went out; a trigger
+        whose route is ``none`` sends nothing.
+        """
+        if not trigger_id:
+            return False
+        try:
+            from personalclaw.config.loader import config_dir
+            from personalclaw.triggers.store import TriggerStore
+
+            row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+        except Exception:  # noqa: BLE001 - a lookup that fails reports nothing, never raises
+            logger.debug("could not read trigger %s for its report", trigger_id, exc_info=True)
+            return False
+        if row is None:
+            return False
+        return self._deliver_fire_outcome(
+            row.trigger, ok=not error, error=error, summary=summary, run_id=run_id
+        )
+
+    def _deliver_fire_outcome(
+        self,
+        trigger: Any,
+        *,
+        ok: bool,
+        error: str = "",
+        summary: str = "",
+        run_id: str = "",
+    ) -> bool:
         """Notify the user about a completed fire, with a deep link (§R18 / crit 10 — S140).
+
+        ``summary`` is what the work produced, for a fire whose work ended after the fire did (an
+        agent task's reply, a workflow run's summary: `_report_to_its_trigger`), and ``run_id``
+        the workflow run the note links to; a failure's ``error`` is its summary. Returns whether
+        a note went out on the trigger's route.
 
         🔴 WHY THIS EXISTS. `triggers/delivery.py` implements criterion 10 in full — `statusUrl`
         deep links, stable event ids for retry dedup, `is_duplicate`, destination formatting — but
@@ -2048,7 +2117,7 @@ class GatewayOrchestrator:
 
             state = getattr(self, "dashboard_state", None)
             if state is None:
-                return
+                return False
             # 🔴 ONE NOTIFICATION PER FIRE. A `notify` action's success already put the user's own
             # note in front of them — measured: 5 fires of a per-minute notify trigger made 10
             # notifications, each fire's "Standup nudge: review Q4 tasks" followed by an empty
@@ -2056,7 +2125,7 @@ class GatewayOrchestrator:
             # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
             # A failure still reports: in that case the action's own note never went out.
             if ok and _delivery.notifies_on_its_own(trigger):
-                return
+                return False
             if not hasattr(self, "_delivered_event_ids"):
                 self._delivered_event_ids: set[str] = set()
             # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (R7's `dedupe_hash`). The legacy
@@ -2069,12 +2138,13 @@ class GatewayOrchestrator:
             # not ask for coalescing keeps every alert. Capped by a 1h window, so a still-broken
             # automation re-alerts: "it stopped telling me" and "it got fixed" must not look alike.
             if not ok and self._dedupe_repeat_failure(trigger, error=error):
-                return
+                return False
             note = _delivery.build_delivery(
                 trigger_id=str(getattr(trigger, "id", "") or ""),
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
-                summary=error[:_ERROR_SUMMARY_MAX],
+                summary=(summary if ok else error)[:_ERROR_SUMMARY_MAX],
+                run_id=run_id,
                 # 🔴 EACH FIRE IS A NEW EVENT (R18 / crit 10). This passed neither `run_id`
                 # nor `attempt_key`, so `event_id` — derived from exactly those three parts —
                 # produced the SAME id for every fire of a trigger, and `is_duplicate` then dropped
@@ -2106,9 +2176,10 @@ class GatewayOrchestrator:
                 # test can derive the kind an outcome WILL carry instead of assuming one.
                 scheduled=_delivery.is_scheduled(trigger),
             )
-            _delivery.deliver(state, note, delivered_ids=self._delivered_event_ids)
+            return _delivery.deliver(state, note, delivered_ids=self._delivered_event_ids)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not deliver the fire outcome for %s", trigger, exc_info=True)
+            return False
 
     async def _record_fire_outcome(
         self,
@@ -3419,6 +3490,9 @@ class GatewayOrchestrator:
                     node_timeout_total=wf_cfg.default_node_timeout_total_secs,
                     node_timeout_stall=wf_cfg.default_node_timeout_stall_secs,
                     memory=MemoryService.over_vector_store(getattr(self, "vector_memory", None)),
+                    # A run a trigger started says how it went on the trigger's route when it
+                    # ends; the fire that started it only said it launched.
+                    report_to_trigger=self._report_to_its_trigger,
                 ),
             )
             self.workflow_watchdog.start()
@@ -3513,9 +3587,12 @@ class GatewayOrchestrator:
             ("cron:", "subagent:", "hook:", ownership.OWNED_PREFIX)
         ):
             chan, ts = parent_key.split(":", 1)
-            if self._channel_delivery is not None:
+            # The link is the channel's that issued the id, or none: another channel's link to it
+            # opens nothing, or the wrong conversation.
+            delivery = _delivery_owning(chan)
+            if delivery is not None:
                 try:
-                    link = self._channel_delivery.build_thread_link(chan, ts)
+                    link = delivery.build_thread_link(chan, ts)
                 except Exception:
                     logger.debug("build_thread_link failed for %s", parent_key, exc_info=True)
                     link = ""
@@ -3668,10 +3745,13 @@ class GatewayOrchestrator:
         # ── channel:<channel>:<thread_ts> → reply to thread ──
         if deliver.startswith("channel:"):
             parts = deliver.split(":", 2)
+            # On the channel that issued the id, or else the owner's DM: another channel handed
+            # the id posts to the wrong place, or to no one.
+            delivery = _delivery_owning(parts[1]) if len(parts) == 3 else None
             try:
-                if self._channel_delivery is not None and len(parts) == 3:
+                if delivery is not None:
                     chan, ts = parts[1], parts[2]
-                    await self._channel_delivery.deliver_notification(chan, title, result_text, ts)
+                    await delivery.deliver_notification(chan, title, result_text, ts)
                 else:
                     await self._notify_owner_dm(title, result_text)
             except Exception:
@@ -3937,6 +4017,21 @@ class GatewayOrchestrator:
             for _member in batch:
                 await _broadcast_subagent_status(_member, "done")
 
+            # A trigger's own agent says how it went on the trigger's route now that it has ended,
+            # wherever its reply goes: the fire, or the Run now, that started it said nothing
+            # (`_reports_later`). When every member has, the plain subagent note would say it twice.
+            def _reported(member: "SubagentInfo") -> bool:
+                trigger_id = getattr(member, "trigger_id", "")
+                if not isinstance(trigger_id, str) or getattr(member, "silent", False):
+                    return False
+                return self._report_to_its_trigger(
+                    trigger_id,
+                    error=str(getattr(member, "error", "") or ""),
+                    summary=str(getattr(member, "result", "") or ""),
+                )
+
+            told = all([_reported(m) for m in batch])
+
             # Build ONE announce covering every completion in the batch. A
             # burst of 8 completions becomes a single parent turn listing all 8,
             # rather than 8 turns serialized behind the parent's Semaphore(1).
@@ -4058,12 +4153,13 @@ class GatewayOrchestrator:
                             _injection_session.queue_append(announce)
                             self.dashboard_state.push_sessions_update()
                             logger.info("Subagent %s → queued in %s", info.id, _session_name)
-                            self.dashboard_state.notify(
-                                notification_kinds.SUBAGENT,
-                                title,
-                                body,
-                                meta=notice_meta,
-                            )
+                            if not told:
+                                self.dashboard_state.notify(
+                                    notification_kinds.SUBAGENT,
+                                    title,
+                                    body,
+                                    meta=notice_meta,
+                                )
                             return
 
                     # Session is idle — start run_chat.
@@ -4098,12 +4194,13 @@ class GatewayOrchestrator:
                     )
 
                 # Dashboard notification for the notification panel
-                self.dashboard_state.notify(
-                    notification_kinds.SUBAGENT,
-                    title,
-                    body,
-                    meta=notice_meta,
-                )
+                if not told:
+                    self.dashboard_state.notify(
+                        notification_kinds.SUBAGENT,
+                        title,
+                        body,
+                        meta=notice_meta,
+                    )
                 return
 
             if parent_key and not parent_key.startswith(
@@ -4178,8 +4275,12 @@ class GatewayOrchestrator:
                                 if info.elapsed > 0
                                 else (time.monotonic() - info.started)
                             )
-                            if response and thread_channel and self._channel_delivery is not None:
-                                await self._channel_delivery.deliver_subagent_reply(
+                            # The thread's own channel, the one that issued its id.
+                            thread_delivery = (
+                                _delivery_owning(thread_channel) if thread_channel else None
+                            )
+                            if response and thread_channel and thread_delivery is not None:
+                                await thread_delivery.deliver_subagent_reply(
                                     thread_channel, response, parent_key, elapsed
                                 )
                             elif response:
@@ -4268,7 +4369,7 @@ class GatewayOrchestrator:
                     )
                     _notify_all_failed(_last_failure_reason)
                 # Dashboard notification
-                if self.dashboard_state:
+                if self.dashboard_state and not told:
                     self.dashboard_state.notify(
                         notification_kinds.SUBAGENT,
                         title,
@@ -4363,8 +4464,9 @@ class GatewayOrchestrator:
                             "Cron session %s: reset failed after last subagent", parent_key
                         )
 
-            # Dashboard notification — suppressed only when EVERY member is silent.
-            if self.dashboard_state and not all(m.silent for m in batch):
+            # Dashboard notification — suppressed only when EVERY member is silent, or every one
+            # has just said how it went on its trigger's route.
+            if self.dashboard_state and not all(m.silent for m in batch) and not told:
                 self.dashboard_state.notify(
                     notification_kinds.SUBAGENT,
                     title,

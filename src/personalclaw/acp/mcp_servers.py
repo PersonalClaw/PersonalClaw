@@ -108,14 +108,19 @@ def _core_call(title: str, tool_kind: str, tool_input: object) -> tuple[str, Any
     return "", None, False
 
 
-def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> tuple[str, bool, bool]:
-    """``(risk_level, builds, proposes)`` for an ACP call to one of PersonalClaw's own tools.
+def core_tool_declaration(
+    title: str, tool_kind: str, tool_input: object
+) -> tuple[str, bool, bool, bool]:
+    """``(risk_level, builds, proposes, tells_owner)`` for an ACP call to one of PersonalClaw's
+    own tools.
 
     An ACP CLI declares nothing about its tools, so a call from one carries no declaration and
     is treated as a change. The exception is a call to the ``personalclaw-core`` server the
     host serves itself: those tools declare exactly what they do, so the call can carry the
     same declaration a native call does, and Ask mode, Trust reads and the card treat
-    ``memory_recall`` as the read it is and ``artifact_delete`` as the delete.
+    ``memory_recall`` as the read it is and ``artifact_delete`` as the delete. ``tells_owner``
+    is whether THIS call does nothing but tell the owner something
+    (``tool_providers.base.only_tells_the_owner``).
 
     The lookup is exact — the tool's own name, on the one server — and it takes the
     declaration only when the call cannot be something else wearing the name:
@@ -125,32 +130,41 @@ def core_tool_declaration(title: str, tool_kind: str, tool_input: object) -> tup
       ours by choosing its text;
     * on kiro-cli's title, which one of its shell calls can also produce, only a
       ``destructive`` declaration is taken. That one only adds a question; a read, a Build
-      mode producer or a proposal would let the shell call through.
+      mode producer, a proposal or a notice to the owner would let the shell call through.
 
-    ``("", False, False)`` for every other call.
+    ``("", False, False, False)`` for every other call.
     """
     from personalclaw import mcp_core
     from personalclaw.tool_providers.base import (
         BUILDS_META_KEY,
         PROPOSES_META_KEY,
+        TELLS_OWNER_META_KEY,
         RiskLevel,
+        only_tells_the_owner,
         risk_from_annotations,
     )
 
     name, args, exact = _core_call(title, tool_kind, tool_input)
     tool = mcp_core.own_tool(name) if name else None
     if tool is None:
-        return "", False, False
+        return "", False, False, False
     risk = risk_from_annotations(tool.get("annotations"), trusted=True)
     if not exact:
-        return (risk.value if risk is RiskLevel.DESTRUCTIVE else ""), False, False
+        return (risk.value if risk is RiskLevel.DESTRUCTIVE else ""), False, False, False
     schema = tool.get("inputSchema")
     takes = schema.get("properties") if isinstance(schema, dict) else None
     if not isinstance(args, dict) or not set(args) <= set(takes if isinstance(takes, dict) else ()):
-        return "", False, False
+        return "", False, False, False
     meta = tool.get("_meta")
     meta = meta if isinstance(meta, dict) else {}
-    return risk.value, meta.get(BUILDS_META_KEY) is True, meta.get(PROPOSES_META_KEY) is True
+    notice_args = meta.get(TELLS_OWNER_META_KEY)
+    tells_owner = isinstance(notice_args, list) and only_tells_the_owner(notice_args, args)
+    return (
+        risk.value,
+        meta.get(BUILDS_META_KEY) is True,
+        meta.get(PROPOSES_META_KEY) is True,
+        tells_owner,
+    )
 
 
 def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:

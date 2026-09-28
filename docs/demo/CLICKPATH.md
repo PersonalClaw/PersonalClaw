@@ -40,7 +40,7 @@ PCLAW_URL=http://127.0.0.1:18420 node docs/demo/capture_demo.mjs
 ```
 
 `--approval interactive` is load-bearing, not a precaution: it is what makes the agent ask
-before every tool call, which is the thing beat 3 exists to show. Recording under `reads`
+before each tool call that needs approval, which is the thing beat 3 exists to show. Recording under `reads`
 or `yolo` would produce a smoother take of a product that does not ask.
 
 Two env overrides exist for re-recording, both documented in the script's header:

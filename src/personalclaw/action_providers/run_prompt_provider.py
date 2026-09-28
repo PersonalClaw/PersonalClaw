@@ -43,7 +43,11 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
-from personalclaw.action_providers.services import get_action_services, validate_spawn_cwd
+from personalclaw.action_providers.services import (
+    get_action_services,
+    spawn_refusal,
+    validate_spawn_cwd,
+)
 from personalclaw.autonomous_framing import with_autonomous_framing
 
 logger = logging.getLogger(__name__)
@@ -250,30 +254,34 @@ class RunPromptActionProvider(ActionProvider):
 
             capability_class = gate_project_capability(cwd, capability_class)
 
-        async def _spawn() -> None:
-            try:
-                services.subagents.spawn(  # type: ignore[union-attr]
-                    task=task,
-                    parent_session_key=parent_key,
-                    agent=agent,
-                    max_turns=max_turns,
-                    model=model,
-                    cwd=cwd,
-                    approval_mode="auto",
-                    capability_class=capability_class,
-                    silent=False,
-                    dry_run=dry_run,
-                    # The trigger whose fire this is (`ActionContext.trigger_id`), so a call the
-                    # agent is denied names it and can be run again from the Inbox.
-                    trigger_id=ctx.trigger_id,
-                    title=title,
-                )
-            except Exception:
-                logger.warning("run-prompt: spawn failed", exc_info=True)
-
-        # Fire-and-forget: the trigger returns immediately; the prompt turn runs
-        # in the background (spawn() schedules the run internally).
-        services.spawn_background(_spawn())
+        # Fire-and-forget: spawn() schedules the turn and returns at once. A spawn it refuses
+        # there (no memory, an incident, the budget, the fan-out stop) is this fire's failure:
+        # the fire says nothing when it only launched, so a refusal nobody reported would leave
+        # the automation silent.
+        try:
+            info = services.subagents.spawn(
+                task=task,
+                parent_session_key=parent_key,
+                agent=agent,
+                max_turns=max_turns,
+                model=model,
+                cwd=cwd,
+                approval_mode="auto",
+                capability_class=capability_class,
+                silent=False,
+                dry_run=dry_run,
+                # The trigger whose fire this is (`ActionContext.trigger_id`): a call the agent
+                # is denied names it and can be run again from the Inbox, and the agent says how
+                # it went on the trigger's route when it ends.
+                trigger_id=ctx.trigger_id,
+                title=title,
+            )
+        except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
+            logger.warning("run-prompt: spawn failed", exc_info=True)
+            return ActionResult(success=False, error=f"run-prompt: the agent did not start: {exc}")
+        refused = spawn_refusal(info)
+        if refused:
+            return ActionResult(success=False, error=f"run-prompt: {refused}")
         # "launched", not "succeeded": we only started the background turn; its
         # real outcome is recorded by the spawned run itself (T7 honesty).
         return ActionResult(

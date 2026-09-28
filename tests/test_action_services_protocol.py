@@ -83,7 +83,7 @@ async def test_the_notify_provider_dispatches_through_the_protocol(monkeypatch):
     state.owner_id = "owner"
     monkeypatch.setattr(
         "personalclaw.action_providers.services._services",
-        ActionServices(state=state, spawn_background=MagicMock()),
+        ActionServices(state=state),
     )
 
     result = await NotifyActionProvider().execute(

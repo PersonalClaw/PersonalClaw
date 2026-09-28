@@ -53,6 +53,7 @@ from personalclaw.subagent_persistence import (
     write_result_chunk,
     write_tombstone,
 )
+from personalclaw.task_modes import declared_level
 from personalclaw.textfmt import extract_options
 from personalclaw.validation import _AGENT_NAME_RE
 
@@ -2119,8 +2120,13 @@ class SubagentManager:
         )
 
         # A call is within the grant by what its tool DECLARES, asked as a research leaf's and a
-        # room critic's are (`declared_tool_grant_denial`).
-        _grant_denial = partial(declared_tool_grant_denial, _tool_profile)
+        # room critic's are (`declared_tool_grant_denial`). An automation's own agent (a
+        # trigger's fire, or its Run now) may also tell the owner something with `notify`, and
+        # nothing more (`owner_notices`): an automation that finds something has to be able to
+        # say so, and a research run changes nothing else.
+        _grant_denial = partial(
+            declared_tool_grant_denial, _tool_profile, owner_notices=bool(info.trigger_id)
+        )
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that
         # ASK. A native runtime answers an ask itself while a standing grant stands (its policy
@@ -2182,6 +2188,7 @@ class SubagentManager:
                     event.tool_kind,
                     event.tool_input,
                     proposes=event.proposes,
+                    tells_owner=event.tells_owner,
                 )
                 if _grant_deny:
                     await self._reject_and_log(
@@ -2230,6 +2237,22 @@ class SubagentManager:
                         metadata={"subagent_id": info.id, "reason": "hook_auto_approve"},
                     )
                     await self._fire_granted(info, event, approval_grants.HOOK_PATTERN, call_inputs)
+                    continue
+                # A call whose tool declares it only reads asks nobody, as a native agent's never
+                # does: an ACP child asks about every call, so it is answered here, past the
+                # grants and hooks above, and never relayed to a person.
+                if declared_level(event.risk_level) == "safe":
+                    await self._approve_and_log(
+                        client,
+                        event.request_id,
+                        session_key,
+                        event,
+                        decided_by=approval_grants.DECLARED_READ,
+                        metadata={"subagent_id": info.id, "reason": approval_grants.DECLARED_READ},
+                    )
+                    await self._fire_granted(
+                        info, event, approval_grants.DECLARED_READ, call_inputs
+                    )
                     continue
                 # A standing grant, read at THIS call (it may have been revoked since the agent
                 # started) and bounded by the ceiling.

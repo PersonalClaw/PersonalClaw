@@ -21,6 +21,17 @@ posture is the only gate, and ``yolo`` answers every ask. These drive the runtim
 
 A listing that shared a tool with its writes could not declare a read at all: ``triage_rules``
 listed, added and revoked rules, so its list asked like a write. The list is ``triage_rules_list``.
+
+Four previews were an argument of the change they preview, so they asked like it: checking a spec
+(``workflow_author`` with ``save=false``), a run edit's cascade (``workflow_edit`` with
+``preview_only``), the drift report (``workflow_audit``, whose default only reported) and an
+automation's dry run (``automation_run`` with ``dry_run``). Each is now a read of its own
+(``workflow_check``, ``workflow_edit_preview``, ``workflow_audit``, ``automation_dry_run``), and the
+change takes no preview argument, so a call is what its tool declares.
+
+And the rule holds whoever built the definition: a ``ToolDefinition`` that declares a read asks
+nobody (``requires_approval`` is false), so an app's tools and a trusted MCP server's reads, which
+PersonalClaw's own constructors do not build, run as every other read does.
 """
 
 from __future__ import annotations
@@ -43,7 +54,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_RESULT,
     AgentEvent,
 )
-from personalclaw.tool_providers.base import RiskLevel, ToolResult
+from personalclaw.tool_providers.base import RiskLevel, ToolProvider, ToolResult
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -58,9 +69,21 @@ _READS = [
     ("personalclaw.mcp_memory", "memory_recall", '{"query": "the dishwasher"}'),
     ("personalclaw.mcp_memory", "triage_rules_list", "{}"),
     ("personalclaw.mcp_core", "skill_search", '{"query": "release notes"}'),
+    # The previews, each a read of its own.
+    ("personalclaw.mcp_workflows", "workflow_check", '{"name": "triage", "root": "{}"}'),
+    ("personalclaw.mcp_workflows", "workflow_edit_preview", '{"run_id": "a1b2c3d4", "ops": "[]"}'),
+    ("personalclaw.mcp_workflows", "workflow_audit", "{}"),
+    ("personalclaw.mcp_automation", "automation_dry_run", '{"id": "file:notes"}'),
 ]
 #: The control: a change from the same registry still asks, and still fails closed unattended.
 _CHANGE = ("personalclaw.mcp_memory", "memory_remember", '{"rule": "always x", "category": "tool"}')
+#: The changes the previews preview, which still ask.
+_PREVIEWED = [
+    ("personalclaw.mcp_workflows", "workflow_author", '{"name": "triage", "root": "{}"}'),
+    ("personalclaw.mcp_workflows", "workflow_edit", '{"run_id": "a1b2c3d4", "ops": "[]"}'),
+    ("personalclaw.mcp_workflows", "workflow_repair", "{}"),
+    ("personalclaw.mcp_automation", "automation_run", '{"id": "file:notes"}'),
+]
 
 
 # ── the declaration and the flag agree, on every constructor ─────────────────────────────
@@ -233,9 +256,12 @@ async def test_a_chat_is_not_asked_about_a_declared_read(module, tool, args):
 
 
 @pytest.mark.asyncio
-async def test_a_chat_is_still_asked_about_a_change():
-    invoked, asked, _ = await _turn(*_CHANGE)
-    assert asked == [_CHANGE[1]]
+@pytest.mark.parametrize(
+    "module,tool,args", [_CHANGE, *_PREVIEWED], ids=[r[1] for r in [_CHANGE, *_PREVIEWED]]
+)
+async def test_a_chat_is_still_asked_about_a_change(module, tool, args):
+    invoked, asked, _ = await _turn(module, tool, args)
+    assert asked == [tool]
     assert invoked == []
 
 
@@ -278,3 +304,107 @@ async def test_a_headless_read_only_run_runs_a_declared_read():
 async def _consume(rt: NativeAgentRuntime) -> None:
     async for _ev in rt.stream("go"):
         pass
+
+
+# ── a preview is a read of its own ───────────────────────────────────────────────────────
+
+
+_PREVIEW_ARGUMENTS = [
+    ("personalclaw.mcp_workflows", "workflow_author", "save", {"name": "t", "save": False}),
+    ("personalclaw.mcp_workflows", "workflow_edit", "preview_only", {"preview_only": True}),
+    ("personalclaw.mcp_workflows", "workflow_audit", "dry_run", {"dry_run": False}),
+    ("personalclaw.mcp_automation", "automation_run", "dry_run", {"id": "x", "dry_run": True}),
+]
+
+
+@pytest.mark.parametrize(
+    "module,tool,argument,args", _PREVIEW_ARGUMENTS, ids=[r[1] for r in _PREVIEW_ARGUMENTS]
+)
+def test_no_tool_switches_between_reading_and_changing_on_an_argument(module, tool, argument, args):
+    """🔴 Before: each of these took the argument, so a call's effect was not its tool's
+    declaration. The argument is gone and a call that sends it is refused, never run as the
+    other half: `workflow_author` with `save=false` does not save, and `automation_run` with
+    `dry_run` does not fire."""
+    import importlib
+
+    registry = importlib.import_module(module)
+    schema = {t["name"]: t for t in registry._list_tools()}[tool]["inputSchema"]
+    assert argument not in schema.get("properties", {})
+    assert f"{argument}: unknown field" in registry._call_tool(tool, args)
+
+
+# ── whoever built the definition ─────────────────────────────────────────────────────────
+
+
+def test_a_definition_that_declares_a_read_asks_nobody_whoever_built_it():
+    from personalclaw.tool_providers.base import ToolDefinition
+
+    def asks(risk, requires_approval):
+        return ToolDefinition(
+            name="t", description="d", risk_level=risk, requires_approval=requires_approval
+        ).requires_approval
+
+    assert asks(RiskLevel.SAFE, True) is False
+    assert asks("safe", True) is False  # a constructor that passes the level's value
+    assert asks(RiskLevel.CAUTION, True) is True
+    assert asks(RiskLevel.DESTRUCTIVE, True) is True
+    assert asks(RiskLevel.CAUTION, False) is False  # a change may still say it asks nobody
+
+
+class _AppProvider(ToolProvider):
+    """An app's provider that declares a read and says it asks, as the MCP server adapter did."""
+
+    def __init__(self, risk: RiskLevel) -> None:
+        self._risk = risk
+        self.invoked: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "an-app"
+
+    @property
+    def display_name(self) -> str:
+        return "An app"
+
+    async def list_tools(self):
+        from personalclaw.tool_providers.base import ToolDefinition
+
+        return [
+            ToolDefinition(
+                name="docs_search",
+                description="Search the docs.",
+                provider="an-app",
+                requires_approval=True,
+                risk_level=self._risk,
+            )
+        ]
+
+    async def invoke(self, tool_name, arguments):
+        self.invoked.append(tool_name)
+        return ToolResult(success=True, output="ran")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("risk", "asked"), [(RiskLevel.SAFE, False), (RiskLevel.CAUTION, True)])
+async def test_an_apps_declared_read_runs_unasked_and_its_change_asks(risk, asked):
+    """🔴 Before: a trusted MCP server's read, which the adapter built with
+    `requires_approval=True`, raised a card in a chat that runs every other read, and was
+    declined wherever nobody could be asked."""
+    provider = _AppProvider(risk)
+    rt = NativeAgentRuntime(
+        definition=AgentRuntimeDefinition(name="T", provider="native", model="scripted"),
+        model_provider=_OneCall("docs_search", '{"query": "x"}'),
+        tool_providers=[provider],
+    )
+    await rt.start()
+    seen: list[str] = []
+
+    async def drain() -> None:
+        async for ev in rt.stream("go"):
+            if ev.kind == EVENT_PERMISSION_REQUEST:
+                seen.append(ev.title)
+                await rt.reject_tool(ev.request_id)
+
+    await asyncio.wait_for(drain(), timeout=10)
+    assert (seen == ["docs_search"]) is asked
+    assert (provider.invoked == ["docs_search"]) is not asked

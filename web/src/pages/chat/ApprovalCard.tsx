@@ -45,8 +45,8 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
  *  are the facts established rather than a full audit, because the absence of a chip is
  *  not a guarantee about the tool.
  */
-function BlastRadiusChips({ tool, risk, readOnlyCommand }: { tool: string; risk?: ApprovalSegment['risk']; readOnlyCommand?: boolean }) {
-  const facets = establishedFacets(deriveBlastRadius({ tool, risk: risk ?? undefined, readOnlyCommand }))
+function BlastRadiusChips({ tool, risk, readOnly }: { tool: string; risk?: ApprovalSegment['risk']; readOnly?: boolean }) {
+  const facets = establishedFacets(deriveBlastRadius({ tool, risk: risk ?? undefined, readOnly }))
   if (facets.length === 0) return null
   return (
     <ul aria-label="What this can touch, as far as we can establish"
@@ -203,7 +203,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
       args={seg.input}
       purpose={seg.purpose}
       badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
-      meta={<BlastRadiusChips tool={seg.tool} risk={seg.risk} readOnlyCommand={seg.readOnlyCommand} />}
+      meta={<BlastRadiusChips tool={seg.tool} risk={seg.risk} readOnly={seg.readOnly} />}
       scope={
         <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">

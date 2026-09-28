@@ -118,7 +118,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/browse/kill/release` — re-enable unattended browsing.
 - `GET /api/browse/status` — the mirror's read model: kill state, expired sites, pending grants.
 - `GET /api/changelog` — read full CHANGELOG.md from project.
-- `POST /api/channel/profile` — read a channel user's profile.
+- `POST /api/channel/profile` — read the owner's profile on the channel whose owner id it is.
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
 - `GET /api/channels` — all comms transports with info + health.
 - `GET /api/channels/reply-targets` — list channels the bot can reply in.
@@ -595,6 +595,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/notifications/rules` — replace rules for the keys named in the body.
 - `GET /api/notifications/settings` — _(no summary)_
 - `PUT /api/notifications/settings` — _(no summary)_
+- `POST /api/notifications/trust` — the owner's Allow or Deny on an unknown-sender notification.
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
 - `GET /api/onboarding/import` — what each source holds, and what importing each item does.

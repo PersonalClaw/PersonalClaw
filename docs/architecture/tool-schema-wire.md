@@ -81,8 +81,8 @@ in:
 - the rest decode with `validation.decode_json_text`, which passes an already-structured value
   through untouched (a caller that is not a model may still send one).
 
-Built-in parameters carried this way: `workflow_author.root`/`inputs`, `workflow_start.inputs`,
-`workflow_edit.ops`, `automation_create.spec`,
+Built-in parameters carried this way: `workflow_author.root`/`inputs` (and `workflow_check`'s),
+`workflow_start.inputs`, `workflow_edit.ops` (and `workflow_edit_preview`'s), `automation_create.spec`,
 `automation_update.patch`, `notify.blocks`, `propose_template_diff.ops`, `prompt_render.vars`,
 `sheet_create.sheets`/`rows` (JSON keeps a number a number) and `visualize.data`. Where the
 shape IS known it is declared instead (`project_run_create.stage_plan`, `deck_create.slides`,

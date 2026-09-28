@@ -390,9 +390,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "max_items": 100,
         "security": SecurityControl(
             loosens_when_added(),
-            "Tools the added MCP server labels read-only will run in Ask and Plan mode and "
-            "without asking you under Trust reads. If it labels a tool that changes something "
-            "as read-only, that change happens without anyone being asked.",
+            "Tools the added MCP server labels read-only will run without asking you, and in "
+            "Ask and Plan mode. If it labels a tool that changes something as read-only, that "
+            "change happens without anyone being asked.",
         ),
     },
     # Per place, like the elicitation grant: each id is one folder or sign-in outside the

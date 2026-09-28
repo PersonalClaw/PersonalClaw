@@ -1513,6 +1513,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/notifications/ack": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/unack": OwnerOnly(_HIDES_NOTIFICATIONS),
     "POST /api/notifications/ack-all": OwnerOnly(_HIDES_NOTIFICATIONS),
+    "POST /api/notifications/trust": OwnerOnly(
+        "letting someone new talk to your agent, or refusing them — who may reach it through a "
+        "channel is yours"
+    ),
     "PUT /api/notifications/rules": OwnerOnly(
         "which notifications reach you, and how loudly — a rule can silence one"
     ),

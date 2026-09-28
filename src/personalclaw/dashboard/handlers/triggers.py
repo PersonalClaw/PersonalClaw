@@ -753,8 +753,10 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
 
     One question for every trigger kind's create and edit, because the form that writes the
     action is one form. A `run-workflow` action saved with no workflow, or with one its inputs
-    cannot start, failed at every fire instead (`run_workflow_provider.config_problem`). An edit
-    that sends only the config is checked against the provider the trigger already runs.
+    cannot start, failed at every fire instead (`run_workflow_provider.config_problem`), and so did
+    a `send-message` naming a chat channel not set up here, or an id no channel, or more than one,
+    takes (`send_message_provider.config_problem`). An edit that sends only the config is checked
+    against the provider the trigger already runs.
     """
     if not isinstance(action, dict):
         return ""
@@ -765,6 +767,10 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
         from personalclaw.action_providers.run_workflow_provider import config_problem
 
         return await config_problem(config if isinstance(config, dict) else {})
+    if provider == "send-message":
+        from personalclaw.action_providers import send_message_provider
+
+        return send_message_provider.config_problem(config if isinstance(config, dict) else {})
     return ""
 
 

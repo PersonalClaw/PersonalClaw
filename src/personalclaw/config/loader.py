@@ -602,8 +602,8 @@ class AgentConfig:
         default="auto",
         metadata=_meta(
             "Approval Mode",
-            "Tool approval mode. 'trust_reads' auto-approves read-only tools "
-            "and asks for everything else.",
+            "Tool approval mode. A tool that only reads asks nobody in any mode; "
+            "'trust_reads' also approves a read-only shell command without asking.",
             enum=["auto", "interactive", "trust_reads"],
         ),
     )

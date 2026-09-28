@@ -7,10 +7,10 @@ someone is reading: every tool granted, the tools that ask a person something of
 that needed approval parked on a prompt nobody would see.
 
 Now a ``hook:`` session is unattended and gets the headless profile, whose tool grants are
-``read``. A call whose tool does not declare it only reads is refused before anything could approve
-it, a read runs, a call that needs approval is declined at once, and a tool that asks a person is
-not offered. A turn on an agent CLI, which runs its tools where the host cannot hold them to the
-grants, is refused before its message is sent, and says why.
+``read``. A call whose tool declares neither a read nor a proposal is refused before anything could
+approve it, a read runs, a call that needs approval (a proposal) is declined at once, and a tool
+that asks a person is not offered. A turn on an agent CLI, which runs its tools where the host
+cannot hold them to the grants, is refused before its message is sent, and says why.
 
 Driven through the real ``_run_hook_agent`` and ``SessionManager`` on the real
 ``NativeAgentRuntime``, answered by a scripted model.
@@ -39,8 +39,9 @@ from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProv
 WRITES = "write_note"
 #: A tool that declares it only reads.
 READS = "read_note"
-#: A read that asks first: nobody can answer on a webhook's turn.
-ASKS = "read_vault"
+#: A tool whose only effect is a proposal for the owner: the read grant admits it, and it asks
+#: first, since it is not a read (a read asks nobody). Nobody can answer on a webhook's turn.
+ASKS = "propose_tidy"
 #: A tool whose whole job is to ask a person something.
 INTERACTIVE = "ask_owner"
 
@@ -64,7 +65,7 @@ class _Tools(ToolProvider):
         return [
             tool(WRITES, requires_approval=False),
             tool(READS, requires_approval=False, risk_level=RiskLevel.SAFE),
-            tool(ASKS, requires_approval=True, risk_level=RiskLevel.SAFE),
+            tool(ASKS, requires_approval=True, proposes=True),
             tool(INTERACTIVE, requires_approval=False, risk_level=RiskLevel.SAFE, interactive=True),
         ]
 

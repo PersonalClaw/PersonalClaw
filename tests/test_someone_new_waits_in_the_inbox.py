@@ -351,11 +351,26 @@ async def test_a_reply_while_the_channel_is_down_is_kept_and_says_why(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_pair_asks_your_consent_before_anyone_new_is_let_in(tmp_path):
+    """🔴 Before: one click let them in, with none of the consent the Sender trust page asks for
+    opening a channel to strangers, or the unknown-sender notification's Allow asks."""
+    state, row = await _held(tmp_path)
+
+    status, body = await _post(state, f"/api/inbox/{row.id}/pair")
+
+    assert status == 400, body
+    assert body["error"]["code"] == "confirmation_required"
+    assert body["error"]["detail"]["title"] == "Let Pat Example talk to your agent on Email?"
+    assert ct.is_allowed_sender("email", STRANGER) is False
+    assert state._inbox_store.items[row.id].status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_pair_lets_them_talk_to_the_agent_from_their_next_message_on(tmp_path):
     state, row = await _held(tmp_path)
     assert ct.is_allowed_sender("email", STRANGER) is False
 
-    status, body = await _post(state, f"/api/inbox/{row.id}/pair")
+    status, body = await _post(state, f"/api/inbox/{row.id}/pair", {"confirm": True})
 
     assert status == 200 and body == {"ok": True, "paired": True}, body
     assert ct.is_allowed_sender("email", STRANGER) is True

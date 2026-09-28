@@ -25,7 +25,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
-from personalclaw.task_modes import read_only_command, resolve_effective_risk, tool_input_to_str
+from personalclaw.task_modes import reads_only, resolve_effective_risk, tool_input_to_str
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
@@ -205,13 +205,16 @@ class DashboardApprovalState:
         trigger: str = "",
         asked_on_channel: bool = False,
         risk_level: str = "",
+        tool_kind: str = "",
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
         ``risk_level`` is what the tool behind the call DECLARES (``AgentEvent.risk_level``;
         ``""`` when nothing does). The pending row carries the call's effective risk from it,
         so the queue, its nudge and the phone describe the call from the declaration and the
-        screened command, never from the tool's name.
+        screened command, never from the tool's name. ``tool_kind`` is the kind the call
+        arrived with (``AgentEvent.tool_kind``), which a chat's card reads the same call by: an
+        ACP agent's shell call is known as one by its kind, so its command is screened here too.
 
         ``asked_on_channel`` says the caller is already asking the owner on a chat channel (the
         gateway's race for a background origin), so no channel is asked a second time from here.
@@ -263,20 +266,23 @@ class DashboardApprovalState:
             session=session,
             trigger=trigger,
             asked_by=_background_asker(source=source, session=session, trigger=trigger),
-            # #2821: the same command-screening verdict the chat card gets, from the same
-            # owner, so the two surfaces that ask a human for permission cannot describe
-            # one call differently.
+            # Whether the call is established as a read, from the same owner and the same
+            # inputs as the chat card's, so the two surfaces that ask a human for permission
+            # cannot describe one call differently.
             #
-            # Screened on the RAW `tool_input`, NOT on `display_input`: the entry's copy has had
-            # URLs and credentials rewritten, and screening a string the shell will never see
-            # is how a verdict stops describing the actual call. The raw object is also the
-            # more precise input — `read_only_command` is typed `object` precisely so it can
-            # read a native dict's `command` key instead of re-parsing a serialized copy.
-            # `None` when this is not a shell call.
-            is_read_only=read_only_command(tool, "", tool_input, risk_level),
+            # Read off the RAW `tool_input`, NOT `display_input`: the entry's copy has had URLs
+            # and credentials rewritten, and screening a string the shell will never see is how
+            # a verdict stops describing the actual call. The raw object is also the more
+            # precise input — `reads_only` takes an `object` precisely so it can read a native
+            # dict's `command` key instead of re-parsing a serialized copy.
+            is_read_only=reads_only(tool, tool_kind, tool_input, risk_level),
             # Only from a declaration: a call that carries none (an ACP agent's own tool, an MCP
             # server's question) has no risk anybody established, and "" says exactly that.
-            risk=resolve_effective_risk(risk_level, tool, "", tool_input) if risk_level else "",
+            risk=(
+                resolve_effective_risk(risk_level, tool, tool_kind, tool_input)
+                if risk_level
+                else ""
+            ),
         )
         if asked_on_channel:
             self.__dict__.setdefault("_channel_asked", set()).add(approval_id)
@@ -327,7 +333,7 @@ class DashboardApprovalState:
         tool_purpose: str,
         agent: str,
         risk: str,
-        is_read_only: bool | None,
+        is_read_only: bool,
         grant_agent: str,
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
@@ -338,9 +344,9 @@ class DashboardApprovalState:
         so an answer that arrives the instant it is listed must find the future in place.
 
         ``tool_input`` is the caller's already-sanitized display string (the same one the
-        transcript row persists), and ``is_read_only`` its verdict on the RAW input — the
-        screening rule `request_approval` states, kept by the one caller that holds the raw
-        object.
+        transcript row persists), and ``is_read_only`` whether the call is established as a
+        read, read off the RAW input — the rule `request_approval` states, kept by the one
+        caller that holds the raw object.
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -372,7 +378,7 @@ class DashboardApprovalState:
         tool_input: str,
         tool_purpose: str,
         session: str,
-        is_read_only: bool | None,
+        is_read_only: bool,
         asked_by: str,
         agent: str = "",
         risk: str = "",

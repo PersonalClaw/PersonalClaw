@@ -68,6 +68,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **MCP Tool Servers ships with PersonalClaw: an MCP server you add or import is one every agent can call, with nothing to install from the Store.**
 
+- **Checking a workflow spec, previewing an edit to a running workflow, a workflow's drift report and an automation's dry run are tools of their own that only read (`workflow_check`, `workflow_edit_preview`, `workflow_audit`, `automation_dry_run`), so none of them asks; `workflow_repair` repairs, and `workflow_author`, `workflow_edit` and `automation_run` refuse the old preview arguments.**
+
+- **A `ToolDefinition` that declares `RiskLevel.SAFE` asks nobody, whatever its `requires_approval` says (SDK: a change no app has to make, and MCP Tool Servers now says so itself).**
+
+- **Trusting an MCP server's read-only labels lets its reads run without asking in every approval mode, as the Tools page now says.**
+
+- **An approval's `is_read_only` is true or false: whether the call is established as a read.**
+
 - **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
 
 - **A subagent works in the workspace unless you add another folder: `agent.subagent_cwd_allowed_roots` is empty by default.**
@@ -114,6 +122,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **`personalclaw app new` writes a `.gitignore`, so an app's first commit no longer publishes its compiled bytecode and the path it was built on.**
 - **First run's Web search lane is ready only once the agent can search: after a search provider, it offers Web Tools, the app that gives the agent its `web_search` tool.**
+
+- **A tool that only reads asks nobody over an agent CLI either: in a Normal chat, in a background agent's run and in a room.**
+
+- **`personalclaw run --allow` runs the writes it grants: the run's chat approves its own calls, within the operator's approval ceiling.**
+
+- **The Normal and Trust reads approval modes say what they do.**
+
+- **The notification that someone you haven't paired messaged you offers Allow and Deny, and Allow asks you first.**
+
+- **An automation's agent can message you (SDK: `ToolDefinition.tells_owner` and `LLMEvent.tells_owner`, additions no app has to change for).**
+
+- **An automation that runs an agent or a workflow says it finished when it has, not when it started.**
+
+- **A message to a chat or user id with no channel named goes out on the channel that id belongs to, and an id two channels could take is refused with both (`email-channel` takes only an address).**
+
+- **The Triggers page checks a send-message action's chat channel when you save it.**
 
 - **A chat or room turn that fails with an error PersonalClaw doesn't recognize says what to do next, with the error's own words after it.**
 - **The container update commands are the ones you installed with: the README's `docker run`, or Compose's.**
@@ -541,6 +565,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Sync's shared registry names none of your records: what each machine last agreed on with another stays on that machine.**
 
 - **Automations, tasks, projects, themes and the other stores PersonalClaw rewrites whole are written 0600, like the configuration, and a crash midway no longer leaves one half-written.**
+
+- **Switching one chat to Trust answers that chat's pending approvals and its own agents', not every other chat's and every background run's.**
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
 - **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**

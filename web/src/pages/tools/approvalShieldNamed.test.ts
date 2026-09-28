@@ -72,7 +72,8 @@ describe('the approval shield names itself', () => {
 
   it('the name says what happens, not what the field is called', () => {
     // "requires_approval" is the flag; a user needs the behaviour. The wording follows the composer's
-    // own permission copy ("ask before every tool") rather than inventing a third vocabulary.
+    // own permission copy ("the rest ask when they need approval") rather than inventing a third
+    // vocabulary.
     const at = src.indexOf('t.requires_approval &&')
     const badge = src.slice(at, src.indexOf('<RiskBadge', at))
     const label = /aria-label="([^"]+)"/.exec(badge)?.[1] ?? ''

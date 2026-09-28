@@ -409,8 +409,8 @@ class SecurityConfig:
         ),
     )
     # Whose READ-ONLY labels are believed. An MCP server marks a tool `readOnlyHint: true` to say
-    # it only reads, and a server can say that about anything — believed, the tool would run in
-    # Ask and Plan mode and without a card under Trust reads. So it is default-DENY and granted
+    # it only reads, and a server can say that about anything — believed, the tool would run
+    # without a card and in Ask and Plan mode. So it is default-DENY and granted
     # PER SERVER, like the elicitation grant above: an absent server's tools all ask. The read
     # side is `personalclaw.mcp_client.declared_risk`.
     mcp_read_only_servers: list[str] = field(

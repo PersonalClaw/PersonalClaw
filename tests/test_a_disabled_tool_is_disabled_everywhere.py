@@ -94,8 +94,10 @@ class _McpToolServers(ToolProvider):
                         description=tool.description,
                         provider="mcp",
                         parameters=tool.input_schema,
+                        # A server whose read-only labels you have not trusted: every one of
+                        # its tools is a change, and asks.
                         requires_approval=True,
-                        risk_level=RiskLevel.SAFE,
+                        risk_level=RiskLevel.CAUTION,
                     )
                 )
         return out

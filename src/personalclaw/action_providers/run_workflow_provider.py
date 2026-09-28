@@ -75,7 +75,6 @@ class RunWorkflowActionProvider(ActionProvider):
         import json
         import time
 
-        context = ctx
         started = time.monotonic()
         name = str((action_config or {}).get("workflow", "") or "").strip()
         if not name:
@@ -244,10 +243,10 @@ class RunWorkflowActionProvider(ActionProvider):
                 inputs=run_inputs,
                 mode=str((action_config or {}).get("mode", "background") or "background"),
                 project_id=str((action_config or {}).get("project_id", "") or ""),
-                origin=RunOrigin(
-                    kind=OriginKind.HOOK,
-                    trigger_id=str(getattr(context, "context", "") or ""),
-                ),
+                # The trigger whose fire this is, so the run says how it went on the trigger's
+                # route when it ends (`run_finish.report_to_its_trigger`). This read the event's
+                # CONTEXT text, which is a file path or a message and never the trigger's id.
+                origin=RunOrigin(kind=OriginKind.HOOK, trigger_id=ctx.trigger_id),
                 # The queued marker goes in the SAME insert as the row — marking after
                 # `create` would leave a window in which the row is an ordinary DRAFT.
                 extra=overlap_mod.queued_extra() if action == Act.QUEUE else {},

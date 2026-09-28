@@ -936,9 +936,11 @@ def note_unknown_sender(
     Emits exactly ONE ``sender_denied`` SEL entry and ONE actionable owner notification per
     sender per :data:`UNKNOWN_SENDER_RENOTIFY_SECS` window — a chatty stranger cannot flood
     either. The notification carries ``actions=["allow","deny"]`` plus the ``provider`` /
-    ``sender_id`` the Allow button needs; a click routes to :func:`apply_trust_action`,
-    which persists the sender. Whether the sender also gets the canned reply is
-    :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same window.
+    ``sender_id`` the Allow button needs; a click routes to :func:`apply_trust_action`
+    (``POST /api/notifications/trust``, which answers only a sender this records:
+    :func:`owner_was_asked_about`), which persists the sender. Whether the sender also gets the
+    canned reply is :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same
+    window.
 
     ``held`` says the sender's message was just added to the Inbox, by a channel that speaks as
     the owner (:func:`guard_inbound`'s ``hold_for_owner``): nothing was sent to them, and the
@@ -1002,12 +1004,35 @@ def note_unknown_sender(
     return True
 
 
+def owner_was_asked_about(provider: str, sender_id: str) -> bool:
+    """Whether the owner was told ``sender_id`` messaged ``provider`` and isn't paired: the
+    first contact :func:`note_unknown_sender` recorded. An answer to an unknown-sender
+    notification may let in only the sender this gate asked about, so a note naming anyone else
+    answers nothing (``POST /api/notifications/trust``)."""
+    rate = _provider_record(_read_store(), provider).get("rate")
+    return bool(sender_id) and isinstance(rate, dict) and sender_id in rate
+
+
+def sender_consent(provider: str, who: str) -> tuple[str, str]:
+    """``(title, consent)`` the owner is asked before someone new may talk to the agent: the Allow
+    on the unknown-sender notification and the Inbox's Pair ask it in the same words. Whoever is
+    let in is read as the owner is (only a group's content is fenced)."""
+    where = channel_display_name(provider)
+    return (
+        f"Let {who} talk to your agent on {where}?",
+        f"{who} can message your agent on {where} from now on, and it reads what they write as "
+        "your own instructions. You can revoke them in Settings, Sender trust.",
+    )
+
+
 def apply_trust_action(action: str, provider: str, sender_id: str, name: str = "") -> bool:
     """Apply the owner's click on an unknown-sender notification. Returns the allow state.
 
     ``allow`` → :func:`allow_sender` (persists, ``via="owner"``) and returns True.
     ``deny`` → :func:`deny_sender` and returns False. This is the backend the notification's
-    Allow/Deny buttons resolve to — the seam that makes the notification *actionable*."""
+    Allow/Deny buttons resolve to — the seam that makes the notification *actionable*: in the
+    dashboard through ``POST /api/notifications/trust`` (which asks the owner's consent to an
+    Allow first), on Slack through its own allowlist command."""
     act = (action or "").strip().lower()
     if act == "allow":
         allow_sender(provider, sender_id, name, via="owner")

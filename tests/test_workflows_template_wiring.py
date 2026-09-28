@@ -333,7 +333,7 @@ class TestSuggestTemplateNudge:
 class TestDiscoverThenFreeze:
     def test_a_validated_dry_run_freezes_a_session_scoped_candidate(self, home):
         out = mcp_workflows._call_tool(
-            "workflow_author",
+            "workflow_check",
             {
                 "name": "probe-spec",
                 "description": "Probe the staging endpoint each morning",
@@ -344,7 +344,6 @@ class TestDiscoverThenFreeze:
                         {"kind": "transform", "id": "seed", "config": {"expr": {"n": 1}}},
                     ],
                 },
-                "save": False,
             },
         )
         assert "Error" not in out.split("\n")[0]
@@ -427,7 +426,5 @@ class TestDiscoverThenFreeze:
     def test_a_failed_validation_freezes_nothing(self, home):
         """A candidate is a spec that PARSED. Freezing an invalid one would put a broken shape in
         front of the next similar intent."""
-        mcp_workflows._call_tool(
-            "workflow_author", {"name": "bad-spec", "root": {"kind": "nope"}, "save": False}
-        )
+        mcp_workflows._call_tool("workflow_check", {"name": "bad-spec", "root": {"kind": "nope"}})
         assert not template_store.load_candidates()

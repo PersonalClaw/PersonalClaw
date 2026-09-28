@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowUpRight, Bell, Check, CheckCheck, Filter, Trash2, Undo2, X, Target } from 'lucide-react'
+import { ArrowUpRight, Bell, Check, CheckCheck, Filter, Trash2, Undo2, UserPlus, X, XCircle, Target } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -29,6 +29,8 @@ import { PageTitle } from '../../ui/PageTitle'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { reportingWrite } from '../../app/reportingWrite'
+import { ConsentDeclined } from '../../lib/securityConsent'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -76,6 +78,24 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
       notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
     }
     invalidateKeys('autonomy:ladder'); refreshLadder()
+  }
+
+  // Someone new wrote on a chat channel and isn't paired: the note asks you, and Allow or Deny is
+  // your answer (`POST /api/notifications/trust`). An Allow asks your consent first, in the
+  // gateway's words; the answer is recorded on the note, which then offers neither again.
+  const [answering, setAnswering] = useState('')
+  async function answerSender(n: NotificationItem, action: 'allow' | 'deny') {
+    setAnswering(action)
+    try {
+      await api.answerUnknownSender(n.ts, action)
+    } catch (e) {
+      if (!(e instanceof ConsentDeclined)) {
+        notify(`Couldn't ${action} them: ${String((e as Error)?.message || e)}`, 'error')
+      }
+    } finally {
+      setAnswering('')
+    }
+    load()
   }
 
   // newest first (the log is appended chronologically)
@@ -187,6 +207,9 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
               {open.acked && <span className="text-on-surface-low inline-flex items-center gap-1"><Check size={13} /> read</span>}
             </div>
             <div className="text-on-surface-var text-[0.9375rem] leading-relaxed"><Markdown>{open.body}</Markdown></div>
+            {asksAboutSender(open) && (
+              <SenderAnswer n={open} answering={answering} onAnswer={(action) => answerSender(open, action)} />
+            )}
             <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
               {/* The note's own deep link (R18 `statusUrl`) — a trigger fire opens that trigger's
                   panel, a run opens the run. Same shape as "Open loop" below: reading the thing a
@@ -265,6 +288,32 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
         )}
       </div>
     </WorkbenchLayout>
+  )
+}
+
+/** Whether *n* is the trust gate's question about someone new, the one note Allow and Deny answer. */
+function asksAboutSender(n: NotificationItem): boolean {
+  return n.event === 'channel.unknown_sender' && Boolean(n.sender_id) && (n.actions ?? []).includes('allow')
+}
+
+/** Allow or Deny on the note about someone new, or the answer once given. */
+function SenderAnswer({ n, answering, onAnswer }: { n: NotificationItem; answering: string; onAnswer: (action: 'allow' | 'deny') => void }) {
+  const who = n.sender_name || n.sender_id
+  if (n.trust_answer === 'allowed') {
+    return <p data-type="body-s" className="text-on-surface-var">Allowed. {who} can talk to your agent from their next message.</p>
+  }
+  if (n.trust_answer === 'denied') {
+    return <p data-type="body-s" className="text-on-surface-var">Denied. {who} can't talk to your agent.</p>
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-s">
+      <Button size="sm" onClick={() => onAnswer('allow')} loading={answering === 'allow'} disabled={Boolean(answering)} disabledReason={BUSY_REASON}>
+        <UserPlus size={14} /> Allow {who}
+      </Button>
+      <Button size="sm" variant="secondary" onClick={() => onAnswer('deny')} loading={answering === 'deny'} disabled={Boolean(answering)} disabledReason={BUSY_REASON}>
+        <XCircle size={14} /> Deny
+      </Button>
+    </div>
   )
 }
 

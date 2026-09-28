@@ -337,7 +337,7 @@ The posture is announced on stderr, so stdout stays pipeable.
     run_parser.add_argument(
         "--allow",
         action="store_true",
-        help="Grant write/execute tools for this run (default is read-only; the grant is printed to stderr)",  # noqa: E501
+        help="Grant write/execute tools for this run and approve its calls without asking (default is read-only; the grant is printed to stderr)",  # noqa: E501
     )
     run_parser.add_argument(
         "--timeout",

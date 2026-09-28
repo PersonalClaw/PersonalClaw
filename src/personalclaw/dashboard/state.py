@@ -29,7 +29,7 @@ from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
-    read_only_command,
+    reads_only,
     resolve_effective_risk,
     shell_command,
     tool_input_to_str,
@@ -1394,6 +1394,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     #: `raised_by_app` is WHICH APP raised the note, named by the producer that raises it for the
     #: app (`notify(raised_by_app=...)`). It is what lets an app read the note back
     #: (`notification_reaches`), so meta that could supply it could hand any note to any app.
+    #:
+    #: `trust_answer` is the owner's Allow or Deny on an unknown-sender note
+    #: (`answer_unknown_sender`): a note raised already answered would show no buttons, and the
+    #: stranger it names would be neither let in nor refused.
     _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
         {
             "mode",
@@ -1406,6 +1410,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             "withheld_reason",
             "routed_to",
             "raised_by_app",
+            "trust_answer",
         }
     )
 
@@ -1869,6 +1874,22 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             _rewrite_notifications(self._notification_log)
         else:
             _persist_notification(note)
+
+    def notification(self, ts: str) -> dict[str, Any] | None:
+        """The notification written at ``ts``, or None when the log holds none."""
+        return next((n for n in self._notification_log if n.get("ts") == ts), None)
+
+    def answer_unknown_sender(self, ts: str, answer: str) -> bool:
+        """Record the owner's answer (``allowed`` or ``denied``) on the unknown-sender note at
+        ``ts`` and mark it read, so it offers Allow and Deny no more. False when there is none."""
+        note = self.notification(ts)
+        if note is None:
+            return False
+        note["trust_answer"] = answer
+        note["acked"] = True
+        _rewrite_notifications(self._notification_log)
+        self.broadcast_ws("notification_ack", {"ts": ts})
+        return True
 
     def ack_notification(self, ts: str) -> bool:
         """Mark a notification as acknowledged and persist."""

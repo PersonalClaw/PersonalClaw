@@ -234,7 +234,7 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
 # granting it unattended operation.
 #
 # 🔴 EVERY FACT BELOW IS READ FROM A SHIPPED RESOLVER, never re-derived. §3.3 is explicit that
-# the execution machinery belongs to AUTOMATION-SUBSTRATE (AUTO-R15 / `automation_run(dry_run)`)
+# the execution machinery belongs to AUTOMATION-SUBSTRATE (AUTO-R15 / `automation_dry_run`)
 # and that this plan's remainder is only the unified RENDERING of it. A second next-fire
 # calculator or a second capability evaluator here would be a surface that disagrees with the
 # scheduler — the exact drift `schedule_view.describe_cadence` was written to end.
@@ -247,7 +247,7 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
 #   capability_grants → `triggers.screen.requested_capabilities` + `provider_is_read_only` +
 #                       `unfenced_actions` (the same three the firepath capability gate calls)
 #   observe_mode      → `triggers.tools.run(dry_run=True, runner=None)`, which is exactly what
-#                       `mcp_automation`'s `automation_run` dispatches a `dry_run` to, plus the
+#                       `mcp_automation`'s `automation_dry_run` dispatches to, plus the
 #                       T9 honesty check `ActionProvider.supports_dry_run`
 
 #: The five facts §3.3 names, as data so a test can assert the response is TOTAL over them
@@ -413,8 +413,8 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
 def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
     """Fact 5 — AUTOMATION-SUBSTRATE's dry fire, plus the T9 honesty verdict.
 
-    `tools.run(dry_run=True, runner=None)` is the local answer `automation_run` gives a
-    `dry_run` (`mcp_automation`: "a `dry_run` needs no turn and is answered locally"). It walks
+    `tools.run(dry_run=True, runner=None)` is the local answer `automation_dry_run` gives
+    (`mcp_automation`: "`automation_dry_run` needs no turn and is answered locally"). It walks
     the gate plan and returns BEFORE the runner is consulted, which is the property that makes
     this safe to offer from a browser button.
 

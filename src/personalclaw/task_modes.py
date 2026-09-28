@@ -177,36 +177,22 @@ def shell_command(title: str, tool_kind: str, tool_input: object, declared: obje
     return extract_bash_command(tool_input)
 
 
-def read_only_command(
-    title: str, tool_kind: str, tool_input: object, declared: object = ""
-) -> bool | None:
-    """The command-screening verdict an approval surface may publish. Tri-state.
+def reads_only(title: str, tool_kind: str, tool_input: object, declared: object = "") -> bool:
+    """Whether this ONE call is established as a read: what an approval surface publishes as
+    ``is_read_only``.
 
-    ``True`` this call runs a shell command and that command is read-only ·
-    ``False`` it runs a shell command that is NOT read-only ·
-    ``None`` it is not a shell call at all, so the question does not apply.
+    ``True`` when its tool declares it only reads, or when it runs a shell command screened
+    read-only; ``False`` for every other call, which PersonalClaw treats as the change it may
+    be: a tool that declares a change or nothing, a mutating command, a shell call whose command
+    never arrived. Never a third state: a call is a read only on positive evidence, and "not
+    established" is what ``False`` says.
 
-    The distinction between ``False`` and ``None`` is the whole point and is why this
-    returns an optional rather than a bool. A consumer must be able to tell "screened,
-    and it mutates" from "never screened": the first is a positive claim it may render,
-    the second is an absence it must not turn into one. #2821's consumer
-    (``web/src/pages/chat/approvalMeta.ts``) encodes exactly that tri-state and had no
-    supplier, so one branch of it was unreachable in production.
-
-    ONE owner for the composition (#2821): ``shell_command`` decides whether a ``command``
-    key means anything here — ``command`` is an ordinary argument name and reading it off a
-    non-shell tool labelled a destructive call as a read (#443) — and only then does
-    :func:`is_read_only_bash` screen it. Two surfaces publish this verdict (the dashboard
-    chat's approval card and the gateway's pending-approval queue) and they call this, so
-    they cannot answer the same question differently.
-
-    This screens the actual command string, deny-by-default. The tool's declaration is the
-    other half of "is this call a read", and :func:`classify_invocation` composes the two.
+    The answer is :func:`resolve_effective_risk` reaching ``safe``, the one owner of "is this
+    call a read" (:func:`classify_invocation` composes the declaration with the screened
+    command), so the two surfaces that publish it (the chat's approval card and the gateway's
+    pending approvals) and the risk each shows beside it cannot disagree.
     """
-    cmd = shell_command(title, tool_kind, tool_input, declared)
-    if not cmd:
-        return None
-    return is_read_only_bash(cmd)
+    return resolve_effective_risk(declared, title, tool_kind, tool_input) == "safe"
 
 
 def tool_input_to_str(value: object) -> str:

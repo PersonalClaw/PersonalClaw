@@ -106,12 +106,11 @@ def test_an_unattended_fire_hands_it_the_trigger_too(seen):
 
 
 def _services(spawned: dict):
-    def _bg(coro):
-        return asyncio.ensure_future(coro)
+    def _spawn(**kw):
+        spawned.update(kw)
+        return SimpleNamespace(done=False, error="")
 
-    return SimpleNamespace(
-        subagents=SimpleNamespace(spawn=lambda **kw: spawned.update(kw)), spawn_background=_bg
-    )
+    return SimpleNamespace(subagents=SimpleNamespace(spawn=_spawn))
 
 
 @pytest.mark.parametrize(
@@ -130,14 +129,10 @@ def test_both_agent_actions_spawn_under_the_trigger(monkeypatch, module, provide
     if module == "run_prompt_provider":
         monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "write the digest")
 
-    async def go():
-        res = await provider().execute(
-            config, ActionContext(event="Schedule", trigger_id="nightly")
-        )
-        await asyncio.sleep(0.05)
-        return res
-
-    assert asyncio.run(go()).success is True
+    res = asyncio.run(
+        provider().execute(config, ActionContext(event="Schedule", trigger_id="nightly"))
+    )
+    assert res.success is True, res.error
     assert spawned["trigger_id"] == "nightly"
 
 

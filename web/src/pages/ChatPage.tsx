@@ -82,7 +82,7 @@ import { confirm, promptInput } from '../ui/dialog'
 import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
-import { readOnlyCommandOf } from './chat/approvalMeta'
+import { readOnlyOf } from './chat/approvalMeta'
 import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
@@ -198,8 +198,8 @@ const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
 // so hovering a header tab (now the primary approval control) tells the user
 // what e.g. "YOLO" or "Plan" actually does rather than just its name.
 const APPROVAL_SLIDER = [
-  { key: 'normal', label: 'Normal', icon: Shield, title: 'Normal — ask before every tool' },
-  { key: 'trust_reads', label: 'Trust reads', icon: Eye, title: 'Trust reads — auto-approve read-only tools' },
+  { key: 'normal', label: 'Normal', icon: Shield, title: 'Normal — a tool that only reads runs; the rest ask when they need approval' },
+  { key: 'trust_reads', label: 'Trust reads', icon: Eye, title: 'Trust reads — read-only shell commands run without asking too' },
   { key: 'trust', label: 'Trust', icon: ShieldCheck, title: 'Trust — auto-approve every tool in this chat' },
   { key: 'yolo', label: 'YOLO', icon: Zap, title: 'YOLO — auto-approve everywhere; auto-expires, re-enable to extend' },
 ]
@@ -1448,7 +1448,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // other surface uses, unique across chats (a chat's id is unique only inside it).
           const id = String(d.request_id ?? '')
           if (segs.some((sg) => sg.kind === 'approval' && sg.id === id)) return segs
-          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(d.is_read_only), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
+          segs.push({ kind: 'approval', id, tool: String(d.tool ?? 'tool'), input: String(d.tool_input ?? ''), purpose: String(d.tool_purpose ?? ''), risk: (d.risk ? String(d.risk) : undefined) as ApprovalSegment['risk'], readOnly: readOnlyOf(d.is_read_only), grantAgent: d.grant_agent ? String(d.grant_agent) : '' })
           return segs
         })
         break
@@ -1899,8 +1899,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     // A card action that raises the session's standing posture must move the
-    // Permission-mode pill to match — otherwise the pill keeps claiming "Normal —
-    // ask before every tool" while the session silently auto-approves (a dishonest
+    // Permission-mode pill to match — otherwise the pill keeps claiming "Normal" (ask
+    // before a tool that needs approval) while the session silently auto-approves (a dishonest
     // state). `trust`/`trust_agent` → this chat is now trusted; `trust_reads` →
     // read-only auto; `yolo` → everywhere. `approved`/`rejected` are single-shot and
     // leave the mode alone. Mirror-only (no extra API call — the approve request
@@ -1913,7 +1913,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // 🪤 THE MIRROR IS GATED ON THE WRITE, AND THE FAILURE IS REPORTED. Both halves used to be
     // wrong in the same direction. The request swallowed its rejection, and the mirror ran
     // regardless — so a failed `yolo` left the pill claiming this chat auto-approves everything
-    // while the server was still asking before every tool. That is the EXACT INVERSE of the
+    // while the server was still asking. That is the EXACT INVERSE of the
     // dishonest state the comment above sets out to prevent, and it is a claim about a security
     // posture, not a cosmetic one. The pill is a mirror of a server flag, so it may only move once
     // the server has the flag; a failed decision now says so instead of being absorbed.

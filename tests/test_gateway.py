@@ -108,6 +108,37 @@ def _mock_dashboard_state():
     return ds
 
 
+@pytest.fixture
+def slack_set_up():
+    """Slack set up as a chat channel that knows its own conversation ids, as the Slack app's
+    transport does: how core finds the channel a bare channel id belongs to
+    (`channel_delivery.channel_of_id`)."""
+    import re
+
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Slack(ChannelTransportProvider):
+        name = "slack"
+        display_name = "Slack"
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message) -> bool:
+            return True
+
+        def validate_target(self, target: str) -> str:
+            return "" if re.fullmatch(r"[CDGW][A-Z0-9]+", target) else "not a Slack id"
+
+    channel_transports.register_transport(_Slack())
+    yield
+    channel_transports.unregister_transport("slack")
+
+
 def _mock_channel_delivery(channel="D_U1"):
     """Mock ChannelDelivery (the outbound handle the gateway delivers through).
 
@@ -520,10 +551,10 @@ class TestDeliverResult:
         delivery.deliver_notification.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_channel_thread_delivery(self):
+    async def test_channel_thread_delivery(self, slack_set_up):
         orch = _make_orchestrator(slack_enabled=True, owner_id="U1")
         delivery = _mock_channel_delivery()
-        orch._channel_delivery = delivery
+        orch.register_channel_delivery(delivery, provider="slack")
         orch.dashboard_state = _mock_dashboard_state()
         await orch._deliver_result("Title", "task", "result", "channel:C123:1234.5678")
         delivery.deliver_notification.assert_awaited_once()
@@ -891,6 +922,10 @@ class TestNotifMeta:
     """Notification metadata builder (channel deep links come from the
     ChannelDelivery seam's build_thread_link — core never builds vendor URLs)."""
 
+    @pytest.fixture(autouse=True)
+    def _slack(self, slack_set_up):
+        yield
+
     @staticmethod
     def _orch(with_delivery: bool = True):
         orch = _make_orchestrator()
@@ -899,7 +934,7 @@ class TestNotifMeta:
             delivery.build_thread_link = MagicMock(
                 side_effect=lambda chan, ts: f"https://chat.example/{chan}/{ts}"
             )
-            orch._channel_delivery = delivery
+            orch.register_channel_delivery(delivery, provider="slack")
         else:
             orch._channel_delivery = None
         return orch

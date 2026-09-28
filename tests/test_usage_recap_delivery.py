@@ -121,7 +121,7 @@ def _wire_state(monkeypatch, home: Path):
     monkeypatch.setattr(
         S,
         "_services",
-        S.ActionServices(state=state, spawn_background=lambda coro: None),
+        S.ActionServices(state=state),
     )
     return state
 

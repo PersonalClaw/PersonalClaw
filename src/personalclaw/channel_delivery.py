@@ -30,6 +30,7 @@ import copy
 import dataclasses
 import inspect
 import logging
+import unicodedata
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, runtime_checkable
@@ -605,6 +606,27 @@ def channel_shown_as(key: str) -> str:
     return transport.display_name if transport is not None else key
 
 
+def _chat_channels(transports: "Mapping[str, Any] | None" = None) -> dict[str, Any]:
+    """The chat channels set up here, by key: *transports*, else the registered ones. The Web UI
+    is not one."""
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport, list_transports
+
+    if transports is None:
+        transports = {key: get_transport(key) for key in list_transports()}
+    return {k: t for k, t in transports.items() if k != WEBUI_TRANSPORT and t is not None}
+
+
+def _shown(chat: Mapping[str, Any]) -> dict[str, str]:
+    return {k: str(getattr(t, "display_name", "") or k) for k, t in chat.items()}
+
+
+def _set_up_here(shown: Mapping[str, str]) -> str:
+    """The sentence naming the chat channels set up here, for a refusal to end with."""
+    if not shown:
+        return "No chat channel is set up here."
+    return f"The chat channels set up here: {', '.join(sorted(shown.values()))}."
+
+
 def named_chat_channel(
     name: str, *, transports: "Mapping[str, Any] | None" = None
 ) -> tuple[str, str]:
@@ -616,22 +638,122 @@ def named_chat_channel(
     never stands in for the one they named. *transports* is the channels to look in, by key; the
     registered ones when omitted.
     """
-    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport, list_transports
-
-    if transports is None:
-        transports = {key: get_transport(key) for key in list_transports()}
-    chat = {k: t for k, t in transports.items() if k != WEBUI_TRANSPORT and t is not None}
+    shown = _shown(_chat_channels(transports))
     wanted = name.strip().casefold()
-    shown: dict[str, str] = {k: str(getattr(t, "display_name", "") or k) for k, t in chat.items()}
     for key, display in shown.items():
         if wanted and wanted in (key.casefold(), display.casefold()):
             return key, ""
-    choices = (
-        f"The chat channels set up here: {', '.join(sorted(shown.values()))}."
-        if shown
-        else "No chat channel is set up here."
+    return "", (
+        f"{name.strip() or 'That'} isn't one of the chat channels set up here. "
+        f"{_set_up_here(shown)}"
     )
-    return "", f"{name.strip() or 'That'} isn't one of the chat channels set up here. {choices}"
+
+
+def same_user(owner_id: str, user_id: str) -> bool:
+    """Whether *user_id* is the user *owner_id* names. Slack spells one user with a ``U`` or a
+    ``W`` in front, so either matches the other."""
+    if not owner_id or not user_id:
+        return False
+    return (
+        user_id == owner_id
+        or user_id.replace("W", "U", 1) == owner_id
+        or user_id.replace("U", "W", 1) == owner_id
+    )
+
+
+#: The longest id a message may be addressed to: far longer than any platform's, and shorter than
+#: pasted text.
+_ID_MAX_LEN = 256
+
+
+def id_problem(target: str) -> str:
+    """Why *target* can't be anyone's id, in one sentence, or ``""`` when it could be: it is empty,
+    longer than any platform's id, or has a space or control character in it. Which channel it
+    belongs to, and whether it is one of that channel's, the channels answer (:func:`channel_of_id`,
+    :func:`target_problem`)."""
+    value = str(target or "")
+    if not value:
+        return "An id to send to can't be empty."
+    if len(value) > _ID_MAX_LEN:
+        return "That's too long to be an id to send to."
+    if any(ch.isspace() or unicodedata.category(ch).startswith("C") for ch in value):
+        return "An id to send to has no spaces or control characters."
+    return ""
+
+
+def _takes(transport: Any, target: str) -> bool:
+    """Whether *transport* takes *target* as one of its chat or channel ids. A check that raises
+    claims nothing."""
+    try:
+        return not transport.validate_target(target)
+    except Exception:  # noqa: BLE001 - a broken check must not claim someone else's id
+        logger.warning("channel %s: validate_target raised", getattr(transport, "name", ""))
+        return False
+
+
+def channels_taking(
+    target: str, *, user: bool = False, transports: "Mapping[str, Any] | None" = None
+) -> list[str]:
+    """The chat channels set up here that take *target*, by key and sorted: as a chat or channel
+    id (``ChannelTransportProvider.validate_target``), or with *user* as the owner's user id there
+    (``owner_id_for``), the owner being the one user core sends a message to."""
+    chat = _chat_channels(transports)
+    if user:
+        from personalclaw.config.credentials import owner_id_for
+
+        return [key for key in sorted(chat) if same_user(owner_id_for(key), target)]
+    return [key for key in sorted(chat) if _takes(chat[key], target)]
+
+
+def channel_of_id(
+    target: str, *, user: bool = False, transports: "Mapping[str, Any] | None" = None
+) -> tuple[str, str]:
+    """The chat channel an id sent without naming its channel belongs to, as ``(key, "")``, or
+    ``("", the sentence saying why not)``.
+
+    *target* is a chat or channel id, or with *user* a user id. An id means nothing without the
+    channel that issued it (#959), and core cannot tell one platform's ids from another's, so each
+    chat channel set up here is asked (:func:`channels_taking`). Exactly one takes it → that one.
+    None, or more than one, is refused with the channels to choose from, so the sender says which:
+    an id is never handed to whichever channel happens to sort first. With no chat channel set up
+    at all there is no channel to name, and the answer is ``("", "")``: the message has nowhere to
+    go but PersonalClaw itself. *transports* is the channels to ask, by key; the registered ones
+    when omitted.
+    """
+    chat = _chat_channels(transports)
+    if not chat:
+        return "", ""
+    takes = channels_taking(target, user=user, transports=chat)
+    if len(takes) == 1:
+        return takes[0], ""
+    shown = _shown(chat)
+    names = ", ".join(shown[key] for key in takes)
+    if user and not takes:
+        return "", (
+            f"{target} isn't the owner's user id on any chat channel set up here, so which "
+            f"channel it is on is unknown. {_set_up_here(shown)} Say which one to send it on."
+        )
+    if user:
+        return "", f"{target} is the owner's user id on {names}. Say which one to send it on."
+    if not takes:
+        return "", (
+            f"No chat channel set up here takes {target} as a chat or channel id. "
+            f"{_set_up_here(shown)} Say which one to send it on."
+        )
+    return "", f"{target} could be a chat or channel on {names}. Say which one to send it on."
+
+
+def target_problem(key: str, target: str, *, transports: "Mapping[str, Any] | None" = None) -> str:
+    """Why chat channel *key* can't send to chat or channel id *target*, or ``""`` if it can: the
+    channel checks its own ids (``ChannelTransportProvider.validate_target``)."""
+    transport = _chat_channels(transports).get(key)
+    if transport is None:
+        return f"{key} isn't one of the chat channels set up here."
+    try:
+        return str(transport.validate_target(target) or "")
+    except Exception:  # noqa: BLE001 - a broken check refuses rather than letting any id through
+        logger.warning("channel %s: validate_target raised", key, exc_info=True)
+        return f"{channel_shown_as(key)} couldn't check that id."
 
 
 async def reach_owner(

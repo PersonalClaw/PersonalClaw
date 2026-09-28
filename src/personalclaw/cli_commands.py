@@ -336,13 +336,19 @@ def _cron_channel_problem(channel: str | None) -> str:
     """
     if not channel:
         return ""
-    from personalclaw.providers.loader import build_channel_transports
     from personalclaw.triggers import delivery as _delivery
 
-    transports = {t.name: t for t in build_channel_transports()}
     return _delivery.channel_route_problem(
-        f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}", transports=transports
+        f"{_delivery.CHANNEL_ROUTE_PREFIX}{channel}", transports=_cli_chat_channels()
     )
+
+
+def _cli_chat_channels() -> dict[str, Any]:
+    """The installed chat channels, built to be asked: this process is not the gateway, so none
+    is registered in it. What a channel route or a `send-message` action is checked against."""
+    from personalclaw.providers.loader import build_channel_transports
+
+    return {t.name: t for t in build_channel_transports()}
 
 
 def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
@@ -618,7 +624,13 @@ def _cron(args: argparse.Namespace) -> None:
                     nothing="Nothing was changed.",
                 )
 
-        result = _tools.update(store, trigger_id=args.job_id, patch=patch, owner_consented=yes)
+        result = _tools.update(
+            store,
+            trigger_id=args.job_id,
+            patch=patch,
+            owner_consented=yes,
+            chat_channels=_cli_chat_channels() if "workflow" in patch else None,
+        )
         if result.ok and result.data.get("granted"):
             sel().log_api_access(
                 caller="cli",

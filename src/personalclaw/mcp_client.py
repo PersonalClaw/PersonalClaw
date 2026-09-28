@@ -89,7 +89,7 @@ def declared_risk(server: str, tool: McpToolSpec, *, trusted: bool | None = None
 
     The server's ``readOnlyHint`` counts only when the owner trusts that server's labels
     (:func:`read_only_labels_trusted`): a server can call anything read-only, and believing it
-    would let its tool run in Ask mode and without a card under Trust reads. So an untrusted
+    would let its tool run without a card and in Ask mode. So an untrusted
     server's tools are CAUTION — they ask — whatever they say; an explicit ``destructiveHint``
     is believed from anyone, since it only adds a question.
 

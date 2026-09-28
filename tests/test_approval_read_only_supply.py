@@ -1,24 +1,17 @@
-"""Rails for #2821: the command-screening verdict had no supplier.
+"""Rails for #2821: every approval says whether its call is established as a read.
 
 ``ONBOARDING-UX`` Contract C2 names three inputs to the approval brief's blast-radius
-derivation — the tool name, the existing risk level, and the command-screening
-classification. The first two were supplied. The third was COMPUTED per approval
-(``is_read_only_bash`` behind ``perm_meta["is_read_only"]``) and then dropped: it was not
-on the ``approval`` WS payload, not on ``GET /api/approvals``, and no frontend call site
-passed ``readOnlyCommand``. So ``deriveBlastRadius``'s
-``input.readOnlyCommand === true`` branch was unreachable in production.
+derivation — the tool name, the existing risk level, and the backend's read classification.
+The third was once computed per approval and dropped before any wire; then it was published as
+a command-screening verdict with THREE states, ``None`` meaning "not a shell call", so every
+approval for a tool (a declared read included) carried ``is_read_only: null`` — a field named
+for a yes-or-no question answering neither.
 
-The fix is a pass-through with ONE owner, not a second classifier —
-``task_modes.read_only_command()``. These rails assert the OBSERVABLE supply at each door
-rather than that the function exists, because "the constant is defined" is exactly the
-assertion that let this survive as a source comment for two changes.
-
-**Why the verdict is tri-state and why that is asserted everywhere.** ``None``/absent
-means "this call runs no shell, so the question does not apply"; ``False`` means
-"screened, and it mutates". Collapsing those two is the whole failure mode: the honesty
-contract downstream reads absence as *not established*, never as *verified absent*, so a
-``False`` flattened to absent silently loses a negative verdict. Every door below asserts
-all three states, not just the positive one.
+It is now the call-level answer from ONE owner, ``task_modes.reads_only()``: ``True`` when the
+tool declares it only reads or its command screened read-only, ``False`` for every other call,
+which PersonalClaw treats as the change it may be. These rails assert the OBSERVABLE supply at
+each door rather than that the function exists, and both states at every door, because a
+supplier that only ever publishes ``True`` is half wired.
 
 The doors are enumerated deliberately. ``_pending_approvals`` is BOTH the gateway
 ``approval`` WS payload and the ``GET /api/approvals`` row, so one supply reaches two
@@ -29,6 +22,7 @@ since a facet present on one surface and absent on the other was the drift #2821
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -42,30 +36,36 @@ WEB = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
 class TestTheSupplierIsOneOwner:
-    """``read_only_command`` composes the scoped extractor with the screener."""
+    """``reads_only`` is the effective risk's ``safe``: the declaration and the screened
+    command, composed by their one owner."""
 
     @pytest.mark.parametrize(
-        "tool,tool_input,expected",
+        "tool,tool_input,declared,expected",
         [
-            # Screened, read-only.
-            ("bash", {"command": "ls -la"}, True),
-            ("bash", {"command": "git status"}, True),
-            # Screened, NOT read-only — the state that must not flatten to absent.
-            ("bash", {"command": "rm -rf /tmp/x"}, False),
-            ("bash", {"command": "cat a > b"}, False),
-            # Not a shell call at all: `command` is an ordinary argument name, and
-            # reading it off a non-shell tool labelled a destructive call as a read
-            # (#443). The answer is "does not apply", never False-as-in-mutating.
-            ("workflow_delete_def", {"command": "ls"}, None),
-            ("read_file", {"path": "/etc/hosts"}, None),
-            # A shell tool with nothing to screen.
-            ("bash", {}, None),
+            # A shell call whose command screened read-only.
+            ("bash", {"command": "ls -la"}, "", True),
+            ("bash", {"command": "git status"}, "", True),
+            # A shell call whose command changes something.
+            ("bash", {"command": "rm -rf /tmp/x"}, "", False),
+            ("bash", {"command": "cat a > b"}, "", False),
+            # A tool that declares it only reads.
+            ("memory_recall", {"query": "x"}, "safe", True),
+            ("read_file", {"path": "/etc/hosts"}, "safe", True),
+            # Not a shell call: `command` is an ordinary argument name, and reading it off a
+            # non-shell tool labelled a destructive call as a read (#443).
+            ("workflow_delete_def", {"command": "ls"}, "destructive", False),
+            # A tool that declares nothing is not established as a read.
+            ("read_file", {"path": "/etc/hosts"}, "", False),
+            # A shell tool with nothing to screen: nobody read a command, so no read.
+            ("bash", {}, "", False),
         ],
     )
-    def test_the_verdict_is_tri_state(self, tool, tool_input, expected) -> None:
-        from personalclaw.task_modes import read_only_command
+    def test_the_verdict_is_a_yes_or_a_no(self, tool, tool_input, declared, expected) -> None:
+        """🔴 Before: ``None`` for every call that is not a shell command, a declared read
+        included, so the approval said neither yes nor no."""
+        from personalclaw.task_modes import reads_only
 
-        assert read_only_command(tool, "", tool_input) is expected
+        assert reads_only(tool, "", tool_input, declared) is expected
 
     def test_it_screens_the_command_not_the_tool_name(self) -> None:
         """Deliberately NOT ``classify_invocation``.
@@ -76,10 +76,10 @@ class TestTheSupplierIsOneOwner:
         string, so the same tool name gets opposite answers for opposite commands. If that
         stops being true, this supplier has become the thing that argument warns about.
         """
-        from personalclaw.task_modes import read_only_command
+        from personalclaw.task_modes import reads_only
 
-        assert read_only_command("bash", "", {"command": "ls"}) is True
-        assert read_only_command("bash", "", {"command": "rm x"}) is False
+        assert reads_only("bash", "", {"command": "ls"}) is True
+        assert reads_only("bash", "", {"command": "rm x"}) is False
 
 
 # ── door: the gateway's pending-approval store (WS payload + GET /api/approvals) ──
@@ -93,7 +93,7 @@ def _state():
     return DashboardState(sessions=MagicMock(count=0), start_time=0.0)
 
 
-async def _request(state, tool: str, tool_input: str):
+async def _request(state, tool: str, tool_input: str, *, risk_level: str = ""):
     """Fire ``request_approval`` and return the stored row, then resolve the future.
 
     The call blocks on a human, so it is driven as a task and released immediately —
@@ -102,7 +102,9 @@ async def _request(state, tool: str, tool_input: str):
     import asyncio
 
     task = asyncio.create_task(
-        state.request_approval("ap-1", "subagent", tool, tool_input=tool_input)
+        state.request_approval(
+            "ap-1", "subagent", tool, tool_input=tool_input, risk_level=risk_level
+        )
     )
     for _ in range(200):
         await asyncio.sleep(0)
@@ -127,11 +129,42 @@ async def test_the_pending_approval_row_carries_the_verdict(command, expected) -
 
 
 @pytest.mark.asyncio
-async def test_a_non_shell_tool_publishes_no_verdict_rather_than_False() -> None:
-    """``None``, not ``False``. See this module's header — this IS the failure mode."""
+@pytest.mark.parametrize(("declared", "expected"), [("safe", True), ("caution", False)])
+async def test_a_tool_that_runs_no_command_is_answered_by_its_declaration(
+    declared, expected
+) -> None:
+    """🔴 Before: ``None`` for a declared read and a declared change alike."""
     state = _state()
-    row = await _request(state, "read_file", json.dumps({"path": "/etc/hosts"}))
-    assert row["is_read_only"] is None
+    row = await _request(
+        state, "read_file", json.dumps({"path": "/etc/hosts"}), risk_level=declared
+    )
+    assert row["is_read_only"] is expected
+
+
+@pytest.mark.asyncio
+async def test_an_acp_shell_call_is_screened_by_its_kind_as_the_chat_screens_it() -> None:
+    """The kind the call arrived with reaches the queue too, so an ACP agent's shell call titled
+    in prose is known as one here, as the chat's card knows it."""
+    import asyncio
+
+    state = _state()
+    task = asyncio.create_task(
+        state.request_approval(
+            "ap-1",
+            "subagent",
+            "List the files",
+            tool_input=json.dumps({"command": "ls -la"}),
+            tool_kind="execute",
+        )
+    )
+    for _ in range(200):
+        await asyncio.sleep(0)
+        if "ap-1" in state._pending_approvals:
+            break
+    row = dict(state._pending_approvals["ap-1"])
+    state.resolve_approval("ap-1", False, by=YOU)
+    await task
+    assert row["is_read_only"] is True
 
 
 @pytest.mark.asyncio
@@ -191,7 +224,7 @@ class TestBothPermissionSurfacesAgree:
     chat path would have passed on the exact state the issue was filed about.
     """
 
-    def test_every_derive_call_site_passes_the_screening_verdict(self) -> None:
+    def test_every_derive_call_site_passes_the_read_verdict(self) -> None:
         """``deriveBlastRadius`` has three call sites; all three must supply the input.
 
         Enumerated from the source rather than trusted: the census is the assertion, so a
@@ -215,14 +248,19 @@ class TestBothPermissionSurfacesAgree:
             if rel == "pages/chat/approvalMeta.ts":
                 continue  # the definition itself, not a call site
             text = (WEB / rel).read_text(encoding="utf-8")
-            assert "readOnlyCommand" in text, f"{rel} derives a blast radius without the verdict"
+            calls = re.findall(r"deriveBlastRadius\(\{[^}]*\}", text)
+            assert calls, f"{rel}: no deriveBlastRadius call found — this rail measures nothing"
+            for call in calls:
+                assert re.search(
+                    r"\breadOnly\b", call
+                ), f"{rel} derives a blast radius without the verdict: {call}"
 
     def test_every_wire_parse_decodes_through_the_one_decoder(self) -> None:
         """``is_read_only`` must never be read by casting or by truthiness.
 
-        ``""`` is falsy but not ``=== false``, so a raw pass-through lands in the
-        "unknown" branch and drops a negative verdict. ``readOnlyCommandOf`` owns the
-        tri-state; every reader goes through it.
+        ``""`` (a transcript row's spelling of no) is falsy but not ``=== false``, so a raw
+        pass-through reads as "no verdict" and drops the negative one. ``readOnlyOf`` owns the
+        wire's spellings; every reader goes through it.
         """
         readers = {
             p.relative_to(WEB).as_posix()
@@ -234,8 +272,8 @@ class TestBothPermissionSurfacesAgree:
         # api.ts and approvalMeta.ts declare/document the field; the rest READ it.
         for rel in readers - {"lib/api.ts", "pages/chat/approvalMeta.ts"}:
             text = (WEB / rel).read_text(encoding="utf-8")
-            assert "readOnlyCommandOf(" in text, (
-                f"{rel} reads is_read_only without the tri-state decoder; "
+            assert "readOnlyOf(" in text, (
+                f"{rel} reads is_read_only without the one decoder; "
                 "an empty string is falsy but not === false"
             )
 
@@ -243,6 +281,6 @@ class TestBothPermissionSurfacesAgree:
         """Both scans above are greps over a tree; prove the tree was actually read."""
         assert (WEB / "pages" / "chat" / "approvalMeta.ts").exists()
         assert len(list(WEB.rglob("*.ts*"))) > 100
-        assert "readOnlyCommandOf" in (WEB / "pages" / "chat" / "approvalMeta.ts").read_text(
+        assert "readOnlyOf" in (WEB / "pages" / "chat" / "approvalMeta.ts").read_text(
             encoding="utf-8"
         )

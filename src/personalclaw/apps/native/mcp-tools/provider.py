@@ -10,7 +10,8 @@ as a Store install. With no server configured it serves no tools at all.
 Tool names are namespaced ``mcp/<server>/<tool>`` so they never collide with the
 builtin/in-process core tools, and ``invoke`` routes back to the owning server. What a tool is
 taken to do comes from the server's own annotations (:func:`personalclaw.sdk.mcp.declared_risk`),
-never from its name, and every one of them asks before it runs.
+never from its name: a read asks nobody, like every tool that declares one, and every other tool
+asks before it runs.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from personalclaw.sdk.mcp import McpClientRegistry
-from personalclaw.sdk.tool import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.sdk.tool import RiskLevel, ToolDefinition, ToolProvider, ToolResult
 
 _TOOL_PREFIX = "mcp"
 
@@ -53,16 +54,17 @@ class McpToolProvider(ToolProvider):
             for tool in await conn.list_tools():
                 # What the server's annotations declare, never what the tool is called: a
                 # read-only label counts only from a server the owner trusts (Tools page), a
-                # destructive one from any server, and a tool that says nothing is a change,
-                # so it asks.
+                # destructive one from any server, and a tool that says nothing is a change.
+                # A read asks nobody; a change asks.
+                risk = declared_risk(server_name, tool)
                 tools.append(
                     ToolDefinition(
                         name=f"{_TOOL_PREFIX}/{server_name}/{tool.name}",
                         description=tool.description,
                         provider="mcp",
                         parameters=tool.input_schema,
-                        requires_approval=True,
-                        risk_level=declared_risk(server_name, tool),
+                        requires_approval=risk is not RiskLevel.SAFE,
+                        risk_level=risk,
                     )
                 )
         return tools

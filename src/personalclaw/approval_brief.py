@@ -205,17 +205,17 @@ def derive_blast_radius(
     tool: str,
     *,
     risk: str | None = None,
-    read_only_command: bool | None = None,
+    read_only: bool | None = None,
 ) -> dict[str, bool] | None:
     """Derive C2's four facets for one pending call, or ``None`` if none was established.
 
     ``tool`` is the tool identity as it already travels the approval path (``event.title``
     — the same value ``chat_runner`` broadcasts as the ``approval`` event's ``tool``).
-    ``risk`` is the EFFECTIVE per-invocation risk. ``read_only_command`` is the command
-    screening verdict: ``True``/``False`` positively establish/rule out the read claim,
-    ``None`` says nothing either way. It is declared for parity with the frontend's
-    ``deriveBlastRadius`` (C2's third input) and, as there, NO caller supplies it —
-    :func:`compose_approval_brief` explains why passing it would be worse than redundant.
+    ``risk`` is the EFFECTIVE per-invocation risk. ``read_only`` is the approval's
+    ``is_read_only`` (``task_modes.reads_only``): ``True``/``False`` establish/rule out the read
+    claim, ``None`` (a row that carries none) says nothing either way. It is declared for parity
+    with the frontend's ``deriveBlastRadius`` (C2's third input) and NO caller here supplies it —
+    :func:`compose_approval_brief` explains why passing it would be redundant.
 
     Total and pure — no I/O, no clock, no throws. Field-for-field identical to
     ``approvalMeta.ts``' ``deriveBlastRadius``.
@@ -228,19 +228,18 @@ def derive_blast_radius(
     # What kind of change the call can make, from words in its name — a description, never a
     # read: no word establishes that a call changes nothing.
     writes = _has_any(name, DESTRUCTIVE_HINTS) or _has_any(name, WRITE_HINTS)
-    # `read_only` needs positive evidence: the screening verdict (it inspected the actual
-    # command) or an EFFECTIVE-safe risk (the tool declares it only reads). An explicit `False`
-    # from the screen rules it out whatever the risk says, and so does an established write —
-    # a tool labelled read-only whose name says it writes is shown as the write it may be.
-    read_only = not writes and (
-        read_only_command is True
-        or (read_only_command is not False and _risk_establishes_read_only(risk))
+    # `reads` needs positive evidence: the call's read verdict or an EFFECTIVE-safe risk (the
+    # tool declares it only reads, or its command screened read-only). An explicit `False`
+    # rules it out whatever the risk says, and so does an established write — a tool labelled
+    # read-only whose name says it writes is shown as the write it may be.
+    reads = not writes and (
+        read_only is True or (read_only is not False and _risk_establishes_read_only(risk))
     )
 
     # Nothing established → say nothing. See the honesty contract in the header.
-    if not writes and not network and not shell and not read_only:
+    if not writes and not network and not shell and not reads:
         return None
-    return {"writes": writes, "network": network, "shell": shell, "readOnly": read_only}
+    return {"writes": writes, "network": network, "shell": shell, "readOnly": reads}
 
 
 def established_facets(radius: dict[str, bool] | None) -> list[dict[str, str]]:
@@ -332,8 +331,8 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
     :func:`~personalclaw.security.redact_field`). A native-loop call's arguments arrive as a
     dict, and are JSON-encoded before the mask reads them, which is what the card shows too.
 
-    **Why the screening verdict is not passed separately.** OU-8 measured the
-    ``read_only_command`` pass-through as redundant, and it is: ``resolve_effective_risk``
+    **Why the read verdict is not passed separately.** OU-8 measured the
+    ``read_only`` pass-through as redundant, and it is: ``resolve_effective_risk``
     already routes a readable command through ``is_read_only_bash`` and only ever reports
     ``'safe'`` on positive read evidence — a tool that declares nothing floors at
     ``'caution'``, never ``'safe'``, so nothing arrives on the phone claiming "reads only"

@@ -560,24 +560,10 @@ async def start_dashboard(
     _set_inbox_state(state)
 
     # Wire the native hook providers' service accessor (notify/send-message/
-    # create-task reach DashboardState + a tracked background-spawn through it).
-    def _spawn_background(coro: Any) -> Any:
-        import asyncio as _asyncio
-
-        task = _asyncio.ensure_future(coro)
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-        return task
-
+    # create-task reach DashboardState through it, invoke-agent/run-prompt the subagents).
     from personalclaw.action_providers.services import ActionServices, set_action_services
 
-    set_action_services(
-        ActionServices(
-            state=state,
-            spawn_background=_spawn_background,
-            subagents=state.subagents,
-        )
-    )
+    set_action_services(ActionServices(state=state, subagents=state.subagents))
 
     # Wire script hooks into subagent tool execution path
     if state.subagents is not None:
@@ -1720,6 +1706,7 @@ async def start_dashboard(
     app.router.add_delete("/api/notifications", handlers.api_notification_delete)
     app.router.add_post("/api/notifications/ack", handlers.api_notification_ack)
     app.router.add_post("/api/notifications/unack", handlers.api_notification_unack)
+    app.router.add_post("/api/notifications/trust", handlers.api_notification_trust)
     app.router.add_post("/api/notifications/ack-all", handlers.api_notifications_ack_all)
     app.router.add_get("/api/update/check", handlers.api_update_check)
     app.router.add_get("/api/changelog", handlers.api_changelog)

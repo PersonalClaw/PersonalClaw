@@ -202,6 +202,7 @@ def _event() -> SimpleNamespace:
     return SimpleNamespace(
         request_id="req-1",
         title="bash",
+        tool_kind="",
         tool_input='{"command": "make test"}',
         tool_purpose="run the tests",
         risk_level="",

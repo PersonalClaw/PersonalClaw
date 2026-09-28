@@ -138,18 +138,19 @@ async def test_a_credential_inside_a_STRUCTURED_argument_is_still_redacted() -> 
 async def test_the_screening_verdict_reads_the_RAW_dict_not_the_serialized_copy() -> None:
     """Coercion must not move what ``is_read_only`` is computed from.
 
-    ``read_only_command`` is typed ``object`` precisely so it can read a native dict's
-    ``command`` key. Screening the serialized copy would work by accident (it re-parses JSON)
-    and would stop working the moment redaction or serialization changed the text, so the
-    ordering is pinned: coerce for DISPLAY, screen the RAW value.
+    ``reads_only`` takes an ``object`` precisely so it can read a native dict's ``command``
+    key. Screening the serialized copy would work by accident (it re-parses JSON) and would
+    stop working the moment redaction or serialization changed the text, so the ordering is
+    pinned: coerce for DISPLAY, screen the RAW value.
     """
     state = _state()
     assert (await _row(state, "bash", {"command": "ls -la"}))["is_read_only"] is True
     state = _state()
     assert (await _row(state, "bash", {"command": "rm -rf /tmp/x"}))["is_read_only"] is False
     state = _state()
-    # Not a shell call at all → the question does not apply. `None`, never `False`.
-    assert (await _row(state, "read_file", {"path": "/etc/hosts"}))["is_read_only"] is None
+    # A tool that declares nothing here is not established as a read: a no, never a third
+    # "unknown" state.
+    assert (await _row(state, "read_file", {"path": "/etc/hosts"}))["is_read_only"] is False
 
 
 # ── the scanner keeps its `str` contract, and that is the stated posture ──────

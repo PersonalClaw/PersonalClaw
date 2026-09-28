@@ -1,6 +1,8 @@
 """Abstract base for tool providers."""
 
+import json
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -15,10 +17,10 @@ class RiskLevel(str, Enum):
       — a usage counter, the audit log, a retained copy of its result, an index or cache
       derived from what it read, a one-time upgrade of its own store's layout: it creates,
       edits and deletes nothing the owner keeps, sends nothing anywhere, starts, stops and
-      steers no run, and does not act on the desktop. Every "reads run without asking"
-      decision admits exactly these: Ask and
-      Plan mode, Trust reads, ``personalclaw run`` without ``--allow``, ``--approval reads``, a
-      research-class leaf or subagent, a read-only room member, a dry run.
+      steers no run, and does not act on the desktop. It asks nobody, in any approval mode, and
+      every "reads run without asking" decision admits exactly these: Ask and Plan mode,
+      ``personalclaw run`` without ``--allow``, ``--approval reads``, a research-class leaf or
+      subagent, a read-only room member, a dry run.
     - ``CAUTION``: it changes something (write_file, task_create, memory_remember,
       workflow_start, computer_click). It asks, unless the owner's posture answers for it.
     - ``DESTRUCTIVE``: arbitrary shell exec or a delete (bash, *_delete, memory_forget).
@@ -40,6 +42,38 @@ BUILDS_META_KEY = "personalclaw/builds"
 #: The ``_meta`` key an MCP-shaped tool dict sets to declare that its only effect is a proposal
 #: the owner accepts or dismisses (:attr:`ToolDefinition.proposes`).
 PROPOSES_META_KEY = "personalclaw/proposes"
+
+#: The ``_meta`` key an MCP-shaped tool dict sets to name the arguments a call may carry and
+#: still do nothing but tell the owner something (:attr:`ToolDefinition.tells_owner`).
+TELLS_OWNER_META_KEY = "personalclaw/tells_owner"
+
+
+def only_tells_the_owner(tells_owner: Collection[str], tool_input: object) -> bool:
+    """Whether a call does nothing but tell the owner something: its tool declares the arguments
+    such a call carries (``tells_owner``), and the call sets no other.
+
+    An argument left empty (``""``, ``None``, ``False``, an empty list or object) is not set. A
+    call whose input cannot be read, or to a tool that declares nothing, is not such a call.
+    """
+    allowed = frozenset(str(a) for a in tells_owner or ())
+    if not allowed:
+        return False
+    args: object = tool_input
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args.strip() else {}
+        except ValueError:
+            return False
+    if not isinstance(args, dict):
+        return False
+    return all(key in allowed for key, value in args.items() if _is_set(value))
+
+
+def _is_set(value: object) -> bool:
+    """Whether a call's argument says anything: an empty or false one leaves it to the default."""
+    if value is None or value is False:
+        return False
+    return not (isinstance(value, (str, list, dict)) and not value)
 
 
 def risk_from_annotations(annotations: Any, *, trusted: bool) -> RiskLevel:
@@ -63,12 +97,19 @@ def risk_from_annotations(annotations: Any, *, trusted: bool) -> RiskLevel:
 
 @dataclass
 class ToolDefinition:
-    """Schema for a tool exposed by a provider."""
+    """Schema for a tool exposed by a provider.
+
+    A tool that declares it only reads (``risk_level=RiskLevel.SAFE``) asks nobody, whoever
+    built it: its ``requires_approval`` is false whatever the constructor passed, so the
+    declaration is the one answer every runtime, the Tools page and the reference read.
+    """
 
     name: str
     description: str
     provider: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
+    # Whether a call asks before it runs, unless the session's approval posture answers for it.
+    # Only a change asks: false for a declared read (see the class docstring).
     requires_approval: bool = True
     # What a call does (see RiskLevel). Undeclared is CAUTION: only a tool that says it only
     # reads is treated as a read.
@@ -91,6 +132,17 @@ class ToolDefinition:
     # mode, Trust reads and a dry run treat it as the change it is — but a research-class run's
     # `read` tool grant admits it, because filing for the owner's review is what those runs do.
     proposes: bool = False
+    # The arguments a call may carry and still do nothing but tell the owner something
+    # (`notify` with its text and the channel to use): a call that sets no other argument only
+    # tells the owner (`only_tells_the_owner`). Not a read, so every posture that asks still asks,
+    # but an automation's own agent, whose grant is `read`, may make it: telling the owner what
+    # it found is what an automation is for.
+    tells_owner: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # `==`, not `is`: a constructor may pass the level's string value.
+        if self.risk_level == RiskLevel.SAFE:
+            self.requires_approval = False
 
 
 # Name fragments that mark a tool as option-prompt-shaped even when its provider

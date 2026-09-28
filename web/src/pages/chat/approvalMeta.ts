@@ -23,7 +23,7 @@
  *     read-only") — a confident claim from zero evidence. Absence is C2's own
  *     unknown channel (`blastRadius?`), so the renderer simply shows no chips.
  *  2. `readOnly` is only ever claimed on positive evidence — a read-only EFFECTIVE risk
- *     or a screened read-only command — and never alongside a write. Under-claiming
+ *     or the backend's read verdict — and never alongside a write. Under-claiming
  *     safety is the correct direction to err.
  *
  *  ── What the name is, and is not, evidence of ─────────────────────────────────
@@ -41,28 +41,25 @@
  *  still establish writes/network/shell and can still leave everything unknown
  *  (→ `undefined`).
  *
- *  ── Where `readOnlyCommand` comes from (#2821) ───────────────────────────────
- *  C2 names "command-screening classification" as a third input, and for a while it
- *  had no supplier: `is_read_only_bash()` ran per approval and was stored in
- *  `perm_meta["is_read_only"]`, but reached no wire and no reader, so the
- *  `readOnlyCommand === true` branch below was unreachable in production.
+ *  ── Where `readOnly` comes from (#2821) ───────────────────────────────────────
+ *  C2 names the backend's read classification as a third input: an approval's
+ *  `is_read_only`, from `task_modes.reads_only()` — ONE backend owner, so the two
+ *  surfaces that ask a human for permission cannot answer differently. It says whether
+ *  THIS call is established as a read (its tool declares it only reads, or its command
+ *  screened read-only), and it is a yes or a no: a call not established as a read is the
+ *  change it may be. It arrives on all three paths: the chat `approval` WS event,
+ *  `GET /api/approvals`, and the persisted `perm_meta` a reloaded transcript rehydrates.
  *
- *  It is now supplied by `task_modes.read_only_command()` — ONE backend owner, so the
- *  two surfaces that ask a human for permission cannot answer differently — and
- *  arrives on all three paths: the chat `approval` WS event, `GET /api/approvals`, and
- *  the persisted `perm_meta` a reloaded transcript rehydrates.
+ *  Two wire spellings exist and `readOnlyOf` is the ONE decoder for both. The live paths
+ *  carry a real JSON boolean. The history path carries `"1"`/`""` strings, the value a
+ *  session transcript's `cls` column holds. Note `""` is falsy but not `=== false`, so
+ *  passing it through raw would read as "no verdict" and lose the negative one — the bug
+ *  shape this decoder exists to prevent. A transcript row written before the verdict was
+ *  recorded for every call carries none, which decodes as `undefined` (no verdict).
  *
- *  Two wire spellings exist and `readOnlyCommandOf` is the ONE decoder for both. The
- *  live paths carry a real JSON boolean (or `null`). The history path carries the
- *  legacy `"1"`/`""` strings, because that value is already written into every session
- *  transcript's `cls` column and old transcripts must keep rehydrating. Note `""` is
- *  falsy but not `=== false`, so passing it through raw would land in the "unknown"
- *  branch and silently lose the negative verdict — which is exactly the bug shape this
- *  decoder exists to prevent.
- *
- *  It is still not re-implemented client-side: this module never inspects a command
- *  string, because deciding whether a command is read-only IS security logic and it
- *  already has an owner.
+ *  It is not re-implemented client-side: this module never inspects a command string,
+ *  because deciding whether a command is read-only IS security logic and it already has
+ *  an owner.
  */
 
 import type { ApprovalSegment } from './chatTypes'
@@ -87,26 +84,26 @@ export interface BlastRadiusInput {
   /** The EFFECTIVE per-invocation risk the backend already resolved. ABSENT on the
    *  approvals-queue/companion path — see the module header. */
   risk?: ApprovalRisk
-  /** The backend's command-screening verdict (`task_modes.read_only_command`), when
-   *  this call is a shell call. Absent when it is not one — see the module header.
-   *  Decode a raw wire value with `readOnlyCommandOf`, never by casting. */
-  readOnlyCommand?: boolean
+  /** The backend's read verdict for this call (an approval's `is_read_only`,
+   *  `task_modes.reads_only`) — see the module header. Absent on a row that carries none.
+   *  Decode a raw wire value with `readOnlyOf`, never by casting. */
+  readOnly?: boolean
 }
 
-/** The ONE decoder for the wire's command-screening verdict. Tri-state in, tri-state out.
+/** The ONE decoder for the wire's read verdict.
  *
- *  `true`/`"1"` → screened, read-only · `false`/`""` → screened, NOT read-only ·
- *  anything else (`null`, `undefined`, an unknown string) → not screened.
+ *  `true`/`"1"` → established as a read · `false`/`""` → not established as one ·
+ *  anything else (`undefined`, an unknown string) → no verdict.
  *
  *  Every parse site funnels through here so the two wire spellings cannot produce two
  *  different answers. The `""` case is the one worth naming: it is falsy but not
- *  `=== false`, so a raw pass-through would read as "unknown" and quietly drop a
- *  negative verdict, turning a mutating command back into an unscreened one.
+ *  `=== false`, so a raw pass-through would read as "no verdict" and quietly drop a
+ *  negative one.
  *
- *  Unknown values collapse to `undefined` rather than `false`: absence must never
- *  become a positive claim in either direction, which is the honesty contract the whole
- *  module is built on. */
-export function readOnlyCommandOf(raw: unknown): boolean | undefined {
+ *  Unknown values collapse to `undefined` rather than `false`: an absent verdict must never
+ *  become a claim in either direction, which is the honesty contract the whole module is
+ *  built on. */
+export function readOnlyOf(raw: unknown): boolean | undefined {
   if (raw === true || raw === '1') return true
   if (raw === false || raw === '') return false
   return undefined
@@ -197,13 +194,12 @@ export function deriveBlastRadius(input: BlastRadiusInput): BlastRadius | undefi
   // What kind of change the call can make, from words in its name — a description, never a
   // read: no word establishes that a call changes nothing.
   const writes = hasAny(name, DESTRUCTIVE_HINTS) || hasAny(name, WRITE_HINTS)
-  // `readOnly` needs positive evidence: the screening verdict (it inspected the actual
-  // command) or an EFFECTIVE-safe risk (the tool declares it only reads). An explicit
-  // `false` from the screening verdict rules the claim out, and so does an established
-  // write — a tool labelled read-only whose name says it writes is shown as the write it
-  // may be.
-  const readOnly = !writes && (input.readOnlyCommand === true
-    || (input.readOnlyCommand !== false && riskEstablishesReadOnly(input.risk)))
+  // `readOnly` needs positive evidence: the backend's read verdict or an EFFECTIVE-safe
+  // risk (the tool declares it only reads, or its command screened read-only). An explicit
+  // `false` verdict rules the claim out, and so does an established write — a tool labelled
+  // read-only whose name says it writes is shown as the write it may be.
+  const readOnly = !writes && (input.readOnly === true
+    || (input.readOnly !== false && riskEstablishesReadOnly(input.risk)))
 
   // Nothing established → say nothing. See the honesty contract in the header.
   if (!writes && !network && !shell && !readOnly) return undefined

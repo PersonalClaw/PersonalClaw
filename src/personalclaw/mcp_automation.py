@@ -14,7 +14,7 @@ against the real store while this layer stays a translation with nothing to hide
 **Runner boundary.** `automation_run` needs the LLM turn, which this stdio-shaped surface does not
 own — the executor + `SubagentManager.spawn` do. So an immediate run routes through the gateway's
 HTTP `/run` (the shipped `schedule_trigger` pattern the plan's recon note calls out) rather than
-executing here; a `dry_run` needs no turn and is answered locally.
+executing here; `automation_dry_run` needs no turn and is answered locally.
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ def _store() -> Any:
 
 
 def _chat_channels() -> Any:
-    """The chat channels a named one (`via`) is looked up in: ``None``, the registered ones, in the
-    gateway, where the native runtime runs these tools; elsewhere (the tool server an agent CLI
-    starts) nothing is registered, so the installed channels are built to be asked, as the CLI's
-    ``--channel`` check builds them."""
+    """The chat channels a named one (`via`), or the one an id belongs to, is looked up in:
+    ``None``, the registered ones, in the gateway, where the native runtime runs these tools;
+    elsewhere (the tool server an agent CLI starts) nothing is registered, so the installed
+    channels are built to be asked, as the CLI's ``--channel`` check builds them."""
     from personalclaw.channel_transports import WEBUI_TRANSPORT, list_transports
 
     if any(key != WEBUI_TRANSPORT for key in list_transports()):
@@ -201,15 +201,24 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "automation_run",
             "annotations": {"readOnlyHint": False},
-            "description": "Fire an automation now. `dry_run: true` walks the gates and reports "
-            "what WOULD run without executing. A manual run bypasses quiet-hours and duty limits "
-            "but never the injection screen, capability allowlist, or budget.",
+            "description": "Fire an automation now. A manual run bypasses quiet-hours and duty "
+            "limits but never the injection screen, capability allowlist, or budget; "
+            "automation_dry_run reports what it would run without executing.",
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "id": trigger_id,
-                    "dry_run": {"type": "boolean", "description": "Observe without executing."},
-                },
+                "properties": {"id": trigger_id},
+                "required": ["id"],
+            },
+        },
+        {
+            "name": "automation_dry_run",
+            "annotations": {"readOnlyHint": True},
+            "description": "Walk an automation's gates and report what a manual run WOULD do, "
+            "executing nothing: the gates it would enforce and bypass, and whether a real run "
+            "would be refused.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"id": trigger_id},
                 "required": ["id"],
             },
         },
@@ -456,13 +465,21 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         patch = args.get("patch")
         if not isinstance(patch, dict):
             return tool_failure("'patch' must be an object.")
-        result = T.update(store, trigger_id=str(args.get("id") or ""), patch=patch)
+        result = T.update(
+            store,
+            trigger_id=str(args.get("id") or ""),
+            patch=patch,
+            # The channels a `send-message` action's chat channel is looked up in.
+            chat_channels=_chat_channels() if "workflow" in patch else None,
+        )
     elif name == "automation_pause":
         result = T.set_paused(store, trigger_id=str(args.get("id") or ""), paused=True)
     elif name == "automation_resume":
         result = T.set_paused(store, trigger_id=str(args.get("id") or ""), paused=False)
-    elif name == "automation_run":
-        dry = bool(args.get("dry_run"))
+    elif name in ("automation_run", "automation_dry_run"):
+        # A dry run is its own tool, never an argument of the run: a call either runs the
+        # automation or executes nothing, so what it declares is what it does.
+        dry = name == "automation_dry_run"
         result = T.run(
             store,
             trigger_id=str(args.get("id") or ""),

@@ -4,13 +4,15 @@ import { Button } from '../../ui/Button'
 import { FieldError } from '../../ui/forms'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { api, type InboxItem } from '../../lib/api'
+import { ConsentDeclined } from '../../lib/securityConsent'
 
 /** A message from someone new, held by a channel that sends as you (your own mailbox).
  *
  *  Nothing was sent to them: such a channel never answers a stranger on its own, since an answer
  *  would go out in your name and tell them the address is read. Their message waits here. The
  *  reply below answers them, as you, when you press Send; Pair lets them talk to your agent on that
- *  channel from their next message on; Ignore dismisses this. */
+ *  channel from their next message on, once you consent in the gateway's words; Ignore dismisses
+ *  this. */
 export function SomeoneNewActions({ item, onChanged, onIgnore, busy = false }: {
   item: InboxItem
   onChanged: () => void
@@ -34,7 +36,8 @@ export function SomeoneNewActions({ item, onChanged, onIgnore, busy = false }: {
       await api.pairInboxSender(item.id)
       onChanged()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not pair them')
+      // Declining the consent changed nothing, and is no error.
+      if (!(e instanceof ConsentDeclined)) setErr(e instanceof Error ? e.message : 'Could not pair them')
     } finally {
       setPairing(false)
     }

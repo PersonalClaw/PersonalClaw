@@ -211,6 +211,7 @@ TOOL_NAMES: tuple[str, ...] = (
     "automation_pause",
     "automation_resume",
     "automation_run",
+    "automation_dry_run",
     "automation_history",
     "automation_delete",
     "automation_delete_all",
@@ -384,6 +385,25 @@ def unregistered_action_provider_refusal(workflow: Any) -> AutomationToolResult 
             {"provider": name},
         )
     return None
+
+
+def unsendable_message_refusal(
+    workflow: Any, *, chat_channels: Any = None
+) -> AutomationToolResult | None:
+    """Refuse a `send-message` action no fire could send: a ``via`` that names no chat channel set
+    up here, an id that channel does not take, or an id without ``via`` that no chat channel set up
+    here, or more than one, takes (`send_message_provider.config_problem`, over *chat_channels*,
+    the registered ones when None). The Triggers page asks the same question where it saves
+    (`dashboard/handlers/triggers._action_problem`); this is the chat's and the CLI's door, for
+    `create` and `update` alike."""
+    action = _inline_action_of(workflow)
+    if str(action.get("provider") or "") != "send-message":
+        return None
+    from personalclaw.action_providers.send_message_provider import config_problem
+
+    config = action.get("config")
+    problem = config_problem(config if isinstance(config, dict) else {}, transports=chat_channels)
+    return AutomationToolResult(False, f"Error: {problem}") if problem else None
 
 
 def posture_refusal(
@@ -686,6 +706,7 @@ def create(
         # doctor said healthy.
         spec_error_refusal(resolved_kind, resolved_spec),
         unregistered_action_provider_refusal(workflow),
+        unsendable_message_refusal(workflow, chat_channels=chat_channels),
         None if owner_consented else posture_refusal(workflow, stored={}, creating=True),
     ):
         if refusal is not None:
@@ -871,8 +892,12 @@ def update(
     trigger_id: str,
     patch: dict[str, Any],
     owner_consented: bool = False,
+    chat_channels: Any = None,
 ) -> AutomationToolResult:
     """`automation_update` — patch an existing automation through the allowlist.
+
+    `chat_channels` is the chat channels a `send-message` action's channel is looked up in
+    (`unsendable_message_refusal`): the registered ones when None, as in the gateway.
 
     A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
     `health_status` and got no error would keep believing a stale model of the automation.
@@ -931,6 +956,7 @@ def update(
         for refusal in (
             unattended_action_refusal(applied["workflow"]),
             unregistered_action_provider_refusal(applied["workflow"]),
+            unsendable_message_refusal(applied["workflow"], chat_channels=chat_channels),
             (
                 None
                 if owner_consented
@@ -1224,7 +1250,7 @@ def run(
     dry_run: bool = False,
     runner: Any = None,
 ) -> AutomationToolResult:
-    """`automation_run` — §4: "(id, dry_run?) — manual fire / observe-mode replay".
+    """`automation_run` and `automation_dry_run` — §4's manual fire and observe-mode replay.
 
     A DISABLED automation still runs manually: pausing means "stop firing on your own", and
     refusing a hand-driven run of a paused automation would remove the main way a user tests one

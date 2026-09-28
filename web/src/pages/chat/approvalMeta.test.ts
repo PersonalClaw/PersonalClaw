@@ -109,22 +109,21 @@ describe('deriveBlastRadius — the companion path has NO risk', () => {
   })
 })
 
-describe('deriveBlastRadius — the command-screening input (no caller yet)', () => {
-  // is_read_only_bash() runs per approval at chat_runner.py:2593 and lands in
-  // perm_meta["is_read_only"], but it is not on the WS payload and nothing reads it. The
-  // parameter exists with that verdict's exact shape so OU-8/OU-9 can pass it through.
+describe('deriveBlastRadius — the backend read verdict', () => {
+  // An approval's `is_read_only` (`task_modes.reads_only`): whether the call is established
+  // as a read. Decoded by `readOnlyOf`, and passed through as `readOnly`.
   it('an explicit read-only verdict is the strongest signal', () => {
-    expect(deriveBlastRadius({ tool: 'bash', readOnlyCommand: true })!.readOnly).toBe(true)
+    expect(deriveBlastRadius({ tool: 'bash', readOnly: true })!.readOnly).toBe(true)
   })
 
   it('an explicit not-read-only verdict rules the claim out, even over a safe risk', () => {
-    expect(deriveBlastRadius({ tool: 'bash', risk: 'safe', readOnlyCommand: false })!.readOnly)
+    expect(deriveBlastRadius({ tool: 'bash', risk: 'safe', readOnly: false })!.readOnly)
       .toBe(false)
   })
 
   it('omitting it changes nothing — it is genuinely optional', () => {
     expect(deriveBlastRadius({ tool: 'bash', risk: 'safe' }))
-      .toEqual(deriveBlastRadius({ tool: 'bash', risk: 'safe', readOnlyCommand: undefined }))
+      .toEqual(deriveBlastRadius({ tool: 'bash', risk: 'safe', readOnly: undefined }))
   })
 })
 

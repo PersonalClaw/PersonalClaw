@@ -120,13 +120,14 @@ dashboard uses, so a scripted turn is gated exactly like an interactive one.
 | `--model NAME` | Model override for this turn. |
 | `--session KEY` | Continue a **named persistent** session (`inbound:cli:<key>`). Omitted = a fresh stateless one-shot per invocation. |
 | `--cwd DIR` | Working directory for the turn's tools. |
-| `--allow` | Grant write/execute tools. **Default is read-only.** |
+| `--allow` | Grant write/execute tools, and approve the run's calls without asking. **Default is read-only.** |
 | `--timeout SECS` | Ceiling on the turn (default 600). |
 | `--port PORT` | Gateway port (default: resolved like every other client command). |
 
 Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
-it finished, or the transport failed, and `2` on a refused invocation (blank prompt, or a
-read-only run on an ACP agent). The code follows how the gateway says the turn ended, not the
+it finished, the transport failed, or `--allow` could not grant the run's writes (the operator's
+approval ceiling refuses it), and `2` on a refused invocation (blank prompt, or a read-only run
+on an ACP agent). The code follows how the gateway says the turn ended, not the
 error rows along the way: a transient failure the gateway retried and then finished exits `0`.
 
 ### Safety posture
@@ -138,7 +139,14 @@ it resolves through the `HEADLESS` safety profile by construction.
   non-read-only tool call is denied before the approval gate — the same gate the native
   runtime enforces, which Trust/YOLO cannot bypass. A tool the classifier cannot read
   (an opaque shell command, an unlabelled external MCP tool) is **denied**, not allowed.
-* **`--allow` is the explicit write grant** (task mode `agent`).
+* **A tool that only reads runs**, in both modes: it declares it only reads, and a read asks
+  nobody. Any other call that asks for approval is declined in read-only mode, since nobody is
+  there to answer it.
+* **`--allow` is the explicit write grant**, in two parts: task mode `agent` admits the calls
+  that change things, and Trust on the run's own chat approves them, because a headless turn
+  has nobody to ask. Trust for one chat answers that chat's approvals only. The operator's
+  approval ceiling bounds it like any grant: under `approval: ask` the run stops before its
+  turn, saying why.
 * **The posture is always announced on stderr**, for both modes, so stdout stays
   pipeable and a script is self-documenting about what it asked for.
 * **ACP-backed agents are refused in read-only mode** (exit 2). An unattended ACP turn

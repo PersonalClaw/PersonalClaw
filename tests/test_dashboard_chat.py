@@ -2646,6 +2646,75 @@ class TestApiChatModePropagation:
             assert s1._trust is True  # must survive
 
     @pytest.mark.asyncio
+    async def test_trusting_one_chat_answers_only_what_it_and_its_agents_asked(
+        self, tmp_path, monkeypatch
+    ):
+        """🔴 Before: switching ONE chat to Trust approved every chat's pending approval and
+        every background agent's, whoever they were waiting on. It answers that chat's own, and
+        the ones its agents asked on its behalf, which its Trust now covers."""
+        from personalclaw.approval_answer import YOU
+
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
+        state = _make_state(tmp_path)
+        state.push_sessions_update = MagicMock()
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+        loop = asyncio.get_running_loop()
+        mine, theirs = loop.create_future(), loop.create_future()
+        s1._approval_futures["a1"] = mine
+        s2._approval_futures["a2"] = theirs
+        asked = {
+            "bg-mine": asyncio.create_task(
+                state.request_approval("bg-mine", "subagent", "write_file", session="s1")
+            ),
+            "bg-theirs": asyncio.create_task(
+                state.request_approval("bg-theirs", "subagent", "write_file", session="s2")
+            ),
+            "bg-nobodys": asyncio.create_task(state.request_approval("bg-nobodys", "cron", "x")),
+        }
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if set(asked) <= set(state._pending_approvals):
+                break
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/mode", json={"mode": "trust", "session": "s1"})
+            assert resp.status == 200
+
+        assert mine.done() and mine.result() == "approved"
+        assert await asyncio.wait_for(asked["bg-mine"], timeout=5) is True
+        assert not theirs.done()
+        assert not asked["bg-theirs"].done() and not asked["bg-nobodys"].done()
+        for aid in ("bg-theirs", "bg-nobodys"):
+            state.resolve_approval(aid, False, by=YOU)
+            assert await asyncio.wait_for(asked[aid], timeout=5) is False
+
+    @pytest.mark.asyncio
+    async def test_trusting_every_chat_still_answers_every_approval(self, tmp_path, monkeypatch):
+        """The control: a switch that covers every chat answers what every chat is waiting on."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        import personalclaw.trust_mode as _tm
+
+        _tm.disable_yolo()
+        state = _make_state(tmp_path)
+        state.push_sessions_update = MagicMock()
+        s1 = state.get_or_create_session("s1")
+        s2 = state.get_or_create_session("s2")
+        loop = asyncio.get_running_loop()
+        first, second = loop.create_future(), loop.create_future()
+        s1._approval_futures["a1"] = first
+        s2._approval_futures["a2"] = second
+
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/chat/mode", json={"mode": "trust"})
+            assert resp.status == 200
+
+        assert first.result() == "approved" and second.result() == "approved"
+
+    @pytest.mark.asyncio
     async def test_yolo_restores_per_session_trust(self, tmp_path, monkeypatch):
         """YOLO does not mutate per-session trust; disabling preserves it."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)

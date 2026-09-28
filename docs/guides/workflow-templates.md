@@ -226,9 +226,10 @@ curl -X POST localhost:10000/api/workflows \
   -d '{"name": "my-template", "root": {…}, "save": false}'
 ```
 
-From chat, `workflow_author` with `save=false` does the same thing, and
-`workflow_plan` with `template: "<name>"` hands you an existing template's
-expanded tree to start from.
+From chat, `workflow_check` does the same thing: it takes the spec
+`workflow_author` saves and writes nothing, so it only reads and never asks for
+approval. `workflow_plan` with `template: "<name>"` hands you an existing
+template's expanded tree to start from.
 
 In the dashboard, open the definition (**Workflows → Definitions**) and choose
 **Edit**, or **Edit a copy** for a shipped template, which is read-only and so is

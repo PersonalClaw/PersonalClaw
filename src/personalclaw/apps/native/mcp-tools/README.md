@@ -9,9 +9,10 @@ reach an agent through this provider, named `mcp/<server>/<tool>`. It is built i
 connected server is otherwise useless: without it, a server the gateway is already running
 exposes nothing an agent can call.
 
-With no server configured, it serves no tools. Each server's tools ask before they act. What a
-tool is taken to do comes from the server's own annotations, never from the tool's name, and
-a read-only label counts only from a server you trust on the Tools page. To stop agents using
+With no server configured, it serves no tools. What a tool is taken to do comes from the
+server's own annotations, never from the tool's name, and a read-only label counts only from a
+server you trust on the Tools page. A tool it labels read-only then asks nobody, like every read;
+every other tool asks before it acts. To stop agents using
 MCP tools, remove or disable the servers, or switch this provider off on the Tools page.
 
 ## What this is

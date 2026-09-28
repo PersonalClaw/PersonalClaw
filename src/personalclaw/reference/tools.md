@@ -396,6 +396,23 @@ Delete every automation YOU created (created_by=agent), in one call. Requires co
 }
 ```
 
+### `automation_dry_run`
+
+Walk an automation's gates and report what a manual run WOULD do, executing nothing: the gates it would enforce and bypass, and whether a real run would be refused.
+
+**Response type:** `automation.run.result`
+
+**Parameters:**
+- `id` (string, required) — The automation id (e.g. 'file:my-notes').
+
+**Example — Preview what would run without executing:**
+
+```json
+{
+  "id": "file:summarize-notes"
+}
+```
+
 ### `automation_history`
 
 Recent run/fire rows for an automation, with typed outcomes — to self-debug why an automation did or did not do something.
@@ -480,29 +497,19 @@ Resume a paused automation. Refuses (with the reason) if the row has a parse err
 
 ### `automation_run`
 
-Fire an automation now. `dry_run: true` walks the gates and reports what WOULD run without executing. A manual run bypasses quiet-hours and duty limits but never the injection screen, capability allowlist, or budget.
+Fire an automation now. A manual run bypasses quiet-hours and duty limits but never the injection screen, capability allowlist, or budget; automation_dry_run reports what it would run without executing.
 
 **Response type:** `automation.run.result`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `dry_run` (boolean, optional) — Observe without executing.
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
 
 **Example — Fire an automation now:**
 
 ```json
 {
-  "id": "file:summarize-notes"
-}
-```
-
-**Example — Preview what would run without executing:**
-
-```json
-{
-  "dry_run": true,
   "id": "file:summarize-notes"
 }
 ```
@@ -863,13 +870,15 @@ Explicit channel=..., user=... or via=... always wins and suppresses the auto-de
 
 via: when the owner named the chat channel to reach them on ('message me on Telegram'), give its name. Only that channel sends it.
 
+An automation's agent, which may change nothing, can still tell the owner what it found: give only text, title and via.
+
 **Response type:** `notify.result`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `blocks` (string, optional) — Optional rich-message blocks (Block Kit format), as JSON text: an array of up to 50 block objects. When provided, the message is sent as a rich message with text as fallback.
-- `channel` (string, optional) — Target channel ID (e.g. C0123ABC456). Must be a tracked channel. Omit to send to owner DM.
+- `channel` (string, optional) — Target chat or channel id, as its chat channel spells it (a Slack channel C0123ABC456, a Telegram chat -1001234567890). Must be a tracked channel. It goes out on the chat channel it belongs to, or the one 'via' names; an id more than one channel could have issued is refused with them, so give 'via'. Omit to send to owner DM.
 - `reply_broadcast` (boolean, optional) — When true and 'thread_ts' is set, also broadcast the threaded reply to the channel's main message list. Requires 'thread_ts' — passing reply_broadcast=true without thread_ts returns 400. Defaults to false.
 - `session` (string, optional) — Routing opt-in/opt-out for cron messages. "origin" injects into the dashboard session that created this cron (auto-applied for cron callers that set neither channel nor user). "channel" explicitly routes to the owner's messaging channel, bypassing origin. Fallback paths (origin unreachable, explicit "channel", non-cron caller) also fire a dashboard notification so the message isn't silently dropped.
 - `text` (string, required) — Message text. Also used as fallback when blocks are provided.
@@ -877,7 +886,7 @@ via: when the owner named the chat channel to reach them on ('message me on Tele
 - `title` (string, optional) — Optional title for the notification
 - `unfurl_links` (boolean, optional) — Whether to unfurl URL link previews. Defaults to true.
 - `unfurl_media` (boolean, optional) — Whether to unfurl media (images/video) previews. Defaults to true.
-- `user` (string, optional) — Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.
+- `user` (string, optional) — Target user id to DM, as its chat channel spells it. Must be the owner's id on that channel, which it goes out on (or the one 'via' names). Omit to send to owner DM.
 - `via` (string, optional) — The chat channel to send it on, by its name (e.g. 'telegram'), when the owner named one. Only that channel is used: when it cannot deliver, the message goes to the owner's Inbox saying why, never to another channel. A name that is not a chat channel set up here is refused with the ones that are, so you can ask which. Omit it to reach the owner on the first connected channel that knows them.
 
 **Example — Send a notification to the user:**
@@ -2016,14 +2025,12 @@ Search the web/src/ui design-system kit (components + design tokens) by keyword.
 
 ### `workflow_audit`
 
-Diagnose workflow runs that drifted — nodes stuck running, gates nobody can answer, expired waits, runs whose status was never written. Defaults to dry_run=true, which only REPORTS. Pass dry_run=false to repair; a run with a live controller is reported and left alone either way.
+Diagnose workflow runs that drifted — nodes stuck running, gates nobody can answer, expired waits, runs whose status was never written. Only REPORTS; workflow_repair repairs what it finds.
 
 **Response type:** `workflow.audit.report`
 
-**Safety:** requires approval, risk: caution
-
 **Parameters:**
-- `dry_run` (boolean, optional) — true (default) = report only; false = repair.
+- _(no parameters)_
 
 **Example — Report drifted runs without repairing:**
 
@@ -2033,7 +2040,7 @@ Diagnose workflow runs that drifted — nodes stuck running, gates nobody can an
 
 ### `workflow_author`
 
-Save a workflow definition from an explicit DAG spec — the low-level authoring tool. Use when you already know the node structure; use workflow_plan instead to turn a natural-language goal into a spec. Pass save=false to VALIDATE ONLY and get the issue list back without writing anything, which is the cheap way to iterate. Never put a literal API key in the spec: reference credentials as {{secret:KEY}}.
+Save a workflow definition from an explicit DAG spec — the low-level authoring tool. Use when you already know the node structure; use workflow_plan instead to turn a natural-language goal into a spec, and workflow_check to get the issue list back without saving anything, which is the cheap way to iterate. Never put a literal API key in the spec: reference credentials as {{secret:KEY}}.
 
 **Response type:** `workflow.def.saved`
 
@@ -2044,16 +2051,14 @@ Save a workflow definition from an explicit DAG spec — the low-level authoring
 - `inputs` (string, optional) — Declared inputs, as JSON text: an object mapping each input name to {type, required, default, help}.
 - `name` (string, required) — Definition name: lowercase letters, digits, hyphens.
 - `root` (string, required) — The root node of the spec tree, as JSON text (one object). Call workflow_manifest for the node taxonomy, binding pipes and allowed shapes.
-- `save` (boolean, optional) — false = validate only, write nothing (default true).
 - `tags` (array, optional)
 
-**Example — Validate a two-stage spec without saving it:**
+**Example — Save a one-stage spec:**
 
 ```json
 {
   "name": "triage-inbox",
-  "root": "{\"kind\": \"sequence\", \"id\": \"main\", \"children\": [{\"kind\": \"infer\", \"id\": \"classify\", \"config\": {\"prompt\": \"Classify: {{inputs.text}}\"}}]}",
-  "save": false
+  "root": "{\"kind\": \"sequence\", \"id\": \"main\", \"children\": [{\"kind\": \"infer\", \"id\": \"classify\", \"config\": {\"prompt\": \"Classify: {{inputs.text}}\"}}]}"
 }
 ```
 
@@ -2073,6 +2078,28 @@ Cancel a run. The intent is persisted, so it is honoured even if the gateway res
 ```json
 {
   "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_check`
+
+Check a workflow definition from an explicit DAG spec without saving it: returns the issue list and writes nothing. Takes the spec workflow_author saves, so a spec that checks clean is one it will save.
+
+**Response type:** `workflow.def.saved`
+
+**Parameters:**
+- `description` (string, optional)
+- `inputs` (string, optional) — Declared inputs, as JSON text: an object mapping each input name to {type, required, default, help}.
+- `name` (string, required) — Definition name: lowercase letters, digits, hyphens.
+- `root` (string, required) — The root node of the spec tree, as JSON text (one object). Call workflow_manifest for the node taxonomy, binding pipes and allowed shapes.
+- `tags` (array, optional)
+
+**Example — Check a spec without saving it:**
+
+```json
+{
+  "name": "triage-inbox",
+  "root": "{\"kind\": \"sequence\", \"id\": \"main\", \"children\": [{\"kind\": \"infer\", \"id\": \"classify\", \"config\": {\"prompt\": \"Classify: {{inputs.text}}\"}}]}"
 }
 ```
 
@@ -2097,7 +2124,7 @@ Delete a workflow definition. Existing runs of it are unaffected — they carry 
 
 ### `workflow_edit`
 
-Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, move, set_input, skip. Returns a cascade preview naming every node that would re-run; if it would re-run already-completed work you must resubmit with confirm_cascade=true. Running and finished nodes cannot be edited — rewind one first. Pass expect_version from workflow_status to avoid editing a spec that changed under you.
+Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, move, set_input, skip. Returns a cascade preview naming every node that would re-run; if it would re-run already-completed work you must resubmit with confirm_cascade=true. Running and finished nodes cannot be edited — rewind one first. Pass expect_version from workflow_status to avoid editing a spec that changed under you. workflow_edit_preview computes the same cascade and queues nothing.
 
 **Response type:** `workflow.mutation.result`
 
@@ -2107,7 +2134,26 @@ Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, mo
 - `confirm_cascade` (boolean, optional) — Accept re-running completed nodes.
 - `expect_version` (integer, optional)
 - `ops` (string, required) — The mutation ops, as JSON text: an array of op objects. See workflow_manifest for the catalog.
-- `preview_only` (boolean, optional) — true = compute the cascade and queue NOTHING.
+- `run_id` (string, required) — The run id (from workflow_start).
+
+**Example — Edit a pending prompt, re-running what depends on it:**
+
+```json
+{
+  "confirm_cascade": true,
+  "ops": "[{\"op\": \"update_node\", \"node_id\": \"produce\", \"fields\": {\"prompt\": \"Be concise.\"}}]",
+  "run_id": "a1b2c3d4"
+}
+```
+
+### `workflow_edit_preview`
+
+Compute what workflow_edit would do to a RUNNING workflow — the cascade naming every node the ops would re-run — and queue NOTHING. Takes the ops workflow_edit applies.
+
+**Response type:** `workflow.mutation.result`
+
+**Parameters:**
+- `ops` (string, required) — The mutation ops, as JSON text: an array of op objects. See workflow_manifest for the catalog.
 - `run_id` (string, required) — The run id (from workflow_start).
 
 **Example — Preview what editing a pending prompt would re-run:**
@@ -2115,7 +2161,6 @@ Edit a RUNNING workflow's unexecuted nodes. Ops: update_node, insert, delete, mo
 ```json
 {
   "ops": "[{\"op\": \"update_node\", \"node_id\": \"produce\", \"fields\": {\"prompt\": \"Be concise.\"}}]",
-  "preview_only": true,
   "run_id": "a1b2c3d4"
 }
 ```
@@ -2267,6 +2312,23 @@ Turn a natural-language goal into a workflow spec for review BEFORE anything run
   "goal": "summarize new issues each morning",
   "rigor": "standard"
 }
+```
+
+### `workflow_repair`
+
+Repair the workflow runs that drifted, as workflow_audit reports them. A run with a live controller is reported and left alone.
+
+**Response type:** `workflow.audit.report`
+
+**Safety:** requires approval, risk: caution
+
+**Parameters:**
+- _(no parameters)_
+
+**Example — Repair the runs that drifted:**
+
+```json
+{}
 ```
 
 ### `workflow_resume`

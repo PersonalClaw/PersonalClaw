@@ -53,6 +53,12 @@ describe('a settled note says who decided the retry', () => {
     expect(screen.getByText(said)).toBeTruthy()
   })
 
+  it('a call that declares a read ran on its declaration, which is no permission at all', () => {
+    const handled = note({ auto_denied: 'expired', tool: 'memory_recall', session: 'chat-a', chat: 'chat-a', retry: 'approved', retry_by: 'declared_read' }, 'handled')
+    render(<InboxDetail item={handled} onChanged={() => {}} navigate={() => {}} />)
+    expect(screen.getByText('Ran again without asking: memory_recall only reads, and a read asks nobody.')).toBeTruthy()
+  })
+
   it('a grant it does not know by name reads as a permission, never as a person', () => {
     const handled = note({ auto_denied: 'expired', tool: 'bash', session: 'chat-a', chat: 'chat-a', retry: 'approved', retry_by: 'something_new' }, 'handled')
     render(<InboxDetail item={handled} onChanged={() => {}} navigate={() => {}} />)

@@ -321,7 +321,9 @@ class TestRunWorkflowProvider:
     def _ctx(self):
         from personalclaw.action_providers.base import ActionContext
 
-        return ActionContext(event="schedule", context="trigger-1")
+        # The trigger's id rides `trigger_id`; `context` is the event's own text, which the run
+        # recorded as its trigger until the run-end report needed the real one.
+        return ActionContext(event="schedule", context="the clock fired", trigger_id="trigger-1")
 
     def test_it_is_registered_and_allowlisted_together(self) -> None:
         """A provider in one set but not the other is what makes a trigger save and then

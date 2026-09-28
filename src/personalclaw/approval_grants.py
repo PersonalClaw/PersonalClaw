@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 YOU = "you"
 #: Nobody did: the approval's window closed, or the work that asked was stopped first.
 NOBODY = "nobody"
+#: The call's own declaration: its tool declares it only reads, and a read asks nobody. A
+#: native runtime never asks about one; an ACP CLI asks the host about every call, so the host
+#: approves one of these itself. Not a grant, so the operator ceiling does not bound it, just as
+#: it does not make a native runtime ask about a read.
+DECLARED_READ = "declared_read"
 
 #: The chat's own Trust (its toggle, or "This chat" on an approval card).
 TRUST = "trust"

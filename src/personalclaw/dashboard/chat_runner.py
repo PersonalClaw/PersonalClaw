@@ -69,7 +69,7 @@ from personalclaw.dashboard.state import (
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
-    read_only_command,
+    reads_only,
     resolve_effective_risk,
     tool_input_to_str,
 )
@@ -124,7 +124,7 @@ from personalclaw.security import (
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.task_modes import REPORTED_READ_KINDS
+from personalclaw.task_modes import REPORTED_READ_KINDS, declared_level
 from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.validation import ValidationError, validate_ask_user_question
 
@@ -4124,11 +4124,19 @@ async def run_chat(
                     event.tool_kind,
                     event.tool_input,
                 )
-                # Trust-reads: auto-approve an EFFECTIVE-SAFE call — a tool that declares it
-                # only reads (read_file, knowledge_search, web_search) or a read-only shell
-                # command. A tool that declares nothing (an ACP CLI's own, an untrusted MCP
-                # server's) is CAUTION, so it prompts like every other change.
-                if (
+                # A call whose tool declares it only reads asks nobody, as a native call to it
+                # never does: an ACP CLI asks the host about every call, so the host answers
+                # this one itself (`approval_grants.DECLARED_READ`, whoever's conversation it
+                # is). The DECLARATION decides, never the effective risk: a read-only shell
+                # command is Trust reads' to approve below, as it is in a native chat.
+                #
+                # Trust reads approves an EFFECTIVE-SAFE call — which, with declared reads
+                # answered here, is a read-only shell command. A tool that declares nothing
+                # (an ACP CLI's own, an untrusted MCP server's) is CAUTION, so it prompts like
+                # every other change.
+                if declared_level(getattr(event, "risk_level", "") or "") == "safe":
+                    _unasked_by = approval_grants.DECLARED_READ
+                elif (
                     session._trust_reads
                     and not session._trust
                     and not yolo_active
@@ -4137,6 +4145,10 @@ async def run_chat(
                         approval_grants.TRUST_READS, session_key=session_key, event=event
                     )
                 ):
+                    _unasked_by = approval_grants.TRUST_READS
+                else:
+                    _unasked_by = ""
+                if _unasked_by:
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
@@ -4173,9 +4185,9 @@ async def run_chat(
                         outcome="auto_approved",
                         request_id=event.request_id,
                         metadata={
-                            "reason": approval_grants.TRUST_READS,
+                            "reason": _unasked_by,
                             "risk": effective_risk,
-                            "decided_by": approval_grants.TRUST_READS,
+                            "decided_by": _unasked_by,
                         },
                     )
                     _settle_granted(
@@ -4183,7 +4195,7 @@ async def run_chat(
                         session,
                         tool=event.title,
                         tool_input=event.tool_input,
-                        grant=approval_grants.TRUST_READS,
+                        grant=_unasked_by,
                     )
                     continue
                 # Trust mode (per-session) or YOLO mode (global) — auto-approve, if the operator
@@ -4401,22 +4413,19 @@ async def run_chat(
                     sanitized, _ = redact_exfiltration_urls(input_text)
                     sanitized, _ = redact_credentials(sanitized)
                     perm_meta["tool_input"] = sanitized
-                # The command-screening verdict, for the context-aware buttons AND for the
-                # card's blast-radius derivation (#2821). Tri-state from the one owner:
-                # None means "not a shell call", which must stay distinguishable from
-                # "screened and it mutates" — the consumer treats absence as
-                # not-established, never as verified-absent.
-                read_only = read_only_command(
+                # Whether this call is established as a read, for the card's blast-radius
+                # derivation (#2821): its tool declares it only reads, or it runs a command
+                # screened read-only. Every other call is the change it may be, so this is a
+                # yes or a no, never a third "unknown" (`task_modes.reads_only`).
+                read_only = reads_only(
                     event.title,
                     event.tool_kind,
                     event.tool_input,
                     getattr(event, "risk_level", "") or "",
                 )
-                if read_only is not None:
-                    # Persisted spelling stays "1"/"" — this string is already in every
-                    # session transcript's `cls` column and rehydrating history must keep
-                    # reading it. The live wire below carries a real boolean.
-                    perm_meta["is_read_only"] = "1" if read_only else ""
+                # Persisted spelling is "1"/"" — the string a session transcript's `cls` column
+                # carries and rehydrating history reads. The live wire below carries a boolean.
+                perm_meta["is_read_only"] = "1" if read_only else ""
                 # Effective risk of this call (computed above) — a user-facing
                 # INDICATOR on the card so the human can weigh the decision. On this
                 # surface it does not gate execution (an explicit trust/YOLO still
@@ -4489,8 +4498,8 @@ async def run_chat(
                         tool_purpose=event.tool_purpose or "",
                         agent=_agent_label(session),
                         risk=effective_risk,
-                        # #2821: the third input Contract C2 names — `None` when the call
-                        # runs no shell, screened on the RAW input above.
+                        # #2821: the third input Contract C2 names, read off the RAW input
+                        # above.
                         is_read_only=read_only,
                         # The live card needs the grant target too, not just the rehydrated
                         # one — a prompt answered without a reload is the COMMON case, and

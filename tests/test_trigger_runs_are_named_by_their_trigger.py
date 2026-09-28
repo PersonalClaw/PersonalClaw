@@ -46,27 +46,20 @@ class TestRunTitle:
 
 
 class _Spawns:
-    """The action services' subagent manager, recording what each spawn was asked."""
+    """The action services' subagent manager, recording what each spawn was asked. Each spawn
+    starts, as the manager's does: it returns the agent it scheduled."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def spawn(self, **kwargs: Any) -> None:
+    def spawn(self, **kwargs: Any) -> SubagentInfo:
         self.calls.append(kwargs)
+        return SubagentInfo(id=f"run{len(self.calls):05d}", task=kwargs.get("task", ""))
 
 
 def _services(spawns: _Spawns) -> Any:
     services = MagicMock()
     services.subagents = spawns
-
-    def _now(coro: Any) -> None:
-        # Run the fire-and-forget spawn to completion here, so the test reads what it sent.
-        try:
-            coro.send(None)
-        except StopIteration:
-            pass
-
-    services.spawn_background = _now
     return services
 
 

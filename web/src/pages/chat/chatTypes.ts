@@ -5,7 +5,7 @@
 
 // `approvalMeta` imports ApprovalSegment from here as `import type`, which is erased at
 // compile time, so this value import creates no runtime cycle.
-import { readOnlyCommandOf } from './approvalMeta'
+import { readOnlyOf } from './approvalMeta'
 import { turnErrorText } from './turnError'
 import type { ImageDelivery } from './imageAttachments'
 
@@ -52,10 +52,9 @@ export interface ApprovalSegment {
   input?: string
   purpose?: string
   risk?: 'safe' | 'caution' | 'destructive'  // effective per-invocation risk indicator
-  // The backend's command-screening verdict (`task_modes.read_only_command`), decoded
-  // from the wire by `readOnlyCommandOf`. Tri-state: absent means the call runs no
-  // shell, which must stay distinct from `false` ("screened, and it mutates"). #2821.
-  readOnlyCommand?: boolean
+  // Whether the call is established as a read (`task_modes.reads_only`), decoded from the
+  // wire by `readOnlyOf`. Absent only on a row that carries no verdict. #2821.
+  readOnly?: boolean
   // The agent a "This agent" grant would be SAVED ON, resolved by the backend
   // (`agents.defaults.persistable_grant_target`) at the moment the prompt was raised.
   // Empty or absent means the grant cannot persist — a reserved system agent, a name with no
@@ -565,7 +564,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const resolved = m.meta?.resolved || undefined
       // `is_read_only` has been in this meta since #443 and was read by nothing until
       // #2821. Decoded, never cast: on this path it is the legacy `"1"`/`""` string.
-      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnlyCommand: readOnlyCommandOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
+      lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: m.meta?.risk as ApprovalSegment['risk'], readOnly: readOnlyOf(m.meta?.is_read_only), grantAgent: m.meta?.grant_agent, resolved })
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       lastAssistant().segments.push({ kind: 'error', text: turnErrorText(m.content) })

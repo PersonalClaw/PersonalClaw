@@ -607,10 +607,14 @@ async def api_inbox_pair(request: web.Request) -> web.Response:
     For a row held from someone new (``native_source.hold_from_someone_new``): the owner's Pair.
     Their address joins the channel's allowed senders (``channel_trust.allow_sender``, audited),
     so their next message is a conversation with the agent. This message is not handed to the
-    agent; the row is marked handled and remembers the pairing.
+    agent; the row is marked handled and remembers the pairing. It asks the owner's consent
+    first (``{"confirm": true}``), in the words the unknown-sender notification's Allow asks
+    (``channel_trust.sender_consent``): both let someone new in.
     """
-    from personalclaw.channel_trust import allow_sender
+    from personalclaw.channel_trust import allow_sender, sender_consent
+    from personalclaw.http_errors import consent_required
     from personalclaw.inbox_providers.native_source import SOMEONE_NEW_REF
+    from personalclaw.safety_flags import confirm_granted
 
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
@@ -623,6 +627,13 @@ async def api_inbox_pair(request: web.Request) -> web.Response:
             {"error": "Only a message from someone new can pair its sender."}, status=409
         )
     name = item.sender_name if item.sender_name != item.sender_id else ""
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    if not confirm_granted(body):
+        title, consent = sender_consent(provider, name or item.sender_id)
+        return consent_required("sender", consent, title=title)
     allow_sender(provider, item.sender_id, name, via="owner")
     status_before = item.status
     inbox.update(item.id, refs={**item.refs, "paired": True})

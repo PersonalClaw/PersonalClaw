@@ -15,9 +15,13 @@ Delivery goes through the provider-agnostic
 vendor-neutral about *which* channel backend. The owner's DM (no ``channel`` or
 ``user``) goes to the channel ``via`` names, else the first connected channel that
 reaches the owner (``channel_delivery.deliver_to_owner``), and to the Inbox, saying
-why, when that one or none does. When no channel is configured and none is named it
-falls back to a dashboard notification so the action still surfaces. Text is redacted
-(credentials + exfiltration URLs) before send.
+why, when that one or none does. A ``channel`` or ``user`` id goes out on the channel
+``via`` names, else on the one channel it belongs to (``channel_delivery.channel_of_id``);
+an id more than one channel set up here could have issued, or none, is refused with the
+channels to choose from, where the trigger is saved (:func:`config_problem`) and when it
+fires. When no channel is configured and none is named it falls back to a dashboard
+notification so the action still surfaces. Text is redacted (credentials + exfiltration
+URLs) before send.
 """
 
 from __future__ import annotations
@@ -32,6 +36,40 @@ from personalclaw.action_providers.base import (
 )
 from personalclaw.action_providers.services import get_action_services
 from personalclaw.action_providers.template import render_template
+
+
+def route_of(action_config: dict[str, Any] | None, *, transports: Any = None) -> tuple[str, str]:
+    """The chat channel this action sends on, as ``(key, "")``, or ``("", why it can't)``.
+
+    The one ``via`` names, whose own ids a ``channel`` id must be; else the one a ``channel`` or
+    ``user`` id belongs to. ``("", "")`` for the owner's DM with no channel named, which goes to the
+    first channel that reaches the owner. *transports* is the chat channels to look in, by key; the
+    registered ones when None (a process without the gateway builds its own).
+    """
+    from personalclaw.channel_delivery import channel_of_id, named_chat_channel, target_problem
+
+    config = action_config or {}
+    via = str(config.get("via") or "").strip()
+    channel = str(config.get("channel") or "").strip()
+    user = str(config.get("user") or "").strip()
+    if via:
+        # The name as the Triggers page may hold it ("Telegram").
+        key, problem = named_chat_channel(via, transports=transports)
+        if not problem and channel:
+            problem = target_problem(key, channel, transports=transports)
+        return ("", problem) if problem else (key, "")
+    if channel or user:
+        return channel_of_id(channel or user, user=not channel, transports=transports)
+    return "", ""
+
+
+def config_problem(action_config: dict[str, Any] | None, *, transports: Any = None) -> str:
+    """Why this action could not send, or ``""`` when it could. Asked where the trigger is saved
+    (`dashboard/handlers/triggers._action_problem`, `triggers.tools`), so an action every fire
+    would refuse is refused in the form that wrote it: a ``via`` that names no chat channel set up
+    here, an id that channel does not take, an id without ``via`` that no channel set up here, or
+    more than one, takes. *transports* as :func:`route_of` reads it."""
+    return route_of(action_config, transports=transports)[1]
 
 
 class SendMessageActionProvider(ActionProvider):
@@ -69,20 +107,19 @@ class SendMessageActionProvider(ActionProvider):
         body = f"*{title}*\n{text}" if title else text
         channel = (action_config.get("channel") or "").strip()
         user = (action_config.get("user") or "").strip()
-        from personalclaw.channel_delivery import (
-            channel_shown_as,
-            deliver_to_owner,
-            delivery_for,
-            named_chat_channel,
-        )
+        from personalclaw.channel_delivery import channel_shown_as, deliver_to_owner, delivery_for
 
-        via = str(action_config.get("via") or "").strip()
+        # The channel it goes out on: the one `via` names, else the one its id belongs to. An id
+        # used to go to whichever channel sorted first, so another platform's id was posted there.
+        via, problem = route_of(action_config)
+        if problem:
+            return ActionResult(success=False, error=f"send-message: {problem}")
+
         if via:
-            # The name as the Triggers page may hold it ("Telegram"). One that names no channel
-            # set up here stays as written, and the send says that channel isn't connected.
-            via = named_chat_channel(via)[0] or via.lower()
-
-        delivery = delivery_for(via) if via else getattr(state, "channel_delivery", None)
+            delivery = delivery_for(via)
+        else:
+            # An id goes out only on its own channel, and with no chat channel set up it has none.
+            delivery = None if channel or user else getattr(state, "channel_delivery", None)
         if delivery is None and not via:
             # No channel backend — fall back to a dashboard notification so the
             # action is never a silent no-op.

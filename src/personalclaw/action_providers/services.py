@@ -14,7 +14,6 @@ startup fails loudly in tests rather than silently no-opping.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -46,11 +45,8 @@ class ActionServices:
     """Handles native action providers need. Wired once at dashboard startup."""
 
     state: DashboardStateProtocol
-    # Schedule a coroutine as a tracked background task (fire-and-forget spawn),
-    # mirroring the dashboard's ``_background_tasks`` bookkeeping. Used by
-    # invoke-agent (E3-P3) so the lifecycle never blocks on a child agent.
-    spawn_background: Callable[[Awaitable[Any]], Any]
-    # The subagent manager invoke-agent (E3-P3) spawns child agents through.
+    # The subagent manager invoke-agent (E3-P3) and run-prompt spawn agent tasks through. Its
+    # spawn schedules the task and returns, so neither waits on the agent it starts.
     subagents: "SubagentManager | None" = None
     # The workflow supervisor (`WorkflowWatchdog`) run-workflow starts runs through.
     # Deliberately the SUPERVISOR, not a controller factory: it owns controller
@@ -74,6 +70,22 @@ def get_action_services() -> "ActionServices | None":
     Providers MUST handle ``None`` (return an error result) rather than assume.
     """
     return _services
+
+
+def spawn_refusal(info: Any) -> str:
+    """Why an agent task ``SubagentManager.spawn`` just returned did not start, or "" when it
+    started or waits for a slot.
+
+    The manager refuses some spawns on the spot (too little memory, an incident, the day's budget,
+    a folder outside the allowed roots, an unknown agent, a stopped fan-out) and returns them
+    already ended, with the reason. An action that only reports "launched" would hide that, and
+    its trigger would hear nothing, since a launch says nothing until the agent ends.
+    """
+    if info is None:
+        return "the agent did not start: there was no room for another one"
+    if getattr(info, "done", False):
+        return str(getattr(info, "error", "") or "") or "the agent ended before it started"
+    return ""
 
 
 def validate_spawn_cwd(cwd: str) -> str:

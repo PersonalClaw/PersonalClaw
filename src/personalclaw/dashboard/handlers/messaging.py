@@ -341,6 +341,73 @@ async def api_notification_ack(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok})
 
 
+#: The owner's two answers to someone new, and what each records on the note.
+_SENDER_ANSWERS = {"allow": "allowed", "deny": "denied"}
+
+
+async def api_notification_trust(request: web.Request) -> web.Response:
+    """POST /api/notifications/trust — the owner's Allow or Deny on an unknown-sender notification.
+
+    Body ``{ts, action: "allow" | "deny", confirm?}``. The note says who wrote and on which
+    channel (``channel_trust.note_unknown_sender``), and that is who the answer is about: the
+    sender is read off the stored note, never the request, and only a sender the trust gate
+    recorded telling the owner about is answered (``channel_trust.owner_was_asked_about``), so no
+    note another emitter wrote can let anyone in. An Allow asks the owner's consent first
+    (``channel_trust.sender_consent``, the question the Inbox's Pair asks); a Deny tightens and
+    asks nothing. The answer goes through ``channel_trust.apply_trust_action``, which writes the
+    security audit (``sender_paired`` / ``sender_denied``), and is recorded on the note, which
+    offers the two buttons no more.
+    """
+    from personalclaw import channel_trust
+    from personalclaw.http_errors import consent_required, json_error
+    from personalclaw.safety_flags import confirm_granted
+
+    state: DashboardState = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+    ts = str(body.get("ts") or "")
+    answer = _SENDER_ANSWERS.get(str(body.get("action") or "").strip().lower(), "")
+    if not ts or not answer:
+        return json_error("sender_answer_invalid", status=400)
+    note = state.notification(ts)
+    if note is None:
+        return json_error("not_found", status=404)
+    provider = str(note.get("provider") or "")
+    sender_id = str(note.get("sender_id") or "")
+    if (
+        note.get("event") != "channel.unknown_sender"
+        or note.get("raised_by_app")
+        or not channel_trust.owner_was_asked_about(provider, sender_id)
+    ):
+        _sel().log_api_access(
+            caller=request.get("user", "dashboard"),
+            operation="channel.sender_answer",
+            outcome="denied",
+            source="dashboard",
+            resources=f"notification={ts}: asks about no one the trust gate held back",
+        )
+        return json_error("sender_ask_none", status=409)
+    if note.get("trust_answer"):
+        return json_error(
+            "sender_ask_answered",
+            message=f"You already answered this: {note['trust_answer']}.",
+            status=409,
+        )
+    name = str(note.get("sender_name") or "")
+    if answer == "allowed" and not confirm_granted(body):
+        title, consent = channel_trust.sender_consent(provider, name or sender_id)
+        return consent_required("sender", consent, title=title)
+    channel_trust.apply_trust_action(
+        "allow" if answer == "allowed" else "deny", provider, sender_id, name
+    )
+    state.answer_unknown_sender(ts, answer)
+    return web.json_response({"ok": True, "answer": answer})
+
+
 async def api_notification_unack(request: web.Request) -> web.Response:
     """POST /api/notifications/unack — mark a single notification as unread."""
     state: DashboardState = request.app["state"]
@@ -445,29 +512,18 @@ def _resolve_session_target(
     return session_key.removeprefix("dashboard:"), row.trigger.name
 
 
-def _is_owner_user(owner_id: str, user_id: str) -> bool:
-    """Owner-only channel access (multi-user disabled), with W/U prefix cross-match."""
-    if not owner_id or not user_id:
-        return False
-    return (
-        user_id == owner_id
-        or user_id.replace("W", "U", 1) == owner_id
-        or user_id.replace("U", "W", 1) == owner_id
-    )
+def _is_tracked_channel(state: "DashboardState", channel_id: str, provider: str) -> bool:
+    """Whether a channel is in ``provider``'s outbound allowlist: the chat channel the message
+    goes out on, the one it names or the one its id belongs to.
 
-
-def _is_tracked_channel(state: "DashboardState", channel_id: str, provider: str = "") -> bool:
-    """Whether a channel is in the ACTIVE channel app's outbound allowlist — ``provider``'s when
-    the message names its chat channel.
-
-    The channel app owns its tracked-channel config; core
-    consults it through the provider-agnostic ChannelDelivery seam. No channel
-    connected → nothing is tracked (deny-by-default)."""
-    if not channel_id:
+    The channel app owns its tracked-channel config; core consults it through the
+    provider-agnostic ChannelDelivery seam. No channel to ask, or that channel not connected →
+    nothing is tracked (deny-by-default): another channel's allowlist says nothing about this id."""
+    if not channel_id or not provider:
         return False
     from personalclaw.channel_delivery import delivery_for
 
-    delivery = delivery_for(provider) if provider else getattr(state, "channel_delivery", None)
+    delivery = delivery_for(provider)
     if delivery is None or not hasattr(delivery, "is_tracked_channel"):
         return False
     try:
@@ -487,17 +543,31 @@ async def api_send_message(request: web.Request) -> web.Response:
     ``via`` names the chat channel the message goes out on, the one the owner asked for ("message
     me on Telegram"): that channel alone, for the owner's DM and for a channel or user id. When it
     cannot deliver, the message goes to the Inbox saying why; a name that is not a chat channel set
-    up here is refused with the ones that are, and nothing is sent."""
-    from personalclaw.validation import CHANNEL_ID_RE, USER_ID_RE  # noqa: F811
+    up here is refused with the ones that are, and nothing is sent.
 
-    _owner = getattr(request.app["state"], "owner_id", "") or ""
+    A channel or user id sent without ``via`` goes out on the channel it belongs to
+    (``channel_delivery.channel_of_id``). One that more than one channel set up here could have
+    issued, or none, is refused with the channels to choose from, and nothing is sent: it used to
+    go to whichever channel sorted first, which posted another platform's id there."""
+    from personalclaw.channel_delivery import (
+        channel_of_id,
+        channels_taking,
+        id_problem,
+        same_user,
+        target_problem,
+    )
+    from personalclaw.config.credentials import owner_id_for
+
     via = ""
 
     def is_tracked_channel(channel_id: str) -> bool:
         return _is_tracked_channel(request.app["state"], channel_id, via)
 
     def is_allowed_user(user_id: str) -> bool:
-        return _is_owner_user(_owner, user_id)
+        # The owner, as the channel the message goes out on knows them: the one user it may DM.
+        # With no channel (none set up to belong to), the owner PersonalClaw knows.
+        owner = owner_id_for(via) if via else getattr(request.app["state"], "owner_id", "")
+        return same_user(str(owner or ""), user_id)
 
     state: DashboardState = request.app["state"]
     try:
@@ -554,11 +624,25 @@ async def api_send_message(request: web.Request) -> web.Response:
             # error status reaches it only as its status line. Nothing was sent anywhere.
             return web.json_response({"ok": False, "error": problem, "channel": False})
 
-    # Validate format first, then redact
-    if target_channel and not CHANNEL_ID_RE.match(target_channel):
-        return web.json_response({"error": "invalid channel ID format"}, status=400)
-    if target_user and not USER_ID_RE.match(target_user):
-        return web.json_response({"error": "invalid user ID format"}, status=400)
+    # Validate format first, then redact. Only the shape every id shares: which channel an id
+    # belongs to, and whether it is one of that channel's, the channels answer below.
+    for label, value in (("channel", target_channel), ("user", target_user)):
+        problem = id_problem(value) if value else ""
+        if problem:
+            return web.json_response({"error": f"invalid {label} id: {problem}"}, status=400)
+    if (target_channel or target_user) and not via:
+        via, problem = channel_of_id(target_channel or target_user, user=not target_channel)
+        if problem and target_user and not channels_taking(target_user, user=True):
+            # The owner's id on no channel set up here: the allowlist below refuses it, as it
+            # refuses any other user.
+            problem = ""
+        if problem:
+            # 200 with the sentence, like a `via` naming no channel: nothing was sent anywhere.
+            return web.json_response({"ok": False, "error": problem, "channel": False})
+    elif target_channel:
+        problem = target_problem(via, target_channel)
+        if problem:
+            return web.json_response({"ok": False, "error": problem, "channel": False})
 
     # Redact after format validation
     if target_channel:
@@ -755,17 +839,19 @@ async def api_send_message(request: web.Request) -> web.Response:
                 )
 
             # A named channel is tried even with none connected: that it is not is the reason the
-            # message says, rather than a dashboard note standing in for the channel asked for.
+            # message says, rather than a dashboard note standing in for the channel asked for. An
+            # id goes out only on its own channel (`via` by now), and one with no chat channel set
+            # up to belong to has the dashboard note above as its delivery.
             if state.channel_delivery or via:
                 try:
                     from personalclaw.channel_delivery import channel_shown_as, delivery_for
 
                     delivery = delivery_for(via) if via else state.channel_delivery
                     if target_channel or target_user:
-                        if delivery is None:
+                        if via and delivery is None:
                             channel_attempted = True
                             channel_error = f"{channel_shown_as(via)} isn't connected"
-                        else:
+                        elif via and delivery is not None:
                             channel = target_channel or await delivery.open_dm(target_user)
                             if channel:
                                 channel_attempted = True
@@ -837,10 +923,18 @@ async def api_send_message(request: web.Request) -> web.Response:
 
 
 async def api_channel_profile(request: web.Request) -> web.Response:
-    """POST /api/channel/profile — read a channel user's profile."""
+    """POST /api/channel/profile — read the owner's profile on the channel whose owner id it is.
+
+    The owner is the one user whose profile is read, on the channel that knows them by that id
+    (``channel_delivery.channel_of_id``): it used to be asked of whichever channel sorted first."""
     import time  # noqa: F811
 
-    from personalclaw.validation import USER_ID_RE  # noqa: F811
+    from personalclaw.channel_delivery import (
+        channel_of_id,
+        channels_taking,
+        delivery_for,
+        id_problem,
+    )
 
     state: DashboardState = request.app["state"]
     try:
@@ -857,13 +951,14 @@ async def api_channel_profile(request: web.Request) -> web.Response:
     if not user_id:
         return web.json_response({"error": "user required"}, status=400)
     # Validate format first, then redact
-    if not USER_ID_RE.match(user_id):
-        return web.json_response({"error": "invalid user ID format"}, status=400)
+    problem = id_problem(user_id)
+    if problem:
+        return web.json_response({"error": f"invalid user id: {problem}"}, status=400)
     user_id, _ = redact_exfiltration_urls(user_id)
     user_id, _ = redact_credentials(user_id)
 
     # Authorization first (deny-by-default) — owner-only (multi-user disabled).
-    if not _is_owner_user(getattr(state, "owner_id", "") or "", user_id):
+    if not channels_taking(user_id, user=True):
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="read_channel_profile",
@@ -872,8 +967,12 @@ async def api_channel_profile(request: web.Request) -> web.Response:
             resources=f"user={user_id}",
         )
         return web.json_response({"error": "user not in allowlist"}, status=403)
+    provider, problem = channel_of_id(user_id, user=True)
+    if problem:
+        return web.json_response({"error": problem}, status=400)
 
-    if not state.channel_delivery:
+    delivery = delivery_for(provider)
+    if delivery is None:
         _sel().log_tool_invocation(
             session_key="dashboard",
             tool_name="read_channel_profile",
@@ -903,7 +1002,7 @@ async def api_channel_profile(request: web.Request) -> web.Response:
     state._profile_lookup_times = history  # type: ignore[attr-defined]
 
     try:
-        profile = await state.channel_delivery.resolve_user_profile(user_id)
+        profile = await delivery.resolve_user_profile(user_id)
     except Exception:
         logger.exception("channel-profile: failed for %s", user_id)
         _sel().log_tool_invocation(

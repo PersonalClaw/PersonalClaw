@@ -16,7 +16,7 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
     """Map an ACP stream event to the neutral agent event (field-for-field), plus the
     declaration of the PersonalClaw tool the call names, if it names one
     (:func:`~personalclaw.acp.mcp_servers.core_tool_declaration`)."""
-    risk_level, builds, proposes = core_tool_declaration(
+    risk_level, builds, proposes, tells_owner = core_tool_declaration(
         e.title, e.tool_kind, e.tool_input_obj if e.tool_input_obj is not None else e.tool_input
     )
     return AgentEvent(
@@ -57,4 +57,5 @@ def acp_event_to_agent_event(e: AcpEvent) -> AgentEvent:
         risk_level=risk_level,
         builds=builds,
         proposes=proposes,
+        tells_owner=tells_owner,
     )

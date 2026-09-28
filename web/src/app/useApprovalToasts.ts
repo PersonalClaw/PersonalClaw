@@ -3,7 +3,7 @@ import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
 import { approvalDestination } from './approvalDestination'
-import { approvalRiskOf, readOnlyCommandOf } from '../pages/chat/approvalMeta'
+import { approvalRiskOf, readOnlyOf } from '../pages/chat/approvalMeta'
 
 /** Shell-level watcher: surfaces a toast when a tool-approval is requested for a
  *  chat session the user is NOT currently viewing — most importantly a SUBAGENT's
@@ -57,9 +57,8 @@ export function useApprovalToasts(activeSession: string) {
         level: 'info',
         message: approvalToastMessage({
           who, tool, session, risk: approvalRiskOf(d.risk),
-          // Decoded, not cast: this frame carries a real boolean on the chat path and
-          // `null` for a non-shell call, and `readOnlyCommandOf` owns the tri-state.
-          readOnlyCommand: readOnlyCommandOf(d.is_read_only),
+          // Decoded, not cast: `readOnlyOf` owns the wire's spellings.
+          readOnly: readOnlyOf(d.is_read_only),
         }),
         href: dest.href,
         hrefLabel: dest.linkLabel,

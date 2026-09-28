@@ -65,14 +65,11 @@ ALLOWED_HOOK_EVENTS = frozenset(
 # Valid agent name pattern (alphanumeric, hyphens, underscores)
 _AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
 
-# Valid channel ID pattern (exported for reuse in handlers/CLI).
-# Provider wire format: C = standard channels, D = DM channels,
-# G = legacy private channels, W = cross-org shared channels
-CHANNEL_ID_RE = re.compile(r"^[CDGW][A-Z0-9]+$")
-CHANNEL_MAX_LEN = 20
-# Valid channel user ID pattern (U or W prefix, max 20 chars total)
-USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{1,19}$")
-USER_MAX_LEN = 20
+# A chat, channel or user id a message is addressed to, in the shape every platform's shares: no
+# space or control character, and no longer than any platform's. What it looks like on one platform,
+# and which platform it is, the channels answer (`channel_delivery.channel_of_id`): a Slack-shaped
+# pattern here refused every other channel's ids.
+CHAT_TARGET_ID_RE = re.compile(r"^[^\s\x00-\x1f\x7f-\x9f]{1,256}$")
 
 # Channel-thread message timestamp: digits.digits (the abstract thread
 # addressing format used across channel tool schemas)
@@ -630,22 +627,23 @@ _WF_DEF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _SESSION_ID_RE = re.compile(r"^[\w\-][\w\-.]{0,127}$")
 _WF_MODES = frozenset({"blocking", "background"})
 
-WORKFLOW_AUTHOR_SCHEMA = ToolSchema(
-    tool_name="workflow_author",
-    fields=[
-        # Structural bounds only. Name VOCABULARY and root PRESENCE are the def
-        # layer's rules, answered with its structured errors (WF_DEF_NAME_INVALID,
-        # WF_DEF_ROOT_REQUIRED — pinned by test_workflows_tools.TestErrorContract);
-        # duplicating them here would preempt those answers with this boundary's
-        # generic ones (issue 592's enforcement wiring surfaced exactly that).
-        FieldSpec("name", str, required=True, max_len=63),
-        FieldSpec("root", dict),
-        FieldSpec("description", str, max_len=2000),
-        FieldSpec("inputs", dict, default={}),
-        FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
-        FieldSpec("save", bool, default=True),
-    ],
-)
+#: The spec `workflow_author` saves and `workflow_check` checks, bounded the same way.
+_WORKFLOW_SPEC_FIELDS = [
+    # Structural bounds only. Name VOCABULARY and root PRESENCE are the def
+    # layer's rules, answered with its structured errors (WF_DEF_NAME_INVALID,
+    # WF_DEF_ROOT_REQUIRED — pinned by test_workflows_tools.TestErrorContract);
+    # duplicating them here would preempt those answers with this boundary's
+    # generic ones (issue 592's enforcement wiring surfaced exactly that).
+    FieldSpec("name", str, required=True, max_len=63),
+    FieldSpec("root", dict),
+    FieldSpec("description", str, max_len=2000),
+    FieldSpec("inputs", dict, default={}),
+    FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
+]
+
+WORKFLOW_AUTHOR_SCHEMA = ToolSchema(tool_name="workflow_author", fields=list(_WORKFLOW_SPEC_FIELDS))
+
+WORKFLOW_CHECK_SCHEMA = ToolSchema(tool_name="workflow_check", fields=list(_WORKFLOW_SPEC_FIELDS))
 
 WORKFLOW_PLAN_SCHEMA = ToolSchema(
     tool_name="workflow_plan",
@@ -727,7 +725,14 @@ WORKFLOW_EDIT_SCHEMA = ToolSchema(
         FieldSpec("ops", list, required=True, item_type=dict, max_items=50),
         FieldSpec("expect_version", int, min_val=1),
         FieldSpec("confirm_cascade", bool, default=False),
-        FieldSpec("preview_only", bool, default=False),
+    ],
+)
+
+WORKFLOW_EDIT_PREVIEW_SCHEMA = ToolSchema(
+    tool_name="workflow_edit_preview",
+    fields=[
+        FieldSpec("run_id", str, required=True, max_len=16, pattern=_WF_RUN_ID_RE),
+        FieldSpec("ops", list, required=True, item_type=dict, max_items=50),
     ],
 )
 
@@ -799,10 +804,9 @@ WORKFLOW_RESUME_SCHEMA = ToolSchema(
     ],
 )
 
-WORKFLOW_AUDIT_SCHEMA = ToolSchema(
-    tool_name="workflow_audit",
-    fields=[FieldSpec("dry_run", bool, default=True)],
-)
+WORKFLOW_AUDIT_SCHEMA = ToolSchema(tool_name="workflow_audit")
+
+WORKFLOW_REPAIR_SCHEMA = ToolSchema(tool_name="workflow_repair")
 
 WORKFLOW_MANIFEST_SCHEMA = ToolSchema(tool_name="workflow_manifest")
 
@@ -810,6 +814,7 @@ WORKFLOW_MANIFEST_SCHEMA = ToolSchema(tool_name="workflow_manifest")
 #: MCP_SCHEDULE_SCHEMAS — the key MUST match the schema's own tool_name).
 MCP_WORKFLOW_SCHEMAS: dict[str, ToolSchema] = {
     "workflow_author": WORKFLOW_AUTHOR_SCHEMA,
+    "workflow_check": WORKFLOW_CHECK_SCHEMA,
     "workflow_plan": WORKFLOW_PLAN_SCHEMA,
     "workflow_list_defs": WORKFLOW_LIST_DEFS_SCHEMA,
     "workflow_get_def": WORKFLOW_GET_DEF_SCHEMA,
@@ -819,6 +824,7 @@ MCP_WORKFLOW_SCHEMAS: dict[str, ToolSchema] = {
     "workflow_observe": WORKFLOW_OBSERVE_SCHEMA,
     "workflow_output": WORKFLOW_OUTPUT_SCHEMA,
     "workflow_edit": WORKFLOW_EDIT_SCHEMA,
+    "workflow_edit_preview": WORKFLOW_EDIT_PREVIEW_SCHEMA,
     "workflow_skip": WORKFLOW_SKIP_SCHEMA,
     "workflow_rewind": WORKFLOW_REWIND_SCHEMA,
     "workflow_run_from": WORKFLOW_RUN_FROM_SCHEMA,
@@ -828,6 +834,7 @@ MCP_WORKFLOW_SCHEMAS: dict[str, ToolSchema] = {
     "workflow_cancel": WORKFLOW_CANCEL_SCHEMA,
     "workflow_resume": WORKFLOW_RESUME_SCHEMA,
     "workflow_audit": WORKFLOW_AUDIT_SCHEMA,
+    "workflow_repair": WORKFLOW_REPAIR_SCHEMA,
     "workflow_manifest": WORKFLOW_MANIFEST_SCHEMA,
 }
 
@@ -1138,8 +1145,8 @@ SEND_MESSAGE_SCHEMA = ToolSchema(
         FieldSpec("text", str, required=True, max_len=MAX_MEDIUM_STRING),
         FieldSpec("title", str, max_len=MAX_SHORT_STRING),
         FieldSpec("blocks", list, item_type=dict, max_items=50),
-        FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
-        FieldSpec("user", str, max_len=USER_MAX_LEN, pattern=USER_ID_RE),
+        FieldSpec("channel", str, max_len=256, pattern=CHAT_TARGET_ID_RE),
+        FieldSpec("user", str, max_len=256, pattern=CHAT_TARGET_ID_RE),
         FieldSpec("via", str, max_len=64, pattern=CHAT_CHANNEL_NAME_RE),
         FieldSpec("unfurl_links", bool),
         FieldSpec("unfurl_media", bool),
@@ -1170,20 +1177,6 @@ REGISTER_HOOK_SCHEMA = ToolSchema(
     fields=[
         FieldSpec("hook_id", str, required=True, max_len=MAX_SHORT_STRING),
         FieldSpec("context_summary", str, required=True, max_len=MAX_MEDIUM_STRING),
-    ],
-)
-
-# ── Tool Schemas (Channel Reactions) ──
-
-# Channel emoji names: alphanumeric, underscores, hyphens, and plus signs
-_EMOJI_NAME_RE = re.compile(r"^[a-zA-Z0-9+][a-zA-Z0-9_+\-]{0,98}[a-zA-Z0-9]$|^[a-zA-Z0-9+]$")
-
-ADD_REACTION_SCHEMA = ToolSchema(
-    tool_name="add_reaction",
-    fields=[
-        FieldSpec("channel", str, required=True, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
-        FieldSpec("timestamp", str, required=True, max_len=30, pattern=_MESSAGE_TS_RE),
-        FieldSpec("reaction", str, required=True, max_len=100, pattern=_EMOJI_NAME_RE),
     ],
 )
 
@@ -1307,10 +1300,11 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
     ),
     "automation_run": ToolSchema(
         tool_name="automation_run",
-        fields=[
-            FieldSpec("id", str, required=True, max_len=96),
-            FieldSpec("dry_run", bool),
-        ],
+        fields=[FieldSpec("id", str, required=True, max_len=96)],
+    ),
+    "automation_dry_run": ToolSchema(
+        tool_name="automation_dry_run",
+        fields=[FieldSpec("id", str, required=True, max_len=96)],
     ),
     "automation_history": ToolSchema(
         tool_name="automation_history",

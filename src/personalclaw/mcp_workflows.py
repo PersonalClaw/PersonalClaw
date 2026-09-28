@@ -1,6 +1,6 @@
 """Workflows tool category — author, run, steer and inspect composable workflows.
 
-The chat surface over the v2 engine: 19 tools. Every one delegates to
+The chat surface over the v2 engine: 23 tools. Every one delegates to
 `workflows.service`, the single implementation the REST routes (Slice 7a) will also call —
 two surfaces over one engine must not grow two behaviours.
 
@@ -41,17 +41,77 @@ from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 logger = logging.getLogger(__name__)
 
 #: Read-only tools — no state change, safe to call while thinking. Kept explicit so a
-#: reviewer can see at a glance which tools can be called freely.
+#: reviewer can see at a glance which tools can be called freely; each one's own
+#: `annotations.readOnlyHint` is what every posture acts on, and a test holds the two equal.
 READ_ONLY_TOOLS = frozenset(
     {
         "workflow_list_defs",
         "workflow_get_def",
+        "workflow_check",
+        "workflow_plan",
         "workflow_status",
         "workflow_observe",
         "workflow_output",
+        "workflow_edit_preview",
+        "workflow_audit",
         "workflow_manifest",
     }
 )
+
+
+def _spec_schema() -> dict[str, Any]:
+    """The spec `workflow_author` saves and `workflow_check` checks: one schema, so the check
+    is of exactly what a save would take."""
+    return {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Definition name: lowercase letters, digits, hyphens.",
+            },
+            "description": {"type": "string"},
+            # `root` and `inputs` are JSON TEXT, not objects: a free-form object has no
+            # portable schema, and a strict provider rejects the whole request over one
+            # (tool_providers.portable_schema). `validation.decode_json_text` reads it.
+            "root": {
+                "type": "string",
+                "description": (
+                    "The root node of the spec tree, as JSON text (one object). Call "
+                    "workflow_manifest for the node taxonomy, binding pipes and allowed shapes."
+                ),
+            },
+            "inputs": {
+                "type": "string",
+                "description": (
+                    "Declared inputs, as JSON text: an object mapping each input name to "
+                    "{type, required, default, help}."
+                ),
+            },
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["name", "root"],
+    }
+
+
+def _edit_schema(run_id: dict[str, Any], *, previews: bool) -> dict[str, Any]:
+    """The ops `workflow_edit` applies and `workflow_edit_preview` computes the cascade of."""
+    properties: dict[str, Any] = {
+        "run_id": run_id,
+        "ops": {
+            "type": "string",
+            "description": (
+                "The mutation ops, as JSON text: an array of op objects. See "
+                "workflow_manifest for the catalog."
+            ),
+        },
+    }
+    if not previews:
+        properties["expect_version"] = {"type": "integer"}
+        properties["confirm_cascade"] = {
+            "type": "boolean",
+            "description": "Accept re-running completed nodes.",
+        }
+    return {"type": "object", "properties": properties, "required": ["run_id", "ops"]}
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -63,45 +123,22 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Save a workflow definition from an explicit DAG spec — the low-level "
                 "authoring tool. Use when you already know the node structure; use "
-                "workflow_plan instead to turn a natural-language goal into a spec. Pass "
-                "save=false to VALIDATE ONLY and get the issue list back without writing "
-                "anything, which is the cheap way to iterate. Never put a literal API key "
-                "in the spec: reference credentials as {{secret:KEY}}."
+                "workflow_plan instead to turn a natural-language goal into a spec, and "
+                "workflow_check to get the issue list back without saving anything, which is "
+                "the cheap way to iterate. Never put a literal API key in the spec: reference "
+                "credentials as {{secret:KEY}}."
             ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Definition name: lowercase letters, digits, hyphens.",
-                    },
-                    "description": {"type": "string"},
-                    # `root` and `inputs` are JSON TEXT, not objects: a free-form object has no
-                    # portable schema, and a strict provider rejects the whole request over one
-                    # (tool_providers.portable_schema). `validation.decode_json_text` reads it.
-                    "root": {
-                        "type": "string",
-                        "description": (
-                            "The root node of the spec tree, as JSON text (one object). Call "
-                            "workflow_manifest for the node taxonomy, binding pipes and allowed "
-                            "shapes."
-                        ),
-                    },
-                    "inputs": {
-                        "type": "string",
-                        "description": (
-                            "Declared inputs, as JSON text: an object mapping each input name to "
-                            "{type, required, default, help}."
-                        ),
-                    },
-                    "tags": {"type": "array", "items": {"type": "string"}},
-                    "save": {
-                        "type": "boolean",
-                        "description": "false = validate only, write nothing (default true).",
-                    },
-                },
-                "required": ["name", "root"],
-            },
+            "inputSchema": _spec_schema(),
+        },
+        {
+            "name": "workflow_check",
+            "annotations": {"readOnlyHint": True},
+            "description": (
+                "Check a workflow definition from an explicit DAG spec without saving it: "
+                "returns the issue list and writes nothing. Takes the spec workflow_author "
+                "saves, so a spec that checks clean is one it will save."
+            ),
+            "inputSchema": _spec_schema(),
         },
         {
             "name": "workflow_plan",
@@ -267,31 +304,20 @@ def _list_tools() -> list[dict[str, Any]]:
                 "that would re-run; if it would re-run already-completed work you must "
                 "resubmit with confirm_cascade=true. Running and finished nodes cannot be "
                 "edited — rewind one first. Pass expect_version from workflow_status to "
-                "avoid editing a spec that changed under you."
+                "avoid editing a spec that changed under you. workflow_edit_preview computes "
+                "the same cascade and queues nothing."
             ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "run_id": run_id,
-                    "ops": {
-                        "type": "string",
-                        "description": (
-                            "The mutation ops, as JSON text: an array of op objects. See "
-                            "workflow_manifest for the catalog."
-                        ),
-                    },
-                    "expect_version": {"type": "integer"},
-                    "confirm_cascade": {
-                        "type": "boolean",
-                        "description": "Accept re-running completed nodes.",
-                    },
-                    "preview_only": {
-                        "type": "boolean",
-                        "description": "true = compute the cascade and queue NOTHING.",
-                    },
-                },
-                "required": ["run_id", "ops"],
-            },
+            "inputSchema": _edit_schema(run_id, previews=False),
+        },
+        {
+            "name": "workflow_edit_preview",
+            "annotations": {"readOnlyHint": True},
+            "description": (
+                "Compute what workflow_edit would do to a RUNNING workflow — the cascade "
+                "naming every node the ops would re-run — and queue NOTHING. Takes the ops "
+                "workflow_edit applies."
+            ),
+            "inputSchema": _edit_schema(run_id, previews=True),
         },
         {
             "name": "workflow_skip",
@@ -463,22 +489,22 @@ def _list_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "workflow_audit",
-            "annotations": {"readOnlyHint": False},
+            "annotations": {"readOnlyHint": True},
             "description": (
                 "Diagnose workflow runs that drifted — nodes stuck running, gates nobody "
-                "can answer, expired waits, runs whose status was never written. Defaults "
-                "to dry_run=true, which only REPORTS. Pass dry_run=false to repair; a run "
-                "with a live controller is reported and left alone either way."
+                "can answer, expired waits, runs whose status was never written. Only "
+                "REPORTS; workflow_repair repairs what it finds."
             ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "true (default) = report only; false = repair.",
-                    }
-                },
-            },
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "workflow_repair",
+            "annotations": {"readOnlyHint": False},
+            "description": (
+                "Repair the workflow runs that drifted, as workflow_audit reports them. A run "
+                "with a live controller is reported and left alone."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "workflow_manifest",
@@ -645,13 +671,15 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_get_def":
         return _fmt(_run(service.get_def(str(args.get("name", "") or ""))))
 
-    if name == "workflow_author":
+    if name in ("workflow_author", "workflow_check"):
         root = args.get("root")
         if not isinstance(root, dict):
             return tool_failure(
                 "'root' must be the spec's root node object.", code="WF_DEF_ROOT_REQUIRED"
             )
-        save = bool(args.get("save", True))
+        # A check is its own tool, never an argument of the save: a call either saves or writes
+        # nothing, so what it declares is what it does (a check only reads, and asks nobody).
+        save = name == "workflow_author"
         result = _run(
             service.author_def(
                 name=str(args.get("name", "") or ""),
@@ -704,13 +732,13 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_output":
         return _fmt(service.output(run_id, str(args.get("node_id", "") or "")))
 
-    if name == "workflow_edit":
+    if name in ("workflow_edit", "workflow_edit_preview"):
         ops = args.get("ops")
         if not isinstance(ops, list) or not ops:
             return tool_failure(
                 "'ops' must be a non-empty array of mutation ops.", code="WF_MUT_NO_OPS"
             )
-        if bool(args.get("preview_only")):
+        if name == "workflow_edit_preview":
             return _fmt(service.preview_edit(run_id, ops))
         expect = args.get("expect_version")
         return _fmt(
@@ -785,10 +813,8 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_cancel":
         return _fmt(service.cancel_run(run_id, supervisor=_supervisor()))
 
-    if name == "workflow_audit":
-        return _fmt(
-            service.audit(dry_run=bool(args.get("dry_run", True)), supervisor=_supervisor())
-        )
+    if name in ("workflow_audit", "workflow_repair"):
+        return _fmt(service.audit(dry_run=name == "workflow_audit", supervisor=_supervisor()))
 
     if name == "workflow_delete_def":
         return _fmt(_run(service.delete_def(str(args.get("name", "") or ""))))
@@ -989,14 +1015,14 @@ def _plan(args: dict[str, Any]) -> str:
         **_preflight_surface({"root": proposed, "inputs": {}}),
         **_grill_surface(goal, classified, {"root": proposed}, topics=_plan_topics(goal)),
         "next_step": (
-            "Adapt this tree to the goal, then call workflow_author with save=false to "
-            "validate it before saving."
+            "Adapt this tree to the goal, then call workflow_check to validate it before "
+            "workflow_author saves it."
         ),
         "note": (
-            "Fill the shape's slots and adapt the tree, then call workflow_author with "
-            "save=false to validate. The `grounding` block below is read from THIS system's live "
-            "registries — anything not in it does not exist here. If you cannot plan the goal "
-            'with what is listed, return {"cannot_plan": "<why>"} rather than inventing a node.'
+            "Fill the shape's slots and adapt the tree, then call workflow_check to validate. "
+            "The `grounding` block below is read from THIS system's live registries — anything "
+            "not in it does not exist here. If you cannot plan the goal with what is listed, "
+            'return {"cannot_plan": "<why>"} rather than inventing a node.'
         ),
         "manifest": {k: v for k, v in service.manifest().items() if k != "ok"},
     }
@@ -1792,8 +1818,8 @@ def _plan_from_template(
         # How this template is actually driven — few-shot for the edit the model is about to make.
         "steering_examples": meta.get("steering_examples") or [],
         "next_step": (
-            f"Adapt this template's tree to the goal, then call workflow_author with save=false "
-            f"to validate it. To run {template!r} UNCHANGED, skip authoring and call "
+            f"Adapt this template's tree to the goal, then call workflow_check to validate "
+            f"it. To run {template!r} UNCHANGED, skip authoring and call "
             f"workflow_start with its inputs instead — a template that already fits does not "
             f"need a copy."
         ),

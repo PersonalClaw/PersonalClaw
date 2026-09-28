@@ -330,8 +330,9 @@ once.
 ### A tool reads only when it declares so (`task_modes.py`)
 
 Every posture that runs a read without asking — Ask and Plan mode (and `personalclaw run` without
-`--allow`, which is Ask mode), Trust reads, `--approval reads`, a dry run (which executes reads for
-real) and the `read` tool grant of a research step, subagent or room critic — asks one question:
+`--allow`, which is Ask mode), every approval mode, `--approval reads`, a dry run (which executes
+reads for real) and the `read` tool grant of a research step, subagent or room critic — asks one
+question:
 does this call only read? The answer comes from what the tool DECLARES, never from its name, and
 from nothing else except a shell command's own text:
 
@@ -341,15 +342,24 @@ from nothing else except a shell command's own text:
   every shipped tool to say one or the other); a `ToolDefinition` that states nothing is
   `CAUTION`; an app's route reads only with `"readOnly": true` in its manifest (a `DELETE` is
   destructive whatever it says).
-- **A declared read asks nobody** (`requires_approval` is false), so a chat does not stop for it
-  and the postures with nobody to ask (`personalclaw run`, a dry run, an unattended agent) run it
-  instead of declining it. Every read PersonalClaw defines in Python says so itself, and the two
-  constructors that build tools from a declaration take it from there: the in-process tools
-  (`InProcessMcpToolProvider`) and an app's routes (`AppRoutesToolProvider`).
-  `tests/test_a_declared_read_asks_nobody.py` holds every tool definition to it. A trusted external
-  MCP server's read still asks outside Trust reads, because the owner's trust in its label reaches
-  only as far as the Tools page says. A tool whose one argument switches between reading and
-  changing declares the change; a listing is its own tool (`triage_rules_list`).
+- **A declared read asks nobody**, in every mode, so a chat does not stop for it and the postures
+  with nobody to ask (`personalclaw run`, a dry run, an unattended agent) run it instead of
+  declining it. A `ToolDefinition` that declares `SAFE` has `requires_approval` false whoever built
+  it — PersonalClaw's own tools, an app's routes and tools, a trusted MCP server's reads — and
+  `tests/test_a_declared_read_asks_nobody.py` holds every definition core writes to saying so
+  itself. Over an agent CLI, which asks the host about every call, the host answers a declared read
+  itself (`approval_grants.DECLARED_READ`) at each place that would otherwise ask a person: the
+  chat's gate, a background agent's and a room member's, each past the refusals that come first.
+  The declaration decides there, never the effective risk, so a read-only shell command is still
+  Trust reads' to approve. No tool switches between reading and changing on an argument: a listing
+  is its own tool (`triage_rules_list`) and so is each preview — `workflow_check` (a spec
+  `workflow_author` would save), `workflow_edit_preview`, `workflow_audit` (beside
+  `workflow_repair`) and `automation_dry_run` — and a call that sends a preview argument to the
+  change is refused.
+- **Trust reads** approves what a declared read does not already cover: a read-only shell command.
+- **An approval's `is_read_only` is a yes or a no** (`task_modes.reads_only`): whether the call is
+  established as a read, by its declaration or its screened command. Anything else is the change it
+  may be.
 - **A tool that declares nothing is a change**, so it asks: an ACP CLI's own tools, and an
   external MCP server's tools unless the owner trusts that server's labels. An MCP server may label
   anything read-only, so `readOnlyHint` counts only for a server listed in

@@ -1,9 +1,10 @@
 """The best-effort consequences of a run's terminal write.
 
 `RunController._finish` is the single terminal writer and must never raise, so everything
-here is fully guarded: a failure costs a lesson, an overview line or the next queued run's start —
-never this run's recorded outcome. Run-end learning capture, the project
-overview revision and the `on_overlap: queue` drain.
+here is fully guarded: a failure costs a lesson, an overview line, a trigger's report or the next
+queued run's start — never this run's recorded outcome. Run-end learning capture, the project
+overview revision, the report to the trigger that started the run and the `on_overlap: queue`
+drain.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING
 from personalclaw import project_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import ownership
+from personalclaw.workflows.models import OriginKind, RunStatus, run_ending
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
@@ -91,6 +93,40 @@ def capture_run_end(ctl: RunController) -> None:
         run_end.capture(ctl.run, service, journal=journal_mod)
     except Exception:
         logger.debug("run %s: run-end capture failed", ctl.run.id, exc_info=True)
+
+
+#: Endings a trigger does not report: whoever stopped the run, or declined what it asked,
+#: knows. The same rule `attention.announce_loop_end` holds for a loop.
+_UNREPORTED_ENDINGS: frozenset[RunStatus] = frozenset({RunStatus.CANCELLED, RunStatus.DECLINED})
+
+
+def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
+    """Say how a run a trigger started went, on the trigger's route, now that it has ended.
+
+    The fire that started it only said it launched the run, or queued it, which is not news yet
+    (`gateway._reports_later`), so this is when the trigger's route hears: "<name> finished" and
+    what the run said it produced, or "<name> failed" and why, for a run that failed or stopped
+    before it finished. Only a trigger's own start (`OriginKind.HOOK`) carries a trigger id; a
+    sub-run's origin names its parent's node instead.
+
+    Inert unless the gateway wired its delivery into `EngineServices.report_to_trigger`, and
+    fully guarded: a failure costs the report, never the run's terminal status.
+    """
+    report = getattr(ctl.services, "report_to_trigger", None)
+    origin = ctl.run.origin
+    if report is None or origin.kind != OriginKind.HOOK or not origin.trigger_id:
+        return
+    if status in _UNREPORTED_ENDINGS:
+        return
+    try:
+        error = ""
+        if status != RunStatus.COMPLETE:
+            error = str(ctl.run.error_message or "").strip() or (
+                f"The workflow run {run_ending(status)}."
+            )
+        report(origin.trigger_id, error=error, summary=_completion_summary(ctl), run_id=ctl.run.id)
+    except Exception:
+        logger.debug("run %s: could not report to its trigger", ctl.run.id, exc_info=True)
 
 
 def revise_project_overview(ctl: RunController) -> None:

@@ -357,7 +357,7 @@ def test_no_action_executes_and_no_model_is_called(home, monkeypatch):
     """The two side effects that would matter, wired to explode.
 
     A dry fire must never reach `ActionProvider.execute` (that is the property
-    `automation_run(dry_run)` exists to have) and must never spend a token.
+    `automation_dry_run` exists to have) and must never spend a token.
     """
     import personalclaw.llm_helpers as llm
     from personalclaw.action_providers.bash_provider import BashActionProvider

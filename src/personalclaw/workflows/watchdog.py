@@ -174,6 +174,8 @@ class WorkflowWatchdog:
             # supervisor mines its own ledger on termination. Shared, not per-run — one memory
             # service backs every run, the same way `subagents` does.
             memory=base.memory,
+            # A run a trigger started says how it went on the trigger's route when it ends.
+            report_to_trigger=base.report_to_trigger,
         )
 
     def _publisher(self, run_id: str) -> Any:

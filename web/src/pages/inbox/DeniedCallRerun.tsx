@@ -47,6 +47,8 @@ export function settledSentence(retry: 'approved' | 'rejected', by: unknown, too
   if (who === '' || who === 'you') {
     return retry === 'approved' ? `Asked again: you allowed ${tool}.` : `Asked again: you denied ${tool}.`
   }
+  // Not a permission: the tool declares it only reads, and a read asks nobody.
+  if (who === 'declared_read') return `Ran again without asking: ${tool} only reads, and a read asks nobody.`
   return `Ran again without asking: ${RAN_WITHOUT_ASKING[who] ?? 'a standing permission'} allowed ${tool}.`
 }
 

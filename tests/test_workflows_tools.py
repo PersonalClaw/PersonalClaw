@@ -1,15 +1,16 @@
-"""The workflow chat surface (Slice 6a) — 19 tools over ONE service layer.
+"""The workflow chat surface (Slice 6a) — 23 tools over ONE service layer.
 
 The load-bearing claims:
 
-* **all 19 tools exist, are uniquely named, and each has a real schema** — a tool the
+* **all 23 tools exist, are uniquely named, and each has a real schema** — a tool the
   aggregator exposes but cannot dispatch is worse than a missing one;
 * **the service layer is the single implementation** the REST routes will also call, so
   the two surfaces cannot grow two behaviours;
 * **nothing raises across the tool boundary** — every failure is a coded, readable result,
   because a traceback burns the model's turn on something it cannot act on;
 * a def read STRIPS credentials to `_has*` flags, and authoring REFUSES a literal secret;
-* `save=false` is a true dry run — validation issues come back and nothing is written;
+* the service's `save=False` (the `workflow_check` tool) is a true dry run — validation issues
+  come back and nothing is written;
 * `observe` clamps its window (an unbounded subscribe in a chat turn is a hang);
 * the manifest is GENERATED from the engine's own enums, so it cannot drift.
 """
@@ -173,11 +174,14 @@ class _FakeSupervisor:
 
 
 class TestToolSurface:
-    def test_all_twenty_tools_are_declared(self) -> None:
+    def test_all_twenty_three_tools_are_declared(self) -> None:
         # Twenty since `workflow_start_draft` (#372) — the launch verb for a run that already
         # exists as a DRAFT, which is what `workflow_fork`'s own description had been promising
-        # ("edit it before running it") with nothing able to run it.
-        assert len(T._list_tools()) == 20
+        # ("edit it before running it") with nothing able to run it. Twenty-three since each
+        # preview became a read of its own: `workflow_check`, `workflow_edit_preview` and
+        # `workflow_audit`, beside the `workflow_author`, `workflow_edit` and `workflow_repair`
+        # that change something.
+        assert len(T._list_tools()) == 23
 
     def test_tool_names_are_unique_and_prefixed(self) -> None:
         names = [t["name"] for t in T._list_tools()]
@@ -208,6 +212,8 @@ class TestToolSurface:
     def test_read_only_tools_are_declared(self) -> None:
         assert "workflow_status" in T.READ_ONLY_TOOLS
         assert "workflow_start" not in T.READ_ONLY_TOOLS
+        declared = {t["name"] for t in T._list_tools() if t["annotations"]["readOnlyHint"]}
+        assert T.READ_ONLY_TOOLS == declared
 
     def test_every_tool_has_a_validation_schema(self) -> None:
         from personalclaw.validation import MCP_WORKFLOW_SCHEMAS
@@ -803,7 +809,7 @@ class TestErrorContract:
         for name, args in (
             ("workflow_list_defs", {}),
             ("workflow_get_def", {"name": "absent"}),
-            ("workflow_author", {"name": "async-ok", "root": SPEC_ROOT, "save": False}),
+            ("workflow_check", {"name": "async-ok", "root": SPEC_ROOT}),
             ("workflow_delete_def", {"name": "absent"}),
             ("workflow_observe", {"run_id": "deadbeef"}),
             ("workflow_start", {"name": "absent"}),

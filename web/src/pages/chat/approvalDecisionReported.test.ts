@@ -16,11 +16,11 @@ import { join } from 'node:path'
 //     }, [])
 //
 // 🔑 THE MIRROR IS THE DEFECT, NOT JUST THE SWALLOW. That `setSelection` exists to keep the
-// Permission-mode pill honest — its own comment says so: *"otherwise the pill keeps claiming 'Normal
-// — ask before every tool' while the session silently auto-approves (a dishonest state)"*. But it ran
-// whether or not the write landed, so a failed `yolo` left the pill claiming this chat auto-approves
-// EVERYTHING while the server was still asking before every tool. **The exact inverse of the state
-// that comment sets out to prevent.**
+// Permission-mode pill honest — its own comment says so: *"otherwise the pill keeps claiming 'Normal'
+// (ask before a tool that needs approval) while the session silently auto-approves (a dishonest
+// state)"*. But it ran whether or not the write landed, so a failed `yolo` left the pill claiming
+// this chat auto-approves EVERYTHING while the server was still asking. **The exact inverse of the
+// state that comment sets out to prevent.**
 //
 // The pill is a mirror of a server flag, so it may only move once the server has the flag. It is now
 // gated on the write, and the failure is reported. The cost is one round trip before the pill moves,

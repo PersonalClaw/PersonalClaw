@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **888 registrations** over **720 distinct paths** — 881 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **889 registrations** over **721 distinct paths** — 882 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -47,10 +47,10 @@ The 128 families the surface divides into, largest first.
 | `/api/providers` | 12 | 8 |
 | `/api/durability` | 11 | 11 |
 | `/api/model-providers` | 11 | 9 |
+| `/api/notifications` | 11 | 8 |
 | `/api/onboarding` | 11 | 9 |
 | `/api/prompts` | 11 | 7 |
 | `/api/lexicon` | 10 | 6 |
-| `/api/notifications` | 10 | 7 |
 | `/api/rooms` | 10 | 8 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 881 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 882 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -271,7 +271,7 @@ The 881 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/browse/kill/release` | re-enable unattended browsing. |
 | `GET` | `/api/browse/status` | the mirror's read model: kill state, expired sites, pending grants. |
 | `GET` | `/api/changelog` | read full CHANGELOG.md from project. |
-| `POST` | `/api/channel/profile` | read a channel user's profile. |
+| `POST` | `/api/channel/profile` | read the owner's profile on the channel whose owner id it is. |
 | `POST` | `/api/channel/upload-file` | upload a file to the active channel (internal, called by notify_attachment). |
 | `GET` | `/api/channels` | all comms transports with info + health. |
 | `GET` | `/api/channels/reply-targets` | list channels the bot can reply in. |
@@ -748,6 +748,7 @@ The 881 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/notifications/rules` | replace rules for the keys named in the body. |
 | `GET` | `/api/notifications/settings` | _(no summary)_ |
 | `PUT` | `/api/notifications/settings` | _(no summary)_ |
+| `POST` | `/api/notifications/trust` | the owner's Allow or Deny on an unknown-sender notification. |
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
 | `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |

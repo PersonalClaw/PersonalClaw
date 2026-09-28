@@ -75,9 +75,7 @@ def state(monkeypatch):
     monkeypatch.setattr(
         services,
         "_services",
-        services.ActionServices(
-            state=st, spawn_background=lambda coro: None  # type: ignore[arg-type]
-        ),
+        services.ActionServices(state=st),  # type: ignore[arg-type]
     )
     return st
 

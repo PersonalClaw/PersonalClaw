@@ -124,12 +124,30 @@ async def test_with_no_server_configured_it_serves_no_tool(provider_module, tmp_
     assert result.success is False and "not found" in (result.error or "")
 
 
-@pytest.mark.asyncio
-async def test_every_tool_it_serves_asks_before_it_runs(provider_module):
+async def _asks(provider_module, monkeypatch, *, trusted):
+    from personalclaw import mcp_client
+
+    monkeypatch.setattr(mcp_client, "read_only_labels_trusted", lambda server: trusted)
     listing = _Listing({"acme": [_spec("search_docs", {"readOnlyHint": True}), _spec("wipe")]})
     tools = await provider_module.McpToolProvider(lambda: listing).list_tools()
     assert [t.name for t in tools] == ["mcp/acme/search_docs", "mcp/acme/wipe"]
-    assert all(t.requires_approval for t in tools)
+    return {t.name: t.requires_approval for t in tools}
+
+
+@pytest.mark.asyncio
+async def test_every_tool_of_a_server_whose_labels_you_have_not_trusted_asks(
+    provider_module, monkeypatch
+):
+    asks = await _asks(provider_module, monkeypatch, trusted=False)
+    assert asks == {"mcp/acme/search_docs": True, "mcp/acme/wipe": True}
+
+
+@pytest.mark.asyncio
+async def test_a_read_from_a_server_you_trust_asks_nobody(provider_module, monkeypatch):
+    """🔴 Before: every tool asked, so a trusted server's read raised a card in a chat that runs
+    every other read, and was declined wherever nobody could be asked. Its change still asks."""
+    asks = await _asks(provider_module, monkeypatch, trusted=True)
+    assert asks == {"mcp/acme/search_docs": False, "mcp/acme/wipe": True}
 
 
 @pytest.fixture()

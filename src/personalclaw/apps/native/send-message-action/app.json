@@ -41,14 +41,14 @@
           "type": "string",
           "x-meta": {
             "label": "Send on",
-            "help": "Optional chat channel to send it on, by name, like Telegram. Only that channel sends it; when it can't, the message goes to your Inbox saying why. Empty: the first connected channel that knows you."
+            "help": "Optional chat channel to send it on, by name, like Telegram. Only that channel sends it; when it can't, the message goes to your Inbox saying why. A name that isn't a chat channel set up here is refused when you save. Empty: the first connected channel that knows you."
           }
         },
         "channel": {
           "type": "string",
           "x-meta": {
             "label": "Channel ID",
-            "help": "Optional channel to post to, on the channel Send on names when it is set. Empty + no user \u2192 DM the owner.",
+            "help": "Optional channel to post to: on the channel Send on names, else on the one chat channel the id belongs to. An id more than one chat channel could have issued is refused when you save, so set Send on. Empty + no user \u2192 DM the owner.",
             "tags": [
               "advanced"
             ]
@@ -58,7 +58,7 @@
           "type": "string",
           "x-meta": {
             "label": "User ID",
-            "help": "Optional user to DM (when no channel set), on the channel Send on names when it is set.",
+            "help": "Optional user to DM (when no channel set): on the channel Send on names, else on the chat channel whose owner id it is.",
             "tags": [
               "advanced"
             ]

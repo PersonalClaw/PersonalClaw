@@ -91,7 +91,7 @@ from personalclaw.llm.prompt_cache import (
     effective_cache_mode,
     mark_cacheable_prefix,
 )
-from personalclaw.tool_providers.base import RiskLevel
+from personalclaw.tool_providers.base import RiskLevel, only_tells_the_owner
 from personalclaw.tool_providers.portable_schema import (
     ToolSchemaRejected,
     tools_named_in_rejection,
@@ -408,11 +408,13 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._tool_grants: Callable[..., str] | None = None
         # tool name → what the tool DECLARES a call does (its RiskLevel; SAFE is the read-only
         # declaration), and the tools that declare they build a Build-mode deliverable or only
-        # file a proposal. Built in start(); a name missing from the map declares nothing, which
+        # file a proposal, and the arguments a call to a tool may carry and still only tell the
+        # owner something. Built in start(); a name missing from the map declares nothing, which
         # is CAUTION (`_declared`).
         self._tool_risk: dict[str, RiskLevel] = {}
         self._tool_builds: frozenset[str] = frozenset()
         self._tool_proposes: frozenset[str] = frozenset()
+        self._tool_tells_owner: dict[str, tuple[str, ...]] = {}
         # The turn's ONE stop signal. Not a bool: cancellation has to carry a
         # cause (user vs internal), a live child-process registry a stop can reap, and
         # idempotence — so it is an object, and `self._cancelled` below is a read-only
@@ -564,6 +566,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._tool_risk = {t.name: getattr(t, "risk_level", RiskLevel.CAUTION) for t in defs}
         self._tool_builds = frozenset(t.name for t in defs if getattr(t, "builds", False))
         self._tool_proposes = frozenset(t.name for t in defs if getattr(t, "proposes", False))
+        self._tool_tells_owner = {t.name: tuple(getattr(t, "tells_owner", ()) or ()) for t in defs}
         # Per-turn tool retrieval (TR2): a selector over the full catalog. K
         # defaults above the builtin count → behavioral no-op until MCP catalogs
         # grow; selection only changes the schema the model SEES (dispatch via
@@ -1795,6 +1798,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     risk_level=self._declared(tool_name).value,
                     builds=tool_name in self._tool_builds,
                     proposes=tool_name in self._tool_proposes,
+                    tells_owner=self._tells_owner(tool_name, args),
                 )
                 decision = await self._approval.wait(request_id, fut)
                 if self._cancelled:
@@ -1927,6 +1931,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     "",
                     call.tool_input,
                     proposes=tool_name in self._tool_proposes,
+                    tells_owner=self._tells_owner(tool_name, call.tool_input),
                 )
             except Exception:  # noqa: BLE001 - a grant that cannot be read admits nothing
                 logger.warning("native: tool grants could not be read; refusing", exc_info=True)
@@ -2126,6 +2131,12 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         """What *tool_name* declares a call does. A tool this runtime has no definition for
         declares nothing, which is CAUTION — never a read."""
         return self._tool_risk.get(tool_name, RiskLevel.CAUTION)
+
+    def _tells_owner(self, tool_name: str, tool_input: Any) -> bool:
+        """Whether this call to *tool_name* does nothing but tell the owner something: the tool
+        declares the arguments such a call carries, and the call sets no other
+        (``ToolDefinition.tells_owner``)."""
+        return only_tells_the_owner(self._tool_tells_owner.get(tool_name, ()), tool_input)
 
     def _requires_approval(self, tool_name: str) -> bool:
         if not self._asks_first(tool_name):
@@ -2495,9 +2506,10 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
 
     def set_tool_grants(self, denial: Callable[..., str] | None) -> None:
         """Set which tools this run may use at all: ``denial(tool, declared, tool_kind,
-        tool_input, proposes=...)`` is why not, ``""`` if it may. It is given what the tool
-        declares (:meth:`_declared`, and whether it only files a proposal), because a ``read``
-        grant admits a call by its declaration, never by its name.
+        tool_input, proposes=..., tells_owner=...)`` is why not, ``""`` if it may. It is given what
+        the tool declares (:meth:`_declared`, whether it only files a proposal, and whether this
+        call only tells the owner something), because a ``read`` grant admits a call by its
+        declaration, never by its name.
 
         Asked in :meth:`_guard_and_invoke` before approval, like the task mode, because an approval
         this runtime answers itself (its policy says ``auto``) never reaches the host that holds

@@ -478,7 +478,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [
             {
-                "summary": "Validate a two-stage spec without saving it",
+                "summary": "Save a one-stage spec",
                 "args": {
                     "name": "triage-inbox",
                     # JSON text, as the tool declares it (a node tree has no portable schema).
@@ -486,7 +486,22 @@ TOOL_META: dict[str, dict[str, Any]] = {
                         '{"kind": "sequence", "id": "main", "children": [{"kind": "infer", '
                         '"id": "classify", "config": {"prompt": "Classify: {{inputs.text}}"}}]}'
                     ),
-                    "save": False,
+                },
+            },
+        ],
+    },
+    "workflow_check": {
+        "response_type": "workflow.def.saved",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Check a spec without saving it",
+                "args": {
+                    "name": "triage-inbox",
+                    "root": (
+                        '{"kind": "sequence", "id": "main", "children": [{"kind": "infer", '
+                        '"id": "classify", "config": {"prompt": "Classify: {{inputs.text}}"}}]}'
+                    ),
                 },
             },
         ],
@@ -541,6 +556,23 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [
             {
+                "summary": "Edit a pending prompt, re-running what depends on it",
+                "args": {
+                    "run_id": "a1b2c3d4",
+                    "ops": (
+                        '[{"op": "update_node", "node_id": "produce", '
+                        '"fields": {"prompt": "Be concise."}}]'
+                    ),
+                    "confirm_cascade": True,
+                },
+            },
+        ],
+    },
+    "workflow_edit_preview": {
+        "response_type": "workflow.mutation.result",
+        "error_codes": [],
+        "examples": [
+            {
                 "summary": "Preview what editing a pending prompt would re-run",
                 "args": {
                     "run_id": "a1b2c3d4",
@@ -548,7 +580,6 @@ TOOL_META: dict[str, dict[str, Any]] = {
                         '[{"op": "update_node", "node_id": "produce", '
                         '"fields": {"prompt": "Be concise."}}]'
                     ),
-                    "preview_only": True,
                 },
             },
         ],
@@ -638,6 +669,11 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "response_type": "workflow.audit.report",
         "error_codes": [],
         "examples": [{"summary": "Report drifted runs without repairing", "args": {}}],
+    },
+    "workflow_repair": {
+        "response_type": "workflow.audit.report",
+        "error_codes": [],
+        "examples": [{"summary": "Repair the runs that drifted", "args": {}}],
     },
     "workflow_manifest": {
         "response_type": "workflow.manifest",
@@ -1134,9 +1170,15 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [
             {"summary": "Fire an automation now", "args": {"id": "file:summarize-notes"}},
+        ],
+    },
+    "automation_dry_run": {
+        "response_type": "automation.run.result",
+        "error_codes": [],
+        "examples": [
             {
                 "summary": "Preview what would run without executing",
-                "args": {"id": "file:summarize-notes", "dry_run": True},
+                "args": {"id": "file:summarize-notes"},
             },
         ],
     },

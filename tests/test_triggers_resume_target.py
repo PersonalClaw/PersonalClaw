@@ -348,7 +348,7 @@ def _attach(monkeypatch, watchdog) -> None:
 
     services = svc_mod.get_action_services()
     if services is None:
-        services = svc_mod.ActionServices(state=None, spawn_background=lambda _coro: None)
+        services = svc_mod.ActionServices(state=None)
         monkeypatch.setattr(svc_mod, "get_action_services", lambda: services)
     monkeypatch.setattr(services, "workflows", watchdog, raising=False)
 

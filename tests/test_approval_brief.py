@@ -208,7 +208,14 @@ class TestCallSiteCarriesTheBrief:
         gateway.dashboard_state.request_approval.assert_awaited_once()
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
-        assert set(kwargs) == {"tool_input", "tool_purpose", "session", "trigger", "risk_level"}
+        assert set(kwargs) == {
+            "tool_input",
+            "tool_purpose",
+            "session",
+            "trigger",
+            "risk_level",
+            "tool_kind",
+        }
 
 
 # ── 2. Additive, with vacuity proofs ────────────────────────────────────────────
@@ -427,8 +434,8 @@ class TestHonestyContract:
         radius = derive_blast_radius("file_write", risk="caution")
         assert radius == {"writes": True, "network": False, "shell": False, "readOnly": False}
 
-    def test_a_negative_screening_verdict_rules_the_read_claim_out(self) -> None:
-        radius = derive_blast_radius("bash", risk="safe", read_only_command=False)
+    def test_a_negative_read_verdict_rules_the_read_claim_out(self) -> None:
+        radius = derive_blast_radius("bash", risk="safe", read_only=False)
         assert radius is not None and radius["readOnly"] is False
 
     def test_an_unknown_risk_level_is_no_evidence(self) -> None:

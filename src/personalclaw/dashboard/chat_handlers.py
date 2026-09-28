@@ -2497,8 +2497,9 @@ async def api_chat_mode(request: web.Request) -> web.Response:
     """POST /api/chat/mode — set the tool APPROVAL mode (whether tools auto-approve).
 
     Modes:
-      - ``normal``: reset to interactive (ask for each tool)
-      - ``trust_reads``: auto-approve read-only tools
+      - ``normal``: interactive: a call that needs approval asks (a tool that declares it only
+        reads never does)
+      - ``trust_reads``: a read-only shell command is approved without asking too
       - ``trust``: auto-approve tools for active session
       - ``yolo``: auto-approve all tools everywhere
 
@@ -2604,12 +2605,18 @@ async def api_chat_mode(request: web.Request) -> web.Response:
     # state.enable_yolo()/disable_yolo() above already drive the single source of
     # truth that the channel handler also reads — no separate sync needed.
 
-    # If any session has a pending approval and mode is trust/yolo, auto-approve it
+    # A trust/yolo switch answers the pending approvals it covers, and no others. YOLO, and Trust
+    # for every chat, cover every one. Trust for ONE chat covers that chat's own and the ones its
+    # agents asked on its behalf (`approval_grants.PARENT_TRUST`), never another chat's or another
+    # run's: trusting this chat is not an answer to what anyone else is waiting on.
     if mode in ("trust", "yolo"):
-        # The switch answers every pending approval, so it answers them as the one who flipped it,
-        # held to the rule every door is (`approval_answer`).
+        only = session_name if mode == "trust" else None
+        # The switch answers them as the one who flipped it, held to the rule every door is
+        # (`approval_answer`).
         by = approval_answer.of_request(request)
-        for session in state._sessions.values():
+        for key, session in state._sessions.items():
+            if only is not None and key != only:
+                continue
             for aid, fut in list(session._approval_futures.items()):
                 if not fut.done():
                     # A posture switch is a door like any other: it does not approve a call
@@ -2638,9 +2645,11 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                         )
                     except Exception:
                         logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
-        # Also auto-approve all pending background approvals (cron/subagent)
+        # And the background ones (a subagent, a trigger's run) it covers.
         for aid in list(state._approval_futures):
             fut = state._approval_futures[aid]
+            if only is not None and state._pending_approvals.get(aid, {}).get("session") != only:
+                continue
             if not fut.done() and state.resolve_approval(aid, True, by=by):
                 try:
                     sel().log_api_access(

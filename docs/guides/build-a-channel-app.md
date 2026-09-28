@@ -74,7 +74,7 @@ the authority where the two could disagree: it carries the machine-readable inve
 | `start_inbound(services)` | called by core *after* its services are up, with a `GatewayServices` handle — at boot, and whenever your channel is enabled, installed, updated or its settings are saved — at most once per instance, and only while `health()` is not `offline`. It runs as its own task: raising, or not returning within a minute, becomes your channel's status. This is where a push/poll receiver starts | **MUST if `capabilities().inbound` is `True`**, else MAY | partly (clause 4 checks the inbound path exists, via `inbound_via=`) |
 | `stop_inbound()` | stop EVERYTHING `start_inbound` started. Called when your instance is replaced (the replacement starts only after this returns), disabled or uninstalled, when `health()` turns `offline`, and at shutdown. Core drops the delivery handle registered under your channel's name itself | **MUST if you implement `start_inbound`** | **no** — in no kit tuple |
 | `receive()` | the optional pull-based inbound seam: an `AsyncIterator[ChannelMessage]`. The base implementation raises | **MAY** — no shipped channel uses it; they all drive their own loop from `start_inbound` | partly (clause 4 accepts a named handler instead) |
-| `validate_target(target)` | whether a schedule may send its results to `target`, a chat or channel id in your spelling (`channel:<name>:<target>`). Return `""` if you can deliver there, else ONE sentence the owner reads as is, saying what a valid id looks like. Core knows no platform's id shape, so this is the only check an id gets. The base accepts any non-empty id with no whitespace or control characters | **SHOULD** — override it when your ids have a shape | **no** — in no kit tuple |
+| `validate_target(target)` | whether a schedule may send its results to `target`, a chat or channel id in your spelling (`channel:<name>:<target>`), and whether an id sent without naming its channel is one of yours: core sends it on the one channel set up that says yes, and refuses it when none or more than one does (`channel_delivery.channel_of_id`). Return `""` if you can deliver there, else ONE sentence the owner reads as is, saying what a valid id looks like. Core knows no platform's id shape, so this is the only check an id gets. The base accepts any non-empty id with no whitespace or control characters, which claims every other channel's ids too | **SHOULD** — override it when your ids have a shape | **no** — in no kit tuple |
 
 `connected`, `start_inbound`, `stop_inbound`, `receive` and `validate_target` appear in **none** of
 the kit's three tuples. Their levels above are derived from the ABC's own contract (what core calls,
@@ -228,7 +228,10 @@ What that one call gets you, and what you must not re-implement:
   says the same thing — do not write your own), and core raises exactly **one** actionable
   owner attention item carrying Allow/Deny plus the `provider` + `sender_id` the buttons
   need. It is deduped: a second message from the same stranger does not re-alert. The
-  canned reply is rate-limited to once per sender per 24h.
+  canned reply is rate-limited to once per sender per 24h. The owner answers it from the
+  dashboard's notification (`POST /api/notifications/trust`), which lets in only the sender
+  the gate told them about, and asks their consent to an Allow; your channel adds nothing
+  for that.
 - **A channel that speaks as its owner.** When what your channel sends goes out as the owner
   themselves (their own mailbox) rather than as a bot they run, declare
   `ChannelCapabilities(speaks_as_owner=True)` and hand every inbound message to the door

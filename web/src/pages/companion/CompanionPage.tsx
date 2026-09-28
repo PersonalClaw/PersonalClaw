@@ -7,7 +7,7 @@ import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps 
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
-import { approvalRiskOf, deriveBlastRadius, establishedFacets, readOnlyCommandOf } from '../chat/approvalMeta'
+import { approvalRiskOf, deriveBlastRadius, establishedFacets, readOnlyOf } from '../chat/approvalMeta'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -374,7 +374,7 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
     deriveBlastRadius({
       tool: ap.tool,
       risk: approvalRiskOf(ap.risk),
-      readOnlyCommand: readOnlyCommandOf(ap.is_read_only),
+      readOnly: readOnlyOf(ap.is_read_only),
     }),
   )
   if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])

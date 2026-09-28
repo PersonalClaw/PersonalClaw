@@ -182,10 +182,7 @@ def _state(tmp_path):
 def _wire_services(monkeypatch, state):
     from personalclaw.action_providers import services as svc
 
-    def _spawn(coro):
-        return None
-
-    monkeypatch.setattr(svc, "_services", svc.ActionServices(state=state, spawn_background=_spawn))
+    monkeypatch.setattr(svc, "_services", svc.ActionServices(state=state))
 
 
 def _patch_llm(monkeypatch, calls, reply="Two releases shipped."):

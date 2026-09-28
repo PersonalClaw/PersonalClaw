@@ -191,11 +191,41 @@ def _gateway_with_subagents() -> tuple[Any, Any]:
     return orch, manager.call_args.kwargs["on_done"]
 
 
+@pytest.fixture
+def telegram_set_up():
+    """Telegram set up as a chat channel that knows its own chat ids: how core finds the channel
+    a conversation's id belongs to (`channel_delivery.channel_of_id`)."""
+    import re
+
+    from personalclaw import channel_transports
+    from personalclaw.channel_transports.base import ChannelTransportProvider
+
+    class _Telegram(ChannelTransportProvider):
+        name = "telegram"
+        display_name = "Telegram"
+
+        async def connect(self) -> bool:
+            return True
+
+        async def disconnect(self) -> None:
+            return None
+
+        async def send(self, message: Any) -> bool:
+            return True
+
+        def validate_target(self, target: str) -> str:
+            return "" if re.fullmatch(r"-?\d{1,20}", target) else "not a Telegram chat id"
+
+    channel_transports.register_transport(_Telegram())
+    yield
+    channel_transports.unregister_transport("telegram")
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("thread", ["C123", None], ids=["its-thread", "the-owners-dm"])
-async def test_a_subagents_reply_reaches_the_channel_masked(telegram, thread):
+@pytest.mark.parametrize("thread", ["-1001234567890", None], ids=["its-thread", "the-owners-dm"])
+async def test_a_subagents_reply_reaches_the_channel_masked(telegram, telegram_set_up, thread):
     """A subagent started from a channel conversation: its synthesized reply goes back to that
-    thread, or to the owner's DM when the conversation has none."""
+    thread, on the channel whose id it is, or to the owner's DM when the conversation has none."""
     orch, on_done = _gateway_with_subagents()
     orch.sessions.get_channel = MagicMock(return_value=thread)
     info = MagicMock(

@@ -40,7 +40,16 @@ from typing import Any
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import HOOK_SESSION_PREFIX
-from personalclaw.tool_providers.base import BUILDS_META_KEY, PROPOSES_META_KEY, tool_failure
+from personalclaw.tool_providers.base import (
+    BUILDS_META_KEY,
+    PROPOSES_META_KEY,
+    TELLS_OWNER_META_KEY,
+    tool_failure,
+)
+
+#: What a `notify` call may carry and still tell the owner and no one else: no channel id, no
+#: user id, no thread, no rich blocks, no injection into a chat.
+OWNER_NOTICE_ARGS: tuple[str, ...] = ("text", "title", "via", "unfurl_links", "unfurl_media")
 
 
 def config_dir() -> Path:
@@ -521,6 +530,9 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "notify",
             "annotations": {"readOnlyHint": False},
+            # A call with only these tells the owner and no one else, which an automation's own
+            # agent may do though it may change nothing (`ToolDefinition.tells_owner`).
+            "_meta": {TELLS_OWNER_META_KEY: list(OWNER_NOTICE_ARGS)},
             "description": (
                 "Notify the user via their configured notification channel(s) "
                 "(dashboard notification, plus any connected messaging channel such "
@@ -551,6 +563,8 @@ def _list_tools() -> list[dict[str, Any]]:
                 " the auto-default."
                 "\n\nvia: when the owner named the chat channel to reach them on ('message me"
                 " on Telegram'), give its name. Only that channel sends it."
+                "\n\nAn automation's agent, which may change nothing, can still tell the owner"
+                " what it found: give only text, title and via."
             ),
             "inputSchema": {
                 "type": "object",
@@ -571,11 +585,21 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "channel": {
                         "type": "string",
-                        "description": "Target channel ID (e.g. C0123ABC456). Must be a tracked channel. Omit to send to owner DM.",  # noqa: E501
+                        "description": (
+                            "Target chat or channel id, as its chat channel spells it (a Slack "
+                            "channel C0123ABC456, a Telegram chat -1001234567890). Must be a "
+                            "tracked channel. It goes out on the chat channel it belongs to, or "
+                            "the one 'via' names; an id more than one channel could have issued "
+                            "is refused with them, so give 'via'. Omit to send to owner DM."
+                        ),
                     },
                     "user": {
                         "type": "string",
-                        "description": "Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.",  # noqa: E501
+                        "description": (
+                            "Target user id to DM, as its chat channel spells it. Must be the "
+                            "owner's id on that channel, which it goes out on (or the one 'via' "
+                            "names). Omit to send to owner DM."
+                        ),
                     },
                     "via": {
                         "type": "string",

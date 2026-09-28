@@ -131,8 +131,8 @@ class AgentEvent:
 
     Every ``acp.types.AcpEvent`` field is here under the same name and default,
     so the chat runner consumes either without change. ``risk_level``, ``builds``,
-    ``proposes``, ``served_model_ref`` and ``audit_ids`` have no ACP twin, since an ACP agent
-    reports none of them.
+    ``proposes``, ``tells_owner``, ``served_model_ref`` and ``audit_ids`` have no ACP twin, since
+    an ACP agent reports none of them.
     ``tool_input``/``tool_output`` are typed ``Any`` (the native loop may pass
     structured values; ACP passes str).
     """
@@ -210,3 +210,8 @@ class AgentEvent:
     #: turn. A usage row keeps them, so the model-call log's census leaves out a call the row
     #: already counts. Empty from a backend no guard wraps (the interactive chat, an ACP CLI).
     audit_ids: tuple[str, ...] = ()
+    #: With ``builds`` and ``proposes``, what the tool behind a TOOL_CALL / PERMISSION_REQUEST
+    #: declares: whether THIS call does nothing but tell the owner something
+    #: (``ToolDefinition.tells_owner``, ``tool_providers.base.only_tells_the_owner``), which an
+    #: automation's own agent may do though its grant is ``read``. Last, so no field moves.
+    tells_owner: bool = False

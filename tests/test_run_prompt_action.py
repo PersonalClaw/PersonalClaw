@@ -1,9 +1,10 @@
 """The ``run-prompt`` action (T1) — run a saved Prompt on a trigger's cadence.
 
 Covers: missing prompt_id (error), unknown prompt (error), bad vars type
-(error), empty-render (error), and the success path (resolve → render → frame →
-fire-and-forget auto-approved spawn). The saved-prompt resolution + render is
-stubbed so the test stays unit-scoped; the spawn path mirrors invoke-agent's.
+(error), empty-render (error), the success path (resolve → render → frame →
+auto-approved spawn, which schedules the agent and returns), and a spawn refused on
+the spot (the fire's failure). The saved-prompt resolution + render is stubbed so
+the test stays unit-scoped; the spawn path mirrors invoke-agent's.
 """
 
 from __future__ import annotations
@@ -19,14 +20,15 @@ def _ctx() -> ActionContext:
     return ActionContext(event="Schedule", context="", payload={"session_key": "cron:x"})
 
 
-def _services(spawn_sink, scheduled):
-    fake_sub = SimpleNamespace(spawn=lambda **kw: spawn_sink.update(kw))
+def _services(spawn_sink, *, refused: str = ""):
+    """A manager whose spawn records what it was asked and returns the agent it started, or,
+    given `refused`, one it refused on the spot, as `SubagentManager.spawn` does."""
 
-    def _bg(coro):
-        scheduled.append(coro)
-        return asyncio.ensure_future(coro)
+    def _spawn(**kw):
+        spawn_sink.update(kw)
+        return SimpleNamespace(done=bool(refused), error=refused)
 
-    return SimpleNamespace(subagents=fake_sub, spawn_background=_bg)
+    return SimpleNamespace(subagents=SimpleNamespace(spawn=_spawn))
 
 
 def test_no_prompt_id_and_no_loop_md_is_error(monkeypatch):
@@ -143,20 +145,18 @@ def test_success_spawns_auto_approved_with_framing(monkeypatch):
         mod, "render_saved_prompt", lambda pid, v: f"BODY for {pid} team={(v or {}).get('team')}"
     )
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
 
     async def go():
         res = await RunPromptActionProvider().execute(
             {"prompt_id": "standup", "vars": {"team": "infra"}, "agent": "PersonalClaw"},
             _ctx(),
         )
-        await asyncio.sleep(0.05)
         return res
 
     res = asyncio.run(go())
     assert res.success is True and "standup" in res.stdout
-    assert scheduled, "the prompt turn must run as a fire-and-forget background spawn"
+    assert res.outcome == "launched", "the agent has only started"
     # The rendered prompt reaches the spawn, wrapped in autonomous framing.
     assert "BODY for standup team=infra" in spawn_sink.get("task", "")
     assert "AUTONOMOUS RUN" in spawn_sink.get("task", "")
@@ -169,13 +169,11 @@ def _run_message(monkeypatch, config: dict) -> tuple[object, dict]:
     import personalclaw.action_providers.run_prompt_provider as mod
 
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
     monkeypatch.setattr(mod, "resolve_loop_md", lambda cwd: ("LOOP body", "user"))
 
     async def go():
         res = await RunPromptActionProvider().execute(config, _ctx())
-        await asyncio.sleep(0.05)
         return res
 
     return asyncio.run(go()), spawn_sink
@@ -213,14 +211,12 @@ def test_session_opt_in_pins_parent_session(monkeypatch):
 
     monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
 
     async def go():
         await RunPromptActionProvider().execute(
             {"prompt_id": "p", "session": "cron:pinned"}, _ctx()
         )
-        await asyncio.sleep(0.05)
 
     asyncio.run(go())
     # Explicit session opt-in wins over the trigger payload's session_key.
@@ -232,12 +228,10 @@ def test_default_session_is_trigger_payload(monkeypatch):
 
     monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
 
     async def go():
         await RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx())
-        await asyncio.sleep(0.05)
 
     asyncio.run(go())
     assert spawn_sink.get("parent_session_key") == "cron:x"
@@ -250,7 +244,7 @@ def test_services_unavailable_is_error(monkeypatch):
     monkeypatch.setattr(
         mod,
         "get_action_services",
-        lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None),
+        lambda: SimpleNamespace(subagents=None),
     )
     res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx()))
     assert res.success is False and "subagent manager unavailable" in res.error
@@ -266,11 +260,39 @@ def test_invalid_cwd_is_honest_error(monkeypatch):
         mod, "validate_spawn_cwd", lambda cwd: "cwd is not under any allowed root: ['~/ok']"
     )
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
     res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p", "cwd": "/bad"}, _ctx()))
     assert res.success is False and "allowed root" in res.error
-    assert not scheduled  # never spawned
+    assert spawn_sink == {}  # never spawned
+
+
+def test_a_spawn_refused_on_the_spot_is_the_fires_failure(monkeypatch):
+    """🔴 Before: the spawn ran in a background task that dropped what it returned, so a spawn
+    the manager refused (too little memory, an incident, the day's budget) fired as "launched",
+    and since a launch says nothing until the agent ends, the automation said nothing at all."""
+    import personalclaw.action_providers.run_prompt_provider as mod
+
+    monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
+    spawn_sink: dict = {}
+    refused = "spawn refused: incident mode active (resume with `personalclaw incident off`)"
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, refused=refused))
+    res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx()))
+    assert res.success is False
+    assert res.error == f"run-prompt: {refused}"
+
+
+def test_a_spawn_that_raises_is_the_fires_failure(monkeypatch):
+    import personalclaw.action_providers.run_prompt_provider as mod
+
+    def _boom(**_kw):
+        raise RuntimeError("no event loop")
+
+    monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
+    monkeypatch.setattr(
+        mod, "get_action_services", lambda: SimpleNamespace(subagents=SimpleNamespace(spawn=_boom))
+    )
+    res = asyncio.run(RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx()))
+    assert res.success is False and "did not start: no event loop" in res.error
 
 
 # ── loop.md default-recurring-prompt (T3) ──
@@ -335,12 +357,10 @@ def test_loop_md_fallback_spawns(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path / "nope")
     monkeypatch.setattr(mod, "validate_spawn_cwd", lambda cwd: "")  # cwd allowed
     spawn_sink: dict = {}
-    scheduled: list = []
-    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink, scheduled))
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawn_sink))
 
     async def go():
         res = await RunPromptActionProvider().execute({"cwd": str(tmp_path)}, _ctx())
-        await asyncio.sleep(0.05)
         return res
 
     res = asyncio.run(go())

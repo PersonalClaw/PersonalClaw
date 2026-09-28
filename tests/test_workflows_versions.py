@@ -191,7 +191,7 @@ async def test_a_trigger_fired_run_pins_the_def_version_it_executed(monkeypatch)
     prior = store.create(WorkflowRun(id="", workflow_name="sample", status=RunStatus.RUNNING))
     store.write_spec(prior.id, spec)
     try:
-        ctx = cast(Any, SimpleNamespace(context="trigger-wf2lea6"))
+        ctx = cast(Any, SimpleNamespace(trigger_id="trigger-wf2lea6"))
         result = await RunWorkflowActionProvider().execute({"workflow": "sample"}, ctx)
         run_id = json.loads(result.stdout)["run_id"]
         assert store.get(run_id).spec_version == 4

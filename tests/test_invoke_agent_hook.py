@@ -1,10 +1,10 @@
 """The ``invoke-agent`` hook action and its guards.
 
 depth cap (no spawn at the limit), missing-field (error result),
-services-unavailable (error), success (fire-and-forget spawn with rendered
-args), and capacity (semaphore-locked → error). Also pins that
-``fire_for_ids(depth=N)`` injects ``__hook_depth`` into the payload the provider
-reads.
+services-unavailable (error), success (a spawn with rendered args, which schedules
+the child and returns), and a spawn refused on the spot (the fire's failure). Also
+pins that ``fire_for_ids(depth=N)`` injects ``__hook_depth`` into the payload the
+provider reads.
 """
 
 from __future__ import annotations
@@ -41,58 +41,52 @@ def test_services_unavailable_is_error(monkeypatch):
     monkeypatch.setattr(
         mod,
         "get_action_services",
-        lambda: SimpleNamespace(subagents=None, spawn_background=lambda c: None),
+        lambda: SimpleNamespace(subagents=None),
     )
     res = asyncio.run(InvokeAgentActionProvider().execute({"task_template": "x"}, _ctx(0)))
     assert res.success is False and "subagent manager unavailable" in res.error
 
 
+def _services(spawned: dict, *, refused: str = "") -> SimpleNamespace:
+    """A manager whose spawn records what it was asked and returns the child it started, or,
+    given `refused`, one it refused on the spot, as `SubagentManager.spawn` does."""
+
+    def _spawn(**kw):
+        spawned.update(kw)
+        return SimpleNamespace(done=bool(refused), error=refused)
+
+    return SimpleNamespace(subagents=SimpleNamespace(spawn=_spawn))
+
+
 def test_success_spawns_fire_and_forget(monkeypatch):
     import personalclaw.action_providers.invoke_agent_provider as mod
 
-    spawned = {}
-    fake_sub = SimpleNamespace(spawn=lambda **kw: spawned.update(kw))
-    scheduled = []
+    spawned: dict = {}
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services(spawned))
 
-    def _bg(coro):
-        scheduled.append(coro)
-        return asyncio.ensure_future(coro)
-
-    monkeypatch.setattr(
-        mod,
-        "get_action_services",
-        lambda: SimpleNamespace(subagents=fake_sub, spawn_background=_bg),
-    )
-
-    async def go():
-        res = await InvokeAgentActionProvider().execute(
+    res = asyncio.run(
+        InvokeAgentActionProvider().execute(
             {"task_template": "Review $CONTEXT", "agent": "code-reviewer", "approval_mode": "auto"},
             _ctx(0),
         )
-        await asyncio.sleep(0.05)  # let the fire-and-forget task run
-        return res
-
-    res = asyncio.run(go())
+    )
     assert res.success is True and "Review diff" in res.stdout
-    assert scheduled, "spawn must be scheduled as a background task (never blocks lifecycle)"
+    assert res.outcome == "launched", "the child has only started; the lifecycle does not wait"
     assert spawned.get("task") == "Review diff"
     assert spawned.get("agent") == "code-reviewer"
     assert spawned.get("approval_mode") == "auto"
 
 
-def test_capacity_reached_is_error(monkeypatch):
+def test_a_spawn_refused_on_the_spot_is_the_fires_failure(monkeypatch):
+    """🔴 Before: the spawn ran in a background task that dropped what it returned, so a refused
+    spawn fired as "launched" and its trigger heard nothing, since a launch says nothing until the
+    agent ends."""
     import personalclaw.action_providers.invoke_agent_provider as mod
 
-    fake_sub = SimpleNamespace(spawn=lambda **kw: None)
-    monkeypatch.setattr(
-        mod,
-        "get_action_services",
-        lambda: SimpleNamespace(subagents=fake_sub, spawn_background=lambda c: None),
-    )
-    # A zero-permit semaphore is always locked → capacity guard trips before spawn.
-    monkeypatch.setattr(mod, "_invoke_agent_sem", asyncio.Semaphore(0))
+    refused = "spawn refused: only 1.2 GB memory available (need 4 GB)"
+    monkeypatch.setattr(mod, "get_action_services", lambda: _services({}, refused=refused))
     res = asyncio.run(InvokeAgentActionProvider().execute({"task_template": "x"}, _ctx(0)))
-    assert res.success is False and "capacity reached" in res.error
+    assert res.success is False and res.error == f"invoke-agent: {refused}"
 
 
 def test_fire_for_ids_injects_hook_depth(monkeypatch, tmp_path):

@@ -36,6 +36,7 @@ class PromptBusyExhaustedError(Exception):
 
 
 if TYPE_CHECKING:
+    from personalclaw.approval_grants import ToolDecision
     from personalclaw.history import ConversationLog
     from personalclaw.hooks import HookManager
     from personalclaw.usage_ledger import Attribution
@@ -68,7 +69,7 @@ async def stream_and_collect(
     approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.AUTO_APPROVE,
     hooks: "HookManager | None" = None,
     on_chunk: Callable[[str], None] | None = None,
-    on_tool_approval: Callable[[LLMEvent], Awaitable[bool]] | None = None,
+    on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
     on_substitution: Callable[[str], None] | None = None,
 ) -> str:
@@ -212,7 +213,7 @@ async def _resolve_permission(
     event: LLMEvent,
     policy: ToolApprovalPolicy,
     hooks: "HookManager | None",
-    on_tool_approval: Callable[[LLMEvent], Awaitable[bool]] | None = None,
+    on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     session_key: str = "",
     agent: str = "",
 ) -> bool:
@@ -282,7 +283,12 @@ async def _resolve_permission(
             _log("rejected", metadata={"reason": "interactive_rejected", **decided})
             return False
         await provider.approve_tool(event.request_id)
-        _log("approved", metadata={"reason": "interactive", **decided})
+        # Settled without asking anyone (a grant, or a read, which asks nobody) is recorded as
+        # that, never as a person's Allow.
+        if getattr(approved, "outcome", "") == "auto_approved":
+            _log("auto_approved", metadata={"reason": by, **decided})
+        else:
+            _log("approved", metadata={"reason": "interactive", **decided})
         return True
 
     # Nobody to ask: the run's own policy approves (AUTO_APPROVE, or HOOK_BASED for a call no hook

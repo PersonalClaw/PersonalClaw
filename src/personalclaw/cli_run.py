@@ -29,11 +29,15 @@ Safety posture (fail-CLOSED, and the reason this module exists at all):
   ``task_mode_denies`` is deny-by-default, runs BEFORE the approval gate, and is
   documented as un-bypassable by Trust/YOLO — it is the read-only posture that holds for
   a whole CLI turn.
-* ``--allow`` is the explicit write grant (task mode ``agent``), printed to stderr at
-  start so a script is self-documenting about the posture it asked for.
-* ``run`` never sets an approval mode. ``HEADLESS`` resolves to ``HOOK_BASED``, whose
-  fall-through in ``llm_helpers._resolve_permission`` is auto-approve — so approval
-  alone is NOT a containment boundary here, and the task-mode gate is what contains.
+* ``--allow`` is the explicit write grant, printed to stderr at start so a script is
+  self-documenting about the posture it asked for. It is two writes, because a call that
+  changes something passes two gates: the task mode (``agent``) admits it, and Trust on the
+  run's own chat approves it (:func:`grant_writes`). A headless turn has nobody to ask, so
+  without the second a call that asks for approval is declined, and ``--allow`` ran nothing
+  it promised. Trust is a grant, so the operator ceiling bounds it: under ``approval: ask`` the
+  run is refused, saying why, rather than started with a grant that does not hold.
+* Without ``--allow`` the run's chat is not trusted: a tool that declares it only reads runs,
+  since a read asks nobody, and a call that would ask is declined.
 """
 
 from __future__ import annotations
@@ -336,12 +340,26 @@ def grant_notice(session_key: str, task_mode: str) -> str:
     if task_mode == "agent":
         return (
             f"personalclaw run: WRITE GRANT active (--allow) — session {session_key} runs "
-            f"with full tool access under the headless safety profile."
+            f"with full tool access under the headless safety profile, and trusts its own "
+            f"calls, since nobody is there to approve them."
         )
     return (
         f"personalclaw run: read-only — session {session_key} denies every non-read-only "
         f"tool. Pass --allow to grant writes."
     )
+
+
+def grant_writes(port: int, token: str, session_key: str) -> None:
+    """``--allow``'s approval half: Trust on the run's own chat, so its calls are approved.
+
+    Trust for ONE chat answers only that chat's approvals (``/api/chat/mode``), and the
+    operator ceiling bounds it; a refusal raises :class:`RunError` saying why, before the
+    turn is posted.
+    """
+    try:
+        _api(port, token, "/api/chat/mode", {"mode": "trust", "session": session_key})
+    except RunError as exc:
+        raise RunError(f"--allow could not grant this run's writes: {exc}") from exc
 
 
 # ── HTTP helpers (loopback, token-authenticated) ─────────────────────────────────
@@ -575,6 +593,8 @@ def _run_one(args) -> int:
         # and a headless run then wrote a file to disk while announcing "read-only" on
         # stderr — a read-only promise that denied nothing.
         _api(port, token, "/api/chat/task-mode", {"mode": task_mode, "session": session_key})
+        if task_mode == "agent":
+            grant_writes(port, token, session_key)
         cwd = getattr(args, "cwd", "") or ""
         if cwd:
             _api(

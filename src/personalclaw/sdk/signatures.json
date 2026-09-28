@@ -1300,7 +1300,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "served_model_ref"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "audit_ids"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "tells_owner"}
    ],
    "returns": "None"
   },
@@ -8554,7 +8555,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "interactive"},
     {"annotation": "int | None", "default": "None", "kind": "positional_or_keyword", "name": "max_output"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "builds"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "proposes"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "tells_owner"}
    ],
    "returns": "None"
   },

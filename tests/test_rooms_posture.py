@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -525,6 +526,69 @@ def test_the_critics_write_tool_is_refused_while_the_executors_reaches_the_human
     assert critic.rejected == ["r1"] and critic.approved == []
     assert executor.approved == ["r1"] and executor.rejected == []
     assert asked == ["Bash"], "the human was asked ONCE — only by the member entitled to ask"
+
+
+class _DeclaredReadProvider(_ToolAskingProvider):
+    """An agent CLI member calling one of PersonalClaw's own reads: its permission request
+    carries the tool's declaration, as ``acp.mcp_servers.core_tool_declaration`` attaches it."""
+
+    async def stream(self, message: str):
+        from personalclaw.llm.events import (
+            EVENT_PERMISSION_REQUEST,
+            EVENT_TEXT_CHUNK,
+            AgentEvent,
+        )
+
+        self.prompts.append(message)
+        if self.tool:
+            yield AgentEvent(
+                kind=EVENT_PERMISSION_REQUEST,
+                title=self.tool,
+                tool_kind="other",
+                request_id="r1",
+                risk_level="safe",
+            )
+        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text=self.reply)
+
+
+class _DeclaredReadSessions(_Sessions):
+    async def get_or_create(self, key, agent=None, **kwargs):
+        is_new = key not in self.providers
+        provider = self.providers.setdefault(
+            key, _DeclaredReadProvider(key, tool=self._tools.get(key, ""))
+        )
+        return provider, is_new, False
+
+
+def test_a_members_call_that_declares_a_read_asks_nobody(enabled):
+    """🔴 Before: an agent CLI member's ``memory_recall`` reached the human, where a native
+    member's runs unasked. It is answered past the member's tier, and the audit row says the
+    declaration decided it, not a person."""
+    room = _room_with_two_members("Declared read")
+    asked: list[str] = []
+
+    async def human(event) -> bool:
+        asked.append(getattr(event, "title", ""))
+        return True
+
+    approver = posture.RoomApprover(identity="owner", decide=human)
+    sessions = _DeclaredReadSessions(
+        tools={f"room:{room.id}:critic": "mcp__personalclaw-core__memory_recall"}
+    )
+    store.append_message(room.id, role="user", content="go", speaker="")
+
+    with patch("personalclaw.sel.sel") as rows:
+        _drive_every_member(sessions, room.id, approver=approver)
+
+    critic = sessions.providers[f"room:{room.id}:critic"]
+    assert critic.approved == ["r1"] and critic.rejected == []
+    assert asked == []
+    decided = [
+        c.kwargs.get("metadata", {}).get("decided_by")
+        for c in rows.return_value.log_tool_invocation.call_args_list
+        if c.kwargs.get("outcome") == "auto_approved"
+    ]
+    assert decided == ["declared_read"], decided
 
 
 @pytest.mark.parametrize("tool", ["computer_click", "workflow_start", "memory_remember"])

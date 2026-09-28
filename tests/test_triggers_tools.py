@@ -604,6 +604,7 @@ def test_every_declared_tool_name_has_a_handler():
         "automation_pause": T.set_paused,
         "automation_resume": T.set_paused,
         "automation_run": T.run,
+        "automation_dry_run": T.run,
         "automation_history": T.history,
         "automation_delete": T.delete,
         "automation_delete_all": T.delete_all,
@@ -614,8 +615,9 @@ def test_every_declared_tool_name_has_a_handler():
 
 def test_the_namespace_covers_section_4s_table():
     """§4 declares eight tools, plus the `delete_all` (the scoped bulk delete carried over from
-    the retired `schedule_remove_all`). A missing one is scope quietly dropped."""
-    assert len(T.TOOL_NAMES) == 9
+    the retired `schedule_remove_all`) and the dry run, which is a read of its own rather than
+    an argument of the run. A missing one is scope quietly dropped."""
+    assert len(T.TOOL_NAMES) == 10
     for name in T.TOOL_NAMES:
         assert name.startswith("automation_")
 

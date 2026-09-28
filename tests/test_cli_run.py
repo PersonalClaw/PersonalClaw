@@ -205,6 +205,64 @@ def test_allow_sends_agent_mode(monkeypatch):
     assert tm["mode"] == "agent"
 
 
+def test_allow_trusts_the_runs_own_chat_before_the_turn(monkeypatch):
+    """🔴 Before: ``--allow`` set only the task mode, so a call that asks for approval was
+    declined ("needs approval but the run is unattended") and a write the grant promised never
+    ran on a native agent. Its approval half is Trust on the run's own chat, set before the turn
+    is posted, and for that chat alone."""
+    calls = _capture_api(monkeypatch)
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
+
+    cli_run._run_one(_args(prompt="hi", allow=True))
+
+    paths = [c[0] for c in calls]
+    assert "/api/chat/mode" in paths, paths
+    mode = next(body for path, body in calls if path == "/api/chat/mode")
+    task = next(body for path, body in calls if path == "/api/chat/task-mode")
+    assert mode == {"mode": "trust", "session": task["session"]}
+    assert task["session"].startswith(cli_run.CLI_SESSION_PREFIX)
+    assert paths.index("/api/chat/mode") > paths.index("/api/chat/task-mode")
+
+
+def test_a_read_only_run_trusts_nothing(monkeypatch):
+    calls = _capture_api(monkeypatch)
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
+
+    cli_run._run_one(_args(prompt="hi"))
+
+    assert "/api/chat/mode" not in [c[0] for c in calls]
+
+
+def test_a_refused_write_grant_stops_the_run_before_its_turn(monkeypatch, capsys):
+    """Under an operator ceiling of ``ask`` the grant does not hold, so the run says so and
+    never posts a turn it promised writes for."""
+    posted: list[str] = []
+
+    def _api(port, token, path, body=None):
+        posted.append(path)
+        if path == "/api/chat/mode":
+            raise cli_run.RunError(f"{path} failed: HTTP 409 approval_grant_refused")
+        return {}
+
+    monkeypatch.setattr(cli_run, "_api", _api)
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    turned: list[int] = []
+
+    async def _turn(*a, **k):
+        turned.append(1)
+
+    monkeypatch.setattr(cli_run, "_consume", _turn)
+
+    assert cli_run._run_one(_args(prompt="hi", allow=True)) == 1
+    assert turned == []
+    assert "--allow could not grant this run's writes" in capsys.readouterr().err
+
+
 def test_ask_mode_denies_a_mutating_tool_and_allows_a_read(monkeypatch):
     """The mode names ``run`` sends must mean what it claims in the shared gate.
 

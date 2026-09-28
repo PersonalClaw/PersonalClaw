@@ -487,6 +487,8 @@ def declared_tool_grant_denial(
     tool_input: object = None,
     *,
     proposes: bool = False,
+    tells_owner: bool = False,
+    owner_notices: bool = False,
     detail: str = "",
 ) -> str:
     """:func:`tool_grant_denial` for a call judged by what its tool DECLARES.
@@ -496,8 +498,15 @@ def declared_tool_grant_denial(
     Every seam that holds a declaration asks it here — a research leaf, a research subagent and
     the native runtime it is handed to, a room's critic — so they refuse alike. A call that
     declares nothing is a change, and a ``read`` grant refuses it.
+
+    ``owner_notices`` widens a ``read`` grant by one thing: a call that does nothing but tell the
+    owner something (``tells_owner``, ``tool_providers.base.only_tells_the_owner``). Only an
+    automation's own agent is granted it (``subagent``): telling the owner what it found is what
+    an automation is for, and the owner is the only one such a call reaches.
     """
     from personalclaw.task_modes import read_grant_admits
 
-    within_read = read_grant_admits(declared, tool_name, tool_kind, tool_input, proposes=proposes)
+    within_read = read_grant_admits(
+        declared, tool_name, tool_kind, tool_input, proposes=proposes
+    ) or (owner_notices and tells_owner)
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)

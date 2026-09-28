@@ -525,14 +525,15 @@ def _ask(client, *, safe: bool = False) -> None:
 
     from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
 
+    # The read Trust reads approves: a read-only shell command. A call that DECLARES a read asks
+    # nobody in any conversation, so it cannot tell whose switch approved it.
     request = (
         LLMEvent(
             kind=EVENT_PERMISSION_REQUEST,
-            title="read_file",
-            tool_kind="read",
+            title="ls",
+            tool_kind="execute",
             request_id="req-1",
-            risk_level="safe",
-            tool_input='{"path": "/tmp/app-probe.txt"}',
+            tool_input='{"command": "ls -la /tmp"}',
         )
         if safe
         else LLMEvent(
@@ -560,8 +561,8 @@ YOUR_SWITCHES = ["yolo", "agent_floor", "trust_reads_default"]
 
 
 def _turn_on(switch: str, state, tmp_path: Path) -> tuple[str, bool]:
-    """Turn *switch* on; returns the agent the chat should bind and whether the probe tool must be
-    a SAFE read (Trust reads approves only those)."""
+    """Turn *switch* on; returns the agent the chat should bind and whether the probe must be a
+    read-only shell command (Trust reads approves only reads)."""
     if switch == "yolo":
         state.is_yolo_active = lambda: True
         return "", False
@@ -591,6 +592,32 @@ class TestAnAppsConversationApprovesByItsOwnGrant:
         client.approve_tool.assert_not_awaited()
         client.reject_tool.assert_awaited_once()
         assert any(m.get("role") == "permission" for m in session.messages), "you were asked"
+
+    @pytest.mark.asyncio
+    async def test_a_declared_read_asks_nobody_in_its_conversation_either(self, tmp_path) -> None:
+        """Not a switch: a call that declares it only reads asks nobody, whoever's conversation
+        it is, as a native agent's never does. Only the calls that ask are the app's grant's."""
+        from test_acp_permission_authority import _drive, _set_stream
+
+        from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
+
+        state, client = _runner(tmp_path)
+        read = LLMEvent(
+            kind=EVENT_PERMISSION_REQUEST,
+            title="mcp__personalclaw-core__memory_recall",
+            tool_kind="other",
+            request_id="req-1",
+            risk_level="safe",
+            tool_input='{"query": "the dishwasher"}',
+        )
+        with _home(tmp_path):
+            _install(tmp_path, APP, {"api": ["/api/chat"]})
+            session = _chat("chat-app-3", creator=APP)
+            _set_stream(client, [read, LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")])
+            await _drive(state, session, answer="denied")
+        client.approve_tool.assert_awaited_once()
+        client.reject_tool.assert_not_awaited()
+        assert not any(m.get("role") == "permission" for m in session.messages)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("switch", YOUR_SWITCHES)

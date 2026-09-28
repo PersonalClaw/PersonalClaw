@@ -76,6 +76,8 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import approval_grants
+from personalclaw.approval_grants import ToolDecision
 from personalclaw.guardrails.budgets import (
     Budget,
     BudgetVerdict,
@@ -97,6 +99,7 @@ from personalclaw.guardrails.policy import (
 )
 from personalclaw.rooms.store import Room, RoomError, RoomMember
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX, session_key
+from personalclaw.task_modes import declared_level
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.llm.base import LLMEvent
@@ -460,7 +463,7 @@ def approval_channel(
     approver: "RoomApprover | None",
     *,
     record: Callable[[ToolRefusal], None],
-) -> tuple[ToolApprovalPolicy, Callable[[LLMEvent], Awaitable[bool]]]:
+) -> tuple[ToolApprovalPolicy, Callable[[LLMEvent], Awaitable[bool | ToolDecision]]]:
     """The tool-approval policy and the gate for one member's turn, as ONE value.
 
     Returned together because they are one decision and the unsafe combination is exactly the
@@ -491,7 +494,7 @@ def approval_channel(
     """
     from personalclaw.llm_helpers import ToolApprovalPolicy
 
-    async def gate(event: "LLMEvent") -> bool:
+    async def gate(event: "LLMEvent") -> bool | ToolDecision:
         title = getattr(event, "title", "") or ""
         # What the member's tool DECLARES decides whether a `read` grant covers it — the same
         # question a research leaf and a research subagent are asked.
@@ -506,6 +509,10 @@ def approval_channel(
         if denial:
             record(ToolRefusal(member.name, title, denial))
             return False
+        # A call whose tool declares it only reads asks nobody, as a native member's never does:
+        # an ACP member's CLI asks about every call, so this one is answered here, past the tier.
+        if declared_level(getattr(event, "risk_level", "")) == "safe":
+            return ToolDecision(True, "auto_approved", approval_grants.DECLARED_READ)
         if approver is None:
             record(ToolRefusal(member.name, title, NO_APPROVER_REASON))
             return False
