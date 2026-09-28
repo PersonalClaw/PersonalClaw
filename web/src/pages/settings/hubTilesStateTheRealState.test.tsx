@@ -128,6 +128,12 @@ describe('the Updates tile never says "Up to date" without a check that said so'
     expect(text).not.toContain('Up to date')
   })
 
+  it('a pin set back to an older release says so — the install is about to go back, not "Up to date"', async () => {
+    const text = await pill({ checked: true, current: '0.1.3', pin: '0.1.2', latest: '0.1.2', pin_older: true })
+    expect(text).toContain('Pinned to v0.1.2, older than this build (v0.1.3)')
+    expect(text).not.toContain('Up to date')
+  })
+
   it('checking switched off is not a verdict about the install', async () => {
     const text = await pill({ checked: true, check_enabled: false })
     expect(text).toContain('Update checks are off')

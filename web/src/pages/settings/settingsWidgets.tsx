@@ -349,6 +349,7 @@ async function mutate(fn: () => Promise<unknown>, ...affects: CacheKeySpec[]) {
 const UPDATE_PILL_TONE: Record<UpdateVerdict, 'ok' | 'warn' | 'muted' | 'primary'> = {
   available: 'primary',
   pin_miss: 'warn',
+  pin_older: 'warn',
   checks_off: 'muted',
   up_to_date: 'ok',
   not_checked: 'muted',

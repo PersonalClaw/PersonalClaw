@@ -108,31 +108,25 @@ def test_versions_order_numerically_not_as_text() -> None:
     assert not uk.is_newer("0.1.0", "garbage")
 
 
-def test_cache_round_trip(monkeypatch, tmp_path) -> None:
+def test_releases_cache_round_trip(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    uk.write_release_cache({"tag": "v0.1.3", "etag": 'W/"abc"'})
-    got = uk.read_release_cache()
-    assert got["tag"] == "v0.1.3"
+    uk.write_releases_cache({"releases": [{"tag": "v0.1.3"}], "etag": 'W/"abc"'})
+    got = uk.read_releases_cache()
+    assert got["releases"] == [{"tag": "v0.1.3"}]
     assert got["etag"] == 'W/"abc"'
 
 
-def test_read_cache_missing_is_empty(monkeypatch, tmp_path) -> None:
+def test_read_releases_cache_missing_is_empty(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    assert uk.read_release_cache() == {}
+    assert uk.read_releases_cache() == {}
 
 
 @pytest.mark.asyncio
 async def test_build_status_update_available(monkeypatch) -> None:
-    async def _fake_release() -> dict:
-        return {"tag": "v0.2.0", "name": "0.2.0", "body": "notes"}
+    async def _releases() -> list[dict[str, object]]:
+        return [{"tag": "v0.2.0", "name": "0.2.0", "body": "notes", "prerelease": False}]
 
-    async def _no_releases() -> list[dict[str, object]]:
-        return []
-
-    monkeypatch.setattr(uk, "fetch_latest_release", _fake_release)
-    # The container branch now resolves the image tag from the releases list;
-    # stub that seam too so this stays network-free (empty list -> `latest` fallback).
-    monkeypatch.setattr(uk, "fetch_releases", _no_releases)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     status = await uk.build_update_status("0.1.0")
     assert status["kind"] == "container"
@@ -146,10 +140,10 @@ async def test_build_status_update_available(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_build_status_up_to_date_pip(monkeypatch) -> None:
-    async def _fake_release() -> dict:
-        return {"tag": "v0.1.0", "name": "0.1.0", "body": ""}
+    async def _releases() -> list[dict[str, object]]:
+        return [{"tag": "v0.1.0", "name": "0.1.0", "body": "", "prerelease": False}]
 
-    monkeypatch.setattr(uk, "fetch_latest_release", _fake_release)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
     status = await uk.build_update_status("0.1.0")
@@ -161,30 +155,16 @@ async def test_build_status_up_to_date_pip(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_build_status_offline_no_tag(monkeypatch) -> None:
-    async def _empty_release() -> dict:
-        return {}
+    async def _no_releases() -> list[dict[str, object]]:
+        return []
 
-    monkeypatch.setattr(uk, "fetch_latest_release", _empty_release)
+    monkeypatch.setattr(uk, "fetch_releases", _no_releases)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
     status = await uk.build_update_status("0.1.0")
     # No latest known -> never claims an update is available (offline-tolerant).
     assert status["latest"] == ""
     assert status["update_available"] is False
-
-
-@pytest.mark.asyncio
-async def test_fetch_latest_release_offline_returns_cache(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    uk.write_release_cache({"tag": "v0.1.2", "etag": 'W/"x"'})
-
-    class _BoomSession:
-        def __init__(self, *a, **k):
-            raise OSError("network down")
-
-    monkeypatch.setattr(aiohttp, "ClientSession", _BoomSession)
-    got = await uk.fetch_latest_release()
-    assert got["tag"] == "v0.1.2"  # degraded to the cached view, no raise
 
 
 # ── The egress kill switch + the config-driven cadence ───────────────────────
@@ -205,10 +185,23 @@ def _write_updates_config(home, **updates) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_latest_release_kill_switch_makes_zero_calls(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(
+    "channel, pin, named",
+    [("stable", "", "0.2.1"), ("beta", "", "0.3.0-rc.1"), ("stable", "0.2.0", "0.2.0")],
+)
+async def test_the_check_makes_zero_calls_when_checking_is_disabled(
+    monkeypatch, tmp_path, channel: str, pin: str, named: str
+) -> None:
+    """`check_enabled=false` promises ZERO outbound calls from the check, on every channel.
+
+    The check resolves over the releases list, and `fetch_releases` carries no guard of its
+    own (a typed `personalclaw update` still reaches GitHub with checking off), so the check
+    has to read the cached list. The rows name three DIFFERENT releases from that cache, which
+    is what stops the fix from being "answer nothing when checking is off".
+    """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    _write_updates_config(tmp_path, check_enabled=False)
-    uk.write_release_cache({"tag": "v0.1.2", "etag": 'W/"x"'})
+    _write_updates_config(tmp_path, check_enabled=False, channel=channel, pin=pin)
+    uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": 'W/"x"'})
 
     opened: list[str] = []
 
@@ -219,20 +212,23 @@ async def test_fetch_latest_release_kill_switch_makes_zero_calls(monkeypatch, tm
 
     monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
 
-    got = await uk.fetch_latest_release()
-    # The immune proof: no session was ever opened. `got == cache` alone would pass even
-    # if a call had been made and swallowed — the empty `opened` is what pins the switch.
-    assert opened == [], "fetch_latest_release opened a network session while check_enabled=false"
-    assert got == {"tag": "v0.1.2", "etag": 'W/"x"'}  # the cached view, untouched
+    status = await uk.build_update_status("0.1.0")
+    # The immune proof: no session was ever opened. A cached answer alone would come back from
+    # a call made and swallowed too — the empty `opened` is what pins the switch.
+    assert opened == [], "the check opened a network session while check_enabled=false"
+    assert status["latest"] == named
+    assert status["checked"] is True
 
 
 @pytest.mark.asyncio
-async def test_fetch_latest_release_hits_network_when_enabled(monkeypatch, tmp_path) -> None:
-    # Positive control: with the check ON, the function DOES open a session (so the test
-    # above is a gate, not a constant). We degrade to the cache to keep it hermetic.
+async def test_the_check_reaches_the_releases_list_when_checking_is_enabled(
+    monkeypatch, tmp_path
+) -> None:
+    # Positive control: with the check ON, the check DOES open a session (so the test above is
+    # a gate, not a constant). The session degrades to the cache to keep it hermetic.
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     _write_updates_config(tmp_path, check_enabled=True)
-    uk.write_release_cache({"tag": "v0.1.2", "etag": 'W/"x"'})
+    uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": 'W/"x"'})
 
     opened: list[str] = []
 
@@ -243,9 +239,9 @@ async def test_fetch_latest_release_hits_network_when_enabled(monkeypatch, tmp_p
 
     monkeypatch.setattr(aiohttp, "ClientSession", _RecordingSession)
 
-    got = await uk.fetch_latest_release()
+    status = await uk.build_update_status("0.1.0")
     assert opened == ["ClientSession"], "check_enabled=true must attempt the network"
-    assert got == {"tag": "v0.1.2", "etag": 'W/"x"'}  # degraded to cache, no raise
+    assert status["latest"] == "0.2.1"  # degraded to the cached list, no raise
 
 
 class _FakeProc:
@@ -352,8 +348,8 @@ def test_scheduled_check_due_kill_switch() -> None:
 #
 # The boot-path check runs first and UNCONDITIONALLY — its own egress kill switch is
 # `updates.check_enabled`, proven by test_do_update_check_kill_switch_runs_no_subprocess
-# / test_fetch_latest_release_kill_switch_makes_zero_calls. `updates.auto` (RUM-5, which RETIRED
-# the legacy `auto_update` bool) then decides what happens to an AVAILABLE update:
+# / test_the_check_makes_zero_calls_when_checking_is_disabled. `updates.auto` then decides what
+# happens to an AVAILABLE update:
 #   • "off" (the default) — NOTIFY ONLY: raise the `update_available` refresh, never apply.
 #   • "staged" — apply at the next safe point: HOLD while a session/subagent is in flight
 #     (`DashboardState.active_work_snapshot`) and fire only once idle, on the resolved tag.
@@ -611,16 +607,10 @@ async def test_c2_wire_shape_conformance(monkeypatch) -> None:
     with the per-kind apply_method / commits_behind / instructions semantics the
     plan pins. Locks the Tier-S wire shape against silent drift."""
 
-    async def _rel() -> dict:
-        return {"tag": "v0.2.0", "name": "0.2.0", "body": "notes"}
+    async def _releases() -> list[dict[str, object]]:
+        return [{"tag": "v0.2.0", "name": "0.2.0", "body": "notes", "prerelease": False}]
 
-    async def _no_releases() -> list[dict[str, object]]:
-        return []
-
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
-    # The container branch resolves an image tag from the releases list; stub
-    # that seam so the wire-shape check stays network-free (empty -> `latest`).
-    monkeypatch.setattr(uk, "fetch_releases", _no_releases)
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.delenv("PERSONALCLAW_PROJECT_DIR", raising=False)
 
     required = {
@@ -631,6 +621,7 @@ async def test_c2_wire_shape_conformance(monkeypatch) -> None:
         "commits_behind",
         "apply_method",
         "instructions",
+        "pin_older",
     }
 
     # container: apply_method=instructions, commits_behind=null, instructions non-empty
@@ -1246,15 +1237,11 @@ async def test_build_update_status_container_carries_the_resolved_tag(
     land on DIFFERENT tags — a bare-`latest` implementation fails the beta and pin rows.
     """
 
-    async def _rel() -> dict:
-        return {"tag": "v0.2.1", "name": "0.2.1", "body": ""}
-
     async def _releases() -> list[dict[str, object]]:
         return _FAKE_RELEASES
 
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     monkeypatch.delenv(container_host.STARTED_BY_ENV, raising=False)
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     _fake_container_config(monkeypatch, channel, pin)
 
@@ -1278,14 +1265,10 @@ async def test_build_update_status_container_pin_miss_emits_no_commands(monkeypa
     """A container pin naming no release -> empty image_tag + NO instructions (refuse),
     so the panel/CLI never silently offer a bare `latest` (mirrors the wheel pin-miss)."""
 
-    async def _rel() -> dict:
-        return {"tag": "v0.2.1", "name": "0.2.1", "body": ""}
-
     async def _releases() -> list[dict[str, object]]:
         return _FAKE_RELEASES
 
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
     monkeypatch.setattr(uk, "fetch_releases", _releases)
     _fake_container_config(monkeypatch, "stable", "9.9.9")
 
@@ -1294,24 +1277,19 @@ async def test_build_update_status_container_pin_miss_emits_no_commands(monkeypa
     assert status["instructions"] == []
 
 
-# ── The check describes the RESOLVED release, not `releases/latest` ──
+# ── The check describes the RESOLVED release ──
 #
-# `releases/latest` answers only "the newest NON-prerelease", so on `beta` and under any
-# `pin` it names a release the apply would not install. These rows are adversarial to
-# that shortcut: the stub `releases/latest` says 0.2.1 / "stable notes", while beta
-# resolves to 0.3.0-rc.1 / "beta notes" and a pin overrides the channel entirely.
+# The releases list is what the check resolves against, on every channel, and these rows are
+# adversarial to a check that looked anywhere else: stable resolves to 0.2.1 / "stable notes",
+# beta to 0.3.0-rc.1 / "beta notes", and a pin overrides the channel entirely.
 
 
 def _latest_probe(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`releases/latest` = v0.2.1 — the answer the resolved view must NOT inherit."""
-
-    async def _rel() -> dict:
-        return {"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"}
+    """The releases list the check resolves against, with a different answer per channel."""
 
     async def _releases() -> list[dict[str, object]]:
         return [dict(r) for r in _FAKE_RELEASES]
 
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
     monkeypatch.setattr(uk, "fetch_releases", _releases)
 
 
@@ -1384,10 +1362,10 @@ async def test_status_says_it_checked_when_it_compared_against_a_release(monkeyp
 async def test_status_with_nothing_fetched_and_nothing_cached_has_not_checked(monkeypatch) -> None:
     """Vacuity floor for the test above: offline with no cache is NOT an answer."""
 
-    async def _nothing() -> dict:
-        return {}
+    async def _nothing() -> list[dict[str, object]]:
+        return []
 
-    monkeypatch.setattr(uk, "fetch_latest_release", _nothing)
+    monkeypatch.setattr(uk, "fetch_releases", _nothing)
     _fake_container_config(monkeypatch, "stable")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
 
@@ -1416,13 +1394,9 @@ async def test_a_pin_with_no_list_to_check_it_against_is_not_a_pin_miss(monkeypa
     `latest` alone cannot carry the signal. Telling that user their pin names no release would
     be a guess."""
 
-    async def _rel() -> dict:
-        return {}
-
     async def _no_list() -> list[dict[str, object]]:
         return []
 
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
     monkeypatch.setattr(uk, "fetch_releases", _no_list)
     _fake_container_config(monkeypatch, "stable", "0.2.2")
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
@@ -1446,28 +1420,25 @@ async def test_a_pin_that_matches_is_neither_missed_nor_unchecked(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_status_stable_needs_no_second_fetch(monkeypatch) -> None:
-    """`stable` IS `releases/latest`, so the resolver must not pay for a list fetch.
+async def test_the_check_makes_one_call_whatever_the_channel(monkeypatch) -> None:
+    """The releases list answers every channel and every pin, so a check makes ONE call.
 
-    Asserted by making `fetch_releases` raise: on the default channel the status must
-    still build. This is the cost guard on the clause above — without it, every
-    `GET /api/update/check` on the default install would make a second GitHub call.
+    It is the cost guard on resolving everything over the list: every `GET /api/update/check`
+    costs one conditional GitHub request, as it did when `stable` read the "Latest" release.
     """
+    calls: list[str] = []
 
-    async def _rel() -> dict:
-        return {"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"}
+    async def _releases() -> list[dict[str, object]]:
+        calls.append("releases")
+        return [dict(r) for r in _FAKE_RELEASES]
 
-    async def _boom() -> list[dict[str, object]]:
-        raise AssertionError("stable must not fetch the releases list")
-
-    monkeypatch.setattr(uk, "fetch_latest_release", _rel)
-    monkeypatch.setattr(uk, "fetch_releases", _boom)
-    _fake_container_config(monkeypatch, "stable")
+    monkeypatch.setattr(uk, "fetch_releases", _releases)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-
-    status = await uk.build_update_status("0.1.0")
-    assert status["latest"] == "0.2.1"
-    assert status["release_notes"] == "stable notes"
+    for channel, pin in (("stable", ""), ("beta", ""), ("nightly", ""), ("stable", "0.2.0")):
+        calls.clear()
+        _fake_container_config(monkeypatch, channel, pin)
+        await uk.build_update_status("0.1.0")
+        assert calls == ["releases"], (channel, pin, calls)
 
 
 # ── Who writes `updates.last_version`, and how a pin is stored ───────────────
@@ -1602,46 +1573,3 @@ def test_normalize_pin_refuses_what_can_never_name_a_release(pin) -> None:
     and a stored one used to stop every update without a word."""
     with pytest.raises(ValueError, match="not a release version"):
         uk.normalize_pin(pin)
-
-
-@pytest.mark.asyncio
-async def test_status_makes_zero_calls_when_checking_is_disabled(monkeypatch, tmp_path) -> None:
-    """The kill switch covers the channel/pin probe the resolved-release clause added.
-
-    `check_enabled=false` promises ZERO outbound calls. `fetch_latest_release` guards itself
-    (asserted elsewhere in this file); `fetch_releases` does NOT — it was only ever reachable
-    from a user-typed apply before the resolved-release clause put it on the CHECK path, which
-    every scheduled check runs. So the pinned/beta arm has to read the cache, and this makes
-    `fetch_releases` raise to prove it does: a build that fetched the list fails outright.
-
-    The second assertion is what stops the fix from being "disable the feature when checking is
-    off": the pinned release is still named, resolved from the cached list.
-    """
-    import types
-
-    from personalclaw.config import loader as _loader
-
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    uk.write_releases_cache({"releases": [dict(r) for r in _FAKE_RELEASES], "etag": ""})
-    uk.write_release_cache({"tag": "v0.2.1", "name": "0.2.1", "body": "stable notes"})
-
-    async def _boom_list() -> list[dict[str, object]]:
-        raise AssertionError("check_enabled=false must not fetch the releases list")
-
-    async def _cached_latest() -> dict:
-        # What the REAL `fetch_latest_release` does under the kill switch: return the cache
-        # without opening a session. Stubbed rather than run so this test stays about the
-        # list probe, which is the seam the clause added.
-        return uk.read_release_cache()
-
-    monkeypatch.setattr(uk, "fetch_releases", _boom_list)
-    monkeypatch.setattr(uk, "fetch_latest_release", _cached_latest)
-    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    cfg = types.SimpleNamespace(
-        updates=types.SimpleNamespace(channel="stable", pin="0.2.0", check_enabled=False)
-    )
-    monkeypatch.setattr(_loader.AppConfig, "load", classmethod(lambda cls: cfg))
-
-    status = await uk.build_update_status("0.1.0")
-    assert status["latest"] == "0.2.0", "the pinned release is still named, from the cache"
-    assert status["latest"] != "0.2.1", "and it is NOT the stable latest the cache also holds"

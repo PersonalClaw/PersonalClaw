@@ -4343,8 +4343,10 @@ export interface ProjectImportResult {
  *  channel/pin RESOLVES to, not `releases/latest`. */
 /** `checked` — the check has an answer (a release it compared against, fetched or cached). `pin_miss` — a
  *  pin is set and no release in the fetched list carries it; the ONE "no release matches the pin" signal
- *  (`latest: ''` alone also means "offline, nothing cached"). Both read through `settings/updateVerdict`. */
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; pin_miss?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
+ *  (`latest: ''` alone also means "offline, nothing cached"). `pin_older` — the pin names a release older
+ *  than the one running: a rollback not applied yet, whose container commands are in `instructions`.
+ *  All three read through `settings/updateVerdict`. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
 
 // settings entity payloads
 export interface NotificationSettings {

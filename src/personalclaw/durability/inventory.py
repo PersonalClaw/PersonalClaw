@@ -1845,12 +1845,14 @@ IGNORED: tuple[str, ...] = (
     # persistent terminals and durable workers run in. MACHINE-LOCAL and process-scoped: a
     # snapshot cannot carry a socket, and a restored home starts its own server on first use.
     "tmux.sock",
-    "update_check.json",  # last update check — regenerated on the next poll
-    # The releases-LIST cache, the direct twin of update_check.json above: the
-    # ETag-cached, offline-tolerant releases view the channel/pin resolver reads,
-    # refetched on the next poll. Ignored for the same reason — it carries no unique
-    # truth, so a restored stale release list is worse than the empty one the next
-    # check refills.
+    # The cache an earlier release's update check kept of GitHub's "Latest" release. Nothing
+    # writes or reads it now (the check resolves over the releases list below), but a home that
+    # ran such a release still holds one, and it carries nothing a restore needs.
+    "update_check.json",
+    # The releases-LIST cache: the ETag-cached, offline-tolerant releases view the update check
+    # and every apply resolve against, refetched on the next poll. Ignored because it carries no
+    # unique truth, so a restored stale release list is worse than the empty one the next check
+    # refills.
     "update_releases.json",
     # The run-state file (`self_update._RUN_STATE_FILENAME`): the version this install
     # was running the last time a gateway started. MACHINE-LOCAL, and the one update file

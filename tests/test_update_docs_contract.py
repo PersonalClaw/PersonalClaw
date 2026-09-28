@@ -155,8 +155,8 @@ FALSE_CLAIMS = (
 
 def test_readme_never_claims_the_check_cannot_be_turned_off() -> None:
     """The negative. `updates.check_enabled=false` makes the updater issue zero calls —
-    ``self_update.fetch_latest_release`` returns the cache before opening a session, and
-    ``_do_update_check`` reads the flag before any subprocess — so a README saying otherwise
+    ``self_update.build_update_status`` reads the cached releases list instead of fetching it,
+    and ``_do_update_check`` reads the flag before any subprocess — so a README saying otherwise
     would be telling users to accept egress they can refuse."""
     low = _read(README).lower()
     offenders = [p for p in FALSE_CLAIMS if p in low]

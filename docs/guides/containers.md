@@ -296,10 +296,12 @@ For the one container, `docker exec personalclaw personalclaw snapshot` and
 `docker exec personalclaw personalclaw update --to 0.2.0`, then the update above on `:0.2.0`.
 
 The pin is what makes it a rollback rather than a one-off pull: without it, the next check
-resolves the channel's newest release and offers to take you straight back. Settings →
-Updates shows **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version
-change at least once; on this kind it pins and then prints the commands above, because
-a container replaces its image from the host rather than patching itself.
+resolves the channel's newest release and offers to take you straight back. While the pin
+names an older release than the image you run, Settings → Updates says so — **Pinned to
+v0.2.0, older than this build (v0.2.1)** — and shows the same commands `personalclaw update`
+prints for it, because a container replaces its image from the host rather than patching
+itself. It also offers **Roll back to v&lt;previous&gt;**, which sets that pin for you, once
+PersonalClaw has seen your version change at least once.
 
 ### Applying automatically, and turning the check off
 

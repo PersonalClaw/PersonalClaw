@@ -281,7 +281,9 @@ image tag. A pin naming no published release is *refused* rather than quietly up
 **Rolling back.** `personalclaw update --to 0.1.3` pins that version and installs it, so a
 later check cannot pull you forward again. Settings → Updates offers the same thing as
 **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version change at least
-once. Take a snapshot first — pre-1.0 releases carry no data migrations in either
+once, and while a pin names an older release than the one running it says so — **Pinned to
+v0.1.3, older than this build (v0.2.0)** — beside a **Roll back to v0.1.3** that installs
+it. Take a snapshot first — pre-1.0 releases carry no data migrations in either
 direction:
 
 ```bash

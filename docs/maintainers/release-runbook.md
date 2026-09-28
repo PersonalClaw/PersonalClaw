@@ -76,16 +76,27 @@ red *after* you have already pushed the tag, which is the annoying way to find o
 | `README.md` | the pre-1.0 banner's `PersonalClaw is at **vX.Y.Z**` |
 | `CHANGELOG.md` | a heading of exactly the form `## [X.Y.Z] …`, as the newest entry |
 
+**A release candidate** is written in its tag's spelling in every one of them —
+`0.3.0-rc.1` for the tag `v0.3.0-rc.1`: `version = "0.3.0-rc.1"`, `## [0.3.0-rc.1] …`,
+`**v0.3.0-rc.1**`, and the same in `desktop/package.json`. The installed package then
+reports `0.3.0rc1`, because the build normalizes the spelling. That is one release: every
+check that compares versions — the consistency test, `scripts/verify_wheel.py`, the image
+smoke and the notes lookup — compares them as versions, through
+`scripts/release_version.py`, which asks the updater's own parse. Tag after the bump: the
+`build` job refuses a wheel that is not the tagged version before anything is published.
+
 All six are enforced by `tests/test_version_consistency.py`. The last two were added
 to it on 2026-07-31 after both had silently drifted — `CLIENT_VERSION` sat at `0.1.2`
 through the 0.1.3 release (so every ACP agent was told the wrong version), and the
 README banner still said `v0.1.0` three releases later, in the very paragraph warning
 users their data may break.
 
-The `## [X.Y.Z]` form matters: the `notes` job extracts the release body with
-`^## \[<ver>\][^\n]*\n(.*?)(?=^## \[|\Z)`. A heading without the brackets, or a
-version mismatch, yields the bare fallback text `Release X.Y.Z.` — a published
-release with no notes, which is not something you can edit out of the tag later.
+The `## [X.Y.Z]` form matters: the `build` job finds the release's section as the
+body under the `## [<version>]` heading whose version is the tag's, compared as a
+version (`scripts/release_version.py notes`), and the `notes` job publishes it. A
+heading without the brackets, or one naming another version, yields the bare
+fallback text `Release X.Y.Z.` — a published release with no notes, which is not
+something you can edit out of the tag later.
 
 That body is the release's introduction, its section headings and its one-line
 headlines. Write the introduction when you cut the release: a short paragraph right

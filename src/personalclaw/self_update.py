@@ -91,8 +91,6 @@ _ENV_KINDS: frozenset[str] = frozenset({"container", "desktop"})
 
 # GitHub releases are the release truth (tags), not `main`. Unauthenticated:
 # 60 req/hr/IP is ample for a personal gateway that checks <= hourly + ETag'd.
-_RELEASES_LATEST_URL = "https://api.github.com/repos/PersonalClaw/PersonalClaw/releases/latest"
-_CACHE_FILENAME = "update_check.json"
 _HTTP_TIMEOUT_S = 10.0
 
 # The version this install was running the last time a gateway started, kept OUTSIDE
@@ -304,30 +302,6 @@ def up_to_date_sentence(target: str, current: str, pin: str = "") -> str:
     return f"You're on v{current}, newer than the newest release (v{target})"
 
 
-def _cache_path() -> Path:
-    from personalclaw.config.loader import config_dir
-
-    return config_dir() / _CACHE_FILENAME
-
-
-def read_release_cache() -> dict[str, object]:
-    """The last fetched ``releases/latest`` view, or ``{}``. Never raises."""
-    try:
-        return json.loads(_cache_path().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def write_release_cache(data: dict[str, object]) -> None:
-    """Persist the release view for the next (ETag-conditional) check."""
-    from personalclaw.atomic_write import atomic_write
-
-    try:
-        atomic_write(_cache_path(), json.dumps(data, indent=2) + "\n", fsync=True)
-    except Exception:
-        logger.debug("could not persist update-check cache", exc_info=True)
-
-
 # ── Rollback: who writes `updates.last_version`, and how a pin is set ──
 #
 # A rollback needs exactly one fact the product did not previously keep: *which
@@ -510,63 +484,6 @@ def set_version_pin(version: str) -> bool:
     return write_updates_fields({"pin": version})
 
 
-async def fetch_latest_release() -> dict[str, object]:
-    """Return the latest GitHub release view, ETag-cached and offline-tolerant.
-
-    Sends ``If-None-Match`` with the cached ETag: a 304 (or any network error)
-    returns the cached view unchanged; a 200 refreshes and re-caches. The
-    returned dict has ``{tag, name, body, etag, checked_at}`` (empty ``tag`` when
-    nothing has ever been fetched and we're offline).
-
-    Honors the egress kill switch (RUM-3): when ``updates.check_enabled`` is
-    false the updater makes ZERO outbound calls, so this returns the last cached
-    view (or ``{}``) WITHOUT opening a network session — the same offline-tolerant
-    answer, reached before any HTTP. ``api.github.com`` is the product's one
-    unprompted destination; this is the switch that silences it.
-    """
-    from personalclaw.config.loader import AppConfig
-
-    cache = read_release_cache()
-    if not AppConfig.load().updates.check_enabled:
-        logger.debug("update check disabled (updates.check_enabled=false); using cache")
-        return cache
-
-    import aiohttp
-
-    etag = str(cache.get("etag") or "")
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "personalclaw-update-check",
-    }
-    if etag:
-        headers["If-None-Match"] = etag
-
-    try:
-        timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(_RELEASES_LATEST_URL, headers=headers) as resp:
-                if resp.status == 304:
-                    return cache  # unchanged since last check
-                if resp.status != 200:
-                    logger.debug("releases/latest returned HTTP %s", resp.status)
-                    return cache
-                payload = await resp.json()
-                view: dict[str, object] = {
-                    "tag": str(payload.get("tag_name") or ""),
-                    "name": str(payload.get("name") or ""),
-                    "body": str(payload.get("body") or ""),
-                    "etag": resp.headers.get("ETag", "") or etag,
-                    "checked_at": time.time(),
-                }
-                write_release_cache(view)
-                return view
-    except Exception:
-        # Offline / DNS / TLS — degrade to the cached view without raising.
-        logger.debug("update check: network error, using cache", exc_info=True)
-        return cache
-
-
 async def build_update_status(current: str) -> dict[str, object]:
     """Assemble the C2 update-check payload for the running install.
 
@@ -578,18 +495,15 @@ async def build_update_status(current: str) -> dict[str, object]:
     surfaces ``commits_behind`` as secondary info; the container kind carries
     ``instructions``, the commands that pull that same release.
 
-    **Why the resolved release and not ``releases/latest``** (RUM-10). The probe
-    ``releases/latest`` answers only "the newest NON-prerelease", so on the ``beta``
-    channel, and under any ``pin``, it names a release the apply would not install —
-    the panel would report "update available — 0.3.0" and then render 0.3.0's notes
-    while ``POST /api/update`` installed 0.3.1-rc.1. Resolving here is the same
-    correction the ``nightly``/``commits_behind`` clause in ``api_update_check``
-    makes for branch-tracking: the check has to agree with the apply.
-
-    The extra releases-list fetch happens ONLY when the resolution can differ — a
-    non-empty ``pin`` or the ``beta`` channel. ``stable`` is ``releases/latest`` by
-    definition, and ``nightly`` tracks a branch with no release tag at all, so
-    neither pays for a second call.
+    **One selection rule, for the check and for every apply.** The release is
+    :func:`select_target`'s over the releases LIST, on the line :func:`_release_line` names:
+    under a ``pin`` exactly that release, on ``beta`` the highest version including
+    candidates, and otherwise the highest non-pre-release version. That is the rule every
+    apply resolves with (:func:`resolve_target`, :func:`resolve_wheel_target`,
+    :func:`select_image`), so the check cannot report one release while an apply installs
+    another. GitHub's "Latest" marker is not read: the release pipeline marks every stable cut
+    Latest, so a back-patch of an older line would take it, and a check that followed the
+    marker would compare against the back-patch while the apply installed the newer line.
 
     **``checked`` says whether this comparison had anything to compare against.** It is
     THE update check for every kind that is not a git checkout, and it used to report
@@ -597,52 +511,48 @@ async def build_update_status(current: str) -> dict[str, object]:
     pip, container or desktop install that had just compared itself with the newest
     release still read "No update check yet", and the hub tile, which ignored ``checked``,
     read "Up to date" for an install that had never been compared with anything. True when
-    the release this channel/pin resolves against was known (fetched now or cached from an
-    earlier check); False offline with nothing cached.
+    a releases list was known (fetched now or cached from an earlier check); False offline
+    with nothing cached.
 
     **``pin_miss`` is the one "no release matches this pin" signal.** True only when a pin is
     set AND a releases list was actually read AND no release in it carries that version.
     ``latest == ""`` alone cannot say it: an offline install with nothing cached reads the
     same, and telling that user their pin names no release would be a guess.
+
+    **``pin_older`` says a pin names a release OLDER than the one running**: a rollback set up
+    and not applied yet. ``update_available`` is false then, since nothing newer is offered,
+    and the panel said "Up to date" for an install its own pin was about to move back.
     """
     from personalclaw.config.loader import AppConfig
 
     kind = detect_install_kind()
     cfg = AppConfig.load()
     channel, pin = cfg.updates.channel, cfg.updates.pin
-    release = await fetch_latest_release()
-    checked = bool(release.get("tag"))
-    pin_miss = False
-    if pin or channel == "beta":
-        # 🔴 THE EGRESS KILL SWITCH COVERS THIS SECOND PROBE TOO. `check_enabled=false`
-        # promises ZERO outbound calls from the check, and `fetch_releases` — unlike its sibling
-        # `fetch_latest_release` — carries no guard of its own, because until now it was only
-        # reached from a user-typed apply. Reading the cache here keeps the promise without
-        # giving up the resolution: a pinned user who disabled checking still sees their pinned
-        # release named, from whatever the last fetch stored.
-        releases = (
-            await fetch_releases()
-            if cfg.updates.check_enabled
-            else _releases_from_cache(read_releases_cache())
+    pinned = bool((pin or "").strip())
+    # 🔴 THE EGRESS KILL SWITCH. `check_enabled=false` promises ZERO outbound calls from the
+    # check, and `fetch_releases` carries no guard of its own, because a typed `personalclaw
+    # update` still reaches GitHub with checking off. So the check reads what the last fetch
+    # cached instead: a pinned user who disabled checking still sees their pinned release named.
+    releases = (
+        await fetch_releases()
+        if cfg.updates.check_enabled
+        else _releases_from_cache(read_releases_cache())
+    )
+    resolved_tag = select_target(releases, _release_line(channel), pin)
+    release: dict[str, object] = {}
+    if resolved_tag:
+        release = next(
+            (r for r in releases if str(r.get("tag") or "") == resolved_tag),
+            {"tag": resolved_tag},
         )
-        resolved_tag = select_target(releases, channel, pin)
-        # The list is what this arm resolves against, so it — not `releases/latest` — decides
-        # whether there was an answer to give.
-        checked = bool(releases)
-        if resolved_tag:
-            release = next(
-                (r for r in releases if str(r.get("tag") or "") == resolved_tag),
-                {"tag": resolved_tag},
-            )
-        elif pin:
-            # A pin naming no release: report nothing available rather than the
-            # stable latest, which is the release the pin exists to refuse.
-            release = {}
-            pin_miss = bool(releases)
-    latest_tag = str(release.get("tag") or "")
-    latest = normalize_version(latest_tag)
+    checked = bool(releases)
+    # A pin naming no release reports nothing available rather than the channel's newest,
+    # which is the release the pin exists to refuse.
+    pin_miss = pinned and not resolved_tag and checked
+    latest = normalize_version(str(release.get("tag") or ""))
 
     update_available = is_newer(latest, current)
+    pin_older = pinned and is_newer(current, latest)
 
     commits_behind: int | None = None
     if kind == "git":
@@ -654,13 +564,13 @@ async def build_update_status(current: str) -> dict[str, object]:
                 commits_behind = None
 
     # The container kind's pull+recreate commands carry the image tag of the release compared
-    # ABOVE, so the check cannot name one release while its commands pull another, and no second
-    # probe of the releases list runs (a second one ignored `check_enabled`). They exist only for
-    # a move (`moves_to`, the CLI's answer too): no commands to pull the release that already
-    # runs, or an older one a channel never asks for. No release — a pin naming none, or nothing
-    # fetched or cached — means no tag and no commands, never a silent `latest`, mirroring the
-    # pip pin-miss refusal. The commands are the documented install's own (`container_host`),
-    # for whichever of the two ran it.
+    # ABOVE, so the check cannot name one release while its commands pull another. They exist
+    # only for a move (`moves_to`, the CLI's answer too): no commands to pull the release that
+    # already runs, or an older one a channel never asks for — a pin back is the rollback, and
+    # its commands stand. No release — a pin naming none, or nothing fetched or cached — means
+    # no tag and no commands, never a silent `latest`, mirroring the pip pin-miss refusal. The
+    # commands are the documented install's own (`container_host`), for whichever of the two
+    # ran it.
     image_tag = ""
     instructions: list[str] = []
     if kind == "container":
@@ -677,6 +587,7 @@ async def build_update_status(current: str) -> dict[str, object]:
         "update_available": update_available,
         "checked": checked,
         "pin_miss": pin_miss,
+        "pin_older": pin_older,
         "commits_behind": commits_behind,
         "apply_method": _APPLY_METHOD.get(kind, "instructions"),
         "instructions": instructions,
@@ -688,12 +599,12 @@ async def build_update_status(current: str) -> dict[str, object]:
 
 # ── Channel + pin resolver ──────────────────────────────────────────────────
 #
-# The full releases LIST is the source of truth for channel/pin resolution.
-# ``releases/latest`` (:func:`fetch_latest_release`) only ever names the newest
-# *non-prerelease*, so it cannot answer the ``beta`` channel — which must see
-# prereleases — nor a ``pin`` to any older release. This endpoint returns every
-# release, newest first; ``per_page=100`` is far more than a personal project
-# cuts. ETag-cached and offline-tolerant, exactly like the latest probe.
+# The full releases LIST is the source of truth for the check and for every apply, on every
+# channel. GitHub's ``releases/latest`` answers only the release marked "Latest", which cannot
+# answer the ``beta`` channel — which must see prereleases — nor a ``pin`` to an older release,
+# and on ``stable`` is not the highest version once a back-patch of an older line takes the
+# marker. This endpoint returns every release, newest first; ``per_page=100`` is far more than a
+# personal project cuts. ETag-cached and offline-tolerant.
 _RELEASES_LIST_URL = "https://api.github.com/repos/PersonalClaw/PersonalClaw/releases?per_page=100"
 _LIST_CACHE_FILENAME = "update_releases.json"
 
@@ -707,8 +618,7 @@ def _list_cache_path() -> Path:
 def read_releases_cache() -> dict[str, object]:
     """The last fetched releases-LIST view, or ``{}``. Never raises.
 
-    Kept in its own file (``update_releases.json``) so it never clobbers the
-    ``releases/latest`` cache :func:`read_release_cache` owns.
+    Kept in its own file (``update_releases.json``), machine state beside the config.
     """
     try:
         return json.loads(_list_cache_path().read_text(encoding="utf-8"))
@@ -806,11 +716,21 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
     return best_tag
 
 
+def _release_line(channel: str) -> str:
+    """The line a channel selects on wherever a RELEASE is what moves (not a branch).
+
+    ``beta`` is its own line. Every other channel rides ``stable``: the git-only ``nightly``
+    tracks a branch, and a wheel or an image has no build of a branch to move to; an unknown
+    channel takes the safe line. The update check, the wheel apply and the container apply all
+    select through here, so none of them can pick a different release for the same config.
+    """
+    return "beta" if channel == "beta" else "stable"
+
+
 async def fetch_releases() -> list[dict[str, object]]:
     """Return the full GitHub releases list, ETag-cached and offline-tolerant.
 
-    Mirrors :func:`fetch_latest_release` but hits ``/releases`` (the whole list),
-    which the channel/pin resolver needs. Sends ``If-None-Match`` with the cached
+    The whole list, which the channel/pin resolver needs. Sends ``If-None-Match`` with the cached
     ETag: a 304 (or any network error) returns the cached list unchanged — empty
     when nothing was ever fetched — a 200 refreshes and re-caches. Never raises.
     """
@@ -866,17 +786,14 @@ async def resolve_target(channel: str, pin: str = "") -> str:
 async def resolve_wheel_target(channel: str, pin: str = "") -> str:
     """The release tag a WHEEL install (pip/pipx/uv) installs for *channel*/*pin*.
 
-    Identical to :func:`resolve_target`, with one wheel-specific policy: the
-    git-only ``nightly`` channel tracks a branch, and there is no published wheel
-    for a branch, so a wheel install rides the ``stable`` line instead of resolving
-    to ``""``. A ``pin`` is a pin on every install kind and OVERRIDES the channel
-    exactly as in :func:`resolve_target` (RUM-2), so ``nightly`` is only remapped to
-    ``stable`` when no pin is set. Never raises; returns ``""`` when nothing matches
-    (offline with no cache, or a ``pin`` naming no release).
+    Identical to :func:`resolve_target` on the line :func:`_release_line` names: the git-only
+    ``nightly`` channel tracks a branch, and there is no published wheel for a branch, so a
+    wheel install rides the ``stable`` line instead of resolving to ``""``. A ``pin`` is a pin
+    on every install kind and OVERRIDES the channel exactly as in :func:`resolve_target`.
+    Never raises; returns ``""`` when nothing matches (offline with no cache, or a ``pin``
+    naming no release).
     """
-    if channel == "nightly" and not (pin or "").strip():
-        channel = "stable"
-    return await resolve_target(channel, pin)
+    return await resolve_target(_release_line(channel), pin)
 
 
 # ── Container image tag resolver ────────────────────────────────────────────
@@ -931,8 +848,7 @@ def select_image(releases: list[dict[str, object]], channel: str, pin: str = "")
     ``latest``), or no release known at all (offline with nothing cached). Never raises — a
     malformed cache degrades through :func:`select_target`'s defensive field access.
     """
-    line = "beta" if channel == "beta" else "stable"
-    tag = select_target(releases, line, pin)
+    tag = select_target(releases, _release_line(channel), pin)
     if not tag:
         return "", ""
     bare: dict[str, object] = {"tag": tag}

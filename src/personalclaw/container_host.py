@@ -52,10 +52,19 @@ def started_by_compose() -> bool:
 
 
 def run_command(tag: str = "latest") -> str:
-    """The README's ``docker run``, for image *tag*: the command that makes the container."""
+    """The README's ``docker run``, for image *tag*: the command that makes the container.
+
+    It publishes the port the image's gateway listens on, on the host's loopback only and under
+    the same number, as the README runs it. That port is the product's default
+    (``config.loader``'s, the image's ``PERSONALCLAW_PORT``), not this process's: the command
+    makes the README's container, which sets no other port, so publishing a port a customized
+    container moved to would map one the new container's gateway does not listen on.
+    """
+    from personalclaw.config.loader import _DEFAULT_PORT
+
     return (
         f"docker run -d --name {CONTAINER_NAME} --restart unless-stopped "
-        "-p 127.0.0.1:10000:10000 -e PERSONALCLAW_BIND_HOST=0.0.0.0 "
+        f"-p 127.0.0.1:{_DEFAULT_PORT}:{_DEFAULT_PORT} -e PERSONALCLAW_BIND_HOST=0.0.0.0 "
         f"-v {VOLUME}:/data {IMAGE}:{tag or 'latest'}"
     )
 

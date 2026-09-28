@@ -17,6 +17,13 @@ import { repoDocUrl } from '../../lib/repoDocs'
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
 export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
 
+/** The advice every rollback's confirm carries: pre-1.0 there is no migration either way, so state
+ *  written by the newer build is the real risk a downgrade meets. The dialog renders its body as
+ *  given, so the command is marked up as code rather than wrapped in backticks it would print. */
+const DOWNGRADE_ADVICE = (
+  <>Run <code className="font-mono">personalclaw snapshot</code> first — a downgrade can meet state written by the newer version, and pre-1.0 releases carry no migration.</>
+)
+
 /** Updates — the whole release-tracking surface: which line this install follows, whether it
  *  applies on its own, whether it phones GitHub at all, and how to get back to the version
  *  that was working. Backed by /api/update/check (one snapshot for every control) +
@@ -234,7 +241,7 @@ export function UpdatesPanel() {
     if (!to) return
     if (!(await confirm({
       title: `Roll back to v${to}?`,
-      body: `This pins updates.pin to ${to} and installs it, so later checks stay on that release. Run \`personalclaw snapshot\` first — a downgrade can meet state written by the newer version, and pre-1.0 releases carry no migration.`,
+      body: <>This pins updates.pin to {to} and installs it, so later checks stay on that release. {DOWNGRADE_ADVICE}</>,
       confirmLabel: `Roll back to v${to}`,
     }))) return
     setInfo((p) => p && { ...p, pin: to })
@@ -248,6 +255,20 @@ export function UpdatesPanel() {
       .then(() => true)
       .catch((e: unknown) => { reportSettingFailure(`pin v${to}`)(e); return false })
     if (!pinned) return
+    await runApply()
+  }
+
+  /** Apply the pinned release this install is NEWER than — the rollback a pin set up and has not
+   *  applied. The pin is already stored, so this is only the apply, which resolves exactly that
+   *  release; the confirm carries the same snapshot advice as `rollback`. */
+  const applyPinnedRollback = async () => {
+    const to = info?.latest || info?.pin || ''
+    if (!to) return
+    if (!(await confirm({
+      title: `Roll back to v${to}?`,
+      body: <>This installs the pinned release v{to}, older than the v{info?.current ?? ''} running now. {DOWNGRADE_ADVICE}</>,
+      confirmLabel: `Roll back to v${to}`,
+    }))) return
     await runApply()
   }
 
@@ -271,7 +292,7 @@ export function UpdatesPanel() {
   ]
   const checkEnabled = info.check_enabled !== false
   const rollbackTo = info.last_version ?? ''
-  const canRollBack = Boolean(rollbackTo) && rollbackTo !== (info.current ?? '')
+  const pinnedTo = info.latest || info.pin || ''
   const releaseNotes = info.release_notes ?? ''
   const newEntries = updateEntries(info.changes ?? '')
   // Each CHANGELOG entry is a headline and nothing else, so what a breaking change asks of you — a
@@ -282,6 +303,10 @@ export function UpdatesPanel() {
   )
   const channelName = { stable: 'Stable', beta: 'Beta', nightly: 'Developer' }[channel] ?? channel
   const verdict = updateVerdict(info)
+  // A pin already set back to that release offers its rollback in the Version row, so the
+  // Release line row would be the same action twice.
+  const canRollBack = Boolean(rollbackTo) && rollbackTo !== (info.current ?? '')
+    && !(verdict === 'pin_older' && rollbackTo === pinnedTo)
   return (
     <div>
       <PanelHeader title="Updates" hint="Keep the PersonalClaw core current — choose a release line, pin a version, decide whether updates apply on their own, and read what changed. Apps update individually from the Store." />
@@ -317,12 +342,18 @@ export function UpdatesPanel() {
                     style={{ color: verdict === 'up_to_date' ? 'var(--color-success)' : verdict === 'checks_off' ? 'var(--color-on-surface-low)' : 'var(--color-warning)' }}>
                     {verdict === 'up_to_date' ? <CheckCircle2 size={15} aria-hidden />
                       : verdict === 'checks_off' ? <CircleOff size={15} aria-hidden />
+                      : verdict === 'pin_older' ? <Undo2 size={15} aria-hidden />
                       : <AlertTriangle size={15} aria-hidden />}
                     <span className="text-on-surface">{updateVerdictLabel(info)}</span>
                   </div>
                   {verdict === 'pin_miss' && (
                     <div data-type="caption" className="text-on-surface-low">
                       Nothing is offered or installed while this pin stands. Fix it below, or clear it to follow the {channelName} channel.
+                    </div>
+                  )}
+                  {verdict === 'pin_older' && (
+                    <div data-type="caption" className="text-on-surface-low">
+                      Nothing newer is offered while this pin stands. Roll back to it, or clear it to follow the {channelName} channel.
                     </div>
                   )}
                   {verdict === 'checks_off' && (
@@ -342,6 +373,9 @@ export function UpdatesPanel() {
             <div className="flex shrink-0 items-center gap-2">
               <Button variant="secondary" size="sm" loading={checking} onClick={check}><RefreshCw size={14} /> Check</Button>
               {info.available && canApplyInApp && <Button size="sm" loading={applying} onClick={apply}><DownloadCloud size={14} /> Update</Button>}
+              {verdict === 'pin_older' && canApplyInApp && (
+                <Button size="sm" loading={applying} onClick={applyPinnedRollback}><Undo2 size={14} /> Roll back to v{pinnedTo}</Button>
+              )}
             </div>
           </div>
           {msg && <div data-type="caption" className="mt-2 text-on-surface-low">{msg}</div>}
@@ -353,11 +387,18 @@ export function UpdatesPanel() {
               release yields no commands, and the headline above says why — for every install
               kind. That notice used to live HERE,
               gated on `info.available`, which a pin-miss can never be (it resolves no release),
-              so it was the one message about the state it described that no one could see. */}
-          {isContainer && info.available && info.instructions?.length ? (
+              so it was the one message about the state it described that no one could see.
+              A pin set back to an older release gets its rollback commands here too, the ones
+              `personalclaw update` prints: they were hidden behind `available`, which a pin back
+              never is, so the panel said "Up to date" and showed nothing to run. */}
+          {isContainer && (info.available || verdict === 'pin_older') && info.instructions?.length ? (
             <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
-              <div data-type="caption" className="text-on-surface-low mb-1">Update this container install by pulling the new image and recreating:</div>
-              <pre tabIndex={0} role="group" aria-label="Update commands"
+              <div data-type="caption" className="text-on-surface-low mb-1">
+                {verdict === 'pin_older'
+                  ? 'Roll this container install back by pulling the pinned image and recreating:'
+                  : 'Update this container install by pulling the new image and recreating:'}
+              </div>
+              <pre tabIndex={0} role="group" aria-label={verdict === 'pin_older' ? 'Rollback commands' : 'Update commands'}
                 data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{info.instructions.join('\n')}</code></pre>
             </div>
           ) : null}
@@ -367,9 +408,9 @@ export function UpdatesPanel() {
               checks for a release), and this note promised a self-update on next launch for the
               whole life of the shipped Linux artifact (issue 2673). Naming the release page is
               the same answer `personalclaw update` gives on this kind. */}
-          {isDesktop && info.available && (
+          {isDesktop && (info.available || verdict === 'pin_older') && (
             <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
-              Install the new version from the <a className="underline" href="https://github.com/PersonalClaw/PersonalClaw/releases" target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
+              Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href="https://github.com/PersonalClaw/PersonalClaw/releases" target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
             </div>
           )}
         </div>

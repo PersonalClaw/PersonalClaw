@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import type { UpdateCheck } from '../../lib/api'
 
 // ── Settings > Updates edits every `updates.*` field, not two of six ────────────────────────
@@ -185,10 +186,13 @@ describe('the rollback control (RUM-9 surfaced)', () => {
     // The ORDER is the contract: applying before the pin lands would install the channel's
     // newest release — an upgrade for a user who asked to roll back.
     expect(patchConfig.mock.invocationCallOrder[0]).toBeLessThan(applyUpdate.mock.invocationCallOrder[0])
-    // and the confirm names the version + the snapshot advice
-    const body = String((confirmDialog.mock.calls[0][0] as { body: string }).body)
-    expect(body).toContain('0.1.2')
-    expect(body).toContain('personalclaw snapshot')
+    // and the confirm names the version + the snapshot advice, the command marked up as code: the
+    // dialog prints its body as given, so backticks around it were printed as backticks
+    const body = (confirmDialog.mock.calls[0][0] as { body: ReactNode }).body
+    const { container: shown } = render(<>{body}</>)
+    expect(shown.textContent).toContain('0.1.2')
+    expect(shown.querySelector('code')?.textContent).toBe('personalclaw snapshot')
+    expect(shown.textContent).not.toContain('`')
   })
 
   it('does not apply when the pin write fails', async () => {

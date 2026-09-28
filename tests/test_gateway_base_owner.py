@@ -273,6 +273,10 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("cli_server.py", "parse_dashboard_url"): "resolve_client_port: --port > env > config",
     ("cli_server.py", "_DEFAULT_PORT"): "resolve_client_port's last resort, for a CLI client",
     ("cli_setup.py", "DASHBOARD_PORT"): "prints an example URL during setup",
+    ("container_host.py", "_DEFAULT_PORT"): (
+        "the README's `docker run` publishes the IMAGE's port for the host to run, never where "
+        "a child connects; this process's own port is not the new container's"
+    ),
     ("cli_doctor.py", "parse_dashboard_url"): "displays the CONFIGURED url as a diagnostic",
     ("auth/cli.py", "_DEFAULT_PORT"): "`--port` default for the login/logout CLI",
 }

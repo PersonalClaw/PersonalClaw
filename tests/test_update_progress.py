@@ -953,13 +953,10 @@ class TestEveryKindGetsACheckResult:
         monkeypatch.setattr(U, "_local_version", "0.1.3")
         monkeypatch.setattr(
             U.self_update,
-            "fetch_latest_release",
-            AsyncMock(return_value={"tag": latest_tag} if latest_tag else {}),
-        )
-        monkeypatch.setattr(
-            U.self_update,
             "fetch_releases",
-            AsyncMock(return_value=[{"tag": "v0.1.3", "prerelease": False}]),
+            AsyncMock(
+                return_value=[{"tag": latest_tag, "prerelease": False}] if latest_tag else []
+            ),
         )
         monkeypatch.setitem(U._update_info, "checked", git_checked)
         resp = asyncio.run(U.api_update_check(MagicMock()))

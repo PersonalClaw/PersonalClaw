@@ -106,6 +106,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw update` in a container says you're on the newest release when nothing newer is published, and no update offers or installs an older release; release candidates compare in order.**
 - **On the beta channel, a container's update commands pull an image that exists: `:beta` only while a release candidate is the newest release.**
 - **With update checks off, a container's Settings → Updates makes no call to GitHub.**
+- **The update check picks the release every update installs, the highest version on your channel, so a back-patch of an older line can't hide a newer one.**
+- **Settings → Updates says when a pin names an older release than the one running, and shows the rollback it sets up.**
+- **The rollback confirm in Settings → Updates shows `personalclaw snapshot` as a command instead of printing the backticks around it.**
+- **A release candidate's release no longer fails its own checks: the image smoke, the wheel gate and the release notes compare versions, not their spelling.**
 
 - **In a container, `personalclaw service`, `stop` and `restart` say the container runtime runs the gateway, print the host command, and change nothing.**
 

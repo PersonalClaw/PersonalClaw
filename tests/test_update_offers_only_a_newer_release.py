@@ -305,7 +305,6 @@ def _status_config(
     *,
     kind: str,
     channel: str,
-    latest: dict[str, object],
     releases: list[dict[str, object]],
     check_enabled: bool = True,
     pin: str = "",
@@ -323,33 +322,30 @@ def _status_config(
     )
     monkeypatch.setattr(_loader.AppConfig, "load", classmethod(lambda cls: cfg))
 
-    async def _latest() -> dict[str, object]:
-        return dict(latest)
-
     async def _list() -> list[dict[str, object]]:
         return [dict(r) for r in releases]
 
-    monkeypatch.setattr(su, "fetch_latest_release", _latest)
     monkeypatch.setattr(su, "fetch_releases", _list)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "channel, latest, releases, available",
+    "channel, releases, available",
     [
         # stable's newest release is 0.2.1: OLDER than the candidate running, not an update.
-        ("stable", _view("v0.2.1"), _CANDIDATES, False),
+        ("stable", _CANDIDATES, False),
         # beta's newest is the candidate running — the same version, spelled another way.
-        ("beta", _view("v0.2.1"), [_view("v0.3.0-rc.1", prerelease=True), _view("v0.2.1")], False),
+        ("beta", [_view("v0.3.0-rc.1", prerelease=True), _view("v0.2.1")], False),
         # ...and a later candidate IS one.
-        ("beta", _view("v0.2.1"), _CANDIDATES, True),
+        ("beta", _CANDIDATES, True),
     ],
 )
 async def test_the_check_offers_a_running_candidate_only_what_is_newer(
-    monkeypatch: pytest.MonkeyPatch, channel, latest, releases, available
+    monkeypatch: pytest.MonkeyPatch, channel, releases, available
 ) -> None:
-    """The Updates panel reads `update_available`, and it said True to all three rows."""
-    _status_config(monkeypatch, kind="pip", channel=channel, latest=latest, releases=releases)
+    """The Updates panel reads `update_available`, and the first two rows read True: an update
+    to an older release, and to the one running."""
+    _status_config(monkeypatch, kind="pip", channel=channel, releases=releases)
 
     status = await su.build_update_status("0.3.0rc1")
 
@@ -375,7 +371,6 @@ async def test_a_container_check_carries_commands_only_for_a_move(
         monkeypatch,
         kind="container",
         channel="stable",
-        latest=_view("v0.1.3"),
         releases=_ONLY_OLDER,
         pin=pin,
     )
@@ -390,9 +385,7 @@ async def test_a_container_check_carries_commands_only_for_a_move(
 async def test_a_container_check_pulls_the_release_it_compared(monkeypatch) -> None:
     """On beta, once the release is out, the commands pull the release's line — not the
     `:beta` an older candidate still holds."""
-    _status_config(
-        monkeypatch, kind="container", channel="beta", latest=_view("v0.3.0"), releases=_RELEASED
-    )
+    _status_config(monkeypatch, kind="container", channel="beta", releases=_RELEASED)
 
     status = await su.build_update_status("0.3.0rc2")
 
@@ -402,16 +395,13 @@ async def test_a_container_check_pulls_the_release_it_compared(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_a_container_check_with_checking_off_makes_no_call(monkeypatch) -> None:
+async def test_a_container_check_with_checking_off_makes_no_call(monkeypatch, tmp_path) -> None:
     """`check_enabled=false` promises zero outbound calls. The container's image tag came
     from a second probe of the releases list that nothing guarded."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    su.write_releases_cache({"releases": [dict(r) for r in _NO_CANDIDATE], "etag": ""})
     _status_config(
-        monkeypatch,
-        kind="container",
-        channel="stable",
-        latest=_view("v0.2.1"),
-        releases=[],
-        check_enabled=False,
+        monkeypatch, kind="container", channel="stable", releases=[], check_enabled=False
     )
 
     async def _no_call() -> list[dict[str, object]]:

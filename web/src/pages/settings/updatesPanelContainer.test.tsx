@@ -68,4 +68,31 @@ describe('UpdatesPanel container commands', () => {
     expect(text).not.toContain('docker compose')
     expect(container.querySelector('[aria-label="Update commands"]')).toBeNull()
   })
+
+  it('a pin set back to an older release shows the rollback commands, as `personalclaw update` prints them', async () => {
+    // What the server sends: nothing newer, so not `available`; the pin names an OLDER release,
+    // so `pin_older`, and `instructions` carry the pull of that exact release.
+    const { container } = mountWith({
+      ...BASE,
+      available: false,
+      changes: '',
+      current: '0.2.0',
+      latest: '0.1.3',
+      channel: 'stable',
+      pin: '0.1.3',
+      pin_older: true,
+      image_tag: '0.1.3',
+      instructions: [
+        'PERSONALCLAW_IMAGE_TAG=0.1.3 docker compose -f deploy/compose/compose.yaml pull',
+        'PERSONALCLAW_IMAGE_TAG=0.1.3 docker compose -f deploy/compose/compose.yaml up -d',
+      ],
+    })
+    await waitFor(() => expect(container.textContent).toContain('Pinned to v0.1.3, older than this build (v0.2.0)'))
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('Up to date')
+    const commands = container.querySelector('[aria-label="Rollback commands"]')
+    expect(commands, 'the rollback commands are shown, not hidden behind `available`').not.toBeNull()
+    expect(commands?.textContent).toContain('PERSONALCLAW_IMAGE_TAG=0.1.3 docker compose -f deploy/compose/compose.yaml pull')
+    expect(text).toContain('Roll this container install back by pulling the pinned image and recreating')
+  })
 })

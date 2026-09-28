@@ -100,6 +100,20 @@ def test_the_names_the_commands_use_are_the_ones_the_installs_create() -> None:
     assert argv[-1].split(":", 1)[0] == container_host.IMAGE
 
 
+def test_the_published_port_is_the_images_own_and_only_on_loopback() -> None:
+    """``run_command`` publishes the product's default port, on the host's loopback only. The
+    image's gateway listens on the ``PERSONALCLAW_PORT`` its Dockerfile sets, which cannot import
+    that default, so the two are held equal here: an image that moved its port would otherwise be
+    recreated with a mapping to a port nothing in it listens on."""
+    from personalclaw.config.loader import _DEFAULT_PORT
+
+    dockerfile = (_REPO / "deploy" / "docker" / "Dockerfile.backend").read_text(encoding="utf-8")
+    declared = re.findall(r"\bPERSONALCLAW_PORT=(\d+)", dockerfile)
+    assert declared == [str(_DEFAULT_PORT)], declared
+    argv = shlex.split(container_host.run_command("0.2"))
+    assert argv[argv.index("-p") + 1] == f"127.0.0.1:{_DEFAULT_PORT}:{_DEFAULT_PORT}"
+
+
 # ── the commands ───────────────────────────────────────────────────────────────────────────
 
 

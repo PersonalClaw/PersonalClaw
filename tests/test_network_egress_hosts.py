@@ -421,7 +421,7 @@ def test_the_release_check_is_the_only_unprompted_destination():
     take a failing test to change it. ``api.github.com`` remains the sole unprompted
     destination — but it is now suppressible: ``updates.check_enabled=false`` is the egress
     kill switch, and with it set the check makes ZERO calls
-    (``test_self_update.py::test_fetch_latest_release_kill_switch_makes_zero_calls`` +
+    (``test_self_update.py::test_the_check_makes_zero_calls_when_checking_is_disabled`` +
     ``test_do_update_check_kill_switch_runs_no_subprocess``). The schedule is real; the
     opt-out is now real too, and defaults ON so this rail's "unprompted" claim still holds.
     """

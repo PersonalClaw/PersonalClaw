@@ -45,9 +45,9 @@ line, and a user who pinned `:1.2` never opted into release candidates.
 
 Stable releases pass `--latest` explicitly instead of relying on `gh`'s
 automatic date/version heuristic. Note this makes a *back-patch* of an older
-line (`v0.1.9` cut after `v0.2.0`) claim "Latest" — the same thing the API's
-`make_latest` default already did before RUM-8. Suppressing that needs the
-releases list, which no job here fetches; it is not in this atom's scope.
+line (`v0.1.9` cut after `v0.2.0`) claim "Latest" on GitHub's own page. The
+updater never reads that marker: its check and every apply select the highest
+version from the releases list, so a back-patch cannot hide the newer line.
 
 Refusals are loud on purpose — this is a publish path, and a ref this module
 cannot classify must never fall through to "push the moving tags anyway":

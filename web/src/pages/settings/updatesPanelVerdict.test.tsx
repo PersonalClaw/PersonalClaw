@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { ReactNode } from 'react'
 import type { UpdateCheck } from '../../lib/api'
 
 // ── Settings › Updates says what the check actually found, on every install kind ──────────────────
@@ -14,6 +15,7 @@ import type { UpdateCheck } from '../../lib/api'
 // the panel does with them.
 
 const patchConfig = vi.fn()
+const applyUpdate = vi.fn()
 const notify = vi.fn()
 const refresh = vi.fn()
 const invalidateKeys = vi.fn()
@@ -26,7 +28,14 @@ vi.mock('../../lib/data', () => ({
 }))
 vi.mock('../../lib/api', async (orig) => {
   const real = (await orig()) as { api: Record<string, unknown> }
-  return { ...real, api: { ...real.api, patchConfig: (...a: unknown[]) => patchConfig(...a) } }
+  return {
+    ...real,
+    api: {
+      ...real.api,
+      patchConfig: (...a: unknown[]) => patchConfig(...a),
+      applyUpdate: (...a: unknown[]) => applyUpdate(...a),
+    },
+  }
 })
 
 const { UpdatesPanel } = await import('./UpdatesPanel')
@@ -46,6 +55,7 @@ const headline = () => screen.getAllByRole('status').map((e) => e.textContent ??
 
 beforeEach(() => {
   patchConfig.mockReset(); patchConfig.mockResolvedValue({})
+  applyUpdate.mockReset(); applyUpdate.mockResolvedValue({ ok: true, status: 'updating' })
   notify.mockReset(); refresh.mockReset(); invalidateKeys.mockReset(); useQuery.mockReset()
 })
 
@@ -65,6 +75,24 @@ describe('the Version headline is the check’s real answer', () => {
   it('checking switched off is said as such, not reported as "Up to date" from an old answer', () => {
     mountWith({ checked: true, check_enabled: false })
     expect(headline()).toContain('Update checks are off')
+  })
+
+  it('a pin set back to an older release says so and offers the rollback — it read "Up to date"', async () => {
+    const { container } = mountWith({ pin: '0.1.2', latest: '0.1.2', pin_older: true })
+    expect(headline()).toContain('Pinned to v0.1.2, older than this build (v0.1.3)')
+    expect(container.textContent).not.toContain('Up to date')
+    const back = screen.getByRole('button', { name: /Roll back to v0\.1\.2/ })
+    fireEvent.click(back)
+    await waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(1))
+    // The pin is already stored: the rollback is the apply alone, never a second pin write.
+    expect(patchConfig).not.toHaveBeenCalled()
+    // The confirm names both versions and the snapshot command, marked up as code.
+    const { confirm } = await import('../../ui/dialog')
+    const asked = vi.mocked(confirm).mock.calls.at(-1)?.[0] as { body: ReactNode }
+    const { container: shown } = render(<>{asked.body}</>)
+    expect(shown.textContent).toContain('the pinned release v0.1.2, older than the v0.1.3 running now')
+    expect(shown.querySelector('code')?.textContent).toBe('personalclaw snapshot')
+    expect(shown.textContent).not.toContain('`')
   })
 
   it('a pip install the check compared reads "Up to date" (vacuity floor)', () => {

@@ -72,8 +72,22 @@ jobs:
           # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
           # /api/healthz (200). Replaces the old shallow namelist check. It also reads
           # the bundled-model sign-off record out of the INSTALLED package and requires
-          # /api/onboarding to offer the default model's download.
-          python scripts/verify_wheel.py --wheel "dist/*.whl"
+          # /api/onboarding to offer the default model's download. `--release-version`
+          # requires the wheel to BE the tagged release, compared as a version: a tag cut
+          # before the bump would otherwise publish the previous version's wheel, and push
+          # its images, as this release.
+          python scripts/verify_wheel.py --wheel "dist/*.whl" \
+            --release-version "${{ steps.ver.outputs.version }}"
+      - name: Resolve this release's CHANGELOG section
+        # Found by VERSION, not by spelling (`scripts/release_version.py`, the updater's
+        # parse), so a heading the cut spelled `0.3.0-rc.1` or `0.3.0rc1` is this tag's
+        # either way. Resolved here, where uv is, and handed to `notes` as a file, so the
+        # job whose token can create the release fetches nothing.
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          uv run --no-project --with packaging python scripts/release_version.py notes \
+            --version "$RELEASE_VERSION" > release-notes.md
       - name: SBOM (syft SPDX-JSON over the built dist)
         uses: anchore/sbom-action@v0
         with:
@@ -84,6 +98,11 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
 
   pypi:
     # personalclaw → PyPI via Trusted Publishing. Owner-approved via the `release`
@@ -231,20 +250,24 @@ jobs:
           # has no such binary, so it proves its own server binary instead. A
           # single hardcoded `personalclaw --version` would fail on web.
           #
-          # `expect` is a substring the smoke's own output must carry, because an
-          # exit status alone is a weak claim about a version command: exit 0 with
-          # no output at all is a real shape (a shell builtin shadowing the binary,
-          # a wrapper that swallows, a later `|| true`), and for the gateway the
-          # release-relevant property is not "some version printed" but "THE version
-          # being released printed". A cached `builder` layer that produced a stale
-          # venv would ship an image whose `--version` reports the PREVIOUS release
-          # under a `:latest` claiming this one — a published tag that lies, which is
-          # the defect class this whole step exists to stop. `needs` is available in
-          # `strategy` (actionlint enumerates the allowed set as github/inputs/needs/vars).
+          # Each leg names what the smoke's own output must carry, because an exit
+          # status alone is a weak claim about a version command: exit 0 with no
+          # output at all is a real shape (a shell builtin shadowing the binary, a
+          # wrapper that swallows, a later `|| true`). `expect` is a substring of it.
+          # `expect_version` is a VERSION the `personalclaw --version` banner must
+          # report, and for the gateway that is the release-relevant property: not
+          # "some version printed" but "THE version being released printed". A cached
+          # `builder` layer that produced a stale venv would ship an image whose
+          # `--version` reports the PREVIOUS release under a `:latest` claiming this
+          # one — a published tag that lies, which is the defect class this whole step
+          # exists to stop. It is compared as a version, not as text, because the
+          # package spells a release candidate `0.3.0rc1` where its tag says
+          # `0.3.0-rc.1`. `needs` is available in `strategy` (actionlint enumerates the
+          # allowed set as github/inputs/needs/vars).
           - name: gateway
             dockerfile: deploy/docker/Dockerfile.backend
             smoke: personalclaw --version
-            expect: personalclaw ${{ needs.build.outputs.version }}
+            expect_version: ${{ needs.build.outputs.version }}
           - name: web
             dockerfile: deploy/docker/Dockerfile.web
             smoke: nginx -v
@@ -359,22 +382,31 @@ jobs:
       # regression it exists to catch, and would pin an install prefix in a second
       # place.
       #
-      # WHY THE OUTPUT IS ASSERTED AND NOT JUST THE STATUS: see `expect` in the
-      # matrix above. A version command that prints nothing, or that prints the
-      # PREVIOUS release out of a stale build layer, exits 0 either way.
+      # WHY THE OUTPUT IS ASSERTED AND NOT JUST THE STATUS: see `expect` and
+      # `expect_version` in the matrix above. A version command that prints nothing,
+      # or that prints the PREVIOUS release out of a stale build layer, exits 0
+      # either way.
+      #
+      # THE VERSION IS COMPARED BY THE IMAGE'S OWN UPDATER. `scripts/release_version.py`
+      # is piped into the image's Python, so the parse that decides the banner names
+      # this release is the one `personalclaw update` decides "newer" with, and the
+      # runner installs nothing into a job that can push packages. A text match
+      # failed the first release candidate: `personalclaw --version` prints
+      # `personalclaw 0.3.0rc1` for the tag `v0.3.0-rc.1`.
       - name: Smoke both arches (release-blocking)
         env:
           IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
           SMOKE: ${{ matrix.smoke }}
           EXPECT: ${{ matrix.expect }}
+          EXPECT_VERSION: ${{ matrix.expect_version }}
         run: |
           set -euo pipefail
-          # An EMPTY expectation is the vacuity hole in the check below: the `case`
+          # An EMPTY expectation is the vacuity hole in the checks below: the `case`
           # pattern `*""*` matches every possible output, so a matrix leg added
-          # without an `expect` would report green having asserted nothing. Refuse
+          # without an expectation would report green having asserted nothing. Refuse
           # instead. `tests/test_supply_chain.py` holds the same floor statically.
-          if [ -z "$EXPECT" ]; then
-            echo "::error::no expected output for $IMAGE — add an 'expect' to the matrix"
+          if [ -z "$EXPECT" ] && [ -z "$EXPECT_VERSION" ]; then
+            echo "::error::no expected output for $IMAGE — add an 'expect' or 'expect_version' to the matrix"
             exit 1
           fi
           for arch in amd64 arm64; do
@@ -393,13 +425,22 @@ jobs:
               echo "::error::linux/$arch: '$SMOKE' exited $status inside $IMAGE"
               exit 1
             fi
-            case "$output" in
-              *"$EXPECT"*) ;;
-              *)
-                echo "::error::linux/$arch: '$SMOKE' ran but did not report '$EXPECT'"
+            if [ -n "$EXPECT_VERSION" ]; then
+              if ! docker run -i --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
+                python - --installed reports --expect "$EXPECT_VERSION" --output "$output" \
+                < scripts/release_version.py; then
+                echo "::error::linux/$arch: '$SMOKE' ran but did not report version $EXPECT_VERSION"
                 exit 1
-                ;;
-            esac
+              fi
+            else
+              case "$output" in
+                *"$EXPECT"*) ;;
+                *)
+                  echo "::error::linux/$arch: '$SMOKE' ran but did not report '$EXPECT'"
+                  exit 1
+                  ;;
+              esac
+            fi
             echo "::endgroup::"
           done
 
@@ -603,22 +644,10 @@ jobs:
           pattern: desktop-*
           path: desktop-dist/
           merge-multiple: true
-      - name: Extract this version's CHANGELOG section
-        # RELEASE_VERSION comes from the one parser rather than a second
-        # in-line `lstrip("v")`: the CHANGELOG heading this looks up and the version
-        # the wheel/images carry have to be the same string.
-        env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          python - <<'PY' > release-notes.md
-          import re, os, pathlib
-          ver = os.environ["RELEASE_VERSION"]
-          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
-          # Body under "## [<ver>] ...header..." up to the next "## " heading (a
-          # top-level release heading, NOT a "### " subsection) or end of file.
-          m = re.search(rf"^## \[{re.escape(ver)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
-          print(m.group(1).strip() if m else f"Release {ver}.")
-          PY
+      # This version's CHANGELOG section, resolved by `build` (compared as a version).
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
       - name: Create GitHub Release
         # The stability flags come from `scripts/release_tags.py` via the build job
         # (RUM-8), not from a shell suffix test. The expression that used to sit here

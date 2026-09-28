@@ -279,16 +279,22 @@ def test_the_login_shell_scan_can_see_the_release_smoke_it_exists_to_guard() -> 
     commands = _container_commands()
     assert commands, "the scan found no container commands at all, so its zero means nothing"
 
-    smoke = [
+    images = [
         line
         for workflow, job, step, line in commands
         if workflow == "release.yml" and job == "images" and "--entrypoint ''" in line
     ]
-    assert len(smoke) == 1, f"expected exactly one release smoke invocation, got {smoke}"
+    smoke = [line for line in images if '"$SMOKE"' in line]
+    assert len(smoke) == 1, f"expected exactly one release smoke invocation, got {images}"
     assert 'sh -c "$SMOKE"' in smoke[0], (
         "the release smoke must hand its command to a NON-login shell; measured, `sh -lc` "
         f"exits 127 in the gateway image and `sh -c` prints the version: {smoke[0]}"
     )
+    # The version check is the images job's other invocation, and it runs the image's Python
+    # directly: no shell at all, so no profile to overwrite `PATH`.
+    checks = [line for line in images if "scripts/release_version.py" in line]
+    assert len(checks) == 1, f"expected exactly one version check in the image, got {images}"
+    assert "python - --installed reports" in checks[0], checks[0]
 
 
 def test_the_login_shell_detector_fires_and_ignores_prose() -> None:
@@ -317,11 +323,13 @@ def test_the_login_shell_detector_fires_and_ignores_prose() -> None:
 def test_every_smoked_image_declares_the_output_its_smoke_must_produce() -> None:
     """An exit status is a weak claim about a version command, so the OUTPUT is asserted.
 
-    Two holes this closes. A leg with no `expect` makes the workflow's `case` pattern `*""*`,
-    which matches every possible output — green having asserted nothing, which is how the
-    original step read for 45 days. And a `expect` carrying a hardcoded version literal would
-    rot into asserting a PAST release; the gateway's has to be derived from the version this
-    run is publishing, so a stale build layer serving the previous release cannot pass.
+    Three holes this closes. A leg with no expectation makes the workflow's `case` pattern
+    `*""*`, which matches every possible output — green having asserted nothing, which is how
+    the original step read for 45 days. An expectation carrying a hardcoded version literal
+    would rot into asserting a PAST release; the gateway's has to be derived from the version
+    this run is publishing, so a stale build layer serving the previous release cannot pass.
+    And that version is compared AS A VERSION, by the image's own updater: a text match failed
+    the first release candidate, whose package prints `0.3.0rc1` for the tag `v0.3.0-rc.1`.
     """
     jobs = _workflow().get("jobs")
     assert isinstance(jobs, dict)
@@ -332,28 +340,35 @@ def test_every_smoked_image_declares_the_output_its_smoke_must_produce() -> None
 
     for leg in legs:
         assert isinstance(leg, dict)
-        expected = leg.get("expect")
-        assert isinstance(expected, str) and expected.strip(), (
-            f"image leg {leg.get('name')!r} smokes {leg.get('smoke')!r} with no `expect`, so "
-            "the workflow asserts only an exit status and an empty output would pass"
+        declared = [leg.get(key) for key in ("expect", "expect_version")]
+        assert any(isinstance(value, str) and value.strip() for value in declared), (
+            f"image leg {leg.get('name')!r} smokes {leg.get('smoke')!r} with no `expect` or "
+            "`expect_version`, so the workflow asserts only an exit status and an empty output "
+            "would pass"
         )
 
     gateway = next(leg for leg in legs if leg.get("name") == "gateway")
-    assert gateway["expect"] == "personalclaw ${{ needs.build.outputs.version }}", (
+    assert gateway["expect_version"] == "${{ needs.build.outputs.version }}", (
         "the gateway smoke must require the version being RELEASED, not any version: a "
         "cached builder layer would otherwise ship a stale venv under a `:latest` that lies"
     )
+    assert "expect" not in gateway, "the gateway's version is compared as a version, not as text"
 
     smoke_step = _step(images, name="Smoke both arches (release-blocking)")
     environment = smoke_step.get("env")
     assert isinstance(environment, dict)
     assert environment.get("EXPECT") == "${{ matrix.expect }}"
+    assert environment.get("EXPECT_VERSION") == "${{ matrix.expect_version }}"
     script = smoke_step.get("run")
     assert isinstance(script, str)
     assert (
-        'if [ -z "$EXPECT" ]; then' in script
-    ), "the step must refuse an empty expectation; `case $output in *''*)` matches anything"
+        'if [ -z "$EXPECT" ] && [ -z "$EXPECT_VERSION" ]; then' in script
+    ), "the step must refuse a leg with no expectation; `case $output in *''*)` matches anything"
     assert '*"$EXPECT"*)' in script, "the captured output must be tested against the expectation"
+    assert (
+        '--installed reports --expect "$EXPECT_VERSION" --output "$output"' in script
+        and "< scripts/release_version.py" in script
+    ), "the version must be compared by the image's own updater, on the output the smoke captured"
     assert "2>&1" in script, (
         "stderr must be captured: `nginx -v` writes its banner there, so a stdout-only "
         "capture reads EMPTY and reds the web leg on a working image"

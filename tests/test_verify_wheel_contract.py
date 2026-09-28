@@ -539,8 +539,9 @@ def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
     wheel = _backend(project, "build_wheel", tmp_path / "wheel")
 
     # The real artifacts pass: this is the floor that makes the refusals below mean something.
-    verify_wheel.inspect_sdist(sdist, root=project)
-    verify_wheel.inspect_wheel(wheel, root=project)
+    # Each hands back the version its metadata names, for the installed parse to compare.
+    assert verify_wheel.inspect_sdist(sdist, root=project) == "0.0.1"
+    assert verify_wheel.inspect_wheel(wheel, root=project) == "0.0.1"
     passed = capsys.readouterr().out
     assert "OK: sdist payload complete" in passed and "OK: wheel payload complete" in passed
 
@@ -559,14 +560,22 @@ def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
         verify_wheel.inspect_wheel(tampered, root=project)
     assert "RECORD digest or size is wrong for personalclaw/cli.py" in capsys.readouterr().err
 
-    # 3. Metadata that no longer says what pyproject.toml says.
+    # 3. Metadata that no longer says what pyproject.toml says: a field the inspection compares
+    #    itself, and the version, which it hands on to be compared AS A VERSION by the installed
+    #    parse (this test's interpreter stands in for the installed wheel's).
     pyproject = project / "pyproject.toml"
+    declared = pyproject.read_text(encoding="utf-8")
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('"0.0.1"', '"0.0.2"'), encoding="utf-8"
+        declared.replace('license = "MIT"', 'license = "Apache-2.0"'), encoding="utf-8"
     )
     with pytest.raises(SystemExit):
         verify_wheel.inspect_wheel(wheel, root=project)
-    assert "Version" in capsys.readouterr().err
+    assert "License-Expression" in capsys.readouterr().err
+    pyproject.write_text(declared.replace('"0.0.1"', '"0.0.2"'), encoding="utf-8")
+    version = verify_wheel.inspect_wheel(wheel, root=project)
+    with pytest.raises(SystemExit):
+        verify_wheel._assert_versions(Path(sys.executable), {wheel.name: version}, root=project)
+    assert "is not pyproject.toml's version" in capsys.readouterr().err
 
 
 # ── A relative --wheel reaches every process that opens it ────────────────────
@@ -612,7 +621,9 @@ def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
     # The content inspection is a process-local read and has its own tests above; this fixture
     # wheel is two files, so the real one would refuse it before the path under test is reached.
     monkeypatch.setattr(
-        verify_wheel, "inspect_wheel", lambda wheel, root=None: handed.update(inspected=wheel)
+        verify_wheel,
+        "inspect_wheel",
+        lambda wheel, root=None: handed.update(inspected=wheel) or "0.2.0",
     )
     monkeypatch.setattr(sys, "argv", ["verify_wheel.py", "--wheel", f"dist/{wheel_name}"])
 

@@ -115,6 +115,12 @@ _BUNDLED_MODEL_PROBE = Path(__file__).resolve().with_name("installed_bundled_mod
 #: How long the probe may take: it imports the installed package and loads one app.
 _PROBE_TIMEOUT_S = 120.0
 
+#: The pipeline's version comparisons (``scripts/release_version.py``), run by the INSTALLED
+#: artifact's interpreter so the parse is the updater's own. A version is compared as a version,
+#: never as text: setuptools writes a release candidate pinned as ``0.3.0-rc.1`` into the
+#: metadata as ``0.3.0rc1``, and the two are one release.
+_RELEASE_VERSION = Path(__file__).resolve().with_name("release_version.py")
+
 
 def _log(msg: str) -> None:
     print(f"[verify_wheel] {msg}", flush=True)
@@ -338,13 +344,18 @@ def _specifier_set(value: str) -> frozenset[str]:
     return frozenset(clause.strip() for clause in value.split(",") if clause.strip())
 
 
-def _assert_metadata(text: str, *, root: Path, artifact: str) -> None:
-    """The artifact's core metadata says what ``pyproject.toml`` says."""
+def _assert_metadata(text: str, *, root: Path, artifact: str) -> str:
+    """The artifact's core metadata says what ``pyproject.toml`` says; returns its ``Version``.
+
+    The version is returned rather than compared here: this runs on a bare runner, where there
+    is no version parse to compare it with, and a text comparison fails every release candidate
+    (the metadata spells ``0.3.0-rc.1`` as ``0.3.0rc1``). :func:`_assert_versions` compares it
+    once the wheel is installed, with the installed package's own parse.
+    """
     metadata = Parser().parsestr(text)
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     expected = {
         "Name": project["name"],
-        "Version": project["version"],
         "License-Expression": project["license"],
     }
     mismatches = {
@@ -393,6 +404,10 @@ def _assert_metadata(text: str, *, root: Path, artifact: str) -> None:
             actual_urls[label.strip()] = url.strip()
     if expected_urls != actual_urls:
         _fail(f"{artifact} project URLs differ: expected={expected_urls}, actual={actual_urls}")
+    version = metadata.get("Version") or ""
+    if not version:
+        _fail(f"{artifact} metadata names no Version")
+    return version
 
 
 def _assert_wheel_record(archive: zipfile.ZipFile, members: set[str], record: str) -> None:
@@ -425,7 +440,7 @@ def _payload_diff(label: str, expected: set[str], actual: set[str]) -> None:
         )
 
 
-def inspect_wheel(wheel: Path, *, root: Path | None = None) -> None:
+def inspect_wheel(wheel: Path, *, root: Path | None = None) -> str:
     """The wheel's contents are exactly what this checkout declares, and its metadata agrees."""
     root = root or _repo_root()
     payload = _source_payload(root)
@@ -457,7 +472,7 @@ def inspect_wheel(wheel: Path, *, root: Path | None = None) -> None:
             {name for name in members if name.startswith(_BUNDLED_APP_PREFIX)},
         )
 
-        _assert_metadata(
+        version = _assert_metadata(
             archive.read(metadata_members[0]).decode("utf-8"), root=root, artifact=wheel.name
         )
         entry_points = archive.read(f"{dist_info}entry_points.txt").decode("utf-8")
@@ -474,6 +489,7 @@ def inspect_wheel(wheel: Path, *, root: Path | None = None) -> None:
         f"{len(payload['native_members'])} bundled-app file(s)"
     )
     _log(_artifact_evidence(wheel))
+    return version
 
 
 def _sdist_members(sdist: Path) -> dict[str, bytes]:
@@ -493,7 +509,7 @@ def _sdist_members(sdist: Path) -> dict[str, bytes]:
     return members
 
 
-def inspect_sdist(sdist: Path, *, root: Path | None = None) -> None:
+def inspect_sdist(sdist: Path, *, root: Path | None = None) -> str:
     """The sdist carries everything a wheel is rebuilt from, and its metadata agrees."""
     root = root or _repo_root()
     payload = _source_payload(root)
@@ -518,13 +534,14 @@ def inspect_sdist(sdist: Path, *, root: Path | None = None) -> None:
         payload["native_sources"],
         {name for name in members if name.startswith(f"{_SOURCE_PACKAGE.as_posix()}/apps/native/")},
     )
-    _assert_metadata(bodies["PKG-INFO"].decode("utf-8"), root=root, artifact=sdist.name)
+    version = _assert_metadata(bodies["PKG-INFO"].decode("utf-8"), root=root, artifact=sdist.name)
     _log(
         f"OK: sdist payload complete — {len(payload['package_sources'])} package source "
         f"file(s), {len(payload['web_sources'])} dashboard file(s), "
         f"{len(payload['native_sources'])} bundled-app file(s)"
     )
     _log(_artifact_evidence(sdist))
+    return version
 
 
 def _extract_sdist(sdist: Path, destination: Path) -> Path:
@@ -705,6 +722,53 @@ def _make_venv(root: Path) -> Path:
     if not py.exists():
         _fail(f"venv python not found at {py}")
     return py
+
+
+def _same_version(py: Path, actual: str, expected: str) -> bool:
+    """Whether *actual* and *expected* are one version, by the installed package's own parse.
+
+    ``-I`` (isolated) ignores ``PYTHONPATH`` and the script's directory, and ``--installed``
+    refuses the script's fallback to a checkout, so the parse is the one the wheel installed and
+    a wheel without it fails here instead of borrowing the tree's.
+    """
+    proc = subprocess.run(
+        [str(py), "-I", str(_RELEASE_VERSION), "--installed", "same", actual, expected],
+        capture_output=True,
+        text=True,
+        timeout=_PROBE_TIMEOUT_S,
+    )
+    if proc.returncode not in (0, 1):
+        _fail(f"the version comparison did not run in the installed wheel: {proc.stderr.strip()}")
+    return proc.returncode == 0
+
+
+def _assert_versions(
+    py: Path, artifacts: dict[str, str], *, root: Path, release_version: str = ""
+) -> None:
+    """Every artifact is pyproject's version — and the release's, when one is being cut.
+
+    Each artifact's metadata ``Version`` is compared with ``pyproject.toml``'s as a VERSION. With
+    *release_version* (the tag's version, ``release.yml``), the artifacts must be that release
+    too: a tag cut while ``pyproject.toml`` still names the previous version would otherwise
+    publish that version's wheel under the new tag, and push its images as the new release,
+    before any later check could see it.
+    """
+    declared = str(
+        tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    )
+    for artifact, version in artifacts.items():
+        if not _same_version(py, version, declared):
+            _fail(
+                f"{artifact} metadata Version {version!r} is not pyproject.toml's version "
+                f"{declared!r}"
+            )
+        if release_version and not _same_version(py, version, release_version):
+            _fail(
+                f"{artifact} is version {version!r}, not the version being released "
+                f"({release_version!r}) — bump pyproject.toml before tagging"
+            )
+    what = f"version {declared}" + (f", the release {release_version}" if release_version else "")
+    _log(f"OK: {', '.join(artifacts)} — {what}, compared as versions")
 
 
 def _pip_install_wheel(py: Path, wheel: Path) -> None:
@@ -915,8 +979,19 @@ def _boot_and_probe(py: Path, home: Path, bundled_apps: int = 0) -> None:
     _assert_every_bundled_app_enabled(transcript, bundled_apps)
 
 
-def _verify_wheel_runtime(wheel: Path, *, keep: bool) -> None:
-    """Assertions 1-8: install the wheel alone into a scratch venv, then boot and probe it."""
+def _verify_wheel_runtime(
+    wheel: Path,
+    *,
+    keep: bool,
+    artifacts: dict[str, str],
+    root: Path | None = None,
+    release_version: str = "",
+) -> None:
+    """Assertions 1-8: install the wheel alone into a scratch venv, then boot and probe it.
+
+    *artifacts* maps each inspected artifact to its metadata ``Version``; they are compared as
+    versions once the wheel's own parse is installed (:func:`_assert_versions`).
+    """
     _log(f"verifying {wheel}")
     _assert_spa_in_wheel(wheel)
     _assert_no_node()
@@ -930,6 +1005,7 @@ def _verify_wheel_runtime(wheel: Path, *, keep: bool) -> None:
     try:
         py = _make_venv(venv_dir)
         _pip_install_wheel(py, wheel)
+        _assert_versions(py, artifacts, root=root or _repo_root(), release_version=release_version)
         _assert_installed_bundled_model(py, home_dir, wheel)
         _boot_and_probe(py, home_dir, bundled_app_count(wheel))
     finally:
@@ -946,7 +1022,7 @@ def _verify_wheel_runtime(wheel: Path, *, keep: bool) -> None:
     )
 
 
-def _canonical_distribution_build(*, keep: bool) -> None:
+def _canonical_distribution_build(*, keep: bool, release_version: str = "") -> None:
     """``make build``: the one way to produce a distribution that can be checked.
 
     Clean, then the SPA from the lockfile (``npm ci``, never ``npm install``), stamped and
@@ -980,8 +1056,10 @@ def _canonical_distribution_build(*, keep: bool) -> None:
     normalize_sdist(sdist, epoch=int(env["SOURCE_DATE_EPOCH"]))
     _run([uv, "build", "--wheel", "--out-dir", str(dist)], cwd=root, env=env)
     wheel = _one_artifact(dist, "*.whl")
-    inspect_sdist(sdist, root=root)
-    inspect_wheel(wheel, root=root)
+    artifacts = {
+        sdist.name: inspect_sdist(sdist, root=root),
+        wheel.name: inspect_wheel(wheel, root=root),
+    }
 
     scratch = Path(tempfile.mkdtemp(prefix="pc_verify_sdist_")).absolute()
     try:
@@ -1006,7 +1084,9 @@ def _canonical_distribution_build(*, keep: bool) -> None:
         else:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    _verify_wheel_runtime(wheel, keep=keep)
+    _verify_wheel_runtime(
+        wheel, keep=keep, artifacts=artifacts, root=root, release_version=release_version
+    )
     _log("PASS: canonical distribution build")
     _log(_artifact_evidence(sdist))
     _log(_artifact_evidence(wheel))
@@ -1024,17 +1104,25 @@ def main() -> int:
         "byte-identical rebuild from the sdist, install and serve",
     )
     ap.add_argument("--keep", action="store_true", help="keep scratch venvs/homes")
+    ap.add_argument(
+        "--release-version",
+        default="",
+        metavar="VERSION",
+        help="the version being released (the tag's): every artifact must be that version",
+    )
     args = ap.parse_args()
 
     if args.build:
         if args.wheel:
             ap.error("--wheel cannot be combined with --build")
-        _canonical_distribution_build(keep=args.keep)
+        _canonical_distribution_build(keep=args.keep, release_version=args.release_version)
         return 0
 
     wheel = _find_wheel(args.wheel)
-    inspect_wheel(wheel)
-    _verify_wheel_runtime(wheel, keep=args.keep)
+    version = inspect_wheel(wheel)
+    _verify_wheel_runtime(
+        wheel, keep=args.keep, artifacts={wheel.name: version}, release_version=args.release_version
+    )
     return 0
 
 
