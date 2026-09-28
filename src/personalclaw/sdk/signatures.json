@@ -4660,14 +4660,17 @@
   "kind": "function",
   "params": [
    {"annotation": "Sequence[str]", "kind": "positional_or_keyword", "name": "args"},
-   {"annotation": "str", "default": "'git'", "kind": "keyword_only", "name": "git"}
+   {"annotation": "str", "default": "'git'", "kind": "keyword_only", "name": "git"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "token"}
   ],
   "returns": "list[str]"
  },
  "personalclaw.sdk.git.git_env": {
   "kind": "function",
   "params": [
-   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "remote"}
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "remote"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "token"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "username"}
   ],
   "returns": "dict[str, str]"
  },

@@ -236,7 +236,15 @@ nothing an agent wrote can be in its configuration, and a Store source may be a 
 repository and holds every git spawn in the tree to `git_argv`. An app's provider that runs
 git gets the same two helpers from `personalclaw.sdk.git`: `git_argv(args)` and
 `git_env(remote=False)`, with the same refusal (`GitTooOld`), and `git_problem()` for a doctor
-or setup step that says so before anything runs.
+or setup step that says so before anything runs. A token an app keeps for an https remote, in
+a sensitive setting and so in the credential store, signs in with `git_argv(args, token=True)`
+and `git_env(remote=True, token=…, username=…)`: the command's one credential helper answers
+git with the token from that command's environment, and none of the owner's helpers runs. So
+the token is on no command line, in no repository's configuration and in no helper's store
+(a keychain entry for the host can neither answer in its place nor be replaced by it), and a
+value with a line break or a NUL, which git would read as more than one answer, is refused.
+`tests/test_a_git_token_signs_in_and_is_kept_nowhere.py` drives it against a repository
+served through `git http-backend` behind Basic auth.
 
 ### What the sandbox does and does not do
 

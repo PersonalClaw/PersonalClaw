@@ -137,6 +137,27 @@ _NEUTRAL_SETTINGS: tuple[str, ...] = (
 #: credential helpers, read from their own configuration files only.
 _OWNER_AUTH_KEYS = r"^(core\.sshcommand|credential\..*helper)$"
 
+#: Where a token sign-in (``git_argv(…, token=True)``) finds the user name and the token: two
+#: variables of the environment :func:`git_env` builds for that one command, read by
+#: :data:`_TOKEN_HELPER` and nothing else.
+TOKEN_USERNAME_ENV = "PERSONALCLAW_GIT_USERNAME"
+TOKEN_ENV = "PERSONALCLAW_GIT_TOKEN"
+
+#: The one credential helper a token sign-in uses, in place of the owner's. Asked to ``get`` a
+#: credential, it answers with the user name (when there is one) and the token from
+#: :data:`TOKEN_USERNAME_ENV` and :data:`TOKEN_ENV`; asked to ``store`` or ``erase`` one, it does
+#: nothing. So the token reaches git without being on a command line, in the repository's
+#: configuration or in any file, and git never hands it to a helper that would keep it (a
+#: keychain, where it could shadow or replace the owner's own sign-in for that host). It reads
+#: what git sends it to the end first, so git never writes to a helper that has stopped.
+_TOKEN_HELPER = (
+    "!f() { while read -r _line; do :; done; "
+    'test "$1" = get || exit 0; '
+    'test -n "$' + TOKEN_USERNAME_ENV + '" && '
+    "printf 'username=%s\\n' \"$" + TOKEN_USERNAME_ENV + '"; '
+    "printf 'password=%s\\n' \"$" + TOKEN_ENV + '"; }; f'
+)
+
 #: Why each transport the neutral settings refuse is refused, and what to use instead: what the
 #: owner reads when PersonalClaw's git will not reach a remote, in place of git's own
 #: ``transport 'file' not allowed``.
@@ -195,7 +216,9 @@ def transport_refusal(stderr: "str | bytes | None") -> str:
     return TRANSPORT_REFUSALS.get(found.group(1).lower(), "") if found else ""
 
 
-def git_env(*, site: str, remote: bool = False) -> dict[str, str]:
+def git_env(
+    *, site: str, remote: bool = False, username: str = "", token: str = ""
+) -> dict[str, str]:
     """The environment every git PersonalClaw runs gets.
 
     The child allowlist (``sandbox.build_child_env``), never a copy of the gateway's environment:
@@ -212,12 +235,22 @@ def git_env(*, site: str, remote: bool = False) -> dict[str, str]:
     *remote* is for a command that talks to a remote (:data:`REMOTE_SUBCOMMANDS`). It adds the SSH
     agent's socket, ``SSH_AUTH_SOCK``, which git over SSH needs to sign in with the owner's keys
     (``build_child_env``'s ``ssh_agent``): a command that stays on this machine never gets it.
+
+    *token* (and *username*, when the host wants one with it) is what a token sign-in answers
+    git with: a command run with ``git_argv(…, token=True)`` gets them from these variables, and
+    from nowhere else. Only a command that talks to a remote gets them. A value with a line break
+    or a NUL in it would be read by git as more than one answer, so it is refused.
     """
     from personalclaw.sandbox import build_child_env
 
-    return build_child_env(
-        site=site, extra={"GIT_TERMINAL_PROMPT": "0", "LANGUAGE": "en"}, ssh_agent=remote
-    )
+    if any(bad in value for value in (username, token) for bad in ("\n", "\r", "\0")):
+        raise ValueError("a git user name or token can't hold a line break or a NUL")
+    extra = {"GIT_TERMINAL_PROMPT": "0", "LANGUAGE": "en"}
+    if remote and token:
+        extra[TOKEN_ENV] = token
+        if username:
+            extra[TOKEN_USERNAME_ENV] = username
+    return build_child_env(site=site, extra=extra, ssh_agent=remote)
 
 
 @functools.lru_cache(maxsize=8)
@@ -342,7 +375,7 @@ def _owner_auth_settings() -> list[str]:
     return settings
 
 
-def git_argv(args: Sequence[str], *, git: str = "git") -> list[str]:
+def git_argv(args: Sequence[str], *, git: str = "git", token: bool = False) -> list[str]:
     """The argv of a git PersonalClaw runs inside a repository an agent can write.
 
     *args* with the settings that stop the repository's own configuration from running a program
@@ -359,6 +392,12 @@ def git_argv(args: Sequence[str], *, git: str = "git") -> list[str]:
     their own ssh command and credential helpers, read from their own configuration files (never
     the repository's), are set again after the repository's are cleared. Any other command gets
     plain ``ssh`` and no helper at all.
+
+    With *token*, a command that talks to a remote signs in with the token :func:`git_env` was
+    given instead: its one credential helper is :data:`_TOKEN_HELPER`, and none of the owner's
+    runs, so the token is the one answer git gets and is never stored anywhere. The owner's ssh
+    command is kept (a token signs in only over http). It changes nothing for a command that
+    stays on this machine.
 
     What this cannot stop: a filter or merge driver the repository defines and assigns to its own
     files through its attributes. Git names those drivers by the repository's own words, so no
@@ -383,7 +422,10 @@ def git_argv(args: Sequence[str], *, git: str = "git") -> list[str]:
         ssh = [s for s in owner if s.lower().startswith("core.sshcommand=")]
         settings.append(ssh[-1] if ssh else "core.sshCommand=ssh")
         settings.append("credential.helper=")
-        settings += [s for s in owner if not s.lower().startswith("core.sshcommand=")]
+        if token:
+            settings.append(f"credential.helper={_TOKEN_HELPER}")
+        else:
+            settings += [s for s in owner if not s.lower().startswith("core.sshcommand=")]
     else:
         settings += ["core.sshCommand=ssh", "credential.helper="]
     neutral = ["--no-pager"]

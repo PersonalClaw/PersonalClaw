@@ -13,6 +13,12 @@ or an ssh command set there would run the next time the app asked git anything.
 - ``git_env(remote=False)`` is its environment: the child allowlist, never the gateway's own, and
   git never waits on a password prompt. ``remote=True`` (for a command ``talks_to_remote``) adds
   the owner's SSH agent, which git over ssh signs in through.
+- A token an app keeps for an https remote (a sensitive setting, so it lives in the credential
+  store) signs in with ``git_argv(args, token=True)`` and ``git_env(remote=True, token=…,
+  username=…)``: the command's one credential helper hands git the token from its environment,
+  and none of the owner's runs. Keep the URL itself free of any user name or token: the token
+  is then never on a command line, in the repository's configuration or in another helper's
+  store.
 - ``remote_refusal(url)`` says why a remote URL is refused (a local path, ``ext::``, ``git://``)
   and what to use instead, ``""`` when git may reach it: for a URL the owner typed, checked before
   git runs. ``transport_refusal(stderr)`` says the same for a git that was refused anyway.
@@ -40,16 +46,20 @@ from personalclaw.net.git import (  # noqa: F401
 )
 
 
-def git_env(*, remote: bool = False) -> dict[str, str]:
+def git_env(*, remote: bool = False, token: str = "", username: str = "") -> dict[str, str]:
     """The environment for a git an app's provider starts, as ``env=`` to its spawn.
 
     The child allowlist (``PATH``, the home, locale, proxy and certificate settings, git's own
     ``GIT_SSL_CAINFO``/``GIT_SSL_CAPATH``, and what the owner passed through by name), never a copy
     of the gateway's environment. *remote* adds the owner's SSH agent (``SSH_AUTH_SOCK``), for a
-    command that talks to a remote and only for one."""
+    command that talks to a remote and only for one.
+
+    *token* and *username* are what a command run with ``git_argv(…, token=True)`` signs in
+    with, and only a command that talks to a remote gets them. A value with a line break or a
+    NUL in it raises ``ValueError``."""
     from personalclaw.net import git as core_git
 
-    return core_git.git_env(site="app-git", remote=remote)
+    return core_git.git_env(site="app-git", remote=remote, username=username, token=token)
 
 
 __all__ = [

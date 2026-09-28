@@ -14,6 +14,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A provider type can say where an instance that names no endpoint sends, and that it runs inside the gateway: `ProviderCapability.default_endpoint` and `in_process` (SDK additions no app has to change for; every branded app declares its default through `register_branded_app`, and `ollama-models` and `bundled-chat` declare theirs).**
 
+- **An app can sign git in with a token it keeps in the credential store, never on a command line, in the clone or in a keychain: `personalclaw.sdk.git.git_argv(…, token=True)` with `git_env(token=…)`, used by `git-sync`.**
+
 - **An app can say why its media features fail: `personalclaw.sdk.stt.SttError`, `unavailable_reason()` on speech-to-text and embedding providers, and `personalclaw.sdk.net.sentence_with_detail` (SDK additions no app has to change for; `bedrock-models` uses all three, and `openrouter-models`, `google-models`, `alibaba-models`, `git-sync`, `dir-sync`, `rsync-sync`, `s3-sync` and `vector-store-qdrant` use `sentence_with_detail`).**
 - **The channel conformance kit checks how each approval ends and what a press after it is told, and every task status a stream is given: `assert_channel_contract(press=…)`, used by `telegram-channel`, `discord-channel`, `slack-channel` and `email-channel`.**
 
