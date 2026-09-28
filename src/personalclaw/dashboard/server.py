@@ -1694,6 +1694,7 @@ async def start_dashboard(
     app.router.add_post("/api/inbox/notes", handlers_inbox.api_inbox_note_create)
     app.router.add_post("/api/inbox/{id}/apply", handlers_inbox.api_inbox_proposal_apply)
     app.router.add_post("/api/inbox/{id}/restore", handlers_inbox.api_inbox_restore)
+    app.router.add_post("/api/inbox/{id}/pair", handlers_inbox.api_inbox_pair)
     app.router.add_post("/api/inbox/send", handlers_inbox.api_inbox_send)
     app.router.add_put("/api/inbox/{id}", handlers_inbox.api_inbox_update)
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)

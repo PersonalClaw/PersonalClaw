@@ -465,6 +465,28 @@ The `ChannelDelivery` protocol: `open_dm`, `deliver_text`, `deliver_rich`,
 `request_approval`. Everything the gateway sends outward flows through the
 registered implementation.
 
+**A message for the owner goes out on the channel they named, when they named one.** With no
+channel named, `reach_owner` tries every connected channel in name order until one delivers.
+`notify`'s `via`, `send-message`'s `via` and the `send-message` action `automation_create`
+makes from `say` + `via` name one channel, and `reach_owner(only=…)` tries that one alone:
+when it cannot deliver (not connected, no owner id, a failed send), the message goes to the
+Inbox ending "This was for <channel> only, and it could not go out there: …". Another channel
+never stands in for the one named. A name that is not a chat channel set up here is refused
+with the ones that are (`channel_delivery.named_chat_channel`), so the owner can be asked.
+
+**Someone new, on a channel that speaks as the owner.** A channel whose messages go out as
+the owner themselves, from their own mailbox, declares `ChannelCapabilities.speaks_as_owner`.
+The gate hands it no pairing note for a stranger, and the door holds the stranger's direct
+message in the Inbox as someone new (`native_source.hold_from_someone_new`: `refs.someone_new`
+names the channel). The owner answers the row: **Reply** goes back through that channel,
+threaded under the message, only when the owner presses Send; **Pair** (`POST
+/api/inbox/{id}/pair`) lets the sender talk to the agent there from their next message on;
+**Ignore** dismisses it. One row per message; a muted thread holds nothing more, and a held
+row raises no inbox event, so a sender the gate refused arms no automation. The gate holds the
+message first (the door hands it `hold_for_owner`) and composes the owner's once-a-day notice
+from what was held: a message the Inbox kept out raises no notice and leaves the window open,
+so the notice never names a message that is not there.
+
 ### Vendor-blind grammar
 
 The delivery vocabulary names no vendor anywhere in core:

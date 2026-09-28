@@ -65,6 +65,7 @@ in :func:`_route_to_session` — an allowed message that still cannot reach a se
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import logging
 from collections import OrderedDict
@@ -117,14 +118,42 @@ def reset_admissions() -> None:
     _ADMITTED.clear()
 
 
-def admit(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool = True) -> TrustVerdict:
+def speaks_as_owner(provider: str) -> bool:
+    """Whether the channel ``provider`` sends as the owner themselves, not as a bot
+    (``ChannelCapabilities.speaks_as_owner``): a stranger is then answered by nobody but the owner.
+
+    Read from the channel registered under ``provider``. One whose capabilities cannot be read
+    counts as speaking for the owner, the side on which nothing is sent to a stranger."""
+    from personalclaw.channel_transports import get_transport
+
+    transport = get_transport(provider)
+    if transport is None:
+        return False
+    try:
+        return bool(transport.capabilities().speaks_as_owner)
+    except Exception:  # noqa: BLE001 - fail closed: answer no stranger in the owner's name
+        logger.warning("channel %s: its capabilities could not be read", provider, exc_info=True)
+        return True
+
+
+def admit(
+    state: Any,
+    provider: str,
+    msg: "ChannelMessage",
+    *,
+    is_dm: bool = True,
+    hold_for_owner: "Callable[[], bool] | None" = None,
+) -> TrustVerdict:
     """The trust decision for one inbound message — idempotent per message.
 
     Calls :func:`~personalclaw.channel_trust.guard_inbound` at most ONCE per
     ``(provider, message)``; a repeat presentation of the same message returns the first
-    verdict with no side effects (no second owner notification, no second SEL row). See
-    the module docstring for why that is a property of this cache and not of the store's
-    renotify window.
+    verdict with no side effects (no second owner notification, no second SEL row, no second
+    hold). See the module docstring for why that is a property of this cache and not of the
+    store's renotify window.
+
+    ``hold_for_owner`` goes to the gate as it is: for a channel that speaks as the owner, how to
+    hold a stranger's message for them (:func:`_hold_for_the_owner`).
 
     Pairing redemption is NOT attempted here: it lives inside the gate, which applies the
     provider's DM policy to it. See :func:`_decide`.
@@ -143,12 +172,19 @@ def admit(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool = Tru
             cached.allowed,
         )
         return cached
-    verdict = _decide(state, provider, msg, is_dm=is_dm)
+    verdict = _decide(state, provider, msg, is_dm=is_dm, hold_for_owner=hold_for_owner)
     _remember(key, verdict)
     return verdict
 
 
-def _decide(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool) -> TrustVerdict:
+def _decide(
+    state: Any,
+    provider: str,
+    msg: "ChannelMessage",
+    *,
+    is_dm: bool,
+    hold_for_owner: "Callable[[], bool] | None",
+) -> TrustVerdict:
     """One uncached trust decision — the gate, and nothing but the gate.
 
     This function deliberately holds NO branch of its own. It unpacks the transport's
@@ -174,7 +210,36 @@ def _decide(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool) ->
         is_dm=is_dm,
         text=msg.text,
         channel_name=str(meta.get("channel_name", "") or ""),
+        hold_for_owner=hold_for_owner,
     )
+
+
+def _hold_for_the_owner(state: Any, provider: str, msg: "ChannelMessage") -> bool:
+    """Hold a stranger's message in the Inbox as someone new, for a channel that speaks as the
+    owner (``native_source.hold_from_someone_new``); returns whether it was added. Nothing was
+    sent to them, and the owner answers the row.
+
+    The gate calls it, as ``hold_for_owner``, before it tells the owner anything, and tells them
+    only of a message this added: one the Inbox did not take (its thread muted, its row
+    dismissed) is named in no notice."""
+    from personalclaw.channel_delivery import channel_shown_as
+    from personalclaw.inbox_providers.native_source import hold_from_someone_new
+
+    meta = msg.metadata if isinstance(msg.metadata, dict) else {}
+    row = hold_from_someone_new(
+        state,
+        provider=provider,
+        channel_name=channel_shown_as(provider),
+        channel_id=msg.channel_id,
+        sender_id=msg.sender,
+        sender_name=str(meta.get("sender_name", "") or ""),
+        subject=str(meta.get("subject", "") or ""),
+        text=msg.text,
+        thread_id=msg.thread_id,
+        message_id=msg.message_id,
+        ts=float(msg.ts or 0),
+    )
+    return row is not None
 
 
 async def deliver_inbound(
@@ -197,6 +262,12 @@ async def deliver_inbound(
     produced one (non-owner group content, wrapped so a model reads it as DATA) and the
     raw text otherwise — the fence is applied by the gate, so a transport cannot forget it.
 
+    A channel that speaks as the owner (:func:`speaks_as_owner`) is handed no pairing note for
+    a stranger, and the stranger's direct message is held in the Inbox as someone new instead
+    (:func:`_hold_for_the_owner`), where the owner replies to it, pairs them, or ignores it. The
+    gate holds it, with the hold this door hands it, before it tells the owner, so the notice
+    names only a message that is in the Inbox.
+
     ``turn_runner`` is INJECTED, never imported: driving a turn means calling
     ``dashboard.chat_runner.run_chat``, and importing that here would make ``channel_inbound``
     (domain) depend on the HTTP surface — the ``core-must-not-import-the-http-surface``
@@ -205,7 +276,12 @@ async def deliver_inbound(
     ``inbound.openai_dialect.register_routes`` takes its own ``turn_runner``.
     """
     state = getattr(services, "dashboard_state", None)
-    verdict = admit(state, provider, msg, is_dm=is_dm)
+    hold = (
+        functools.partial(_hold_for_the_owner, state, provider, msg)
+        if speaks_as_owner(provider)
+        else None
+    )
+    verdict = admit(state, provider, msg, is_dm=is_dm, hold_for_owner=hold)
     if not verdict.allowed:
         # No log line here: this used to be a bare DEBUG that named neither the channel nor
         # the sender, so it could not answer "which channel do I have to track?" — and it

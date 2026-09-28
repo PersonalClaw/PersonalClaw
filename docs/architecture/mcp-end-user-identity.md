@@ -220,7 +220,9 @@ The ceremony is the interesting part:
 - Until then an unpaired DM sender is **denied** under the default `pairing` policy, with a
   shared canned reply (`src/personalclaw/channel_trust.py:72`, applied at
   `src/personalclaw/channel_trust.py:769`) and exactly one deduped owner attention item
-  (`src/personalclaw/channel_trust.py:605`).
+  (`src/personalclaw/channel_trust.py:605`). A channel that speaks as its owner (their own
+  mailbox) sends no reply: the sender's message is held in the Inbox for the owner instead
+  (`ChannelCapabilities.speaks_as_owner`).
 - Foreign content is fenced on the way in
   (`src/personalclaw/channel_trust.py:422`).
 

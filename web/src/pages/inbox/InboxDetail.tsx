@@ -17,6 +17,7 @@ import { DeniedCallRerun } from './DeniedCallRerun'
 import { InboxSection as Section } from './InboxSection'
 import { TriggerParkActions } from './TriggerParkActions'
 import { BridgeConfirmActions } from './BridgeConfirmActions'
+import { SomeoneNewActions } from './SomeoneNewActions'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -95,6 +96,9 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   // A control-bridge action a local agent asked for, which only you confirm — answerable here.
   const bridgeConfirmation = item.item_kind === 'needs_input'
     && item.refs?.source === 'control_bridge' && !!item.refs?.confirmation
+  // Someone new, held by a channel that sends as you: answered here, with Reply, Pair or Ignore.
+  // Ignore is the row's Dismiss, so the triage bar does not offer that twice.
+  const someoneNew = !!item.refs?.someone_new
 
   return (
     <div className="flex flex-col gap-l">
@@ -198,6 +202,15 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
         </Section>
       )}
 
+      {/* Someone new (`native_source.hold_from_someone_new`): nothing went to them. Once the row
+          is settled, only a pairing is left to say. */}
+      {someoneNew && (!settled || !!item.refs?.paired) && (
+        <Section label="Someone new">
+          <SomeoneNewActions item={item} onChanged={onChanged} busy={!!busy}
+            onIgnore={() => patch({ status: 'dismissed' }, 'dismiss')} />
+        </Section>
+      )}
+
       {/* A call denied without an answer — the one next step it really has (ask the chat
           again, run its trigger again, run its workflow step again), or how its retry ended. */}
       <DeniedCallRerun item={item} navigate={navigate} onChanged={onChanged} />
@@ -296,7 +309,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
         ) : (
           <Button size="sm" variant="secondary" onClick={() => patch({ status: 'handled' }, 'handled')} disabled={!!busy} disabledReason={BUSY_REASON}><Check size={14} /> Mark handled</Button>
         )}
-        {item.status !== 'dismissed' && <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>}
+        {item.status !== 'dismissed' && !(someoneNew && !settled) && <Button size="sm" variant="ghost" onClick={() => patch({ status: 'dismissed' }, 'dismiss')} disabled={!!busy} disabledReason={BUSY_REASON}><XCircle size={14} /> Dismiss</Button>}
         {/* Mute thread writes to the muted-THREADS set, keyed off a channel thread id. A
             non-channel item has no thread, so the button would silently do nothing. */}
         {channelBacked && <Button size="sm" variant="ghost" onClick={() => patch({ mute_thread: true }, 'mute')} disabled={!!busy} disabledReason={BUSY_REASON}><BellOff size={14} /> Mute thread</Button>}

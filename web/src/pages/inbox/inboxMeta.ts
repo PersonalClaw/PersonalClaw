@@ -197,10 +197,11 @@ export function channelLabel(it: Pick<InboxItem, 'channel' | 'channel_name'>): s
 }
 
 /** Short label for the source provider that produced an item (agent-native vs a
- *  connected source's provider id). */
+ *  connected source's provider id). A row a channel held for you (someone new) is
+ *  `channel:<its name>`, and reads as that channel. */
 export function sourceLabel(source?: string): string {
   if (!source || source === 'native') return 'agent'
-  return source
+  return source.startsWith('channel:') ? source.slice('channel:'.length) : source
 }
 
 export function relPast(ts?: number | string | null): string {

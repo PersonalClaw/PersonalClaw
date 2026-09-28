@@ -31,6 +31,11 @@ from personalclaw.acp.types import (  # noqa: F401
 # A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose
 # and the summary line, as the dashboard's card shows them, every string already masked.
 from personalclaw.approval_brief import approval_brief_for
+
+# ── How long an approval waits for a person ──
+# One window for every approval that waits (Settings → Agent defaults), read per approval. A
+# channel that asks on its own, for a turn it runs itself, waits exactly this long too.
+from personalclaw.approval_grants import approval_window_secs
 from personalclaw.atomic_write import atomic_write
 
 # ── Auth posture (#3511) ──
@@ -338,6 +343,7 @@ __all__ = [
     "allow_sender",
     "apply_trust_action",
     "approval_brief_for",
+    "approval_window_secs",
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",

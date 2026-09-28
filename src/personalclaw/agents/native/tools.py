@@ -105,6 +105,7 @@ class InProcessMcpToolProvider(ToolProvider):
         from personalclaw.tool_providers.base import (
             BUILDS_META_KEY,
             PROPOSES_META_KEY,
+            RiskLevel,
             risk_from_annotations,
         )
 
@@ -122,6 +123,7 @@ class InProcessMcpToolProvider(ToolProvider):
             # (`annotations.readOnlyHint` / `destructiveHint`) — the same declaration an ACP CLI
             # reads when the `mcp-core` server lists it. These modules are PersonalClaw's own, so
             # the declaration is trusted; a dict that declares nothing is CAUTION.
+            risk = risk_from_annotations(tool.get("annotations"), trusted=True)
             meta = tool.get("_meta") if isinstance(tool.get("_meta"), dict) else {}
             defs.append(
                 ToolDefinition(
@@ -129,10 +131,14 @@ class InProcessMcpToolProvider(ToolProvider):
                     description=str(tool.get("description", "")),
                     provider=self.name,
                     parameters=params,
-                    # The native loop's approval gate decides per-call; the core
-                    # tools self-enforce deny-list/sensitive-path internally too.
-                    requires_approval=True,
-                    risk_level=risk_from_annotations(tool.get("annotations"), trusted=True),
+                    # A declared read asks nobody, as every read PersonalClaw defines in Python
+                    # does (`read_file`, `knowledge_search`, `task_list`). Asking about it asked
+                    # in a chat where those do not, and declined it wherever nobody can be asked
+                    # (`personalclaw run`, a dry run, an unattended agent): the postures that
+                    # exist to run reads. Everything else asks. The runtime's deny-list,
+                    # task-mode, tool-grant and hook gates run before either.
+                    requires_approval=risk is not RiskLevel.SAFE,
+                    risk_level=risk,
                     builds=meta.get(BUILDS_META_KEY) is True,
                     proposes=meta.get(PROPOSES_META_KEY) is True,
                 )

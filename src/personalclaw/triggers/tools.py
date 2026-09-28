@@ -519,6 +519,9 @@ def create(
     gates: dict[str, Any] | None = None,
     owner_consented: bool = False,
     recurrence: str = "",
+    say: str = "",
+    via: str = "",
+    chat_channels: Any = None,
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -542,6 +545,13 @@ def create(
     Without it the row is created as asked but not allowed to run its action, and the Triggers page
     offers Allow. Measured on `main`: `automation_create` froze the grant for whatever it made, so
     an agent's automation came with its own permission to run.
+
+    `say` is words for the owner, sent as written each time it fires by a `send-message` action (no
+    agent runs), and `via` the chat channel the owner named for them: the action sends there and
+    on no other channel. A name that is not a chat channel set up here is refused with the ones
+    that are, so the owner can be asked which (`channel_delivery.named_chat_channel`, over
+    `chat_channels`, the registered ones when None). "Message me on Telegram" used to be an agent
+    task that could reach the owner only on the first connected channel by name.
     """
     from personalclaw.triggers import grants
     from personalclaw.triggers import screen as _screen
@@ -550,6 +560,36 @@ def create(
 
     if not (name or "").strip():
         return AutomationToolResult(False, "Error: name is required.")
+    words = (say or "").strip()
+    if words and ((message or "").strip() or workflow or resume is not None):
+        return AutomationToolResult(
+            False,
+            "Error: give the words to send in `say`, or what the automation should do in "
+            "`message`, not both.",
+        )
+    via_key = shown_via = ""
+    if (via or "").strip():
+        if not words:
+            return AutomationToolResult(
+                False,
+                "Error: `via` sends the words given in `say`, as written; a task in `message` "
+                "reports its result in PersonalClaw, not on a chat channel. Give the words in "
+                "`say`, or leave out `via`.",
+                {"via": via},
+            )
+        from personalclaw.channel_delivery import channel_shown_as, named_chat_channel
+
+        via_key, problem = named_chat_channel(via, transports=chat_channels)
+        if problem:
+            return AutomationToolResult(
+                False,
+                f"Error: nothing was saved: {problem} Ask the owner which one to use.",
+                {"via": via},
+            )
+        shown_via = str(
+            getattr((chat_channels or {}).get(via_key), "display_name", "")
+            or channel_shown_as(via_key)
+        )
 
     resolved_spec = dict(spec or {})
     resolved_gates = dict(gates or {})
@@ -621,6 +661,12 @@ def create(
         if message and "answer" not in target:
             target["answer"] = message
         workflow = {"resume": target}
+    if words:
+        # As written: a `$` the action's template would read as a placeholder is escaped.
+        config: dict[str, Any] = {"text_template": re.sub(r"\$(?=[A-Za-z_{$])", "$$", words)}
+        if via_key:
+            config["via"] = via_key
+        workflow = {"provider": "send-message", "config": config}
     if message and not workflow:
         workflow = {"provider": "run-prompt", "config": {"message": message}}
     if not workflow:
@@ -725,6 +771,13 @@ def create(
         lines.append(f"  cron: {resolved_spec['expr']}")
     if resolved_spec.get("paths"):
         lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    if words:
+        where = (
+            f"on {shown_via}, and on no other channel"
+            if via_key
+            else "on the first connected chat channel that knows you, else in PersonalClaw"
+        )
+        lines.append(f"  sends you “{redact_for_display(words)}” {where}")
     needs = grants.labels(saved)
     if created_by == "agent":
         # "active now" is a claim about state, so it tracks state — the switch, and whether the

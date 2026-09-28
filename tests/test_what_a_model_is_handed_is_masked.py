@@ -271,7 +271,7 @@ def test_memory_recall_and_approval_rule_patterns_are_masked(monkeypatch):
 
     monkeypatch.setattr(mcp_memory, "_get", fake_get)
     recalled = _agent_reads("personalclaw.mcp_memory", "memory_recall", {"query": "github"})
-    rules = _agent_reads("personalclaw.mcp_memory", "triage_rules", {"action": "list"})
+    rules = _agent_reads("personalclaw.mcp_memory", "triage_rules_list", {})
     for seen in (recalled, rules):
         assert not _leaks(seen), seen
         assert MASK in seen

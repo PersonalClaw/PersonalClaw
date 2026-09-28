@@ -417,14 +417,17 @@ class AppRoutesToolProvider(ToolProvider):
         for app_name, route in iter_app_routes():
             method = (route.method or "GET").upper()
             desc = route.summary or f"{method} {route.path} on app {app_name!r}"
+            risk = route_risk(route)
             defs.append(
                 ToolDefinition(
                     name=tool_name_for(app_name, route.op),
                     description=desc,
                     provider=self.name,
                     parameters=parameters_schema(route),
-                    requires_approval=True,
-                    risk_level=route_risk(route),
+                    # A route the app declares `readOnly` asks nobody, like an SDK tool that
+                    # declares `RiskLevel.SAFE`; every other route asks.
+                    requires_approval=risk is not RiskLevel.SAFE,
+                    risk_level=risk,
                 )
             )
         return defs

@@ -445,10 +445,12 @@ MEMORY_RECALL_SCHEMA = ToolSchema(
     ],
 )
 
+TRIAGE_RULES_LIST_SCHEMA = ToolSchema(tool_name="triage_rules_list")
+
 TRIAGE_RULES_SCHEMA = ToolSchema(
     tool_name="triage_rules",
     fields=[
-        FieldSpec("action", str, required=True, allowed=frozenset({"list", "add", "revoke"})),
+        FieldSpec("action", str, required=True, allowed=frozenset({"add", "revoke"})),
         FieldSpec("pattern", str, max_len=MAX_SHORT_STRING),
         # `suppressed` is deliberately NOT accepted: a cooldown is something the
         # digest derives from declines, not a verdict a caller may assert. `approve` is
@@ -1127,6 +1129,9 @@ FILE_WRITE_SCHEMA = ToolSchema(
     ],
 )
 
+#: A chat channel's name as a tool is given it (``via``): its key or the name it is shown under.
+CHAT_CHANNEL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
+
 SEND_MESSAGE_SCHEMA = ToolSchema(
     tool_name="notify",
     fields=[
@@ -1135,6 +1140,7 @@ SEND_MESSAGE_SCHEMA = ToolSchema(
         FieldSpec("blocks", list, item_type=dict, max_items=50),
         FieldSpec("channel", str, max_len=CHANNEL_MAX_LEN, pattern=CHANNEL_ID_RE),
         FieldSpec("user", str, max_len=USER_MAX_LEN, pattern=USER_ID_RE),
+        FieldSpec("via", str, max_len=64, pattern=CHAT_CHANNEL_NAME_RE),
         FieldSpec("unfurl_links", bool),
         FieldSpec("unfurl_media", bool),
         FieldSpec("thread_ts", str, max_len=30, pattern=_MESSAGE_TS_RE),
@@ -1203,6 +1209,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "memory_remember": LEARN_ADD_SCHEMA,
     "memory_forget": LEARN_REMOVE_SCHEMA,
     "memory_recall": MEMORY_RECALL_SCHEMA,
+    "triage_rules_list": TRIAGE_RULES_LIST_SCHEMA,
     "triage_rules": TRIAGE_RULES_SCHEMA,
     "notify": SEND_MESSAGE_SCHEMA,
     "wait": WAIT_SCHEMA,
@@ -1270,6 +1277,8 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
             FieldSpec("when", str, max_len=MAX_MEDIUM_STRING),
             FieldSpec("message", str, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("say", str, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("via", str, max_len=64, pattern=CHAT_CHANNEL_NAME_RE),
             FieldSpec("kind", str, max_len=32, pattern=re.compile(r"^[a-z_]*$")),
             FieldSpec("spec", dict),
         ],

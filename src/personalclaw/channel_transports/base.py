@@ -80,6 +80,12 @@ class ChannelCapabilities:
     #: to a thread inside it. A chat handed off to such a channel continues in the DM; for one
     #: with threads in its DMs, it continues in the thread the handoff opened.
     dm_thread_is_channel: bool = False
+    #: What this channel sends goes out as the owner themselves (from their own mailbox), not as
+    #: a bot the owner runs. Core then never answers someone it does not know through it: the
+    #: gate hands it no pairing note to send, and a stranger's message is held in the Inbox as
+    #: someone new, where the owner can reply to it, pair them, or ignore it. Nothing goes to
+    #: them until the owner replies or pairs them.
+    speaks_as_owner: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict

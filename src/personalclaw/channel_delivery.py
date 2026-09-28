@@ -30,7 +30,7 @@ import copy
 import dataclasses
 import inspect
 import logging
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, runtime_checkable
 
@@ -49,6 +49,11 @@ TASK_STATUSES: tuple[str, ...] = (
     "expired",
     "cancelled",
 )
+
+#: How an approval ends (:meth:`ChannelDelivery.request_approval`): the owner's answer either way,
+#: nobody answering inside the owner's window, or the work that asked stopping first. A channel's
+#: prompt is told which, wherever it ended.
+APPROVAL_ENDINGS: tuple[str, ...] = ("approved", "rejected", "expired", "cancelled")
 
 
 @runtime_checkable
@@ -216,7 +221,7 @@ class ChannelDelivery(Protocol):
 
         **How it ends.** The pending record carries a ``future``. The owner's press on this
         channel resolves it with ``"approved"`` or ``"rejected"``. However else the approval ends,
-        core resolves it with how it ended (``approval_state.APPROVAL_OUTCOMES``): ``"approved"``
+        core resolves it with how it ended (:data:`APPROVAL_ENDINGS`): ``"approved"``
         or ``"rejected"`` when it was answered somewhere else (the dashboard, the phone),
         ``"expired"`` when nobody answered inside the owner's window, ``"cancelled"`` when the
         work that asked stopped first. The wait keeps no clock of its own: the window is core's,
@@ -568,6 +573,9 @@ class OwnerDelivery:
     logged: bool = False
     #: Whether it went to the Inbox because no channel could take it.
     inboxed: bool = False
+    #: The channel it was for, as it is shown, when one was named (``reach_owner``'s ``only``): no
+    #: other channel was tried.
+    named: str = ""
 
     @property
     def delivered(self) -> bool:
@@ -583,15 +591,47 @@ class OwnerDelivery:
         if self.delivered or not self.reasons:
             return ""
         tail = " The gateway log has the errors." if self.logged else ""
-        return f"No channel could deliver this to you: {'; '.join(self.reasons)}.{tail}"
+        why = "; ".join(self.reasons)
+        if self.named:
+            return f"This was for {self.named} only, and it could not go out there: {why}.{tail}"
+        return f"No channel could deliver this to you: {why}.{tail}"
 
 
-def _channel_name(key: str) -> str:
+def channel_shown_as(key: str) -> str:
     """The name a channel is shown under — its transport's own display name, else its key."""
     from personalclaw.channel_transports import get_transport
 
     transport = get_transport(key)
     return transport.display_name if transport is not None else key
+
+
+def named_chat_channel(
+    name: str, *, transports: "Mapping[str, Any] | None" = None
+) -> tuple[str, str]:
+    """The chat channel *name* means, as ``(key, "")``, or ``("", the sentence saying why not)``.
+
+    For a message the owner asked for on one channel ("message me on Telegram"). *name* is the
+    channel's key or the name it is shown under, in any case. A name that is not a chat channel set
+    up here is refused with the ones that are, so the owner can be asked which: another channel
+    never stands in for the one they named. *transports* is the channels to look in, by key; the
+    registered ones when omitted.
+    """
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport, list_transports
+
+    if transports is None:
+        transports = {key: get_transport(key) for key in list_transports()}
+    chat = {k: t for k, t in transports.items() if k != WEBUI_TRANSPORT and t is not None}
+    wanted = name.strip().casefold()
+    shown: dict[str, str] = {k: str(getattr(t, "display_name", "") or k) for k, t in chat.items()}
+    for key, display in shown.items():
+        if wanted and wanted in (key.casefold(), display.casefold()):
+            return key, ""
+    choices = (
+        f"The chat channels set up here: {', '.join(sorted(shown.values()))}."
+        if shown
+        else "No chat channel is set up here."
+    )
+    return "", f"{name.strip() or 'That'} isn't one of the chat channels set up here. {choices}"
 
 
 async def reach_owner(
@@ -601,8 +641,10 @@ async def reach_owner(
 ) -> OwnerDelivery:
     """Deliver to the owner through the FIRST connected channel that actually reaches them.
 
-    ``only`` names the one channel to try — the owner chose it (a chat's "Continue on …") — and
-    no other is tried when it cannot. Not connected reads as no channel at all.
+    ``only`` names the one channel to try — the owner chose it (a chat's "Continue on …", a
+    message they asked for on that channel) — and no other is tried when it cannot. Not being
+    connected is then a reason like the others, so the message is not taken for one with nowhere
+    to go: a channel the owner did not name never stands in for the one they did.
 
     Every connected channel is tried in the stable order of their names until one delivers:
     its owner id (``config.credentials.owner_id_for`` — the channel's own key, else the shared
@@ -621,11 +663,16 @@ async def reach_owner(
 
     reasons: list[str] = []
     logged = False
+    named = channel_shown_as(only) if only else ""
     for key in [only] if only else sorted(_REGISTRY):
         delivery = _REGISTRY.get(key)
-        if delivery is None:  # unregistered while an earlier channel was being tried
+        name = channel_shown_as(key)
+        if delivery is None:
+            # The named channel is not connected; any other was unregistered while an earlier
+            # channel was being tried.
+            if only:
+                reasons.append(f"{name} isn't connected")
             continue
-        name = _channel_name(key)
         owner = owner_id_for(key)
         if not owner:
             reasons.append(f"{name} has no owner id")
@@ -652,8 +699,9 @@ async def reach_owner(
             result=result,
             reasons=tuple(reasons),
             logged=logged,
+            named=named,
         )
-    return OwnerDelivery(reasons=tuple(reasons), logged=logged)
+    return OwnerDelivery(reasons=tuple(reasons), logged=logged, named=named)
 
 
 async def deliver_to_owner(
@@ -662,18 +710,19 @@ async def deliver_to_owner(
     title: str,
     text: str,
     state: Any = None,
+    only: str = "",
 ) -> OwnerDelivery:
     """Deliver a notification for the owner: the first channel that reaches them, else the Inbox.
 
-    :func:`reach_owner` picks the channel. When channels are connected and none of them could
-    deliver, the notification goes to the Inbox (the native source, ``state`` or the one wired at
-    startup), ending with the sentence saying why each channel could not — it is never dropped.
-    With no channel connected at all nothing failed: the caller's dashboard delivery is the
-    delivery, and the Inbox is left alone.
+    :func:`reach_owner` picks the channel, or tries the one ``only`` names and no other. When that
+    channel, or every connected one, could not deliver, the notification goes to the Inbox (the
+    native source, ``state`` or the one wired at startup), ending with the sentence saying why — it
+    is never dropped. With no channel connected at all and none named, nothing failed: the caller's
+    dashboard delivery is the delivery, and the Inbox is left alone.
 
     ``title`` and ``text`` are what the Inbox item shows.
     """
-    outcome = await reach_owner(send)
+    outcome = await reach_owner(send, only=only)
     if outcome.delivered or outcome.no_channel:
         return outcome
     from personalclaw.inbox_providers.native_source import post_to_inbox

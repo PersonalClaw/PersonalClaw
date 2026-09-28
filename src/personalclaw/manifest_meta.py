@@ -263,6 +263,10 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "summary": "Send a notification to the user",
                 "args": {"text": "The nightly backup finished cleanly."},
             },
+            {
+                "summary": "Message the owner on the chat channel they named, and no other",
+                "args": {"text": "The nightly backup finished cleanly.", "via": "telegram"},
+            },
         ],
     },
     "notify_attachment": {
@@ -661,20 +665,24 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "error_codes": [],
         "examples": [{"summary": "List all remembered rules", "args": {}}],
     },
+    "triage_rules_list": {
+        "response_type": "memory.triage_rules.list",
+        "error_codes": [],
+        "examples": [{"summary": "List the triage rules the digest consults", "args": {}}],
+    },
     "triage_rules": {
-        # The taught approve/deny rules the proactive digest consults. `suppressed`
-        # is not an assertable verdict (a cooldown is derived from declines), so the
-        # examples only show what a caller may actually write.
+        # The rules the proactive digest consults. `suppressed` is not an assertable verdict
+        # (a cooldown is derived from declines) and only the owner teaches an approve rule, so
+        # the examples only show what a caller may actually write.
         "response_type": "memory.triage_rules",
         "error_codes": [],
         "examples": [
-            {"summary": "List the taught triage rules", "args": {"action": "list"}},
             {
-                "summary": "Always approve archiving newsletters",
+                "summary": "Stop proposing to archive newsletters",
                 "args": {
                     "action": "add",
                     "pattern": "archive:newsletter",
-                    "verdict": "approve",
+                    "verdict": "deny",
                 },
             },
             {
@@ -1074,6 +1082,15 @@ TOOL_META: dict[str, dict[str, Any]] = {
             {
                 "summary": "Create a scheduled automation",
                 "args": {"name": "Daily digest", "when": "every weekday at 9", "message": "digest"},
+            },
+            {
+                "summary": "Send the owner words on a schedule, on the chat channel they named",
+                "args": {
+                    "name": "Bin night",
+                    "when": "every Wednesday at 18:00",
+                    "say": "Bins out tonight.",
+                    "via": "telegram",
+                },
             },
         ],
     },

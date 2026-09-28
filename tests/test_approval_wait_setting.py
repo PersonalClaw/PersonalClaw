@@ -72,6 +72,17 @@ def test_the_registry_waits_what_the_setting_says(home, tmp_path):
     assert _make_state(tmp_path).approval_window_secs() == 1800.0
 
 
+def test_a_channel_app_reads_the_same_window_through_the_sdk(home):
+    """A channel that asks on its own, for a turn it runs itself, waits exactly as long: what the
+    SDK reports is the setting, read each time it is asked."""
+    from personalclaw.sdk.channel import approval_window_secs
+
+    _write_agent(home, approval_timeout_minutes=30)
+    assert approval_window_secs() == 1800.0
+    _write_agent(home, approval_timeout_minutes=90)
+    assert approval_window_secs() == 5400.0, "the window was read once and kept"
+
+
 def test_the_allowlist_declares_its_bounds():
     assert _EDITABLE_CONFIG["agent.approval_timeout_minutes"] == {
         "type": "int",

@@ -23,8 +23,10 @@ provider instance it drives the clauses the plan's §C4 names:
    the closed set; ``test()`` returns ``{ok: bool, detail: str}``, consistent with
    health.
 6. **unknown-sender flow** — an unpaired DM sender under the default ``pairing`` policy
-   is denied, gets the canned pairing reply, and raises exactly one owner attention item
-   (``kind="agent_request"``), deduped for a second message from the same sender.
+   is denied, gets the canned pairing reply, and raises exactly one actionable owner
+   notification (its ``allow``/``deny`` actions), deduped for a second message from the same
+   sender. A channel that declares ``speaks_as_owner`` is handed no reply for them at all,
+   and each of their messages is held for the owner (the kit holds it as the door does).
 7. **fencing of non-owner content** — tracked-group content from a non-owner sender
    comes back fenced (``security.is_fenced``), and the transport is asserted to consume
    ``verdict.fenced_text`` rather than the raw text.
@@ -32,7 +34,9 @@ provider instance it drives the clauses the plan's §C4 names:
    ``edits=True`` *and* the caller supplies a ``delivery`` + injectable clock: at most
    one edit per ``min_edit_interval``, and ``stop_stream`` force-flushes the exact final
    text. A transport declaring ``edits=False`` (email) is asserted the other way: its
-   ``start_stream`` must return ``""`` so core skips animation entirely.
+   ``start_stream`` must return ``""`` so core skips animation entirely. Either way a
+   streaming delivery takes every status core gives a call (``TASK_STATUSES``), the endings
+   an approval gives it included, not only ``in_progress`` and ``complete``.
 9. **vendor-seam completeness (ADVISORY)** — the only clause that WARNS instead of
    failing: a provider whose owning ``app.json`` registers a ``channel`` provider but not
    the companion seams gets a ``UserWarning`` naming the missing one (amendment 2026-07-26
@@ -42,6 +46,12 @@ provider instance it drives the clauses the plan's §C4 names:
    ``no_trigger_source_reason=`` when the vendor genuinely has no such semantics. See
    ``_warn_on_incomplete_vendor_seams`` for why an advisory rather than a failure, and
    ``docs/guides/build-a-channel-app.md`` for the checklist.
+10. **approval endings** — when the caller supplies ``press=`` (how the owner answers the
+   channel's prompt): the prompt hands core a pending record whose future core resolves
+   however the approval ends (``APPROVAL_ENDINGS``), and ``request_approval`` then returns
+   ``True`` for ``approved`` alone; a press after each ending changes nothing and is told how
+   THAT approval ended; the owner's press answers it either way; and a wait whose work stops
+   lets the cancellation through.
 
 Failures name the violated obligation, not just the expression, because the reader is
 usually an app author who has never seen this file.
@@ -280,6 +290,7 @@ def assert_channel_contract(
     inbound_via: str = "",
     no_inbox_source_reason: str = "",
     no_trigger_source_reason: str = "",
+    press: Any = None,
 ) -> None:
     """Assert ``provider`` honours the channel contract. Raises on the first violation.
 
@@ -315,6 +326,14 @@ def assert_channel_contract(
         parameter rather than one shared "seams I skip" string, because an app that has a
         real reason to skip one arm rarely has a reason to skip the other, and a single
         suppressor would silence a seam nobody had thought about.
+    :param press: how the owner answers this channel's approval prompt, as an async
+        ``press(pending, approve: bool) -> str``: given the pending record the delivery handed
+        ``on_prompted``, drive the app's OWN handler for the owner's Approve or Deny (a button
+        press, a reply), and return what the presser was told (``""`` when nothing was said).
+        Drive the handler rather than a fake's button: a fake that refuses a press on a message
+        whose buttons are gone would hide the late press this clause is about. Required, with a
+        ``delivery`` that can ask (its owner wired), to assert clause 10; the kit cannot press a
+        vendor's button itself.
     """
     _assert_identity(provider)
     _assert_capabilities(provider)
@@ -332,6 +351,8 @@ def assert_channel_contract(
             clock=clock,
             fake_backend=fake_backend,
         )
+        if press is not None:
+            _run(_assert_approval_endings(delivery, press))
     # Last, and advisory-only: a contract VIOLATION is the urgent signal, and prefacing a
     # red with a doctrine nag buries it. Runs through this entry point rather than as a
     # helper an apps-repo PR would have to adopt, so it is live for all four app suites
@@ -590,11 +611,24 @@ def _assert_unknown_sender_flow(provider: ChannelTransportProvider) -> None:
     Drives the real core seam (``guard_inbound``) against this provider's own
     ``name``, so a transport that picked a provider key core does not recognise fails
     here rather than at first contact with a stranger.
+
+    A channel that declares ``speaks_as_owner`` is handed NO canned reply: what it sends goes
+    out as the owner, so a stranger is answered by nobody but the owner. The kit holds the
+    stranger's message for the owner as the door does (``hold_for_owner``), since the notice
+    names only a message that was held.
     """
     clause = "unknown-sender"
     from personalclaw.channel_trust import CANNED_PAIRING_REPLY, guard_inbound, trust_policies
 
     key = provider.name
+    held: list[str] = []
+
+    def hold() -> bool:
+        """What the door does for a channel that speaks as its owner: the message is held."""
+        held.append(key)
+        return True
+
+    hold_for_owner = hold if provider.capabilities().speaks_as_owner else None
     policies = trust_policies(key)
     _require(
         policies.get("dm") == "pairing",
@@ -607,7 +641,13 @@ def _assert_unknown_sender_flow(provider: ChannelTransportProvider) -> None:
     sender = f"conformance-unknown-sender-{next(_fixture_seq)}"
     state = CapturingState()
     verdict = guard_inbound(
-        state, key, sender, sender_name="Conformance Stranger", is_dm=True, text="hello?"
+        state,
+        key,
+        sender,
+        sender_name="Conformance Stranger",
+        is_dm=True,
+        text="hello?",
+        hold_for_owner=hold_for_owner,
     )
     _require(
         verdict.allowed is False,
@@ -616,12 +656,20 @@ def _assert_unknown_sender_flow(provider: ChannelTransportProvider) -> None:
         f"guard_inbound returned allowed={verdict.allowed!r}. Never let unpaired text "
         "into a session.",
     )
-    _require(
-        verdict.canned_reply == CANNED_PAIRING_REPLY,
-        clause,
-        "the denial MUST carry the shared CANNED_PAIRING_REPLY so every channel says "
-        f"the same thing; got {verdict.canned_reply!r}.",
-    )
+    if hold_for_owner is not None:
+        _require(
+            verdict.canned_reply == "",
+            clause,
+            "a channel that speaks as the owner MUST be handed no reply to a stranger: it would "
+            f"go out in the owner's name, unasked; got {verdict.canned_reply!r}.",
+        )
+    else:
+        _require(
+            verdict.canned_reply == CANNED_PAIRING_REPLY,
+            clause,
+            "the denial MUST carry the shared CANNED_PAIRING_REPLY so every channel says "
+            f"the same thing; got {verdict.canned_reply!r}.",
+        )
     _require(
         verdict.fired_notification is True,
         clause,
@@ -650,7 +698,9 @@ def _assert_unknown_sender_flow(provider: ChannelTransportProvider) -> None:
     )
 
     # A chatty stranger must not flood: the second message is deduped in-store.
-    second = guard_inbound(state, key, sender, is_dm=True, text="hello again?")
+    second = guard_inbound(
+        state, key, sender, is_dm=True, text="hello again?", hold_for_owner=hold_for_owner
+    )
     _require(
         second.allowed is False and second.fired_notification is False,
         clause,
@@ -664,6 +714,14 @@ def _assert_unknown_sender_flow(provider: ChannelTransportProvider) -> None:
         f"the dedup MUST also suppress the second owner request; got "
         f"{len(state.with_actions())} actionable notifications after two messages.",
     )
+    if hold_for_owner is not None:
+        _require(
+            held == [key, key],
+            clause,
+            "every message from a stranger to a channel that speaks as the owner MUST be held "
+            "for the owner, the one the notice's window dedupes too: nothing else answers it. "
+            f"The gate held {len(held)} of 2.",
+        )
 
 
 # ── clause 7: fencing of non-owner content ──────────────────────────────────
@@ -845,6 +903,7 @@ def _assert_streaming(
     if min_edit_interval is None or clock is None:
         # Presence-only: the kit refuses to guess an app's throttle floor, and refuses
         # to sleep. Say so rather than pass silently on an unasserted obligation.
+        _assert_every_task_status(delivery)
         return
 
     _require(
@@ -902,6 +961,7 @@ def _assert_streaming(
         "— otherwise the last progress update is silently dropped and the user sees a "
         "stream frozen mid-run.",
     )
+    _assert_every_task_status(delivery)
 
 
 def _stream_edit_counter(delivery: Any, fake_backend: Any) -> Any:
@@ -927,6 +987,209 @@ def _stream_edit_counter(delivery: Any, fake_backend: Any) -> Any:
         "throttle clause would pass vacuously.",
     )
     return None  # pragma: no cover - _fail always raises
+
+
+def _assert_every_task_status(delivery: Any) -> None:
+    """A streaming delivery takes every status core gives a call, not only the first two.
+
+    ``TASK_STATUSES`` is how a call stands: running, how it ran, and how an approval that
+    stopped it ended. The throttle half drives ``in_progress`` and ``complete`` alone, so a
+    delivery that raised on ``rejected`` would have passed.
+    """
+    from personalclaw.channel_delivery import TASK_STATUSES
+
+    clause = "streaming"
+    stream_ts = _run(delivery.start_stream("conformance", "", "…"))
+    for index, status in enumerate(TASK_STATUSES):
+        try:
+            _run(
+                delivery.append_stream_task(
+                    "conformance", stream_ts, f"status-{index}", f"Step {index + 1}", status
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - the failure IS the finding, named
+            _fail(
+                clause,
+                f"append_stream_task raised for the status {status!r}: {exc!r}. Core gives a "
+                f"call every status in TASK_STATUSES ({', '.join(TASK_STATUSES)}).",
+            )
+    _run(delivery.stop_stream("conformance", stream_ts))
+
+
+# ── clause 10: approval endings ──────────────────────────────────────────────
+
+#: Approvals the kit asks are numbered per process, so a second run has fresh ids.
+_approval_seq = itertools.count(1)
+
+#: How long the kit waits for a prompt to be posted, or a wait to end, before failing.
+_APPROVAL_WAIT_SECS = 5.0
+
+
+def _conformance_approval_event() -> Any:
+    """An approval as core asks a channel for one: its brief stamped, as the dashboard shows it."""
+    from types import SimpleNamespace
+
+    from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY
+
+    brief = {
+        "tool": "write_file",
+        "input": '{"path": "notes.txt"}',
+        "purpose": "Save the meeting notes",
+        "summary": "Can: writes files · Risk: Caution",
+    }
+    return SimpleNamespace(
+        request_id=f"conformance-approval-{next(_approval_seq)}",
+        title=brief["tool"],
+        tool_input=brief["input"],
+        tool_purpose=brief["purpose"],
+        risk_level="caution",
+        tool_meta={APPROVAL_BRIEF_META_KEY: brief},
+    )
+
+
+async def _asked(delivery: Any) -> tuple[Any, "asyncio.Future[Any]"]:
+    """Ask for one approval, as core does, and return its pending record and the wait."""
+    clause = "approvals"
+    seen: list[Any] = []
+    wait = asyncio.ensure_future(
+        delivery.request_approval(
+            _conformance_approval_event(), source="conformance", on_prompted=seen.append
+        )
+    )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _APPROVAL_WAIT_SECS
+    while not seen and not wait.done() and loop.time() < deadline:
+        await asyncio.sleep(0.01)
+    if not seen:
+        answered: Any = "nothing, in time"
+        if wait.done() and not wait.cancelled():
+            answered = wait.exception() or wait.result()
+        elif not wait.done():
+            wait.cancel()
+        _fail(
+            clause,
+            "request_approval never handed core its pending record (on_prompted) — "
+            f"it answered {answered!r}. Core ends an approval through that record, so a prompt "
+            "without it can never be told how its approval ended. With press= given, wire the "
+            "delivery with an owner so it can ask.",
+        )
+    pending = seen[-1]
+    future = getattr(pending, "future", None)
+    _require(
+        isinstance(future, asyncio.Future) and not future.done(),
+        clause,
+        "the pending record MUST carry an unresolved asyncio.Future at `.future`: core "
+        f"resolves it with how the approval ended; got {future!r}.",
+    )
+    return pending, wait
+
+
+async def _ended(wait: "asyncio.Future[Any]", what: str) -> Any:
+    """The wait's answer, once its approval ended."""
+    try:
+        return await asyncio.wait_for(asyncio.shield(wait), _APPROVAL_WAIT_SECS)
+    except asyncio.TimeoutError:
+        wait.cancel()
+        _fail(
+            "approvals",
+            f"request_approval did not return once {what}: the wait MUST end when its "
+            "approval does, and keep no clock of its own.",
+        )
+
+
+def _outcome(future: "asyncio.Future[Any]") -> Any:
+    """What a pending record's future reads: its result, else what stands in its place."""
+    if not future.done():
+        return "unresolved"
+    if future.cancelled():
+        return "the future itself cancelled"
+    return future.exception() or future.result()
+
+
+async def _pressed(press: Any, pending: Any, approve: bool, when: str) -> Any:
+    """What the presser was told, the press itself failing named rather than erroring out."""
+    try:
+        return await press(pending, approve)
+    except Exception as exc:  # noqa: BLE001 - the failure IS the finding, named
+        _fail(
+            "approvals",
+            f"the owner's {'Approve' if approve else 'Deny'} {when} raised {exc!r}: a press MUST "
+            "be answered, whatever it finds.",
+        )
+
+
+async def _assert_approval_endings(delivery: Any, press: Any) -> None:
+    """Clause 10: however an approval ends, the prompt is told, and a late press changes nothing."""
+    from personalclaw.channel_delivery import APPROVAL_ENDINGS
+
+    clause = "approvals"
+    told_late: dict[str, str] = {}
+    for ending in APPROVAL_ENDINGS:
+        pending, wait = await _asked(delivery)
+        pending.future.set_result(ending)  # core ends it: answered elsewhere, expired, cancelled
+        answer = await _ended(wait, f"core ended it {ending!r}")
+        _require(
+            answer is (ending == "approved"),
+            clause,
+            f"an approval that ended {ending!r} MUST make request_approval return "
+            f"{ending == 'approved'!r} (True for 'approved' alone); got {answer!r}.",
+        )
+        told = await _pressed(press, pending, True, f"after the approval ended {ending!r}")
+        _require(
+            _outcome(pending.future) == ending,
+            clause,
+            f"a press after the approval ended {ending!r} MUST change nothing; the record now "
+            f"reads {_outcome(pending.future)!r}.",
+        )
+        _require(
+            isinstance(told, str) and told.strip(),
+            clause,
+            f"a press after the approval ended {ending!r} MUST be told how it ended, not taken "
+            f"for an answer and not left unanswered; the presser was told {told!r}.",
+        )
+        told_late[ending] = told
+    _require(
+        len(set(told_late.values())) == len(told_late),
+        clause,
+        "a press after an approval ended MUST be told how THAT approval ended; different "
+        f"endings were answered alike: {told_late!r}.",
+    )
+
+    for approve, want in ((True, "approved"), (False, "rejected")):
+        pending, wait = await _asked(delivery)
+        await _pressed(press, pending, approve, "on a waiting prompt")
+        for _ in range(100):  # a press may resolve the record on the loop's next turn
+            if pending.future.done():
+                break
+            await asyncio.sleep(0.01)
+        _require(
+            _outcome(pending.future) == want,
+            clause,
+            f"the owner's {'Approve' if approve else 'Deny'} MUST resolve the approval "
+            f"{want!r}; the record reads {_outcome(pending.future)!r}.",
+        )
+        answer = await _ended(wait, f"the owner pressed {'Approve' if approve else 'Deny'}")
+        _require(
+            answer is approve,
+            clause,
+            f"after the owner's {want!r} press request_approval MUST return {approve!r}; "
+            f"got {answer!r}.",
+        )
+
+    pending, wait = await _asked(delivery)
+    wait.cancel()
+    try:
+        await asyncio.wait_for(wait, _APPROVAL_WAIT_SECS)
+    except asyncio.CancelledError:
+        pass
+    except asyncio.TimeoutError:
+        _fail(clause, "a cancelled wait did not end: the work that asked has stopped.")
+    else:
+        _fail(
+            clause,
+            "a wait whose work stopped was cancelled, and request_approval swallowed it: the "
+            "cancellation MUST go through, so the stop reaches the work that asked.",
+        )
 
 
 # ── clause 9: vendor-seam completeness (ADVISORY — warns, never fails) ──────

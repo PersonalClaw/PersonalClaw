@@ -126,6 +126,12 @@ async def test_list_tools_generates_only_agent_callable_routes(tmp_path):
     assert tools["app_demo_get_item"].risk_level is RiskLevel.CAUTION
     assert tools["app_demo_create_item"].risk_level is RiskLevel.CAUTION
     assert tools["app_demo_delete_item"].risk_level is RiskLevel.DESTRUCTIVE
+    # The declared read asks nobody, like an SDK tool that declares `RiskLevel.SAFE`, so the
+    # postures that run reads without anyone to ask can run it; every other route asks.
+    assert tools["app_demo_list_items"].requires_approval is False
+    assert tools["app_demo_get_item"].requires_approval is True
+    assert tools["app_demo_create_item"].requires_approval is True
+    assert tools["app_demo_delete_item"].requires_approval is True
     assert tools["app_demo_list_items"].provider == ar.PROVIDER_NAME
     assert tools["app_demo_list_items"].description == "List items."
 

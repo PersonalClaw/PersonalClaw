@@ -545,8 +545,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 ' want this — pick "channel" only if the message should specifically'
                 " reach the messaging channel and not the spawning chat)."
                 "\n  omitted + non-cron caller → owner channel (default behavior)."
-                "\n\nExplicit channel=... or user=... always wins and suppresses"
+                "\n\nExplicit channel=..., user=... or via=... always wins and suppresses"
                 " the auto-default."
+                "\n\nvia: when the owner named the chat channel to reach them on ('message me"
+                " on Telegram'), give its name. Only that channel sends it."
             ),
             "inputSchema": {
                 "type": "object",
@@ -572,6 +574,17 @@ def _list_tools() -> list[dict[str, Any]]:
                     "user": {
                         "type": "string",
                         "description": "Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.",  # noqa: E501
+                    },
+                    "via": {
+                        "type": "string",
+                        "description": (
+                            "The chat channel to send it on, by its name (e.g. 'telegram'), when "
+                            "the owner named one. Only that channel is used: when it cannot "
+                            "deliver, the message goes to the owner's Inbox saying why, never to "
+                            "another channel. A name that is not a chat channel set up here is "
+                            "refused with the ones that are, so you can ask which. Omit it to "
+                            "reach the owner on the first connected channel that knows them."
+                        ),
                     },
                     "unfurl_links": {
                         "type": "boolean",
@@ -1217,6 +1230,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             payload["channel"] = args["channel"]
         if args.get("user"):
             payload["user"] = args["user"]
+        if args.get("via"):
+            payload["via"] = args["via"]
         if "unfurl_links" in args:
             payload["unfurl_links"] = args["unfurl_links"]
         if "unfurl_media" in args:
@@ -1230,7 +1245,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # full version). Default for cron callers that didn't set any of
         # session/channel/user: auto-apply session="origin" so the message
         # injects into the spawning chat. Explicit session="channel" opts out
-        # and routes to the owner's messaging channel. Explicit channel/user
+        # and routes to the owner's messaging channel. Explicit channel/user/via
         # always wins.
         # ───────────────────────────────────────────────────────────────
         caller_session_env = os.environ.get("PERSONALCLAW_SESSION_KEY", "")
@@ -1238,6 +1253,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             not args.get("session")
             and not args.get("channel")
             and not args.get("user")
+            and not args.get("via")
             and caller_session_env.startswith("cron:")
         ):
             args = {**args, "session": "origin"}
@@ -1250,7 +1266,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 payload["caller_session"] = caller_session
         resp = _post("/api/send-message", payload)
         if not resp.get("ok"):
-            return f"Failed: {resp}"
+            # A refusal says so by its type; the gateway's sentence, when it sent one, is the
+            # reason (a channel not set up here names the ones that are).
+            return tool_failure(str(resp.get("error") or resp))
         if resp.get("session"):
             return "Message injected into target session."
         if resp.get("inbox"):

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw import approval_answer
 from personalclaw.approval_answer import AnswerRefused, Principal
+from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
@@ -71,7 +72,8 @@ SESSION_APPROVAL_ACTIONS = frozenset(
 #: does not run, but neither is "denied": that word states a decision a person made, and the two
 #: surfaces that used to say it for a stopped turn (the live card and, after a reload, a card
 #: whose buttons could no longer deliver anything) were each telling the user something untrue.
-APPROVAL_OUTCOMES = frozenset({"approved", "rejected", "expired", "cancelled"})
+#: The vocabulary is the channel contract's, so a channel's prompt is told the same four words.
+APPROVAL_OUTCOMES = frozenset(APPROVAL_ENDINGS)
 #: The two ways an approval ends without an answer. Also the two values a chat transcript's
 #: permission row records for them, so a reload renders what happened instead of a live card.
 UNANSWERED_OUTCOMES = frozenset({"expired", "cancelled"})

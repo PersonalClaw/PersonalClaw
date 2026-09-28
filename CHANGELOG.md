@@ -11,6 +11,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **An app can say why its media features fail: `personalclaw.sdk.stt.SttError`, `unavailable_reason()` on speech-to-text and embedding providers, and `personalclaw.sdk.net.sentence_with_detail` (SDK additions no app has to change for; `bedrock-models` uses all three, and `openrouter-models`, `google-models`, `alibaba-models`, `git-sync`, `dir-sync`, `rsync-sync`, `s3-sync` and `vector-store-qdrant` use `sentence_with_detail`).**
+- **The channel conformance kit checks how each approval ends and what a press after it is told, and every task status a stream is given: `assert_channel_contract(press=…)`, used by `telegram-channel`, `discord-channel`, `slack-channel` and `email-channel`.**
+
+- **A channel app can say it sends as you, not as a bot, and then answers no stranger: `ChannelCapabilities.speaks_as_owner`, used by `email-channel`.**
+
+- **A channel app waits for an approval as long as PersonalClaw does: `personalclaw.sdk.channel.approval_window_secs()`, used by `slack-channel`.**
 
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
@@ -48,6 +53,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Validation warns about words on a gate that its kind never shows anyone.**
 
 ### Changed
+
+- **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
 
 - **`note_unknown_sender` loses its unused `silent` argument.**
 - **`make build` is the one distribution build, and it proves what it built.**
@@ -93,6 +100,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Every change of the embedding model re-embeds what it has not: its provider removed, a local model bound in setup, a binding another process wrote, and a model not ready yet, once it is.**
 
 - **A re-embed that stops partway keeps what it did, and leaves no search index holding the previous model's vectors.**
+
+- **A tool that only reads no longer asks for approval: a chat stops asking about recalling memory or a workflow's status, and a run with nobody to ask uses them.**
+
+- **A message you ask for on one chat channel goes out there and on no other: "message me on Telegram" no longer lands on Discord.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
@@ -379,6 +390,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
+- **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

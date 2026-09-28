@@ -325,6 +325,59 @@ def test_kit_notices_a_non_default_dm_policy(tmp_path):
         assert_channel_contract(GoodTransport())
 
 
+class OwnerVoiceTransport(GoodTransport):
+    """A channel whose messages go out as the owner (their own mailbox)."""
+
+    @property
+    def name(self) -> str:
+        return "conformance-owner-voice"
+
+    def capabilities(self) -> ChannelCapabilities:
+        return ChannelCapabilities(speaks_as_owner=True)
+
+
+def test_a_channel_that_speaks_as_the_owner_is_handed_no_reply_for_a_stranger():
+    assert_channel_contract(OwnerVoiceTransport())
+
+
+def test_the_kit_catches_a_gate_that_answers_a_stranger_in_the_owners_name(monkeypatch):
+    """🔴 The mailbox case: a reply to a stranger from the owner's own address."""
+    from personalclaw import channel_trust as ct
+
+    real = ct.guard_inbound
+
+    def answers_anyway(*args, **kwargs):
+        verdict = real(*args, **kwargs)
+        verdict.canned_reply = ct.CANNED_PAIRING_REPLY
+        return verdict
+
+    monkeypatch.setattr(ct, "guard_inbound", answers_anyway)
+    with pytest.raises(ChannelContractError, match=r"\[unknown-sender\].*speaks as the owner"):
+        assert_channel_contract(OwnerVoiceTransport())
+
+
+def test_the_kit_catches_a_strangers_message_that_nobody_holds(monkeypatch):
+    """The second message, inside the notice's window, is held too: nothing else answers it."""
+    from personalclaw import channel_trust as ct
+
+    real = ct.guard_inbound
+    holds: list[int] = []
+
+    def dropped() -> bool:
+        return False
+
+    def holds_the_first_only(*args, hold_for_owner=None, **kwargs):
+        if hold_for_owner is not None:
+            holds.append(1)
+            if len(holds) > 1:
+                hold_for_owner = dropped  # the mutant: this message is held for nobody
+        return real(*args, hold_for_owner=hold_for_owner, **kwargs)
+
+    monkeypatch.setattr(ct, "guard_inbound", holds_the_first_only)
+    with pytest.raises(ChannelContractError, match=r"\[unknown-sender\].*held 1 of 2"):
+        assert_channel_contract(OwnerVoiceTransport())
+
+
 def test_capturing_state_records_actionable_notifications():
     state = CapturingState()
     state.notify("agent_request", "t", "b", meta={"actions": ["allow", "deny"]})
@@ -645,6 +698,237 @@ def test_partial_streaming_trio_fails():
 
     with pytest.raises(ChannelContractError, match=r"\[streaming\].*stop_stream"):
         assert_channel_contract(StreamingTransport(), delivery=NoStop(_FakeBackend()))
+
+
+@pytest.mark.parametrize("wired", [True, False], ids=["throttled", "presence-only"])
+def test_a_stream_that_takes_only_the_first_two_statuses_fails(wired):
+    """🔴 The kit drove `in_progress` and `complete` alone, so this delivery passed."""
+
+    class TwoStatuses(GoodDelivery):
+        async def append_stream_task(self, channel, stream_ts, task_id, title, status):
+            if status not in ("in_progress", "complete"):
+                raise ValueError(f"unknown status {status}")
+            await super().append_stream_task(channel, stream_ts, task_id, title, status)
+
+    d = TwoStatuses(_FakeBackend())
+    kwargs = _wire(d) if wired else {"delivery": d}
+    with pytest.raises(ChannelContractError, match=r"\[streaming\].*status 'failed'"):
+        assert_channel_contract(StreamingTransport(), **kwargs)
+
+
+def test_every_status_reaches_the_stream():
+    d = GoodDelivery(_FakeBackend())
+    seen: list[str] = []
+    real = d.append_stream_task
+
+    async def recording(channel, stream_ts, task_id, title, status):
+        seen.append(status)
+        await real(channel, stream_ts, task_id, title, status)
+
+    d.append_stream_task = recording  # type: ignore[method-assign]
+    assert_channel_contract(StreamingTransport(), **_wire(d))
+
+    from personalclaw.channel_delivery import TASK_STATUSES
+
+    assert set(TASK_STATUSES) <= set(seen)
+
+
+# ── clause 10: approval endings ─────────────────────────────────────────────
+
+
+class _Pending:
+    def __init__(self, request_id: str) -> None:
+        import asyncio
+
+        self.request_id = request_id
+        self.future = asyncio.get_running_loop().create_future()
+
+
+_LATE = {
+    "approved": "Already approved. This press changes nothing.",
+    "rejected": "Already rejected. This press changes nothing.",
+    "expired": "Nobody answered in time, so it did not run.",
+    "cancelled": "Cancelled: the work that asked for it stopped first.",
+}
+
+
+class PromptingDelivery(GoodDelivery):
+    """Asks, waits for the approval to end however it ends, and answers a late press."""
+
+    def __init__(self, backend: _FakeBackend) -> None:
+        super().__init__(backend)
+        self.waiting: dict[str, _Pending] = {}
+        self.ended: dict[str, str] = {}
+
+    async def request_approval(self, event, *, source, on_prompted=None, **kw):
+        pending = _Pending(str(event.request_id))
+        self.waiting[pending.request_id] = pending
+        await self.deliver_text("owner-dm", f"Approve {event.title}?")
+        if on_prompted:
+            on_prompted(pending)
+        try:
+            outcome = await pending.future
+        finally:
+            self.waiting.pop(pending.request_id, None)
+        self.ended[pending.request_id] = outcome
+        return outcome == "approved"
+
+    async def on_press(self, request_id: str, approve: bool) -> str:
+        """The app's own press handler."""
+        pending = self.waiting.get(request_id)
+        if pending is None or pending.future.done():
+            return _LATE.get(self.ended.get(request_id, ""), "No longer waiting.")
+        pending.future.set_result("approved" if approve else "rejected")
+        return ""
+
+
+def _press(delivery: PromptingDelivery):
+    async def press(pending, approve: bool) -> str:
+        return await delivery.on_press(pending.request_id, approve)
+
+    return press
+
+
+def _approvals(delivery: PromptingDelivery, **overrides):
+    return {"delivery": delivery, "press": _press(delivery), **overrides}
+
+
+def test_a_delivery_whose_approvals_end_as_core_ends_them_passes():
+    d = PromptingDelivery(_FakeBackend())
+    assert_channel_contract(StreamingTransport(), **_approvals(d))
+    assert sorted(d.ended.values()) == sorted(
+        ["approved", "rejected", "expired", "cancelled", "approved", "rejected"]
+    )
+
+
+def test_without_a_press_the_endings_are_not_asserted():
+    """The kit cannot press a vendor's button itself: GoodDelivery asks nobody and passes."""
+    assert_channel_contract(StreamingTransport(), delivery=GoodDelivery(_FakeBackend()))
+
+
+def test_a_prompt_that_never_hands_core_its_record_fails():
+    class Mute(PromptingDelivery):
+        async def request_approval(self, event, *, source, on_prompted=None, **kw):
+            return None
+
+    d = Mute(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*never handed core"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_record_without_a_future_fails():
+    class NoFuture(PromptingDelivery):
+        async def request_approval(self, event, *, source, on_prompted=None, **kw):
+            on_prompted(types.SimpleNamespace(request_id=event.request_id))
+            return None
+
+    d = NoFuture(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*asyncio.Future"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_an_approval_that_expired_read_as_approved_fails():
+    class Yes(PromptingDelivery):
+        async def request_approval(self, event, **kw):
+            await super().request_approval(event, **kw)
+            return True
+
+    d = Yes(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*ended 'rejected' MUST make"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_wait_with_a_clock_of_its_own_fails(monkeypatch):
+    """A prompt that ends on core's word only after a timer of its own: the wait lags the end."""
+    import asyncio
+
+    from personalclaw.testing import channel_conformance as kit
+
+    monkeypatch.setattr(kit, "_APPROVAL_WAIT_SECS", 0.2)
+
+    class OwnClock(PromptingDelivery):
+        async def request_approval(self, event, **kw):
+            answer = await super().request_approval(event, **kw)
+            await asyncio.sleep(1)
+            return answer
+
+    d = OwnClock(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*did not return once"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_late_press_taken_for_an_answer_fails():
+    class Racy(PromptingDelivery):
+        async def on_press(self, request_id, approve):
+            # Answers the record whatever state it is in: a press after the end raises.
+            pending = self.waiting.get(request_id) or self._last
+            pending.future.set_result("approved" if approve else "rejected")
+            return "Recorded"
+
+        async def request_approval(self, event, *, source, on_prompted=None, **kw):
+            def remember(pending):
+                self._last = pending
+                on_prompted(pending)
+
+            return await super().request_approval(event, source=source, on_prompted=remember)
+
+    d = Racy(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*raised InvalidStateError"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_late_press_left_unanswered_fails():
+    class Silent(PromptingDelivery):
+        async def on_press(self, request_id, approve):
+            await super().on_press(request_id, approve)
+            return ""
+
+    d = Silent(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*MUST be told how it ended"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_late_presses_told_alike_whatever_ended_fail():
+    class OneAnswer(PromptingDelivery):
+        async def on_press(self, request_id, approve):
+            told = await super().on_press(request_id, approve)
+            return "This approval is closed." if told else ""
+
+    d = OneAnswer(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*answered alike"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_press_that_answers_nothing_fails(monkeypatch):
+    from personalclaw.testing import channel_conformance as kit
+
+    monkeypatch.setattr(kit, "_APPROVAL_WAIT_SECS", 0.2)
+
+    class Deaf(PromptingDelivery):
+        async def on_press(self, request_id, approve):
+            pending = self.waiting.get(request_id)
+            if pending is not None and not pending.future.done():
+                return ""  # the owner's press, dropped
+            return await super().on_press(request_id, approve)
+
+    d = Deaf(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*MUST resolve the approval"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
+
+
+def test_a_wait_that_swallows_its_cancellation_fails():
+    import asyncio
+
+    class Swallows(PromptingDelivery):
+        async def request_approval(self, event, **kw):
+            try:
+                return await super().request_approval(event, **kw)
+            except asyncio.CancelledError:
+                return False
+
+    d = Swallows(_FakeBackend())
+    with pytest.raises(ChannelContractError, match=r"\[approvals\].*swallowed it"):
+        assert_channel_contract(StreamingTransport(), **_approvals(d))
 
 
 # ── clause 9: vendor-seam completeness (advisory) ───────────────────────────

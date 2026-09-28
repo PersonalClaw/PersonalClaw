@@ -37,11 +37,18 @@
             "help": "Optional bold heading above the message."
           }
         },
+        "via": {
+          "type": "string",
+          "x-meta": {
+            "label": "Send on",
+            "help": "Optional chat channel to send it on, by name, like Telegram. Only that channel sends it; when it can't, the message goes to your Inbox saying why. Empty: the first connected channel that knows you."
+          }
+        },
         "channel": {
           "type": "string",
           "x-meta": {
             "label": "Channel ID",
-            "help": "Optional channel to post to. Empty + no user \u2192 DM the owner.",
+            "help": "Optional channel to post to, on the channel Send on names when it is set. Empty + no user \u2192 DM the owner.",
             "tags": [
               "advanced"
             ]
@@ -51,7 +58,7 @@
           "type": "string",
           "x-meta": {
             "label": "User ID",
-            "help": "Optional user to DM (when no channel set).",
+            "help": "Optional user to DM (when no channel set), on the channel Send on names when it is set.",
             "tags": [
               "advanced"
             ]

@@ -121,7 +121,7 @@ export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => vo
     <div className="space-y-2xl">
       <PanelHeader
         title="Sender trust"
-        hint="Who can talk to your agent through each chat channel, and what happens to people and groups it doesn't know. You let someone in with a pairing code they send the bot, or with Allow on the notification when they message it."
+        hint="Who can talk to your agent through each chat channel, and what happens to people and groups it doesn't know. You let someone in with a pairing code they send the bot. On a channel that sends as you, like email, a stranger is sent nothing: their message waits in your Inbox, where you can pair them."
       />
 
       {providers.length === 0 ? (

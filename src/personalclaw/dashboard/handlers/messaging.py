@@ -447,15 +447,18 @@ def _is_owner_user(owner_id: str, user_id: str) -> bool:
     )
 
 
-def _is_tracked_channel(state: "DashboardState", channel_id: str) -> bool:
-    """Whether a channel is in the ACTIVE channel app's outbound allowlist.
+def _is_tracked_channel(state: "DashboardState", channel_id: str, provider: str = "") -> bool:
+    """Whether a channel is in the ACTIVE channel app's outbound allowlist — ``provider``'s when
+    the message names its chat channel.
 
     The channel app owns its tracked-channel config; core
     consults it through the provider-agnostic ChannelDelivery seam. No channel
     connected → nothing is tracked (deny-by-default)."""
     if not channel_id:
         return False
-    delivery = getattr(state, "channel_delivery", None)
+    from personalclaw.channel_delivery import delivery_for
+
+    delivery = delivery_for(provider) if provider else getattr(state, "channel_delivery", None)
     if delivery is None or not hasattr(delivery, "is_tracked_channel"):
         return False
     try:
@@ -470,13 +473,19 @@ async def api_send_message(request: web.Request) -> web.Response:
 
     Authorization is channel-agnostic: owner-only user access + a config-backed
     tracked-channel allowlist. No import of any channel app — delivery goes through
-    the provider-agnostic ``state.channel_delivery`` (:class:`ChannelDelivery`)."""
+    the provider-agnostic ``state.channel_delivery`` (:class:`ChannelDelivery`).
+
+    ``via`` names the chat channel the message goes out on, the one the owner asked for ("message
+    me on Telegram"): that channel alone, for the owner's DM and for a channel or user id. When it
+    cannot deliver, the message goes to the Inbox saying why; a name that is not a chat channel set
+    up here is refused with the ones that are, and nothing is sent."""
     from personalclaw.validation import CHANNEL_ID_RE, USER_ID_RE  # noqa: F811
 
     _owner = getattr(request.app["state"], "owner_id", "") or ""
+    via = ""
 
     def is_tracked_channel(channel_id: str) -> bool:
-        return _is_tracked_channel(request.app["state"], channel_id)
+        return _is_tracked_channel(request.app["state"], channel_id, via)
 
     def is_allowed_user(user_id: str) -> bool:
         return _is_owner_user(_owner, user_id)
@@ -523,6 +532,18 @@ async def api_send_message(request: web.Request) -> web.Response:
     # Fail fast: mutual exclusion before any redaction/regex work
     if target_channel and target_user:
         return web.json_response({"error": "specify channel or user, not both"}, status=400)
+
+    named = body.get("via")
+    if named is not None and not isinstance(named, str):
+        return web.json_response({"error": "via must be a chat channel's name"}, status=400)
+    if named and named.strip():
+        from personalclaw.channel_delivery import named_chat_channel
+
+        via, problem = named_chat_channel(named)
+        if problem:
+            # 200 with the sentence, not an error status: the MCP tool reads this body, and an
+            # error status reaches it only as its status line. Nothing was sent anywhere.
+            return web.json_response({"ok": False, "error": problem, "channel": False})
 
     # Validate format first, then redact
     if target_channel and not CHANNEL_ID_RE.match(target_channel):
@@ -724,21 +745,32 @@ async def api_send_message(request: web.Request) -> web.Response:
                     reply_broadcast=reply_broadcast,
                 )
 
-            if state.channel_delivery:
+            # A named channel is tried even with none connected: that it is not is the reason the
+            # message says, rather than a dashboard note standing in for the channel asked for.
+            if state.channel_delivery or via:
                 try:
-                    delivery = state.channel_delivery
+                    from personalclaw.channel_delivery import channel_shown_as, delivery_for
+
+                    delivery = delivery_for(via) if via else state.channel_delivery
                     if target_channel or target_user:
-                        channel = target_channel or await delivery.open_dm(target_user)
-                        if channel:
+                        if delivery is None:
                             channel_attempted = True
-                            channel_ts = await _send(delivery, channel)
-                            sent_channel = True
+                            channel_error = f"{channel_shown_as(via)} isn't connected"
+                        else:
+                            channel = target_channel or await delivery.open_dm(target_user)
+                            if channel:
+                                channel_attempted = True
+                                channel_ts = await _send(delivery, channel)
+                                sent_channel = True
                     else:
-                        # The owner's DM, on the first channel that reaches the owner — the
-                        # message through the same handle that opened it — else the Inbox.
+                        # The owner's DM, on the channel named or else the first channel that
+                        # reaches the owner — the message through the same handle that opened
+                        # it — else the Inbox.
                         from personalclaw.channel_delivery import deliver_to_owner
 
-                        owner = await deliver_to_owner(_send, title=title, text=text, state=state)
+                        owner = await deliver_to_owner(
+                            _send, title=title, text=text, state=state, only=via
+                        )
                         channel_attempted = not owner.no_channel
                         sent_channel = owner.delivered
                         channel_ts = owner.result if owner.delivered else None
@@ -754,6 +786,8 @@ async def api_send_message(request: web.Request) -> web.Response:
             thread_hint = " threaded=1" if thread_ts else ""
             if reply_broadcast:
                 thread_hint += " broadcast=1"
+            if via:
+                thread_hint += f" via={via}"
             base_res = (
                 f"target_channel={target_channel} target_user={target_user}"
                 if (target_channel or target_user)

@@ -31,8 +31,6 @@ Fetch a saved artifact's content by slug. Pass version=N for a historical snapsh
 
 **Response type:** `artifact.detail`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `slug` (string, required)
 - `version` (integer, optional) — Snapshot number (omit for live)
@@ -50,8 +48,6 @@ Fetch a saved artifact's content by slug. Pass version=N for a historical snapsh
 List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, collection, or a text query q.
 
 **Response type:** `artifact.list`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `collection` (string, optional)
@@ -126,8 +122,6 @@ Update a saved artifact by slug, creating a new version snapshot (each agent upd
 List the numbered snapshot versions of an artifact by slug.
 
 **Response type:** `artifact.versions`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `slug` (string, required)
@@ -209,8 +203,6 @@ Generate a real Word document (.docx) from MARKDOWN and save it as a versioned a
 List the document formats this instance can actually generate right now. Check before promising the user a format.
 
 **Response type:** `text`
-
-**Safety:** requires approval
 
 **Parameters:**
 - _(no parameters)_
@@ -300,8 +292,6 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 **Response type:** `genui.widget`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `data` (string, required) — The data to visualize: JSON text (an object or array), or plain text
 - `hint` (string, optional) — How to present it (chart type, framing, emphasis)
@@ -320,7 +310,7 @@ Turn structured DATA into a generative-UI widget (charts, stat tiles, tables, ca
 
 ### `automation_create`
 
-Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'at 5pm', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a time runs it once at that time, in the owner's timezone, a cadence becomes a repeating schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). Announced to you on creation with the time it read, and capped by workflows.self_schedule_max_outstanding. It does not run until the owner allows it on the Triggers page, so tell them it is waiting.
+Create an automation from ONE natural-language message. Use for 'when a file in ~/notes changes', 'every weekday at 9', 'at 5pm', 'when my nightly run finishes'. The `when` phrase is routed to the right trigger kind (file/clock/web_watch/…) — a time runs it once at that time, in the owner's timezone, a cadence becomes a repeating schedule, an event becomes an event trigger. Give `when` + `name` + `message` (what the automation should do). When it is to send the owner words they gave ('message me …: …', 'remind me …: …'), give them in `say` instead of `message`: they go out as written, and no agent runs. When the owner named the chat channel ('on Telegram'), give it in `via`: it sends there and on no other channel. Announced to you on creation with the time it read, and capped by workflows.self_schedule_max_outstanding. It does not run until the owner allows it on the Triggers page, so tell them it is waiting.
 
 **Response type:** `automation.create.result`
 
@@ -330,7 +320,9 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
 - `kind` (string, optional) — Optional explicit kind, bypassing NL routing (file/clock/event/web_watch/idle/webhook/run_completed).
 - `message` (string, optional) — What the automation should do when it fires.
 - `name` (string, required) — A short name for the automation.
+- `say` (string, optional) — Words to send the owner each time it fires, as written, instead of a `message` for an agent: 'Bins out tonight.'
 - `spec` (string, optional) — Optional explicit trigger spec when `kind` is given, as JSON text (one object). For kind `event`: {"pattern": P} plus the one matcher key P reads, P one of MemoryUpdate, MemoryKeyPattern (key_glob), ContentMatch (content_re), InboxMessage, InboxSender (sender_glob), InboxAddress (address_glob), AppEvent (event_glob); the source is derived from the pattern.
+- `via` (string, optional) — The chat channel to send `say` on, by its name (e.g. 'telegram'), when the owner named one. Only that channel sends it: when it cannot, the words go to the owner's Inbox saying why, never to another channel. A name that is not a chat channel set up here is refused with the ones that are, so you can ask which. Omit it to reach the owner on the first connected channel that knows them.
 - `when` (string, optional) — Plain English for WHEN it runs: one time ('at 5pm', 'tomorrow at 9am', 'in 20 minutes'), a cadence ('every weekday at 9') or an event ('when a file in ~/notes changes').
 
 **Example — Create a file-watch automation in one message:**
@@ -350,6 +342,17 @@ Create an automation from ONE natural-language message. Use for 'when a file in 
   "message": "digest",
   "name": "Daily digest",
   "when": "every weekday at 9"
+}
+```
+
+**Example — Send the owner words on a schedule, on the chat channel they named:**
+
+```json
+{
+  "name": "Bin night",
+  "say": "Bins out tonight.",
+  "via": "telegram",
+  "when": "every Wednesday at 18:00"
 }
 ```
 
@@ -399,8 +402,6 @@ Recent run/fire rows for an automation, with typed outcomes — to self-debug wh
 
 **Response type:** `automation.history.result`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `id` (string, required) — The automation id (e.g. 'file:my-notes').
 - `n` (integer, optional) — How many rows (default 10).
@@ -419,8 +420,6 @@ Recent run/fire rows for an automation, with typed outcomes — to self-debug wh
 List automations with health rollups. Optional `kind` and `state` ('active'/'paused') filters. Broken rows are shown, not hidden.
 
 **Response type:** `automation.list.result`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `kind` (string, optional)
@@ -531,7 +530,7 @@ Patch an automation. Only settable fields apply (name, spec, gates, workflow, en
 
 ### `set_onetime_task`
 
-Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning' — and to remind the owner of something at a time ('remind me at 5pm to call Sam': put what to tell them in `message`). The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
+Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you need to wait for something outside this turn — 'check the build in 20 minutes', 'follow up tomorrow morning' — and to remind the owner of something at a time ('remind me at 5pm to call Sam': put what to tell them in `message`). When the owner named the chat channel for it ('remind me on Telegram …'), use automation_create with `say` and `via` instead: a task cannot choose the channel its reply reaches them on. The task wakes you with `message` as the instruction. Counts against your outstanding-task allowance; it frees a slot when it fires, since a one-time task disables itself. It does not run until the owner allows it on the Triggers page, unless it wakes a parked run (`resume_run_id`), which needs no allowing.
 
 **Response type:** `automation.create.result`
 
@@ -627,8 +626,6 @@ List the desktop applications this machine will let you drive. Requires the oper
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
-
 **Parameters:**
 - _(no parameters)_
 
@@ -722,8 +719,6 @@ Walk one application's front window into an indexed accessibility tree. Returns 
 
 **Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `app` (string, required) — Exact application name, as computer_list_apps spells it.
 
@@ -789,8 +784,6 @@ PROPOSE a saved artifact as a dashboard tile on the user's composable home. The 
 Call at the START of every task to load this project's routed context. Returns, in lost-in-the-middle order: hard RULES & directives (the project brief + operating procedure) at the top; then scored mid-tier content — how this user works (memory-derived lessons/preferences), the skills available here, and titled pointers to reference material (knowledge items — retrieve a body on demand, never inlined); and at the bottom an L0 CATALOG of what was NOT loaded, each with the tool/route that pulls it (memory_recall, skill_invoke, GET /api/knowledge/items). Optionally pass a `query` to score the mid tier against the task at hand, and a `project_id` to target a specific project (defaults to this session's project). Read-only: never writes to memory or knowledge.
 
 **Response type:** `context.routed.manifest`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `project_id` (string, optional) — Target project id (e.g. 'p-1a2b3c4d'). Omit to use the current session's bound project, else the Personal default.
@@ -866,7 +859,9 @@ session param:
   omitted + cron caller → auto-applies "origin" (you usually want this — pick "channel" only if the message should specifically reach the messaging channel and not the spawning chat).
   omitted + non-cron caller → owner channel (default behavior).
 
-Explicit channel=... or user=... always wins and suppresses the auto-default.
+Explicit channel=..., user=... or via=... always wins and suppresses the auto-default.
+
+via: when the owner named the chat channel to reach them on ('message me on Telegram'), give its name. Only that channel sends it.
 
 **Response type:** `notify.result`
 
@@ -883,12 +878,22 @@ Explicit channel=... or user=... always wins and suppresses the auto-default.
 - `unfurl_links` (boolean, optional) — Whether to unfurl URL link previews. Defaults to true.
 - `unfurl_media` (boolean, optional) — Whether to unfurl media (images/video) previews. Defaults to true.
 - `user` (string, optional) — Target user ID (e.g. U0123ABC456) to DM. Must be an allowed user. Omit to send to owner DM.
+- `via` (string, optional) — The chat channel to send it on, by its name (e.g. 'telegram'), when the owner named one. Only that channel is used: when it cannot deliver, the message goes to the owner's Inbox saying why, never to another channel. A name that is not a chat channel set up here is refused with the ones that are, so you can ask which. Omit it to reach the owner on the first connected channel that knows them.
 
 **Example — Send a notification to the user:**
 
 ```json
 {
   "text": "The nightly backup finished cleanly."
+}
+```
+
+**Example — Message the owner on the chat channel they named, and no other:**
+
+```json
+{
+  "text": "The nightly backup finished cleanly.",
+  "via": "telegram"
 }
 ```
 
@@ -975,8 +980,6 @@ Read a workflow template's own run-ledger failures, already screened for injecti
 
 **Response type:** `refiner.evidence`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `workflow_name` (string, required) — The template whose run history to read.
 
@@ -993,8 +996,6 @@ Read a workflow template's own run-ledger failures, already screened for injecti
 Load a skill's full instructions by name. Your context carries only a compact INDEX of available skills (name + one-line description); when a listed skill fits the task, call this to pull its complete step-by-step body before acting. Prefer this over reading the skill file directly — it records the skill as used so the library can keep what helps and retire what doesn't.
 
 **Response type:** `skill.invoke.result`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `name` (string, required) — The skill name from the index (e.g. 'tiny-url' or 'auto/release').
@@ -1061,8 +1062,6 @@ Load ONE file a skill declared as a resource (a reference doc, a data file, a he
 
 **Response type:** `skill.resource.content`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `path` (string, required) — The declared resource path, exactly as the catalog lists it (e.g. 'reference/api-notes.md').
 - `skill` (string, required) — The skill that declared the resource (e.g. 'tiny-url').
@@ -1081,8 +1080,6 @@ Load ONE file a skill declared as a resource (a reference doc, a data file, a he
 Find a skill by capability across your ENTIRE skill library — not just the skills surfaced in your context this turn. Use when the task might have a matching skill but you don't see one in the index. Returns ranked name + description; then call skill_invoke(name) to load its full steps. Args: query (str), optional limit (int).
 
 **Response type:** `skill.search.results`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `limit` (integer, optional) — Max results (default 20).
@@ -1158,8 +1155,6 @@ Propose saving the multi-step procedure just carried out in this session as a re
 Pause execution for a specified duration while preserving full session context. Use when waiting for external systems (code review, CI pipeline, deployment). Max 1800s (30 min).
 
 **Response type:** `wait.result`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `reason` (string, required) — Why we are waiting (shown to user)
@@ -1436,8 +1431,6 @@ List all saved lessons and corrections
 
 **Response type:** `memory.list`
 
-**Safety:** requires approval
-
 **Parameters:**
 - _(no parameters)_
 
@@ -1452,8 +1445,6 @@ List all saved lessons and corrections
 Look up your persistent memory on demand — query-relevant facts and past conversation fragments. Your always-on context only carries a small manifest of your most-used facts; call this when you need to recall something specific the user told you before, or context from an earlier session. Set deep=true for a broader, deeper search.
 
 **Response type:** `memory.recall.results`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `deep` (boolean, optional) — Broader/deeper search (default false)
@@ -1494,35 +1485,27 @@ Save a learned correction or preference that persists across all future sessions
 
 ### `triage_rules`
 
-List, add, or revoke the triage approval rules — what the proactive digest may do without asking again. action='list' shows every rule with its hit count and where it came from; action='add' needs a pattern (like 'archive:sender:noreply.github.com') and the verdict 'deny'; action='revoke' needs the rule id from list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal. Only the owner teaches an approve rule, by answering the digest: an agent cannot approve work ahead of time.
+Add or revoke a triage approval rule — what the proactive digest may do without asking again. action='add' needs a pattern (like 'archive:sender:noreply.github.com') and the verdict 'deny'; action='revoke' needs the rule id from triage_rules_list. A deny rule always beats an approve rule, so adding a deny is the safe way to stop a class of proposal. Only the owner teaches an approve rule, by answering the digest: an agent cannot approve work ahead of time.
 
 **Response type:** `memory.triage_rules`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `action` (string, required) — list | add | revoke
+- `action` (string, required) — add | revoke
 - `expires_at` (string, optional) — Optional ISO-8601 expiry; the rule stops matching after it
-- `id` (string, optional) — The rule id (user.approval.*) to revoke
+- `id` (string, optional) — The rule id (user.approval.*) to revoke, from triage_rules_list
 - `pattern` (string, optional) — Colon-delimited pattern, narrowest first segment is the action type: <action>[:<qualifier>...] (add only)
 - `scope` (string, optional) — Where the rule applies (default global)
 - `verdict` (string, optional) — deny = silently skip matching proposals (add only)
 
-**Example — List the taught triage rules:**
-
-```json
-{
-  "action": "list"
-}
-```
-
-**Example — Always approve archiving newsletters:**
+**Example — Stop proposing to archive newsletters:**
 
 ```json
 {
   "action": "add",
   "pattern": "archive:newsletter",
-  "verdict": "approve"
+  "verdict": "deny"
 }
 ```
 
@@ -1533,6 +1516,21 @@ List, add, or revoke the triage approval rules — what the proactive digest may
   "action": "revoke",
   "id": "user.approval.archive:newsletter"
 }
+```
+
+### `triage_rules_list`
+
+List the triage approval rules — what the proactive digest may do without asking again. Shows every rule with its verdict, pattern, hit count, where it came from, scope and expiry, and the id triage_rules revokes it by.
+
+**Response type:** `memory.triage_rules.list`
+
+**Parameters:**
+- _(no parameters)_
+
+**Example — List the triage rules the digest consults:**
+
+```json
+{}
 ```
 
 ## personalclaw-project-tools
@@ -1638,8 +1636,6 @@ Load a saved Prompt and render it with variable values filled in, returning the 
 
 **Response type:** `prompt.render.result`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `prompt_id` (string, required) — The saved prompt name to render.
 - `vars` (string, optional) — Values for the prompt's {{variable}} placeholders, as JSON text: an object mapping each variable name to its value.
@@ -1684,8 +1680,6 @@ List all running and completed subagents (read-only, no commands executed)
 
 **Response type:** `subagent.list`
 
-**Safety:** requires approval
-
 **Parameters:**
 - _(no parameters)_
 
@@ -1725,8 +1719,6 @@ Spawn subagent(s) to run tasks in the background. Returns immediately — result
 Call with the agent ID from a subagent completion event to retrieve the full output in the event of truncation.
 
 **Response type:** `subagent.status`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `agent_id` (string, required) — Subagent ID from completion event
@@ -2156,8 +2148,6 @@ Retrieve one workflow definition in full, including its node tree and declared i
 
 **Response type:** `workflow.def.detail`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `name` (string, required)
 
@@ -2175,8 +2165,6 @@ List the available workflow definitions — the user's own plus any bundled temp
 
 **Response type:** `workflow.def.list`
 
-**Safety:** requires approval
-
 **Parameters:**
 - `source` (string, optional) — Filter by origin: 'user' or 'bundled'.
 - `tag` (string, optional) — Only defs carrying this tag.
@@ -2193,8 +2181,6 @@ The authoring reference, generated from the engine itself: node kinds and their 
 
 **Response type:** `workflow.manifest`
 
-**Safety:** requires approval
-
 **Parameters:**
 - _(no parameters)_
 
@@ -2209,8 +2195,6 @@ The authoring reference, generated from the engine itself: node kinds and their 
 Watch a run for a short bounded window and return what changed, with the events from that window. Read-only. Prefer this over repeated workflow_status calls: one call, one wait, a real delta. The window is clamped (100ms-30s) and returns early if the run finishes.
 
 **Response type:** `workflow.run.delta`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `duration_ms` (integer, optional) — How long to watch, in ms (default 5000, max 30000).
@@ -2230,8 +2214,6 @@ Watch a run for a short bounded window and return what changed, with the events 
 Retrieve one node's structured output from a run. Read-only. Use after workflow_status shows the node is done, to read what it actually produced.
 
 **Response type:** `workflow.node.output`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `node_id` (string, required)
@@ -2270,8 +2252,6 @@ Pause a running workflow: in-flight nodes finish, nothing new launches. Resume w
 Turn a natural-language goal into a workflow spec for review BEFORE anything runs. Returns a draft spec plus its validation issues; nothing is saved or started, so the user approves first. Use for 'set up a workflow that…' requests. To save the result, pass it to workflow_author. To turn a conversation you just had into a workflow, pass source_session_id and the plan is mined from that transcript's real tool use.
 
 **Response type:** `workflow.plan.draft`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `goal` (string, optional) — What the workflow should accomplish, in plain language. Optional when source_session_id is given — the session's first user turn is then the goal.
@@ -2425,8 +2405,6 @@ Start a run that already exists as a DRAFT — the launch step after workflow_fo
 Current status of a run plus per-node progress and any failure detail. Read-only. For watching a run that is actively moving, workflow_observe is cheaper than calling this in a loop.
 
 **Response type:** `workflow.run.status`
-
-**Safety:** requires approval
 
 **Parameters:**
 - `run_id` (string, required) — The run id (from workflow_start).

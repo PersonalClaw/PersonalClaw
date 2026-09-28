@@ -451,7 +451,7 @@ def test_a_negative_action_cap_clamps_to_zero_not_unbounded():
     assert ProactiveConfig(max_auto_actions_per_run=-1).max_auto_actions_per_run == 0
 
 
-# ── the triage_rules tool + its endpoints ──
+# ── the triage_rules tools + their endpoints ──
 
 
 def _svc(tmp_path):
@@ -569,16 +569,25 @@ async def test_revoke_is_scoped_to_approval_keys(rules_api):
     assert resp.status == 400
 
 
-def test_triage_rules_tool_is_declared_and_schema_bound():
+def test_triage_rules_tools_are_declared_and_schema_bound():
     from personalclaw import mcp_memory
     from personalclaw.validation import MCP_CORE_SCHEMAS, validate_tool_args
 
-    assert "triage_rules" in {t["name"] for t in mcp_memory._list_tools()}
+    tools = {t["name"]: t for t in mcp_memory._list_tools()}
+    # The listing is its own tool, declared a read; the writes are declared a change.
+    assert tools["triage_rules_list"]["annotations"] == {"readOnlyHint": True}
+    assert tools["triage_rules"]["annotations"] == {"readOnlyHint": False}
     schema = MCP_CORE_SCHEMAS["triage_rules"]
     with pytest.raises(Exception):
         validate_tool_args({"action": "add", "verdict": "suppressed"}, schema)
     with pytest.raises(Exception):
         validate_tool_args({"action": "nope"}, schema)
+    # A listing through the write tool is refused, so a read never rides on it.
+    with pytest.raises(Exception):
+        validate_tool_args({"action": "list"}, schema)
+    assert validate_tool_args({}, MCP_CORE_SCHEMAS["triage_rules_list"]) == {}
+    with pytest.raises(Exception):
+        validate_tool_args({"action": "add"}, MCP_CORE_SCHEMAS["triage_rules_list"])
 
 
 def test_triage_rules_branches(monkeypatch):
@@ -615,9 +624,10 @@ def test_triage_rules_branches(monkeypatch):
         lambda path, body=None: calls.append(("delete", path)) or {"ok": True},
     )
 
-    out = mcp_memory._call_tool_inner("triage_rules", {"action": "list"})
+    out = mcp_memory._call_tool_inner("triage_rules_list", {})
     assert "deny" in out and "4 hits" in out and "from run-9" in out
     assert "unreadable" in out  # not swallowed
+    assert calls[-1] == ("get", "/api/memory/approval-rules")
 
     out = mcp_memory._call_tool_inner(
         "triage_rules", {"action": "add", "pattern": "archive:sender:x", "verdict": "deny"}
@@ -630,8 +640,13 @@ def test_triage_rules_branches(monkeypatch):
     )
     assert "Revoked" in out
 
-    # An unknown action is an error, not a silent fallthrough to `list`.
+    # An unknown action is an error, not a silent fallthrough, and `list` is no longer one of
+    # this tool's: the refusal names the tool that lists, and reads nothing.
     assert "unknown action" in mcp_memory._call_tool_inner("triage_rules", {"action": "wat"})
+    before = len(calls)
+    refused = mcp_memory._call_tool_inner("triage_rules", {"action": "list"})
+    assert "unknown action" in refused and "triage_rules_list" in refused
+    assert len(calls) == before
     # And `add` without its arguments reports failure rather than writing a partial rule.
     assert "Error" in mcp_memory._call_tool_inner("triage_rules", {"action": "add"})
     assert "Error" in mcp_memory._call_tool_inner("triage_rules", {"action": "add", "pattern": "x"})

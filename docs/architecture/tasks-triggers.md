@@ -179,6 +179,18 @@ Triggers page shows it as the action's Prompt and lets you edit it as
 **Message**. Before, the provider read no `message`, so every automation made in
 chat failed on its first fire, or ran the owner's `loop.md` in its place.
 
+**Words for the owner are a `send-message`, on the channel they named.** When
+the chat is asked to send the owner words ("every Wednesday at 18:00, message me
+on Telegram: 'Bins out tonight.'"), `automation_create` takes them as `say` and the
+channel as `via`, and makes a `send-message` action: nothing runs but the send,
+and it goes out on that channel alone (the action's **Send on**). A name that is
+not a chat channel set up here is refused with the ones that are, so the chat
+asks which. When the channel cannot deliver at the time, the words go to the
+Inbox saying why (`channel_delivery.reach_owner`'s `only`); no other channel
+stands in. Before, the chat could only make an agent task, and nothing could
+name the channel a message for the owner went out on: it went to the first
+connected channel by name, Discord ahead of Telegram.
+
 **A trigger dry run executes nothing and records nothing.** `POST
 /api/triggers/{id}/run {"dry_run": true}` (the **Dry run** button) answers with
 the gate plan a hand-run would apply and `would_run` — the action a real run

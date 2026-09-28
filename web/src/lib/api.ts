@@ -8872,6 +8872,10 @@ export const api = {
   // Undo a verification filter — flips FILTERED→PENDING and fires the ONE
   // notification the second-opinion pass withheld (server enforces fire-exactly-once).
   restoreInboxItem: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/restore`),
+  // Someone new (a row a channel that speaks as you held back): let them talk to your agent on
+  // that channel. Their message itself is not handed to the agent.
+  pairInboxSender: (id: string) =>
+    post<{ ok: boolean; paired: boolean }>(`/api/inbox/${encodeURIComponent(id)}/pair`),
   // Approve one proposal through the C6 apply dispatcher. `edited` is the
   // edit-then-approve payload and REPLACES the stored one (server refuses it for a
   // non-editable proposal). Resolves with ok:false on a failed apply — the item is still

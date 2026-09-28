@@ -283,6 +283,15 @@ from nothing else except a shell command's own text:
   every shipped tool to say one or the other); a `ToolDefinition` that states nothing is
   `CAUTION`; an app's route reads only with `"readOnly": true` in its manifest (a `DELETE` is
   destructive whatever it says).
+- **A declared read asks nobody** (`requires_approval` is false), so a chat does not stop for it
+  and the postures with nobody to ask (`personalclaw run`, a dry run, an unattended agent) run it
+  instead of declining it. Every read PersonalClaw defines in Python says so itself, and the two
+  constructors that build tools from a declaration take it from there: the in-process tools
+  (`InProcessMcpToolProvider`) and an app's routes (`AppRoutesToolProvider`).
+  `tests/test_a_declared_read_asks_nobody.py` holds every tool definition to it. A trusted external
+  MCP server's read still asks outside Trust reads, because the owner's trust in its label reaches
+  only as far as the Tools page says. A tool whose one argument switches between reading and
+  changing declares the change; a listing is its own tool (`triage_rules_list`).
 - **A tool that declares nothing is a change**, so it asks: an ACP CLI's own tools, and an
   external MCP server's tools unless the owner trusts that server's labels. An MCP server may label
   anything read-only, so `readOnlyHint` counts only for a server listed in

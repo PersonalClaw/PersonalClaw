@@ -480,12 +480,13 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--approval",
         choices=["reads", "yolo", "interactive"],
         help=(
-            "Default approval mode for tool invocations. 'reads' auto-approves "
-            "read-only tools (read/list/get/search/* prefixes); 'yolo' "
-            "auto-approves all tools (refused unless PERSONALCLAW_HOME is "
-            "explicitly set to a non-default location); 'interactive' uses "
-            "the standard channel/dashboard prompt flow. When omitted, current "
-            "interactive behavior is preserved."
+            "How the agents PersonalClaw runs in the background (a subagent, and the "
+            "agent an automation or a workflow step starts) have their tool calls "
+            "approved. 'reads' approves a tool that declares it only reads and a "
+            "read-only shell command, and asks for the rest; 'yolo' approves every "
+            "call (refused unless PERSONALCLAW_HOME is explicitly set to a "
+            "non-default location); 'interactive' asks on your channel or the "
+            "dashboard, as omitting it does. A chat keeps its own approval mode."
         ),
     )
     gw_parser.add_argument(

@@ -621,7 +621,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "typing_indicator"},
     {"annotation": "int", "default": "0", "kind": "positional_or_keyword", "name": "max_text_len"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "owner_pairing"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dm_thread_is_channel"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "dm_thread_is_channel"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "speaks_as_owner"}
    ],
    "returns": "None"
   },
@@ -3506,6 +3507,11 @@
   ],
   "returns": "dict[str, Any] | None"
  },
+ "personalclaw.sdk.channel.approval_window_secs": {
+  "kind": "function",
+  "params": [],
+  "returns": "float"
+ },
  "personalclaw.sdk.channel.assert_channel_contract": {
   "kind": "function",
   "params": [
@@ -3516,7 +3522,8 @@
    {"annotation": "Any", "default": "None", "kind": "keyword_only", "name": "clock"},
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "inbound_via"},
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "no_inbox_source_reason"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "no_trigger_source_reason"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "no_trigger_source_reason"},
+   {"annotation": "Any", "default": "None", "kind": "keyword_only", "name": "press"}
   ],
   "returns": "None"
  },
@@ -3670,7 +3677,8 @@
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_id"},
    {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "is_dm"},
    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "text"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_name"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_name"},
+   {"annotation": "Callable[[], bool] | None", "default": "None", "kind": "keyword_only", "name": "hold_for_owner"}
   ],
   "returns": "TrustVerdict"
  },
@@ -3739,7 +3747,8 @@
    {"annotation": "Any", "kind": "positional_or_keyword", "name": "state"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "sender_id"},
-   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "sender_name"}
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "sender_name"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "held"}
   ],
   "returns": "bool"
  },

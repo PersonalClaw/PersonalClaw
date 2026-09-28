@@ -62,6 +62,7 @@ _DECLARED_READS: frozenset[str] = frozenset(
         "skill_search",
         "subagent_list",
         "subagent_status",
+        "triage_rules_list",
         "visualize",
         "wait",
         "workflow_get_def",

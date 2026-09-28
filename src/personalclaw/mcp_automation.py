@@ -42,6 +42,20 @@ def _store() -> Any:
     return TriggerStore(base_dir=config_dir())
 
 
+def _chat_channels() -> Any:
+    """The chat channels a named one (`via`) is looked up in: ``None``, the registered ones, in the
+    gateway, where the native runtime runs these tools; elsewhere (the tool server an agent CLI
+    starts) nothing is registered, so the installed channels are built to be asked, as the CLI's
+    ``--channel`` check builds them."""
+    from personalclaw.channel_transports import WEBUI_TRANSPORT, list_transports
+
+    if any(key != WEBUI_TRANSPORT for key in list_transports()):
+        return None
+    from personalclaw.providers.loader import build_channel_transports
+
+    return {transport.name: transport for transport in build_channel_transports()}
+
+
 def _event_spec_hint() -> str:
     """How an `event` spec is shaped, derived from the pattern table so it cannot drift from it.
 
@@ -75,6 +89,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "(file/clock/web_watch/…) — a time runs it once at that time, in the owner's "
                 "timezone, a cadence becomes a repeating schedule, an event becomes an event "
                 "trigger. Give `when` + `name` + `message` (what the automation should do). "
+                "When it is to send the owner words they gave ('message me …: …', 'remind me …: "
+                "…'), give them in `say` instead of `message`: they go out as written, and no "
+                "agent runs. When the owner named the chat channel ('on Telegram'), give it in "
+                "`via`: it sends there and on no other channel. "
                 "Announced to you on creation with the time it read, and capped by "
                 "workflows.self_schedule_max_outstanding. It does not run until the owner allows "
                 "it on the Triggers page, so tell them it is waiting."
@@ -92,6 +110,20 @@ def _list_tools() -> list[dict[str, Any]]:
                     "message": {
                         "type": "string",
                         "description": "What the automation should do when it fires.",
+                    },
+                    "say": {
+                        "type": "string",
+                        "description": "Words to send the owner each time it fires, as written, "
+                        "instead of a `message` for an agent: 'Bins out tonight.'",
+                    },
+                    "via": {
+                        "type": "string",
+                        "description": "The chat channel to send `say` on, by its name (e.g. "
+                        "'telegram'), when the owner named one. Only that channel sends it: when "
+                        "it cannot, the words go to the owner's Inbox saying why, never to another "
+                        "channel. A name that is not a chat channel set up here is refused with "
+                        "the ones that are, so you can ask which. Omit it to reach the owner on "
+                        "the first connected channel that knows them.",
                     },
                     "kind": {
                         "type": "string",
@@ -235,7 +267,10 @@ def _list_tools() -> list[dict[str, Any]]:
                 "Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you "
                 "need to wait for something outside this turn — 'check the build in 20 minutes', "
                 "'follow up tomorrow morning' — and to remind the owner of something at a time "
-                "('remind me at 5pm to call Sam': put what to tell them in `message`). The task "
+                "('remind me at 5pm to call Sam': put what to tell them in `message`). When the "
+                "owner named the chat channel for it ('remind me on Telegram …'), use "
+                "automation_create with `say` and `via` instead: a task cannot choose the channel "
+                "its reply reaches them on. The task "
                 "wakes you with `message` as the instruction. Counts against your "
                 "outstanding-task allowance; it frees a slot when it fires, since a one-time task "
                 "disables itself. It does not run until the owner allows it on the Triggers page, "
@@ -370,6 +405,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
     store = _store()
     if name == "automation_create":
+        via = str(args.get("via") or "")
         result = T.create(
             store,
             name=str(args.get("name") or ""),
@@ -377,6 +413,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             kind=str(args.get("kind") or ""),
             spec=args.get("spec") if isinstance(args.get("spec"), dict) else None,
             message=str(args.get("message") or ""),
+            say=str(args.get("say") or ""),
+            via=via,
+            chat_channels=_chat_channels() if via.strip() else None,
             created_by="agent",
         )
     elif name == "set_onetime_task":

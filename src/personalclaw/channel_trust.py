@@ -52,6 +52,7 @@ import hmac
 import logging
 import secrets
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -927,7 +928,9 @@ def channel_display_name(provider: str) -> str:
     return name or provider
 
 
-def note_unknown_sender(state: Any, provider: str, sender_id: str, sender_name: str = "") -> bool:
+def note_unknown_sender(
+    state: Any, provider: str, sender_id: str, sender_name: str = "", *, held: bool = False
+) -> bool:
     """Record + surface a first contact from an unknown sender. Returns whether it fired.
 
     Emits exactly ONE ``sender_denied`` SEL entry and ONE actionable owner notification per
@@ -936,6 +939,11 @@ def note_unknown_sender(state: Any, provider: str, sender_id: str, sender_name: 
     ``sender_id`` the Allow button needs; a click routes to :func:`apply_trust_action`,
     which persists the sender. Whether the sender also gets the canned reply is
     :func:`guard_inbound`'s call (policy ``pairing`` only), riding the same window.
+
+    ``held`` says the sender's message was just added to the Inbox, by a channel that speaks as
+    the owner (:func:`guard_inbound`'s ``hold_for_owner``): nothing was sent to them, and the
+    note says their message is there. The gate passes it only for a message that WAS held, so
+    the note never names one the Inbox does not have.
 
     Deduped on the persisted ``rate`` map (an ISO timestamp per sender), so the dedup
     survives a restart — an unknown sender who messaged before you slept does not re-alert
@@ -965,11 +973,22 @@ def note_unknown_sender(state: Any, provider: str, sender_id: str, sender_name: 
 
             who = sender_name or sender_id
             where = channel_display_name(provider)
+            if held:
+                title = f"Someone new wrote to you on {where}"
+                body = (
+                    f"{who} wrote to you on {where} and isn't paired. Nothing was sent to them. "
+                    "Their message is in your Inbox: reply to it, pair them, or ignore it."
+                )
+            else:
+                title = f"Someone you haven't paired messaged you on {where}"
+                body = (
+                    f"{who} messaged your agent on {where} and isn't paired. "
+                    "Allow them to talk to it, or deny."
+                )
             state.notify(
                 notification_kinds.WARNING,
-                f"Someone you haven't paired messaged you on {where}",
-                f"{who} messaged your agent on {where} and isn't paired. "
-                "Allow them to talk to it, or deny.",
+                title,
+                body,
                 meta={
                     "event": "channel.unknown_sender",
                     "provider": provider,
@@ -1000,6 +1019,20 @@ def apply_trust_action(action: str, provider: str, sender_id: str, name: str = "
     return False
 
 
+def _held_for_owner(provider: str, hold_for_owner: Callable[[], bool]) -> bool:
+    """Whether ``hold_for_owner`` held a stranger's message for the owner. A hold that raises held
+    nothing: the message is denied either way, and no notice may say it is in the Inbox."""
+    try:
+        return bool(hold_for_owner())
+    except Exception:  # noqa: BLE001 - nothing held is the answer; the log has the rest
+        logger.warning(
+            "channel %s: a message from someone new could not be held for the owner",
+            provider,
+            exc_info=True,
+        )
+        return False
+
+
 def guard_inbound(
     state: Any,
     provider: str,
@@ -1010,6 +1043,7 @@ def guard_inbound(
     is_dm: bool = True,
     text: str = "",
     channel_name: str = "",
+    hold_for_owner: Callable[[], bool] | None = None,
 ) -> TrustVerdict:
     """THE trust gate a transport calls at the top of its inbound path.
 
@@ -1021,7 +1055,15 @@ def guard_inbound(
       (:func:`note_unknown_sender`) and the message is denied. ``pairing`` returns the
       canned pairing-needed reply with the notification, so once per sender per
       :data:`UNKNOWN_SENDER_RENOTIFY_SECS`; ``owner_only`` stays silent (open question
-      resolved: no in-channel reply).
+      resolved: no in-channel reply). A channel that speaks as the owner
+      (``ChannelCapabilities.speaks_as_owner``) is called with ``hold_for_owner``: how to hold a
+      stranger's message for the owner, returning whether it was added (the door holds it in the
+      Inbox, ``channel_inbound.deliver_inbound``). It gets no canned reply under any policy:
+      what it sends goes out as the owner, and a stranger is answered only by the owner. The
+      message is held FIRST and the notice follows what was held: a held message is named in
+      the window's one notice, and one the Inbox did not take (its thread muted, its row
+      dismissed) raises no notice and leaves the window open, so the notice never names a
+      message that is not in the Inbox.
     * **DM**, policy ``pairing``, and the message is exactly an outstanding 8-digit code →
       :func:`redeem_pairing_code` consumes it and the sender joins the allowlist
       (``via="pairing"``). The verdict is ``allowed=False, reason="paired"`` carrying
@@ -1118,15 +1160,28 @@ def guard_inbound(
                     channel_id=channel_id,
                     is_dm=True,
                 )
-            fired = note_unknown_sender(state, provider, sender_id, sender_name)
+            if hold_for_owner is None:
+                fired = note_unknown_sender(state, provider, sender_id, sender_name)
+            else:
+                # Held first, told after: the notice is composed from what the Inbox took. A
+                # message it did not take raises nothing and leaves the window open, so the
+                # next one it does take is still told.
+                fired = _held_for_owner(provider, hold_for_owner) and note_unknown_sender(
+                    state, provider, sender_id, sender_name, held=True
+                )
             # The reply rides the same per-sender window as the notification
             # (UNKNOWN_SENDER_RENOTIFY_SECS): once per stranger per window, never once per
-            # message. Answering every message put one reply on the wire for each mail anyone
-            # sent to a mailbox the email channel watches, from the owner's own address.
+            # message. A channel that speaks as the owner sends none at all: from the owner's
+            # own mailbox, an automatic answer to whoever wrote confirms the address to them,
+            # and it is a message the owner never agreed to send.
             verdict = TrustVerdict(
                 allowed=False,
                 reason="unknown_sender",
-                canned_reply=CANNED_PAIRING_REPLY if fired and policy == "pairing" else "",
+                canned_reply=(
+                    CANNED_PAIRING_REPLY
+                    if fired and policy == "pairing" and hold_for_owner is None
+                    else ""
+                ),
                 fired_notification=fired,
             )
         # A code-shaped DM that was neither the owner's code nor a sender's code just redeemed

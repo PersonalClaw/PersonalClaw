@@ -342,8 +342,8 @@ Data leaving the running system:
   (`mcp_shared.run_mcp_stdio_loop`); and the one wrapper every inbound surface answers another
   agent through (a tool result, an A2A artifact, a bridge answer), which a webhook's body also
   passes on its way into a trigger (`inbound/framing.fence_payload`). So a tool is masked
-  without opting in, `workflow_status`, `workflow_output`, `memory_recall` and `triage_rules`
-  among them. A prompt is masked where it is
+  without opting in, `workflow_status`, `workflow_output`, `memory_recall` and
+  `triage_rules_list` among them. A prompt is masked where it is
   assembled (`context._Parts.add`: memory, lessons, history, skills, channel history, episodic
   recall, active workflows), and so is what a chat turn puts in front of the request, which goes
   as typed: a stopped turn read back, an app's background context, a subagent's failure notice,

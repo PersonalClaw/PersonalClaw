@@ -28,6 +28,8 @@ from personalclaw.security import MaskConflict, keep_masked_spans
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from personalclaw.dashboard.state import DashboardState
 
 logger = logging.getLogger(__name__)
@@ -596,6 +598,36 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
     return web.json_response(_redact_item(item.to_dict()))
 
 
+async def api_inbox_pair(request: web.Request) -> web.Response:
+    """POST /api/inbox/{id}/pair — let someone new talk to your agent on the channel they wrote on.
+
+    For a row held from someone new (``native_source.hold_from_someone_new``): the owner's Pair.
+    Their address joins the channel's allowed senders (``channel_trust.allow_sender``, audited),
+    so their next message is a conversation with the agent. This message is not handed to the
+    agent; the row is marked handled and remembers the pairing.
+    """
+    from personalclaw.channel_trust import allow_sender
+    from personalclaw.inbox_providers.native_source import SOMEONE_NEW_REF
+
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    item = inbox.items.get(request.match_info["id"])
+    if item is None:
+        return web.json_response({"error": "not found"}, status=404)
+    provider = str((item.refs or {}).get(SOMEONE_NEW_REF) or "")
+    if not provider or not item.sender_id:
+        return web.json_response(
+            {"error": "Only a message from someone new can pair its sender."}, status=409
+        )
+    name = item.sender_name if item.sender_name != item.sender_id else ""
+    allow_sender(provider, item.sender_id, name, via="owner")
+    status_before = item.status
+    inbox.update(item.id, refs={**item.refs, "paired": True})
+    set_item_status(state, inbox, [item], ItemStatus.HANDLED)
+    _announce_unless_moved(state, item, status_before)
+    return web.json_response({"ok": True, "paired": True})
+
+
 async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     """POST /api/inbox/dismiss-all — dismiss every OPEN item (pending or seen).
 
@@ -705,6 +737,10 @@ async def api_inbox_send(request: web.Request) -> web.Response:
     Replies is off). Only a reply the source SENT marks the row handled. One it did not
     send answers 409 with the source's reason and keeps the text as the row's draft, so
     nothing the owner wrote is lost.
+
+    For a row held from SOMEONE NEW (``native_source.hold_from_someone_new``), the reply goes
+    back through the channel they wrote on, threaded under their message: the one answer they
+    get, and only because the owner pressed Send.
     """
     state: "DashboardState" = request.app["state"]
     try:
@@ -757,7 +793,41 @@ async def api_inbox_send(request: web.Request) -> web.Response:
         _announce_unless_moved(state, item, status_before)
         return web.json_response({"ok": True, "delivered_to_session": delivered})
 
+    from personalclaw.inbox_providers.native_source import SOMEONE_NEW_REF
+
+    if (item.refs or {}).get(SOMEONE_NEW_REF):
+        return await _send_to_someone_new(state, inbox, item, text)
     return await _send_to_polled_source(state, inbox, item, text)
+
+
+async def _send_to_someone_new(
+    state: "DashboardState", inbox: InboxStore, item: InboxItem, text: str
+) -> web.Response:
+    """Send the owner's reply to someone new through the channel they wrote on; see
+    :func:`api_inbox_send`."""
+    from personalclaw.channel_delivery import channel_shown_as, delivery_for
+    from personalclaw.inbox_providers.native_source import SOMEONE_NEW_REF
+
+    try:
+        recorded = keep_masked_spans(text, item.draft or "")
+    except MaskConflict as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    provider = str(item.refs.get(SOMEONE_NEW_REF) or "")
+    label = channel_shown_as(provider)
+    delivery = delivery_for(provider)
+    if delivery is None:
+        return web.json_response(
+            {"error": f"{label} isn't connected, so the reply was not sent.", "sent": False},
+            status=503,
+        )
+
+    async def send() -> object:
+        # Threaded under their message: its thread, else the message itself.
+        return await delivery.deliver_text(
+            item.channel, text, str(item.thread_ts or item.reply_target or "")
+        )
+
+    return await _sent_or_kept(state, inbox, item, recorded, label, send)
 
 
 async def _send_to_polled_source(
@@ -780,12 +850,28 @@ async def _send_to_polled_source(
             },
             status=503,
         )
-    label = source_label(source)
-    try:
+
+    async def send() -> object:
         # Addressed with the source's own id for the message (the row's reply_target), never the
         # thread id: every Mail Inbox row shares one channel, so a thread id that named nothing
         # sent the reply to whoever wrote there last.
-        result = await source.send_reply(item.channel, text, item.reply_target or None)
+        return await source.send_reply(item.channel, text, item.reply_target or None)
+
+    return await _sent_or_kept(state, inbox, item, recorded, source_label(source), send)
+
+
+async def _sent_or_kept(
+    state: "DashboardState",
+    inbox: InboxStore,
+    item: InboxItem,
+    recorded: str,
+    label: str,
+    send: "Callable[[], Awaitable[object]]",
+) -> web.Response:
+    """Send one reply and answer for it: a reply sent marks the row handled; one that was not
+    keeps the owner's text as the row's draft and says why, so nothing they wrote is lost."""
+    try:
+        result = await send()
     except Exception as exc:  # noqa: BLE001 - the source's failure is the owner's answer
         logger.warning("inbox send via %s failed", item.source, exc_info=True)
         inbox.update(item.id, draft=recorded)

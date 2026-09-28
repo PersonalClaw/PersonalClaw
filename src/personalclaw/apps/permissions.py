@@ -1453,6 +1453,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "approving a proposal — the decision is yours, whoever raised it"
     ),
     "POST /api/inbox/{id}/restore": OwnerOnly(_TRIAGES_INBOX),
+    "POST /api/inbox/{id}/pair": OwnerOnly(
+        "letting someone new talk to your agent — who may reach it through a channel is yours"
+    ),
     "PUT /api/inbox/{id}": OwnerOnly(_TRIAGES_INBOX),
     "POST /api/inbox/dismiss-all": OwnerOnly(_TRIAGES_INBOX),
     "POST /api/inbox/{id}/open": OwnerOnly(_READS_INBOX),

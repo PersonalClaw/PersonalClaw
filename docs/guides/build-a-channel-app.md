@@ -129,6 +129,17 @@ for one message, split it the way you split a reply and put the buttons on the l
 read composes a brief for an approval your own turn raised, so a channel that runs its own turns
 renders both from one place.
 
+### An approval ends as PersonalClaw's do
+
+A prompt core asks through `request_approval` keeps no timer of its own: core resolves it with how
+the approval ended, wherever it ended. A prompt your channel raises for a turn it runs itself waits
+`personalclaw.sdk.channel.approval_window_secs()`, read when you ask: the window every other
+approval waits (Settings → Agent defaults). It ends the same four ways. Approved and rejected are
+the owner's press. Nobody answering in that window is `expired`, and the turn stopping first is
+`cancelled`; neither is a Deny, in the prompt, in the conversation or in the audit log. Once it has
+ended, the prompt says how and loses its buttons, and a press that arrives later is told how it
+ended and changes nothing.
+
 ### Declare capabilities honestly
 
 `ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:
@@ -218,6 +229,17 @@ What that one call gets you, and what you must not re-implement:
   owner attention item carrying Allow/Deny plus the `provider` + `sender_id` the buttons
   need. It is deduped: a second message from the same stranger does not re-alert. The
   canned reply is rate-limited to once per sender per 24h.
+- **A channel that speaks as its owner.** When what your channel sends goes out as the owner
+  themselves (their own mailbox) rather than as a bot they run, declare
+  `ChannelCapabilities(speaks_as_owner=True)` and hand every inbound message to the door
+  (`services.deliver_channel_inbound`), which reads it. The gate then hands you no
+  `canned_reply` for a stranger, and the door holds their direct message in the Inbox as
+  someone new: the owner replies to it there (through your `deliver_text`, on the message's
+  `thread_id`), pairs them, or ignores it. Nothing reaches the stranger until the owner replies
+  or pairs them, so no automatic answer tells whoever wrote that the address is read. The
+  owner's once-a-day notice is composed from what the Inbox took: a message it kept out (its
+  thread muted, its row dismissed) is named in no notice. Called directly, `guard_inbound`
+  cannot see the capability and treats the channel as a bot.
 - **Pairing.** The owner mints the 8-digit code on Settings → Sender trust (**Pair someone**)
   or with `personalclaw pair <provider>` (see [the CLI reference](../reference/cli.md)) and
   hands it over out of band; the sender sends it to your bot in a DM and the gate redeems it,
@@ -268,7 +290,10 @@ What that one call gets you, and what you must not re-implement:
   owner id, when `open_dm` returns `""` or raises, or when the send raises — so return `""`
   from `open_dm` for an id that is not one of yours (email-channel does, for anything that is
   not an address) rather than handing it to your API. When no connected channel gets it
-  through, it goes to the Inbox with a sentence naming why each one could not.
+  through, it goes to the Inbox with a sentence naming why each one could not. A message the
+  owner asked for on one channel ("message me on Telegram": `notify`'s and `send-message`'s
+  `via`) is tried on that channel alone, and goes to the Inbox, saying why, when it cannot
+  deliver: no other channel stands in for it.
 
 Linking the channel to the dashboard: mint the link's token with
 `owner_sign_in_token(PROVIDER, user_id, ttl)` (and `LINK_WINDOW_SECS`) over `dashboard_origin()`,
@@ -303,8 +328,15 @@ def test_channel_contract(fake_backend):
         min_edit_interval=delivery.EDIT_MIN_INTERVAL,
         clock=fake_backend.set_now,         # setter advancing the injected monotonic clock
         inbound_via="_on_message",          # your async inbound handler
+        press=press,                        # how the owner answers your approval prompt
     )
 ```
+
+`press` is `async def press(pending, approve: bool) -> str`: given the pending record your
+`request_approval` handed `on_prompted`, it drives your OWN handler for the owner's Approve or
+Deny (a callback, an interaction, a reply) and returns what the presser was told. Drive the
+handler, not a fake's button: a fake that refuses a press on a message whose buttons are gone
+would hide the late press the clause is about. Wire the delivery with an owner, so it asks.
 
 Import it from `personalclaw.sdk.channel` — **not** from `personalclaw.testing.…` and not
 from core's `tests/` tree. The facade is the only path the apps-side import lint allows,
@@ -325,14 +357,16 @@ call it once per config if you have several.
 | connect/send | `connect()`/`disconnect()` are not awaitable or return the wrong type; `send()` returns a non-bool or raises on a well-formed message |
 | receive/inbound | `inbound=True` with no inbound path, a named `inbound_via` that is missing or not async, or `inbound=False` while an inbound handler exists |
 | health/test | a state outside `{ready, offline, error}`, a missing `detail`, a non-bool `ok`, or `test()` claiming ok on a non-ready `health()` |
-| unknown-sender | an unpaired DM sender is allowed, gets the wrong canned reply, or raises zero or two owner requests |
+| unknown-sender | an unpaired DM sender is allowed, gets the wrong canned reply (none at all for a channel that `speaks_as_owner`, which must have each of their messages held for the owner), or raises zero or two owner requests |
 | fencing | tracked-group content comes back unfenced, the fence replaces rather than wraps the text, or your module never reads `verdict.fenced_text` |
 | delivery | `deliver_text` missing, or any SHOULD method absent while you passed a `delivery` |
-| streaming | `edits=True` and the trio is incomplete, the throttle fires more than once per your floor, `stop_stream` does not force-flush — or `edits=False` and `start_stream` returned a non-empty ts |
+| streaming | `edits=True` and the trio is incomplete, the throttle fires more than once per your floor, `stop_stream` does not force-flush, or `append_stream_task` refuses a status in `TASK_STATUSES` — or `edits=False` and `start_stream` returned a non-empty ts |
+| approvals | with `press=`: the prompt hands core no pending record with a future, an ending other than `approved` returns anything but `False`, a press after an ending changes it or is not told how THAT approval ended, the owner's press does not answer it, or a cancelled wait swallows its cancellation |
 | vendor completeness | **never fails** — warns; see below |
 
 If you cannot supply `min_edit_interval` + `clock`, the streaming clause degrades to
 presence-only. The kit refuses to sleep, and refuses to invent a floor it cannot know.
+Without `press`, the approvals clause is not asserted: the kit cannot press your button.
 
 ---
 
