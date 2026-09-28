@@ -384,12 +384,14 @@ async def test_one_unreadable_file_does_not_abort_the_cycle(store, watched, monk
             raise PermissionError("nope")
         return real_open(path, *a, **kw)
 
-    monkeypatch.setattr("builtins.open", _boom)
-    clock.advance(11)
-    # The two readable files still index; the unreadable one is skipped, not fatal.
-    assert await _poll(engine, store, sid) == 2
-    assert {r["guid"] for r in _items(store, sid)} == {"good1.md", "good2.md"}
-    monkeypatch.undo()
+    # A context, not `monkeypatch.undo()`, which would also undo the fixtures' and the suite's
+    # patches for the rest of the test.
+    with monkeypatch.context() as unreadable:
+        unreadable.setattr("builtins.open", _boom)
+        clock.advance(11)
+        # The two readable files still index; the unreadable one is skipped, not fatal.
+        assert await _poll(engine, store, sid) == 2
+        assert {r["guid"] for r in _items(store, sid)} == {"good1.md", "good2.md"}
 
     # And the skipped file does not spin forever: its baseline advanced.
     clock.advance(100)

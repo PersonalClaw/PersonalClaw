@@ -20,6 +20,9 @@ from aiohttp.test_utils import make_mocked_request
 from personalclaw.dashboard import model_downloads as M
 from personalclaw.dashboard.handlers import model_downloads as H
 
+#: The real helper, read before this file's autouse stub replaces it.
+_REAL_EXPECTED_SIZE_BYTES = M._expected_size_bytes
+
 # ── catalog/provider stubs (no network) ──
 
 
@@ -250,11 +253,12 @@ def test_the_expected_total_keeps_a_fractional_mebibyte(monkeypatch):
     Asserted in BOTH directions — the fractional case reds on a truncating implementation, and
     the whole-number case pins that nothing was traded away to fix it.
 
-    🪤 ``monkeypatch.undo()`` first: this file's autouse ``_stub_providers`` replaces
-    ``_expected_size_bytes`` itself with a 4 MiB constant, so without undoing it this test would
-    assert against the stub and pass no matter what the real helper does.
+    🪤 The real helper first: this file's autouse ``_stub_providers`` replaces
+    ``_expected_size_bytes`` itself with a 4 MiB constant, so without putting it back this test
+    would assert against the stub and pass no matter what the real helper does. Put back by
+    name, not by ``monkeypatch.undo()``, which would also undo the suite's home isolation.
     """
-    monkeypatch.undo()
+    monkeypatch.setattr(M, "_expected_size_bytes", _REAL_EXPECTED_SIZE_BYTES)
 
     class _M:
         def __init__(self, name, size_mb):

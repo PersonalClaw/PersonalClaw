@@ -285,20 +285,24 @@ def test_the_driver_imports_and_refuses_where_the_frameworks_are_absent(monkeypa
     single seam every entry point goes through, so forcing it to report the platform as absent
     reproduces exactly what a Linux install does.
     """
-    monkeypatch.setattr(macos_ffi, "_LOADED", None)
-    monkeypatch.setattr(macos_ffi.platform, "system", lambda: "Linux")
+    # The Linux platform lives in a context of its own, and is undone before the driver is
+    # reloaded for the rest of the run: a bare `monkeypatch.undo()` would also undo the suite's
+    # home isolation.
+    with monkeypatch.context() as linux:
+        linux.setattr(macos_ffi, "_LOADED", None)
+        linux.setattr(macos_ffi.platform, "system", lambda: "Linux")
 
-    reloaded = importlib.reload(macos_driver)  # must not raise
-    try:
-        with pytest.raises(macos_ffi.FFIUnavailable):
-            macos_ffi._load()
-        answer = reloaded.op_snapshot({"app": "TextEdit"})
-        assert _code(answer) == macos_driver.ERR_DRIVER_UNAVAILABLE
-        assert "Darwin" not in answer["error"]["message"]
-    finally:
-        monkeypatch.undo()
-        macos_ffi._LOADED = None
-        importlib.reload(macos_driver)
+        reloaded = importlib.reload(macos_driver)  # must not raise
+        try:
+            with pytest.raises(macos_ffi.FFIUnavailable):
+                macos_ffi._load()
+            answer = reloaded.op_snapshot({"app": "TextEdit"})
+            assert _code(answer) == macos_driver.ERR_DRIVER_UNAVAILABLE
+            assert "Darwin" not in answer["error"]["message"]
+        finally:
+            linux.undo()
+            macos_ffi._LOADED = None
+            importlib.reload(macos_driver)
 
 
 def test_every_op_refuses_rather_than_raising_when_the_frameworks_are_unavailable(monkeypatch):

@@ -671,14 +671,14 @@ def test_a_HOLD_is_HEAD_OF_LINE_and_keeps_the_tail_in_ORDER(tmp_path, monkeypatc
     fired: list[str] = []
     monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
 
-    _engine_down(monkeypatch)
-    _tick(tmp_path)
-    assert fired == [], "nothing may re-enter while the head is held"
-    assert [e.payload["key"] for e in drain_spool()[0]] == ["first", "second"]
+    # The engine is down only inside this context; its exit brings back the router `_isolate`
+    # attached. A bare `monkeypatch.undo()` would also undo the suite's own isolation.
+    with monkeypatch.context() as down:
+        _engine_down(down)
+        _tick(tmp_path)
+        assert fired == [], "nothing may re-enter while the head is held"
+        assert [e.payload["key"] for e in drain_spool()[0]] == ["first", "second"]
 
-    monkeypatch.undo()
-    _isolate(tmp_path, monkeypatch)
-    monkeypatch.setattr(et, "emit_event", lambda **kw: fired.append(kw["key"]))
     _tick(tmp_path, now=NOW + 1)
     assert fired == ["first", "second"], "the tail must follow the head, in order"
 

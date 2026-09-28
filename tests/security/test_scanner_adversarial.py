@@ -818,7 +818,12 @@ class TestCorpusRedsOnAWeakenedScanner:
     Each test weakens ONE control for the duration of the test (monkeypatch only, so the
     shipped scanner is untouched) and asserts the matching corpus rail now fails. If a
     control were already dead, its rail would pass under the weakening and this class
-    would red — which is the point."""
+    would red — which is the point.
+
+    The intact run's patches live in a ``monkeypatch.context()`` of their own. A bare
+    ``monkeypatch.undo()`` between the two runs also undid the suite's home isolation, so the
+    weakened run wrote the skill's lock file with the developer's real home as the home, and
+    failed on the guard instead of on the weakness it exists to show."""
 
     @staticmethod
     def _case(case_id: str) -> dict[str, Any]:
@@ -875,8 +880,8 @@ class TestCorpusRedsOnAWeakenedScanner:
         NOT malicious (a trailing comment), which is the point: byte equality catches a
         post-scan substitution even when the substituted bytes look clean."""
         case = self._case("integrity-race/refetch-swap")
-        assert_installed_equals_scanned(case, tmp_path / "intact", monkeypatch)
-        monkeypatch.undo()
+        with monkeypatch.context() as intact:
+            assert_installed_equals_scanned(case, tmp_path / "intact", intact)
 
         real_writer = mk.install_skill_files
 
@@ -902,8 +907,8 @@ class TestCorpusRedsOnAWeakenedScanner:
         the thing doing the work.
         """
         case = self._case("baseline-tamper/self-consistent-file-rewrite")
-        assert_baseline_file_tamper_detected(case, tmp_path / "intact", monkeypatch)
-        monkeypatch.undo()
+        with monkeypatch.context() as intact:
+            assert_baseline_file_tamper_detected(case, tmp_path / "intact", intact)
 
         tampered_digest = security._baseline_digest([str(p) for p in case["tamper"]["patterns"]])
         monkeypatch.setattr(security, "_BASELINE_SHA256", tampered_digest)
@@ -921,8 +926,8 @@ class TestCorpusRedsOnAWeakenedScanner:
         real failure, so the rail must red on it rather than only on a shrink.
         """
         case = self._case("baseline-tamper/snapshot-and-file-both-rebound")
-        assert_baseline_shrink_refused_and_audited(case, tmp_path / "intact", monkeypatch)
-        monkeypatch.undo()
+        with monkeypatch.context() as intact:
+            assert_baseline_shrink_refused_and_audited(case, tmp_path / "intact", intact)
         security._BASELINE_TAMPER_REPORTED.clear()
 
         monkeypatch.setattr(security, "_note_baseline_tamper", lambda digest: False)

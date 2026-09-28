@@ -154,10 +154,65 @@ def test_the_loop_lives_in_the_no_crons_else_branch(monkeypatch):
         raise AssertionError("the file-watch task creation was not found")
 
 
-def test_shutdown_cancels_the_loop():
-    """A dangling task across shutdown leaks a filesystem poll into the next process."""
-    import inspect
+class _LoopThatNeverLeaves:
+    """Stands in for the poll loop: once cancelled, it does not leave until the test lets it."""
 
-    src = inspect.getsource(G.GatewayOrchestrator._shutdown)
-    assert "_file_watch_task" in src
-    assert ".cancel()" in src
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.cancels = 0
+        self._released = asyncio.Event()
+
+    def release(self) -> None:
+        self._released.set()
+
+    async def __call__(self) -> None:
+        self.entered.set()
+        while not self._released.is_set():
+            try:
+                await self._released.wait()
+            except asyncio.CancelledError:
+                self.cancels += 1  # does not leave on a cancel
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_the_loop_through_the_bounded_wait(monkeypatch):
+    """A dangling task across shutdown leaks a filesystem poll into the next process, so the stop
+    cancels the loop. It does that through ``cancel_and_wait``, which waits for the loop a bounded
+    time: driven with a loop that does not leave after its cancel, the stop still returns."""
+    from test_gateway import _make_orchestrator
+
+    from personalclaw import cancellation
+
+    monkeypatch.setattr(cancellation, "CANCEL_GRACE_SECS", 0.3)
+    handed: list[tuple[list, set]] = []
+    real_cancel_and_wait = G.cancel_and_wait
+
+    async def spy(tasks, *, what, grace=None):
+        tasks = list(tasks)
+        left = await real_cancel_and_wait(tasks, what=what, grace=grace)
+        handed.append((tasks, left))
+        return left
+
+    monkeypatch.setattr(G, "cancel_and_wait", spy)
+    orch = _make_orchestrator()
+    orch.heartbeat_svc = None
+    orch.inbox_svc = None
+    orch.subagent_mgr = None
+    orch.sessions = None
+    orch.dashboard_state = None
+    orch._dashboard_runner = None
+    loop = _LoopThatNeverLeaves()
+    watch = orch._file_watch_task = asyncio.ensure_future(loop())
+    await loop.entered.wait()
+    stop = asyncio.ensure_future(orch._shutdown())
+    try:
+        done, _ = await asyncio.wait({stop}, timeout=5.0)
+        assert stop in done, "the stop waited on a file-watch loop that never left"
+        stop.result()
+        assert loop.cancels == 1, "the stop did not cancel the file-watch loop"
+        # Handed to the bounded wait once, which reported it as the task it left running.
+        reported = [left for tasks, left in handed if watch in tasks]
+        assert reported == [{watch}], f"the loop never reached the bounded wait: {reported}"
+    finally:
+        loop.release()
+        await asyncio.wait({watch, stop}, timeout=5.0)

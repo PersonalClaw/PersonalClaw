@@ -107,18 +107,19 @@ def test_a_reachable_but_empty_map_is_a_hard_error(tmp_path, monkeypatch) -> Non
     """ "File present, contents lost" must not pass. An empty map is indistinguishable at
     the call site from "no rule is glossed", which is the silence this map removes — so the
     loader raises instead of handing back ``{}``."""
-    for body in ("{}", '{"_comment": ["rationale only, no rules"]}'):
-        empty = tmp_path / "scan_rule_gloss.json"
-        empty.write_text(body, encoding="utf-8")
-        monkeypatch.setattr(sc, "SCAN_RULE_GLOSS_PATH", empty)
+    # A context, not `monkeypatch.undo()`, which would also undo the suite's home isolation.
+    with monkeypatch.context() as gloss:
+        for body in ("{}", '{"_comment": ["rationale only, no rules"]}'):
+            empty = tmp_path / "scan_rule_gloss.json"
+            empty.write_text(body, encoding="utf-8")
+            gloss.setattr(sc, "SCAN_RULE_GLOSS_PATH", empty)
+            sc.load_scan_rule_gloss.cache_clear()
+            with pytest.raises(RuntimeError, match="no rule glosses"):
+                sc.load_scan_rule_gloss()
+        gloss.setattr(sc, "SCAN_RULE_GLOSS_PATH", tmp_path / "absent.json")
         sc.load_scan_rule_gloss.cache_clear()
-        with pytest.raises(RuntimeError, match="no rule glosses"):
+        with pytest.raises(RuntimeError, match="missing or unreadable"):
             sc.load_scan_rule_gloss()
-    monkeypatch.setattr(sc, "SCAN_RULE_GLOSS_PATH", tmp_path / "absent.json")
-    sc.load_scan_rule_gloss.cache_clear()
-    with pytest.raises(RuntimeError, match="missing or unreadable"):
-        sc.load_scan_rule_gloss()
-    monkeypatch.undo()
     sc.load_scan_rule_gloss.cache_clear()
 
 

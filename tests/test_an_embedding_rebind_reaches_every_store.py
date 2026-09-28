@@ -892,11 +892,15 @@ def test_a_rebuild_on_another_thread_never_pairs_its_ids_with_the_index_a_search
 def test_a_memory_re_embed_keeps_what_it_wrote_as_it_goes(recorded, tmp_path, monkeypatch):
     """🔴 Red before: the pass committed its memories once, at its end, so a stop partway — the
     gateway stopped, the machine off — kept none of them, and each re-index began again from the
-    first memory. Read from another connection while the pass runs, as a restart would read it."""
-    import sqlite3
+    first memory. Read from another connection while the pass runs, as a restart would read it.
 
+    The reader opens the database through the driver the store uses. On Linux x86_64 that is
+    ``pysqlite3``, a second copy of SQLite, and a stdlib reader there was a second SQLite in one
+    process on one file: its close took itself for the last connection and deleted the WAL under
+    the store, so the next commit went where no new connection looks and read as ``[1, 1]``."""
     from personalclaw import vector_memory
     from personalclaw.config.loader import config_dir
+    from personalclaw.sqlite_compat import sqlite3
 
     state = _main_state(config_dir())
     _bind(A)

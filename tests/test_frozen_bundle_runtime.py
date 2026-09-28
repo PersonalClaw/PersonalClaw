@@ -49,9 +49,10 @@ class TestIsFrozen:
 
     def test_either_signal_alone_is_enough(self, monkeypatch):
         """Two independent signals so a bootloader that drops one still reads correctly."""
-        monkeypatch.setattr("sys.frozen", True, raising=False)
-        assert self_update.is_frozen() is True
-        monkeypatch.undo()
+        # A context, not `monkeypatch.undo()`, which would also undo the suite's home isolation.
+        with monkeypatch.context() as first:
+            first.setattr("sys.frozen", True, raising=False)
+            assert self_update.is_frozen() is True
         monkeypatch.setattr("sys._MEIPASS", "/tmp/_MEI", raising=False)
         assert self_update.is_frozen() is True
 

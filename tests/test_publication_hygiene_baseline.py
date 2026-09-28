@@ -766,16 +766,18 @@ def test_a_document_the_rule_cannot_fully_read_is_refused_not_trusted(monkeypatc
     documents nested deeper than it follows are each a refusal, never a silent pass."""
     rule = hygiene.load_baseline()["office_document_rule"]
     nested = _ooxml({"word/embeddings/sheet.xlsx": _ooxml()})
-    monkeypatch.setattr(hygiene, "_OFFICE_PART_CAP", 64)
-    assert "has a part this rule cannot read (docProps/app.xml)" in (
-        hygiene.office_document_problems(_ooxml(), rule)
-    )
-    monkeypatch.undo()
-    monkeypatch.setattr(hygiene, "_OFFICE_MAX_PARTS", 3)
-    assert hygiene.office_document_problems(_ooxml(), rule) == [
-        "has more parts than this rule reads (5 > 3)"
-    ]
-    monkeypatch.undo()
+    # One cap at a time, each in a context of its own: a bare `monkeypatch.undo()` would also
+    # undo the suite's home isolation for the rest of the test.
+    with monkeypatch.context() as caps:
+        caps.setattr(hygiene, "_OFFICE_PART_CAP", 64)
+        assert "has a part this rule cannot read (docProps/app.xml)" in (
+            hygiene.office_document_problems(_ooxml(), rule)
+        )
+    with monkeypatch.context() as caps:
+        caps.setattr(hygiene, "_OFFICE_MAX_PARTS", 3)
+        assert hygiene.office_document_problems(_ooxml(), rule) == [
+            "has more parts than this rule reads (5 > 3)"
+        ]
     monkeypatch.setattr(hygiene, "_OFFICE_MAX_DEPTH", 0)
     assert hygiene.office_document_problems(nested, rule) == [
         "nests documents deeper than this rule reads (word/embeddings/sheet.xlsx)"

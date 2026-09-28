@@ -1965,9 +1965,10 @@ def test_a_source_sqlite_calls_DAMAGED_is_refused_before_any_import(tmp_path, mo
         conn = real_connect(target, *args, **kwargs)
         return _Damaged(conn) if "mode=ro" in str(target) else conn
 
-    monkeypatch.setattr(snap_mod.sqlite3, "connect", _connect)
-    imported = _merge_sqlite_attach(src, dst, "damaged")
-    monkeypatch.undo()
+    # A context, not `monkeypatch.undo()`, which would also undo the suite's home isolation.
+    with monkeypatch.context() as damaged:
+        damaged.setattr(snap_mod.sqlite3, "connect", _connect)
+        imported = _merge_sqlite_attach(src, dst, "damaged")
 
     assert imported == 0
     conn = real_connect(str(dst))
