@@ -273,7 +273,10 @@ def install(*, home: Path | None = None, start: bool = True) -> HistoryDebouncer
         if _installed is not None:
             return _installed
         if not sh.git_available():
-            logger.info("time-travel: git not available — history disabled")
+            from personalclaw.net.git import git_problem
+
+            reason = git_problem() or "git not available"
+            logger.info("time-travel: %s — history disabled", reason)
             return None
         debouncer = HistoryDebouncer(home=home)
         register_post_write_hook(debouncer.notify)

@@ -113,6 +113,9 @@ _BUILT: dict[str, str] = {
     "durability/state_history.py::_repo_usable::subprocess.run": "history repo probe",
     "durability/state_history.py::ensure_repo::subprocess.run": "history repo init",
     "durability/state_history.py::git_available::subprocess.run": "git presence probe",
+    "net/git.py::_version_of::subprocess.run": (
+        "the version of the git on PATH, which PersonalClaw's git refuses below 2.12"
+    ),
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": "doctor work-tree probe",
     "self_update.py::_run_git::subprocess.run": "git on PersonalClaw's own checkout",
     "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec": (
@@ -293,6 +296,7 @@ _MUST_STAY_BUILT = {
     "durability/state_history.py::_repo_usable::subprocess.run",
     "durability/state_history.py::ensure_repo::subprocess.run",
     "durability/state_history.py::git_available::subprocess.run",
+    "net/git.py::_version_of::subprocess.run",
     "cli_doctor.py::_git_is_inside_work_tree::subprocess.run",
     "self_update.py::_run_git::subprocess.run",
     "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec",

@@ -160,6 +160,17 @@ async def test_a_blocking_hooks_reason_is_masked_in_the_log_and_the_activity_lin
 #: ``CalledProcessError`` keep it in these attributes.
 _CHILD_OUTPUT = {"stdout", "stderr", "output"}
 
+#: What a child's output may pass through on its way into a log line: the masker, which also
+#: keeps it on one line, the refusal a transport gets in PersonalClaw's own words, and ``len``
+#: (a size is not output).
+_LOG_MASKERS = {"mask_child_output", "transport_refusal", "len"}
+#: On its way to the owner's terminal, in a printed line or a raised error: those, and the
+#: helpers built on the masker for a service command's words and a failed git step's.
+_TERMINAL_MASKERS = _LOG_MASKERS | {"command_said", "_git_said"}
+#: Into a record a view shows (a JSON response, an artifact): those, and the display mask the
+#: views apply (the trigger handlers call it ``_redact``), since a record is not a terminal.
+_RECORD_MASKERS = _TERMINAL_MASKERS | {"redact_for_display", "_redact"}
+
 
 def _is_log_call(node: ast.Call) -> bool:
     func = node.func
@@ -179,22 +190,27 @@ def _is_log_call(node: ast.Call) -> bool:
     return "log" in name.lower()
 
 
-def _raw_child_output(node: ast.AST, masked: bool = False) -> list[str]:
+def _raw_child_output(
+    node: ast.AST, maskers: set[str] = _LOG_MASKERS, masked: bool = False
+) -> list[str]:
     """Each ``x.stdout``/``x.stderr``/``x.output`` in *node* that reaches the log unmasked.
 
-    Masked: inside ``mask_child_output(...)``. Not output: inside ``len(...)`` (a size), or the
-    test of a conditional (``mask_child_output(r.stderr) if r.stderr else ...``)."""
+    Masked: inside one of *maskers* (for a log line, ``mask_child_output(...)``). Not output:
+    inside ``len(...)`` (a size), or the test of a conditional
+    (``mask_child_output(r.stderr) if r.stderr else ...``)."""
     found: list[str] = []
     if isinstance(node, ast.Call):
         callee = node.func.attr if isinstance(node.func, ast.Attribute) else ""
         callee = callee or getattr(node.func, "id", "")
-        masked = masked or callee in {"mask_child_output", "len"}
+        masked = masked or callee in maskers
     if isinstance(node, ast.IfExp):
-        return _raw_child_output(node.body, masked) + _raw_child_output(node.orelse, masked)
+        return _raw_child_output(node.body, maskers, masked) + _raw_child_output(
+            node.orelse, maskers, masked
+        )
     if isinstance(node, ast.Attribute) and node.attr in _CHILD_OUTPUT and not masked:
         found.append(ast.unparse(node))
     for child in ast.iter_child_nodes(node):
-        found += _raw_child_output(child, masked)
+        found += _raw_child_output(child, maskers, masked)
     return found
 
 
@@ -225,6 +241,287 @@ def test_no_log_line_in_the_tree_carries_a_childs_raw_output():
         "a log line writes what a child printed as it printed it. Pass it through "
         f"`security.mask_child_output` (masked, cut, escaped): {found}"
     )
+
+
+#: Records that keep a child's own output on purpose, and why that output is not a child's
+#: words: ``file::key``.
+_RECORD_EXEMPT = {
+    # A commit id: what `git rev-parse HEAD` prints about the history's own repository.
+    "durability/state_history.py::'head'": "a commit id the history names its HEAD with",
+}
+
+
+def _unmasked_terminal_errors_and_records(tree: ast.AST, rel: str) -> list[str]:
+    """Each ``print(...)``, raised error and dict record in *tree* that carries a child's raw
+    ``stdout`` or ``stderr``. A record's ``output`` is left out: in a record it is a node's or a
+    tool's result, which the log rail's wider set would misread as a child's."""
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "print":
+            raw = [r for a in node.args for r in _raw_child_output(a, _TERMINAL_MASKERS)]
+            if raw:
+                out.append(f"{node.lineno}: print {', '.join(raw)}")
+        elif isinstance(node, ast.Raise) and node.exc is not None:
+            raw = _raw_child_output(node.exc, _TERMINAL_MASKERS)
+            if raw:
+                out.append(f"{node.lineno}: raise {', '.join(raw)}")
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                raw = [
+                    r
+                    for r in _raw_child_output(value, _RECORD_MASKERS)
+                    if r.endswith((".stdout", ".stderr"))
+                ]
+                shown = ast.unparse(key) if key is not None else "**"
+                if raw and f"{rel}::{shown}" not in _RECORD_EXEMPT:
+                    out.append(f"{value.lineno}: record {shown}: {', '.join(raw)}")
+    return sorted(out, key=lambda hit: int(hit.split(":")[0]))
+
+
+def test_no_printed_line_error_or_record_in_the_tree_carries_a_childs_raw_output():
+    """What sudo, systemctl, launchctl or git printed reaches the owner's terminal through
+    ``print`` and ``raise``, and what an evaluation cell's child printed reached its artifact,
+    both as printed (#486, #485)."""
+    found = {}
+    scanned = 0
+    for path in sorted(_SRC.rglob("*.py")):
+        scanned += 1
+        rel = path.relative_to(_SRC).as_posix()
+        hits = _unmasked_terminal_errors_and_records(
+            ast.parse(path.read_text(encoding="utf-8")), rel
+        )
+        if hits:
+            found[rel] = hits
+    assert scanned > 500, f"the scan read {scanned} files: it is not reading the tree"
+    assert not found, (
+        "a printed line, a raised error or a written record carries what a child printed as it "
+        f"printed it. Pass it through `security.mask_child_output`: {found}"
+    )
+
+
+def test_the_terminal_and_record_rail_sees_the_shapes_it_is_for():
+    src = (
+        "def f(res, proc):\n"
+        "    print(f'failed:\\n{(res.stderr or \"\").strip()}')\n"
+        "    raise ServiceInstallError(f'said: {(res.stderr or res.stdout).strip()}')\n"
+        "    record = {'stdout_tail': (proc.stdout or '')[-2000:], 'output': proc.output}\n"
+        "    print(command_said(res))\n"
+        "    raise ServiceInstallError(mask_child_output(res.stderr))\n"
+        "    ok = {'stdout_tail': mask_child_output(proc.stdout, tail=True)}\n"
+    )
+    hits = _unmasked_terminal_errors_and_records(ast.parse(src), "example.py")
+    assert [h.split(":")[0] for h in hits] == ["2", "3", "4"], hits
+    assert "record 'stdout_tail'" in hits[2] and "output" not in hits[2], hits
+
+
+# ── the rail: every sink the log records reach masks what it writes ────────────────────────
+
+#: The logging handler classes a sink can be made of; the tree's own subclasses join them.
+_HANDLER_CLASSES = {
+    "StreamHandler",
+    "FileHandler",
+    "RotatingFileHandler",
+    "TimedRotatingFileHandler",
+    "WatchedFileHandler",
+}
+
+
+def _tail_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return getattr(node, "id", "")
+
+
+def _sink_problems(tree: ast.AST, handler_classes: set[str]) -> tuple[list[str], list[str]]:
+    """``(problems, sinks)``: each log handler made in *tree* without the masking formatter, a
+    formatter that is not it and a ``basicConfig`` that builds its own; and the functions that
+    make a handler and give it the masking formatter."""
+    problems: list[str] = []
+    sinks: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _tail_name(node.func)
+            # A class, so capitalised: `setFormatter` is the call that attaches one.
+            if name.endswith("Formatter") and name[:1].isupper() and name != "MaskingFormatter":
+                problems.append(f"{node.lineno}: a {name}, which masks nothing")
+            if name == "basicConfig":
+                keywords = {k.arg for k in node.keywords}
+                if "format" in keywords or "handlers" not in keywords:
+                    problems.append(f"{node.lineno}: a basicConfig that makes its own formatter")
+    seen: set[int] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        made = {
+            target.id: node.lineno
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and _tail_name(node.value.func) in handler_classes
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        seen |= {
+            id(node.value)
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+        }
+        masked = {
+            node.func.value.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and _tail_name(node.func) == "setFormatter"
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.args
+            and isinstance(node.args[0], ast.Call)
+            and _tail_name(node.args[0].func) == "MaskingFormatter"
+        }
+        for handler, line in made.items():
+            if handler in masked:
+                sinks.append(fn.name)
+            else:
+                problems.append(f"{line}: {fn.name} makes a log handler without MaskingFormatter")
+    # A handler made anywhere but a name in a function (`addHandler(StreamHandler())`) is one
+    # whose formatter the rail cannot see, so it cannot pass.
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _tail_name(node.func) in handler_classes
+            and id(node) not in seen
+        ):
+            problems.append(f"{node.lineno}: a log handler made where its formatter cannot be seen")
+    return problems, sinks
+
+
+def test_every_log_sink_the_tree_makes_masks_what_it_writes():
+    """``gateway.log``, the console stream a service manager keeps, and the Logs page's buffer
+    and live stream: a record reaches each through a handler, and the handler's formatter is
+    what masks it (#485)."""
+    trees = {
+        path.relative_to(_SRC).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
+        for path in sorted(_SRC.rglob("*.py"))
+    }
+    handler_classes = set(_HANDLER_CLASSES)
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and any(
+                _tail_name(base) == "Handler" for base in node.bases
+            ):
+                handler_classes.add(node.name)
+    found: dict[str, list[str]] = {}
+    sinks: set[str] = set()
+    for rel, tree in trees.items():
+        problems, made = _sink_problems(tree, handler_classes)
+        sinks |= {f"{rel}::{fn}" for fn in made}
+        if problems:
+            found[rel] = problems
+    assert not found, f"a log sink writes records as they are: {found}"
+    for sink in (
+        "cli.py::_console_log_handler",
+        "cli.py::_gateway_log_handler",
+        "dashboard/handlers/updates.py::install_log_ring_handler",
+        "dashboard/handlers/updates.py::api_logs",
+        "providers/availability_probe.py::main",
+    ):
+        assert sink in sinks, f"the rail no longer sees {sink}: it would pass vacuously"
+
+
+def test_the_sink_rail_sees_the_shapes_it_is_for():
+    src = (
+        "def plain(path):\n"
+        "    handler = RotatingFileHandler(path)\n"
+        "    handler.setFormatter(logging.Formatter('%(message)s'))\n"
+        "def masked(path):\n"
+        "    handler = RotatingFileHandler(path)\n"
+        "    handler.setFormatter(MaskingFormatter('%(message)s'))\n"
+        "logging.basicConfig(format='%(message)s')\n"
+        "logging.getLogger().addHandler(logging.StreamHandler())\n"
+    )
+    problems, sinks = _sink_problems(ast.parse(src), set(_HANDLER_CLASSES))
+    assert sorted(p.split(":")[0] for p in problems) == ["2", "3", "7", "8"], problems
+    assert sinks == ["masked"], sinks
+
+
+# ── the sinks themselves ───────────────────────────────────────────────────────────────────
+
+
+def _record(msg: str, *args: object, exc: bool = False) -> logging.LogRecord:
+    exc_info = None
+    if exc:
+        try:
+            raise RuntimeError(f"the service answered with {_KEY}")
+        except RuntimeError:
+            import sys
+
+            exc_info = sys.exc_info()
+    return logging.LogRecord(
+        "personalclaw.example", logging.ERROR, __file__, 1, msg, args, exc_info
+    )
+
+
+def test_gateway_log_keeps_no_credential_a_record_carried(tmp_path):
+    """🔴 Before, gateway.log was written with a plain formatter: a key in a record's argument
+    or in an exception's text reached the file as it was."""
+    from personalclaw.cli import _gateway_log_handler
+
+    log_file = tmp_path / "gateway.log"
+    handler = _gateway_log_handler(log_file, logging.DEBUG)
+    try:
+        handler.emit(_record("connected with %s", _KEY))
+        handler.emit(_record("the sync failed", exc=True))
+    finally:
+        handler.close()
+    written = log_file.read_text(encoding="utf-8")
+    assert "connected with [REDACTED" in written, written
+    assert "Traceback" in written and "RuntimeError" in written, "the traceback is kept"
+    assert _KEY not in written, written
+
+
+def test_the_console_the_service_manager_keeps_masks_too():
+    """launchd writes the console stream to its log files and systemd to its journal."""
+    import io
+
+    from personalclaw.cli import _console_log_handler
+
+    handler = _console_log_handler()
+    stream = io.StringIO()
+    handler.setStream(stream)
+    handler.emit(_record("token %s rejected", _KEY))
+    assert "[REDACTED" in stream.getvalue() and _KEY not in stream.getvalue(), stream.getvalue()
+
+
+def test_an_evaluation_cells_artifact_keeps_its_childs_output_masked(tmp_path, monkeypatch):
+    """🔴 Before, a cell's ``result.json`` kept the last 2000 characters its child printed on
+    stdout and stderr as they were (#485)."""
+    import json
+    import types
+
+    from test_evals_matrix_runner import write_pinnable_home
+
+    from personalclaw.evals import runner as runner_mod
+    from personalclaw.evals import store as evals_store
+    from personalclaw.evals.matrix import MatrixSpec
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    write_pinnable_home(tmp_path)
+
+    def child(args, **_kwargs):
+        return types.SimpleNamespace(
+            returncode=1,
+            stdout=f"loading\nkey {_KEY}\n",
+            stderr=f"Traceback …\nRuntimeError: sign-in refused for {_KEY}\x1b[2K\n",
+        )
+
+    monkeypatch.setattr(runner_mod.subprocess, "run", child)
+    runner_mod.run_matrix(MatrixSpec(subject="s", axes={}, trial_count=1), matrix_id="m-tails")
+
+    artifact = json.loads(
+        (evals_store.matrix_dir("m-tails") / "cell-0000" / "result.json").read_text("utf-8")
+    )
+    assert _KEY not in artifact["stdout_tail"] and _KEY not in artifact["stderr_tail"], artifact
+    assert "sign-in refused for [REDACTED" in artifact["stderr_tail"], artifact
+    assert "\n" in artifact["stderr_tail"] and "\\x1b[2K" in artifact["stderr_tail"], artifact
 
 
 def test_the_rail_sees_the_shapes_it_is_for():

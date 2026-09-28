@@ -66,8 +66,11 @@ def _worktrees_root(workspace: str, project_id: str = "") -> str:
 
 
 def git_available() -> bool:
-    """True iff a ``git`` binary is on PATH."""
-    return shutil.which("git") is not None
+    """True iff a ``git`` binary is on PATH and new enough for PersonalClaw's git
+    (``net.git.git_problem``)."""
+    from personalclaw.net.git import git_problem
+
+    return not git_problem()
 
 
 def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]:

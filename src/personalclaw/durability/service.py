@@ -285,7 +285,10 @@ def run_history_commit() -> JobResult:
     if not _cfg().time_travel:
         return JobResult("history_commit", skipped="time travel is off")
     if not state_history.git_available():
-        return JobResult("history_commit", skipped="git is not available")
+        from personalclaw.net.git import git_problem
+
+        # No git on PATH, or one older than PersonalClaw's git runs: the reason says which.
+        return JobResult("history_commit", skipped=git_problem() or "git is not available")
     with single_flight("durability:history") as acquired:
         if not acquired:
             return JobResult("history_commit", skipped="another history commit is running")

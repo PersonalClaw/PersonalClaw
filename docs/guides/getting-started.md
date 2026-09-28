@@ -14,6 +14,11 @@ channels. This guide takes you from **nothing installed** to your first chat.
   OpenAI, an OpenAI-compatible endpoint or AWS Bedrock (anything from the Store's
   model-provider apps). You don't need one to start, because first-run setup can
   download a [small default model](#the-small-default-model) instead.
+- git 2.12 or newer, for what runs git: time travel, a workflow's or a loop's own
+  worktree, updating a git checkout, and the git apps (Git Sync, Git Repository, Notes,
+  Spec Builder). PersonalClaw refuses an older git for these, because an older one
+  ignores the settings that stop a repository's own configuration from running a
+  program. `personalclaw doctor` shows the git it found and its version.
 
 You do **not** need to install Python or Node yourself for the recommended
 paths: `uv` provides its own Python 3.12, and the release wheel ships the

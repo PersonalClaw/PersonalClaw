@@ -23,7 +23,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
 from personalclaw.net.git import git_argv, git_env, transport_refusal
 from personalclaw.request_validation import json_object_body
-from personalclaw.security import mask_child_output
+from personalclaw.security import MaskingFormatter, mask_child_output
 
 
 def config_path() -> Path:
@@ -125,15 +125,6 @@ async def api_update_check(request: web.Request) -> web.Response:
     merged["last_version"] = cfg.updates.last_version
     merged["version"] = _local_version
     return web.json_response(merged)
-
-
-def _redact_log_text(text: str) -> str:
-    """Redact credentials and exfiltration URLs from log text before streaming/buffering."""
-    from personalclaw.security import redact_credentials, redact_exfiltration_urls
-
-    text, _ = redact_credentials(text)
-    text, _ = redact_exfiltration_urls(text)
-    return text
 
 
 async def _do_update_check() -> None:
@@ -927,7 +918,8 @@ async def api_log_level_get(request: web.Request) -> web.Response:
 
 
 class _QueueLogHandler(logging.Handler):
-    """Logging handler that enqueues formatted log entries for SSE delivery."""
+    """Logging handler that enqueues formatted log entries for SSE delivery. Masked by the
+    formatter it is given (``security.MaskingFormatter``), like every log sink."""
 
     def __init__(self, queue: asyncio.Queue) -> None:  # type: ignore[type-arg]
         super().__init__()
@@ -935,7 +927,7 @@ class _QueueLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = _redact_log_text(self.format(record))
+            msg = self.format(record)
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._queue.put_nowait(data)
         except Exception:
@@ -953,7 +945,8 @@ _log_ring_handler: "_RingLogHandler | None" = None
 class _RingLogHandler(logging.Handler):
     """Always-on handler that keeps the last N log entries in a ring buffer.
 
-    Also pushes log events to WebSocket log subscribers.
+    Also pushes log events to WebSocket log subscribers. Masked by the formatter it is given
+    (``security.MaskingFormatter``), like every log sink.
     """
 
     def __init__(
@@ -972,7 +965,7 @@ class _RingLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            msg = _redact_log_text(self.format(record))
+            msg = self.format(record)
             data = json.dumps({"level": record.levelname, "msg": msg})
             self._ring.append(data)
             # Push to WS log subscribers through the state's ONE gated fan-out, which is
@@ -993,7 +986,7 @@ def install_log_ring_handler() -> _RingLogHandler | None:
         return _log_ring_handler
     _log_ring_handler_installed = True
     handler = _RingLogHandler(_log_ring, _LOG_RING_SIZE)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setFormatter(MaskingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.getLogger("personalclaw").addHandler(handler)
     _log_ring_handler = handler
     return handler
@@ -1041,7 +1034,7 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
 
     log_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=500)
     handler = _QueueLogHandler(log_queue)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    handler.setFormatter(MaskingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     root = logging.getLogger("personalclaw")
     root.addHandler(handler)
     try:

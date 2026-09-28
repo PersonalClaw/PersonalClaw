@@ -33,11 +33,13 @@ another port can only arrive in a redirect, which is the server's choice and not
 
 from __future__ import annotations
 
+import functools
 import ipaddress
 import logging
 import os
 import re
 import selectors
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -51,6 +53,30 @@ from personalclaw.net.guard import GuardDecision, evaluate
 from personalclaw.net.policy import EgressPolicy
 
 logger = logging.getLogger(__name__)
+
+#: The oldest git whose own settings do what :func:`git_argv` gives them to do. The newest of
+#: those settings is ``protocol.<name>.allow`` (git 2.12): an older git ignores it, and an
+#: ``ext::`` remote then runs the command it names. ``core.hooksPath`` and an empty
+#: ``credential.helper`` (2.9), ``core.sshCommand`` (2.10) and the ``git config --show-origin``
+#: the owner's sign-in is read with (2.8) all came before it.
+MIN_GIT_VERSION = (2, 12)
+
+#: What PersonalClaw's git says in place of running an older git: what it needs, what it found,
+#: what to do, and then why.
+GIT_TOO_OLD = (
+    "PersonalClaw needs git {need} or newer, and this machine has git {have}. Install a newer "
+    "git: an older one ignores the settings that stop a repository's own configuration from "
+    "running a program."
+)
+
+
+class GitTooOld(OSError):
+    """The git PersonalClaw would run is older than :data:`MIN_GIT_VERSION`, so it does not run.
+
+    An ``OSError``, as a git that cannot be started at all is (``FileNotFoundError``): a caller
+    that catches ``OSError`` around its git catches this too. The message names the version
+    needed, the one found and what to do."""
+
 
 #: The git subcommands that talk to a remote. Only these get the SSH agent (:func:`git_env`) and
 #: the owner's own ssh command and credential helpers (:func:`git_argv`).
@@ -194,6 +220,72 @@ def git_env(*, site: str, remote: bool = False) -> dict[str, str]:
     )
 
 
+@functools.lru_cache(maxsize=8)
+def _version_of(executable: str, mtime_ns: int) -> tuple[int, ...] | None:
+    """The version *executable* reports, or ``None`` when it does not say one in time.
+
+    ``git version`` reads no repository, so nothing a repository holds changes the answer: it is
+    read once per build of the executable (*mtime_ns*), whatever it is, and a git that cannot say
+    one is not asked again. A real git answers in milliseconds; the timeout bounds the one wait a
+    broken one costs a caller, the gateway's event loop included."""
+    try:
+        proc = subprocess.run(
+            [executable, "version"],
+            env=git_env(site="git-version"),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"git version (\d+(?:\.\d+)*)", proc.stdout or "")
+    return tuple(int(part) for part in found.group(1).split(".")) if found else None
+
+
+def _version_at(executable: str) -> tuple[int, ...] | None:
+    try:
+        mtime_ns = os.stat(executable).st_mtime_ns
+    except OSError:
+        return None
+    return _version_of(executable, mtime_ns)
+
+
+def git_version(git: str = "git") -> tuple[int, ...] | None:
+    """The version of the git *git* names on ``PATH`` (``(2, 39, 5)``), or ``None`` when there is
+    none or it does not say one."""
+    executable = shutil.which(git)
+    return _version_at(executable) if executable else None
+
+
+def _dotted(version: Sequence[int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _too_old(have: tuple[int, ...] | None) -> str:
+    """The refusal for a git of version *have*, or ``""`` when it is new enough. A version that
+    cannot be read is left to the command, which fails on its own if that git is broken."""
+    if have is None or have >= MIN_GIT_VERSION:
+        return ""
+    return GIT_TOO_OLD.format(need=_dotted(MIN_GIT_VERSION), have=_dotted(have))
+
+
+def git_problem(git: str = "git") -> str:
+    """Why PersonalClaw's git cannot run *git*, or ``""`` when it can: there is none on ``PATH``,
+    or it is older than :data:`MIN_GIT_VERSION`."""
+    executable = shutil.which(git)
+    return _too_old(_version_at(executable)) if executable else "git is not on PATH"
+
+
+def require_git(git: str = "git") -> None:
+    """Raise :class:`GitTooOld` when *git* is older than :data:`MIN_GIT_VERSION`. A git that is
+    not there is left to the spawn, which raises ``FileNotFoundError`` itself."""
+    executable = shutil.which(git)
+    problem = _too_old(_version_at(executable)) if executable else ""
+    if problem:
+        raise GitTooOld(problem)
+
+
 def _subcommand_index(args: Sequence[str]) -> int:
     """Where the subcommand is in *args*, past git's own leading options; ``len(args)`` if none."""
     i = 0
@@ -273,7 +365,11 @@ def git_argv(args: Sequence[str], *, git: str = "git") -> list[str]:
     fixed setting reaches them; they run with :func:`git_env`'s environment. And over ssh, the
     upload-pack or receive-pack command a repository sets for a remote is what the remote host is
     asked to run.
+
+    A git older than :data:`MIN_GIT_VERSION` ignores some of these settings, so it is refused:
+    :class:`GitTooOld`, an ``OSError`` whose message names the version needed and the one found.
     """
+    require_git(git)
     args = list(args)
     i = _subcommand_index(args)
     if i == len(args):

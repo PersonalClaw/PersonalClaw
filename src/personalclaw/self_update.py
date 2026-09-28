@@ -924,9 +924,19 @@ def _run_git(args: list[str], *, cwd: str, timeout: float) -> subprocess.Complet
     ``origin`` those settings refuse (a local path) fails with PersonalClaw's reason and what to
     use instead, not git's bare ``transport 'file' not allowed``.
     """
-    from personalclaw.net.git import git_argv, git_env, talks_to_remote, transport_refusal
+    from personalclaw.net.git import (
+        GitTooOld,
+        git_argv,
+        git_env,
+        talks_to_remote,
+        transport_refusal,
+    )
 
-    argv = git_argv(args)
+    try:
+        argv = git_argv(args)
+    except GitTooOld as exc:
+        # Said in place of running a git too old for the settings the checkout needs.
+        return subprocess.CompletedProcess(["git", *args], 127, "", str(exc))
     env = git_env(site="self-update-git", remote=talks_to_remote(args))
     try:
         proc = subprocess.run(

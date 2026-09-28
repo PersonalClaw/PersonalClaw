@@ -28,6 +28,7 @@ so the worktrees root never touches a real PersonalClaw home.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 
@@ -35,7 +36,10 @@ import pytest
 
 from personalclaw.loop import worktree as wt
 
-pytestmark = pytest.mark.skipif(not wt.git_available(), reason="git not installed")
+# `shutil.which`, not `wt.git_available()`: that probe reads git's version with git's child
+# environment, built from the owner's settings, and a module-level mark runs at collection,
+# before any test chose a home.
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
 
 @pytest.fixture(autouse=True)

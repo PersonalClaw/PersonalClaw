@@ -533,16 +533,23 @@ def _update_git(proj: str) -> None:
         _update_git_release(git_dir, cfg.updates.channel, cfg.updates.pin)
 
 
+def _git_said(result: subprocess.CompletedProcess[str]) -> str:
+    """What a failed git step printed, for the owner's terminal: masked like every view, with
+    its line breaks kept and every control character escaped, so a remote's message cannot
+    move the cursor or hide text. The updater has already put a refused transport in
+    PersonalClaw's own words (``self_update._run_git``)."""
+    from personalclaw.security import mask_child_output
+
+    return mask_child_output(result.stderr, limit=None, one_line=False)
+
+
 def _update_git_nightly(git_dir: str) -> None:
     """Nightly/developer channel: track the current branch by fast-forward only."""
     branch = self_update.resolve_default_branch(git_dir)
     print("  ⬇️  git fetch…")
     fetched = self_update.git_fetch(git_dir, branch)
     if fetched.returncode != 0:
-        print(
-            f"  ❌ git fetch origin {branch} failed:\n{(fetched.stderr or '').strip()}",
-            file=sys.stderr,
-        )
+        print(f"  ❌ git fetch origin {branch} failed:\n{_git_said(fetched)}", file=sys.stderr)
         sys.exit(1)
 
     if self_update.git_is_up_to_date(git_dir, branch):
@@ -557,10 +564,7 @@ def _update_git_nightly(git_dir: str) -> None:
     ff = self_update.git_fast_forward(git_dir, branch)
     if ff.returncode != 0:
         # A diverged branch cannot fast-forward — we do NOT reset over it.
-        print(
-            f"  ❌ fast-forward failed (branch diverged?):\n{(ff.stderr or '').strip()}",
-            file=sys.stderr,
-        )
+        print(f"  ❌ fast-forward failed (branch diverged?):\n{_git_said(ff)}", file=sys.stderr)
         sys.exit(1)
 
     _finish_git_update(git_dir)
@@ -593,14 +597,12 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
     print("  ⬇️  git fetch --tags…")
     fetched = self_update.git_fetch_tags(git_dir)
     if fetched.returncode != 0:
-        print(f"  ❌ git fetch --tags failed:\n{(fetched.stderr or '').strip()}", file=sys.stderr)
+        print(f"  ❌ git fetch --tags failed:\n{_git_said(fetched)}", file=sys.stderr)
         sys.exit(1)
     print(f"  🏷  git checkout {target}…")
     checked = self_update.git_checkout(git_dir, target)
     if checked.returncode != 0:
-        print(
-            f"  ❌ git checkout {target} failed:\n{(checked.stderr or '').strip()}", file=sys.stderr
-        )
+        print(f"  ❌ git checkout {target} failed:\n{_git_said(checked)}", file=sys.stderr)
         sys.exit(1)
 
     _finish_git_update(git_dir)

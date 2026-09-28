@@ -190,6 +190,8 @@ stays saved, and running `setup` again is safe: Enter at a prompt keeps its answ
 
 Verify the PersonalClaw setup (credentials, model bindings, channel tokens,
 directories, and each agent CLI an installed agent app set up).
+Its `git:` row shows the git on `PATH` and its version, and fails for a git older than
+2.12, which PersonalClaw's git refuses.
 
 Doctor starts no agent CLI unless you ask it to. For each one it reports whether the CLI
 is installed and what its last Test found (the Test on its card in Settings → Providers);

@@ -99,11 +99,12 @@ def main(names: list[str]) -> int:
     """Answer for ``names`` on stdout, one JSON line per provider record. Exit 0."""
     channel = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8")
     sys.stdout = sys.stderr
-    logging.basicConfig(
-        level=logging.WARNING,
-        stream=sys.stderr,
-        format="%(levelname)s %(name)s: %(message)s",
-    )
+    # Masked like every log sink (`security.MaskingFormatter`): the board reads this stream.
+    from personalclaw.security import MaskingFormatter
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(MaskingFormatter("%(levelname)s %(name)s: %(message)s"))
+    logging.basicConfig(level=logging.WARNING, handlers=[handler])
     records, missing = _records(names)
     for name in missing:
         _emit(

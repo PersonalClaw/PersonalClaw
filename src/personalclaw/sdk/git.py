@@ -16,6 +16,11 @@ or an ssh command set there would run the next time the app asked git anything.
 - ``remote_refusal(url)`` says why a remote URL is refused (a local path, ``ext::``, ``git://``)
   and what to use instead, ``""`` when git may reach it: for a URL the owner typed, checked before
   git runs. ``transport_refusal(stderr)`` says the same for a git that was refused anyway.
+- ``git_argv`` refuses a git older than 2.12, which ignores some of those settings: it raises
+  ``GitTooOld``, an ``OSError`` (as a git that is not installed is) whose message names the
+  version needed, the one found and what to do. Catch it where a missing git is caught, and say
+  its message. ``git_problem()`` is that message before anything runs (or that there is no git
+  on ``PATH``), ``""`` when git can run: for an app's doctor or setup step.
 
     from personalclaw.sdk.git import git_argv, git_env, talks_to_remote
 
@@ -26,7 +31,9 @@ or an ssh command set there would run the next time the app asked git anything.
 from __future__ import annotations
 
 from personalclaw.net.git import (  # noqa: F401
+    GitTooOld,
     git_argv,
+    git_problem,
     remote_refusal,
     talks_to_remote,
     transport_refusal,
@@ -45,4 +52,12 @@ def git_env(*, remote: bool = False) -> dict[str, str]:
     return core_git.git_env(site="app-git", remote=remote)
 
 
-__all__ = ["git_argv", "git_env", "remote_refusal", "talks_to_remote", "transport_refusal"]
+__all__ = [
+    "GitTooOld",
+    "git_argv",
+    "git_env",
+    "git_problem",
+    "remote_refusal",
+    "talks_to_remote",
+    "transport_refusal",
+]

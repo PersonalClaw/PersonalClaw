@@ -216,15 +216,19 @@ a borrowed repository's refs, a signing or signature-check program, or the hook 
 collection asks about old objects. The `ext`, `file` and `git` transports are refused, so a
 remote at a local path is too. The repository's ssh command and credential helpers are
 replaced: a command that talks to a remote uses the owner's own, from their own git
-configuration files, and any other command uses plain `ssh` and none. What no setting given
-there can reach is in
+configuration files, and any other command uses plain `ssh` and none. A git older than 2.12
+ignores some of these settings (`protocol.<name>.allow` arrived in 2.12, `core.hooksPath` in
+2.9), so `git_argv` refuses it before it runs: `GitTooOld`, an `OSError` whose message names
+the version needed, the one found and what to do, and the doctor's git row says the same. What
+no setting given there can reach is in
 [limitations §12](../security/limitations.md#12-a-git-driver-a-repository-assigns-to-its-own-files-still-runs).
 A clone into a directory PersonalClaw has just made (the Store's) runs without these settings:
 nothing an agent wrote can be in its configuration, and a Store source may be a local path.
 `tests/test_personalclaw_git_is_neutral.py` plants each of those programs in a real
 repository and holds every git spawn in the tree to `git_argv`. An app's provider that runs
 git gets the same two helpers from `personalclaw.sdk.git`: `git_argv(args)` and
-`git_env(remote=False)`.
+`git_env(remote=False)`, with the same refusal (`GitTooOld`), and `git_problem()` for a doctor
+or setup step that says so before anything runs.
 
 ### What the sandbox does and does not do
 

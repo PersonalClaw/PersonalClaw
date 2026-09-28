@@ -267,7 +267,7 @@ function TimeTravelSection({ cfg, setCfg }: {
       {gitMissing && (
         <div data-type="body-s" className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3" style={{ color: 'var(--color-warn)' }}>
           <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
-          <span>Time travel needs <code>git</code> installed, and this machine has none. Nothing is being recorded.</span>
+          <span>Time travel needs <code>git</code> 2.12 or newer, and this machine has none. Nothing is being recorded.</span>
         </div>
       )}
 

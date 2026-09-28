@@ -679,8 +679,9 @@ PersonalClaw runs git inside repositories an agent can write: the workspace's, a
 the state history, the updater's checkout. Every such git runs with settings that stop the
 repository's own configuration from running a program: hooks, a file-system monitor, an external
 diff, its ssh command and credential helpers, and the rest
-([security.md](../architecture/security.md#sandbox-sandboxpy)). Two kinds of program are outside
-what a setting can reach:
+([security.md](../architecture/security.md#sandbox-sandboxpy)). A git older than 2.12 ignores some
+of those settings, so PersonalClaw refuses to run it and says which version it needs. Two kinds of
+program are outside what a setting can reach:
 
 - **A filter or merge driver.** A repository can define a driver (`filter.<name>.clean`, `.smudge`
   or `.process`, `merge.<name>.driver`) and assign it to its own files in `.gitattributes` or

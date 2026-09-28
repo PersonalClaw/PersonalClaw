@@ -211,6 +211,11 @@ If `python3 --version` is below 3.12, create the venv with an explicit interpret
 (`python3.12 -m venv .venv`) or let `uv` supply one (`uv venv --python 3.12`), which is what
 CI and the end-user install path both do.
 
+**git 2.12 or newer.** PersonalClaw's own git refuses an older one
+(`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own
+configuration from running a program, so the time-travel, worktree and updater tests need it
+too. `git version` says which you have.
+
 ```bash
 # from the repo root
 python3 --version            # must be 3.12.x or 3.13.x

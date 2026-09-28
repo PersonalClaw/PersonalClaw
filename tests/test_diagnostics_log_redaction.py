@@ -27,17 +27,20 @@ if sys.platform == "win32":
         _p.fork = lambda: (0, 1)
         sys.modules["pty"] = _p
 
-from personalclaw.dashboard.handlers.updates import (
-    _QueueLogHandler,
-    _redact_log_text,
-    _RingLogHandler,
-)
+from personalclaw.dashboard.handlers.updates import _QueueLogHandler, _RingLogHandler
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.security import MaskingFormatter
+
+
+def _masked(text: str) -> str:
+    """*text* as the log sinks write it: through the formatter every one of them is given."""
+    record = logging.LogRecord("personalclaw.test", logging.WARNING, __file__, 1, text, (), None)
+    return MaskingFormatter("%(message)s").format(record)
 
 
 class TestDiagnosticsLogRedaction:
-    def test_redact_log_text_helper(self):
-        """_redact_log_text redacts raw API keys, tokens, and git credentials.
+    def test_the_log_masker_redacts_keys_tokens_and_git_credentials(self):
+        """The log sinks' formatter redacts raw API keys, tokens, and git credentials.
 
         🔴 This claimed "git credentials" while planting a GitHub TOKEN as the
         password, and `ghp_…` is a shape `_CREDENTIAL_PATTERNS` already matched — so
@@ -48,23 +51,23 @@ class TestDiagnosticsLogRedaction:
         """
         token_part = "fake-github-token-1"
         raw = f"app registry: git fetch errored for https://user:{token_part}@github.com/repo.git"
-        redacted = _redact_log_text(raw)
+        redacted = _masked(raw)
         assert token_part not in redacted
         assert "[REDACTED" in redacted
 
         # An ARBITRARY password — no recognisable provider shape, so only a
         # positional rule catches it.
         plain = "app registry: git fetch errored for https://alice:hunter2@github.com/repo.git"
-        redacted_plain = _redact_log_text(plain)
+        redacted_plain = _masked(plain)
         assert "hunter2" not in redacted_plain, "an ordinary password in a URL still leaks"
         # …and the host survives, or the log stops being diagnosable.
         assert "github.com/repo.git" in redacted_plain
 
-    def test_redact_log_text_exfiltration_url(self):
-        """_redact_log_text redacts suspicious URLs with long query parameters."""
+    def test_the_log_masker_redacts_an_exfiltration_url(self):
+        """The log sinks' formatter redacts suspicious URLs with long query parameters."""
         long_query = "a" * 250
         raw = f"Network request to https://analytics-tracker.org/event?payload={long_query}"
-        redacted = _redact_log_text(raw)
+        redacted = _masked(raw)
         assert long_query not in redacted
         assert "[REDACTED: suspicious URL" in redacted
 
@@ -72,7 +75,7 @@ class TestDiagnosticsLogRedaction:
         """_QueueLogHandler.emit redacts credentials before placing in queue."""
         queue: asyncio.Queue[str] = asyncio.Queue()
         handler = _QueueLogHandler(queue)
-        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler.setFormatter(MaskingFormatter("%(message)s"))
 
         anthropic_key = "sk-ant-api03-abcdef1234567890abcdef1234567890"
         aws_key = "AKIAIOSFODNN7EXAMPLE"
@@ -98,7 +101,7 @@ class TestDiagnosticsLogRedaction:
         """_RingLogHandler.emit redacts credentials stored in the ring buffer."""
         ring: collections.deque[str] = collections.deque(maxlen=100)
         handler = _RingLogHandler(ring)
-        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(MaskingFormatter("%(levelname)s %(name)s: %(message)s"))
 
         pat_token = "fake-github-token-2"
         secret_url = f"https://user:{pat_token}@example.com/repo.git"
@@ -123,7 +126,7 @@ class TestDiagnosticsLogRedaction:
         """_RingLogHandler broadcasts redacted logs to WebSocket subscribers."""
         ring: collections.deque[str] = collections.deque(maxlen=100)
         handler = _RingLogHandler(ring)
-        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler.setFormatter(MaskingFormatter("%(message)s"))
 
         state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
         ws_mock = MagicMock()
@@ -151,7 +154,7 @@ class TestDiagnosticsLogRedaction:
         """Non-sensitive log records are preserved accurately."""
         ring: collections.deque[str] = collections.deque(maxlen=100)
         handler = _RingLogHandler(ring)
-        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler.setFormatter(MaskingFormatter("%(message)s"))
 
         record = logging.LogRecord(
             name="personalclaw.server",

@@ -185,6 +185,8 @@ describe('the timeline renders', () => {
     mount()
     await waitFor(() => expect(screen.getByText(/needs/i)).toBeTruthy())
     expect(screen.getByText(/Nothing is being recorded/i)).toBeTruthy()
+    // One sentence for no git and for one too old to run: the server reports both as `false`.
+    expect(screen.getByText(/2\.12 or newer/)).toBeTruthy()
   })
 })
 

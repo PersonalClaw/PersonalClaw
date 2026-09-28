@@ -322,6 +322,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "net/git.py::_owner_auth_settings::subprocess.run": (
         "host-fact: the owner's own git sign-in settings"
     ),
+    # The version of the git on PATH, which `git_argv` refuses below 2.12: a fixed
+    # `<git> version` argv, no shell, no repository read, bounded by a timeout.
+    "net/git.py::_version_of::subprocess.run": "host-fact: the version of the git on PATH",
     # CLI commands — operator at a terminal.
     "cli_config.py::_edit_config::subprocess.run": "operator: opens $EDITOR on a copy of config",
     "cli_doctor.py::_doctor::subprocess.run": "operator: doctor host probes",

@@ -1501,6 +1501,32 @@ Examples:
     return parser
 
 
+#: What every gateway log line looks like, on the console and in ``gateway.log``.
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _console_log_handler() -> logging.Handler:
+    """The handler for the console: the stream a service manager keeps as the gateway's log
+    (launchd's log files, the systemd journal), masked like every view
+    (``security.MaskingFormatter``)."""
+    from personalclaw.security import MaskingFormatter
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
+    return handler
+
+
+def _gateway_log_handler(log_file: Path, level: int) -> RotatingFileHandler:
+    """The handler that writes ``gateway.log``: rotated, at *level*, and masked like every view
+    (``security.MaskingFormatter``), so a credential in any record never reaches the file."""
+    from personalclaw.security import MaskingFormatter
+
+    handler = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
+    handler.setLevel(level)
+    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
+    return handler
+
+
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
     # stdout a line at a time, so that a line on stderr lands after what was printed before it
@@ -1619,8 +1645,7 @@ def main() -> None:
         level = logging.WARNING
     logging.basicConfig(
         level=logging.WARNING,  # third-party libs stay quiet
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        handlers=[_console_log_handler()],
     )
     # PersonalClaw loggers: --verbose CLI flag takes precedence, otherwise
     # fall back to the persistent log_level from config.
@@ -1645,12 +1670,7 @@ def main() -> None:
         logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     # Persistent file log — respects the configured log_level
-    _log_file = config_dir() / "gateway.log"
-    _fh = RotatingFileHandler(_log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
-    _fh.setLevel(level)
-    _fh.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
-    )
+    _fh = _gateway_log_handler(config_dir() / "gateway.log", level)
     logging.getLogger("personalclaw").addHandler(_fh)
     for _lname in _APP_LOGGER_ROOTS:
         logging.getLogger(_lname).addHandler(_fh)

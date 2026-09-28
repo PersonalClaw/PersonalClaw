@@ -21,6 +21,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An image or video provider can say why it can't generate: `unavailable_reason()` on `ImageGenProvider` and `VideoGenProvider` (an SDK addition no app has to change for; `google-models`, `bedrock-models`, `openrouter-models`, `alibaba-models`, `fal-image` and `local-image-gen` say why).**
 
+- **An app can say that git is too old to run: `personalclaw.sdk.git.git_argv` refuses a git older than 2.12 with `GitTooOld`, and `git_problem()` says so before anything runs (`git-repo`, `git-sync`, `notes` and `spec-builder` use them).**
+
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
@@ -70,6 +72,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The git PersonalClaw runs refuses a remote at a local path; reach it over ssh or https.**
 - **Settings → Agent defaults → Runners runs a runner's `--version` only when you press its Check, and only for a runner an installed agent app set up.**
+
+- **PersonalClaw needs git 2.12 or newer, and refuses an older one with the version it needs: an older git ignores the settings that stop a repository's own configuration from running a program.**
 
 - **`note_unknown_sender` loses its unused `silent` argument.**
 - **`make build` is the one distribution build, and it proves what it built.**
@@ -494,6 +498,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The keys that are not sign-ins have a lifetime: an app's proxy secret is new each time its backend starts, the 2FA secret is deleted when 2FA is turned off, and a trigger's question can be answered for a week.**
 
 - **The `embeddings` extra needs sentence-transformers 5.6 or newer, the oldest release checked for a model card that stays local.**
+
+- **The gateway log, the console a service manager keeps and the Logs page mask what they write, and an evaluation keeps what its step printed masked in its artifacts.**
+
+- **`personalclaw service install`, `service status` and `update` show what sudo, systemctl, launchctl or git said masked, and a failure keeps its end, where the reason is.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

@@ -14,7 +14,13 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from personalclaw.service.common import LAUNCHD_LABEL, personalclaw_bin, service_path
+from personalclaw.security import mask_child_output
+from personalclaw.service.common import (
+    LAUNCHD_LABEL,
+    command_said,
+    personalclaw_bin,
+    service_path,
+)
 from personalclaw.service.environment import Capture, capture
 
 PLIST_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -110,8 +116,7 @@ def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Captur
     load_res = _launchctl("load", "-w", str(PLIST_PATH))
     if load_res.returncode != 0:
         raise ServiceInstallError(
-            f"`launchctl load` failed: "
-            f"{(load_res.stderr or load_res.stdout).strip()}\n"
+            f"`launchctl load` failed: {command_said(load_res)}\n"
             f"   Plist: {PLIST_PATH}\n"
             f"   Tail the agent logs at {STDOUT_LOG} / {STDERR_LOG} for details."
         )
@@ -182,5 +187,6 @@ def status() -> str:
     """Return a human-readable status block from launchctl."""
     res = _launchctl("list", LAUNCHD_LABEL)
     if res.returncode != 0:
-        return f"personalclaw service is not loaded ({res.stderr.strip() or 'no entry'})\n"
-    return res.stdout
+        said = mask_child_output(res.stderr) or "no entry"
+        return f"personalclaw service is not loaded ({said})\n"
+    return mask_child_output(res.stdout, limit=None, one_line=False) + "\n"

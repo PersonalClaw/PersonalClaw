@@ -4650,6 +4650,10 @@
   ],
   "returns": "FeedbackRecord | None"
  },
+ "personalclaw.sdk.git.GitTooOld": {
+  "bases": ["OSError"],
+  "kind": "class"
+ },
  "personalclaw.sdk.git.git_argv": {
   "kind": "function",
   "params": [
@@ -4664,6 +4668,13 @@
    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "remote"}
   ],
   "returns": "dict[str, str]"
+ },
+ "personalclaw.sdk.git.git_problem": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "default": "'git'", "kind": "positional_or_keyword", "name": "git"}
+  ],
+  "returns": "str"
  },
  "personalclaw.sdk.git.remote_refusal": {
   "kind": "function",

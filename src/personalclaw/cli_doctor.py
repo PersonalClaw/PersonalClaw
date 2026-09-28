@@ -571,12 +571,22 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     # ── Dependencies ──
     print("Dependencies")
 
+    from personalclaw.net.git import MIN_GIT_VERSION, git_problem, git_version
+
     git = shutil.which("git")
-    if git:
-        print(f"  git:         ✅ {git}")
-    else:
-        print("  git:         ❌ not found (needed for personalclaw update)")
+    need = ".".join(str(part) for part in MIN_GIT_VERSION)
+    have = ".".join(str(part) for part in (git_version() if git else None) or ())
+    if not git:
+        print(f"  git:         ❌ not found (needed for personalclaw update; git {need} or newer)")
         issues.append("git")
+    elif git_problem():
+        # PersonalClaw's git refuses it (`net.git.GitTooOld`): an older git ignores the settings
+        # that stop a repository's own configuration from running a program.
+        print(f"  git:         ❌ {git} is git {have}; PersonalClaw needs git {need} or newer")
+        print(f"               Fix: install git {need} or newer")
+        issues.append("git")
+    else:
+        print(f"  git:         ✅ {git}" + (f" (git {have})" if have else ""))
 
     node = shutil.which("node")
     if node:

@@ -408,23 +408,26 @@ def _git(
     check: bool = True,
     stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    from personalclaw.net.git import git_argv
+    from personalclaw.net.git import GitTooOld, git_argv
 
     gd = git_dir(root, home=home)
     _assert_service_git_dir(gd, home=home)
-    cmd = git_argv(
-        [
-            f"--git-dir={gd}",
-            f"--work-tree={root.worktree}",
-            "-c",
-            f"user.name={COMMIT_NAME}",
-            "-c",
-            f"user.email={COMMIT_EMAIL}",
-            "-c",
-            "advice.detachedHead=false",
-            *args,
-        ]
-    )
+    try:
+        cmd = git_argv(
+            [
+                f"--git-dir={gd}",
+                f"--work-tree={root.worktree}",
+                "-c",
+                f"user.name={COMMIT_NAME}",
+                "-c",
+                f"user.email={COMMIT_EMAIL}",
+                "-c",
+                "advice.detachedHead=false",
+                *args,
+            ]
+        )
+    except GitTooOld as exc:
+        raise HistoryError(str(exc)) from exc
     proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
         cmd,
         cwd=str(root.worktree),
@@ -447,7 +450,8 @@ def _git(
 
 
 def git_available() -> bool:
-    """Whether a usable ``git`` exists. Time-travel degrades to off without one."""
+    """Whether a usable ``git`` exists: on ``PATH``, and new enough for PersonalClaw's git
+    (``net.git.MIN_GIT_VERSION``). Time-travel degrades to off without one."""
     from personalclaw.net.git import git_argv
 
     try:
@@ -471,10 +475,14 @@ def _repo_usable(gd: Path) -> bool:
     pruning by file age, a disk-full init, a sync tool), and any anatomy
     checklist here would just be a second, incomplete copy of git's own rule.
     """
-    from personalclaw.net.git import git_argv
+    from personalclaw.net.git import GitTooOld, git_argv
 
+    try:
+        argv = git_argv(["--git-dir", str(gd), "rev-parse", "--git-dir"])
+    except GitTooOld as exc:
+        raise HistoryError(str(exc)) from exc
     proc = subprocess.run(  # noqa: S603
-        git_argv(["--git-dir", str(gd), "rev-parse", "--git-dir"]),  # noqa: S607
+        argv,
         env=_git_env(),
         capture_output=True,
         text=True,
@@ -523,11 +531,15 @@ def ensure_repo(root: HistoryRoot, *, home: Path | None = None) -> Path:
             husk.name,
         )
     if not (gd / "HEAD").is_file():
-        from personalclaw.net.git import git_argv
+        from personalclaw.net.git import GitTooOld, git_argv
 
+        try:
+            argv = git_argv(["init", "--bare", "--quiet", str(gd)])
+        except GitTooOld as exc:
+            raise HistoryError(str(exc)) from exc
         gd.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(  # noqa: S603
-            git_argv(["init", "--bare", "--quiet", str(gd)]),  # noqa: S607
+            argv,
             env=_git_env(),
             capture_output=True,
             text=True,

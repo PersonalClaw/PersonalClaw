@@ -627,8 +627,9 @@ async def provision(
         # declared scratch workspace, and it is the run's workspace: its steps work in it
         # (`run_start`), the spawn allowlist admits it (`run_workdir`), and a restart finds it
         # recoverable like any scratch run's. So the run stays isolated, and its reason says
-        # where it works, once, whatever made the fallback.
-        out.degraded_reason = f"{degraded}; using a scratch dir"
+        # where it works, once, whatever made the fallback. A reason that is whole sentences (a
+        # git too old to run says what it needs and what to do) keeps no stop before it.
+        out.degraded_reason = f"{degraded.rstrip('.')}; using a scratch dir"
 
     # preserve → setup. Both only for an isolated workspace: an in-place run is already IN the
     # tree the patterns would copy from, so copying would be a file onto itself.
@@ -763,8 +764,12 @@ def _create_worktree(run_id: str, *, project_id: str, workspace_dir: str) -> tup
 
     if not workspace_dir:
         return _scratch_dir(run_id, "", None), "", "no workspace is bound to this run's project"
-    if not loop_worktree.git_available():
-        return _scratch_dir(run_id, "", None), "", "git is not on PATH"
+    from personalclaw.net.git import git_problem
+
+    problem = git_problem()
+    if problem:
+        # Not on PATH, or older than PersonalClaw's git needs: the reason says which.
+        return _scratch_dir(run_id, "", None), "", problem
     if not loop_worktree.is_git_repo(workspace_dir):
         return _scratch_dir(run_id, "", None), "", "the bound workspace is not a git repo"
     if not loop_worktree.ensure_base_commit(workspace_dir):

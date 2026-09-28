@@ -169,11 +169,14 @@ def test_a_loop_worktrees_git_runs_without_the_gateways_secrets(home, tmp_path, 
     rc, _out = worktree._git(str(home / "workspace"), "status")
 
     assert rc == 0
-    (run,) = stub.runs()
+    # PersonalClaw's git reads the version of the git it runs first (`net.git.require_git`),
+    # once per build of it, with the same environment as the command.
+    probe, run = stub.runs()
+    assert probe.argv == ["version"]
     assert run.argv == git_argv(["status"])[1:]
-    _assert_no_gateway_secret(run, home)
-    names = run.names
-    assert "GIT_DIR" not in names
+    for seen in (probe, run):
+        _assert_no_gateway_secret(seen, home)
+        assert "GIT_DIR" not in seen.names
 
 
 def test_a_workflow_step_runs_without_the_gateways_secrets(home, tmp_path, monkeypatch):

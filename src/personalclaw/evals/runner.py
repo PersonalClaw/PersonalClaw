@@ -57,6 +57,7 @@ from personalclaw.evals.matrix import (
     expand_cells,
 )
 from personalclaw.llm import registry as registry_lib
+from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,10 @@ _FORWARDED_ENV_NAMES: tuple[str, ...] = (registry_lib.SCRIPTED_PROVIDER_ENV,)
 # Default per-cell wall-clock ceiling. A single-user machine runs cells one at a
 # time, so this bounds one scenario, not a fleet.
 DEFAULT_CELL_TIMEOUT_SECS = 600.0
+
+#: How much of a cell child's stdout and stderr its artifact keeps: the end, where a failing
+#: child says why.
+_ARTIFACT_TAIL_CHARS = 2000
 
 
 def _budget_blocks_cell(spec: MatrixSpec) -> bool:
@@ -260,13 +265,20 @@ def _spawn_cell(
             return CellResult(coords=coords, outcome=VERIFIER_ABSENT, artifact_ref=artifact_ref)
 
         parsed = _parse_child_stdout(proc.stdout)
+        # The tails are what the cell's child printed, and a cell's artifact outlives the run: it
+        # is read back, compared and attached to a report. Masked like every view, cut after
+        # masking, with line breaks kept for a person reading why a cell failed.
         _write_cell_artifact(
             cell_dir,
             {
                 "returncode": proc.returncode,
                 "parsed": parsed,
-                "stdout_tail": (proc.stdout or "")[-2000:],
-                "stderr_tail": (proc.stderr or "")[-2000:],
+                "stdout_tail": mask_child_output(
+                    proc.stdout, limit=_ARTIFACT_TAIL_CHARS, tail=True, one_line=False
+                ),
+                "stderr_tail": mask_child_output(
+                    proc.stderr, limit=_ARTIFACT_TAIL_CHARS, tail=True, one_line=False
+                ),
             },
         )
 

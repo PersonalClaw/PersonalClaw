@@ -1267,6 +1267,23 @@ def mask_child_output(
     return _UNSAFE_OUTPUT_CHARS_BUT_LF.sub(_visible_escape, text)
 
 
+class MaskingFormatter(logging.Formatter):
+    """A log formatter that masks what it writes, the way every view masks
+    (:func:`redact_for_display`).
+
+    Every sink the gateway's log records reach uses it: the ``gateway.log`` file, the console
+    stream a service manager keeps (launchd's log files, the systemd journal), and the Logs
+    page's buffer and live stream. The record is masked after it is formatted, so a credential
+    is masked wherever it sits: in the message, an argument, an exception's text or a traceback
+    line. A call site that writes what a child printed still passes it through
+    :func:`mask_child_output`, which also keeps it on one line; this is the floor under every
+    record, not a replacement for that.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_for_display(super().format(record))
+
+
 #: What stands in for a value a tool handed to the code it ran, in that code's output. The same
 #: text as a shape-found credential's mask, so the inverses and the model read it the same way.
 _KNOWN_VALUE_MASK = "[REDACTED: credential]"

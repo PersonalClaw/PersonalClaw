@@ -22,7 +22,13 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from personalclaw.service.common import SERVICE_NAME, personalclaw_bin, service_path
+from personalclaw.security import mask_child_output
+from personalclaw.service.common import (
+    SERVICE_NAME,
+    command_said,
+    personalclaw_bin,
+    service_path,
+)
 from personalclaw.service.environment import (
     Capture,
     capture,
@@ -197,30 +203,25 @@ def install(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -> Captur
         raise ServiceInstallError(
             "Failed to write the unit file. The sudo step is required because "
             f"{UNIT_PATH} is owned by root.\n"
-            f"   sudo install said: {(write_res.stderr or write_res.stdout).strip()}"
+            f"   sudo install said: {command_said(write_res)}"
         )
 
     reload_res = _systemctl("daemon-reload")
     if reload_res.returncode != 0:
         raise ServiceInstallError(
-            f"`sudo systemctl daemon-reload` failed: "
-            f"{(reload_res.stderr or reload_res.stdout).strip()}"
+            f"`sudo systemctl daemon-reload` failed: {command_said(reload_res)}"
         )
 
     enable_res = _systemctl("enable", f"{SERVICE_NAME}.service")
     if enable_res.returncode != 0:
-        raise ServiceInstallError(
-            f"`sudo systemctl enable` failed: "
-            f"{(enable_res.stderr or enable_res.stdout).strip()}"
-        )
+        raise ServiceInstallError(f"`sudo systemctl enable` failed: {command_said(enable_res)}")
 
     # Use restart (not start) so re-running install picks up a unit-file
     # change without manual intervention.
     restart_res = _systemctl("restart", f"{SERVICE_NAME}.service")
     if restart_res.returncode != 0:
         raise ServiceInstallError(
-            f"`sudo systemctl restart` failed: "
-            f"{(restart_res.stderr or restart_res.stdout).strip()}\n"
+            f"`sudo systemctl restart` failed: {command_said(restart_res)}\n"
             f"Run `sudo journalctl -u {SERVICE_NAME}.service -n 50` for details."
         )
     return carried
@@ -277,4 +278,6 @@ def status() -> str:
     show whether the service is up.
     """
     res = _systemctl("status", f"{SERVICE_NAME}.service", "--no-pager", sudo=False)
-    return res.stdout or res.stderr
+    # The block ends with the gateway's latest journal lines, which can hold anything a log line
+    # held: masked whole, line breaks kept, control characters escaped.
+    return mask_child_output(res.stdout or res.stderr, limit=None, one_line=False) + "\n"

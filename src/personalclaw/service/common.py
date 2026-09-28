@@ -3,10 +3,32 @@
 import enum
 import os
 import shutil
+import subprocess
 import sys
 
 SERVICE_NAME = "personalclaw"  # systemd unit name (without .service)
 LAUNCHD_LABEL = "io.personalclaw.gateway"  # launchd Label
+
+
+#: How much of what sudo, systemctl or launchctl said a failure keeps: the end, where the
+#: reason and what to do are.
+COMMAND_SAID_CHARS = 600
+
+
+def command_said(result: "subprocess.CompletedProcess[str]") -> str:
+    """What a service command (sudo, systemctl, launchctl) printed, fit for the terminal.
+
+    Its stderr, else its stdout: masked the way every view masks, cut to the end, where the
+    reason is (``Unit not found``, ``a terminal is required to read the password``), with its
+    line breaks kept for the person reading it and every control character written as a
+    visible escape, so the command cannot move the cursor or recolour the terminal it is shown
+    in. A status block goes through ``mask_child_output`` whole, the same way.
+    """
+    from personalclaw.security import mask_child_output
+
+    return mask_child_output(
+        result.stderr or result.stdout, limit=COMMAND_SAID_CHARS, tail=True, one_line=False
+    )
 
 
 def personalclaw_bin() -> str:

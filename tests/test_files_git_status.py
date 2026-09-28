@@ -181,7 +181,13 @@ def _slow_git(tmp_path, monkeypatch, name="bin"):
     # /bin/sleep by ABSOLUTE path: PATH below holds only this dir, so a bare `sleep`
     # is not found and the stub would exit 0 instantly. That is exactly how the
     # pre-fix version of the reap test below passed while inducing no timeout at all.
-    git_stub.write_text(f"#!/bin/sh\n/bin/sleep {_GRANDCHILD_SECS} & wait\n")
+    # It answers `git version` as a real git does, without reading anything: PersonalClaw's git
+    # asks that before it runs one (`net.git.require_git`). What never answers is the read.
+    git_stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = version ]; then echo "git version 2.43.0"; exit 0; fi\n'
+        f"/bin/sleep {_GRANDCHILD_SECS} & wait\n"
+    )
     git_stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(fake_bin))  # _git calls bare "git" → our stub
     return fake_bin

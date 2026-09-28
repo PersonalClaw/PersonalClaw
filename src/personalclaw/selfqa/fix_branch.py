@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,11 +71,6 @@ class FixBranchResult:
             "reason": self.reason,
             "already_existed": self.already_existed,
         }
-
-
-def git_available() -> bool:
-    """True iff a ``git`` binary is on PATH."""
-    return shutil.which("git") is not None
 
 
 def _git(repo: Path, *args: str) -> tuple[int, str]:
@@ -140,8 +134,12 @@ def create_fix_branch(repo: Path | str, sha: str, *, enabled: bool) -> FixBranch
             branch=branch,
             reason="refused: the commit ref is not a hex sha, so no branch was created",
         )
-    if not git_available():
-        return FixBranchResult(created=False, branch=branch, reason="git is not available")
+    from personalclaw.net.git import git_problem
+
+    problem = git_problem()
+    if problem:
+        # No git on PATH, or one older than PersonalClaw's git runs: the reason says which.
+        return FixBranchResult(created=False, branch=branch, reason=problem)
 
     root = Path(repo)
     if not _is_git_repo(root):

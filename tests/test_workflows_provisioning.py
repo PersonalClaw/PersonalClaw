@@ -336,6 +336,29 @@ class TestDegradation:
         )
         assert result.isolated is True, "the scratch folder it fell back to is its own"
 
+    async def test_a_git_too_old_to_run_falls_back_to_scratch_and_says_why(
+        self, home, repo, tmp_path, monkeypatch
+    ) -> None:
+        """PersonalClaw's git refuses a git older than 2.12, so for a worktree there is no git:
+        the run works in a scratch folder of its own, and its reason names the version needed,
+        the one found and what to do."""
+        old_git = tmp_path / "old-git-bin"
+        old_git.mkdir()
+        (old_git / "git").write_text("#!/bin/sh\necho 'git version 2.11.0'\n", encoding="utf-8")
+        (old_git / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{old_git}{os.pathsep}{os.environ.get('PATH', '')}")
+        run = _run()
+        result = await provisioning.provision(
+            WorkspaceSpec(mode=Mode.WORKTREE), run_id=run.id, workspace_dir=str(repo)
+        )
+        assert (result.ok, result.isolated) == (True, True)
+        assert result.path == str(provisioning.scratch_location(run.id)), result.path
+        assert result.degraded_reason == (
+            "PersonalClaw needs git 2.12 or newer, and this machine has git 2.11.0. Install a "
+            "newer git: an older one ignores the settings that stop a repository's own "
+            "configuration from running a program; using a scratch dir"
+        )
+
     async def test_container_mode_degrades_rather_than_refusing(self, home, repo) -> None:
         """WF2WOR-12 shipped container mode with the no-environment posture unchanged: a bare
         `container` declaration (no manifest) still RUNS — isolated scratch, reason recorded,
