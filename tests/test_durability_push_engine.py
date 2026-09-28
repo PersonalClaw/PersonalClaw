@@ -181,3 +181,94 @@ class TestCasRetry:
         )
         assert not report.registry_committed
         assert report.cas_attempts == 5  # bounded, not infinite
+
+    def test_a_create_lost_to_a_write_that_never_landed_is_tried_again_as_a_create(self, tmp_path):
+        """A create can lose to another machine's write to the registry that then never lands:
+        S3 answers a conditional write 409 while another is still in progress. The reload finds
+        no registry, and every retry swapped against the bytes of an empty one, which isn't
+        there, so all five lost and nothing was written."""
+
+        class Store(FakeTransport):
+            """A store with no registry, whose first create meets a write still in progress."""
+
+            def __init__(self):
+                super().__init__()
+                self.in_progress = True
+
+            def cas_registry(self, expected_sha, data):
+                self.cas_calls.append(expected_sha)
+                if expected_sha is not None:
+                    return False  # a sha was expected, and there is no registry to hold it
+                if self.in_progress:
+                    self.in_progress = False  # that write never lands
+                    return False
+                self.registry_bytes = data
+                return True
+
+        tr = Store()
+        report = publish_export(
+            tr,
+            _export_dir(tmp_path),
+            Registry.absent(),
+            Outbox(tmp_path / "s"),
+            self_id="me",
+            manifest_sha="s",
+            now="t",
+            reload_registry=Registry.absent,  # what read_registry answers for a store without one
+        )
+
+        assert (report.registry_committed, report.cas_attempts, tr.cas_calls) == (
+            True,
+            2,
+            [None, None],
+        ), report.detail
+        assert Registry.loads(tr.registry_bytes).seq_of("me") == 1
+
+    def test_a_registry_that_is_there_with_no_machine_in_it_is_swapped_not_created(self, tmp_path):
+        """The control: only a reload that found no registry makes the next try a create. One
+        that found a registry holding no machine still swaps against its bytes."""
+        empty = Registry.empty()
+
+        class Store(FakeTransport):
+            """A store holding an empty registry, which refuses a create of it."""
+
+            def cas_registry(self, expected_sha, data):
+                self.cas_calls.append(expected_sha)
+                if expected_sha != empty.sha():
+                    return False  # a create meets the registry already there
+                self.registry_bytes = data
+                return True
+
+        tr = Store()
+        report = publish_export(
+            tr,
+            _export_dir(tmp_path),
+            Registry.loads(empty.to_bytes()),
+            Outbox(tmp_path / "s"),
+            self_id="me",
+            manifest_sha="s",
+            now="t",
+            reload_registry=lambda: Registry.loads(empty.to_bytes()),  # read_registry's answer
+        )
+
+        assert (report.registry_committed, report.cas_attempts, tr.cas_calls) == (
+            True,
+            2,
+            [None, empty.sha()],
+        ), report.detail
+
+    def test_read_registry_says_when_there_is_no_registry(self):
+        """What the swap's retry reads its "no registry" from: a store without one, and a store
+        whose listing names one it then doesn't hand over, are absent; one it holds is not."""
+        from personalclaw.durability.sync_cycle import read_registry
+
+        class Listed(FakeTransport):
+            def pull(self, refs):
+                return []  # listed, then not there to read
+
+        tr = FakeTransport()
+        assert read_registry(tr).present is False
+        tr.objects["registry.json"] = Registry.empty().to_bytes()
+        listed = Listed()
+        listed.objects["registry.json"] = b"{}"
+        assert (read_registry(listed).present, read_registry(tr).present) == (False, True)

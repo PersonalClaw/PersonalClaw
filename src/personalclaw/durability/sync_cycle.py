@@ -88,19 +88,20 @@ def _record_published(ancestors: Ancestors, home: Path) -> None:
 def read_registry(transport: SyncTransportProvider) -> Registry:
     """Read and parse the shared ``registry.json`` from the remote.
 
-    Absent (a brand-new sync root) → an empty registry, so the first machine publishes from
-    scratch. A listing/pull error propagates to the caller, which records it as a failed cycle.
+    Absent (a brand-new sync root) → :meth:`Registry.absent`, an empty registry marked not
+    there, so the first machine publishes from scratch and a swap creates it. A listing/pull
+    error propagates to the caller, which records it as a failed cycle.
     """
     refs = transport.list_remote(REGISTRY_KEY)
     if not refs:
-        return Registry.empty()
+        return Registry.absent()
     # list_remote(prefix) is a prefix match; take the exact key if present.
     exact = [r for r in refs if r.key == REGISTRY_KEY] or [RemoteRef(key=REGISTRY_KEY)]
     objs = transport.pull(exact)
     for obj in objs:
         if obj.key == REGISTRY_KEY:
             return Registry.loads(obj.data)
-    return Registry.empty()
+    return Registry.absent()
 
 
 def run_sync_cycle(

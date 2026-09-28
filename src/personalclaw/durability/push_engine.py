@@ -154,7 +154,11 @@ def _commit_registry(
             if mid != self_id and e.seq > merged.seq_of(mid):
                 merged.machines[mid] = e
         registry.machines = merged.machines
-        expected = remote.sha()
+        # A reload that found no registry has no bytes to swap against, so the next try creates
+        # it, as the first did. A swap against the bytes of an empty one loses every time, and
+        # that is what a create lost to a write that then never landed (a conditional write S3
+        # answers 409 while another is still in progress) met on every retry.
+        expected = remote.sha() if remote.present else None
     report.detail = f"registry CAS lost after {_MAX_CAS_ATTEMPTS} attempts"
     return False
 

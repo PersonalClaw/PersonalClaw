@@ -99,11 +99,20 @@ class Registry:
     """
 
     machines: dict[str, MachineEntry] = field(default_factory=dict)
+    #: False for the empty registry standing in for a remote that has none yet (:meth:`absent`).
+    #: Not part of the registry itself: never serialized, never compared.
+    present: bool = field(default=True, repr=False, compare=False)
 
     # ── parse / serialize ────────────────────────────────────────────────────
     @classmethod
     def empty(cls) -> Registry:
         return cls(machines={})
+
+    @classmethod
+    def absent(cls) -> Registry:
+        """What a remote with no registry yet holds: an empty registry, marked not ``present``,
+        so a swap creates it rather than comparing against bytes that aren't there."""
+        return cls(machines={}, present=False)
 
     @classmethod
     def loads(cls, data: bytes | str | None) -> Registry:
