@@ -174,12 +174,15 @@ def _git_is_inside_work_tree(path: Path) -> bool | None:
     """
     if not shutil.which("git"):
         return None
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         result = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            git_argv(["-C", str(path), "rev-parse", "--is-inside-work-tree"]),
             capture_output=True,
             text=True,
             timeout=5,
+            env=git_env(site="doctor-git"),
         )
     except Exception:
         return None

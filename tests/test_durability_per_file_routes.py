@@ -25,13 +25,14 @@ file keeps it honest:
   way to get that wrong is to call every failure a path problem.
 
 Every test runs against an isolated home AND an isolated workspace: setting only
-``PERSONALCLAW_HOME`` leaves the memory root pointed at the developer's real
-``~/workplace``, and ``config_dir`` is pinned too because the handlers resolve
+``PERSONALCLAW_HOME`` leaves the memory root following a ``PERSONALCLAW_WORKSPACE`` the
+developer's shell may export, and ``config_dir`` is pinned too because the handlers resolve
 the home through ``service.active_home()``.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -39,7 +40,11 @@ import pytest
 
 from personalclaw.durability import state_history as sh
 
-pytestmark = pytest.mark.skipif(not sh.git_available(), reason="git is required for time-travel")
+# `shutil.which`, not `sh.git_available()`: that probe builds git's child environment from the
+# owner's settings, and a module-level mark runs at collection, before any test chose a home.
+pytestmark = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is required for time-travel"
+)
 
 
 # ── fixtures ───────────────────────────────────────────────────────────────

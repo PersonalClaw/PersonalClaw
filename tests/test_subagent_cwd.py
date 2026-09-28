@@ -2,7 +2,7 @@
 
 Covers:
 - ``validate_cwd`` helper: absolute, exists, realpath, allowlist matching,
-  symlink traversal, disabled feature.
+  symlink traversal, and the empty default that keeps a spawn in the workspace.
 - ``SubagentManager.spawn`` cwd rejection path: invalid cwd returns a done
   ``SubagentInfo`` with an ``error`` and emits a ``rejected_invalid_cwd`` SEL
   event without incrementing the running count.
@@ -20,6 +20,22 @@ import pytest
 
 from personalclaw.subagent import SubagentManager, validate_cwd
 
+
+@pytest.fixture(autouse=True)
+def _workspace_of_this_test(tmp_path_factory, monkeypatch):
+    """The workspace ``validate_cwd`` always admits, pinned to a folder of this test's own and
+    outside its ``tmp_path``: a ``PERSONALCLAW_WORKSPACE`` exported by the developer's shell must
+    not decide what is admitted, and no test here may create a folder in it."""
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path_factory.mktemp("workspace")))
+
+
+def _workspace() -> str:
+    """The workspace ``validate_cwd`` always admits, resolved the way it resolves it."""
+    from personalclaw.config.loader import workspace_root
+
+    return os.path.realpath(workspace_root())
+
+
 # ---------------------------------------------------------------------------
 # validate_cwd helper
 # ---------------------------------------------------------------------------
@@ -34,11 +50,21 @@ class TestValidateCwd:
         assert resolved == ""
         assert err == ""
 
-    def test_empty_allowed_roots_rejects_non_empty_cwd(self, tmp_path: Path) -> None:
-        """With no allowed roots configured, any cwd is rejected (fails-closed)."""
+    def test_empty_allowed_roots_admit_the_workspace_only(self, tmp_path: Path) -> None:
+        """The default, ``[]``: a folder inside the workspace is admitted, and one outside it is
+        refused with the workspace named, so the caller learns where it may work instead."""
+        inside = Path(_workspace()) / "cwd-test-project"
+        inside.mkdir(parents=True, exist_ok=True)
+
+        resolved, err = validate_cwd(str(inside), [])
+        assert (resolved, err) == (os.path.realpath(inside), "")
+
         resolved, err = validate_cwd(str(tmp_path), [])
         assert resolved == ""
-        assert "disabled" in err
+        assert err == (
+            f"cwd is not in the workspace ({_workspace()}) or under any allowed root: []. "
+            "Add its folder in Settings → Agent defaults → Allowed working directories."
+        )
 
     def test_relative_cwd_rejected(self) -> None:
         """Relative paths are ambiguous and rejected."""
@@ -75,7 +101,7 @@ class TestValidateCwd:
         allowed.mkdir()
         resolved, err = validate_cwd(str(other), [str(allowed)])
         assert resolved == ""
-        assert "not under any allowed root" in err
+        assert "or under any allowed root" in err
 
     def test_symlink_target_outside_allowlist_rejected(self, tmp_path: Path) -> None:
         """Symlink pointing outside the allowlist is rejected after realpath."""
@@ -87,7 +113,7 @@ class TestValidateCwd:
         link.symlink_to(secret)
         resolved, err = validate_cwd(str(link), [str(allowed)])
         assert resolved == ""
-        assert "not under any allowed root" in err
+        assert "or under any allowed root" in err
 
     def test_symlink_target_inside_allowlist_accepted(self, tmp_path: Path) -> None:
         """Symlink that resolves inside the allowlist is accepted; resolved path is the realpath."""
@@ -138,7 +164,7 @@ class TestValidateCwd:
         sibling.mkdir()
         resolved, err = validate_cwd(str(sibling), [str(allow)])
         assert resolved == ""
-        assert "not under any allowed root" in err
+        assert "or under any allowed root" in err
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +306,11 @@ class TestSpawnCwd:
         assert "cwd" in sel_mock.log_tool_invocation.call_args_list[0].kwargs["metadata"]
         assert info is not None
         assert info.done is True
-        assert info.error == f"spawn refused: cwd is not under any allowed root: {allowed_roots}"
+        assert info.error == (
+            f"spawn refused: cwd is not in the workspace ({_workspace()}) or under any allowed "
+            f"root: {allowed_roots}. Add its folder in Settings → Agent defaults → Allowed "
+            "working directories."
+        )
         assert manager._running_count == running_before
 
     @pytest.mark.asyncio
@@ -332,16 +362,19 @@ class TestSpawnCwd:
             "rejected_invalid_cwd"
         ]
         assert info is not None
-        assert info.error.startswith("spawn refused: cwd is not under any allowed root")
+        assert info.error.startswith("spawn refused: cwd is not in the workspace")
 
     @pytest.mark.asyncio
-    async def test_spawn_cwd_disabled_when_allowlist_empty(
+    async def test_spawn_with_the_empty_default_works_in_the_workspace_only(
         self,
         tmp_path: Path,
     ) -> None:
-        """Config with empty allowed_roots rejects any cwd (fails-closed)."""
-        project = tmp_path / "project"
-        project.mkdir()
+        """The default ``[]`` adds no folder: a cwd in the workspace is taken, one outside is
+        refused. Nothing but the owner's own addition widens where a subagent can work."""
+        outside = tmp_path / "project"
+        outside.mkdir()
+        inside = Path(_workspace()) / "project"
+        inside.mkdir()
         manager = SubagentManager(
             sessions=_mock_sessions(),
             ctx_builder=_mock_ctx_builder_auto_spawn(),
@@ -354,10 +387,12 @@ class TestSpawnCwd:
             patch("personalclaw.subagent.sel"),
             patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
         ):
-            info = manager.spawn("t", cwd=str(project))
-        assert info is not None
-        assert info.done is True
-        assert "disabled" in info.error
+            refused = manager.spawn("t", cwd=str(outside))
+            taken = manager.spawn("t", cwd=str(inside))
+        assert refused is not None and refused.done is True
+        assert refused.error.startswith("spawn refused: cwd is not in the workspace")
+        assert taken is not None and not taken.error, taken.error
+        assert taken.cwd == os.path.realpath(inside)
 
     @pytest.mark.asyncio
     async def test_spawn_at_capacity_queues_cwd_for_dequeue(
@@ -402,11 +437,10 @@ class TestSpawnCwd:
         self,
         tmp_path: Path,
     ) -> None:
-        """If AppConfig.load raises, reject cwd (fail-closed).
+        """If AppConfig.load raises, a cwd outside the workspace is refused (fail-closed).
 
-        Defaulting to the permissive ``["~/workspace"]`` would silently
-        re-enable the feature for admins who explicitly disabled it with
-        ``subagent_cwd_allowed_roots = []``.
+        With the config unreadable, no folder the owner may have added counts: the spawn keeps
+        to the workspace, which a project folder under ``tmp_path`` is not.
 
         🪤 THE BUDGET GUARD NOW REFUSES THE SAME CAUSE, AND IT RUNS FIRST (#3458). It reads
         the same ``AppConfig.load`` this patch breaks, and an unverifiable spend ceiling is
@@ -441,4 +475,4 @@ class TestSpawnCwd:
 
         assert info is not None
         assert info.done is True
-        assert "disabled" in info.error
+        assert info.error.startswith("spawn refused: cwd is not in the workspace")

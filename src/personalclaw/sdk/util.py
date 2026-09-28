@@ -15,12 +15,13 @@
   invariant in a directory they all share, and the failure they would trade for is a
   half-written artifact a later run treats as complete.
 
-- ``child_process_env(extra, installer=...)`` — the environment for any other child process an
-  app's provider starts: a binary it runs, an ``npx`` tool. A provider runs inside the gateway, and
-  the gateway's environment holds every secret saved in PersonalClaw, so a child started with
-  ``env`` left out inherits all of them. This is the child allowlist (PATH, home, locale, proxy
-  and CA settings, and what the owner passed through by name), *extra* over it, and with
-  ``installer="npm"`` or ``"pip"`` that installer's own settings.
+- ``child_process_env(extra, installer=..., ssh_agent=...)`` — the environment for any other child
+  process an app's provider starts: a binary it runs, an ``npx`` tool. A provider runs inside the
+  gateway, and the gateway's environment holds every secret saved in PersonalClaw, so a child
+  started with ``env`` left out inherits all of them. This is the child allowlist (PATH, home,
+  locale, proxy and CA settings, and what the owner passed through by name), *extra* over it, with
+  ``installer="npm"`` or ``"pip"`` that installer's own settings, and with ``ssh_agent=True`` the
+  owner's SSH agent socket and nothing else, for a program that signs in over ssh.
 - ``app_packages_env()`` — the environment for a child process that must import the
   packages apps declare (``<home>/app-python``): an app running one of its declared packages
   as ``python -m <package>``. The child allowlist (PATH, home, locale, proxy and CA settings),
@@ -98,7 +99,7 @@ def shared_app_data_dir(name: str) -> Path | None:
 
 
 def child_process_env(
-    extra: Mapping[str, str] | None = None, *, installer: str = ""
+    extra: Mapping[str, str] | None = None, *, installer: str = "", ssh_agent: bool = False
 ) -> dict[str, str]:
     """The environment for a child process an app's provider starts, as ``env=`` to its spawn.
 
@@ -107,10 +108,15 @@ def child_process_env(
     of the gateway's environment: a provider runs inside the gateway, whose environment holds every
     secret saved in PersonalClaw. *extra* goes over it (a credential-shaped name in it is refused).
     ``installer="npm"`` or ``"pip"`` adds that installer's own settings, for an ``npx`` or ``pip``
-    run. A child that must import the packages apps declare wants :func:`app_packages_env`."""
+    run. ``ssh_agent=True`` adds the owner's SSH agent socket (``SSH_AUTH_SOCK``) and nothing else,
+    for a program that signs in over ssh with the owner's keys, such as rsync to their host; no
+    other child gets it. A child that must import the packages apps declare wants
+    :func:`app_packages_env`, and a git wants ``personalclaw.sdk.git``."""
     from personalclaw.sandbox import build_child_env
 
-    return build_child_env(site="app-child", extra=dict(extra or {}), installer=installer)
+    return build_child_env(
+        site="app-child", extra=dict(extra or {}), installer=installer, ssh_agent=ssh_agent
+    )
 
 
 def outside_home_path(place: str) -> Path | None:

@@ -114,10 +114,7 @@
     "type": "float"
   },
   {
-    "default": [
-      "~/workspace",
-      "~/workplace"
-    ],
+    "default": [],
     "path": "agent.subagent_cwd_allowed_roots",
     "sensitive": false,
     "type": "list[str]"

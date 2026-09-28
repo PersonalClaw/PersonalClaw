@@ -147,19 +147,21 @@ never reach a sandboxed child).
 
 Child **environments** are built by allowlist, not inherited: `build_child_env`
 gives the native agent's bash commands, a hook, cron-script or bash-action child, a
-loop's check command and its worktree git, a workflow's setup and teardown steps (a
+loop's check command, a workflow's setup and teardown steps (a
 durable step included: it starts under `env -i`, so the tmux server's own environment
 never reaches it) and effect teardowns, a runner CLI's version probe, every ACP agent
 CLI (plus the variables its app declares for it and the session it answers for), every
-git that reads or clones an app source (`net/git.py::source_git_env`, the guarded
-listing fetch included), and everything the gateway starts for an app (the pip and npm
-that install what it declares, its engine's venv and pip, its setup hooks, backend,
-worker, sidecar and MCP servers). An app's provider module runs inside the gateway, so
-the children IT starts get the same base only when it asks for it:
-`personalclaw.sdk.util.child_process_env(extra=None, *, installer="")` (or
-`app_packages_env()` for a Python child that imports the app packages), an SDK addition:
-`extra` is what that child needs beyond the base, and `installer` names a package manager
-whose own settings pass through. `tests/test_spawn_env_audit.py` classifies every spawn
+git PersonalClaw runs (`net/git.py::git_env`: the state history, the updater, a loop's
+worktree, the file browser, the run review and self-QA reads, the doctor's probe, and the
+Store reading and cloning an app source, the guarded listing fetch included), and
+everything the gateway starts for an app (the pip and npm that install what it declares,
+its engine's venv and pip, its setup hooks, backend, worker, sidecar and MCP servers). An
+app's provider module runs inside the gateway, so the children IT starts get the same base
+only when it asks for it: `personalclaw.sdk.util.child_process_env(extra=None, *,
+installer="")` (or `app_packages_env()` for a Python child that imports the app packages),
+an SDK addition: `extra` is what that child needs beyond the base, and `installer` names a
+package manager whose own settings pass through. A git an app runs asks for
+`personalclaw.sdk.git` instead (below). `tests/test_spawn_env_audit.py` classifies every spawn
 site by where its child's environment comes from; the ones that keep the gateway's
 environment, each with its reason there, are PersonalClaw's own processes, installs and
 updates, the owner's terminal and editor, an MCP server of the owner's own config, the
@@ -179,6 +181,32 @@ the floor: a declaration cannot pass `AWS_SECRET*`, `AWS_SESSION*`,
 `SSH_AUTH_SOCK`, `GNUPGHOME` or `GIT_ASKPASS`. Withheld names are listed in the
 debug log at each spawn, so a script that needs one more variable is diagnosable
 rather than mysteriously broken.
+
+**The SSH agent, and PersonalClaw's own git.** The one way past that floor is the SSH agent's
+socket, for a child that signs in over ssh with the owner's keys: `build_child_env(ssh_agent=True)`
+adds `SSH_AUTH_SOCK` and nothing else. A git command that talks to a remote (`clone`, `fetch`,
+`pull`, `push`, `ls-remote`, `remote`, `submodule`) gets it, and so does a program an app starts
+with `personalclaw.sdk.util.child_process_env(ssh_agent=True)`, such as rsync to the owner's own
+host. `GIT_SSL_CAINFO` and `GIT_SSL_CAPATH` are in every child's base, and the service
+install carries them, so a clone behind a proxy that re-signs TLS verifies the server. And
+because an agent's shell can write a repository's `.git` as easily as its files, a git that
+runs in a repository an agent can write also runs with `net/git.py::git_argv`: settings on
+git's command line, after the caller's own options, that stop the repository's configuration
+from running a program. No hook runs; nor does a file-system monitor, a password or editor
+program, an external diff, a diff driver or textconv filter, the pager, the command that lists
+a borrowed repository's refs, a signing or signature-check program, or the hook a garbage
+collection asks about old objects. The `ext`, `file` and `git` transports are refused, so a
+remote at a local path is too. The repository's ssh command and credential helpers are
+replaced: a command that talks to a remote uses the owner's own, from their own git
+configuration files, and any other command uses plain `ssh` and none. What no setting given
+there can reach is in
+[limitations §12](../security/limitations.md#12-a-git-driver-a-repository-assigns-to-its-own-files-still-runs).
+A clone into a directory PersonalClaw has just made (the Store's) runs without these settings:
+nothing an agent wrote can be in its configuration, and a Store source may be a local path.
+`tests/test_personalclaw_git_is_neutral.py` plants each of those programs in a real
+repository and holds every git spawn in the tree to `git_argv`. An app's provider that runs
+git gets the same two helpers from `personalclaw.sdk.git`: `git_argv(args)` and
+`git_env(remote=False)`.
 
 ### What the sandbox does and does not do
 

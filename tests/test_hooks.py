@@ -161,7 +161,7 @@ class TestToolHooks:
         """'Reading *' matches file-read tools whose title starts with 'Reading '."""
         cfg = HooksConfig(auto_approve_tools=["Reading *"])
         mgr = HookManager(cfg)
-        assert mgr.on_tool_call("Reading /workplace/src/file.py").action == TOOL_AUTO_APPROVE
+        assert mgr.on_tool_call("Reading /projects/src/file.py").action == TOOL_AUTO_APPROVE
         assert mgr.on_tool_call("TrackerCreateIssue").action == TOOL_ALLOW
 
     def test_mixed_prefix_and_name_patterns(self):

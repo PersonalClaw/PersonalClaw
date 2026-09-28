@@ -4648,6 +4648,42 @@
   ],
   "returns": "FeedbackRecord | None"
  },
+ "personalclaw.sdk.git.git_argv": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Sequence[str]", "kind": "positional_or_keyword", "name": "args"},
+   {"annotation": "str", "default": "'git'", "kind": "keyword_only", "name": "git"}
+  ],
+  "returns": "list[str]"
+ },
+ "personalclaw.sdk.git.git_env": {
+  "kind": "function",
+  "params": [
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "remote"}
+  ],
+  "returns": "dict[str, str]"
+ },
+ "personalclaw.sdk.git.remote_refusal": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "url"}
+  ],
+  "returns": "str"
+ },
+ "personalclaw.sdk.git.talks_to_remote": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Sequence[str]", "kind": "positional_or_keyword", "name": "args"}
+  ],
+  "returns": "bool"
+ },
+ "personalclaw.sdk.git.transport_refusal": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str | bytes | None", "kind": "positional_or_keyword", "name": "stderr"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.image.ImageGenError": {
   "bases": ["Exception"],
   "kind": "class"
@@ -7815,6 +7851,16 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.security.mask_child_output": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str | bytes | None", "kind": "positional_or_keyword", "name": "output"},
+   {"annotation": "int | None", "default": "200", "kind": "keyword_only", "name": "limit"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "tail"},
+   {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "one_line"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.security.require_proxy_signature": {
   "kind": "function",
   "params": [
@@ -8809,7 +8855,8 @@
   "kind": "function",
   "params": [
    {"annotation": "Mapping[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "installer"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "installer"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "ssh_agent"}
   ],
   "returns": "dict[str, str]"
  },

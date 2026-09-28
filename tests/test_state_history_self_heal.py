@@ -20,13 +20,18 @@ The heal's contract, each half pinned here:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from personalclaw.durability import state_history as sh
 
-pytestmark = pytest.mark.skipif(not sh.git_available(), reason="git is required for time-travel")
+# `shutil.which`, not `sh.git_available()`: that probe builds git's child environment from the
+# owner's settings, and a module-level mark runs at collection, before any test chose a home.
+pytestmark = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is required for time-travel"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -66,8 +71,6 @@ def _seed_commit(root: sh.HistoryRoot, home: Path) -> str:
 
 def _partially_destroy(gd: Path) -> None:
     """The observed live shape: HEAD survives, objects/ and refs/ do not."""
-    import shutil
-
     for name in ("objects", "refs"):
         target = gd / name
         if target.exists():

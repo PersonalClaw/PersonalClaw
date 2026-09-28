@@ -62,6 +62,7 @@ from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.sandbox import PROFILE_BUILD, build_child_env
+from personalclaw.security import mask_child_output
 
 
 def config_dir() -> Path:
@@ -508,7 +509,12 @@ async def build_react_artifact(
         argv = build_argv(toolchain, entry, out_js, metafile)
         rc, output = await _run_esbuild(argv, cwd=work, timeout=timeout)
         if rc != 0:
-            logger.warning("react artifact build failed for %s (rc=%s): %s", slug, rc, output)
+            logger.warning(
+                "react artifact build failed for %s (rc=%s): %s",
+                slug,
+                rc,
+                mask_child_output(output, limit=None),
+            )
             raise ArtifactBuildError(
                 "the React build failed",
                 f"the bundler exited {rc}: {_bundler_tail(output)}",
@@ -552,7 +558,9 @@ async def build_react_artifact(
 def _bundler_tail(output: str) -> str:
     """The last useful lines of bundler output, or an honest admission of silence."""
     lines = [ln.strip() for ln in (output or "").splitlines() if ln.strip()]
-    return _clip(" / ".join(lines[-4:])) if lines else "it printed nothing."
+    if not lines:
+        return "it printed nothing."
+    return _clip(mask_child_output(" / ".join(lines[-4:]), limit=None))
 
 
 def _publish(

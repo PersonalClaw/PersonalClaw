@@ -135,6 +135,21 @@ def test_the_systemd_unit_carries_what_the_gateway_needs(shell, systemd):
     assert env["USER"] == "ada" and env["HOME"] and env["PATH"]
 
 
+def test_gits_own_ca_settings_reach_both_service_files(shell, launchd, systemd):
+    """Behind a proxy that re-signs TLS, git verifies a Store source over HTTPS only with its own
+    CA settings. The child allowlist passes them on to git, so the service has to carry them to
+    the gateway in the first place, or a source that clones from the shell fails as a service."""
+    shell.setenv("GIT_SSL_CAINFO", "/etc/ssl/example-corp-ca.pem")
+    shell.setenv("GIT_SSL_CAPATH", "/etc/ssl/example-corp-certs")
+
+    svc_macos.install()
+    svc_linux.install()
+
+    for env in (_plist_environment(launchd), _unit_environment(systemd[-1])):
+        assert env.get("GIT_SSL_CAINFO") == "/etc/ssl/example-corp-ca.pem", sorted(env)
+        assert env.get("GIT_SSL_CAPATH") == "/etc/ssl/example-corp-certs", sorted(env)
+
+
 def test_status_shows_the_environment_the_service_starts_with(shell, launchd, capsys):
     svc_macos.install()
     capsys.readouterr()

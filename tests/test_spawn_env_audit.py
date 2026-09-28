@@ -4,8 +4,9 @@ The gateway's environment holds every secret saved in PersonalClaw (``AppConfig.
 exports them so its own children can read them), plus whatever the shell that started it had. A
 child spawned with ``env`` left out, or with a copy of ``os.environ``, gets all of it. The rule is
 ``sandbox.build_child_env``: a child that runs code PersonalClaw did not write (an agent's command,
-a hook, a loop's check, a workflow step, an app's installs and servers, an agent CLI) or that
-fetches someone else's repository starts from the child allowlist, never from the gateway's
+a hook, a loop's check, a workflow step, an app's installs and servers, an agent CLI), that
+fetches someone else's repository, or that is any git PersonalClaw runs (a repository an agent can
+write names programs git starts) begins from the child allowlist, never from the gateway's
 environment.
 
 So every spawn site in ``src/personalclaw`` (the SAME census and keys as
@@ -83,7 +84,7 @@ _BUILT: dict[str, str] = {
     "mcp_client.py::McpServerConn._open_transport::StdioServerParameters": (
         "an MCP server connection (`stdio_spawn_env`, the probe's own definition)"
     ),
-    # Git that fetches someone else's repository (`net.git.source_git_env`).
+    # Git that fetches someone else's repository (`net.git.git_env`, with the SSH agent).
     "apps/catalog.py::_read_git_registry::subprocess.run": (
         "the Store reading an app source's registry index"
     ),
@@ -91,6 +92,34 @@ _BUILT: dict[str, str] = {
     "apps/source.py::_clone_git::subprocess.run": "an install cloning the owner's git URL",
     "net/git.py::run_git_guarded::subprocess.run": (
         "a registry listing's clone through the egress tunnel (`guarded_git_env`)"
+    ),
+    "net/git.py::_owner_auth_settings::subprocess.run": (
+        "reading the owner's own git sign-in settings for a fetch"
+    ),
+    # PersonalClaw's own git in a repository an agent's shell can write (`net.git.git_env`, and
+    # `git_argv` on the command line): a hook or any other program that repository names would
+    # otherwise run with every secret the gateway holds.
+    "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec": "file browser git read",
+    "workflows/review_service.py::_git::asyncio.create_subprocess_exec": (
+        "a run workspace's git diff read"
+    ),
+    "triggers/liveness.py::_dirty_git_active::subprocess.run": "workspace git-dirty probe",
+    "selfqa/triage.py::_git::subprocess.run": "read-only git on the watched repo",
+    "selfqa/watch.py::_git::subprocess.run": "read-only git on the watched repo",
+    "selfqa/fix_branch.py::_git::subprocess.run": "`git branch` on the owner's watched repo",
+    "durability/state_history.py::_git::subprocess.run": (
+        "PersonalClaw's own history repo (`_git_env`: no global/system config either)"
+    ),
+    "durability/state_history.py::_repo_usable::subprocess.run": "history repo probe",
+    "durability/state_history.py::ensure_repo::subprocess.run": "history repo init",
+    "durability/state_history.py::git_available::subprocess.run": "git presence probe",
+    "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": "doctor work-tree probe",
+    "self_update.py::_run_git::subprocess.run": "git on PersonalClaw's own checkout",
+    "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec": (
+        "git fetch of PersonalClaw's own origin, with the owner's SSH agent and sign-in"
+    ),
+    "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": (
+        "update check git on PersonalClaw's own checkout"
     ),
 }
 
@@ -128,15 +157,8 @@ _GATEWAY_ENV: dict[str, str] = {
     "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
         "self-update git/pip"
     ),
-    "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": (
-        "update check git on PersonalClaw's own checkout"
-    ),
     "gateway.py::GatewayOrchestrator._auto_apply_update::asyncio.create_subprocess_exec": (
-        "auto-update git/pip"
-    ),
-    "self_update.py::_run_git::subprocess.run": "git on PersonalClaw's own checkout",
-    "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec": (
-        "git fetch of PersonalClaw's own origin, with the owner's git sign-in"
+        "auto-update pip (its git runs through `self_update._run_git`)"
     ),
     "frontend.py::build_frontend_sync::subprocess.run": "PersonalClaw's own frontend build",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": (
@@ -177,22 +199,6 @@ _GATEWAY_ENV: dict[str, str] = {
     "workflows/container_env.py::_run_cli::create_subprocess_limited": (
         "the container CLI talking to the owner's daemon"
     ),
-    # Read-only git on the owner's own repositories and PersonalClaw's own history repo.
-    "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec": "file browser git read",
-    "workflows/review_service.py::_git::asyncio.create_subprocess_exec": (
-        "a run workspace's git diff read"
-    ),
-    "triggers/liveness.py::_dirty_git_active::subprocess.run": "workspace git-dirty probe",
-    "selfqa/triage.py::_git::subprocess.run": "read-only git on the watched repo",
-    "selfqa/watch.py::_git::subprocess.run": "read-only git on the watched repo",
-    "selfqa/fix_branch.py::_git::subprocess.run": "`git branch` on the owner's watched repo",
-    "durability/state_history.py::_git::subprocess.run": (
-        "PersonalClaw's own history repo (`_git_env`: no global/system config, no hooks)"
-    ),
-    "durability/state_history.py::_repo_usable::subprocess.run": "history repo probe",
-    "durability/state_history.py::ensure_repo::subprocess.run": "history repo init",
-    "durability/state_history.py::git_available::subprocess.run": "git presence probe",
-    "cli_doctor.py::_git_is_inside_work_tree::subprocess.run": "doctor work-tree probe",
     "dashboard/handlers/files.py::_content_search_rg::asyncio.create_subprocess_exec": (
         "ripgrep over the owner's files"
     ),
@@ -275,6 +281,22 @@ _MUST_STAY_BUILT = {
     "apps/catalog.py::_scan_git_source::subprocess.run",
     "apps/source.py::_clone_git::subprocess.run",
     "net/git.py::run_git_guarded::subprocess.run",
+    "net/git.py::_owner_auth_settings::subprocess.run",
+    # Every git PersonalClaw runs: the program a repository names runs as its child.
+    "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec",
+    "workflows/review_service.py::_git::asyncio.create_subprocess_exec",
+    "triggers/liveness.py::_dirty_git_active::subprocess.run",
+    "selfqa/triage.py::_git::subprocess.run",
+    "selfqa/watch.py::_git::subprocess.run",
+    "selfqa/fix_branch.py::_git::subprocess.run",
+    "durability/state_history.py::_git::subprocess.run",
+    "durability/state_history.py::_repo_usable::subprocess.run",
+    "durability/state_history.py::ensure_repo::subprocess.run",
+    "durability/state_history.py::git_available::subprocess.run",
+    "cli_doctor.py::_git_is_inside_work_tree::subprocess.run",
+    "self_update.py::_run_git::subprocess.run",
+    "self_update.py::commits_behind_upstream::asyncio.create_subprocess_exec",
+    "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec",
 }
 
 
@@ -451,7 +473,7 @@ def f(kw):
     subprocess.run(["x"], env=dict(os.environ))
     subprocess.run(["x"], env=installer_env())
     subprocess.run(["x"], env=build_child_env(site="s"))
-    subprocess.run(["x"], env=source_git_env(site="s"))
+    subprocess.run(["x"], env=git_env(site="s"))
     subprocess.run(["x"], **kw)
     built = build_child_env(site="s")
     subprocess.run(["x"], env=built)
@@ -460,7 +482,7 @@ def f(kw):
 """
     func = ast.parse(src).body[0]
     calls = [n for n in ast.walk(func) if isinstance(n, ast.Call) and _called_name(n) == "run"]
-    got = [env_source(c, func, {"build_child_env", "source_git_env"}) for c in calls]
+    got = [env_source(c, func, {"build_child_env", "git_env"}) for c in calls]
     assert got == [
         "inherited",
         "inherited",
@@ -479,7 +501,7 @@ def f(kw):
 def test_the_builders_are_found_in_the_tree():
     """The wrappers the built sites go through are recognised, so a built site is not vacuous."""
     builders = _builders(_trees())
-    for name in ("source_git_env", "guarded_git_env", "app_packages_env", "stdio_spawn_env"):
+    for name in ("git_env", "guarded_git_env", "_git_env", "app_packages_env", "stdio_spawn_env"):
         assert name in builders, name
     assert "installer_env" not in builders  # a copy of the gateway's environment
 

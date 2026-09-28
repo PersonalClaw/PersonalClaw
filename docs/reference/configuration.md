@@ -43,7 +43,6 @@ fields are held at their most restrictive value until the file is repaired or re
 | Key | Held at | Instead of its default |
 |---|---|---|
 | `agent.approval_mode` | `interactive` | `auto` |
-| `agent.subagent_cwd_allowed_roots` | `[]` | `["~/workspace", "~/workplace"]` |
 | `agent.unattended_requires_verified_adapter` | `true` | `false` |
 
 Every other field falls back to its default. Two consequences worth knowing:
@@ -89,7 +88,7 @@ so, and writes nothing — the dashboard answers `503`, and trying again works.
 | `agent.spawn_min_memory_gb` | number (0–64) | `4.0` | Settings → Agent defaults | Minimum available memory (GB) required to spawn a subagent. `0` disables the check. |
 | `agent.subagent_max_turns` | integer (1–200) | `100` | Settings → Agent defaults | Default tool-call budget per subagent. |
 | `agent.subagent_timeout_secs` | integer (60–7200) | `1800` | Settings → Agent defaults | Wall-clock timeout per subagent execution. |
-| `agent.subagent_cwd_allowed_roots` | list of strings | `["~/workspace", "~/workplace"]` | Settings → Agent defaults | Directory roots under which a subagent's `cwd` override is permitted (`~` expands), besides the workspace. Empty list disables cwd overrides. |
+| `agent.subagent_cwd_allowed_roots` | list of strings | `[]` | Settings → Agent defaults | Folders besides the workspace that a subagent's `cwd` may name (`~` expands). Empty by default, so a subagent works in the workspace only, and a step of a workflow run in the folder that run owns: its scratch workspace, its own worktree, the folder its project is bound to when it works in place, or its project's context folder. Each folder you add widens where a subagent can work. |
 | `agent.log_level` | enum: `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Settings → Agent defaults | Persistent backend log level. Applied at startup; the `--verbose` CLI flag overrides it. |
 | `agent.soft_stop_budget_secs` | number (0.5–60) | `10.0` | Settings → Agent defaults | Seconds to wait for a cooperative cancel before hard-killing a session. |
 | `agent.unattended_requires_verified_adapter` | boolean | `false` | Settings → Agent defaults | Refuse an UNATTENDED spawn onto an external agent runner whose ACP adapter has no verified provenance: an `npx -y` fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. "Unattended" is derived from the session key, so it covers cron fires, loop-cycle workers, subagents, the background/heartbeat session, inbox and side sweeps, channel deliveries and trigger dispatches — no caller has to opt in. Interactive chat is never gated. Fails closed: an unverifiable runner is refused. |

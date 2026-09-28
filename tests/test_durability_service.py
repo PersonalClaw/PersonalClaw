@@ -28,13 +28,14 @@ def _snap(directory: Path, when: datetime, *, size: int = 100) -> Path:
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir(parents=True, exist_ok=True)
-    # 🪤 AN ISOLATED HOME DOES NOT CONFINE THE WORKSPACE. `workspace_root()` reads
-    # `PERSONALCLAW_WORKSPACE` first and otherwise falls through to the platform default
-    # — the developer's REAL `~/workplace/personalclaw-workspace`. Harmless while every
-    # job here only touched the home; the history job takes the memory workspace as a
-    # git work tree, so an unpinned workspace would point it at real user notes. Pinned
-    # here rather than in that one test, because the next job to reach the workspace
-    # should inherit the isolation rather than rediscover this.
+    # 🪤 AN ISOLATED HOME DOES NOT ALWAYS CONFINE THE WORKSPACE. `workspace_root()` reads
+    # `PERSONALCLAW_WORKSPACE` first, so a developer's shell that exports it points the
+    # workspace at their REAL folder; only without it is the workspace the home's own
+    # `workspace` folder. Harmless while every job here only touched the home; the history
+    # job takes the memory workspace as a git work tree, so an unpinned workspace would
+    # point it at real user notes. Pinned here rather than in that one test, because the
+    # next job to reach the workspace should inherit the isolation rather than rediscover
+    # this.
     monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path / "ws"))
     (tmp_path / "ws").mkdir(parents=True, exist_ok=True)
     yield

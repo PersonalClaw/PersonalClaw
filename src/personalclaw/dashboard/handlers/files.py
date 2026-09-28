@@ -1873,15 +1873,20 @@ async def _git(
     committed blob doesn't pay a multi-megabyte regex pass to find that out.
     """
 
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            *args,
+            *git_argv(args),
             cwd=cwd,
+            # The repository is one an agent's shell can write, `.git` included, so git runs
+            # with the settings that keep its configuration from running a program and without
+            # the gateway's secrets (`net.git`).
+            env=git_env(site="file-browser-git"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             # So kill_timed_out can signal the GROUP: git forks (remote helpers,
-            # fsmonitor, filter drivers) and a grandchild holds this stdout pipe.
+            # filter drivers) and a grandchild holds this stdout pipe.
             start_new_session=True,
         )
     except (OSError, ValueError):

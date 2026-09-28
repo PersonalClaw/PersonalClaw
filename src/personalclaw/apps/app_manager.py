@@ -64,6 +64,7 @@ from personalclaw.apps.manager import (
 )
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.atomic_write import atomic_write
+from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
 from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
 from personalclaw.supply_chain import ScanReport, TrustTier, Verdict, default_scanner
@@ -312,7 +313,7 @@ def _run_hook(cmd: str, *, cwd: Path, timeout: int, env_name: str) -> None:
     except subprocess.TimeoutExpired as exc:
         raise AppLifecycleError(f"{env_name} hook timed out after {timeout}s") from exc
     if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip()[-300:]
+        tail = mask_child_output(proc.stderr or proc.stdout, limit=300, tail=True, one_line=False)
         raise AppLifecycleError(
             f"{env_name} hook exited {proc.returncode}: {tail}", log_excerpt=tail
         )

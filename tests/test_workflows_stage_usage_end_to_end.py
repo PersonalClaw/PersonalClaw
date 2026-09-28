@@ -140,10 +140,10 @@ def driven(scripted_home: Path, monkeypatch: pytest.MonkeyPatch):
         controller = RunController(
             run,
             _spec(),
-            # No `cwd`: `SubagentManager.spawn` validates a non-empty cwd against the operator's
-            # allow-roots (`~/workspace`, `~/workplace`) and REFUSES a tmp_path, which would make
-            # this test measure the cwd guard instead of the usage chain. An empty cwd is the
-            # shipped "wherever the gateway runs" case and skips that check.
+            # No `cwd`: `SubagentManager.spawn` validates a non-empty cwd against the workspace
+            # and the operator's allow-roots (none by default) and REFUSES a tmp_path, which
+            # would make this test measure the cwd guard instead of the usage chain. An empty
+            # cwd is the shipped "wherever the gateway runs" case and skips that check.
             services=EngineServices(subagents=manager, cwd=""),
         )
         return controller, manager, provider

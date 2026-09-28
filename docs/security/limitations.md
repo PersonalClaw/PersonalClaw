@@ -646,8 +646,12 @@ views show, and it has these edges:
   steps, a knowledge item's digest and a sync-conflict merge you review have no tools to read
   with. They pass the outbound scan at the model-call guard instead: at `guardrails.scan_mode`'s
   default, `redact`, a credential in the prompt is replaced before it leaves; `block` refuses the
-  call and `warn` sends it. A provider the guard counts as local is not scanned, and it counts a
-  loopback endpoint and any Ollama instance, wherever that runs. Masking these would put a marker
+  call and `warn` sends it. A provider the guard counts as local keeps `warn` whatever the setting
+  says, so its prompt is scanned and then sent as written. It counts a provider as local by where
+  its endpoint is: `localhost`, a loopback address, or `0.0.0.0`, which reaches this machine. An
+  Ollama or any other model server on another machine is scanned like a hosted provider, and so
+  is a provider that names no endpoint, such as the bundled model running inside the gateway.
+  Masking these would put a marker
   into answers that are written back, such as a merge you accept. PersonalClaw's own chores (a
   title, follow-ups, memory consolidation) are masked, because they run in the background
   session.
@@ -669,6 +673,32 @@ views show, and it has these edges:
 will read. Work that needs a stored credential inside a command runs on the native runtime, whose
 `bash` fills the reference in.
 
+## 12. A git driver a repository assigns to its own files still runs
+
+PersonalClaw runs git inside repositories an agent can write: the workspace's, a loop's worktree,
+the state history, the updater's checkout. Every such git runs with settings that stop the
+repository's own configuration from running a program: hooks, a file-system monitor, an external
+diff, its ssh command and credential helpers, and the rest
+([security.md](../architecture/security.md#sandbox-sandboxpy)). Two kinds of program are outside
+what a setting can reach:
+
+- **A filter or merge driver.** A repository can define a driver (`filter.<name>.clean`, `.smudge`
+  or `.process`, `merge.<name>.driver`) and assign it to its own files in `.gitattributes` or
+  `.git/info/attributes`. Git names the driver by the repository's own word, so no fixed setting
+  stops every one. When PersonalClaw's git adds, checks out, merges or reports the status of such a
+  file, the driver runs.
+- **The command a remote host is asked to run.** Over ssh, git asks the server to run
+  `git-upload-pack` or `git-receive-pack`, or the command a repository set for that remote
+  (`remote.<name>.uploadpack` or `.receivepack`). The server runs it as the account the owner's key
+  signs in to.
+
+**What limits it today:** a driver runs with the child environment, so none of the gateway's
+secrets reach it. A git host lets that account run git's own commands and nothing else.
+
+**What this means for you:** an agent's shell can define a driver in the workspace's repository,
+and the program it names runs when PersonalClaw's git next touches a file it is assigned to. A
+key that signs in to a machine where it has a full shell account can run more than git there.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -680,8 +710,8 @@ UI, with the SDK crossing it as a message channel, for #4; checking a hand-copie
 weight's sha256 when it loads, for the gap in #5; per-app OS isolation for every kind of app
 code, which today only a backend that names a sandbox tier has, for #7; a session signing key the
 agent's shell cannot read, for #10; masking an agent CLI's requests in the capture proxy its
-model calls can already be pointed at (`inbound/capture_proxy.py`), and counting a provider as
-local by where its endpoint is rather than by its kind, for #11). This page will shrink as
+model calls can already be pointed at (`inbound/capture_proxy.py`), for #11; running the git of a
+repository an agent can write under that agent's own sandbox, for #12). This page will shrink as
 those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

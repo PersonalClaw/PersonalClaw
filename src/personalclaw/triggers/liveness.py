@@ -174,13 +174,16 @@ def _dirty_git_active(spec: dict[str, Any], *, base_dir: Path | None) -> str:
     path = _resolve(target, base_dir)
     if path is None:
         return ""
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         proc = subprocess.run(  # noqa: S603,S607 - fixed argv, no shell, bounded timeout
-            ["git", "status", "--porcelain"],
+            git_argv(["status", "--porcelain"]),
             cwd=str(path),
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT_SECS,
+            env=git_env(site="liveness-git"),
         )
     except (OSError, subprocess.SubprocessError):
         return ""

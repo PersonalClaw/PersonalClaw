@@ -91,6 +91,10 @@ CARRIED: tuple[tuple[str, tuple[str, ...]], ...] = (
             "REQUESTS_CA_BUNDLE",
             "CURL_CA_BUNDLE",
             "NODE_EXTRA_CA_CERTS",
+            # git's own: behind a proxy that re-signs TLS, a Store source over HTTPS verifies
+            # only with these.
+            "GIT_SSL_CAINFO",
+            "GIT_SSL_CAPATH",
         ),
     ),
 )

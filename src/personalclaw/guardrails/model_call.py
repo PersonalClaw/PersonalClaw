@@ -735,19 +735,44 @@ class ModelCallGuard(ModelProvider):
         return getattr(self._inner, item)
 
 
-def _is_local_provider(provider: ModelProvider) -> bool:
-    """Best-effort: is ``provider`` local-only (content never leaves the machine)?
+def _provider_endpoint(provider: ModelProvider) -> str:
+    """The URL *provider* sends its requests to, or ``""`` when it names none.
 
-    Ollama and a base_url pointing at loopback/private are local — their outbound
-    scan is forced to ``warn`` (§2.2: local content stays on the machine, so a hard
-    block/redact would be pointless friction). Unknown → treat as REMOTE (the
-    conservative default: a hosted provider gets the real scan mode)."""
-    base_url = str(getattr(provider, "_base_url", "") or "").lower()
-    if base_url:
-        if any(h in base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1")):
-            return True
-    type_name = type(provider).__name__.lower()
-    return "ollama" in type_name
+    Read from the attribute an HTTP provider keeps it in: ``_base_url`` (the OpenAI- and
+    Anthropic-compatible clients, and every provider built on them) or ``_endpoint`` (a provider
+    that talks to a model server's own API). A provider with neither, such as one that runs its
+    model inside the gateway or behind a CLI, names no endpoint."""
+    for attr in ("_base_url", "_endpoint"):
+        value = getattr(provider, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _is_local_provider(provider: ModelProvider) -> bool:
+    """Whether ``provider`` sends its requests to this machine, so its content never leaves it.
+
+    Decided by WHERE the endpoint is, never by what kind of provider it is: a model server of any
+    kind can run on another machine, and its outbound text is then as far from the gateway as a
+    hosted provider's. Local means the endpoint's host is ``localhost``, a loopback address, or
+    the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine through
+    (``net.guard.classify_host``). An address on the network, any other name, an endpoint that
+    does not parse and no endpoint at all are not local, so they get the scan mode the setting
+    asks for (§2.2); only a local provider's scan is forced to ``warn``."""
+    from urllib.parse import urlparse
+
+    from personalclaw.net.guard import classify_host
+
+    endpoint = _provider_endpoint(provider)
+    if not endpoint:
+        return False
+    try:
+        host = (urlparse(endpoint).hostname or "").rstrip(".")
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    return bool(host) and classify_host(host).category in ("loopback", "unspecified")
 
 
 def wrap_model_call_guard(

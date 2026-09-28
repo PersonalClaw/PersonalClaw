@@ -63,6 +63,7 @@ from pathlib import Path
 from personalclaw._app_python_child import PATH_ENV
 from personalclaw.apps import manager as _manager
 from personalclaw.apps.manager import APP_MANIFEST_FILENAME, INSTALLED_META_FILENAME
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -601,16 +602,15 @@ def _pip_install(target: Declared, others: list[Declared], env: _Env) -> None:
     if proc.returncode != 0:
         output = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
         logger.warning(
-            "app %s: pip exited %s installing %s:\n%s",
+            "app %s: pip exited %s installing %s: %s",
             target.name,
             proc.returncode,
             requirements,
-            output[-4 * _LOG_TAIL_CHARS :],
+            mask_child_output(output, limit=4 * _LOG_TAIL_CHARS, tail=True),
         )
         message, actionable = explain_failure(output, target, others)
-        raise PackageInstallError(
-            message, log_excerpt=output.strip()[-_LOG_TAIL_CHARS:] if actionable else ""
-        )
+        excerpt = mask_child_output(output, limit=_LOG_TAIL_CHARS, tail=True, one_line=False)
+        raise PackageInstallError(message, log_excerpt=excerpt if actionable else "")
     _drop_displaced()
 
 

@@ -312,6 +312,32 @@ def package_in_checkout(monkeypatch):
     return _place
 
 
+@pytest.fixture
+def git_over_ssh(tmp_path_factory, monkeypatch):
+    """``git_over_ssh(repo)`` is an ``ssh://`` URL that reaches the local repository *repo*.
+
+    PersonalClaw's git refuses a remote at a local path (``net.git.git_argv``), so a test that
+    fetches from a repository it made reaches it the way an owner reaches a server: over ssh, with
+    an ssh command of the owner's own (``core.sshCommand``). Here that command is a stand-in that
+    runs, on this machine, the git command a server would run. It is set in a scratch ``HOME``,
+    which the test's own git and PersonalClaw's both read."""
+    home = tmp_path_factory.mktemp("home-with-an-ssh-stand-in")
+    stand_in = home / "ssh-stand-in"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        "# git asks whether this is OpenSSH with -G. Saying no makes it pass only the host\n"
+        "# and the command to run there.\n"
+        '[ "$1" = "-G" ] && exit 1\n'
+        'exec /bin/sh -c "$2"\n',
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o755)
+    (home / ".gitconfig").write_text(f"[core]\n\tsshCommand = {stand_in}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    return lambda repo: f"ssh://example.invalid{Path(repo).resolve()}"
+
+
 @pytest.fixture(autouse=True)
 def _reset_trust_mode():
     """Reset the process-global YOLO/auto-approve trust state around every test.

@@ -51,6 +51,7 @@ async def provision_workspace(ctl: RunController) -> bool:
     """
     from personalclaw.config.loader import AppConfig
     from personalclaw.workflows import containers, provisioning
+    from personalclaw.workflows.workspace import Mode
 
     if not provisioning.declares_workspace(ctl.spec):
         # No `workspace:` block, no managed workspace. The default mode fills in a block that
@@ -116,10 +117,12 @@ async def provision_workspace(ctl: RunController) -> bool:
         provisioning.stamp_run(ctl.run, result, spec)
         ctl._save_run()
     ctl.journal.workspace_provisioned(result.to_dict())
-    if result.isolated and result.path:
+    if result.path and (result.isolated or result.mode is Mode.IN_PLACE):
         # The stage dispatcher's cwd, so a code-kind run's subagents actually work IN the
         # worktree. Without this the isolation would be a directory nothing ran in — the
-        # mechanism would look provisioned and be decorative.
+        # mechanism would look provisioned and be decorative. An in-place run's path is the tree
+        # its project is bound to, which is what in place means: without this its steps worked
+        # in the project's context folder (`bind_project_memory_cwd`) instead.
         ctl.services.cwd = result.path
     return True
 
@@ -127,23 +130,16 @@ async def provision_workspace(ctl: RunController) -> bool:
 def _project_workspace(ctl: RunController) -> str:
     """The codebase this run's project binds, or the services cwd.
 
-    A project's `workspace_dir` is the tree a worktree branches from and the tree
-    `preserve_patterns` copies out of. Falling back to `services.cwd` keeps a project-less
-    run (a chat-launched batch) provisionable — its workspace is simply wherever the gateway
-    is rooted, which is what every other cwd-consuming node already assumes.
+    A project's `workspace_dir` is the tree a worktree branches from, the tree
+    `preserve_patterns` copies out of, and the tree an in-place run works in. It is read the one
+    way the spawn allowlist reads it too (`provisioning.project_tree`), so the folder an in-place
+    run is pointed at is the folder its steps are admitted to. Falling back to `services.cwd`
+    keeps a project-less run (a chat-launched batch) provisionable — its workspace is simply
+    wherever the gateway is rooted, which is what every other cwd-consuming node already assumes.
     """
-    pid = ctl.run.project_id
-    if not pid:
-        return ctl.services.cwd
-    try:
-        from personalclaw.tasks.hierarchy import HierarchyStore
+    from personalclaw.workflows import provisioning
 
-        project = HierarchyStore().get_project(pid)
-        bound = str(getattr(project, "workspace_dir", "") or "") if project else ""
-        return bound or ctl.services.cwd
-    except Exception:
-        logger.debug("run %s: project workspace lookup failed", ctl.run.id, exc_info=True)
-        return ctl.services.cwd
+    return provisioning.project_tree(ctl.run.project_id) or ctl.services.cwd
 
 
 def bind_project_memory_cwd(ctl: RunController) -> None:

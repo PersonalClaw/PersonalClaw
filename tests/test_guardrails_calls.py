@@ -48,8 +48,10 @@ class _Adapter:
         yield LLMEvent(kind=EVENT_COMPLETE, input_tokens=self.usage[0], output_tokens=self.usage[1])
 
 
-class _OllamaLikeAdapter(_Adapter):
-    """A local adapter by the guard's own rule (`_is_local_provider` reads the type name)."""
+class _LoopbackAdapter(_Adapter):
+    """A local adapter by the guard's own rule: its endpoint is on this machine."""
+
+    _base_url = "http://127.0.0.1:11434"
 
 
 async def _call(adapter, *, model: str = "unlisted-model-x") -> str:
@@ -157,7 +159,7 @@ async def test_the_guard_records_usage_model_and_the_temperature_it_sent():
 @pytest.mark.asyncio
 async def test_a_local_models_zero_is_a_measurement():
     with capture_model_calls() as log:
-        await _call(_OllamaLikeAdapter())
+        await _call(_LoopbackAdapter())
     assert log.calls[0].priced is True
     assert log.cost_usd == 0.0
 

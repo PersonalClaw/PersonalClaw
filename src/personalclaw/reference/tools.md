@@ -1700,7 +1700,7 @@ Spawn subagent(s) to run tasks in the background. Returns immediately — result
 **Parameters:**
 - `agent` (string, optional) — Agent name for the subagent. Use subagent_list to see available agents.
 - `agents` (array, optional) — Agent names corresponding to each task in 'tasks' array
-- `cwd` (string, optional) — Optional absolute path to launch the subagent subprocess in, instead of the default sandbox. Enables cwd-relative resource globs (.personalclaw/steering, AGENTS.md) to resolve against this directory. Must be under a configured subagent_cwd_allowed_roots entry (default: [~/workspace, ~/workplace]). Applies to all tasks in a batch spawn.
+- `cwd` (string, optional) — Optional absolute path to launch the subagent subprocess in, instead of the default sandbox. Enables cwd-relative resource globs (.personalclaw/steering, AGENTS.md) to resolve against this directory. Must be inside the workspace, or under a folder the owner added to agent.subagent_cwd_allowed_roots (none by default). Applies to all tasks in a batch spawn.
 - `max_turns` (integer, optional) — Override tool-call budget for this spawn (default: config or 100)
 - `task` (string, optional) — Single task description
 - `tasks` (array, optional) — Multiple tasks to run in parallel

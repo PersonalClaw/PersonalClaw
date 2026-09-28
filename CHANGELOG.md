@@ -17,6 +17,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A channel app waits for an approval as long as PersonalClaw does: `personalclaw.sdk.channel.approval_window_secs()`, used by `slack-channel`.**
 
+- **An app's provider runs git the way core runs its own through `personalclaw.sdk.git`, masks what a program it starts printed with `personalclaw.sdk.security.mask_child_output`, and passes only the SSH agent to a program that signs in over ssh with `child_process_env(ssh_agent=True)` (`git-repo`, `git-sync`, `notes`, `spec-builder`, `skills-sh` and `rsync-sync` use them).**
+
 - **An app's test suite can keep the OS keychain out: `personalclaw.sdk.testing.keychain_off()`.**
 
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
@@ -57,6 +59,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The agent lists the triage rules with `triage_rules_list`; `triage_rules` adds and revokes them.**
+
+- **A subagent works in the workspace unless you add another folder: `agent.subagent_cwd_allowed_roots` is empty by default.**
+
+- **The git PersonalClaw runs refuses a remote at a local path; reach it over ssh or https.**
 
 - **`note_unknown_sender` loses its unused `silent` argument.**
 - **`make build` is the one distribution build, and it proves what it built.**
@@ -109,6 +115,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A tool that only reads no longer asks for approval: a chat stops asking about recalling memory or a workflow's status, and a run with nobody to ask uses them.**
 
 - **A message you ask for on one chat channel goes out there and on no other: "message me on Telegram" no longer lands on Discord.**
+
+- **A workflow run's steps work in the folder the run owns instead of being refused: its scratch workspace (every batch has one), its own worktree, its project's folder when it works in place, or its project's context folder.**
+
+- **A workflow run that works in place runs its steps in the folder its project is bound to, instead of in the project's context folder.**
+
+- **Git over ssh signs in through your SSH agent, and the service install keeps git's own certificate settings.**
 
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
@@ -398,6 +410,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An automation or hook from another machine arrives switched off, and asks here before it runs, however it arrives: sync, a conflict's other version, a merge restore or an import.**
 - **The email channel no longer answers someone new from your address: their mail waits in your Inbox, where you reply, pair them, or ignore it.**
+
+- **A model server on another machine is scanned like a hosted provider: only one at `localhost`, a loopback address or `0.0.0.0` counts as local.**
+
+- **What a hook or another program PersonalClaw starts prints reaches the gateway log masked, and a hook's output is logged by its length only.**
+
+- **The git PersonalClaw runs gets no gateway secret, and runs no program a repository's own configuration names: no hook, file-system monitor, ssh command, external diff, credential helper or `ext::` remote.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

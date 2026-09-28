@@ -36,6 +36,7 @@ from personalclaw.apps.disclosure import describe
 from personalclaw.apps.manifest import AppManifest, version_tuple
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -869,9 +870,8 @@ def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None
     import subprocess
     import tempfile
 
-    from personalclaw.net.git import source_git_env
+    from personalclaw.net.git import git_env
 
-    env = source_git_env(site="app-source-git")
     tmp = tempfile.mkdtemp(prefix="pclaw-registry-")
     try:
         proc = subprocess.run(
@@ -879,20 +879,23 @@ def _read_git_registry(url: str, *, deadline: float | None = None) -> str | None
             capture_output=True,
             text=True,
             timeout=_git_timeout(60, deadline),
-            env=env,
+            env=git_env(site="app-source-git", remote=True),
         )
         if proc.returncode != 0:
             logger.debug(
-                "app registry: git fetch failed for %s: %s", url, (proc.stderr or "")[-200:]
+                "app registry: git fetch failed for %s: %s",
+                url,
+                mask_child_output(proc.stderr, tail=True),
             )
             return None
-        # Pull just the index file out of the tree without checking out the rest.
+        # Pull just the index file out of the tree without checking out the rest. The clone is
+        # partial, so this reads the file's blob from the source: the same remote, the same agent.
         show = subprocess.run(
             ["git", "-C", tmp, "show", f"HEAD:{_REGISTRY_FILENAME}"],
             capture_output=True,
             text=True,
             timeout=_git_timeout(30, deadline),
-            env=env,
+            env=git_env(site="app-source-git", remote=True),
         )
         # A source with no registry index → git exits non-zero on the missing path.
         return show.stdout if show.returncode == 0 else ""
@@ -1086,7 +1089,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
     if cached is not None and (now - cached[0]) < _GIT_SCAN_TTL_SECS:
         return cached[1]
 
-    from personalclaw.net.git import source_git_env
+    from personalclaw.net.git import git_env
 
     entries: list[CatalogEntry] = []
     tmp = tempfile.mkdtemp(prefix="pclaw-gitscan-")
@@ -1096,13 +1099,13 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
             capture_output=True,
             text=True,
             timeout=_git_timeout(90, deadline),
-            env=source_git_env(site="app-source-git"),
+            env=git_env(site="app-source-git", remote=True),
         )
         if proc.returncode != 0:
             logger.debug(
                 "git scan: clone failed for %s: %s",
                 url,
-                (proc.stderr or "")[-200:],
+                mask_child_output(proc.stderr, tail=True),
             )
             _git_scan_cache[url] = (now, [])
             return []

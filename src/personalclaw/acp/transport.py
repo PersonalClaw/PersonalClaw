@@ -320,12 +320,9 @@ class AcpProcess:
         """Redacted tail of recent stderr lines (for death diagnostics)."""
         if not self._stderr_lines:
             return ""
-        tail = "; ".join(self._stderr_lines)
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+        from personalclaw.security import mask_child_output
 
-        tail, _ = redact_exfiltration_urls(tail)
-        tail, _ = redact_credentials(tail)
-        return tail
+        return mask_child_output("; ".join(self._stderr_lines), limit=None)
 
     # ── spawn / kill / teardown ─────────────────────────────────────────────────
     async def spawn(self) -> None:
@@ -433,11 +430,9 @@ class AcpProcess:
             if text:
                 self._stderr_lines.append(text)
                 self._last_activity = time.monotonic()
-                from personalclaw.security import redact_credentials, redact_exfiltration_urls
+                from personalclaw.security import mask_child_output
 
-                redacted, _ = redact_exfiltration_urls(text)
-                redacted, _ = redact_credentials(redacted)
-                logger.warning("%s stderr: %s", binary_name, redacted)
+                logger.warning("%s stderr: %s", binary_name, mask_child_output(text, limit=None))
 
     async def snapshot_process_tree(self) -> None:
         """Discover + track the full process tree after MCP servers load.

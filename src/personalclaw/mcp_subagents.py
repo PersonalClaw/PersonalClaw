@@ -217,8 +217,9 @@ def _list_tools() -> list[dict[str, Any]]:
                             "Optional absolute path to launch the subagent subprocess in, "
                             "instead of the default sandbox. Enables cwd-relative resource globs "
                             "(.personalclaw/steering, AGENTS.md) to resolve against this directory. "  # noqa: E501
-                            "Must be under a configured subagent_cwd_allowed_roots entry "
-                            "(default: [~/workspace, ~/workplace]). Applies to all tasks in a batch spawn."  # noqa: E501
+                            "Must be inside the workspace, or under a folder the owner added to "
+                            "agent.subagent_cwd_allowed_roots (none by default). "
+                            "Applies to all tasks in a batch spawn."
                         ),
                     },
                 },

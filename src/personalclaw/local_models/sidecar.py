@@ -57,6 +57,7 @@ from typing import Any
 
 from personalclaw import app_code
 from personalclaw.periodic_sweep import PeriodicSweep
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -965,7 +966,8 @@ class SidecarInstall:
             raise InstallCancelled("the install was cancelled")
         if code != 0:
             tail = self.log_tail
-            raise RuntimeError(f"{label} exited {code}: {tail[-1][:160] if tail else 'no output'}")
+            last = mask_child_output(tail[-1], limit=160) if tail else "no output"
+            raise RuntimeError(f"{label} exited {code}: {last}")
 
     def _read_output(self, proc: subprocess.Popen[str]) -> None:
         stream = proc.stdout

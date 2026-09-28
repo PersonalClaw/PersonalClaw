@@ -58,13 +58,16 @@ def state_path() -> Path:
 
 def _git(repo: Path, *args: str) -> str:
     """One read-only git command. Returns stdout stripped, or "" on any failure."""
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, read-only git
-            ["git", "-C", str(repo), *args],
+            git_argv(["-C", str(repo), *args]),
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=git_env(site="selfqa-git"),
         )
     except (OSError, subprocess.SubprocessError):
         return ""

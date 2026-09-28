@@ -1001,16 +1001,32 @@ def _run_git(args: list[str], *, cwd: str, timeout: float) -> subprocess.Complet
     CompletedProcess with the reason in ``stderr`` rather than as an exception
     every call site would have to wrap. Every git spawn in this module funnels
     through here, which also makes the whole git layer fakeable at one seam.
+
+    The checkout is a directory an agent's shell can write, so git runs with the settings that
+    keep its own configuration from running a program (``net.git.git_argv``) and with the child
+    allowlist, not the gateway's secrets; a fetch keeps the owner's SSH agent and sign-in. An
+    ``origin`` those settings refuse (a local path) fails with PersonalClaw's reason and what to
+    use instead, not git's bare ``transport 'file' not allowed``.
     """
-    argv = ["git", *args]
+    from personalclaw.net.git import git_argv, git_env, talks_to_remote, transport_refusal
+
+    argv = git_argv(args)
+    env = git_env(site="self-update-git", remote=talks_to_remote(args))
     try:
-        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout
+        )
     except subprocess.TimeoutExpired:
+        # Named as the caller asked for it, not with the settings git_argv put in front.
         return subprocess.CompletedProcess(
-            argv, 124, "", f"`{' '.join(argv)}` timed out after {timeout:g}s"
+            argv, 124, "", f"`git {' '.join(args)}` timed out after {timeout:g}s"
         )
     except (FileNotFoundError, OSError) as exc:
         return subprocess.CompletedProcess(argv, 127, "", f"cannot run git: {exc}")
+    refused = transport_refusal(proc.stderr) if proc.returncode else ""
+    if refused:
+        return subprocess.CompletedProcess(argv, proc.returncode, proc.stdout, refused)
+    return proc
 
 
 def current_branch(proj: str) -> str:
@@ -1145,16 +1161,17 @@ async def commits_behind_upstream(proj: str) -> int | None:
     view, which is also what drove the "update available" signal)."""
     import asyncio
 
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         # start_new_session: `git fetch` forks a remote helper (git-remote-https, ssh),
         # and that helper is what a stalled fetch is actually waiting on — `fetch.kill()`
         # reached only the `git` wrapper and left the helper running. Only a GROUP signal
         # reaches it. See kill_timed_out.
         fetch = await asyncio.create_subprocess_exec(
-            "git",
-            "fetch",
-            "--quiet",
+            *git_argv(["fetch", "--quiet"]),
             cwd=proj,
+            env=git_env(site="self-update-git", remote=True),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
             start_new_session=True,
@@ -1167,11 +1184,9 @@ async def commits_behind_upstream(proj: str) -> int | None:
         pass  # no git / no remote — the rev-list probe below decides
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-list",
-            "--count",
-            "HEAD..@{u}",
+            *git_argv(["rev-list", "--count", "HEAD..@{u}"]),
             cwd=proj,
+            env=git_env(site="self-update-git"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

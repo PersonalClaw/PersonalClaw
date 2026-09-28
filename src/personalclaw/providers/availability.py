@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.cancellation import kill_timed_out, terminate_and_reap
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +289,9 @@ class AvailabilityBoard:
             reason = "The availability check ended without an answer for this provider."
             if proc.returncode not in (0, None) and tail:
                 logger.warning(
-                    "availability probe exited %s: %s", proc.returncode, tail.strip()[-600:]
+                    "availability probe exited %s: %s",
+                    proc.returncode,
+                    mask_child_output(tail, limit=600, tail=True),
                 )
         self._settle(names, reported, reason)
 

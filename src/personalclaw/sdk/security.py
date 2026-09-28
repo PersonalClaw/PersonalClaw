@@ -5,6 +5,12 @@ web results, third-party API payloads) in ``<untrusted_content>`` fences so a
 prompt-injection in that data is treated as data, not instructions — the same fencing
 core applies. An app that ingests external text uses this rather than reimplementing it.
 
+``mask_child_output`` is how a child process's output goes into a log line or an error: what a
+program an app runs prints can carry a credential it read, and a log outlives the run. It is
+masked the way every view masks, cut after masking (so no half of a key is left at the cut), and
+written on one line with control characters as visible escapes, so the child cannot start a line
+of the log's own.
+
 ``require_proxy_signature`` is the INBOUND authentication an app backend applies to
 every request. An app backend binds on loopback with no auth of its own — the port is
 a *network* boundary, not an *authorization* one (see
@@ -42,10 +48,11 @@ from personalclaw.proxy_signature import (  # noqa: F401
     hmac_hex,
     sign_proxy_request,
 )
-from personalclaw.security import fence_untrusted  # noqa: F401
+from personalclaw.security import fence_untrusted, mask_child_output  # noqa: F401
 
 __all__ = [
     "fence_untrusted",
+    "mask_child_output",
     "require_proxy_signature",
     "sign_proxy_request",
     "build_signing_string",

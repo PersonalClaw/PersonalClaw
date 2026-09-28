@@ -87,15 +87,17 @@ def _git(repo: Path, *args: str) -> tuple[int, str]:
     there is no shell, and stderr is merged into the returned output so a caller can log the
     failure. Never raises.
     """
+    from personalclaw.net.git import git_argv, git_env
     from personalclaw.sandbox import PROFILE_BUILD, spawn_shim_argv
 
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, build-ceiling git
-            spawn_shim_argv(["git", "-C", str(repo), *args], PROFILE_BUILD),
+            spawn_shim_argv(git_argv(["-C", str(repo), *args]), PROFILE_BUILD),
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=git_env(site="selfqa-git"),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)

@@ -13,6 +13,7 @@ import asyncio
 import logging
 
 from personalclaw.cancellation import kill_timed_out
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
         # done-ness signal, so a missing tool means the loop can NEVER self-complete
         # — surface it distinctly (not the silent "didn't pass yet" of a real fail)
         # so the un-runnable gate is diagnosable rather than a forever-spin. None.
-        detail = (err or b"").decode("utf-8", "replace").strip()[:200]
+        detail = mask_child_output(err)
         logger.warning(
             "loop gate: %s command not runnable (exit 127 — tool missing?) `%s`%s",
             label,

@@ -21,7 +21,9 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
+from personalclaw.net.git import git_argv, git_env, transport_refusal
 from personalclaw.request_validation import json_object_body
+from personalclaw.security import mask_child_output
 
 
 def config_path() -> Path:
@@ -173,10 +175,12 @@ async def _do_update_check() -> None:
         return
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "fetch",
-            "--quiet",
+            *git_argv(["fetch", "--quiet"]),
             cwd=proj,
+            # The checkout is a directory an agent's shell can write: git runs with the settings
+            # that keep its configuration from running a program, and without the gateway's
+            # secrets. The fetch keeps the owner's SSH agent and sign-in (`net.git`).
+            env=git_env(site="update-check-git", remote=True),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
             # Own group: `git fetch` forks a remote helper (git-remote-https, ssh) that
@@ -193,15 +197,14 @@ async def _do_update_check() -> None:
             logger.warning(
                 "git fetch failed (rc=%s): %s",
                 proc.returncode,
-                (fetch_err or b"").decode(errors="replace").strip(),
+                transport_refusal(fetch_err) or mask_child_output(fetch_err, limit=500, tail=True),
             )
             return
 
         local = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-parse",
-            "HEAD",
+            *git_argv(["rev-parse", "HEAD"]),
             cwd=proj,
+            env=git_env(site="update-check-git"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -215,10 +218,9 @@ async def _do_update_check() -> None:
             await local.communicate()
             return
         remote = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-parse",
-            "@{u}",
+            *git_argv(["rev-parse", "@{u}"]),
             cwd=proj,
+            env=git_env(site="update-check-git"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -250,10 +252,9 @@ async def _do_update_check() -> None:
             # package is nested — a hardcoded repo-root-relative prefix is wrong for
             # whichever layout it was not written for.
             show = await asyncio.create_subprocess_exec(
-                "git",
-                "show",
-                f"{target_sha}:./pyproject.toml",
+                *git_argv(["show", f"{target_sha}:./pyproject.toml"]),
                 cwd=proj,
+                env=git_env(site="update-check-git"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -277,12 +278,9 @@ async def _do_update_check() -> None:
         if available:
             diff_base = f"v{_local_version}" if local_sha == remote_sha else local_sha
             diff = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
-                f"{diff_base}..{target_sha}",
-                "--",
-                "CHANGELOG.md",
+                *git_argv(["diff", f"{diff_base}..{target_sha}", "--", "CHANGELOG.md"]),
                 cwd=proj,
+                env=git_env(site="update-check-git"),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -439,8 +437,12 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 state.push_update_progress("error", "pip upgrade timed out")
                 return
             if pip_up.returncode != 0:
-                detail = (pip_err or b"").decode(errors="replace").strip()
-                logger.error("self-update failed (rc=%d): %s", pip_up.returncode, detail[:500])
+                detail = mask_child_output(pip_err, limit=None, one_line=False)
+                logger.error(
+                    "self-update failed (rc=%d): %s",
+                    pip_up.returncode,
+                    mask_child_output(pip_err, limit=500),
+                )
                 # Surface the REAL error, not just a static label. The cause was
                 # captured and logged but never sent to the UI, so the panel said
                 # only "pip upgrade failed" and the user had to read gateway.log
@@ -694,7 +696,7 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 logger.error(
                     "Update: pip install failed (rc=%d): %s",
                     pip_install.returncode,
-                    (pip_err or b"").decode(errors="replace")[:500],
+                    mask_child_output(pip_err, limit=500),
                 )
                 state.push_update_progress("error", "pip install failed")
                 return

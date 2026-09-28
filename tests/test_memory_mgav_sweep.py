@@ -59,10 +59,11 @@ QUERY = f"what about {ENTITY}?"
 def home(tmp_path, monkeypatch):
     """An isolated home AND an isolated workspace.
 
-    Both, deliberately: `config_dir` alone leaves `workspace_dir` unseeded, and the
-    vault/consolidation paths that fall through to it would land in the real
-    `~/workplace`. The config file is written empty so `AppConfig.load()` reads defaults
-    from THIS directory rather than the developer's own settings.
+    Both, deliberately: `config_dir` alone leaves the workspace to a `PERSONALCLAW_WORKSPACE`
+    the developer's shell may export, and the vault/consolidation paths that resolve through
+    it would land in their real workspace. The config file is written empty so
+    `AppConfig.load()` reads defaults from THIS directory rather than the developer's own
+    settings.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))

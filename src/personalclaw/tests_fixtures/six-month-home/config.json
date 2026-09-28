@@ -17,7 +17,7 @@
     "subagent_timeout_secs": 1800,
     "subagent_cwd_allowed_roots": [
       "~/workspace",
-      "~/workplace"
+      "~/Projects"
     ],
     "log_level": "WARNING",
     "soft_stop_budget_secs": 10.0

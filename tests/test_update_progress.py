@@ -774,11 +774,13 @@ class TestGitCheckReadsRemoteVersion:
             capture_output=True,
         )
 
-    def _behind_clone(self, tmp_path, prefix: str):
+    def _behind_clone(self, tmp_path, prefix: str, url_of):
         """An upstream whose tip bumps the version, plus a clone one commit behind.
 
         ``prefix`` selects the layout: ``""`` is the published standalone checkout
         (repo root IS the package root), ``"PersonalClaw"`` the nested monorepo.
+        ``url_of`` is the ``git_over_ssh`` fixture: the clone reaches the upstream the way a
+        checkout reaches a server, since PersonalClaw's git refuses a remote at a local path.
         Returns the clone's PACKAGE root, the checkout the running package comes from.
         """
         origin = tmp_path / "origin"
@@ -794,18 +796,18 @@ class TestGitCheckReadsRemoteVersion:
         self._git(origin, "commit", "-qm", "v0.1.4")
 
         work = tmp_path / "work"
-        self._git(tmp_path, "clone", "-q", str(origin), str(work))
+        self._git(tmp_path, "clone", "-q", url_of(origin), str(work))
         self._git(work, "reset", "--hard", "-q", "HEAD~1")
         return work / prefix if prefix else work
 
     @pytest.mark.parametrize("prefix", ["", "PersonalClaw"])
     def test_check_detects_remote_version_in_both_layouts(
-        self, monkeypatch, tmp_path, prefix, package_in_checkout
+        self, monkeypatch, tmp_path, prefix, package_in_checkout, git_over_ssh
     ):
         """One commit behind a version-bumping tip ⇒ latest/available reflect it."""
         from personalclaw.dashboard.handlers import updates as U
 
-        proj = self._behind_clone(tmp_path, prefix)
+        proj = self._behind_clone(tmp_path, prefix, git_over_ssh)
         package_in_checkout(proj, git="")  # the clone's own .git is the checkout's
         monkeypatch.setattr(U, "_local_version", "0.1.3")
         saved = dict(U._update_info)
@@ -819,12 +821,12 @@ class TestGitCheckReadsRemoteVersion:
             U._update_info.update(saved)
 
     def test_check_reports_no_update_when_versions_match(
-        self, monkeypatch, tmp_path, package_in_checkout
+        self, monkeypatch, tmp_path, package_in_checkout, git_over_ssh
     ):
         """Vacuity guard: the same probe must NOT claim an update at parity."""
         from personalclaw.dashboard.handlers import updates as U
 
-        proj = self._behind_clone(tmp_path, "")
+        proj = self._behind_clone(tmp_path, "", git_over_ssh)
         package_in_checkout(proj, git="")  # the clone's own .git is the checkout's
         monkeypatch.setattr(U, "_local_version", "0.1.4")  # already at the remote version
         saved = dict(U._update_info)

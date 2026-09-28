@@ -63,11 +63,14 @@ async def _git(args: list[str], cwd: str, timeout: float = 10.0) -> str:
     Non-zero exit is NOT an error here: ``git diff`` exits 1 when there are differences under
     ``--no-index``, which is the case this is used for. stdout is what matters.
     """
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            *args,
+            *git_argv(args),
             cwd=cwd,
+            # A run's workspace is a directory its agents write, `.git` included (`net.git`).
+            env=git_env(site="run-review-git"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

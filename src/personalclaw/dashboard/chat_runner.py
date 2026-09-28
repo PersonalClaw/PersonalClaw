@@ -113,7 +113,12 @@ from personalclaw.llm.events import (
     unasked_reason,
 )
 from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
-from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    is_sensitive_path,
+    mask_child_output,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
 from personalclaw.sel import sel
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
@@ -2156,7 +2161,9 @@ async def run_chat(
             for r in results:
                 if r.exit_code == 0 and r.stdout:
                     injected.append(r.stdout)
-                    logger.info("Hook %s stdout: %s", r.hook_name, r.stdout[:200])
+                    # Its size, never its text: what a hook prints is the context it adds to the
+                    # turn, and a hook can print a credential it read. The log keeps neither.
+                    logger.info("Hook %s injected %d chars", r.hook_name, len(r.stdout))
                     state.broadcast_ws(
                         "activity_event",
                         {
@@ -2172,19 +2179,20 @@ async def run_chat(
                     logger.warning(
                         "Hook %s blocked tool: %s",
                         r.hook_name,
-                        r.stderr[:200] if r.stderr else "exit 2",
+                        mask_child_output(r.stderr) if r.stderr else "exit 2",
                     )
                     state.broadcast_ws(
                         "activity_event",
                         {
                             "session": session.key,
                             "kind": "hook",
-                            "text": f"Hook {r.hook_name} BLOCKED: {r.stderr[:100] if r.stderr else 'denied'}",  # noqa: E501
+                            "text": f"Hook {r.hook_name} BLOCKED: "
+                            + (mask_child_output(r.stderr, limit=100) if r.stderr else "denied"),
                         },
                     )
                 elif r.exit_code not in (0, 2) and r.stderr:
                     # Non-zero, non-block: show warning
-                    logger.warning("Hook %s warning: %s", r.hook_name, r.stderr[:200])
+                    logger.warning("Hook %s warning: %s", r.hook_name, mask_child_output(r.stderr))
         except Exception as exc:
             if event == HOOK_EVENT_PRE_TOOL_USE:
                 logger.warning("Hook fire error during blocking event %s: %s", event, exc)

@@ -86,7 +86,11 @@ from personalclaw.llm_helpers import (
 from personalclaw.loop import files as loop_files
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule_history import ScheduleRunStore
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import (
+    mask_child_output,
+    redact_credentials,
+    redact_exfiltration_urls,
+)
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
@@ -903,7 +907,7 @@ class GatewayOrchestrator:
             print("✅ Dependencies installed")
         else:
             print("❌ Dependency install failed — run manually: personalclaw update")
-            logger.error("Dep repair failed: %s", result.stderr.decode(errors="replace")[:500])
+            logger.error("Dep repair failed: %s", mask_child_output(result.stderr, limit=500))
 
     # ------------------------------------------------------------------
     # Service initialisation
@@ -4834,7 +4838,7 @@ class GatewayOrchestrator:
                 logger.error(
                     "Auto-update: pip install failed (rc=%d): %s",
                     pip_install.returncode,
-                    pip_err.decode(errors="replace")[:500],
+                    mask_child_output(pip_err, limit=500),
                 )
                 # Restarting into an env with missing/stale deps could brick
                 # the gateway — keep running the current image instead.

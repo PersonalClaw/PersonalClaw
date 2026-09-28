@@ -27,6 +27,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from personalclaw.security import mask_child_output
+
 logger = logging.getLogger(__name__)
 
 #: A commit ref this module will hand to git. Hex only, so nothing option-shaped gets through.
@@ -165,20 +167,26 @@ def _git(repo: Path, *args: str) -> str:
     logged and degrades to an empty result rather than raising, because a commit the watcher
     cannot read must still produce a verdict — `classify_paths([])` gives it one.
     """
+    from personalclaw.net.git import git_argv, git_env
+
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell, read-only git
-            ["git", "-C", str(repo), *args],
+            git_argv(["-C", str(repo), *args]),
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
             check=False,
+            env=git_env(site="selfqa-git"),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("selfqa triage: git %s failed in %s: %s", args[0] if args else "", repo, exc)
         return ""
     if proc.returncode != 0:
         logger.warning(
-            "selfqa triage: git %s exited %d: %s", args, proc.returncode, proc.stderr[:200]
+            "selfqa triage: git %s exited %d: %s",
+            args,
+            proc.returncode,
+            mask_child_output(proc.stderr),
         )
         return ""
     return proc.stdout

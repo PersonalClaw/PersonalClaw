@@ -367,6 +367,7 @@ def build_child_env(
     extra: "dict[str, str] | None" = None,
     source: "dict[str, str] | None" = None,
     installer: str = "",
+    ssh_agent: bool = False,
 ) -> dict[str, str]:
     """The environment a child process runs with when it runs code PersonalClaw did not write:
     an agent's command, a hook or cron script, an app's installs, hooks, backend, worker, engine
@@ -387,6 +388,11 @@ def build_child_env(
     only, never values) so a script that breaks for want of one is diagnosable instead of a
     silent mystery — a dropped variable is otherwise indistinguishable from a bug in the
     script.
+
+    *ssh_agent* passes the owner's SSH agent socket (``SSH_AUTH_SOCK``) and nothing else, for a
+    child that signs in over ssh with the owner's keys: git or rsync to a remote. It is the one
+    way past the credential floor, which refuses that name from *extra* and from a declaration,
+    so no other child reaches the agent.
     """
     src = dict(os.environ) if source is None else dict(source)
     declared = _declared_env_passthrough(site)
@@ -427,6 +433,8 @@ def build_child_env(
             )
             continue
         env[name] = str(value)
+    if ssh_agent and src.get("SSH_AUTH_SOCK"):
+        env["SSH_AUTH_SOCK"] = src["SSH_AUTH_SOCK"]
     return env
 
 
@@ -657,10 +665,12 @@ def _probe_sandbox_exec() -> bool:
             timeout=5,
         )
         if r.returncode != 0:
+            from personalclaw.security import mask_child_output
+
             logger.warning(
                 "sandbox-exec probe failed (exit %d): %s",
                 r.returncode,
-                r.stderr.decode(errors="replace").strip(),
+                mask_child_output(r.stderr, limit=None),
             )
         return r.returncode == 0
     except Exception as exc:

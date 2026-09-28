@@ -1,24 +1,26 @@
 """#3424 — a `config.json` we cannot read must not widen the operator's security posture.
 
 ``AppConfig.load()`` discarded an unparseable ``config.json`` and substituted the dataclass
-defaults, and two of those defaults are **less safe than the narrowest value the operator can
+defaults, and some of those defaults are **less safe than the narrowest value the operator can
 store**. So a truncated file — a disk-full write, an interrupted save, a partially synced home —
 silently converted a confirm-before-acting posture into unattended execution:
 
-====================  =====================  ==============================
-``config.json``       ``agent.approval_mode``  ``subagent_cwd_allowed_roots``
-====================  =====================  ==============================
-intact (control)      ``interactive``        ``[]``
-truncated             ``auto``               ``['~/workspace','~/workplace']``
-non-object            ``auto``               ``['~/workspace','~/workplace']``
-non-UTF-8             *raised*               *raised*
-====================  =====================  ==============================
+====================  =======================  ==============================================
+``config.json``       ``agent.approval_mode``  ``agent.unattended_requires_verified_adapter``
+====================  =======================  ==============================================
+intact (control)      ``interactive``          ``true``
+truncated             ``auto``                 ``false``
+non-object            ``auto``                 ``false``
+non-UTF-8             *raised*                 *raised*
+====================  =======================  ==============================================
 
-The shape worth naming is the second column. An empty ``subagent_cwd_allowed_roots`` is not an
-absence of configuration — **it is how the feature is disabled** — and ``subagent.py``'s
-``except`` arm carries a comment explicitly forbidding this re-widening. That arm never ran,
+A guard written to prevent exactly this re-widening sat in an ``except`` arm that never ran,
 because the loader does not raise: it returns defaults. The protection read as present and was
 unreachable.
+
+``agent.subagent_cwd_allowed_roots`` is not in the table any more: its default is already its
+narrowest value (``[]``, the workspace only), so a discarded read has nothing to widen, and
+:func:`test_the_cwd_roots_need_no_discard_entry` holds that down.
 
 This file is the same contract ``providers/entity_routes._load_entity_settings`` acquired in
 #3411, applied to ``config.json``: *absent* and *unreadable* are different claims, and only the
@@ -50,7 +52,6 @@ from personalclaw.config.loader import AppConfig
 STORED_NARROW: dict[str, Any] = {
     "agent": {
         "approval_mode": "interactive",
-        "subagent_cwd_allowed_roots": [],
         "unattended_requires_verified_adapter": True,
     }
 }
@@ -60,7 +61,6 @@ STORED_NARROW: dict[str, Any] = {
 #: operator happened to store, because a read that failed is not consent.
 FAIL_CLOSED: dict[str, Any] = {
     "agent.approval_mode": "interactive",
-    "agent.subagent_cwd_allowed_roots": [],
     "agent.unattended_requires_verified_adapter": True,
 }
 
@@ -69,7 +69,6 @@ FAIL_CLOSED: dict[str, Any] = {
 #: an arm below into a tautology.
 PERMISSIVE_DEFAULTS: dict[str, Any] = {
     "agent.approval_mode": "auto",
-    "agent.subagent_cwd_allowed_roots": ["~/workspace", "~/workplace"],
     "agent.unattended_requires_verified_adapter": False,
 }
 
@@ -115,6 +114,19 @@ def test_the_intact_config_is_actually_read(home: Path) -> None:
     assert _posture(AppConfig.load()) == FAIL_CLOSED
 
 
+def test_the_cwd_roots_need_no_discard_entry() -> None:
+    """A subagent's extra working folders default to NONE, the narrowest value the field has.
+
+    So the table carries no entry for them: by its own membership rule an entry whose value is the
+    default changes nothing, and a discarded read of a config that added folders already falls
+    back to the workspace only. If this default ever widens again, the entry has to come back.
+    """
+    from personalclaw.config.loader import CONFIG_ON_DISCARDED_READ, AgentConfig
+
+    assert AgentConfig().subagent_cwd_allowed_roots == []
+    assert "agent.subagent_cwd_allowed_roots" not in CONFIG_ON_DISCARDED_READ
+
+
 def test_the_permissive_defaults_are_still_permissive() -> None:
     """The defaults this file calls unsafe ARE the defaults, measured from the dataclass.
 
@@ -141,8 +153,8 @@ def test_a_truncated_config_fails_closed(home: Path) -> None:
     assert _posture(cfg) == FAIL_CLOSED, (
         "a truncated config.json widened the posture: a file we cannot parse was read as 'no "
         "restrictions declared'. approval_mode=auto auto-approves every tool call for a "
-        "subagent's lifetime, and a non-empty subagent_cwd_allowed_roots re-enables cwd "
-        "overrides the operator disabled with []."
+        "subagent's lifetime, and unattended_requires_verified_adapter=false lets an unproven "
+        "runner start while nobody is watching."
     )
     assert cfg.agent.yolo is False
 

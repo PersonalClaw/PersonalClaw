@@ -317,6 +317,11 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "net/git.py::run_git_guarded::subprocess.run": (
         "operator: git app clone for a registry listing, through the egress tunnel"
     ),
+    # The owner's own ssh command and credential helpers, read for a git that talks to a remote:
+    # a fixed `git config --get-regexp` argv run in an empty directory of its own, no shell.
+    "net/git.py::_owner_auth_settings::subprocess.run": (
+        "host-fact: the owner's own git sign-in settings"
+    ),
     # CLI commands — operator at a terminal.
     "cli_config.py::_edit_config::subprocess.run": "operator: opens $EDITOR on a copy of config",
     "cli_doctor.py::_doctor::subprocess.run": "operator: doctor host probes",

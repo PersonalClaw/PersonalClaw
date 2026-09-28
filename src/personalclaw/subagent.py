@@ -266,17 +266,21 @@ def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> 
     return (True, -1.0)
 
 
-def validate_cwd(cwd: str, allowed_roots: list[str]) -> tuple[str, str]:
-    """Validate a caller-supplied ``cwd`` for ``subagent_run``.
+def validate_cwd(cwd: str, allowed_roots: list[str], *, run_workdir: str = "") -> tuple[str, str]:
+    """Validate a caller-supplied ``cwd`` for a spawn.
 
-    Resolves symlinks and verifies the path is an existing directory under at
-    least one entry in ``allowed_roots``, or under the workspace (the folder the
-    parent session itself works in). Empty ``allowed_roots`` disables the
-    feature — any non-empty ``cwd`` is rejected.
+    Resolves symlinks and verifies the path is an existing directory inside the workspace (the
+    folder the parent session itself works in), under a root the operator added in
+    ``agent.subagent_cwd_allowed_roots``, or inside *run_workdir*: the folder of the workflow run
+    the spawn is a step of (``workflows.provisioning.run_workdir``: its scratch folder, its own
+    worktree, the folder its project is bound to when it works in place, or its project's context
+    folder), which the engine put the run's steps in. The list is empty by default, so the
+    workspace and a run's own folder are where a spawn may work until the owner names another.
 
     Args:
         cwd: Caller-supplied absolute path (may contain ``~``).
-        allowed_roots: Permitted root paths from config (may contain ``~``).
+        allowed_roots: Extra permitted root paths from config (may contain ``~``).
+        run_workdir: The spawning run's own folder, ``""`` for any other spawn.
 
     Returns:
         ``(resolved_cwd, error)``. On success ``error`` is empty and
@@ -285,8 +289,6 @@ def validate_cwd(cwd: str, allowed_roots: list[str]) -> tuple[str, str]:
     """
     if not cwd:
         return ("", "")
-    if not allowed_roots:
-        return ("", "cwd override is disabled (subagent_cwd_allowed_roots is empty)")
     try:
         expanded = os.path.expanduser(cwd)
         if not os.path.isabs(expanded):
@@ -296,16 +298,38 @@ def validate_cwd(cwd: str, allowed_roots: list[str]) -> tuple[str, str]:
         return ("", f"cwd resolution failed: {exc}")
     if not os.path.isdir(resolved):
         return ("", "cwd does not exist or is not a directory")
-    resolved_roots = [os.path.realpath(os.path.expanduser(r)) for r in allowed_roots]
     # The workspace defaults to the home's own folder, which no configured root names: a subagent
-    # may still work where the session that spawns it works.
+    # may always work where the session that spawns it works.
     from personalclaw.config.loader import workspace_root
 
-    resolved_roots.append(os.path.realpath(workspace_root()))
+    workspace = os.path.realpath(workspace_root())
+    resolved_roots = [workspace] + [os.path.realpath(os.path.expanduser(r)) for r in allowed_roots]
+    if run_workdir:
+        resolved_roots.append(os.path.realpath(run_workdir))
     for root in resolved_roots:
         if resolved == root or resolved.startswith(root + os.sep):
             return (resolved, "")
-    return ("", f"cwd is not under any allowed root: {allowed_roots}")
+    return (
+        "",
+        f"cwd is not in the workspace ({workspace}) or under any allowed root: {allowed_roots}. "
+        "Add its folder in Settings → Agent defaults → Allowed working directories.",
+    )
+
+
+def _run_workdir_for(parent_run: str) -> str:
+    """The folder of the workflow run a spawn is a step of, or ``""``.
+
+    ``parent_run`` is ``workflow:<run_id>`` only when the workflow engine dispatches the run's own
+    step: no caller of ``/api/spawn`` or of an agent's tool can set it. The folder itself comes
+    from that run's record (``workflows.provisioning.run_workdir``), never from the request, so a
+    spawn is admitted to its own run's folder and to no other."""
+    from personalclaw.workflows.ownership import OWNED_PREFIX
+
+    if not parent_run.startswith(OWNED_PREFIX):
+        return ""
+    from personalclaw.workflows.provisioning import run_workdir
+
+    return run_workdir(parent_run[len(OWNED_PREFIX) :])
 
 
 _SYSTEM_PREFIX = (
@@ -383,8 +407,8 @@ class SubagentInfo:
     # Optional subprocess cwd override. When set, the subagent ACP agent
     # process launches here instead of the default ``subagent_<id>`` sandbox, so
     # cwd-relative resource globs (``.personalclaw/steering/**/*.md``, ``AGENTS.md``)
-    # resolve against this directory. Validated on spawn against
-    # ``AgentConfig.subagent_cwd_allowed_roots``.
+    # resolve against this directory. Validated on spawn by ``validate_cwd``: the workspace,
+    # ``AgentConfig.subagent_cwd_allowed_roots``, or the folder of the workflow run it is a step of.
     cwd: str = ""
     # Sandbox provider name: the isolation backend this subagent's ACP worker launches
     # through. ``none`` (the default builtin) composes the host path-sandbox + resource ceilings
@@ -1201,21 +1225,16 @@ class SubagentManager:
             try:
                 allowed_roots = AppConfig.load().agent.subagent_cwd_allowed_roots
             except Exception:
-                # Fail closed: if config is unavailable, treat cwd override as
-                # disabled. Defaulting to the permissive default here would
-                # silently re-enable the feature for admins who set
-                # subagent_cwd_allowed_roots=[] to disable it.
-                #
-                # 🔴 This arm was UNREACHABLE for the case it was written for, and that was the
-                # defect (#3424): `AppConfig.load()` does not raise on a corrupt config.json —
-                # it returned the permissive default, so the re-widening this comment forbids
-                # happened through the NORMAL return, past a guard that read as present. The
-                # loader now owns it: a discarded read resolves
-                # `agent.subagent_cwd_allowed_roots` to `[]` itself
-                # (`CONFIG_ON_DISCARDED_READ`), which is why the narrow posture survives. What
-                # remains here is genuine defence in depth for an unexpected raise.
+                # Fail closed: with the config unavailable, no folder the owner might have added
+                # counts, so a subagent may work in the workspace (and a run's step in its own
+                # run's folder) and nowhere else. `[]` is also the field's default, so a
+                # config.json the loader had to discard (`AppConfig.load` returns defaults and
+                # never raises for that) lands on the same narrow list without this arm. What
+                # remains here is defence in depth for an unexpected raise.
                 allowed_roots = []
-            resolved_cwd, cwd_err = validate_cwd(cwd, allowed_roots)
+            resolved_cwd, cwd_err = validate_cwd(
+                cwd, allowed_roots, run_workdir=_run_workdir_for(parent_run)
+            )
             if cwd_err:
                 logger.warning("Subagent spawn refused: invalid cwd %r: %s", cwd, cwd_err)
                 sel().log_tool_invocation(

@@ -387,11 +387,13 @@ def provision_acp_adapter(
             env=env,
         )
         if proc.returncode != 0:
+            from personalclaw.security import mask_child_output
+
             logger.warning(
                 "acp adapter %s: provisioning failed (rc=%d): %s",
                 npm_pkg,
                 proc.returncode,
-                (proc.stderr or "")[-400:],
+                mask_child_output(proc.stderr, limit=400, tail=True),
             )
             return None
     except Exception:

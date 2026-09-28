@@ -1,9 +1,9 @@
 """Workspace time-travel: the seam, the debounce, rollback/revert, secrets.
 
 Every test here runs against an isolated home AND an isolated workspace. Setting
-only ``PERSONALCLAW_HOME`` does not confine the workspace: with no seeded
-``workspace_dir`` the resolver falls through to the real ``~/workplace``, so the
-memory root would be a git repository over the developer's actual workspace.
+only ``PERSONALCLAW_HOME`` does not confine the workspace: ``PERSONALCLAW_WORKSPACE``
+wins over the home's own ``workspace`` folder, so under a developer's shell that exports
+it the memory root would be a git repository over the developer's actual workspace.
 
 Four things these rails exist to prove, because each is a claim that reads true
 and can be false:
@@ -20,6 +20,7 @@ and can be false:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -31,7 +32,11 @@ from personalclaw.durability import history_debounce as hd
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import state_history as sh
 
-pytestmark = pytest.mark.skipif(not sh.git_available(), reason="git is required for time-travel")
+# `shutil.which`, not `sh.git_available()`: that probe builds git's child environment from the
+# owner's settings, and a module-level mark runs at collection, before any test chose a home.
+pytestmark = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is required for time-travel"
+)
 
 
 # ── fixtures ───────────────────────────────────────────────────────────────

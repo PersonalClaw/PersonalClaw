@@ -628,9 +628,9 @@ def test_the_asset_assertion_accepts_a_real_bundle_with_the_control_firing(
 #
 # Measured on the image as uid 10001: after an out-of-memory kill the dashboard
 # stayed down until someone ran `docker start`, because the README command set no restart
-# policy; and only `/data` is a volume while the workspace root defaulted to
-# `/home/personalclaw/workplace/…`, so the default chat workspace and every project folder
-# made at the picker's starting point were gone after `docker rm` + `docker run`.
+# policy; and only `/data` is a volume while the workspace root defaulted to a folder in the
+# container's home directory outside it, so the default chat workspace and every project
+# folder made at the picker's starting point were gone after `docker rm` + `docker run`.
 
 
 def _runtime_stage(text: str) -> str:

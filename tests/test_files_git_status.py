@@ -388,7 +388,8 @@ def test_git_original_still_serves_a_committed_file(tmp_path, monkeypatch):
 
 
 def _spawns_git(node) -> bool:
-    """True iff *node* is a process spawn whose argv[0] is the literal ``"git"``.
+    """True iff *node* is a process spawn of git: its argv[0] is the literal ``"git"``, or its
+    argv is built by ``net.git.git_argv`` (passed whole, or spread with ``*``).
 
     The spawn vocabulary and the callee matcher are imported from
     ``test_spawn_ceiling_audit`` rather than re-listed, so a new spawn shape has to be
@@ -401,6 +402,10 @@ def _spawns_git(node) -> bool:
     if _normalize(_callee(node)) not in _SPAWN_CALLEES:
         return False
     first = node.args[0]
+    if isinstance(first, ast.Starred):
+        first = first.value
+    if isinstance(first, ast.Call) and _callee(first).split(".")[-1] == "git_argv":
+        return True
     if isinstance(first, ast.List) and first.elts:
         first = first.elts[0]
     return isinstance(first, ast.Constant) and first.value == "git"
@@ -460,6 +465,14 @@ def test_the_git_invoker_matcher_is_not_vacuous():
     assert [
         n for n in ast.walk(sneaky) if _spawns_git(n)
     ], "the matcher would not notice a hand-rolled git spawn — the rail above is vacuous"
+    helper_built = ast.parse(
+        "import asyncio\n"
+        "async def api_sneaky():\n"
+        "    proc = await asyncio.create_subprocess_exec(*git_argv(['show', 'HEAD:x']))\n"
+    )
+    assert [
+        n for n in ast.walk(helper_built) if _spawns_git(n)
+    ], "the matcher would not notice a git spawn built by git_argv — the rail above is vacuous"
     other = ast.parse(
         "import asyncio\n"
         "async def f():\n"

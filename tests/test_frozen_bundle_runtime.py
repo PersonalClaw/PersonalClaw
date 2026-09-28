@@ -190,4 +190,5 @@ class TestTheUpdateCheckDoesNotShellOutToGit:
         which would silently retire the changelog-diff check for the one kind that has one."""
         spawned = self._run_check(monkeypatch, tmp_path, "git")
         assert spawned, "the git kind must still fetch"
-        assert spawned[0][:2] == ("git", "fetch"), spawned[0]
+        # The fetch is the argv's end: the settings `net.git.git_argv` adds come before it.
+        assert spawned[0][0] == "git" and spawned[0][-2:] == ("fetch", "--quiet"), spawned[0]

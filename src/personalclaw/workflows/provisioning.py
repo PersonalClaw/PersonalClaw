@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.cancellation import kill_timed_out
+from personalclaw.security import mask_child_output
 from personalclaw.workflows import worktrees
 from personalclaw.workflows.workspace import (
     Mode,
@@ -791,8 +792,9 @@ def _create_worktree(run_id: str, *, project_id: str, workspace_dir: str) -> tup
     return path, branch, ""
 
 
-def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:
-    """A per-run (or per-named-workspace) scratch directory under the run's own dir.
+def scratch_location(run_id: str, name: str = "", run_dir: Path | None = None) -> Path:
+    """Where a run's scratch workspace lives: the one definition :func:`_scratch_dir` creates and
+    :func:`run_workdir` admits.
 
     Under the RUN dir on purpose: retention already sweeps it (`watchdog._sweep_run_dir`), so a
     scratch workspace cannot outlive the run that made it and become an orphan nobody can find.
@@ -803,10 +805,103 @@ def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:
 
     if name:
         safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in name)[:64] or "named"
-        root = store.workflows_dir() / "workspaces" / safe
-    else:
-        base = run_dir if run_dir is not None else store.run_dir(run_id)
-        root = Path(base) / "workspace"
+        return store.workflows_dir() / "workspaces" / safe
+    base = run_dir if run_dir is not None else store.run_dir(run_id)
+    return Path(base) / "workspace"
+
+
+def project_tree(project_id: str) -> str:
+    """The folder project *project_id* is bound to (its Workspace), ``~`` expanded, or ``""``
+    when it binds none or there is no such project.
+
+    Read from the project's own record, so the run that works in it and the allowlist that
+    admits it name the same folder: :func:`run_workdir` here, and the run start that points an
+    in-place run at it and branches a worktree from it (``run_start._project_workspace``).
+    """
+    if not project_id:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().get_project(project_id)
+    except Exception:  # noqa: BLE001 - an unreadable project binds nothing
+        logger.debug("project %s: record unreadable", project_id, exc_info=True)
+        return ""
+    bound = str(getattr(project, "workspace_dir", "") or "").strip() if project else ""
+    return os.path.expanduser(bound) if bound else ""
+
+
+def run_workdir(run_id: str) -> str:
+    """The folder a step of run *run_id* works in, from the run's own record, or ``""``.
+
+    What the spawn working-directory allowlist admits for that run's own steps
+    (``subagent.validate_cwd``): the engine spawns each step IN this folder, and none of them is
+    under a root the allowlist names. Exactly the folder the run owns, and nothing broader:
+
+    * a run with an isolated workspace: the path its record says it was given, and only when that
+      path is the one this module makes for the run: its scratch folder (the named one it
+      declared, for a named workspace) or its own git worktree;
+    * a project's run that works in place: the folder its project is bound to, read from the
+      project's record (:func:`project_tree`) and never from the path the run's record carries;
+    * any other project's run: that project's context folder, which is where the engine puts
+      such a run's steps (``run_start.bind_project_memory_cwd``).
+
+    A record that names anything else (another run's folder, the run's own directory with its
+    journal, a project's tree for a run that does not work in place) admits nothing, and neither
+    does a run with no workspace and no project.
+    """
+    from personalclaw.workflows import store
+
+    try:
+        run = store.get(run_id)
+    except Exception:  # noqa: BLE001 - an unreadable record admits nothing
+        logger.debug("run %s: record unreadable for the cwd allowlist", run_id, exc_info=True)
+        return ""
+    if run is None:
+        return ""
+    state = workspace_state(run)
+    recorded = str(state.get("path", "") or "")
+    if recorded and state.get("isolated"):
+        return _own_isolated_dir(run, recorded, state)
+    project_id = str(getattr(run, "project_id", "") or "")
+    if not project_id:
+        return ""
+    if str(state.get("mode", "") or "") == Mode.IN_PLACE.value:
+        tree = project_tree(project_id)
+        if tree:
+            return tree
+    from personalclaw.memory_locality import project_memory_cwd
+
+    return project_memory_cwd(project_id)
+
+
+def _own_isolated_dir(run: Any, recorded: str, state: dict[str, Any]) -> str:
+    """*recorded* when it is the isolated folder this module makes for *run*, else ``""``."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.loop import worktree as loop_worktree
+
+    try:
+        real = Path(os.path.realpath(recorded))
+        if str(state.get("mode", "") or "") == Mode.WORKTREE.value:
+            project_id = str(getattr(run, "project_id", "") or "")
+            if project_id:
+                own = Path(os.path.realpath(loop_worktree.worktree_path("", run.id, project_id)))
+                return recorded if real == own else ""
+            # A project-less run's worktree sits under a root keyed by the tree it branched from,
+            # which the record does not name: it is this run's when it is the run's own name in
+            # one of those roots.
+            roots = Path(os.path.realpath(config_dir() / "code" / "worktrees"))
+            return recorded if real.name == run.id and real.parent.parent == roots else ""
+        own = Path(os.path.realpath(scratch_location(run.id, str(state.get("name", "") or ""))))
+        return recorded if real == own else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:
+    """Create the scratch directory :func:`scratch_location` names, and return it (``""`` when it
+    cannot be created)."""
+    root = scratch_location(run_id, name, run_dir)
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -994,7 +1089,7 @@ def _commit_outstanding(path: str, branch: str, *, preserved: list[str]) -> bool
         return True
     if "nothing added to commit" in out or "nothing to commit" in out:
         return False
-    logger.debug("could not commit outstanding work in %s: %s", path, out.strip()[:200])
+    logger.debug("could not commit outstanding work in %s: %s", path, mask_child_output(out))
     return False
 
 

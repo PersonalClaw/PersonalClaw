@@ -52,9 +52,8 @@ def _run_cli(
 def test_setup_survives_a_non_interactive_stdin(tmp_path) -> None:
     """`setup` takes its printed defaults instead of dying on EOFError.
 
-    Seeds `<home>/workspace_dir` so the wizard's workspace default is a tmp path: the
-    platform default is `~/workplace/personalclaw-workspace`, and a test must never create
-    a directory in the real home.
+    Seeds `<home>/workspace_dir`, the pointer a real setup saves, so the wizard's workspace
+    default is a tmp path: a test must never create a directory outside its own home.
     """
     ws = tmp_path / "ws"
     (tmp_path / "workspace_dir").write_text(str(ws) + "\n", encoding="utf-8")

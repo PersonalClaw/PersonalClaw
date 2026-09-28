@@ -161,6 +161,7 @@ def test_a_loop_worktrees_git_runs_without_the_gateways_secrets(home, tmp_path, 
     """🔴 Red on main: `commit` and `merge` run the repository's hooks, and an inherited
     `GIT_DIR` pointed every step at another repository."""
     from personalclaw.loop import worktree
+    from personalclaw.net.git import git_argv
 
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "another-repository"))
     stub = _Recorder(tmp_path, monkeypatch, "git")
@@ -169,7 +170,7 @@ def test_a_loop_worktrees_git_runs_without_the_gateways_secrets(home, tmp_path, 
 
     assert rc == 0
     (run,) = stub.runs()
-    assert run.argv == ["status"]
+    assert run.argv == git_argv(["status"])[1:]
     _assert_no_gateway_secret(run, home)
     names = run.names
     assert "GIT_DIR" not in names
@@ -354,3 +355,28 @@ def test_an_apps_provider_gets_the_allowlist_for_its_children(home, monkeypatch)
     assert kept == ("1", "https://registry.example.invalid/")
     assert "npm_config__authToken" not in seen.names
     assert "npm_config_registry" not in plain.names
+
+
+def test_a_program_that_signs_in_over_ssh_gets_the_agent_socket_and_nothing_else(home, monkeypatch):
+    """rsync or git to the owner's own host signs in through their SSH agent. The opt-in adds
+    that one socket to the allowlist; without it, and through `extra` or a declaration, the
+    credential floor still refuses the name."""
+    from personalclaw.net.git import git_env
+    from personalclaw.sandbox import build_child_env
+    from personalclaw.sdk.util import child_process_env
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/example-agent.sock")
+    plain = build_child_env(site="t")
+    with_agent = build_child_env(site="t", ssh_agent=True)
+
+    assert set(with_agent) - set(plain) == {"SSH_AUTH_SOCK"}
+    assert with_agent["SSH_AUTH_SOCK"] == "/tmp/example-agent.sock"
+    assert "SSH_AUTH_SOCK" not in build_child_env(site="t", extra={"SSH_AUTH_SOCK": "/x"})
+    app = _Seen([], child_process_env(ssh_agent=True))
+    _assert_no_gateway_secret(app, home)
+    assert app.get("SSH_AUTH_SOCK") == "/tmp/example-agent.sock"
+    assert "SSH_AUTH_SOCK" not in child_process_env()
+    # A git that talks to a remote (the Store's clone of a source over ssh among them) is the
+    # same opt-in, so the two cannot drift apart.
+    assert git_env(site="t", remote=True)["SSH_AUTH_SOCK"] == "/tmp/example-agent.sock"
+    assert "SSH_AUTH_SOCK" not in git_env(site="t")

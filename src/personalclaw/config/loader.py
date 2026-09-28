@@ -711,11 +711,11 @@ class AgentConfig:
         ),
     )
     subagent_cwd_allowed_roots: list[str] = field(
-        default_factory=lambda: ["~/workspace", "~/workplace"],
+        default_factory=list,
         metadata=_meta(
             "SubAgent CWD Allowed Roots",
-            "Directory roots under which subagent_run's cwd parameter is permitted, besides "
-            "the workspace. Values support ~ expansion. Empty list disables cwd overrides.",
+            "Folders besides the workspace that subagent_run's cwd parameter may name. Values "
+            "support ~ expansion. Empty by default: a subagent works in the workspace only.",
         ),
     )
     log_level: str = field(
@@ -3443,14 +3443,12 @@ class PendingConfigChanges:
 #:   than silently waived.
 #:
 #: Fields whose default is ALREADY the restrictive value (``agent.yolo``, every
-#: ``external_access.*`` flag, ``security.egress.allow_private``, ``dashboard.trusted_proxies``)
+#: ``external_access.*`` flag, ``security.egress.allow_private``, ``dashboard.trusted_proxies``,
+#: ``agent.subagent_cwd_allowed_roots``, whose empty default keeps a subagent in the workspace)
 #: are deliberately absent: an entry that changes nothing is dead code.
 CONFIG_ON_DISCARDED_READ: dict[str, Any] = {
     # Auto-approves EVERY tool call for a subagent's lifetime. `interactive` asks.
     "agent.approval_mode": "interactive",
-    # An empty list is not an absence of configuration — it is how cwd overrides are DISABLED.
-    # `subagent.py`'s cwd guard says so in a comment, in an `except` arm that never ran.
-    "agent.subagent_cwd_allowed_roots": [],
     # Read plainly (defaulting OFF) on the normal path so an upgrade does not start blocking
     # existing unattended runs; that rationale is about a config we CAN read. An operator who
     # turned it on asked for nothing unproven to run while nobody is watching, and a file we
@@ -3777,9 +3775,9 @@ class AppConfig:
             target: Any = cfg
             for section in sections:
                 target = getattr(target, section)
-            # Deep-copied, because the table is module-level: handing out its list would let any
-            # caller that mutates `subagent_cwd_allowed_roots` rewrite the fail-closed default
-            # for the rest of the process.
+            # Deep-copied, because the table is module-level: a mutable value handed out as it is
+            # would let a caller that changes it rewrite the fail-closed default for the rest of
+            # the process.
             setattr(target, leaf, copy.deepcopy(value))
         return cfg
 
@@ -4114,9 +4112,7 @@ class AppConfig:
                 spawn_min_memory_gb=float(agent_data.get("spawn_min_memory_gb", 4.0)),
                 subagent_max_turns=agent_data.get("subagent_max_turns", 100),
                 subagent_timeout_secs=agent_data.get("subagent_timeout_secs", 1800),
-                subagent_cwd_allowed_roots=list(
-                    agent_data.get("subagent_cwd_allowed_roots", ["~/workspace", "~/workplace"])
-                ),
+                subagent_cwd_allowed_roots=list(agent_data.get("subagent_cwd_allowed_roots", [])),
                 log_level=agent_data.get("log_level", "WARNING").upper(),
                 bot_name=_sanitize_bot_name(agent_data.get("bot_name", "")),
                 soft_stop_budget_secs=max(

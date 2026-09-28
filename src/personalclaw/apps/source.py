@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.apps.manager import APP_MANIFEST_FILENAME
+from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +190,12 @@ def _listing_fetch_policy(source: str, base: str, listed_by: str) -> Any:
 def _clone_git(url: str, *, policy: Any = None) -> ResolvedSource:
     """Shallow-clone *url*. With a ``policy`` (a listing's fetch), git runs through the egress
     guard's tunnel; without one (the owner's own URL), it runs as a plain ``git clone``. Either
-    way git gets the child allowlist, not the gateway's environment (``net.git.source_git_env``)."""
+    way git gets the child allowlist, not the gateway's environment (``net.git.git_env``)."""
     from personalclaw.net.git import (
         GitEgressRefused,
         GitHostUnreachable,
+        git_env,
         run_git_guarded,
-        source_git_env,
     )
 
     tmp = Path(tempfile.mkdtemp(prefix="pclaw-app-clone-"))
@@ -206,7 +207,7 @@ def _clone_git(url: str, *, policy: Any = None) -> ResolvedSource:
                 capture_output=True,
                 text=True,
                 timeout=_CLONE_TIMEOUT,
-                env=source_git_env(site="app-install-git"),
+                env=git_env(site="app-install-git", remote=True),
             )
         else:
             proc = run_git_guarded(clone, policy=policy, timeout=_CLONE_TIMEOUT)
@@ -228,7 +229,7 @@ def _clone_git(url: str, *, policy: Any = None) -> ResolvedSource:
         raise SourceError(listing_unreachable(exc.host, exc.reason)) from exc
     if proc.returncode != 0:
         _rmtree(tmp)
-        tail = (proc.stderr or proc.stdout or "").strip()[-300:]
+        tail = mask_child_output(proc.stderr or proc.stdout, limit=300, tail=True, one_line=False)
         raise SourceError(f"git clone failed: {tail}")
     # The clone keeps its `.git`: staging leaves version-control metadata out of every
     # bundle, at any depth (`supply_chain.never_installed`), so it is never scanned,

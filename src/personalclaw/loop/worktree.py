@@ -28,6 +28,8 @@ import threading
 import time
 from typing import NamedTuple
 
+from personalclaw.security import mask_child_output
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30
@@ -74,19 +76,22 @@ def _git(workspace: str, *args: str, timeout: int = _TIMEOUT) -> tuple[int, str]
     # run drives them). Deliver the ``build`` ceiling (raised NOFILE for many file
     # handles + OOM bias) via the post-exec shim, prepended to argv. Synchronous run
     # off no event loop, so no fork-wedge hazard; the shim applies the limit after exec.
-    # The environment is the child allowlist (`build_child_env`): `commit` and `merge` run the
-    # repository's hooks, which can be tracked files the loop's own work edits, and an inherited
-    # `GIT_DIR` or `GIT_WORK_TREE` would point every step at another repository.
-    from personalclaw.sandbox import PROFILE_BUILD, build_child_env, spawn_shim_argv
+    # The loop's own work can edit this repository's `.git` as easily as its files, so git runs
+    # with the settings that keep a hook, an fsmonitor or any other program the repository names
+    # from running (`net.git.git_argv`), and with the child allowlist (`net.git.git_env`): none of
+    # the gateway's secrets, and no inherited `GIT_DIR` or `GIT_WORK_TREE` pointing every step at
+    # another repository.
+    from personalclaw.net.git import git_argv, git_env
+    from personalclaw.sandbox import PROFILE_BUILD, spawn_shim_argv
 
     try:
         p = subprocess.run(
-            spawn_shim_argv(["git", *args], PROFILE_BUILD),
+            spawn_shim_argv(git_argv(args), PROFILE_BUILD),
             cwd=workspace,
             capture_output=True,
             timeout=timeout,
             check=False,
-            env=build_child_env(site="loop-worktree-git"),
+            env=git_env(site="loop-worktree-git"),
         )
         out = (p.stdout or b"").decode("utf-8", "replace") + (p.stderr or b"").decode(
             "utf-8", "replace"
@@ -432,7 +437,7 @@ def set_sparse_scope(wt_path: str, paths: list[str]) -> bool:
         if "could not lock config file" not in out:
             break
         time.sleep(0.05 * (attempt + 1))
-    logger.debug("sparse-checkout set failed in %s: %s", wt_path, out.strip()[:200])
+    logger.debug("sparse-checkout set failed in %s: %s", wt_path, mask_child_output(out))
     return False
 
 
@@ -451,7 +456,7 @@ def widen_scope(wt_path: str, paths: list[str]) -> bool:
         return False
     rc, out = _git(wt_path, "sparse-checkout", "add", *paths)
     if rc != 0:
-        logger.debug("sparse-checkout add failed in %s: %s", wt_path, out.strip()[:200])
+        logger.debug("sparse-checkout add failed in %s: %s", wt_path, mask_child_output(out))
         return False
     return True
 
@@ -607,15 +612,15 @@ def reset_worktree(workspace: str, task_id: str, project_id: str = "") -> bool:
     base = out.strip().splitlines()[0] if rc == 0 and out.strip() else "HEAD"
     rc, out = _git(path, "checkout", "-B", branch_name(task_id), base)
     if rc != 0:
-        logger.debug("worktree reset checkout failed for %s: %s", task_id, out.strip()[:200])
+        logger.debug("worktree reset checkout failed for %s: %s", task_id, mask_child_output(out))
         return False
     rc, out = _git(path, "reset", "--hard", base)
     if rc != 0:
-        logger.debug("worktree reset --hard failed for %s: %s", task_id, out.strip()[:200])
+        logger.debug("worktree reset --hard failed for %s: %s", task_id, mask_child_output(out))
         return False
     rc, out = _git(path, "clean", "-fdx")
     if rc != 0:
-        logger.debug("worktree reset clean failed for %s: %s", task_id, out.strip()[:200])
+        logger.debug("worktree reset clean failed for %s: %s", task_id, mask_child_output(out))
         return False
     return True
 
@@ -684,7 +689,7 @@ def add_worktree(
     elapsed = time.perf_counter() - started
     if rc != 0:
         _log_creation(workspace, task_id, elapsed, OUTCOME_FAILED)
-        logger.debug("worktree add failed for %s: %s", task_id, out.strip()[:200])
+        logger.debug("worktree add failed for %s: %s", task_id, mask_child_output(out))
         return None
     _log_creation(workspace, task_id, elapsed, OUTCOME_CREATED)
     return path
@@ -783,7 +788,7 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
             "worktree merge %s for %s: %s",
             "conflict" if conflicts else "failed",
             task_id,
-            out.strip()[:200],
+            mask_child_output(out),
         )
         if conflicts:
             _git(workspace, "merge", "--abort")

@@ -53,6 +53,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.security import mask_child_output
+
 logger = logging.getLogger(__name__)
 
 #: Directory under the home that holds one git directory per root.
@@ -385,13 +387,16 @@ def _assert_service_git_dir(gd: Path, *, home: Path | None = None) -> None:
 
 
 def _git_env() -> dict[str, str]:
-    env = dict(os.environ)
-    # The user's global/system git config must not reach these repos: a global
-    # `core.hooksPath`, `commit.gpgsign`, or a template dir would either run
-    # third-party code on every history commit or block it behind a signing key.
+    """The history's git environment: PersonalClaw's git environment (``net.git.git_env``, the
+    child allowlist and none of the gateway's secrets) with the owner's global and system
+    configuration shut out as well, since a template directory or a global setting would change
+    what a history commit records. The settings that stop a repository's own configuration from
+    running a program are on the command line (``net.git.git_argv``)."""
+    from personalclaw.net.git import git_env
+
+    env = git_env(site="state-history-git")
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
-    env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_OPTIONAL_LOCKS"] = "0"
     return env
 
@@ -403,24 +408,23 @@ def _git(
     check: bool = True,
     stdin: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    from personalclaw.net.git import git_argv
+
     gd = git_dir(root, home=home)
     _assert_service_git_dir(gd, home=home)
-    cmd = [
-        "git",
-        f"--git-dir={gd}",
-        f"--work-tree={root.worktree}",
-        "-c",
-        f"user.name={COMMIT_NAME}",
-        "-c",
-        f"user.email={COMMIT_EMAIL}",
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        "core.hooksPath=",
-        "-c",
-        "advice.detachedHead=false",
-        *args,
-    ]
+    cmd = git_argv(
+        [
+            f"--git-dir={gd}",
+            f"--work-tree={root.worktree}",
+            "-c",
+            f"user.name={COMMIT_NAME}",
+            "-c",
+            f"user.email={COMMIT_EMAIL}",
+            "-c",
+            "advice.detachedHead=false",
+            *args,
+        ]
+    )
     proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
         cmd,
         cwd=str(root.worktree),
@@ -437,16 +441,19 @@ def _git(
     if check and proc.returncode != 0:
         raise HistoryError(
             f"git {' '.join(args[:2])} failed for root {root.id}: "
-            f"{(proc.stderr or proc.stdout).strip()}"
+            f"{mask_child_output(proc.stderr or proc.stdout, limit=None)}"
         )
     return proc
 
 
 def git_available() -> bool:
     """Whether a usable ``git`` exists. Time-travel degrades to off without one."""
+    from personalclaw.net.git import git_argv
+
     try:
         proc = subprocess.run(  # noqa: S603
-            ["git", "--version"],  # noqa: S607 — PATH lookup is the point
+            git_argv(["version"]),  # noqa: S607 — PATH lookup is the point
+            env=_git_env(),
             capture_output=True,
             text=True,
             check=False,
@@ -464,8 +471,10 @@ def _repo_usable(gd: Path) -> bool:
     pruning by file age, a disk-full init, a sync tool), and any anatomy
     checklist here would just be a second, incomplete copy of git's own rule.
     """
+    from personalclaw.net.git import git_argv
+
     proc = subprocess.run(  # noqa: S603
-        ["git", "--git-dir", str(gd), "rev-parse", "--git-dir"],  # noqa: S607
+        git_argv(["--git-dir", str(gd), "rev-parse", "--git-dir"]),  # noqa: S607
         env=_git_env(),
         capture_output=True,
         text=True,
@@ -514,16 +523,21 @@ def ensure_repo(root: HistoryRoot, *, home: Path | None = None) -> Path:
             husk.name,
         )
     if not (gd / "HEAD").is_file():
+        from personalclaw.net.git import git_argv
+
         gd.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(  # noqa: S603
-            ["git", "init", "--bare", "--quiet", str(gd)],  # noqa: S607
+            git_argv(["init", "--bare", "--quiet", str(gd)]),  # noqa: S607
             env=_git_env(),
             capture_output=True,
             text=True,
             check=False,
         )
         if proc.returncode != 0:
-            raise HistoryError(f"could not init history repo for {root.id}: {proc.stderr.strip()}")
+            raise HistoryError(
+                f"could not init history repo for {root.id}: "
+                f"{mask_child_output(proc.stderr, limit=None)}"
+            )
         # 0700: the history holds the user's memory notes and configuration.
         with contextlib.suppress(OSError):
             gd.chmod(0o700)

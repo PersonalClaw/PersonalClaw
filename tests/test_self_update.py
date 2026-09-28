@@ -312,7 +312,9 @@ async def test_do_update_check_runs_git_fetch_when_enabled(
 
     await dash_updates._do_update_check()
     assert calls, "check_enabled=true must run the git fetch subprocess"
-    assert calls[0][0] == "git" and calls[0][1] == "fetch"
+    # The settings that keep the checkout's own configuration from running a program come
+    # before the subcommand (`net.git.git_argv`), so the fetch is the argv's end, not its start.
+    assert calls[0][0] == "git" and calls[0][-2:] == ("fetch", "--quiet"), calls[0]
 
 
 def test_scheduled_check_due_reads_interval_hours() -> None:
@@ -1073,7 +1075,7 @@ def _init_repo(path) -> None:
     _git(path, "config", "tag.gpgsign", "false")
 
 
-def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path) -> None:
+def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path, git_over_ssh) -> None:
     """RUM-4 acceptance criteria: driven on a checkout ONE RELEASE BEHIND, the release apply
     (git fetch --tags + git checkout <tag>) leaves HEAD EXACTLY at the target tag —
     not at the branch tip, and with no reset."""
@@ -1086,7 +1088,7 @@ def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path) -> None:
 
     # Clone and park the checkout on v0.0.1 — one release behind what's coming.
     clone = tmp_path / "clone"
-    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _git(tmp_path, "clone", "-q", git_over_ssh(origin), str(clone))
     _git(clone, "checkout", "-q", "v0.0.1")
     behind_commit = _rev(clone)
 
@@ -1107,7 +1109,7 @@ def test_release_apply_leaves_head_exactly_at_the_target_tag(tmp_path) -> None:
     assert _rev(clone, "v0.0.2") == target_commit
 
 
-def test_fast_forward_advances_a_branch_without_reset(tmp_path) -> None:
+def test_fast_forward_advances_a_branch_without_reset(tmp_path, git_over_ssh) -> None:
     """nightly: git merge --ff-only advances the tracked branch to origin,
     preserving history (no reset)."""
     origin = tmp_path / "origin"
@@ -1117,7 +1119,7 @@ def test_fast_forward_advances_a_branch_without_reset(tmp_path) -> None:
     _git(origin, "commit", "-qm", "A")
 
     clone = tmp_path / "clone"
-    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _git(tmp_path, "clone", "-q", git_over_ssh(origin), str(clone))
     start = _rev(clone)
 
     (origin / "f.txt").write_text("b\n")
@@ -1140,7 +1142,9 @@ def test_fast_forward_advances_a_branch_without_reset(tmp_path) -> None:
     assert head == "main"
 
 
-def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(tmp_path) -> None:
+def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(
+    tmp_path, git_over_ssh
+) -> None:
     """A diverged local branch cannot fast-forward: ff-only fails non-zero and
     leaves HEAD untouched — the safe answer, and why RUM-4 has no reset fallback."""
     origin = tmp_path / "origin"
@@ -1150,7 +1154,7 @@ def test_fast_forward_refuses_a_diverged_branch_and_leaves_it_untouched(tmp_path
     _git(origin, "commit", "-qm", "A")
 
     clone = tmp_path / "clone"
-    _git(tmp_path, "clone", "-q", str(clone.parent / "origin"), str(clone))
+    _git(tmp_path, "clone", "-q", git_over_ssh(origin), str(clone))
     _git(clone, "config", "user.email", "t@example.com")
     _git(clone, "config", "user.name", "Tester")
     _git(clone, "config", "commit.gpgsign", "false")

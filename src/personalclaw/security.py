@@ -1214,6 +1214,59 @@ def redact_for_model(text: str) -> str:
     return redact_for_display(text)
 
 
+#: Characters written as a visible escape rather than raw: C0 controls but TAB, DEL, the C1
+#: controls (NEL among them) and the two Unicode separators some viewers break a line on.
+_UNSAFE_OUTPUT_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]")
+#: The same set less the line feed, for text a person reads with its line breaks kept.
+_UNSAFE_OUTPUT_CHARS_BUT_LF = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def _visible_escape(match: "re.Match[str]") -> str:
+    ch = match.group()
+    if ch == "\n":
+        return "\\n"
+    if ch == "\r":
+        return "\\r"
+    return f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else f"\\u{ord(ch):04x}"
+
+
+def mask_child_output(
+    output: "str | bytes | None",
+    *,
+    limit: int | None = 200,
+    tail: bool = False,
+    one_line: bool = True,
+) -> str:
+    """What a child process printed, fit to be written into a log line or an error message.
+
+    A child's output is not PersonalClaw's own text. A hook, git, pip or a bundler can print a
+    credential it read (a token, a URL with a login in it, a key from a file it opened), and what
+    PersonalClaw writes that output into, the gateway log or an error a caller logs and shows,
+    outlives the run and is read by people and by tools. So the output is:
+
+    * masked the way every view masks it (:func:`redact_for_display`), BEFORE it is cut, so a
+      credential that straddles the cut is masked whole instead of leaving half of it behind;
+    * cut to *limit* characters (none are cut when it is ``None``): the start, or the end when
+      *tail* is set, which is where a failing installer or git prints its reason;
+    * written with every control character as a visible escape (``\\x1b``). With *one_line*, the
+      default, a line break is one too (``\\n``), so a child cannot start a line that reads as a
+      record of the log's own. ``one_line=False`` keeps line breaks, for an error a person reads.
+    """
+    if output is None:
+        return ""
+    if isinstance(output, (bytes, bytearray)):
+        text = bytes(output).decode("utf-8", "replace")
+    else:
+        text = str(output)
+    text = redact_for_display(text.strip())
+    if limit is not None and len(text) > limit:
+        text = text[-limit:] if tail else text[:limit]
+    if one_line:
+        return _UNSAFE_OUTPUT_CHARS.sub(_visible_escape, text)
+    text = text.replace("\r\n", "\n")
+    return _UNSAFE_OUTPUT_CHARS_BUT_LF.sub(_visible_escape, text)
+
+
 #: What stands in for a value a tool handed to the code it ran, in that code's output. The same
 #: text as a shape-found credential's mask, so the inverses and the model read it the same way.
 _KNOWN_VALUE_MASK = "[REDACTED: credential]"
