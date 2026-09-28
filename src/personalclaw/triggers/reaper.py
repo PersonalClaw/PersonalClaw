@@ -48,12 +48,17 @@ run, and death is observable, so `terminalize_orphans` answers at boot instead: 
 claim's `owner_pid` (the claim now carries one) and terminalizes only the claims whose owner is
 PROVABLY gone. The deadline sweep stays as the backstop for a run that is alive and merely stuck —
 two different questions, two passes, one shared `_mark_degraded` so both look the same to a user.
+
+**And the run a stop cuts off (`record_stopped_run`).** A stop or a Restart does not leave its runs
+for the boot pass: it cancels them, and the cancelled run gives its claim back on the way out. So
+the gateway records each one itself as it stops, with the same row, health and review card.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -81,6 +86,12 @@ RUN_DEADLINE_SECS = 1800.0
 #: have done part of its work, so the orphan pass puts it on the review (`triggers/review.py`),
 #: where the user runs it again or dismisses it.
 RESTART_INTERRUPTED_STATUS = "interrupted"
+
+#: What every interrupted run's reason ends with: what happens to it now, and where you decide.
+_NOT_RUN_AGAIN = (
+    "It is not run again on its own, because it may already have done part of its work: run it "
+    "again from the review on the Triggers page, or dismiss it there."
+)
 
 
 def overdue(
@@ -282,11 +293,15 @@ def terminalize_orphans_sync(
             owner_pid,
             elapsed,
         )
+        # A claim naming this very process was left by the image a restart replaced
+        # (`claims.orphaned_ids`): its pid is not gone, the program that ran it is.
+        gone = (
+            "the gateway restarted while this was running"
+            if owner_pid == os.getpid()
+            else f"the process running this (pid {owner_pid}) is gone"
+        )
         reason = (
-            f"Interrupted by a gateway restart: the process running this "
-            f"(pid {owner_pid}) is gone. It ran {int(elapsed)}s. It is not run again on its "
-            f"own, because it may already have done part of its work: run it again from the "
-            f"review on the Triggers page, or dismiss it there."
+            f"Interrupted by a gateway restart: {gone}. It ran {int(elapsed)}s. {_NOT_RUN_AGAIN}"
         )
         record: dict[str, Any] = {
             "trigger_id": trigger_id,
@@ -323,6 +338,74 @@ async def terminalize_orphans(
     )
 
 
+def record_stopped_run(
+    trigger_id: str,
+    *,
+    started_at: float,
+    restarting: bool,
+    by_hand: bool = False,
+    store: Any = None,
+    now: float = 0.0,
+    base_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """Close a run this gateway cut off as it stopped or restarted. NEVER raises.
+
+    🔴 THE DEFECT THIS CLOSES: a stop or a Restart cancelled a run in flight and recorded nothing.
+    A stop cancels the loops a fire runs in, and `asyncio.CancelledError` is not an `Exception`, so
+    the dispatch's `except Exception`, which records a failed fire, never saw it — and the
+    executor's `finally` gave the claim back, so the boot pass above, which closes a run whose
+    owner died, found no claim to close. The run just ended: no row in its history, no card on the
+    review, and a last run that read as whatever ran before it.
+
+    Closed here the way that pass closes a run whose owner died, with a reason naming what stopped
+    it: the `interrupted` row, the trigger's health (`_mark_degraded`), the audit, and the card on
+    the review (`triggers/review.py`), where the user runs it again or dismisses it. A run started
+    *by_hand* (Run now, the review's Run now) is recorded as the hand run it was — its row is
+    `manual`, and it leaves the trigger's health alone, as `_record_manual_run` does.
+
+    Returns the record in the boot pass's shape. Synchronous, awaiting nothing: it runs inside the
+    cancellation it records, where any await can be cancelled again.
+    """
+    now = now or time.time()
+    elapsed = max(0.0, now - (started_at or now))
+    if restarting:
+        why = "Interrupted by a gateway restart: the gateway restarted while this was running."
+    else:
+        why = "Interrupted when the gateway stopped: it stopped while this was running."
+    reason = f"{why} It ran {int(elapsed)}s. {_NOT_RUN_AGAIN}"
+    record: dict[str, Any] = {
+        "trigger_id": trigger_id,
+        "elapsed": int(elapsed),
+        "reason": reason,
+        "restarting": bool(restarting),
+        "recorded": False,
+    }
+    logger.warning(
+        "trigger %s was running when the gateway %s; recording it as interrupted after %.0fs",
+        trigger_id,
+        "restarted" if restarting else "stopped",
+        elapsed,
+    )
+    if not by_hand:
+        record["recorded"] = _mark_degraded(store, trigger_id, reason)
+    _write_interrupted_row(
+        trigger_id,
+        started_at=started_at or now,
+        now=now,
+        reason=reason,
+        base_dir=base_dir,
+        run_trigger="manual" if by_hand else "scheduled",
+    )
+    _audit(trigger_id, tool_name="stop_interrupt", outcome="interrupted", elapsed=elapsed)
+    try:
+        from personalclaw.triggers import review
+
+        review.record(review.cards_from_orphans([record], now=now), base_dir=base_dir)
+    except Exception:  # noqa: BLE001 - the row is written; losing the card must not undo it
+        logger.warning("could not put interrupted run %s on the review", trigger_id, exc_info=True)
+    return record
+
+
 def _write_interrupted_row(
     trigger_id: str,
     *,
@@ -330,6 +413,7 @@ def _write_interrupted_row(
     now: float,
     reason: str,
     base_dir: Path | str | None = None,
+    run_trigger: str = "scheduled",
 ) -> None:
     """The terminal run row for an interrupted run. Never raises.
 
@@ -347,7 +431,9 @@ def _write_interrupted_row(
             ScheduleRun(
                 run_id=f"interrupted-{int(now * 1000)}",
                 job_id=trigger_id,
-                trigger="scheduled",
+                # `manual` for a hand run, the tag `_record_manual_run` gives one: the hourly cap
+                # and the failure streak both pass over it.
+                trigger=run_trigger,
                 started_at=started_at,
                 finished_at=now,
                 duration_ms=int(max(0.0, now - started_at) * 1000),

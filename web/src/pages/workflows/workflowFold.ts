@@ -38,6 +38,8 @@ export interface WorkflowEventEnvelope {
   /** A node event's own epoch, which can lag the run's after a partial rewind. */
   node_epoch?: number
   node_id?: string
+  /** The author's name for the step, on its `node_started` when it has one. */
+  label?: string
   instance_path?: string
   status?: string
   degraded_reason?: string
@@ -287,6 +289,10 @@ function patchNode(
   const patched: WorkflowNodeState = {
     instance_path: path,
     node_id: (env.node_id as string) || existing?.node_id || '',
+    // The author's name for the step. Carried forward like `item_label` below: the snapshot's rows
+    // carry it and only `node_started` repeats it, so a patch that dropped it put every row it
+    // touched back to its id.
+    label: env.label || existing?.label,
     state,
     attempt: existing?.attempt,
     degraded_reason: (env.degraded_reason as string) || '',

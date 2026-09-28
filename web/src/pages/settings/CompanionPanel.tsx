@@ -218,7 +218,7 @@ export function CompanionPanel() {
             : <ListSkeleton rows={2} what="phone push settings" />
         ) : (
         <RowGroup>
-          <Field label="Push backend" hint="'Web push' uses your browser's own subscription and needs a keypair from `personalclaw push init`. 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.">
+          <Field label="Push backend" hint={<>'Web push' uses your browser's own subscription and needs a keypair from <code>personalclaw push init</code>. 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.</>}>
             <SegPills
               ariaLabel="Push backend"
               value={String(mobileCfg?.push_backend ?? 'webpush')}
@@ -239,7 +239,7 @@ export function CompanionPanel() {
             <Row label="Keypair"
               hint={pushStatus.vapid_ready
                 ? 'Ready — subscribed devices can receive pushes.'
-                : 'Missing — run `personalclaw push init` on the gateway host, then reload. Until then, Web push sends nothing.'}>
+                : <>Missing — run <code>personalclaw push init</code> on the gateway host, then reload. Until then, Web push sends nothing.</>}>
               <span data-type="body-s" className={`inline-flex items-center gap-1.5 ${pushStatus.vapid_ready ? 'text-ok' : 'text-warn'}`}>
                 {pushStatus.vapid_ready ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
                 {pushStatus.vapid_ready ? 'Ready' : 'Not set up'}

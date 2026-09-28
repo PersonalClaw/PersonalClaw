@@ -144,6 +144,12 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
   const held = guard.conflict !== null
 
   const rows = useMemo(() => (doc ? stepRows(doc.root) : []), [doc])
+  // Each step's name by its id, for a step that names the ones it runs after: by label, as its row.
+  const nameOf = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const { node } of rows) if (node.id && !names.has(node.id)) names.set(node.id, node.label || node.id)
+    return (id: string) => names.get(id) || id
+  }, [rows])
   const placed = useMemo(() => placeIssues(issues ?? [], rows), [issues, rows])
   const errors = (issues ?? []).filter(isError)
   const advice = (issues ?? []).filter((i) => !isError(i))
@@ -357,6 +363,7 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
                       })}
                       onChange={(next) => editNode(row, next)}
                       markBad={markBad}
+                      nameOf={nameOf}
                     />
                   ))}
                 </section>
@@ -487,18 +494,21 @@ function InputsEditor({ inputs, issues, onChange, markBad }: {
 
 // ── one step ───────────────────────────────────────────────────────────────────
 
-function StepCard({ row, issues, open, onToggle, onChange, markBad }: {
+function StepCard({ row, issues, open, onToggle, onChange, markBad, nameOf }: {
   row: StepRow
   issues: EditIssue[]
   open: boolean
   onToggle: () => void
   onChange: (next: WorkflowNode) => void
   markBad: (key: string, bad: boolean) => void
+  /** Another step's name by its id, for the steps this one runs after. */
+  nameOf: (id: string) => string
 }) {
   const { node } = row
   const action = stepAction(node)
   const problems = issues.filter(isError).length
-  const label = node.id || (row.path === 'root' ? 'Workflow' : node.kind)
+  // What a person reads the step as: its label, the name every run surface gives it, else its id.
+  const label = node.label || node.id || (row.path === 'root' ? 'Workflow' : node.kind)
   return (
     <div
       className="rounded-lg bg-surface-container"
@@ -521,15 +531,16 @@ function StepCard({ row, issues, open, onToggle, onChange, markBad }: {
         {problems > 0 && <span data-type="caption" className="ml-auto shrink-0 text-danger">{problems === 1 ? '1 problem' : `${problems} problems`}</span>}
       </button>
       {issues.length > 0 && <div className="px-m pb-s"><IssueList issues={issues} /></div>}
-      {open && <StepFields row={row} onChange={onChange} markBad={markBad} />}
+      {open && <StepFields row={row} onChange={onChange} markBad={markBad} nameOf={nameOf} />}
     </div>
   )
 }
 
-function StepFields({ row, onChange, markBad }: {
+function StepFields({ row, onChange, markBad, nameOf }: {
   row: StepRow
   onChange: (next: WorkflowNode) => void
   markBad: (key: string, bad: boolean) => void
+  nameOf: (id: string) => string
 }) {
   const { node } = row
   const config = (node.config ?? {}) as Record<string, unknown>
@@ -538,7 +549,7 @@ function StepFields({ row, onChange, markBad }: {
   return (
     <div className="flex flex-col gap-m border-t border-outline-variant px-m py-m">
       {node.needs && node.needs.length > 0 && (
-        <p data-type="caption" className="text-on-surface-low">Runs after {node.needs.join(', ')}.</p>
+        <p data-type="caption" className="text-on-surface-low">Runs after {node.needs.map(nameOf).join(', ')}.</p>
       )}
       {entries.length === 0 && (
         <p data-type="caption" className="text-on-surface-low">This step has no settings of its own. Add one in the JSON tab.</p>

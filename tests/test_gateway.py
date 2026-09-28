@@ -1421,7 +1421,7 @@ class TestSubagentDone:
         session._pending_subagent_failures = []
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-1"
         info.parent_session_key = "dashboard:test-session"
         info.error = None
@@ -1465,7 +1465,7 @@ class TestSubagentDone:
         session.queue_append = MagicMock()
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-2"
         info.parent_session_key = "dashboard:busy-session"
         info.error = None
@@ -1487,7 +1487,7 @@ class TestSubagentDone:
         on_done = mock_sm.call_args[1]["on_done"]
         orch.subagent_mgr.running = []
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-3"
         info.parent_session_key = "cron:job1"
         info.error = None
@@ -1514,7 +1514,7 @@ class TestSubagentDone:
         orch, mock_sm = self._setup_orch_with_subagent_mgr()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-4"
         info.parent_session_key = "subagent:parent"
         info.error = "something failed"
@@ -1535,7 +1535,7 @@ class TestSubagentDone:
         orch, mock_sm = self._setup_orch_with_subagent_mgr()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-5"
         info.parent_session_key = "subagent:x"
         info.error = None
@@ -1568,7 +1568,7 @@ class TestSubagentDone:
         on_done = mock_sm.call_args[1]["on_done"]
         orch.subagent_mgr.running = []
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "b961a327"
         info.parent_session_key = owned_key("11b9a34c", "synthesize")
         info.error = None
@@ -1632,7 +1632,7 @@ class TestSubagentDone:
         on_done = mock_sm.call_args[1]["on_done"]
         orch._channel_delivery = _mock_channel_delivery()
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-6"
         info.parent_session_key = "C123:1234.567890"
         info.error = None
@@ -1660,7 +1660,7 @@ class TestSubagentDone:
         on_done = mock_sm.call_args[1]["on_done"]
         orch.dashboard_state.get_session = MagicMock(return_value=None)
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-7"
         info.parent_session_key = "dashboard:gone-session"
         info.error = None
@@ -1674,6 +1674,63 @@ class TestSubagentDone:
 
         await on_done([info])
         orch.dashboard_state.notify.assert_called()
+
+    @staticmethod
+    def _trigger_run(**over):
+        """An agent a trigger started, as `run-prompt` spawns it: its task is the framed prompt,
+        its title the trigger's name."""
+        from personalclaw.subagent import SubagentInfo
+
+        fields = {
+            "id": "rem00001",
+            "task": "[AUTONOMOUS RUN — no user is present to reply]\nYou are running unattended.",
+            "title": "Call the dentist",
+            "trigger_id": "clock:call-the-dentist",
+            "parent_session_key": "",
+            "result": "Time to call the dentist — the number is in your contacts.",
+            "done": True,
+            **over,
+        }
+        return SubagentInfo(**fields)
+
+    @pytest.mark.asyncio
+    async def test_a_trigger_run_is_told_by_its_name_and_says_what_it_said(self):
+        """🔴 Red before: "Subagent `rem00001` completed", with the completion-event preamble and
+        the framed task first and the reminder itself last. The note a person reads is now titled
+        by the run and IS what the agent said, and it links back to the automation."""
+        orch, mock_sm = self._setup_orch_with_subagent_mgr()
+        on_done = mock_sm.call_args[1]["on_done"]
+
+        await on_done([self._trigger_run()])
+
+        (kind, title, body), kwargs = orch.dashboard_state.notify.call_args
+        assert title == "Call the dentist"
+        assert body == "Time to call the dentist — the number is in your contacts."
+        assert kwargs["meta"] == {"statusUrl": "#/triggers?open=clock:call-the-dentist"}
+
+    @pytest.mark.asyncio
+    async def test_a_failed_trigger_run_says_it_failed_under_its_name(self):
+        orch, mock_sm = self._setup_orch_with_subagent_mgr()
+        on_done = mock_sm.call_args[1]["on_done"]
+
+        await on_done([self._trigger_run(result="", error="the model did not answer")])
+
+        (_kind, title, body), _kwargs = orch.dashboard_state.notify.call_args
+        assert title == "Call the dentist — failed"
+        assert body == "Error: the model did not answer"
+
+    @pytest.mark.asyncio
+    async def test_a_run_nobody_named_keeps_the_completion_note(self):
+        """The control: an agent with no title is told as before."""
+        orch, mock_sm = self._setup_orch_with_subagent_mgr()
+        on_done = mock_sm.call_args[1]["on_done"]
+
+        await on_done([self._trigger_run(title="", trigger_id="")])
+
+        (_kind, title, body), kwargs = orch.dashboard_state.notify.call_args
+        assert title == "Subagent `rem00001` completed"
+        assert body.startswith("[Subagent completion event]")
+        assert kwargs["meta"] is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2013,7 +2070,7 @@ class TestSubagentSlackInjection:
         orch, mock_sm = self._setup()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-timeout"
         info.parent_session_key = "C123:ts.123"
         info.error = None
@@ -2042,7 +2099,7 @@ class TestSubagentSlackInjection:
         on_done = mock_sm.call_args[1]["on_done"]
         orch.subagent_mgr.running = []
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-cron-timeout"
         info.parent_session_key = "cron:job1"
         info.error = None
@@ -2064,7 +2121,7 @@ class TestSubagentSlackInjection:
         orch.subagent_mgr.notify_injection_failed.assert_called()
 
     def _channel_info(self, agent_id: str):
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = agent_id
         info.parent_session_key = "C123:ts.123"
         info.error = None
@@ -2273,7 +2330,7 @@ class TestInjectWithRetry:
         orch, mock_sm = self._setup()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-died"
         info.parent_session_key = "C123:ts.1"
         info.error = None
@@ -2302,7 +2359,7 @@ class TestInjectWithRetry:
         orch, mock_sm = self._setup()
         on_done = mock_sm.call_args[1]["on_done"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-busy"
         info.parent_session_key = "C123:ts.2"
         info.error = None
@@ -2530,7 +2587,7 @@ class TestRetriggerRecovery:
         session._pending_subagent_failures = []
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-fail"
         info.parent_session_key = "dashboard:session1"
         info.task = "failed task"
@@ -2551,7 +2608,7 @@ class TestRetriggerRecovery:
         orch, mock_sm = self._setup()
         on_event = mock_sm.call_args[1]["on_event"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-chunk"
         info.parent_session_key = "dashboard:session1"
 
@@ -2564,7 +2621,7 @@ class TestRetriggerRecovery:
         orch, mock_sm = self._setup()
         on_event = mock_sm.call_args[1]["on_event"]
 
-        info = MagicMock()
+        info = MagicMock(title="", trigger_id="")
         info.id = "agent-status"
         info.parent_session_key = "dashboard:session1"
 

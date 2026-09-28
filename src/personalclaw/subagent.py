@@ -439,6 +439,11 @@ class SubagentInfo:
     # it is denied leaves a note that can run the trigger again (`auto_denials.py`).
     # Last, so no field an app passes by position moves (`sdk.channel` exports this class).
     trigger_id: str = ""
+    # What the run is called where a person reads it: the name of the trigger that started it, or
+    # the instruction it was given (`triggers.store.run_title`). Its completion notice and the
+    # background-agents list lead with it. "" for a run nobody named, which reads by its task. After
+    # `trigger_id` for the same reason `trigger_id` is last.
+    title: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -759,13 +764,12 @@ class SubagentManager:
         )
 
     def start_reaper(self) -> None:
-        """Start the periodic reaper loop.  Call once after the event loop is running."""
-        if self._reaper_task is None:
-            from personalclaw.subagent_orphans import reconcile_orphans
+        """Start the periodic reaper loop.  Call once after the event loop is running.
 
+        What a PREVIOUS run left behind is settled by the gateway once its dashboard is up
+        (`subagent_orphans.reconcile_orphans`), because the owner is told through it."""
+        if self._reaper_task is None:
             self._reaper_task = asyncio.create_task(self._reaper_loop())
-            # One-shot reconciliation of what a previous run left, on startup.
-            self._reconcile_task = asyncio.create_task(reconcile_orphans(self._agents))
 
     async def _reaper_loop(self) -> None:
         """Periodically force-kill subagents that exceed the timeout.
@@ -1028,6 +1032,7 @@ class SubagentManager:
             {
                 "id": a.id,
                 "task": _r(a.task[:80]),
+                "title": _r(a.title),
                 "agent": _r(a.agent),
                 "turns": a.turns,
                 "last_tool": _r(a.last_tool),
@@ -1054,6 +1059,7 @@ class SubagentManager:
         extra_env: dict[str, str] | None = None,
         *,
         trigger_id: str = "",
+        title: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1098,6 +1104,9 @@ class SubagentManager:
                 wide fan-out cannot starve or overspend against every other run.
             trigger_id (str): The trigger whose fire this is (``ActionContext.trigger_id``),
                 kept on the info so its approvals and denials can name and re-run it.
+            title (str): What the run is called where a person reads it — for a trigger's run,
+                its name or its instruction (``triggers.store.run_title``). Its completion notice
+                is titled with it and leads with what the agent said.
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1284,6 +1293,7 @@ class SubagentManager:
             sandbox=sandbox or "none",
             extra_env=dict(extra_env or {}),
             trigger_id=trigger_id or "",
+            title=redact_credentials(redact_exfiltration_urls(title or "")[0])[0],
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
 
@@ -1693,6 +1703,7 @@ class SubagentManager:
                 agent=info.agent,
                 parent_session=info.parent_session_key,
                 max_turns=info.max_turns,
+                title=info.title,
             )
         except Exception:
             logger.warning("Failed to create agent folder for %s", info.id, exc_info=True)

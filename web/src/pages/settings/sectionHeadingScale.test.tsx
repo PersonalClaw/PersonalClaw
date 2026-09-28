@@ -5,6 +5,105 @@ import { join } from 'node:path'
 import { Boxes } from 'lucide-react'
 import { Section } from './settingsUI'
 
+const clean = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+/** Complete `<Section …>` openings, brace-aware — a `[^>]*>` matcher stops at the `>` inside
+ *  `hint={<span>x</span>}` and would score a titled section as bare. */
+function sectionTags(src: string): string[] {
+  const out: string[] = []
+  for (const m of src.matchAll(/<Section\b/g)) {
+    let depth = 0
+    for (let i = m.index! + m[0].length; i < src.length; i++) {
+      const c = src[i]
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (c === '>' && depth === 0) { out.push(src.slice(m.index!, i + 1)); break }
+    }
+  }
+  return out
+}
+
+/** The props a `<Section …>` opening passes AT ITS OWN LEVEL, name → raw value. A prop inside a
+ *  braced value — `right={<Button icon={RefreshCw} title="Refresh" />}` — is that nested element's,
+ *  and a pattern over the whole tag read it as the Section's: a toolbar button's `icon` as the
+ *  section's glyph (and its missing `iconTone` as coral), a button's `title` as the section's name. */
+function ownProps(tag: string): Map<string, string> {
+  const props = new Map<string, string>()
+  const body = tag.replace(/^<Section\b/, '').replace(/\/?>$/, '')
+  /** The index just past the `}` that closes the `{` at `from`. */
+  const closing = (from: number): number => {
+    let depth = 0
+    for (let i = from; i < body.length; i++) {
+      if (body[i] === '{') depth++
+      else if (body[i] === '}' && --depth === 0) return i + 1
+    }
+    return body.length
+  }
+  let i = 0
+  while (i < body.length) {
+    while (i < body.length && /\s/.test(body[i])) i++
+    if (i >= body.length) break
+    if (body[i] === '{') { i = closing(i); continue } // a spread, `{...rest}`
+    const name = /^[A-Za-z_][\w-]*/.exec(body.slice(i))?.[0]
+    if (!name) break
+    i += name.length
+    if (body[i] !== '=') { props.set(name, 'true'); continue }
+    i++
+    const quote = body[i]
+    if (quote === '"' || quote === "'") {
+      const end = body.indexOf(quote, i + 1)
+      if (end < 0) break
+      props.set(name, body.slice(i, end + 1))
+      i = end + 1
+    } else if (quote === '{') {
+      const end = closing(i)
+      props.set(name, body.slice(i, end))
+      i = end
+    } else break
+  }
+  return props
+}
+
+/** What the rails below ask of each opening, read off its OWN props. */
+const isTitled = (tag: string) => ownProps(tag).has('title')
+const hasIcon = (tag: string) => ownProps(tag).has('icon')
+const isMuted = (tag: string) => ownProps(tag).get('iconTone') === '"muted"'
+
+describe('the rails below read a Section’s OWN props', () => {
+  it('🔴 a glyph on the right-hand control is not the section’s glyph', () => {
+    const [tag] = sectionTags('<Section right={<Button icon={RefreshCw} onClick={() => go()}>Refresh</Button>}>')
+    expect(hasIcon(tag)).toBe(false)
+  })
+
+  it('🔴 a title on the right-hand control does not name the section', () => {
+    const [tag] = sectionTags('<Section right={<button type="button" title="Clear the log">x</button>}>')
+    expect(isTitled(tag)).toBe(false)
+  })
+
+  it('🔴 a muted glyph on the right-hand control does not mute the section’s own', () => {
+    const [tag] = sectionTags('<Section title="Logs" icon={Boxes} right={<Badge icon={Dot} iconTone="muted" />}>')
+    expect(hasIcon(tag)).toBe(true)
+    expect(isMuted(tag)).toBe(false)
+  })
+
+  it('reads the section’s own glyph, tone and title beside a nested control', () => {
+    const [tag] = sectionTags(
+      '<Section title="Voices" icon={Mic2} iconTone="muted" hint={<span>a</span>} right={<Button icon={Plus} />}>',
+    )
+    const props = ownProps(tag)
+    expect(props.get('title')).toBe('"Voices"')
+    expect(props.get('icon')).toBe('{Mic2}')
+    expect(props.get('iconTone')).toBe('"muted"')
+  })
+
+  it('reads past a spread and a boolean prop', () => {
+    const [tag] = sectionTags('<Section {...rest} collapsed title="Logs">')
+    const props = ownProps(tag)
+    expect(props.get('collapsed')).toBe('true')
+    expect(props.get('title')).toBe('"Logs"')
+  })
+})
+
 // ── Two settings pages wrote their section titles 2px larger than the other 23 ─────────────
 //
 // Censused across `pages/settings/`: **23 panels render section titles through `Section` (72
@@ -124,29 +223,13 @@ describe('a panel that names its sections names ALL of them', () => {
   // place `settingsUI`'s Section is imported.
 
   const DIR = join(process.cwd(), 'src/pages/settings')
-  const clean = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-
-  /** Complete `<Section …>` openings, brace-aware — a `[^>]*>` matcher stops at the `>` inside
-   *  `hint={<span>x</span>}` and would score a titled section as bare. */
-  function sectionTags(src: string): string[] {
-    const out: string[] = []
-    for (const m of src.matchAll(/<Section\b/g)) {
-      let depth = 0
-      for (let i = m.index! + m[0].length; i < src.length; i++) {
-        const c = src[i]
-        if (c === '{') depth++
-        else if (c === '}') depth--
-        else if (c === '>' && depth === 0) { out.push(src.slice(m.index!, i + 1)); break }
-      }
-    }
-    return out
-  }
 
   const panels = readdirSync(DIR)
     .filter((n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n) && n !== 'settingsUI.tsx')
     .map((n) => {
       const tags = sectionTags(clean(readFileSync(join(DIR, n), 'utf8')))
-      return { n, titled: tags.filter((t) => /\stitle=/.test(t)).length, bare: tags.length - tags.filter((t) => /\stitle=/.test(t)).length }
+      const titled = tags.filter(isTitled).length
+      return { n, titled, bare: tags.length - titled }
     })
     .filter((p) => p.titled + p.bare > 0)
 
@@ -246,26 +329,14 @@ describe('a section glyph is muted unless it marks something live', () => {
   // count, so a new decorative glyph fails and a genuinely-live one has to say why here.
 
   const DIR = join(process.cwd(), 'src/pages/settings')
-  const clean = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  /** Brace-aware `<Section …>` openings that pass an icon, per file. */
+  /** The `<Section …>` openings that pass an icon OF THEIR OWN, per file (`ownProps`). */
   function iconSections() {
     const out: { file: string; tag: string; muted: boolean }[] = []
     for (const n of readdirSync(DIR)) {
       if (!/\.tsx$/.test(n) || /\.(test|doc)\.tsx$/.test(n)) continue
-      const src = clean(readFileSync(join(DIR, n), 'utf8'))
-      for (const m of src.matchAll(/<Section\b/g)) {
-        let depth = 0
-        for (let i = m.index! + m[0].length; i < src.length; i++) {
-          const c = src[i]
-          if (c === '{') depth++
-          else if (c === '}') depth--
-          else if (c === '>' && depth === 0) {
-            const tag = src.slice(m.index!, i + 1)
-            if (/\sicon=/.test(tag)) out.push({ file: n, tag, muted: /iconTone="muted"/.test(tag) })
-            break
-          }
-        }
+      for (const tag of sectionTags(clean(readFileSync(join(DIR, n), 'utf8')))) {
+        if (hasIcon(tag)) out.push({ file: n, tag, muted: isMuted(tag) })
       }
     }
     return out

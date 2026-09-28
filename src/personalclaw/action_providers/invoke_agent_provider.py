@@ -113,6 +113,9 @@ class InvokeAgentActionProvider(ActionProvider):
         # ``capability: "mutating"`` grant — write on an unattended agent is created deliberately,
         # never acquired by default.
         capability_class = str(action_config.get("capability") or "").strip().lower() or None
+        from personalclaw.triggers.store import run_title
+
+        title = run_title(ctx.trigger_id, task)
 
         async def _spawn() -> None:
             try:
@@ -128,6 +131,8 @@ class InvokeAgentActionProvider(ActionProvider):
                     # The trigger whose fire this is (`ActionContext.trigger_id`), so an approval
                     # the agent asks for names it and can be run again from the Inbox.
                     trigger_id=ctx.trigger_id,
+                    # What the run is called: its trigger's name, else its task's first line.
+                    title=title,
                 )
             except Exception:
                 logger.warning("invoke-agent: spawn failed", exc_info=True)

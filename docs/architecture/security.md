@@ -107,6 +107,24 @@ permission model holds in every auth mode.
   `session_signed_in` / `session_signed_out` row. A token that expired, was revoked or was
   replaced is told which, and when, under the same `unauthorized` code every other inbound refusal
   carries; a token the gateway never issued is told nothing more.
+- **The keys that are not sign-ins have a lifetime too, each the one its job allows.**
+  - An app backend's proxy secret (`apps/<app>/.app_secret`, the HMAC key the reverse proxy signs
+    with) is minted afresh each time the backend starts (`apps/app_secret.mint_app_secret`), so it
+    lasts as long as that backend, and a copy stops working the next time it starts.
+  - The 2FA seed lasts as long as 2FA is enrolled: `personalclaw auth totp disable` deletes it, and
+    enrolling again mints a new one. Turning 2FA off is refused while `auth.require_totp` is on,
+    since login would then ask for a code nothing can produce.
+  - A trigger's question (`triggers/parks.py`) is answerable for the window a workflow's resume
+    token has (`workflows/human_input.DEFAULT_RESUME_TTL_SECS`, 7 days); after that its answer is
+    refused, its Inbox row closed, and the trigger asks again, with a new token, the next time it
+    stops.
+  - The SEL integrity key (`sel_hmac.key`) lives as long as the log it signs: a new key would
+    leave every earlier record unverifiable, which is the one thing the chain is for. No export
+    carries it; a snapshot does, so a restore can still verify the records it brings back.
+  - The web-push keypair lives until `personalclaw push init --force` replaces it: every paired
+    device's subscription is bound to its public key, so replacing it signs every device out of
+    push, which is the right trade after a compromise and the wrong one on a timer. Each push
+    message's own VAPID signature lasts at most 12 hours.
 
 ### Webhook auth
 

@@ -26,6 +26,7 @@ from personalclaw.dashboard.state import (
     parse_cls_meta,
     tool_input_to_str,
 )
+from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
 from personalclaw.validation import MAX_TOOL_NAME_LEN, sanitize_string
@@ -427,9 +428,13 @@ def _broadcast_compaction_result(
     runtime performs returns a real before/after, so on a fresh chat the honest answer is
     that nothing moved. Saying "compacted" there would be the same shape of lie as the
     substituted plain-prompt answer this replaced (#470).
+
+    A loop that compacted its own history mid-turn (``COMPACTION_AUTOMATIC``) is announced in
+    the same words as a ``/compact`` that did: it is the same pass, and the conversation changed
+    the same way.
     """
     status_type = event.text
-    if status_type == "completed":
+    if status_type in ("completed", COMPACTION_AUTOMATIC):
         summary, _ = redact_credentials(event.title)
         summary, _ = redact_exfiltration_urls(summary)
         msg_text = f"Conversation compacted: {summary}" if summary else "Conversation compacted."

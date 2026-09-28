@@ -109,6 +109,25 @@ async def test_a_step_with_no_label_carries_none(tmp_path: Path) -> None:
     assert "label" not in rows["plain"][0]
 
 
+async def test_the_live_stream_names_a_started_step_as_its_row_does(tmp_path: Path) -> None:
+    """🔴 Red before: `workflow_node_started` carried no label, so a view folding the stream (the
+    chat's progress card) could name a step the snapshot had not listed only by its id. It now
+    carries the same label the row does, and nothing for a step without one."""
+    published: list[tuple[str, dict[str, Any]]] = []
+    with _isolated(tmp_path):
+        run = store.create(WorkflowRun(id="", workflow_name=str(_SPEC["name"])))
+        store.write_spec(run.id, _SPEC)
+        services = EngineServices(publish=lambda event, payload: published.append((event, payload)))
+        await RunController(run, _SPEC, services=services).run_to_completion(timeout=60)
+    started: dict[str, list[Any]] = {}
+    for event, payload in published:
+        if event == "workflow_node_started":
+            started.setdefault(str(payload["node_id"]), []).append(payload.get("label"))
+    assert started["gather"] == ["Gather the sources"], started
+    assert started["one"] == ["Read one source", "Read one source"], started
+    assert started["plain"] == [None], "a step with no label is named by nothing more than its id"
+
+
 async def test_the_row_names_the_step_the_way_the_runs_ending_does(tmp_path: Path) -> None:
     """🔴 Red on main. The run's ending quotes the failed step by its label; the row the page shows
     beside that sentence must carry the same name."""

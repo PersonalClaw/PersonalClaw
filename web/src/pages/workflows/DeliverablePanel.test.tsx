@@ -31,6 +31,7 @@ function present(name: string, content: string): WorkflowRunDeliverable['report'
   return {
     name, present: true, content, bytes: content.length, modified_at: 1_788_000_000,
     truncated: false, clipped_blobs: 0, found_in: 'run_dir', absent_reason: null,
+    kept_from: null, kept_by: null,
   }
 }
 
@@ -42,6 +43,7 @@ function absent(
   return {
     name, present: false, content: null, bytes: null, modified_at: null,
     truncated: false, clipped_blobs: 0, found_in: null, absent_reason,
+    kept_from: null, kept_by: null,
   }
 }
 
@@ -192,6 +194,30 @@ describe('a written document reads as a document', () => {
       )
     render(<DeliverablePanel runId="r1" />)
     await waitFor(() => expect(screen.getByText(/truncated for display/)).toBeTruthy())
+  })
+
+  it('🔴 a copy the run kept says which step wrote it, and where', async () => {
+    // A project-less run's steps work in the shared workspace, which the panel does not read: the
+    // run keeps its own copy of what each step wrote there. Read as a copy — not as the run folder's
+    // own file — and named by the step and the folder, since other runs write into that folder too.
+    payload = () =>
+      Promise.resolve(
+        body({
+          workflow: 'deep-research',
+          report: {
+            ...present('RESEARCH.md', '# Findings'),
+            found_in: 'kept',
+            kept_from: '/srv/example/workspace',
+            kept_by: 'research',
+          },
+        }),
+      )
+    render(<DeliverablePanel runId="r1" />)
+    await waitFor(() => expect(screen.getByText('Findings')).toBeTruthy())
+    expect(screen.getByText(/the run’s own copy of what step/)).toBeTruthy()
+    expect(screen.getByText('research')).toBeTruthy()
+    expect(screen.getByText('/srv/example/workspace')).toBeTruthy()
+    expect(screen.queryByText(/read from this run’s run directory/)).toBeNull()
   })
 })
 

@@ -70,13 +70,18 @@ def create_agent_folder(
     agent: str = "",
     parent_session: str = "",
     max_turns: int = 0,
+    title: str = "",
 ) -> Path:
-    """Create ``~/.personalclaw/subagents/{id}/`` with ``state.json``."""
+    """Create ``~/.personalclaw/subagents/{id}/`` with ``state.json``.
+
+    ``title`` is what the run is called (``SubagentInfo.title``), kept so a restart that finds it
+    left behind can name it as its completion would have."""
     d = _agent_dir(agent_id)
     d.mkdir(parents=True, exist_ok=True)
     state = {
         "id": agent_id,
         "task": task,
+        "title": title,
         "agent": agent,
         "parent_session": parent_session,
         "started": time.time(),

@@ -83,6 +83,7 @@ def read_claim(
         claimed_at = float(raw.get("claimed_at") or 0.0)
         max_secs = float(raw.get("max_duration_secs") or CLAIM_MAX_DURATION_SECS)
         owner_pid = int(raw.get("owner_pid") or 0)
+        owner_image = str(raw.get("owner_image") or "")
     except (TypeError, ValueError):
         return None
     if claimed_at <= 0 or now - claimed_at >= max_secs:
@@ -97,6 +98,9 @@ def read_claim(
         # every claim on the machine would then read as owned by a live process, which is precisely
         # the always-true liveness check `orphaned_ids` exists to avoid.
         owner_pid=owner_pid,
+        # The same for the image, and the same "" for a record that carries none: defaulted, every
+        # claim this pid's previous image left would read as this image's own.
+        owner_image=owner_image,
     )
 
 
@@ -122,6 +126,7 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
         # would be right today by coincidence and wrong the first time a claim is written by
         # anything other than the process that runs the fire.
         "owner_pid": int(getattr(claim, "owner_pid", 0) or 0),
+        "owner_image": str(getattr(claim, "owner_image", "") or ""),
     }
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload), encoding="utf-8")
@@ -206,10 +211,18 @@ def orphaned_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> lis
     PID REUSE fails safe in the same direction: if the OS recycled a dead owner's pid, the claim
     reads as live and falls through to the reaper deadline — today's behaviour, not a new hole.
 
+    🔴 A RESTART KEEPS THE PID. The gateway restarts by re-execing itself in place, so the owner of
+    every claim the old image left is THIS process, and `pid_is_alive` answered True for it: the
+    run read as in flight after every Restart until the deadline reaper recorded it as reaped. A
+    claim naming this pid is therefore judged by its image (`scheduling.PROCESS_IMAGE`): this
+    image's own is live, another image's was granted by a program that no longer runs. A claim
+    carrying no image is unknown, and like an unknown owner it is left to the deadline.
+
     A pure read, like `overdue`, so the boot pass and a test can ask without causing an effect;
     sorted for a stable, reproducible sweep order.
     """
     from personalclaw.gateway_base import pid_is_alive
+    from personalclaw.triggers.scheduling import PROCESS_IMAGE
 
     now = now or time.time()
     out: list[tuple[str, int]] = []
@@ -218,7 +231,13 @@ def orphaned_ids(*, now: float = 0.0, base_dir: Path | str | None = None) -> lis
         if claim is None:
             continue
         pid = int(getattr(claim, "owner_pid", 0) or 0)
-        if pid <= 0 or pid_is_alive(pid):
+        if pid <= 0:
+            continue
+        if pid == os.getpid():
+            image = str(getattr(claim, "owner_image", "") or "")
+            if not image or image == PROCESS_IMAGE:
+                continue
+        elif pid_is_alive(pid):
             continue
         out.append((trigger_id, pid))
     return sorted(out)

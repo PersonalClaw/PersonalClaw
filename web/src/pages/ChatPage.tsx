@@ -23,7 +23,7 @@ import { SearchField } from '../ui/SearchField'
 import { TopBar } from '../ui/TopBar'
 import { SidePanel } from '../ui/SidePanel'
 import { Button } from '../ui/Button'
-import { Checkbox } from '../ui/forms'
+import { Checkbox, useSyncedDraft } from '../ui/forms'
 import { QuietButton } from '../ui/QuietButton'
 import { SelectionToolbar } from '../ui/SelectionPill'
 import { Segmented } from '../ui/Segmented'
@@ -649,8 +649,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // project page's Chat button), but ALSO user-pickable on a bare new chat via the
   // composer's project chooser (the vision's "optional project chooser"). Frozen once the
   // session starts (project_id is fixed at create, like memory mode).
-  const [projectId, setProjectId] = useState(initialProjectId)
-  useEffect(() => { setProjectId(initialProjectId) }, [initialProjectId])
+  const [projectId, setProjectId] = useSyncedDraft(initialProjectId)
   // Name of the project this chat is bound to — shown as a header chip so the user knows
   // the chat is scoped to that project's workspace.
   const [projectName, setProjectName] = useState('')

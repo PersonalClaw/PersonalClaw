@@ -912,154 +912,175 @@ class TestOrphanReconciliation:
         assert not (agent_root / "tracked1" / "tombstone.json").exists()
 
 
-# ── Notification — injection + Slack DM fallback ─────────────────────
+# ── The owner is told, once, which agents a restart stopped ─────────
 
 
-class TestOrphanNotification:
-    """Verify orphan notification with injection attempt and Slack DM fallback."""
+class _Notes:
+    """A dashboard stand-in that keeps what it is asked to deliver."""
 
-    @pytest.mark.asyncio
-    async def test_notification_called_for_orphan_with_result(self, agent_root):
-        from unittest.mock import AsyncMock, MagicMock, patch
+    def __init__(self, fail: bool = False) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+        self.fail = fail
 
-        from personalclaw.subagent import SubagentManager
-        from personalclaw.subagent_persistence import (
-            create_agent_folder,
-            update_state,
-            write_result_chunk,
-        )
+    def notify(self, kind, title, body, **_kw):
+        if self.fail:
+            raise RuntimeError("delivery refused")
+        self.sent.append((kind, title, body))
 
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
 
-        create_agent_folder("notif1", task="important task", parent_session="dashboard:default")
-        write_result_chunk("notif1", "the answer is 42")
-        update_state("notif1", pid=99999)
+class TestOrphanNotice:
+    """The start-up pass reports what it settled, and the owner gets ONE notice naming it.
 
-        with (
-            patch.object(orphans, "is_pid_alive", return_value=False),
-            patch.object(orphans, "notify_orphan", new_callable=AsyncMock) as mock_notify,
-        ):
-            await orphans.reconcile_orphans(manager._agents)
-
-        mock_notify.assert_awaited_once()
-        call_args = mock_notify.call_args
-        assert call_args[0][0] == "notif1"  # agent_id
-        assert call_args[0][2] == "result_available"  # recovery
-        assert call_args[0][3] is True  # has_result
+    Before, each orphan went to a session injection that was a stub (it always said no) and then
+    to a "channel DM" that only wrote a log line, so a restart that stopped work told the owner
+    nothing anywhere they look.
+    """
 
     @pytest.mark.asyncio
-    async def test_notification_called_for_orphan_without_result(self, agent_root):
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from personalclaw.subagent import SubagentManager
-        from personalclaw.subagent_persistence import create_agent_folder, update_state
-
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
-
-        create_agent_folder("notif2", task="lost task")
-        update_state("notif2", pid=99999)
-
-        with (
-            patch.object(orphans, "is_pid_alive", return_value=False),
-            patch.object(orphans, "notify_orphan", new_callable=AsyncMock) as mock_notify,
-        ):
-            await orphans.reconcile_orphans(manager._agents)
-
-        mock_notify.assert_awaited_once()
-        call_args = mock_notify.call_args
-        assert call_args[0][2] == "notification_pending"  # recovery
-        assert call_args[0][3] is False  # has_result
-
-    @pytest.mark.asyncio
-    async def test_slack_dm_fallback_called(self, agent_root):
-        """When injection returns False, Slack DM fallback is called."""
-        from unittest.mock import AsyncMock, patch
-
-        from personalclaw.subagent_persistence import create_agent_folder, write_result_chunk
-
-        create_agent_folder("notif3", task="fallback task", parent_session="dashboard:default")
-        write_result_chunk("notif3", "result data")
-
-        state = {"id": "notif3", "task": "fallback task", "parent_session": "dashboard:default"}
-
-        with (
-            patch.object(
-                orphans,
-                "try_inject_orphan_notification",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-            patch.object(orphans, "send_orphan_channel_dm", new_callable=AsyncMock) as mock_dm,
-        ):
-            await orphans.notify_orphan("notif3", state, "delivered", True)
-
-        mock_dm.assert_awaited_once()
-        msg = mock_dm.call_args[0][0]
-        assert "notif3" in msg
-        assert "orphaned by gateway restart" in msg
-
-    @pytest.mark.asyncio
-    async def test_msg_redacted_before_injection_path(self, agent_root):
-        """msg must be redacted before try_inject_orphan_notification (not just Slack DM)."""
-        from unittest.mock import patch
-
-        from personalclaw.subagent_persistence import create_agent_folder, write_result_chunk
-
-        create_agent_folder("notif_redact", task="secret task")
-        write_result_chunk("notif_redact", "result")
-
-        state = {"id": "notif_redact", "task": "secret task", "parent_session": "dashboard:default"}
-
-        injected_msg = None
-
-        async def _capture_inject(_session, msg):
-            nonlocal injected_msg
-            injected_msg = msg
-            return True
-
-        with (
-            patch.object(orphans, "try_inject_orphan_notification", side_effect=_capture_inject),
-            patch(
-                "personalclaw.subagent_orphans._redact", side_effect=lambda m: f"[REDACTED]{m}"
-            ) as mock_redact,
-        ):
-            await orphans.notify_orphan("notif_redact", state, "delivered", True)
-
-        # _redact must have been called before injection
-        mock_redact.assert_called()
-        assert injected_msg is not None
-        assert injected_msg.startswith("[REDACTED]")
-
-    @pytest.mark.asyncio
-    async def test_notification_failure_doesnt_crash(self, agent_root):
-        """Notification failure should not prevent reconciliation of other orphans."""
+    async def test_the_pass_reports_each_orphan_and_where_its_result_is(self, agent_root):
         from unittest.mock import MagicMock, patch
 
         from personalclaw.subagent import SubagentManager
-        from personalclaw.subagent_persistence import create_agent_folder
 
         manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        create_agent_folder("notif1", task="important task", parent_session="dashboard:default")
+        write_result_chunk("notif1", "the answer is 42")
+        create_agent_folder("notif2", task="lost task")
+        update_state("notif1", pid=99999)
+        update_state("notif2", pid=99998)
 
-        create_agent_folder("notif4", task="t1")
-        create_agent_folder("notif5", task="t2")
+        with patch.object(orphans, "is_pid_alive", return_value=False):
+            settled = await orphans.reconcile_orphans(manager._agents)
 
-        call_count = 0
+        by_id = {o.agent_id: o for o in settled}
+        assert set(by_id) == {"notif1", "notif2"}
+        assert by_id["notif1"].result_path == str(agent_root / "notif1" / "result.txt")
+        assert by_id["notif1"].name == "important task"
+        assert by_id["notif2"].result_path == ""
 
-        async def _failing_notify(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("notification failed")
+    @pytest.mark.asyncio
+    async def test_a_named_run_is_reported_by_its_name(self, agent_root):
+        """A trigger's run is called by its trigger (`SubagentInfo.title`), not by its task, which
+        opens with the unattended-run framing."""
+        from unittest.mock import MagicMock, patch
+
+        from personalclaw.subagent import SubagentManager
+
+        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        create_agent_folder(
+            "named1",
+            task="[AUTONOMOUS RUN — no user is present to reply]",
+            title="Call the dentist",
+        )
+        with patch.object(orphans, "is_pid_alive", return_value=False):
+            (settled,) = await orphans.reconcile_orphans(manager._agents)
+        assert settled.name == "Call the dentist"
+
+    def test_one_notice_names_every_agent_and_what_it_left(self, agent_root):
+        from personalclaw import notification_kinds
+
+        notes = _Notes()
+        orphans.announce_orphans(
+            notes,
+            [
+                orphans.Orphan("a1", "Research the venues", "/tmp/a1/result.txt"),
+                orphans.Orphan("b2", "Summarize the thread"),
+            ],
+        )
+        ((kind, title, body),) = notes.sent
+        assert kind == notification_kinds.SUBAGENT
+        assert title == "A restart stopped 2 background agents"
+        assert body.split("\n\n") == [
+            "a1 — Research the venues: its result so far is saved at /tmp/a1/result.txt.",
+            "b2 — Summarize the thread: it saved no result.",
+        ]
+
+    def test_a_single_agent_reads_as_one(self, agent_root):
+        notes = _Notes()
+        orphans.announce_orphans(notes, [orphans.Orphan("a1", "Research the venues")])
+        assert notes.sent[0][1] == "A restart stopped a background agent"
+
+    def test_nothing_is_said_when_nothing_was_left(self, agent_root):
+        notes = _Notes()
+        orphans.announce_orphans(notes, [])
+        assert notes.sent == []
+
+    def test_a_long_list_says_how_many_it_left_out(self, agent_root):
+        notes = _Notes()
+        orphans.announce_orphans(notes, [orphans.Orphan(f"id{i}", "t") for i in range(11)])
+        body = notes.sent[0][2]
+        assert body.count(" — t: ") == 8
+        assert body.endswith("…and 3 more.")
+
+    def test_the_notice_is_redacted(self, agent_root):
+        from unittest.mock import patch
+
+        notes = _Notes()
+        with patch("personalclaw.subagent_orphans._redact", side_effect=lambda m: f"[R]{m}"):
+            orphans.announce_orphans(notes, [orphans.Orphan("a1", "t")])
+        assert notes.sent[0][2].startswith("[R]")
+
+    def test_a_notice_that_cannot_be_delivered_does_not_raise(self, agent_root):
+        orphans.announce_orphans(_Notes(fail=True), [orphans.Orphan("a1", "t")])
+
+    @pytest.mark.asyncio
+    async def test_an_agent_spawned_during_the_pass_is_not_read_as_left_behind(self, agent_root):
+        """`tracked_by` asks the manager at each folder, so an agent that is this run's by the
+        time the pass reaches it is skipped, however late it arrived."""
+        from unittest.mock import MagicMock, patch
+
+        from personalclaw.subagent import SubagentInfo, SubagentManager
+
+        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        create_agent_folder("mine", task="t")
+        tracked = orphans.tracked_by(manager)  # taken before the agent exists
+        listed = orphans.list_orphans
+
+        def _spawned_as_the_pass_starts() -> list:
+            found = listed()
+            manager._agents["mine"] = SubagentInfo(id="mine", task="t")
+            return found
 
         with (
             patch.object(orphans, "is_pid_alive", return_value=False),
-            patch.object(orphans, "notify_orphan", side_effect=_failing_notify),
+            patch.object(orphans, "list_orphans", _spawned_as_the_pass_starts),
         ):
-            await orphans.reconcile_orphans(manager._agents)
+            settled = await orphans.reconcile_orphans(tracked)
 
-        # Both orphans should be tombstoned despite notification failure
-        assert (agent_root / "notif4" / "tombstone.json").exists()
-        assert (agent_root / "notif5" / "tombstone.json").exists()
+        assert settled == []
+        assert not (agent_root / "mine" / "tombstone.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_the_gateway_settles_them_once_its_dashboard_is_up(self, agent_root):
+        """🔴 Red before: the pass ran at spawn, before the dashboard existed, and its "notice"
+        was a log line. Once the dashboard is up the gateway settles the agents and delivers."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from personalclaw.gateway import GatewayOrchestrator
+        from personalclaw.subagent import SubagentManager
+
+        create_agent_folder("gone1", task="Draft the weekly note")
+        update_state("gone1", pid=99999)
+        gateway = GatewayOrchestrator.__new__(GatewayOrchestrator)
+        gateway._held_boot_review = None
+        gateway._background_tasks = set()
+        gateway.subagent_mgr = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        gateway.dashboard_state = _Notes()
+
+        with (
+            patch.object(orphans, "is_pid_alive", return_value=False),
+            patch("personalclaw.triggers.legacy_import.announce"),
+        ):
+            gateway._surface_held_boot_review()
+            pending = list(gateway._background_tasks)
+            assert pending, "the settle must be started"
+            await asyncio.gather(*pending)
+
+        ((_kind, title, body),) = gateway.dashboard_state.sent
+        assert title == "A restart stopped a background agent"
+        assert body == "gone1 — Draft the weekly note: it saved no result."
+        assert (agent_root / "gone1" / "tombstone.json").exists()
 
 
 # ── Reaper prunes tombstoned folders > 7 days ────────────────────────

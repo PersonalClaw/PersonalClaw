@@ -145,6 +145,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An agent runtime on the Agents page that isn't ready says why, instead of a count of 0.**
 
+- **A reminder a trigger starts arrives named for its trigger, not as a subagent's completion (`SubagentManager.spawn` takes an optional `title`, which `SubagentInfo` carries; `slack-channel`, the one app that spawns, needs no change).**
+
+- **A run's Document panel shows what its steps wrote, also on a run with no project, and only what they wrote.**
+
+- **A stop or a Restart records the run it cut off as interrupted, names which, and puts it on the review; Run now counts as running while it runs.**
+
+- **The chat says when it compacted a conversation on its own, and how much, in the words `/compact` answers with.**
+
+- **An automation's Run now spins only for its own run and says what the run recorded; a question's Deny waits while an answer is being sent.**
+
+- **You are told which background agents a restart stopped.**
+
+- **The workflow editor and the chat's progress card name steps by their labels.**
+
+- **Settings hints show commands and paths as code, not wrapped in backticks.**
+
+- **Something you type into a setting just as its panel opens is kept.**
+
+- **The last lines the gateway prints as it stops reach its log.**
+
 - **The re-index that re-embeds your library shows wherever it runs, and a stop no longer leaves passages behind.**
 
 - **Knowledge compares two embeddings only when one model wrote both, as memory does.**
@@ -463,6 +483,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Hugging Face's transfer cache stays in the PersonalClaw home, for the gateway and every process it starts.**
 
 - **A research report from another machine arrives switched off, and sync never brings in another machine's project trust, autonomy grants or integration clients.**
+- **The keys that are not sign-ins have a lifetime: an app's proxy secret is new each time its backend starts, the 2FA secret is deleted when 2FA is turned off, and a trigger's question can be answered for a week.**
 
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 

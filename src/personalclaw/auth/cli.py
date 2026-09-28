@@ -318,8 +318,17 @@ def _rotate_key_cmd(args) -> int:
 def _totp_cmd(args) -> int:
     sub = str(getattr(args, "totp_action", "") or "setup")
     if sub == "disable":
+        if _auth_config().get("require_totp"):
+            # Deleting the secret while login still asks for a code would make password login
+            # impossible — the state `auth status` warns about, reached on purpose.
+            print(
+                "❌ Login still requires a 2FA code (auth.require_totp). Turn that off first "
+                "(Settings → Login), then turn 2FA off.",
+                file=sys.stderr,
+            )
+            return 1
         creds.disable_totp()
-        print("✅ 2FA turned off. The secret is kept, so re-enabling needs no re-enrollment.")
+        print("✅ 2FA turned off and its secret deleted. Turning it on again enrolls a new one.")
         return 0
     if not creds.has_credentials():
         print("❌ Set a password first — 2FA is a second factor, not the first.", file=sys.stderr)

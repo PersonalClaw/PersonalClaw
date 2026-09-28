@@ -323,7 +323,15 @@ and a run a restart cut off may already have done part of its work.
 - **Interrupted runs.** `triggers/reaper.terminalize_orphans` closes a run
   whose process is gone with the status `interrupted`
   (`RESTART_INTERRUPTED_STATUS`) and the reason in `error`. It is not
-  retried.
+  retried. A claim names its owner's pid and the program image that took it
+  (`scheduling.PROCESS_IMAGE`), because a Restart re-execs the gateway in the
+  same process: a claim an earlier image left is closed the same way. A stop
+  or a Restart records the runs it cancels itself, as it stops
+  (`reaper.record_stopped_run`, from `GatewayOrchestrator._record_stopped_fire`
+  and the Run now dispatch), since a cancelled run gives its claim back and
+  leaves the boot pass nothing to close. A Run now holds the trigger's claim
+  while it runs, so it reads as running and a second one is refused 409. It
+  gives back only its own claim: one a tick wrote over it meanwhile stays.
 
 Both land in `trigger-review.json` beside `triggers.json`
 (`triggers/review.py`): one card per trigger and kind, until you decide it.

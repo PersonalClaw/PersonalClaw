@@ -944,8 +944,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 409: the token answers nothing now — already answered (a second click), or the trigger's
     # question was withdrawn because a later run went through.
     "trigger_park_gone": (
-        "This question was already answered, or the trigger no longer waits on it; run it again "
-        "to be asked afresh."
+        "This question was already answered, was open too long to answer, or the trigger no "
+        "longer waits on it; run it again to be asked afresh."
     ),
     # ── binding a use case's models (dashboard/handlers/model_registry.py —
     #    PUT /api/models/active/{use_case}) ──

@@ -89,15 +89,10 @@ async def api_trigger_run(request: web.Request) -> web.Response:
         )
     # 🔴 the manual-run re-point. A store-backed clock trigger fires through the SAME path
     # `_run_store` uses for every other store kind, so a Run button and an autonomous tick fire
-    # the same action the same way. `is_running` comes from the CLAIM store — cross-process, so
-    # an API worker that does not own the scheduler loop can still answer it (the legacy
-    # `is_running` read a process-local dict and was simply wrong here).
+    # the same action the same way — including the 409 for a run already in flight, which
+    # `_run_store` answers for every kind.
     store = _trigger_store()
     if store.get(raw) is not None:
-        from personalclaw.triggers import claims as _claims
-
-        if _claims.is_running(raw, base_dir=store.base_dir):
-            return web.json_response({"error": "already running", "running": True}, status=409)
         return await _run_store(raw, request)
 
     return web.json_response({"error": "not found"}, status=404)
@@ -398,6 +393,14 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
                 "refused": grants.refusal(row.trigger, missing),
             }
         )
+    # A run already in flight, whoever started it: the claim a tick fire holds, or the one a Run now
+    # holds while it runs (`_dispatch_store_action`). This was asked for a clock trigger only, and
+    # nothing held a claim for a Run now, so a second click ran the action again beside the first.
+    # Read from the CLAIM store — cross-process, unlike the process-local dict it replaced.
+    from personalclaw.triggers import claims as _claims
+
+    if _claims.is_running(raw, base_dir=store.base_dir):
+        return web.json_response({"error": "already running", "running": True}, status=409)
     # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
     # the failure carried as prose in `result` — so "no action provider configured" arrived as an
     # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
@@ -593,16 +596,31 @@ async def _dispatch_store_action(
     )
     from personalclaw.triggers.firepath import action_timeout
 
+    trigger_id = str(getattr(trigger, "id", "") or "")
     started = time.time()
+    # 🔴 A RUN NOW HOLDS THE TRIGGER'S CLAIM WHILE IT RUNS, as a tick fire does. It held none: the
+    # Run button's "already running" read a claim only a tick writes, so a second click ran the
+    # action again beside the first, a tick could fire beside it whatever its `overlap` said, and
+    # a gateway that died under it left nothing the boot pass could close.
+    holder = f"{event}:{int(started)}"
+    claimed = _hold_claim(trigger_id, holder=holder, now=started)
     try:
         # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
         # `bash` Run now was cut off at 30s where its scheduled fire had 300s.
         result = await provider.execute(
             action.get("config") or {}, ctx, timeout=action_timeout(provider_name)
         )
+    except asyncio.CancelledError:
+        # A stop or a restart cut it off. A cancellation is not an `Exception`, so the branch below
+        # never saw it and the run was recorded nowhere; recorded now, before it goes on its way.
+        _record_stopped_run(trigger_id, started=started)
+        raise
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
         await _record_manual_run(trigger, started=started, exc=exc)
         return False, f"failed: {type(exc).__name__}: {exc}"
+    finally:
+        if claimed is not None:
+            _give_back_claim(trigger_id, holder=holder, root=claimed)
     await _record_manual_run(trigger, started=started, result=result, late=late)
     if result is not None and not bool(getattr(result, "success", True)):
         note = str(getattr(result, "error", "") or "") or "the action reported failure"
@@ -614,6 +632,71 @@ async def _dispatch_store_action(
         # the restart review's Run now — and "ran" read as done, so it is the row's own line.
         return True, parks.waiting_line(result)
     return True, "ran"
+
+
+def _hold_claim(trigger_id: str, *, holder: str, now: float) -> Any:
+    """Take the trigger's claim for a hand run; the root it was written under, or None.
+
+    None when a run already holds it — a view refresh or a webhook fire beside a tick's run keeps
+    the tick's claim rather than replacing it, so the tick's own release stays the one that frees
+    it — or when it could not be written. Never raises: the claim is bookkeeping about the run, and
+    a run that could not note itself still runs, as it did before it noted anything.
+    """
+    try:
+        from personalclaw.dashboard.handlers.triggers import _trigger_store
+        from personalclaw.triggers import claims
+        from personalclaw.triggers.scheduling import Claim
+
+        root = _trigger_store().base_dir
+        if not trigger_id or claims.read_claim(trigger_id, now=now, base_dir=root) is not None:
+            return None
+        claims.write_claim(
+            Claim(trigger_id=trigger_id, holder=holder, claimed_at=now), base_dir=root
+        )
+        return root
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not hold the claim for a hand run of %s", trigger_id, exc_info=True)
+        return None
+
+
+def _give_back_claim(trigger_id: str, *, holder: str, root: Any) -> None:
+    """Drop the claim `_hold_claim` took, only while it is still this run's. Never raises.
+
+    A tick whose `overlap` lets it fire beside a hand run writes its own claim over this one, and
+    dropping that would free a run still in flight: a Run now could start beside it, and a gateway
+    that died under it would leave the boot pass nothing to close. One that no longer reads (it
+    expired) is dropped, as the executor drops its own.
+    """
+    try:
+        from personalclaw.triggers import claims
+
+        held = claims.read_claim(trigger_id, base_dir=root)
+        if held is None or held.holder == holder:
+            claims.release_claim(trigger_id, base_dir=root)
+    except Exception:  # noqa: BLE001 - an undropped claim expires on its own
+        logger.debug("could not give back the claim of a hand run of %s", trigger_id, exc_info=True)
+
+
+def _record_stopped_run(trigger_id: str, *, started: float) -> None:
+    """Record a hand run a stop or a restart cut off (`reaper.record_stopped_run`). Never raises.
+
+    The row is the hand run's (`manual`) and the trigger's health is left alone, as
+    `_record_manual_run` leaves it; the card waits on the review like any interrupted run's.
+    """
+    try:
+        from personalclaw import restart_request
+        from personalclaw.dashboard.handlers.triggers import _trigger_store
+        from personalclaw.triggers import reaper
+
+        reaper.record_stopped_run(
+            trigger_id,
+            started_at=started,
+            restarting=restart_request.pending() is not None,
+            by_hand=True,
+            base_dir=_trigger_store().base_dir,
+        )
+    except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
+        logger.warning("could not record a hand run a stop cut off: %s", trigger_id, exc_info=True)
 
 
 async def _record_manual_run(

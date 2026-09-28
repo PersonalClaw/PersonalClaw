@@ -256,15 +256,24 @@ def test_totp_secret_never_lands_in_the_credential_json(monkeypatch) -> None:
     assert creds.status()["totp_enabled"] is True
 
 
-def test_disable_totp_clears_the_flag_but_keeps_the_secret(monkeypatch) -> None:
+def _store(monkeypatch) -> dict[str, str]:
+    """The credential store as a dict: saves land in it, deletes leave it, nothing reaches a real
+    keychain or ``.env``."""
     saved: dict[str, str] = {}
-
     monkeypatch.setattr(cred_store, "save_credential", lambda k, v: saved.update({k: v}))
+    monkeypatch.setattr(cred_store, "delete_credential", lambda k: saved.pop(k, None) is not None)
+    return saved
+
+
+def test_disable_totp_clears_the_flag_and_deletes_the_secret(monkeypatch) -> None:
+    """🔴 Red before: the secret was kept for a later re-enable, so a seed copied once produced valid
+    codes for as long as the home existed, 2FA on or off. It lives while 2FA is enrolled."""
+    saved = _store(monkeypatch)
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret("JBSWY3DPEHPK3PXP")
     creds.disable_totp()
     assert creds.status()["totp_enabled"] is False
-    assert saved[creds.TOTP_SECRET_KEY] == "JBSWY3DPEHPK3PXP"
+    assert creds.TOTP_SECRET_KEY not in saved
 
 
 def test_setting_a_new_password_preserves_the_totp_flag(monkeypatch) -> None:
@@ -277,7 +286,8 @@ def test_setting_a_new_password_preserves_the_totp_flag(monkeypatch) -> None:
     assert creds.status()["totp_enabled"] is True
 
 
-def test_set_flag_on_an_unconfigured_store_is_a_noop() -> None:
+def test_set_flag_on_an_unconfigured_store_is_a_noop(monkeypatch) -> None:
+    _store(monkeypatch)
     creds.disable_totp()
     assert creds.load_credentials() == {}
 

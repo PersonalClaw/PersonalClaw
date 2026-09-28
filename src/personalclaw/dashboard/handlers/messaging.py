@@ -125,6 +125,7 @@ async def api_spawn_status(request: web.Request) -> web.Response:
                 disk_data: dict[str, object] = {
                     "id": agent_id,
                     "task": _redact(disk_state.get("task", "")),
+                    "title": _redact(disk_state.get("title", "") or ""),
                     "done": True,
                     "started": disk_state.get("started"),
                 }
@@ -155,7 +156,12 @@ async def api_spawn_status(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("Persistence fallback failed for %s", agent_id, exc_info=True)
         return web.json_response({"error": "not found"}, status=404)
-    data = {"id": info.id, "task": _redact(info.task), "done": info.done}  # type: dict[str, object]
+    data = {
+        "id": info.id,
+        "task": _redact(info.task),
+        "title": _redact(info.title),
+        "done": info.done,
+    }  # type: dict[str, object]
     data["started"] = info.started
     if info.done:
         # Read full result from disk (info.result is truncated to 3000 chars)
@@ -188,6 +194,9 @@ async def api_spawn_list(request: web.Request) -> web.Response:
         entry: dict[str, object] = {
             "id": info.id,
             "task": _redact(info.task),
+            # What the run is called (`SubagentInfo.title`) — the list leads with it, and a run
+            # nobody named has "", which the list reads as "name it by its task".
+            "title": _redact(info.title),
             "done": info.done,
             "parent": info.parent_session_key,
             "agent": info.agent,

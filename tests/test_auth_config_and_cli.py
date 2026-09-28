@@ -380,6 +380,49 @@ def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
     assert totp.verify_code(secret, totp.code_now(secret)) is True
 
 
+def _store(monkeypatch) -> dict[str, str]:
+    saved: dict[str, str] = {}
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: saved.update({k: v}))
+    monkeypatch.setattr(cred_store, "delete_credential", lambda k: saved.pop(k, None) is not None)
+    return saved
+
+
+def test_totp_disable_deletes_the_secret_and_setup_enrolls_a_new_one(monkeypatch, capsys) -> None:
+    """🔴 Red before: disable kept the secret ("re-enabling needs no re-enrollment")."""
+    from personalclaw.auth.cli import auth_cmd
+
+    saved = _store(monkeypatch)
+    creds.set_password("jordan", "correct-horse-battery")
+    assert auth_cmd(_Args(auth_command="totp", totp_action="setup")) == 0
+    first = saved[creds.TOTP_SECRET_KEY]
+
+    assert auth_cmd(_Args(auth_command="totp", totp_action="disable")) == 0
+    assert creds.TOTP_SECRET_KEY not in saved
+    assert "deleted" in capsys.readouterr().out
+
+    assert auth_cmd(_Args(auth_command="totp", totp_action="setup")) == 0
+    assert saved[creds.TOTP_SECRET_KEY] != first
+
+
+def test_totp_disable_is_refused_while_login_requires_a_code(
+    _isolated_home, monkeypatch, capsys
+) -> None:
+    """Deleting the secret while `auth.require_totp` is on would make password login impossible."""
+    from personalclaw.auth.cli import auth_cmd
+
+    saved = _store(monkeypatch)
+    creds.set_password("jordan", "correct-horse-battery")
+    creds.set_totp_secret("JBSWY3DPEHPK3PXP")
+    (_isolated_home / "config.json").write_text(
+        json.dumps({"auth": {"login_enabled": True, "require_totp": True}}), encoding="utf-8"
+    )
+
+    assert auth_cmd(_Args(auth_command="totp", totp_action="disable")) == 1
+    assert "Turn that off first" in capsys.readouterr().err
+    assert saved[creds.TOTP_SECRET_KEY] == "JBSWY3DPEHPK3PXP"
+    assert creds.status()["totp_enabled"] is True
+
+
 def test_an_unknown_subcommand_is_a_usage_error(capsys) -> None:
     """The parser's refusal, so the usage error every command line gets: stderr, exit 2."""
     from personalclaw.cli import build_parser

@@ -270,14 +270,15 @@ class BackendSupervisor:
             storage_ok = checker is not None and checker.can_use_storage()
             data_dir = app_data_dir(name) if storage_ok else None
 
-            # Mint (or read) the per-app proxy secret and hand it to the backend via env.
-            # Fail-closed: a backend that cannot obtain a verifiable secret does NOT start
-            # — an unprotected backend (no inbound signature check) is worse than a missing
-            # one. The value is 0600 on disk and never logged (see apps/app_secret.py).
-            from personalclaw.apps.app_secret import ensure_app_secret
+            # Mint the per-app proxy secret for THIS launch and hand it to the backend via env:
+            # a new one each start, so it lasts as long as the backend it protects. Fail-closed:
+            # a backend that cannot obtain a verifiable secret does NOT start — an unprotected
+            # backend (no inbound signature check) is worse than a missing one. The value is
+            # 0600 on disk and never logged (see apps/app_secret.py).
+            from personalclaw.apps.app_secret import mint_app_secret
             from personalclaw.sdk.security import APP_SECRET_ENV
 
-            proxy_secret = ensure_app_secret(name)
+            proxy_secret = mint_app_secret(name)
             if not proxy_secret:
                 logger.warning(
                     "app %s backend: proxy secret unavailable; refusing to start unprotected",

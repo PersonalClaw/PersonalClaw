@@ -24,6 +24,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def compaction_summary(before: int, after: int) -> str:
+    """How much a pass reclaimed, as ``/compact`` reports it and as an automatic pass is announced.
+
+    One sentence for both, so a compaction the loop did on its own reads exactly like one you asked
+    for: "Conversation compacted: freed 42% of the conversation (12,000 → 6,960 characters)".
+    """
+    return (
+        f"freed {(before - after) / before * 100:.0f}% of the conversation "
+        f"({before:,} → {after:,} characters)"
+    )
+
+
 class InProcessCompaction:
     """The loop compacts its history when context crosses the Settings threshold,
     ``context_compaction.autocompact_pct()`` — see :meth:`_maybe_compact`."""
@@ -140,7 +152,7 @@ class InProcessCompaction:
             )
         return before, after
 
-    def _maybe_compact(self) -> None:
+    def _maybe_compact(self) -> tuple[int, int] | None:
         """Run structured compaction on ``self._messages`` if over the threshold.
 
         Trigger = provider-reported context usage ≥ the Settings threshold
@@ -150,6 +162,10 @@ class InProcessCompaction:
         (tool-output pruning pre-pass + structured digest) — cheap, safe, and
         synchronous; an LLM-summarized middle can layer on later. Records the save
         fraction for the anti-thrashing guard.
+
+        Returns ``(before, after)`` when the pass rewrote the history, else ``None`` — what the
+        turn loop announces (``compaction_summary``), so the conversation is not compacted
+        without a word.
         """
         from personalclaw import context_compaction as cc
 
@@ -161,14 +177,15 @@ class InProcessCompaction:
         # Unmeasured context cannot cross a threshold — an unknown gauge must not
         # trigger compaction any more than it may print a percentage.
         if measured_pct is None or measured_pct < cc.autocompact_pct():
-            return
+            return None
         if not cc.should_compact(self._compaction_saves):
-            return
+            return None
         before, after = self._compact_now(measured_pct)
         if before > 0:
             # The anti-thrashing record is the AUTOMATIC trigger's own bookkeeping — see
             # `_compact_now`'s note on why an explicit `/compact` must never write to it.
             self._compaction_saves.append((before - after) / before)
+        return (before, after) if after < before else None
 
     @property
     def compacts_in_process(self) -> bool:

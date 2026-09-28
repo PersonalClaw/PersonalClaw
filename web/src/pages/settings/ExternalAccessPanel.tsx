@@ -221,7 +221,7 @@ export function ExternalAccessPanel() {
 
       <Section
         title="Surfaces"
-        hint="Each needs its own ≥32-byte token, created with `personalclaw inbound token create <surface>`. A token that is missing, too short, or equal to your dashboard token is refused — the surface will not mount and says so here.">
+        hint={<>Each needs its own ≥32-byte token, created with <code>personalclaw inbound token create &lt;surface&gt;</code>. A token that is missing, too short, or equal to your dashboard token is refused — the surface will not mount and says so here.</>}>
         {surfaces.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             Couldn’t read the surface configuration.

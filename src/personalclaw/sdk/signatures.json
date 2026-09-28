@@ -3141,7 +3141,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "queued"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cancelled"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "title"}
    ],
    "returns": "None"
   },
@@ -3240,7 +3241,8 @@
      {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "parent_run"},
      {"annotation": "str", "default": "'none'", "kind": "positional_or_keyword", "name": "sandbox"},
      {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "title"}
     ],
     "returns": "SubagentInfo | None"
    },

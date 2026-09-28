@@ -28,8 +28,8 @@ The signed message is::
 
 with ``ts`` an integer unix second and a ±60s acceptance window. The secret reaches the
 backend via the ``PERSONALCLAW_APP_SECRET`` environment variable (the supervisor mints
-it 0600 on disk and injects it). ``/health`` is exempt because the gateway watchdog
-probes it directly, not through the signing proxy.
+a new one 0600 on disk each time it starts the backend, and injects it). ``/health`` is
+exempt because the gateway watchdog probes it directly, not through the signing proxy.
 """
 
 from __future__ import annotations

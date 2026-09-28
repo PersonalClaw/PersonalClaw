@@ -7,10 +7,10 @@ reverse-proxy forwards is signed with an HMAC over a per-app secret, and the bac
 SDK middleware refuses anything unsigned (fail-closed). This module owns that secret's
 one true storage shape so the two call sites agree:
 
-- :func:`ensure_app_secret` — used by the backend supervisor at ``start()`` to mint
-  (once) and read the secret, then inject it into the child env as
-  ``PERSONALCLAW_APP_SECRET``. Fail-closed: returns ``None`` if the secret cannot be
-  written/read, so the supervisor declines to start an unprotected backend.
+- :func:`mint_app_secret` — used by the backend supervisor each time it launches the backend,
+  to mint a fresh secret and inject it into the child env as ``PERSONALCLAW_APP_SECRET``.
+  Fail-closed: returns ``None`` if the secret cannot be written, so the supervisor declines to
+  start an unprotected backend.
 - :func:`read_app_secret` — used by the proxy handler at forward time to sign. The
   supervisor already minted it; the proxy just reads (returns ``None`` if absent →
   the proxy fails closed rather than forwarding unsigned).
@@ -21,16 +21,23 @@ auditable home is safer than duplicating the crypto-adjacent bits.
 
 The secret is a 256-bit hex token (``secrets.token_hex(32)``). The file is 0600 and its
 value is NEVER logged.
+
+**It lasts as long as the backend it protects.** It was minted once and read back on every start,
+so a copy made once — from the file, or from a backend's environment — signed requests the backend
+accepted for as long as the app stayed installed. Now each launch mints a new one: the backend that
+starts is the only one holding it, and a copy stops working the next time the backend starts (a
+gateway restart, an update, a crash revived). Nothing else holds it — every signer reads the file
+when it signs (:func:`proxy_signature`).
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 from pathlib import Path
 
 from personalclaw.apps.manager import app_dir
+from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -43,46 +50,28 @@ def secret_path(name: str) -> Path:
     return app_dir(name) / APP_SECRET_FILENAME
 
 
-def _write_0600(path: Path, value: str) -> None:
-    """Write ``value`` to ``path`` with mode 0600, enforced even under a loose umask.
+def mint_app_secret(name: str) -> str | None:
+    """Mint app ``name``'s proxy secret for the backend about to start. ``None`` on failure.
 
-    ``os.open`` honors the mode arg only modulo the umask, so a permissive umask could
-    leave the fresh file group/other-readable. We fchmod after creating to pin 0600
-    regardless — the secret must never be world-readable.
-    """
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.fchmod(fd, 0o600)  # pin 0600 even if umask loosened O_CREAT's mode
-        os.write(fd, value.encode("ascii"))
-    finally:
-        os.close(fd)
-
-
-def ensure_app_secret(name: str) -> str | None:
-    """Mint (if absent) and return app ``name``'s proxy secret. ``None`` on failure.
-
-    Fail-closed: if the secret cannot be created or read, the caller (the backend
-    supervisor) must NOT start the backend — an unprotected backend is worse than a
-    missing one. Never logs the secret value.
+    A new one on every call, replacing the last: the supervisor calls this only when it is about
+    to launch a backend, when no live backend holds the old one (see the module docstring).
+    Fail-closed: if the secret cannot be written, the caller (the backend supervisor) must NOT
+    start the backend — an unprotected backend is worse than a missing one. Never logs the
+    secret value.
     """
     path = secret_path(name)
+    if not path.parent.is_dir():
+        logger.warning("app %s: no install folder to keep its proxy secret in", name)
+        return None
     try:
-        if path.exists():
-            existing = path.read_text(encoding="ascii").strip()
-            if existing:
-                # Re-pin perms: a secret left group/other-readable by an older run is
-                # a finding, not something to silently trust.
-                try:
-                    os.chmod(path, 0o600)
-                except OSError:
-                    pass
-                return existing
-            # Empty/corrupt file → re-mint over it.
         token = secrets.token_hex(_SECRET_BYTES)
-        _write_0600(path, token)
+        # A new file renamed over the old, created 0600 before any byte lands: a signer never
+        # reads half a secret, and a link planted under the name is replaced, never written
+        # through.
+        atomic_write(path, token, mode=0o600)
         return token
-    except OSError as exc:
-        logger.warning("app %s: could not mint/read proxy secret: %s", name, exc)
+    except (OSError, ValueError) as exc:
+        logger.warning("app %s: could not mint the proxy secret: %s", name, exc)
         return None
 
 

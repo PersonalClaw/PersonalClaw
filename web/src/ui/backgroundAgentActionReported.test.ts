@@ -21,8 +21,9 @@ import { join } from 'node:path'
 // Two decisions asserted below, because a later pass could plausibly normalise either away:
 //
 //   · the message NAMES the agent. The fleet is a list; "couldn't cancel that agent" identifies
-//     nothing when three are running, so the task's first line is threaded from the row where it is
-//     already in scope. Same call, for the same reason, as the task-comment delete.
+//     nothing when three are running, so the row's own name for it (`agentName`: the run's title,
+//     else its task's first line) is threaded from the row where it is already in scope. Same call,
+//     for the same reason, as the task-comment delete.
 //   · `load()` is GATED on success. Refetching after a failed cancel re-renders the identical
 //     running row, which reads as "nothing happened, twice" — the rule this family recorded for
 //     data-driven controls. The 4s poll is still running while the card is open, so nothing can go
@@ -64,10 +65,12 @@ describe('the background-agent monitor reports a failed cancel or clear', () => 
   })
 
   it('the cancel message names WHICH agent, from the row that already has it', () => {
-    // A fleet is a list. Without this the message is ambiguous across every running row.
-    expect(code, 'the row threads its own task line into the handler').toMatch(
-      /cancel\(a\.id,\s*firstLine\(a\.task\)\)/,
+    // A fleet is a list. Without this the message is ambiguous across every running row. And it is
+    // the name the row shows, so the message and the row cannot call one agent two things.
+    expect(code, 'the row threads its own name into the handler').toMatch(
+      /cancel\(a\.id,\s*agentName\(a\)\)/,
     )
+    expect(code, 'the name the row shows').toMatch(/>\{agentName\(a\)\}<\/span>/)
     expect(code, 'and the handler spends it on the sentence').toMatch(
       /const cancel = async \(id: string, task: string\)/,
     )

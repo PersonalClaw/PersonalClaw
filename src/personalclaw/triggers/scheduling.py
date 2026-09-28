@@ -33,9 +33,19 @@ from __future__ import annotations
 
 import hashlib
 import os
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+#: Which program image of this process is running: new each time the process starts one.
+#:
+#: A restart re-execs the gateway in the SAME process (`restart_request.start`), so the fresh
+#: image has the old one's pid, and a claim the old image left names a process that is alive —
+#: its run read as in flight until the deadline reaper called it hung. A claim stamped with
+#: another image of this pid was granted by an image that no longer exists
+#: (`claims.orphaned_ids`).
+PROCESS_IMAGE = uuid.uuid4().hex
 
 #: Poll ceiling. The shipped service sleeps `min(next-due, 30s)` so an external edit (an MCP tool in
 #: another process mutating the store) is picked up within one poll via the
@@ -251,6 +261,9 @@ class Claim:
     claimed_at: float
     max_duration_secs: float = CLAIM_MAX_DURATION_SECS
     owner_pid: int = field(default_factory=os.getpid)
+    # The program image of `owner_pid` that granted it (`PROCESS_IMAGE`), stamped the same way and
+    # read back the same way: a restart keeps the pid and changes the image.
+    owner_image: str = field(default_factory=lambda: PROCESS_IMAGE)
 
     def expired(self, now: float) -> bool:
         return now >= self.claimed_at + max(1.0, self.max_duration_secs)
@@ -263,6 +276,7 @@ class Claim:
             "max_duration_secs": self.max_duration_secs,
             "expires_at": self.claimed_at + self.max_duration_secs,
             "owner_pid": self.owner_pid,
+            "owner_image": self.owner_image,
         }
 
 

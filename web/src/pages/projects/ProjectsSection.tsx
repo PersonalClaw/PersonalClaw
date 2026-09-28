@@ -19,7 +19,7 @@ import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
-import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput, useSyncedDraft } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { StatusPill } from '../../ui/StatusPill'
 import { WorkspacePicker } from '../code/WorkspacePicker'
@@ -1316,8 +1316,8 @@ function DirEntryRow({ entry, onClick }: { entry: FsEntry; onClick: () => void }
 /** Inline-editable project brief row (collapsed preview → textarea on click). */
 function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => void }) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(brief)
-  useEffect(() => { setDraft(brief) }, [brief])
+  // Follows the saved brief when it moves, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(brief)
   if (editing) {
     return (
       <div className="flex flex-col gap-1.5">

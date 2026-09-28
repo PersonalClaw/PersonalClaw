@@ -214,6 +214,7 @@ def set_totp_secret(secret: str) -> None:
 
     save_credential(TOTP_SECRET_KEY, secret)
     _set_flag("totp_enabled", True)
+    _audit("totp_enrolled", "", "ok")
 
 
 def totp_secret() -> str:
@@ -222,8 +223,17 @@ def totp_secret() -> str:
 
 
 def disable_totp() -> None:
-    """Turn TOTP off. The secret is left in the credential store for deliberate re-enable."""
+    """Turn TOTP off and delete its secret, which lives only as long as 2FA is enrolled.
+
+    It was kept for a later re-enable, so a seed copied once went on producing valid codes for as
+    long as the home existed, whether or not 2FA was on. Enrolling again mints a new one
+    (`auth.totp.new_secret`), and an authenticator entry for the old one reads as what it is: gone.
+    """
+    from personalclaw.config.credentials import delete_credential
+
+    delete_credential(TOTP_SECRET_KEY)
     _set_flag("totp_enabled", False)
+    _audit("totp_disabled", "", "ok")
 
 
 def _set_flag(name: str, value: bool) -> None:

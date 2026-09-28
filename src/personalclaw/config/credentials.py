@@ -528,8 +528,8 @@ def _dotenv_save_credentials(values: Mapping[str, str]) -> None:
     # `atomic_write` closes both: mkstemp creates the temp at 0600, fchmod pins the mode before
     # any content is visible, and `os.replace` swaps it in one step, so a reader sees either the
     # old file or the new one. `fsync=True` because losing a credential to a post-rename crash is
-    # the same outage as never having written it. Same shape as apps/app_secret.py::_write_0600,
-    # which names the umask hazard, plus the atomicity that one does not need and this one does.
+    # the same outage as never having written it. `apps/app_secret.py` mints the app proxy
+    # secret the same way.
     from personalclaw.atomic_write import atomic_write
 
     atomic_write(ep, "\n".join(lines) + "\n", mode=0o600, fsync=True)

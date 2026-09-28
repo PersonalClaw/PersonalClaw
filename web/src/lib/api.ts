@@ -722,7 +722,9 @@ export interface ChannelTrust {
 /** A sender's pairing code, shown ONCE: the answer to minting it is the only place it exists. */
 export interface ChannelSenderPairing { code: string; expires_at: string; ttl_secs: number }
 // A background subagent (from /api/spawn) — spawned by a cron/loop/Slack/agent.
-export interface SpawnedAgent { id: string; task: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
+// `title` is what the run is called — a trigger's run by its trigger's name or instruction; "" for
+// a run nobody named, which reads by its task.
+export interface SpawnedAgent { id: string; task: string; title?: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
 // A knowledge item scored for chat-context injection (from search-for-context),
 // carrying its token cost so the picker can budget. P12 adds the per-item citation
 // locator (source_type/section/line_range/deep_link) so a card can deep-link + cite
@@ -1863,6 +1865,8 @@ export interface WorkflowDefStub {
 // tolerant-reader contract), so this type stays valid as node kinds gain fields.
 export interface WorkflowNode {
   kind: string; id?: string
+  /** The author's name for the step — what a run's rows, ending and failure lines call it. */
+  label?: string
   children?: WorkflowNode[]
   body?: WorkflowNode
   cases?: Record<string, WorkflowNode>
@@ -2434,8 +2438,12 @@ export interface WorkflowDeliverableDoc {
   // redactor is quadratic in unbroken-token length — one 512 KB base64 blob measured 111s — so a
   // blob is clipped rather than served, and the clip is COUNTED rather than silent.
   clipped_blobs: number
-  found_in: 'workspace' | 'run_dir' | null
+  // `kept`: the run's own copy of what one of its steps wrote in a folder the run does not own
+  // (a project-less run's steps work in the shared workspace), with that folder and that step.
+  found_in: 'workspace' | 'run_dir' | 'kept' | null
   absent_reason: WorkflowDeliverableAbsence | null
+  kept_from: string | null
+  kept_by: string | null
 }
 export interface WorkflowRunDeliverable {
   run_id: string
@@ -2453,8 +2461,9 @@ export interface WorkflowRunDeliverable {
     reason: WorkflowDeliverableAbsence | null
     declared_by: { kind: string; variant: string; name: string } | { template: string; name: string } | null
   }
-  // Where the backend looked, in order — workspace first, then the run dir.
-  roots: Array<{ kind: 'workspace' | 'run_dir'; path: string; exists: boolean }>
+  // Where the backend looked, in order — workspace first, then the run dir, then the copies the run
+  // kept (only once it kept any).
+  roots: Array<{ kind: 'workspace' | 'run_dir' | 'kept'; path: string; exists: boolean }>
   // Whether this run's OWN spec ever names the document. `false` reframes an absence from "not yet"
   // to "never asked for": measured, no bundled template names its kind's document today. `null`
   // when there was no name to check for.

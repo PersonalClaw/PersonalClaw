@@ -1,6 +1,7 @@
-import { useEffect, useId, useState } from 'react'
+import { useId } from 'react'
 import { X } from 'lucide-react'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { useSyncedDraft } from '../../ui/forms'
 import type { PromptVariable, PromptVarType } from '../../lib/api'
 import { VAR_TYPES } from './promptMeta'
 
@@ -73,8 +74,8 @@ function ChoicesInput({ options, onChange, name, which }: {
   which: string
 }) {
   const committed = (options ?? []).join(', ')
-  const [draft, setDraft] = useState(committed)
-  useEffect(() => { setDraft(committed) }, [committed])
+  // Follows the committed list when it moves, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(committed)
   return (
     <input value={draft} onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onChange({ options: draft.split(',').map((s) => s.trim()).filter(Boolean) })}

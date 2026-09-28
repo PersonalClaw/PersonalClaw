@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Pencil, Trash2, Check, X, Star, Lock, Cpu, ShieldCheck, ChevronDown, VolumeX, RefreshCw, FileText } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
-import { TextArea, FieldError } from '../../ui/forms'
+import { TextArea, FieldError, useSyncedDraft } from '../../ui/forms'
 import { FormFooter } from '../../ui/FormFooter'
 import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
@@ -78,9 +78,17 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   // definitions are not agent-scoped, so there is nothing equivalent to show.
 
   // Seeded from the agent as the list shows it when the editor opens (or another agent is picked) —
-  // never over an edit, where a revalidation landing mid-edit must not replace what is typed.
+  // never over an edit, where a revalidation landing mid-edit must not replace what is typed, and
+  // never on mount: the state was just seeded from this same agent, so that run could only overwrite
+  // an edit that raced the first flush (`ui/forms.useSyncedDraft`).
   const reseed = () => { const b = baseOf(agent); setBase(b); setDraft(b.value) }
-  useEffect(() => { reseed() }, [agent.name, editing])
+  const seededFor = useRef(`${agent.name}:${editing}`)
+  useEffect(() => {
+    const now = `${agent.name}:${editing}`
+    if (seededFor.current === now) return
+    seededFor.current = now
+    reseed()
+  }, [agent.name, editing])
   // A FRESHER COPY REPLACES AN UNTOUCHED ONE. A reload straight into the editor (`?edit=1`) paints the
   // tab's cached list first, and the fresh read that lands a moment later never reached the form — so
   // it showed values older than what was stored, and its first save was refused. Nothing was lost,
@@ -453,7 +461,8 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
   // models" — on a box with three bound models that sentence is a false claim about a setting, and
   // it is the one fact this editor exists to show.
   const { options, loading, error: catalogErr } = useActiveChatModelOptions()
-  const [model, setModel] = useState(agent.model ?? '')
+  // Re-seeded when the editor is showing another agent, never on mount (`useSyncedDraft`).
+  const [model, setModel] = useSyncedDraft(agent.model ?? '', agent.name)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   // A saved pin the list does not offer is listed as unavailable, never shown as "Auto".
@@ -461,8 +470,6 @@ function ReservedModelEditor({ agent, onSaved }: { agent: SavedAgent; onSaved: (
     () => [{ value: '', label: 'Auto — use chat binding' }, ...options, ...(loading || catalogErr ? [] : unavailableModelOption(agent.model ?? '', options))],
     [options, loading, catalogErr, agent.model],
   )
-  useEffect(() => { setModel(agent.model ?? '') }, [agent.name])
-
   const dirty = model !== (agent.model ?? '')
   const save = async () => {
     setSaving(true); setErr('')

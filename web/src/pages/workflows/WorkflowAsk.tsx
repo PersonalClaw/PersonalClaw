@@ -51,17 +51,19 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
     return seed
   })
   const [alwaysAllow, setAlwaysAllow] = useState(false)
-  // Whether the answer THIS panel's button sent is still in flight, which `busy` cannot say: it is
-  // the caller's one flag, shared by every gate a run page lists and set by Deny too. So `busy` dims
-  // the button while any answer is out, and it spins only for its own (`loading`, which is what
-  // publishes `aria-busy`). One flag serves all three because exactly one of Wake, Approve and Submit
-  // renders; Deny does not set it, so Approve never spins for a Deny.
-  const [answering, setAnswering] = useState(false)
+  // Which answer THIS panel sent is still in flight, which `busy` cannot say: it is the caller's one
+  // flag, shared by every gate a run page lists. So `busy` dims every answer while any is out, this
+  // panel's own answer dims the rest of its buttons too — Deny included, so a second, contrary answer
+  // cannot follow the first — and only the pressed primary button spins (`loading`, which is what
+  // publishes `aria-busy`). `send` serves all three primaries because exactly one of Wake, Approve and
+  // Submit renders; a Deny in flight is `deny`, so Approve never spins for a Deny.
+  const [answering, setAnswering] = useState<'send' | 'deny' | null>(null)
   const setField = (name: string, value: unknown) => setForm((p) => ({ ...p, [name]: value }))
-  const send = async (value: unknown, remember: boolean) => {
-    setAnswering(true)
-    try { await onAnswer(continuation, value, remember) } finally { setAnswering(false) }
+  const answerWith = async (which: 'send' | 'deny', value: unknown, remember: boolean) => {
+    setAnswering(which)
+    try { await onAnswer(continuation, value, remember) } finally { setAnswering(null) }
   }
+  const send = (value: unknown, remember: boolean) => answerWith('send', value, remember)
 
   if (expired) {
     return (
@@ -200,17 +202,21 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
       <div className="flex items-center gap-s">
         {event ? (
           // The wake carries no verdict, so it is sent as a bare `true`: "it happened".
-          <Button onClick={() => send(true, false)} loading={answering} disabled={busy} disabledReason={BUSY_REASON}>
+          <Button onClick={() => send(true, false)} loading={answering === 'send'}
+            disabled={busy || answering !== null} disabledReason={BUSY_REASON}>
             <Play size={14} /> Wake it now
           </Button>
         ) : kind === 'approval' ? (
           <>
-            <Button onClick={() => send(true, rerun ? false : alwaysAllow)} loading={answering} disabled={busy} disabledReason={BUSY_REASON}>
+            <Button onClick={() => send(true, rerun ? false : alwaysAllow)} loading={answering === 'send'}
+              disabled={busy || answering !== null} disabledReason={BUSY_REASON}>
               <Check size={14} /> Approve
             </Button>
             {/* Deny is quiet, not destructive-styled: rejecting a gate is a normal answer,
-                and dressing it in red implies the run broke. */}
-            <QuietButton onClick={() => onAnswer(continuation, false, rerun ? false : alwaysAllow)} title="Deny this step">
+                and dressing it in red implies the run broke. Off while any answer is out, like
+                Approve: a Deny pressed after an Approve would send the opposite answer. */}
+            <QuietButton onClick={() => answerWith('deny', false, rerun ? false : alwaysAllow)} title="Deny this step"
+              disabled={busy || answering !== null} disabledReason={BUSY_REASON}>
               <X size={13} /> Deny
             </QuietButton>
           </>
@@ -220,8 +226,8 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
               kind === 'choice' ? choice : kind === 'text' ? text : form,
               alwaysAllow,
             )}
-            loading={answering}
-            disabled={busy || (kind === 'text' && !text.trim())}
+            loading={answering === 'send'}
+            disabled={busy || answering !== null || (kind === 'text' && !text.trim())}
             disabledReason={kind === 'text' && !text.trim() ? 'Type an answer first' : BUSY_REASON}
           >
             <Check size={14} /> Submit

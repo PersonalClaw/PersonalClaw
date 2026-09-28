@@ -558,3 +558,22 @@ def trigger_name(trigger_id: str) -> str:
         logger.debug("could not read the name of trigger %s", trigger_id, exc_info=True)
         return ""
     return str(row.trigger.name or "") if row is not None else ""
+
+
+#: How much of an instruction a run is titled with when its trigger has no name to lend it.
+RUN_TITLE_CHARS = 80
+
+
+def run_title(trigger_id: str, instruction: str) -> str:
+    """What an agent a trigger started is called: the trigger's name, else its instruction.
+
+    The agent's own task opens with the unattended-run framing, so a run named by its task read
+    "[AUTONOMOUS RUN — no user is present to reply]" everywhere a person looked, and its completion
+    arrived as "Subagent `<id>` completed". The instruction is the text before that framing — what
+    the owner asked for ("Remind me to call the dentist") — cut to its first line.
+    """
+    name = trigger_name(trigger_id).strip()
+    if name:
+        return name
+    first = next((line.strip() for line in (instruction or "").splitlines() if line.strip()), "")
+    return first if len(first) <= RUN_TITLE_CHARS else first[: RUN_TITLE_CHARS - 1] + "…"

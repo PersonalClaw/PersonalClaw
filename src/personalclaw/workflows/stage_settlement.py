@@ -218,6 +218,10 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             )
             if node is not None:
                 effect_boundary.record_terminal_effect(ctl, node, path, inst, inst.state, output)
+        # What the stage wrote where the run cannot read it, kept in the run's own folder before
+        # anyone is told the step is done — on either outcome: a failed stage's document is still
+        # the document as it stands.
+        _keep_what_it_wrote(ctl, inst, info, node_id or path)
         # 🔴 The ITERATION COUNTER, which this method used to leave behind. `_apply` advances
         # the loop for an awaited dispatch, and for a spawned `stage` it returns at the RUNNING
         # branch above — so a loop whose body ENDS in a stage settled here, journalled
@@ -259,6 +263,25 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         # watching would report zero for its whole life. `_persist_state` writes instances
         # only, which is why the counter needs its own flush here.
         ctl._save_run()
+
+
+def _keep_what_it_wrote(ctl: RunController, inst: Any, info: Any, step: str) -> None:
+    """Keep the documents a settled stage wrote in a folder the run does not own.
+
+    The folder is the one the stage's session worked in: the cwd it was spawned with, or — for a
+    project-less run, which spawns with none — the workspace every session defaults to
+    (`provider_bridge._native_session_cwd`, the ACP spawn's `_resolve_acp_spawn_cwd`). Measured
+    from the stage's own start, so only what this stage changed is taken
+    (`deliverable.keep_step_documents`).
+    """
+    from personalclaw.config.loader import default_workspace_dir
+    from personalclaw.workflows import deliverable
+    from personalclaw.workflows.models import stamp_epoch
+
+    folder = str(getattr(info, "cwd", "") or "") or ctl.services.cwd or default_workspace_dir()
+    deliverable.keep_step_documents(
+        ctl.run, ctl.spec, folder=folder, since=stamp_epoch(inst.started_at), step=step
+    )
 
 
 def _settled_stage_output(ctl: RunController, node: Node | None, text: str) -> NodeResult:

@@ -7,7 +7,7 @@ import { useQuery } from '../../lib/data'
 import { durableWorkersHint, usePersistAvailable } from '../../lib/persistClaim'
 import { PanelHeader, Section, RowGroup, Row, SegPills, SavedToast, StrListField, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
-import { FieldError, NumberField, TextInput } from '../../ui/forms'
+import { FieldError, NumberField, TextInput, useSyncedDraft } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
@@ -407,12 +407,11 @@ function TextRow({ label, hint, cfg, field, patch, placeholder }: {
   placeholder?: string
 }) {
   const stored = String(cfg[field] ?? '')
-  const [draft, setDraft] = useState(stored)
+  // Re-seeded when the loaded config changes under us (a revalidate, or another tab's write) —
+  // never on mount, where it could only clobber an edit that raced the first flush
+  // (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(stored)
   const [saved, flash] = useSavedFlash()
-  // Re-seed when the loaded config changes under us (a revalidate, or another tab's write), but
-  // never while the user has an unsaved edit — clobbering their typing to show them the server's
-  // older value is worse than a briefly stale field.
-  useEffect(() => { setDraft(stored) }, [stored])
   const dirty = draft !== stored
   const save = () => patch(field, draft.trim(), flash, label)
   return (

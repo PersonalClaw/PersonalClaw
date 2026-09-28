@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Plus, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -9,7 +9,7 @@ import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { Surface } from '../../ui/Surface'
-import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput, useSyncedDraft } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -164,8 +164,11 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  "centre the control on the label" is not a well-formed request there. Their right-hand alignment is
  *  a separate list-row question, and the three already disagree with each other (two `items-center`,
  *  one `items-start`). `rowAlignsControlToLabel.test.tsx` ratchets their count at three so a fourth
- *  cannot appear quietly. */
-export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+ *  cannot appear quietly.
+ *
+ *  `hint` is a ReactNode, as `Section`'s is: a hint that names a command shows it as `<code>`. A
+ *  string sink printed markdown's backticks around it literally. */
+export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const hintId = useId()
   // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (90 hinted rows, and
   // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
@@ -198,8 +201,9 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
  *
  *  This is the same defect the ToolsPage local `Field` had, in a second place: the label is on screen,
  *  so it looks correct, and only assistive tech sees the gap. Publishing here fixes every consumer of
- *  this Field at once rather than asking each call site to remember an `ariaLabel`. */
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+ *  this Field at once rather than asking each call site to remember an `ariaLabel`. `hint` is a
+ *  ReactNode for the reason `Row`'s is. */
+export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const labelId = useId()
   const hintId = useId()
   // This row already publishes its LABEL through the shared provider, which is what gives its control
@@ -541,12 +545,11 @@ export function TextRow({ label, hint, cfg, field, patch, placeholder, mono }: {
   const [saved, setSaved] = useState(false)
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
   const stored = typeof cfg[field] === 'string' ? (cfg[field] as string) : ''
-  const [draft, setDraft] = useState(stored)
   // A commit the server REFUSES must not leave the refused text in the box: the panel's `patch`
-  // rolls `cfg` back, and this effect pulls the draft back with it. Keeping a refused value is
-  // exactly what `settingsWriteReported` forbids, and it is the reason this syncs on `stored`
-  // rather than only initialising from it.
-  useEffect(() => { setDraft(stored) }, [stored])
+  // rolls `cfg` back, and the draft follows `stored` back with it. Keeping a refused value is
+  // exactly what `settingsWriteReported` forbids, and it is the reason the draft follows `stored`
+  // rather than only initialising from it — once it moves, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(stored)
   const dirty = draft !== stored
   const commit = () => { if (dirty) patch(field, draft as never, flash, label) }
   return (

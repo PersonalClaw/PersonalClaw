@@ -10,7 +10,7 @@ import { Button } from '../../ui/Button'
 import { attentionLine, readAttention } from '../workflows/attentionMeta'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
-import { fmtElapsed, isTerminal, nodeLook, runLook } from '../workflows/workflowMeta'
+import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflows/workflowMeta'
 import { TextLink } from '../../ui/TextLink'
 
 // Tools whose result means "a workflow run now exists worth watching". `workflow_start`
@@ -187,7 +187,8 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         if (!active) return null
         const nl = nodeLook(active.state)
         const NIcon = nl.icon
-        const label = active.node_id || active.instance_path
+        // Named as the run page names it: the step's label, else its id (`nodeLabel`).
+        const label = nodeLabel(active)
         return (
           <div data-type="caption" className="flex min-w-0 items-center gap-s text-on-surface-low">
             <NIcon size={12} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />

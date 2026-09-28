@@ -205,6 +205,11 @@ class RunPromptActionProvider(ActionProvider):
         # doesn't fall back to questions / option menus, and rely on the spawn's
         # auto-approve + T5 unattended toolset so it can't wedge.
         task = with_autonomous_framing(rendered)
+        # What the run is called: its trigger's name, else the prompt it runs — never the framing
+        # above, which is what every run started this way used to be named by.
+        from personalclaw.triggers.store import run_title
+
+        title = run_title(ctx.trigger_id, rendered)
 
         services = get_action_services()
         if services is None or services.subagents is None:
@@ -261,6 +266,7 @@ class RunPromptActionProvider(ActionProvider):
                     # The trigger whose fire this is (`ActionContext.trigger_id`), so a call the
                     # agent is denied names it and can be run again from the Inbox.
                     trigger_id=ctx.trigger_id,
+                    title=title,
                 )
             except Exception:
                 logger.warning("run-prompt: spawn failed", exc_info=True)

@@ -302,10 +302,10 @@ async def test_call_app_route_backend_unavailable_is_coded(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_call_app_route_404_reports_drift(tmp_path, monkeypatch):
     """A live backend that 404s a declared route → ERR_APP_ROUTE_UNKNOWN + drift note."""
-    from personalclaw.apps.app_secret import ensure_app_secret
+    from personalclaw.apps.app_secret import mint_app_secret
 
     _install(tmp_path)
-    ensure_app_secret("demo")
+    mint_app_secret("demo")
 
     class _RB:
         base_url = "http://127.0.0.1:65500"
@@ -334,10 +334,10 @@ async def test_call_app_route_404_reports_drift(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_app_route_success_returns_body(tmp_path, monkeypatch):
-    from personalclaw.apps.app_secret import ensure_app_secret
+    from personalclaw.apps.app_secret import mint_app_secret
 
     _install(tmp_path)
-    ensure_app_secret("demo")
+    mint_app_secret("demo")
 
     class _RB:
         base_url = "http://127.0.0.1:65500"
@@ -405,11 +405,11 @@ async def test_call_app_route_reaches_a_backend_that_requires_the_proxy_signatur
     from aiohttp import web
     from aiohttp.test_utils import TestServer
 
-    from personalclaw.apps.app_secret import ensure_app_secret
+    from personalclaw.apps.app_secret import mint_app_secret
     from personalclaw.sdk.security import require_proxy_signature
 
     _install(tmp_path)
-    secret = ensure_app_secret("demo")
+    secret = mint_app_secret("demo")
     assert secret
 
     async def _list(request: web.Request) -> web.Response:

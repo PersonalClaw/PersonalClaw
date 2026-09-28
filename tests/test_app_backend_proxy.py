@@ -36,35 +36,62 @@ _SECRET = "a" * 64
 # --------------------------------------------------------------------------- #
 # Secret minting (SH2.1)
 # --------------------------------------------------------------------------- #
-def test_ensure_app_secret_is_0600_and_stable(tmp_path, monkeypatch):
+def test_mint_app_secret_is_0600_hex(tmp_path, monkeypatch):
     monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / name)
     (tmp_path / "growth").mkdir()
 
-    s1 = app_secret.ensure_app_secret("growth")
+    s1 = app_secret.mint_app_secret("growth")
     assert s1 and len(s1) == 64  # 256-bit hex
     path = app_secret.secret_path("growth")
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     # value is a hex token, not a log line / not empty
     assert all(c in "0123456789abcdef" for c in s1)
-    # idempotent: second call returns the same secret (does not re-mint)
-    assert app_secret.ensure_app_secret("growth") == s1
     # a plain reader sees the same value; a reader for an unminted app sees None
     assert app_secret.read_app_secret("growth") == s1
     assert app_secret.read_app_secret("minutes") is None
 
 
-def test_ensure_app_secret_fails_closed_when_unwritable(tmp_path, monkeypatch):
-    # A path whose parent does not exist and cannot be created → mint returns None so the
-    # supervisor declines to start an unprotected backend.
+def test_every_start_mints_a_new_secret_and_the_old_one_stops_signing(tmp_path, monkeypatch):
+    """🔴 Red before: the secret was minted once and read back on every start, so a copy made once
+    signed requests for as long as the app stayed installed. It lasts as long as the backend."""
+    monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / name)
+    (tmp_path / "growth").mkdir()
+
+    first = app_secret.mint_app_secret("growth")
+    second = app_secret.mint_app_secret("growth")
+
+    assert first and second and second != first
+    # Every signer reads the file when it signs, so the previous start's secret signs nothing more.
+    assert app_secret.read_app_secret("growth") == second
+
+
+def test_a_link_planted_under_the_secrets_name_is_replaced_not_written_through(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / name)
+    (tmp_path / "growth").mkdir()
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_text("not the app's", encoding="utf-8")
+    app_secret.secret_path("growth").symlink_to(elsewhere)
+
+    assert app_secret.mint_app_secret("growth")
+
+    assert elsewhere.read_text(encoding="utf-8") == "not the app's"
+    assert not app_secret.secret_path("growth").is_symlink()
+
+
+def test_mint_app_secret_fails_closed_when_unwritable(tmp_path, monkeypatch):
+    # A path whose parent does not exist → mint returns None so the supervisor declines to start
+    # an unprotected backend.
     monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / "nope" / name)
-    assert app_secret.ensure_app_secret("growth") is None
+    assert app_secret.mint_app_secret("growth") is None
 
 
 def test_secret_value_never_logged_by_mint(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(app_secret, "app_dir", lambda name: tmp_path / name)
     (tmp_path / "growth").mkdir()
     with caplog.at_level("DEBUG"):
-        s = app_secret.ensure_app_secret("growth")
+        s = app_secret.mint_app_secret("growth")
     assert s not in caplog.text
 
 

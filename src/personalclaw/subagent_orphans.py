@@ -3,12 +3,13 @@
 A subagent's folder outlives the process that ran it (``subagent_persistence``), so after a restart
 the folders of the agents the old process was running are still there, with no tombstone and,
 sometimes, a process still alive. :func:`reconcile_orphans` settles each one once, at boot: a
-process that is still the one the agent started is killed, every orphan is tombstoned with what can
-be recovered (its result, or nothing), and the owner is told.
+process that is still the one the agent started is killed, and every orphan is tombstoned with what
+can be recovered (its result, or nothing). :func:`announce_orphans` then tells the owner, in one
+notice, which agents the restart stopped and where any result was saved.
 
 Split out of ``subagent.py`` along the seam it always had: this is a pass over what ANOTHER process
 left, and its one input from the running manager is which agents are its own (``tracked``). The
-manager starts it (``SubagentManager.start_reaper``) and holds nothing it touches.
+gateway runs it once the dashboard is up, because the notice is delivered through it.
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Container
+from collections.abc import Container, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from personalclaw.sel import sel
 from personalclaw.subagent import _redact
@@ -30,21 +33,54 @@ from personalclaw.subagent_persistence import (
 
 logger = logging.getLogger(__name__)
 
+#: The agents one notice names; a restart that stopped more says how many it left out.
+_NAMED_IN_NOTICE = 8
 
-async def reconcile_orphans(tracked: Container[str]) -> None:
-    """Scan for orphaned agent folders from a prior gateway run.
+
+@dataclass(frozen=True)
+class Orphan:
+    """One agent a previous run left behind, as the start-up pass settled it."""
+
+    agent_id: str
+    #: What it is called: its title (a trigger's run is named by its trigger), else the start of
+    #: its task. Redacted.
+    name: str
+    #: Where its result was saved, or "" when it saved none.
+    result_path: str = ""
+
+
+class _Tracked:
+    """The agents this run is managing, asked of the manager at each orphan rather than listed up
+    front: an agent spawned while the pass runs is this run's, and must not be read as left behind.
+    """
+
+    def __init__(self, manager: Any) -> None:
+        self._manager = manager
+
+    def __contains__(self, agent_id: object) -> bool:
+        return isinstance(agent_id, str) and self._manager.get(agent_id) is not None
+
+
+def tracked_by(manager: Any) -> Container[str]:
+    """The ``tracked`` container :func:`reconcile_orphans` takes, for a running manager."""
+    return _Tracked(manager)
+
+
+async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
+    """Scan for orphaned agent folders from a prior gateway run. Returns the ones it settled.
 
     For each orphan (folder with state.json but no tombstone.json,
     and not one of *tracked* — the agents this run is managing):
     - PID alive → SIGKILL, tombstone (gateway_restart)
-    - PID dead + result → tombstone (gateway_restart, delivered)
+    - PID dead + result → tombstone (gateway_restart, result_available)
     - PID dead + no result → tombstone (gateway_restart, notification_pending)
     """
+    settled: list[Orphan] = []
     try:
 
         orphans = list_orphans()
         if not orphans:
-            return
+            return settled
         logger.info("Reconciling %d orphaned subagent(s)", len(orphans))
         processed = 0
         for state in orphans:
@@ -113,11 +149,14 @@ async def reconcile_orphans(tracked: Container[str]) -> None:
                     pid,
                     has_result,
                 )
-                # Notify user about the orphaned agent
-                try:
-                    await notify_orphan(agent_id, state, recovery, has_result)
-                except Exception:
-                    logger.debug("Notification failed for orphan %s", agent_id, exc_info=True)
+                name = str(state.get("title") or "") or str(state.get("task") or "")[:100]
+                settled.append(
+                    Orphan(
+                        agent_id=agent_id,
+                        name=_redact(name),
+                        result_path=str(_agent_dir(agent_id) / "result.txt") if has_result else "",
+                    )
+                )
             except Exception:
                 logger.warning("Failed to reconcile orphan %s", agent_id, exc_info=True)
 
@@ -127,6 +166,43 @@ async def reconcile_orphans(tracked: Container[str]) -> None:
                 await asyncio.sleep(0)
     except Exception:
         logger.warning("Orphan reconciliation failed", exc_info=True)
+    return settled
+
+
+def announce_orphans(state: Any, orphans: Sequence[Orphan]) -> None:
+    """Tell the owner, once, which background agents a restart stopped. Nothing when none did.
+
+    ONE notice for the whole pass, not one per agent: a restart during a wide fan-out would
+    otherwise deliver a notification per child. Through the dashboard's one delivery choke point
+    (`DashboardState.notify`), so the owner's own notification rules decide where else it goes.
+    Never raises: the agents are already settled, and the notice is the part that can wait.
+    """
+    if not orphans or state is None:
+        return
+    from personalclaw import notification_kinds
+
+    count = len(orphans)
+    title = (
+        "A restart stopped a background agent"
+        if count == 1
+        else f"A restart stopped {count} background agents"
+    )
+    # One paragraph per agent and no markup: the notification list shows a body's first line as
+    # plain text, and the detail renders the rest as markdown, so plain paragraphs read in both.
+    lines = []
+    for orphan in orphans[:_NAMED_IN_NOTICE]:
+        outcome = (
+            f"its result so far is saved at {orphan.result_path}."
+            if orphan.result_path
+            else "it saved no result."
+        )
+        lines.append(f"{orphan.agent_id} — {orphan.name or 'no task recorded'}: {outcome}")
+    if count > _NAMED_IN_NOTICE:
+        lines.append(f"…and {count - _NAMED_IN_NOTICE} more.")
+    try:
+        state.notify(notification_kinds.SUBAGENT, title, _redact("\n\n".join(lines)))
+    except Exception:
+        logger.warning("could not tell the owner which agents a restart stopped", exc_info=True)
 
 
 def is_pid_alive(pid: int) -> bool:
@@ -163,83 +239,3 @@ def kill_orphan_pid(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
     except (ProcessLookupError, OSError):
         pass
-
-
-async def notify_orphan(agent_id: str, state: dict, recovery: str, has_result: bool) -> None:
-    """Notify user about an orphaned subagent.
-
-    1. Try session injection if parent session still exists
-    2. Fall back to the channel DM via send_message MCP tool
-    """
-    task_preview = (state.get("task", "") or "")[:100]
-    parent_session = state.get("parent_session", "")
-
-    result_path = str(_agent_dir(agent_id) / "result.txt")
-
-    if has_result:
-        msg = (
-            f"[Subagent completion event]\n"
-            f"Agent `{agent_id}` ⚠️ orphaned by gateway restart\n"
-            f"Task: {task_preview}\n"
-            f"Result saved at: `{result_path}`\n"
-            f"Use the read tool to retrieve it."
-        )
-    else:
-        msg = (
-            f"[Subagent completion event]\n"
-            f"Agent `{agent_id}` ❌ lost to gateway restart\n"
-            f"Task: {task_preview}\n"
-            f"No result was captured before the restart."
-        )
-
-    # Redact before any delivery path (injection or channel DM)
-    msg = _redact(msg)
-
-    # Try session injection first
-    if parent_session.startswith("dashboard:"):
-        try:
-            injected = await try_inject_orphan_notification(parent_session, msg)
-            if injected:
-                # Update tombstone recovery_action
-                try:
-                    write_tombstone(
-                        agent_id,
-                        cause="gateway_restart",
-                        recovery_action="delivered",
-                        pid=state.get("pid"),
-                        turns=state.get("turns", 0),
-                        last_tool=state.get("last_tool", ""),
-                    )
-                except Exception:
-                    pass
-                return
-        except Exception:
-            logger.debug("Injection failed for orphan %s", agent_id, exc_info=True)
-
-    # Fallback: channel DM
-    try:
-        await send_orphan_channel_dm(msg)
-    except Exception:
-        logger.debug("Channel DM fallback failed for orphan %s", agent_id, exc_info=True)
-
-
-async def try_inject_orphan_notification(parent_session: str, msg: str) -> bool:
-    """Try to inject a message into the parent dashboard session.
-
-    Returns True if injection succeeded.
-    """
-    # This hooks into the existing dashboard session injection mechanism.
-    # For now, return False to always fall through to the channel DM.
-    # Full injection requires access to the dashboard session, which is
-    # wired up at a higher level (gateway.py). This will be connected
-    # when the notification plumbing is integrated.
-    return False
-
-
-async def send_orphan_channel_dm(msg: str) -> None:
-    """Surface an orphan notification (best-effort).
-
-    No channel client is wired at this layer, so the notification is logged
-    at WARNING rather than DM'd.
-    """
-    logger.warning("Orphan notification (channel DM pending): %s", msg[:200])

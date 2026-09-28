@@ -20,6 +20,11 @@ that had expired, a site-level row that resumed nothing. This is that seam for a
   (`dashboard/handlers/trigger_runs.api_trigger_answer`). Deny closes the question until the trigger
   next runs.
 
+A question is answerable for :func:`answerable_secs`, the window a workflow's resume token has.
+Its token lived for as long as nobody answered, so a link to it could run the action months after
+the question it asked stopped meaning anything. Past the window its answer is refused and its row
+closed, and the trigger asks again, with a new token, the next time it stops.
+
 The run's history row says it is waiting, and on what (:func:`waiting_line`): the run did not do
 what it was asked yet, so it is not recorded as a success (`schedule_history` status `waiting`).
 
@@ -47,6 +52,23 @@ logger = logging.getLogger(__name__)
 #: emitter of this pair parks work on the user's answer" — a workflow gate, a browse sign-in
 #: handoff). A second pair for the same kind of question would give the user two switches for it.
 SOURCE = "loop"
+
+
+def answerable_secs() -> float:
+    """How long a trigger's question can be answered: the window a workflow's resume token has
+    (`human_input.DEFAULT_RESUME_TTL_SECS`, "long enough to answer tomorrow morning; short enough
+    that a year-old token cannot resurrect a run whose world has moved on") — read where it is
+    defined, so the two kinds of question cannot drift apart."""
+    from personalclaw.workflows.human_input import DEFAULT_RESUME_TTL_SECS
+
+    return float(DEFAULT_RESUME_TTL_SECS)
+
+
+def expired(park: "TriggerPark", *, now: float = 0.0) -> bool:
+    """Whether *park*'s question is past answering. One with no creation time cannot be bounded,
+    so it is past it too."""
+    now = now or time.time()
+    return park.created_at <= 0 or now - park.created_at >= answerable_secs()
 
 
 def parks_dir() -> Path:
@@ -194,7 +216,8 @@ def raise_park(trigger: Any, result: Any, *, state: Any = None) -> TriggerPark |
         return None
     try:
         park = load(trigger_id)
-        if park is None:
+        if park is None or expired(park):
+            # An expired question is asked afresh: a new token, and the row re-raised with it.
             park = TriggerPark(
                 token=secrets.token_urlsafe(24),
                 trigger_id=trigger_id,
@@ -216,6 +239,10 @@ def claim(trigger_id: str, token: str) -> TriggerPark | None:
     concurrent answers wins."""
     park = load(trigger_id)
     if park is None or not token or not secrets.compare_digest(park.token, str(token)):
+        return None
+    if expired(park):
+        # Past answering: the row is closed rather than left offering an answer nothing takes.
+        withdraw(trigger_id)
         return None
     path = _path(trigger_id)
     claimed = path.with_suffix(".claimed")

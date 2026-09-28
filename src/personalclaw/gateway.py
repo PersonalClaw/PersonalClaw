@@ -26,7 +26,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from aiohttp import web
 
@@ -1521,6 +1521,10 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return
 
+        fire_started = time.time()
+        # Whether the action itself is under way, and whether a stop cancelled this fire at all:
+        # only an action a stop interrupted is a run cut off, and no chain starts while it stops.
+        running = cut_off = False
         try:
             # 🔴 The MODE DEFAULT the legacy dispatcher applied (300s for a command, 30s
             # otherwise), because a `bash` fire is a real subprocess and 30s is not a command's
@@ -1573,7 +1577,9 @@ class GatewayOrchestrator:
             # trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
             budget_token = set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))
             try:
+                running = True
                 result = await provider.execute(config, ctx, timeout=timeout)
+                running = False
             finally:
                 reset_current_run_budget(budget_token)
                 reset_current_run_key(run_token)
@@ -1607,6 +1613,16 @@ class GatewayOrchestrator:
                 ok=fired_ok,
                 error="" if fired_ok else str(getattr(result, "error", "") or ""),
             )
+        except asyncio.CancelledError:
+            # 🔴 A STOP OR A RESTART CUT THIS FIRE OFF. It cancels the loop the fire runs in, and a
+            # cancellation is not an `Exception`: the branch below never saw it, the executor gave
+            # the claim back, and the run was recorded nowhere — no row, no card. Recorded now,
+            # before the cancellation goes on its way — when it was the action that was stopped;
+            # one that landed after the action returned interrupted only the bookkeeping.
+            cut_off = True
+            if running:
+                self._record_stopped_fire(trigger, started_at=fire_started)
+            raise
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             # A provider that RAISES (rather than returning a failed
             # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
@@ -1640,7 +1656,64 @@ class GatewayOrchestrator:
             # switch and the capability fence. A chain with its own dispatch path would be a second
             # place for those controls to be forgotten, which is exactly how the `web_watch` gap
             # happened. After the refresh, so a slow chain never delays the view update.
-            await self._fire_chained_triggers(trigger, payload)
+            #
+            # Not after a run a stop cut off: it did not complete, and a `run_completed` chain
+            # started while the gateway stops would be one more run cut off.
+            if not cut_off:
+                await self._fire_chained_triggers(trigger, payload)
+
+    def _record_stopped_fire(self, trigger: Any, *, started_at: float) -> None:
+        """Record a fire a stop or a restart cut off, and tell the owner. Never raises.
+
+        Recorded as the boot pass records a run whose owner died — the `interrupted` row, the
+        trigger's health and the review card (`reaper.record_stopped_run`) — with a reason that
+        names the restart, or the stop. Synchronous: it runs inside the cancellation, where an
+        await could be cancelled again before the row is written.
+        """
+        try:
+            from personalclaw import restart_request
+            from personalclaw.triggers import reaper
+            from personalclaw.triggers.store import TriggerStore
+
+            home = config_dir()
+            record = reaper.record_stopped_run(
+                str(getattr(trigger, "id", "") or ""),
+                started_at=started_at,
+                restarting=restart_request.pending() is not None,
+                store=TriggerStore(base_dir=home),
+                base_dir=home,
+            )
+            self._announce_stopped_run(trigger, record)
+        except Exception:  # noqa: BLE001 - the stop goes on whether or not this lands
+            logger.warning("could not record the fire a stop cut off: %s", trigger, exc_info=True)
+
+    def _announce_stopped_run(self, trigger: Any, record: dict[str, Any]) -> None:
+        """One notice for a run a stop cut off, as the boot's notice names the runs a restart cut
+        off. It goes out through `notify` while the dashboard is still up, and is kept with the
+        other notifications, so it is there when the gateway is back."""
+        state = getattr(self, "dashboard_state", None)
+        if state is None:
+            return
+        from personalclaw.security import redact_credentials, redact_exfiltration_urls
+        from personalclaw.triggers.delivery import status_url
+
+        trigger_id = str(getattr(trigger, "id", "") or "")
+        name = str(getattr(trigger, "name", "") or "") or trigger_id
+        what = "by a restart" if record.get("restarting") else "when the gateway stopped"
+        title, _ = redact_exfiltration_urls(f"{name} was interrupted {what}")
+        title, _ = redact_credentials(title)
+        try:
+            state.notify(
+                kind=notification_kinds.INFO,
+                title=title,
+                body=str(record.get("reason") or ""),
+                meta={
+                    "event": "automation.interrupted",
+                    "statusUrl": status_url(trigger_id=trigger_id),
+                },
+            )
+        except Exception:  # noqa: BLE001 - the run is recorded; a lost notice must not undo it
+            logger.debug("could not announce the interrupted run of %s", trigger_id, exc_info=True)
 
     def _record_boot_review(
         self,
@@ -1679,7 +1752,8 @@ class GatewayOrchestrator:
     def _surface_held_boot_review(self) -> None:
         """Send what the boot passes found once the dashboard can deliver it.
 
-        The missed-run notice the passes held (`_record_boot_review`), and the review item for the
+        The missed-run notice the passes held (`_record_boot_review`), the background agents a
+        previous run left behind (`_settle_left_behind_agents`), and the review item for the
         triggers a legacy import brought over and switched off (`legacy_import.announce`). The
         import runs in `_init_cron`, long before the inbox service exists, so its item is raised
         here — from the rows still waiting in the store, which is also what makes it survive a
@@ -1689,6 +1763,12 @@ class GatewayOrchestrator:
         if held is not None:
             self._held_boot_review = None
             self._surface_missed_review(*held)
+        if getattr(self, "subagent_mgr", None) is not None:
+            # The agents the previous run was running when it stopped: settled now, and named in
+            # one notice, which is why this waits for the dashboard rather than running at spawn.
+            settle = asyncio.create_task(self._settle_left_behind_agents())
+            self._background_tasks.add(settle)
+            settle.add_done_callback(self._background_tasks.discard)
         try:
             from personalclaw.triggers import legacy_import
             from personalclaw.triggers.store import TriggerStore
@@ -1703,6 +1783,13 @@ class GatewayOrchestrator:
             logger.warning(
                 "could not announce the triggers a legacy import brought over", exc_info=True
             )
+
+    async def _settle_left_behind_agents(self) -> None:
+        """Stop and tombstone the background agents a previous run left, then tell the owner."""
+        from personalclaw.subagent_orphans import announce_orphans, reconcile_orphans, tracked_by
+
+        settled = await reconcile_orphans(tracked_by(self.subagent_mgr))
+        announce_orphans(self.dashboard_state, settled)
 
     def _surface_missed_review(
         self, report: dict[str, Any], interrupted: list[dict[str, Any]] | tuple = ()
@@ -3839,8 +3926,7 @@ class GatewayOrchestrator:
             # Build ONE announce covering every completion in the batch. A
             # burst of 8 completions becomes a single parent turn listing all 8,
             # rather than 8 turns serialized behind the parent's Semaphore(1).
-            def _one_block(member: "SubagentInfo") -> str:
-                m_status = "failed" if member.error else "completed"
+            def _detail(member: "SubagentInfo") -> str:
                 # Subagent result → the parent transcript. A blind head-cut here was a
                 # real failure class; route long output through project_and_retain
                 # (Context Economy §2.5a) for a type-projected digest + raw_ref handle.
@@ -3856,6 +3942,14 @@ class GatewayOrchestrator:
                         )
                 m_detail, _ = redact_exfiltration_urls(m_detail)
                 m_detail, _ = redact_credentials(m_detail)
+                return m_detail
+
+            # Once per member: a long result is retained as it is projected, and the notice below
+            # reads the same text the announce carries.
+            details = {m.id: _detail(m) for m in batch}
+
+            def _one_block(member: "SubagentInfo") -> str:
+                m_status = "failed" if member.error else "completed"
                 m_task, _ = redact_exfiltration_urls(member.task)
                 m_task, _ = redact_credentials(m_task)
                 m_task = m_task[:100]
@@ -3864,7 +3958,7 @@ class GatewayOrchestrator:
                     f"{f' ({member.agent})' if member.agent else ''}"
                     f" {m_status}\n"
                     f"Task: {m_task}\n\n"
-                    f"{m_detail}"
+                    f"{details[member.id]}"
                 )
 
             blocks = [_one_block(m) for m in batch]
@@ -3880,9 +3974,26 @@ class GatewayOrchestrator:
                     f"[Subagent completion batch — {len(batch)} agents, "
                     f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
                 )
+            body = announce
+            notice_meta = self._notif_meta(parent_key)
+            if len(batch) == 1 and info.title:
+                # The note a PERSON reads, for a run someone named — an automation's, by its
+                # trigger (`SubagentInfo.title`). It arrived as "Subagent `<id>` completed" with the
+                # completion-event preamble first and what the agent said last; now it is titled by
+                # the run and IS what the agent said (the reminder, the summary), and it links back
+                # to the automation. The announce above stays the model-facing event it always was,
+                # and a batch keeps the generic note, since no one name covers several runs.
+                title = f"{info.title} — failed" if info.error else info.title
+                body = details[info.id]
+                if info.trigger_id:
+                    from personalclaw.triggers.delivery import status_url as _trigger_status_url
+
+                    notice_meta = {
+                        **(notice_meta or {}),
+                        "statusUrl": _trigger_status_url(trigger_id=info.trigger_id),
+                    }
             title, _ = redact_exfiltration_urls(title)
             title, _ = redact_credentials(title)
-            body = announce
 
             # ── Route completion back to the originating session ──
             # Dashboard → dashboard only (no channel delivery)
@@ -3937,7 +4048,7 @@ class GatewayOrchestrator:
                                 notification_kinds.SUBAGENT,
                                 title,
                                 body,
-                                meta=self._notif_meta(parent_key),
+                                meta=notice_meta,
                             )
                             return
 
@@ -3977,7 +4088,7 @@ class GatewayOrchestrator:
                     notification_kinds.SUBAGENT,
                     title,
                     body,
-                    meta=self._notif_meta(parent_key),
+                    meta=notice_meta,
                 )
                 return
 
@@ -4059,7 +4170,9 @@ class GatewayOrchestrator:
                                     lambda delivery, dm: delivery.deliver_subagent_reply(
                                         dm, response, parent_key, elapsed
                                     ),
-                                    title="Subagent reply",
+                                    # A named run's reply is titled by the run, as its notice is.
+                                    title=(info.title if len(batch) == 1 else "")
+                                    or "Subagent reply",
                                     text=response,
                                     state=self.dashboard_state,
                                 )
@@ -4141,7 +4254,7 @@ class GatewayOrchestrator:
                         notification_kinds.SUBAGENT,
                         title,
                         body,
-                        meta=self._notif_meta(parent_key),
+                        meta=notice_meta,
                     )
                 return
 
@@ -4232,7 +4345,7 @@ class GatewayOrchestrator:
                     notification_kinds.SUBAGENT,
                     title,
                     body,
-                    meta=self._notif_meta(parent_key),
+                    meta=notice_meta,
                 )
             if not parent_key.startswith("cron:"):
                 logger.info("Subagent %s → notification only (parent=%s)", info.id, parent_key)
@@ -5039,7 +5152,7 @@ class GatewayOrchestrator:
                     stop_processes()
                 except Exception:
                     pass
-                os._exit(0)
+                _exit_now(0)
             _shutting_down = True
             # A stop — even one that arrives while a restart is shutting down — stops.
             from personalclaw.restart_request import request_stop
@@ -5155,7 +5268,23 @@ class GatewayOrchestrator:
             print("Restarting…")
             restart_request.start(restart)
         print("Goodbye!")
-        os._exit(0)
+        _exit_now(0)
+
+
+def _exit_now(code: int) -> NoReturn:
+    """End the process at once, after writing out what it printed.
+
+    ``os._exit`` skips the interpreter's shutdown, and the flush of ``sys.stdout`` and
+    ``sys.stderr`` goes with it. Those are block-buffered whenever they are a pipe or a file — a
+    service's log, the harness reading ``--json-ready`` — so the last lines a stop printed
+    ("Shutting down…", "Goodbye!", "Force exit!") never reached the log.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):  # a closed or broken stream must not stop the exit
+            pass
+    os._exit(code)
 
 
 def _open_dashboard(url: str) -> None:

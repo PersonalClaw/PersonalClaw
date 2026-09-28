@@ -24,7 +24,7 @@ import { confirm, confirmDelete, confirmDestructive } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, InlineLoadError, LoadError, EmptyState } from '../../ui/ListScaffold'
-import { TextInput, Select, ChipInput, NumberField, FieldError } from '../../ui/forms'
+import { TextInput, Select, ChipInput, NumberField, FieldError, useSyncedDraft } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
 import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -2230,8 +2230,8 @@ function VaultSection({ settings, onMode, onPath, saved }: {
   // A draft + an explicit Save, NOT a write-per-keystroke or a write-on-blur: this value
   // decides where files get written, and half a path committed because focus moved is a
   // vault generated in the wrong place. Save is gated on dirty (the StudioDocEditor pattern).
-  const [pathDraft, setPathDraft] = useState(settings.vault_path ?? '')
-  useEffect(() => { setPathDraft(settings.vault_path ?? '') }, [settings.vault_path])
+  // Follows the saved path when it moves, never on mount (`useSyncedDraft`).
+  const [pathDraft, setPathDraft] = useSyncedDraft(settings.vault_path ?? '')
   const loadStatus = () => { api.memoryVaultStatus().then(setStatus).catch(() => setStatus(null)) }
   useEffect(loadStatus, [mode])
   const pathDirty = pathDraft.trim() !== (settings.vault_path ?? '')
@@ -2264,7 +2264,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
       <Field label="Vault mode" hint={VAULT_MODE_HINT[mode]}>
         <Select value={mode} onChange={(v) => onMode(v as MemoryVaultMode)} options={VAULT_MODE_OPTIONS} />
       </Field>
-      <Field label="Vault folder" hint="A plain name lands under ~/.personalclaw; an absolute path is used as-is (point it at an Obsidian vault to open memory there). Only the default location is covered by `personalclaw snapshot`.">
+      <Field label="Vault folder" hint={<>A plain name lands under ~/.personalclaw; an absolute path is used as-is (point it at an Obsidian vault to open memory there). Only the default location is covered by <code>personalclaw snapshot</code>.</>}>
         <div className="flex items-center gap-2">
           <div className="flex-1">
             <TextInput value={pathDraft} onChange={setPathDraft}

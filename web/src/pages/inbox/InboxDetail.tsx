@@ -7,7 +7,7 @@ import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { InlineLoadError } from '../../ui/ListScaffold'
-import { TextArea, Segmented, FieldError } from '../../ui/forms'
+import { TextArea, Segmented, FieldError, useSyncedDraft } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
@@ -27,13 +27,14 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  and triage actions. Sending a reply depends on the source provider supporting
  *  it (filesystem/Slack-bot don't here) — Send is shown but gated. */
 export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: InboxItem; owner?: string; onChanged: () => void; navigate: (path: string) => void }) {
-  const [draft, setDraft] = useState(item.draft ?? '')
+  // Re-seeded when another item is shown, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(item.draft ?? '', item.id)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const cm = classMeta(item.classification)
   const cf = confMeta(item.confidence)
 
-  useEffect(() => { setDraft(item.draft ?? ''); setErr('') }, [item.id])
+  useEffect(() => { setErr('') }, [item.id])
 
   async function patch(body: Record<string, unknown>, tag: string) {
     setBusy(tag); setErr('')

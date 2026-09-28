@@ -117,7 +117,13 @@ chat, channel thread, loop worker, webhook, subagent).
    in-flight message, never another session's transcript — with the chat's
    background summary standing in for its oldest turns while it still describes
    them (`history.model_view`). `context_engine.py` and
-   `context_compaction.py` manage sizing and compaction.
+   `context_compaction.py` manage sizing and compaction. The native loop
+   compacts its own history at the Settings threshold
+   (`session.autocompact_pct`) and when a model rejects a prompt as too long,
+   and the chat says so where it happened, in `/compact`'s words
+   ("Conversation compacted: freed 42% of the conversation (…)"): a
+   `compaction_status` of `automatic` (`llm/events.COMPACTION_AUTOMATIC`),
+   which keeps the answer streamed before it.
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →
    Prompts for the turn's context (`chat`, or `background` for unattended runs).

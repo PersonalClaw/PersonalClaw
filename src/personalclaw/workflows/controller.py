@@ -1407,6 +1407,9 @@ class RunController:
                 # consumer whose folded epoch came from a rewound sibling — `node_started`
                 # and `node_done` for the same node would then disagree about the run.
                 "node_epoch": inst.epoch,
+                # The author's name for the step, the one the REST node list carries: a node the
+                # stream adds after the page's snapshot (a fan-out expanding) is named by it too.
+                **({"label": item.node.label} if item.node.label else {}),
                 # Per-item foreach context: what a "[3/12] refactor auth.py" row
                 # needs. A fan-out of twelve otherwise renders as twelve identical rows
                 # distinguishable only by an index suffix — technically correct and useless

@@ -255,9 +255,9 @@ function RunningAgents({ open }: { open: boolean }) {
               data-type="caption"
               className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">
               <Loader2 size={10} className="shrink-0 animate-spin text-primary" />
-              <span className="min-w-0 flex-1 truncate text-on-surface-var" title={a.task}>{firstLine(a.task)}</span>
+              <span className="min-w-0 flex-1 truncate text-on-surface-var" title={a.task}>{agentName(a)}</span>
               {a.parent && <span className="shrink-0 text-on-surface-low/70">{a.parent.replace('cron:', '⏱')}</span>}
-              <button type="button" onClick={() => cancel(a.id, firstLine(a.task))} disabled={busy === a.id} aria-label="Cancel agent"
+              <button type="button" onClick={() => cancel(a.id, agentName(a))} disabled={busy === a.id} aria-label="Cancel agent"
                 className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger disabled:opacity-50"><X size={11} /></button>
             </motion.div>
           ))}
@@ -362,6 +362,13 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
       )}
     </div>
   )
+}
+
+/** What a background agent is called: its title — a trigger's run by its trigger's name or its
+ *  instruction — else its task's first line. A trigger's task opens with the unattended-run framing,
+ *  so naming it by its task showed that framing's second line for every automation. */
+export function agentName(agent: Pick<SpawnedAgent, 'title' | 'task'>): string {
+  return agent.title?.trim() || firstLine(agent.task)
 }
 
 /** First non-empty line of a task prompt, for a compact one-line label. */

@@ -581,7 +581,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
     <Section title="Schedule" hint="Backups run in the background so losing work never depends on remembering to run one.">
       <RowGroup>
         <Row label="Automatic backups"
-          hint="Take a nightly snapshot and an hourly incremental export in the background. Off means backups only happen when you run them by hand — below, or with `personalclaw backup export`.">
+          hint={<>Take a nightly snapshot and an hourly incremental export in the background. Off means backups only happen when you run them by hand — below, or with <code>personalclaw backup export</code>.</>}>
           <div className="flex items-center gap-2">
             <SavedToast show={saved} />
             <Toggle on={autoBackup} onChange={(v) => patch('auto_backup', v)} label="Automatic backups" />

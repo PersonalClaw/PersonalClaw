@@ -13,9 +13,8 @@ is why a mode-only assertion cannot tell the fixed code from the broken code:
 So the tests below assert the two things that DO distinguish: the call site (an atomic write asked
 for 0600 up front) and the behaviour under a failed write (the previous credentials survive).
 
-`apps/app_secret.py::_write_0600` fixes the umask half with `os.open(..., 0o600)` + `fchmod`; it
-does not need atomicity because it writes one value to its own file. A credential file holding
-every key needs both, which is what `atomic_write(mode=0o600, fsync=True)` gives.
+A credential file holding every key needs both, which is what `atomic_write(mode=0o600,
+fsync=True)` gives; `apps/app_secret.py` mints the app proxy secret through the same atomic write.
 """
 
 from __future__ import annotations

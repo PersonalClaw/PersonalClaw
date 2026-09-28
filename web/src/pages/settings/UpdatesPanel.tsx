@@ -6,7 +6,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
-import { TextInput, NumberField } from '../../ui/forms'
+import { TextInput, NumberField, useSyncedDraft } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
@@ -127,9 +127,6 @@ export function UpdatesPanel() {
   // WHICH control just saved, not merely "something did": six controls share this panel, and a
   // boolean would flash "Saved ✓" beside all of them for a write the user made to one.
   const [saved, setSaved] = useState('')
-  // The pin is the one free-text control, so it holds a draft until commit — patching per
-  // keystroke would write `0`, `0.`, `0.2` and refuse most of them.
-  const [pinDraft, setPinDraft] = useState('')
 
   // Version + changelog change slowly — one persisted snapshot, instant on revisit.
   const { data, loading: checking, error: loadErr, refresh } = useQuery('settings:updates', async () => {
@@ -147,14 +144,18 @@ export function UpdatesPanel() {
   // confirms; re-hydrated whenever a fresh snapshot lands.
   const [info, setInfo] = useState<UpdateCheck | null>(null)
   useEffect(() => { setInfo(data?.info ?? null) }, [data?.info])
+  // The pin is the one free-text control, so it holds a draft until commit — patching per
+  // keystroke would write `0`, `0.`, `0.2` and refuse most of them.
+  //
   // 🪤 SEEDED FROM THE LIVE `info`, NOT FROM `data.info` — found by driving the panel. The query
   // snapshot's `pin` does not move when THIS panel writes one (the write updates `info`
   // optimistically and does not refetch), so a draft seeded from `data` never re-synced: after
   // clearing a pin and pressing Check, the box still showed the version it had just removed while
-  // the row beside it correctly said "Stable channel". Keying on `info.pin` re-syncs after every
+  // the row beside it correctly said "Stable channel". Following `info.pin` re-syncs after every
   // Save/Clear and every refresh that changes the stored pin, and still never clobbers typing —
-  // `info.pin` does not change while you type, only when a write lands.
-  useEffect(() => { setPinDraft(info?.pin ?? '') }, [info?.pin])
+  // `info.pin` does not change while you type, only when a write lands, and it is never re-seeded
+  // on mount (`useSyncedDraft`).
+  const [pinDraft, setPinDraft] = useSyncedDraft(info?.pin ?? '')
   const changelog = data?.changelog ?? ''
 
   const check = () => { invalidateKeys('settings:updates'); refresh() }

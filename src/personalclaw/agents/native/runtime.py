@@ -33,7 +33,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
-from personalclaw.agents.native.compaction import InProcessCompaction
+from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
@@ -69,6 +69,7 @@ from personalclaw.guardrails.loop_breaker import (
     warn_note,
 )
 from personalclaw.llm.events import (
+    COMPACTION_AUTOMATIC,
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
     EVENT_MODEL_SUBSTITUTION,
@@ -1021,8 +1022,11 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 # compaction (no-LLM tool-output pruning pre-pass → 4-region →
                 # structured summary). Anti-thrashing skips it if recent passes
                 # barely helped. ACP backends own their own compaction; this is the
-                # native loop's.
-                self._maybe_compact()
+                # native loop's. Said when it happens, in /compact's words: the history
+                # the rest of this conversation is answered from has just changed.
+                compacted = self._maybe_compact()
+                if compacted is not None:
+                    yield self._compacted_on_its_own(*compacted)
 
                 assistant_text = ""
                 tool_calls: list[AgentEvent] = []
@@ -1143,6 +1147,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                                 msgs = self._request_messages(mode)
                                 assistant_text = ""
                                 usage = None
+                                yield self._compacted_on_its_own(before, after)
                                 continue
                             # after == before: the pass reclaimed nothing — a truthful
                             # outcome, not a failure. Retrying an identical prompt would
@@ -2229,10 +2234,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             yield AgentEvent(
                 kind=EVENT_COMPACTION_STATUS,
                 text="completed",
-                title=(
-                    f"freed {(before - after) / before * 100:.0f}% of the conversation "
-                    f"({before:,} → {after:,} characters)"
-                ),
+                title=compaction_summary(before, after),
                 context_usage_pct=self._last_context_pct,
             )
         else:
@@ -2241,6 +2243,21 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 text="noop",
                 context_usage_pct=self._last_context_pct,
             )
+
+    def _compacted_on_its_own(self, before: int, after: int) -> AgentEvent:
+        """The notice for a compaction this loop did on its own: ``/compact``'s sentence, with the
+        status that tells the chat runner to keep what already streamed (``COMPACTION_AUTOMATIC``).
+
+        Silent before: the threshold pass and the overflow retry rewrote the history mid-turn and
+        said nothing, so a conversation lost its middle without a word — the notice the dashboard
+        posts for a restarted session never reached a loop that compacts itself.
+        """
+        return AgentEvent(
+            kind=EVENT_COMPACTION_STATUS,
+            text=COMPACTION_AUTOMATIC,
+            title=compaction_summary(before, after),
+            context_usage_pct=self._last_context_pct,
+        )
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> str:
         """Stop the WORK, not just the stream (PR2-12).

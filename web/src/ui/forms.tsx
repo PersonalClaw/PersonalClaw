@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { cx } from './cx'
 import { Eyebrow } from './Eyebrow'
@@ -20,6 +20,30 @@ import { Eyebrow } from './Eyebrow'
 // Fields like Variables keep their own per-input aria-labels).
 const FieldLabelCtx = createContext<string | undefined>(undefined)
 export function useFieldLabelId() { return useContext(FieldLabelCtx) }
+
+/** A local draft of a value its owner commits, re-seeded when that value MOVES — never on mount.
+ *
+ *  The draft starts AS the value, so the mount run of the usual `useEffect(() => setDraft(value),
+ *  [value])` can only write the same thing back — except when an edit lands between the mount commit
+ *  and that effect's flush, a window React's scheduler leaves open whenever a panel's load resolves
+ *  outside `act`. Then it writes the STALE initial value over the edit, and a save that compares the
+ *  draft with the value sees nothing to send. So the draft is re-seeded only once the value has
+ *  really changed after mount (a save, a rollback, another tab's write), or — with *key* — once the
+ *  thing being edited is a different one (another item, another agent), from the value it has then.
+ *  Every "edit a copy of a stored value" control uses this rather than its own effect
+ *  (`ui/draftResyncIsGated.test.tsx`). */
+export function useSyncedDraft<T>(value: T, key: unknown = value): [T, Dispatch<SetStateAction<T>>] {
+  const [draft, setDraft] = useState<T>(value)
+  const seen = useRef<unknown>(key)
+  useEffect(() => {
+    if (Object.is(seen.current, key)) return
+    seen.current = key
+    setDraft(value)
+    // Keyed on `key` alone: the value is read as it stands when the key moves, and a value that
+    // moves under an unchanged key is the owner's to re-seed, not this hook's.
+  }, [key])
+  return [draft, setDraft]
+}
 /** Publish a label id to the controls inside, so a NON-`Field` wrapper can still give them an
  *  accessible name.
  *
@@ -356,22 +380,9 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
 }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
-  const [local, setLocal] = useState(String(value))
-  // Re-sync when the committed value CHANGES out from under us (external patch,
-  // clamp, another editor) — but never mid-edit, since we only read `value`, and
-  // never on mount. The mount run is the one place this effect could fire with a
-  // STALE `value`: it flushes on React's own scheduler tick, so an edit that lands
-  // between the mount commit and that tick gets clobbered back to the initial
-  // value — and the subsequent blur-commit then sees clamped === value and drops
-  // the edit entirely. Unreachable for a human, but jsdom tests hit that window
-  // (the #624 rollback rail flaked ~7% on exactly this), so the effect is gated
-  // to actual `value` movement.
-  const synced = useRef(value)
-  useEffect(() => {
-    if (synced.current === value) return
-    synced.current = value
-    setLocal(String(value))
-  }, [value])
+  // Re-synced when the committed value CHANGES out from under us (external patch, clamp, another
+  // editor), never on mount — see `useSyncedDraft` (the #624 rollback rail flaked ~7% on that).
+  const [local, setLocal] = useSyncedDraft(String(value))
   const commit = () => {
     const n = Number(local)
     if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }

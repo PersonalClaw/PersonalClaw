@@ -200,6 +200,8 @@ async def test_a_subagents_reply_reaches_the_channel_masked(telegram, thread):
     orch.sessions.get_channel = MagicMock(return_value=thread)
     info = MagicMock(
         id="agent-1",
+        title="",
+        trigger_id="",
         parent_session_key="C123:1234.567890",
         error=None,
         result="raw result",

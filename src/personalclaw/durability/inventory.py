@@ -640,7 +640,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="installed app copies (their data/ holds real state)",
         # Each app's `.app_secret` is the HMAC key its backend proxy verifies — key material,
-        # minted on demand (`apps.app_secret.ensure_app_secret`) when the backend starts. It
+        # minted afresh (`apps.app_secret.mint_app_secret`) each time the backend starts. It
         # rode every snapshot and every export inside this tree; nothing is lost by leaving it
         # out, and a copy that travels is a key that lets its holder sign as the gateway.
         #

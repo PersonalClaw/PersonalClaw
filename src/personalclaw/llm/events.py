@@ -26,6 +26,11 @@ EVENT_TOOL_RESULT = "tool_result"
 EVENT_PERMISSION_REQUEST = "permission_request"
 EVENT_COMPLETE = "complete"
 EVENT_COMPACTION_STATUS = "compaction_status"
+#: The ``text`` of a COMPACTION_STATUS a loop sends when it compacted its own history on its own,
+#: between two steps of a turn; ``title`` says how much, in ``/compact``'s words. Not
+#: ``completed``, which is a ``/compact`` command's result: the chat runner lets that replace what
+#: streamed before it, and mid-turn what streamed before it is the answer.
+COMPACTION_AUTOMATIC = "automatic"
 EVENT_CLEAR_STATUS = "clear_status"
 EVENT_AGENT_SWITCHED = "agent_switched"
 # The turn's model failed before it said anything and the next model in its chain answers

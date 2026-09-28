@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { CornerDownLeft, Folder } from 'lucide-react'
 import { api, type FsEntry } from '../../../lib/api'
+import { useSyncedDraft } from '../../../ui/forms'
 
 /** Type/paste a directory path with autocomplete (file-complete). Enter or pick
  *  a suggestion navigates the explorer there. */
 export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir: string) => void }) {
-  const [draft, setDraft] = useState(value)
+  // Follows the folder shown when it moves, never on mount (`useSyncedDraft`).
+  const [draft, setDraft] = useSyncedDraft(value)
   const [open, setOpen] = useState(false)
   const [suggestions, setSuggestions] = useState<FsEntry[]>([])
   const [activeIdx, setActiveIdx] = useState(-1)
   const boxRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { setDraft(value) }, [value])
 
   useEffect(() => {
     if (!open || !draft) { setSuggestions([]); return }

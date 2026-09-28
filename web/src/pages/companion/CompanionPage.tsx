@@ -225,7 +225,8 @@ export function CompanionPage({ navigate, query }: RouteProps) {
 function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
   const { data, refresh } = useQuery<PushStatus>('companion:push', () => api.pushStatus())
   const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState('')
+  // A ReactNode, like `line` below: a note that names the command which fixes it shows it as code.
+  const [note, setNote] = useState<ReactNode>('')
   if (!data) return null
 
   const supported = pushSupported()
@@ -241,7 +242,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
       result.reason === 'denied'
         ? 'Your browser refused notification permission. Allow notifications for this site, then try again.'
         : result.reason === 'no-key'
-          ? 'This gateway has no push keypair yet — run `personalclaw push init`.'
+          ? <>This gateway has no push keypair yet — run <code>personalclaw push init</code>.</>
           : result.reason === 'unsupported'
             ? 'This browser cannot hold a push subscription.'
             : `Could not subscribe${result.detail ? ` — ${result.detail}` : ''}.`,
@@ -256,7 +257,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     refresh()
   }
 
-  let line = ''
+  let line: ReactNode = ''
   let action: ReactNode = null
   if (data.backend === 'none') {
     line = 'Push is switched off for this gateway.'
@@ -310,7 +311,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
       )
     }
   } else if (!data.vapid_ready) {
-    line = 'No push keypair yet. Run `personalclaw push init` on the gateway.'
+    line = <>No push keypair yet. Run <code>personalclaw push init</code> on the gateway.</>
   } else if (on) {
     // Checked BEFORE the capability probe on purpose: the gateway holding a subscription for
     // this profile is a FACT, and it outranks a feature test. Probing first would tell a

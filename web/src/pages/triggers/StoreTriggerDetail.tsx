@@ -4,7 +4,7 @@ import { Trash2, Play, FlaskConical, AlertTriangle, Users } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
-import { api, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
+import { api, ApiError, type ActionProvider, type Trigger as WireTrigger, type TriggerRunResult } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerStatusMeta, explainsCause, runFlashMeta } from '../schedule/scheduleMeta'
 import { actionLabel, EVENT_PATTERN_META, eventMatcherValue } from './triggerMeta'
@@ -29,6 +29,11 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
   onDeleted: () => void
 }) {
   const [busy, setBusy] = useState(false)
+  // Which run button's request is in flight, which `busy` cannot say: it is this panel's one flag,
+  // shared by the switch, Allow and Delete, so it dims every action while any of them runs. Only the
+  // button that was pressed spins (`loading`, which is what publishes `aria-busy`), so a Delete in
+  // flight no longer reads as a Run now working.
+  const [running, setRunning] = useState<'run' | 'dry' | null>(null)
   const [runFlash, setRunFlash] = useState<string | null>(null)
   // A dry run's response, rendered by the SAME `DryRunResult` the schedule panel uses — two
   // inspectors that described one dry run two ways is how a user learns to trust neither.
@@ -130,6 +135,7 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
 
   async function run(isDry: boolean) {
     setBusy(true)
+    setRunning(isDry ? 'dry' : 'run')
     setErr('')
     setRunFlash(null)
     setDry(null)
@@ -156,9 +162,12 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       setHistKey((k) => k + 1)
       onChanged()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Run failed')
+      // 409: a run is already in flight — a scheduled fire, or a Run now from another tab.
+      if (e instanceof ApiError && e.status === 409) setErr('This automation is already running.')
+      else setErr(e instanceof Error ? e.message : 'Run failed')
     } finally {
       setBusy(false)
+      setRunning(null)
     }
   }
 
@@ -292,7 +301,9 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       )}
 
       {err && <FieldError>{err}</FieldError>}
-      {runFlash && !err && <div className="text-on-surface-low text-[0.8125rem]">{runFlash}</div>}
+      {/* What the run this press started recorded, in its history row's words. A status, so it is
+          announced, as the schedule panel's is. */}
+      {runFlash && !err && <p role="status" className="text-on-surface-low text-[0.8125rem]">{runFlash}</p>}
       {dry && <DryRunResult result={dry} providers={providers} onDismiss={() => setDry(null)} />}
 
       {/* No action row at all for a foreign automation — Run now, Dry run and Delete are all
@@ -300,9 +311,12 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
           things that could apply to it. */}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button variant="secondary" size="sm" onClick={() => run(false)} loading={busy}><Play size={14} /> Run now
+          <Button variant="secondary" size="sm" onClick={() => run(false)} loading={running === 'run'}
+            loadingLabel="Running…" disabled={busy} disabledReason={BUSY_REASON}>
+            <Play size={14} /> Run now
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy} disabledReason={BUSY_REASON}>
+          <Button variant="ghost" size="sm" onClick={() => run(true)} loading={running === 'dry'}
+            disabled={busy} disabledReason={BUSY_REASON}>
             <FlaskConical size={14} /> Dry run
           </Button>
           <div className="flex-1" />

@@ -262,6 +262,10 @@ Account → *Require a 2FA code*, or `auth.require_totp: true`).
 Requiring a code before enrolling a secret would make sign-in impossible; `personalclaw auth
 status` warns you about exactly that state, and the local token link remains the way to fix it.
 
+`personalclaw auth totp disable` turns 2FA off and deletes the secret, so the entry in your
+authenticator app stops being any use to anyone; turning it on again enrolls a new one. It is
+refused while a code is still required at login — turn *Require a 2FA code* off first.
+
 ### Step 4 — pairing a phone without typing your password into it
 
 Typing a long passphrase into a phone keyboard, over a tunnel, in public, is the worst place to

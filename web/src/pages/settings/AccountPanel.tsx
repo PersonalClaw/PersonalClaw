@@ -353,9 +353,9 @@ function LoginSection() {
       <Row label="Require a 2FA code"
         hint={state.totp_enabled
           ? 'Also ask for a time-based code at sign-in.'
-          : 'Enroll an authenticator first with `personalclaw auth totp setup`, then turn this on — verify a code works before requiring it.'}>
+          : <>Enroll an authenticator first with <code>personalclaw auth totp setup</code>, then turn this on — verify a code works before requiring it.</>}>
         <Toggle on={state.totp_required} onChange={toggleTotp} disabled={!state.totp_enabled}
-          disabledReason="Enroll an authenticator first with `personalclaw auth totp setup`"
+          disabledReason="Enroll an authenticator first: run personalclaw auth totp setup"
           label="Require a 2FA code" />
       </Row>
 

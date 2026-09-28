@@ -100,8 +100,20 @@ Each terminalized run gets three writes, and all three are surfaces you read: th
 (so the next fire is not suppressed by an overlap gate that thinks the old run is still going), a
 **terminal run row** is written (so the history shows an ending), and the trigger's health is marked.
 
-This covers the runs the schedule starts. A run you start by hand with **Run now** holds no claim,
-so a restart that cuts one off leaves no row and no card.
+A **stop or a Restart** does not leave its runs for the boot pass: it records each run it cuts off
+as it stops, with the same row, health and card, and a reason that says which it was ("Interrupted
+by a gateway restart" or "Interrupted when the gateway stopped"). A notice names the run, and it
+is waiting in your notifications when the gateway is back. A run cut off this way starts no
+`run_completed` chain, because it did not complete.
+
+A Restart starts the new gateway in the same process, so its pid is the old one's. Each claim also
+names the program image that took it, and a claim an earlier image left is closed at boot like one
+whose process is gone.
+
+A run you start by hand with **Run now** holds the trigger's claim while it runs, as a scheduled
+fire does: a second **Run now** meanwhile is refused ("This automation is already running."), and
+a stop that cuts it off records it. Its row is the hand run's (`manual`), and the trigger's health
+is left alone, as it is for any hand run.
 
 An interrupted run is **not run again on its own**, because it may already have done part of its
 work. It waits for you instead, with the slots a stopped PersonalClaw missed: the Triggers page
@@ -114,17 +126,19 @@ automation with catch-up enabled gets no card: it fires once, staggered, on its 
 | **Checked on** | the **run history** (the run has a terminal `interrupted` status, labelled "interrupted by a restart", with a reason naming the restart), the Schedule row (it stops rendering as in flight), and the review card at the top of the **Triggers** page |
 | **The status** | `interrupted` — its own word, because the run did not blow a deadline |
 
-- `src/personalclaw/triggers/reaper.py:231` — `terminalize_orphans_sync`, the boot pass, and its
-  three writes.
-- `src/personalclaw/triggers/reaper.py:83` — `RESTART_INTERRUPTED_STATUS = "interrupted"`. The
-  frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:138`), and
+- `src/personalclaw/triggers/reaper.py:242` — `terminalize_orphans_sync`, the boot pass, and its
+  three writes; `reaper.py:341` — `record_stopped_run`, the run a stop cuts off.
+- `src/personalclaw/triggers/claims.py` — `orphaned_ids`, which judges a claim naming this very
+  process by the image that took it.
+- `src/personalclaw/triggers/reaper.py:88` — `RESTART_INTERRUPTED_STATUS = "interrupted"`. The
+  frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:146`), and
   `web/src/pages/triggers/triggerStatusVocabulary.test.ts` fails if a run status the backend can
   record has no rendering there.
 - `src/personalclaw/triggers/review.py:191` — `cards_from_orphans`, the interrupted run's card, and
   `review.py:151` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
   schedule as well as an interval's grid).
 - `src/personalclaw/dashboard/handlers/triggers.py:2227` — `api_trigger_review`, the cards and the
-  decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:427`,
+  decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:432`,
   `resolve_missed`.
 
 ---

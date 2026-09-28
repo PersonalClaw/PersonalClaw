@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { FileText, NotebookPen } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -82,6 +82,21 @@ function Absent({ doc, instructed }: { doc: WorkflowDeliverableDoc; instructed: 
   )
 }
 
+/** Where the shown document was read from. A kept copy says whose writing it is and where it was
+ *  written: a project-less run's steps work in the shared workspace, and the run keeps its own copy
+ *  of what each step wrote there rather than reading a folder other runs write into too. */
+function readFrom(doc: WorkflowDeliverableDoc): ReactNode {
+  if (doc.found_in === 'kept') {
+    return (
+      <>
+        the run’s own copy of what {doc.kept_by ? <>step <span className="font-mono">{doc.kept_by}</span></> : 'a step'} wrote
+        {doc.kept_from && <> in <span className="font-mono">{doc.kept_from}</span></>}
+      </>
+    )
+  }
+  return `read from this run’s ${doc.found_in === 'workspace' ? 'workspace' : 'run directory'}`
+}
+
 /** The name a slot was looked for under, or an explicit dash. Never blank: a missing label reads as a
  *  rendering bug, where “—” reads as the answer it is. */
 function slotLabel(prefix: string, doc: WorkflowDeliverableDoc): string {
@@ -161,8 +176,7 @@ export function DeliverablePanel({ runId }: { runId: string }) {
         <>
           <DocSurface>{doc.content}</DocSurface>
           <p data-type="caption" className="text-on-surface-low">
-            {doc.bytes?.toLocaleString()} bytes, read from this run’s{' '}
-            {doc.found_in === 'workspace' ? 'workspace' : 'run directory'}
+            {doc.bytes?.toLocaleString()} bytes, {readFrom(doc)}
             {doc.truncated && ' · truncated for display — open the file for the rest'}
             {/* A clipped blob is REPORTED for the same reason truncation is: a document that
                 silently loses a chunk is indistinguishable from one that never had it. */}

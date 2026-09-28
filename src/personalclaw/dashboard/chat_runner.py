@@ -105,6 +105,7 @@ from personalclaw.llm.base import (
     EVENT_TOOL_RESULT,
 )
 from personalclaw.llm.events import (
+    COMPACTION_AUTOMATIC,
     EVENT_MODEL_SUBSTITUTION,
     TOOL_META_APPROVAL_WAIVED,
     TOOL_META_AUTO_DENIED,
@@ -4643,7 +4644,14 @@ async def run_chat(
                     continue
             elif event.kind == EVENT_COMPACTION_STATUS:
                 logger.debug("Main loop: compaction event text=%r", event.text)
-                if _broadcast_compaction_result(state, session, event):
+                if event.text == COMPACTION_AUTOMATIC:
+                    # The loop compacted its own history between two steps of this turn: said
+                    # here, in /compact's words, after the answer streamed so far — which stays.
+                    if assistant_text:
+                        _flush_segment(state, session, assistant_text)
+                        assistant_text = ""
+                    _broadcast_compaction_result(state, session, event)
+                elif _broadcast_compaction_result(state, session, event):
                     saw_compaction = True
                     # What streamed before the result was the agent's compaction chatter,
                     # not an answer: the result message above replaces it.

@@ -340,8 +340,10 @@ and neither sends a request unsigned when the app has no secret:
   from now is refused (replay protection). The compare is constant-time
   (`hmac.compare_digest`).
 - **Secret:** a per-app 256-bit key at `apps_dir()/<app>/.app_secret`, minted
-  0600 on first backend start and injected into the child via
-  `PERSONALCLAW_APP_SECRET`. It is never logged.
+  0600 afresh every time the backend starts and injected into the child via
+  `PERSONALCLAW_APP_SECRET`, so it lasts as long as that backend: a copy stops
+  working the next time it starts (`apps/app_secret.mint_app_secret`). It is
+  never logged.
 - **Verifier:** `personalclaw.sdk.security.require_proxy_signature()`, an
   aiohttp middleware every first-party backend installs (and every third-party
   backend should). It reads the body once and stashes it on
