@@ -224,7 +224,9 @@ describe('the scrollable <pre> family is derived, not hand-listed', () => {
       ['ui/Markdown.tsx', /aria-label=\{lang \? `\$\{lang\} code` : 'Code'\}/],
       ['ui/widget/MermaidBlock.tsx', /aria-label="Diagram source"/],
       ['ui/ApprovalPrompt.tsx', /aria-label="Tool arguments"/],
-      ['pages/settings/UpdatesPanel.tsx', /aria-label="Update commands"/],
+      // The update's commands, or a pin set back's rollback commands: named as the caption above
+      // the block says, which is the surface's own words for whichever it shows.
+      ['pages/settings/UpdatesPanel.tsx', /aria-label=\{verdict === 'pin_older' \? 'Rollback commands' : 'Update commands'\}/],
     ]
     for (const [rel, re] of shared) {
       const src = readFileSync(join(SRC, rel), 'utf8')

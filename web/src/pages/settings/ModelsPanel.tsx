@@ -1091,7 +1091,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
       )}
 
       {unavailable.length > 0 && (
-        <ul className="flex flex-col gap-1" aria-label={`${meta.label} providers that can’t be used right now`}>
+        <ul className="flex flex-col gap-xs" aria-label={`${meta.label} providers that can’t be used right now`}>
           {unavailable.map((p) => (
             <li key={p.name} data-type="caption" className="flex items-start gap-1.5 rounded-md bg-surface px-2.5 py-1.5 text-on-surface-low">
               <AlertTriangle size={12} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />

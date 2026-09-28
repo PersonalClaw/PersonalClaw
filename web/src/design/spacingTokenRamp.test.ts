@@ -111,8 +111,13 @@ const RUNG: Record<number, string> = { 4: 'xs', 8: 's', 12: 'm', 16: 'l', 20: 'x
  *  plus that change) → 2977 (the rewritten install-consent module, `pages/apps/installConsent`,
  *  put every rung value on its rungs — its two remaining raw values share an element with a
  *  `gap-1.5` half-step, so they stay in one regime — and the Store's new saved-credentials row
- *  took `gap-s` beside its `p-m`; measured on `ab2536010` plus that change). */
-const MAPPABLE_CEILING = 2977
+ *  took `gap-s` beside its `p-m`; measured on `ab2536010` plus that change) → 2974 (`5fa5fef9a`
+ *  measured 2979: an agent runtime's Test and adapter rows in `settings/ProviderCard` and the list
+ *  of image and video providers that cannot be used in `settings/ModelsPanel` had landed on raw
+ *  rung values, and all five are on their rungs now. The chat notice's `mb-2`, which moved into
+ *  `ui/composer/ComposerNotice`, stays raw: it shares its element with `gap-1.5`, `px-2.5` and
+ *  `py-1.5` half-steps, so converting it alone would split one element across two regimes). */
+const MAPPABLE_CEILING = 2974
 
 /** NOT a gate. The half-step population, recorded so the owner question has a number attached and
  *  so a later pass can see whether it moved. Adding rungs to the ramp would convert most of it. */

@@ -219,14 +219,14 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                       subtitle="Provided by the runtime — read-only."
                       badge={g.ready ? undefined : g.state === 'untested' ? 'not tried yet' : 'unavailable'}>
                       {!g.ready ? (
-                        <p className="text-on-surface-low text-[0.8125rem]">{g.detail || 'This runtime is not ready.'}</p>
+                        <p data-type="body-s" className="text-on-surface-low">{g.detail || 'This runtime is not ready.'}</p>
                       ) : g.failure ? (
                         // The agents are unknown, so this says why rather than "No agents discovered".
-                        <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{g.failure}</p>
+                        <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{g.failure}</p>
                       ) : items.length === 0 ? (
                         // Same n-branch as the Native group: a search miss must not read as an
                         // empty catalog — the count above it is filtered too, so they agree (#667).
-                        <p className="text-on-surface-low text-[0.8125rem]">{n ? 'No matching agents.' : 'No agents discovered.'}</p>
+                        <p data-type="body-s" className="text-on-surface-low">{n ? 'No matching agents.' : 'No agents discovered.'}</p>
                       ) : (
                         <div className="flex flex-col gap-s">
                           {items.map((a, i) => (

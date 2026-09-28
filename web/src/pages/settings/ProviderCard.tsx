@@ -145,16 +145,16 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
       {/* When the answer above was measured: a readiness that is a past Test's says so, rather than
           reading as the present state. */}
       {runtime && runtime.tested_at && !unavailable && (
-        <div data-type="caption" className="mt-1 text-on-surface-low">Last tested {new Date(runtime.tested_at).toLocaleString()}</div>
+        <div data-type="caption" className="mt-xs text-on-surface-low">Last tested {new Date(runtime.tested_at).toLocaleString()}</div>
       )}
       {signingIn && runtime && runtime.state === 'needs_login' && (
-        <div role="status" data-type="caption" className="mt-1 text-on-surface-low">When the sign-in in the terminal finishes, press Test to check it.</div>
+        <div role="status" data-type="caption" className="mt-xs text-on-surface-low">When the sign-in in the terminal finishes, press Test to check it.</div>
       )}
       {/* Its ACP adapter installs when the app is enabled and never behind the user's back, so one
           that is missing waits until they say again, whether an install failed or none is on
           record: Retry enables the app again, which is that moment. */}
       {runtime?.adapter_install && !unavailable && (
-        <div className="mt-2 flex items-start gap-2">
+        <div className="mt-s flex items-start gap-s">
           {runtime.adapter_install.error ? (
             <p data-type="caption" className="flex flex-1 items-start gap-1.5" style={{ color: 'var(--color-danger)' }}>
               <AlertTriangle size={12} className="mt-0.5 shrink-0" /> Its ACP adapter didn't install when you enabled it: {runtime.adapter_install.error}

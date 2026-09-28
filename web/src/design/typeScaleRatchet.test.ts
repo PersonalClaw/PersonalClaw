@@ -21,7 +21,10 @@ import { join } from 'node:path'
 // the attachment chips and their preview, the agent's model and hook notes, the palette's empty
 // state and footer). `ecaf8b673` measured 674, 21 over, because those surfaces landed on raw sizes;
 // 643 is the tree's measured count after moving 31.
-const CEILING = 643
+// 643 → 641: the line under each of the agents page's runtime groups is on `body-s`. The two lines
+// added for a runtime that is not ready and for a failed lookup had landed on raw sizes
+// (`5fa5fef9a` measured 644), and the empty-group line that shares their slot moved with them.
+const CEILING = 641
 
 const RAW_SIZE = /text-\[0?\.[0-9]+rem\]/g
 
