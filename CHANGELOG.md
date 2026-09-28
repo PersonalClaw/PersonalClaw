@@ -658,6 +658,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Without the HTML sanitizer, `web_fetch`, `web_extract` and `document_create` fail like any other call, in the refusal's words, instead of raising (an SDK change web-tools and design-critique see through `personalclaw.sdk.net`).**
 
+- **A password that holds an `@`, a `:` or a `/` is masked whole in every detail and log line instead of leaving its tail behind, and the login of an scp-style `user:password@host:path` address is masked too.**
+
 - **The repository publishes no list of names to keep out, in any form, and its publication check reads none.**
 
 - **The agent's commands, its loops and workflows, and the git that fetches an app get no gateway secret, and an app's own children can have the same allowlist through `personalclaw.sdk.util.child_process_env` (an SDK addition piper-tts and skills-sh use).**

@@ -690,6 +690,15 @@ the same rotation on demand, and keeps the live log if the archive cannot be wri
 
 - Session-archive reads are redacted (`history.py` via
   `redact_credentials` / `redact_exfiltration_urls`).
+- **A login in an address is masked whole, and only the login.** In a URL the credential runs to
+  the last `@` before the host, so a password holding an `@`, a `:` or a `/` is masked entirely
+  (`https://ada:p@ss@host/x` becomes `https://[REDACTED: url credential]@host/x`); where a raw
+  character in a password cuts the address short, the mask runs on to the last `@` it can belong
+  to. An scp-style `user:password@host:path`, which has no `://`, has its login masked the same
+  way. Every mask built on `redact_credentials` carries it: the log sinks' `MaskingFormatter`,
+  `redact_or_withhold`, `redact_for_display`, `mask_child_output`, and `strip_url_userinfo` for an
+  address that has to keep working. `tests/test_redaction_cost.py` holds the fast scan to a plain
+  reading of the rule, byte for byte.
 - **A text its masker fails on is withheld, never passed on as it came**
   (`security.redact_or_withhold`). A masker that raised proves nothing about what the text holds,
   so the local-model health message, a run notification, a send-message hook's text, the run

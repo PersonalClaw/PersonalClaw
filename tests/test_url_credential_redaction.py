@@ -26,13 +26,24 @@ carries both cases.
 #751 asked for the diagnostics log stream to call the redactors. It already does;
 its stated repro still leaked purely because of the missing pattern here. Fixing
 the pattern once closes both.
+
+The positional rule then stopped at the FIRST `@`. A password may hold one, so
+`https://ada:p@ss@host` came out as `https://[REDACTED: url credential]@ss@host`:
+the password's tail, in every detail and log line that masked it. And an
+scp-style `user:password@host:path`, which has no `://` to anchor on, was not
+masked at all. The credential now runs to the last `@` before the host, and an
+scp-style login is masked the same way.
 """
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from personalclaw.security import redact_credentials, redact_url_userinfo
+
+_TAG = "[REDACTED: url credential]"
 
 #: Credential-bearing URLs whose secret is NOT a recognisable provider-key shape,
 #: so nothing but a positional rule can catch them. `hunter2` and `s3cr3t` are
@@ -134,13 +145,16 @@ class TestIdempotence:
         assert redact_url_userinfo(once)[0] == once
 
     def test_it_is_idempotent_by_CONSTRUCTION_not_by_a_guard(self):
-        """The tag contains a space and the userinfo character class excludes
-        whitespace, so a second match is impossible rather than merely prevented.
+        """The tag holds a space straight after its `:`, and whitespace ends an
+        authority, so what a second pass reads after `://` is `[REDACTED:` with
+        nothing after it: a second match is impossible rather than merely prevented.
         Pinned so nobody "simplifies" the tag into something matchable."""
-        from personalclaw.security import _URL_USERINFO_CORE_RE, _URL_USERINFO_TAG
+        from personalclaw.security import _URL_AUTHORITY_RE, _URL_USERINFO_TAG
 
-        assert " " in _URL_USERINFO_TAG
-        assert not _URL_USERINFO_CORE_RE.search(f"https://{_URL_USERINFO_TAG}@host/x")
+        assert _URL_USERINFO_TAG.startswith("[REDACTED: ")
+        m = _URL_AUTHORITY_RE.search(f"https://{_URL_USERINFO_TAG}@host/x")
+        assert m is not None and m.group("authority") == "[REDACTED:"
+        assert redact_url_userinfo(f"https://{_URL_USERINFO_TAG}@host/x")[1] == []
 
     def test_a_composed_line_holding_a_redacted_url_survives(self):
         """The documented hazard's shape, applied to this pass's output: a caller
@@ -220,3 +234,156 @@ class TestGitSourceValidation:
             _validate_git_source("https://user:s3cr3t@github.com/a/b.git")
         with pytest.raises(ValueError, match="git@github.com"):
             _validate_git_source("not-a-git-url")
+
+
+# ── a password holding `@`, `:` or `/`, and an scp-style login ───────────────
+
+
+#: ``(text, what it masks to)``. Each password holds an `@`, a `:` or a `/`, raw. An
+#: `@` in one used to leave the rest of it behind, and a `/` all of it.
+SPECIAL = [
+    (
+        "https://ada:p@ss@git.example.com/acme/repo.git",
+        f"https://{_TAG}@git.example.com/acme/repo.git",
+    ),
+    (
+        "https://ada:pa:ss@git.example.com/acme/repo.git",
+        f"https://{_TAG}@git.example.com/acme/repo.git",
+    ),
+    (
+        "https://ada:pa/ss@git.example.com/acme/repo.git",
+        f"https://{_TAG}@git.example.com/acme/repo.git",
+    ),
+    (
+        "https://ada:p@ss/w0rd@git.example.com/acme/repo.git",
+        f"https://{_TAG}@git.example.com/acme/repo.git",
+    ),
+    (
+        "https://ada:p@s:s/w@git.example.com/acme/repo.git",
+        f"https://{_TAG}@git.example.com/acme/repo.git",
+    ),
+    ("ssh://deploy:p@ss@build.example.com:22/repo", f"ssh://{_TAG}@build.example.com:22/repo"),
+    (
+        "fatal: unable to access 'https://ada:pa/ss@git.example.com/r.git/': URL rejected",
+        f"fatal: unable to access 'https://{_TAG}@git.example.com/r.git/': URL rejected",
+    ),
+    (
+        '{"remote":"https://ada:p@ss/w@git.example.com","by":"ops@example.com"}',
+        '{"remote":"https://' + _TAG + '@git.example.com","by":"ops@example.com"}',
+    ),
+]
+
+#: ``(text, what it masks to)``: an scp-style address, whose login has no `://` before it.
+SCP = [
+    ("deploy:hunter2@git.example.com:acme/repo.git", f"{_TAG}@git.example.com:acme/repo.git"),
+    (
+        "git clone deploy:p@ss/w0rd@git.example.com:acme/repo.git",
+        f"git clone {_TAG}@git.example.com:acme/repo.git",
+    ),
+    (
+        "rsync -av ada:pa:ss@backup.example.com::data/srv",
+        f"rsync -av {_TAG}@backup.example.com::data/srv",
+    ),
+    (
+        "HTTPS_PROXY=ada:hunter2@proxy.example.com:3128",
+        f"HTTPS_PROXY={_TAG}@proxy.example.com:3128",
+    ),
+    ("scp ada:s3cr3t@[2001:db8::1]:/srv/x .", f"scp {_TAG}@[2001:db8::1]:/srv/x ."),
+]
+
+#: Holding an `@` and a `:` does not make a text a login. Each comes through as it was.
+NOT_A_LOGIN = [
+    "git@github.com:owner/repo.git",
+    "https://registry.example.com/@scope/pkg",
+    "https://registry.example.com:8443/@scope/pkg",
+    "pip install git+https://github.com/org/repo.git@v1.2#egg=x",
+    '{"url":"https://api.example.com","mail":"ops@example.com"}',
+    "pulled nginx:1.25@sha256:0123456789abcdef0123456789abcdef",
+    "the css2?family=Inter:wght@100..900: a variable font",
+    "https://matrix.example/#/@alice:matrix.example",
+]
+
+
+class TestAPasswordMayHoldAnAtAColonOrASlash:
+    @pytest.mark.parametrize(("text", "masked"), SPECIAL, ids=lambda t: t[:40])
+    def test_the_whole_password_is_masked_and_the_host_kept(self, text, masked):
+        assert redact_credentials(text)[0] == masked
+
+    def test_a_real_host_keeps_the_at_sign_its_path_holds(self):
+        """The credential ends at the host, so an `@` after it is the path's: a pip ref here."""
+        text = "pip install git+https://tok@github.com/org/repo.git@v1.2#egg=x"
+        masked = f"pip install git+https://{_TAG}@github.com/org/repo.git@v1.2#egg=x"
+        assert redact_credentials(text)[0] == masked
+
+
+class TestAnScpStyleLoginIsMasked:
+    @pytest.mark.parametrize(("text", "masked"), SCP, ids=lambda t: t[:40])
+    def test_the_login_is_masked_and_the_host_and_path_kept(self, text, masked):
+        assert redact_credentials(text)[0] == masked
+
+    @pytest.mark.parametrize("text", NOT_A_LOGIN, ids=lambda t: t[:40])
+    def test_text_that_only_looks_like_one_is_unchanged(self, text):
+        assert redact_credentials(text) == (text, [])
+
+    def test_a_second_pass_changes_nothing(self):
+        once = redact_credentials(SCP[1][0])[0]
+        assert redact_credentials(once) == (once, [])
+
+
+class TestEveryMaskerGetsTheRule:
+    """The masks built on `redact_credentials` carry the rule to where the text goes: a detail
+    that is shown, sent or stored, and every log line."""
+
+    TEXT = (
+        "clone of https://ada:p@ss/w0rd@git.example.com/acme/repo.git failed; "
+        "retry with deploy:hunter2@build.example.com:acme/repo.git"
+    )
+    #: What of the two passwords must not be left: each, and the tail the old rule kept.
+    LEFT = ("p@ss/w0rd", "ss/w0rd", "hunter2")
+    KEPT = ("@git.example.com/acme/repo.git", "@build.example.com:acme/repo.git")
+
+    def _holds_no_password(self, out: str) -> None:
+        for secret in self.LEFT:
+            assert secret not in out, (secret, out)
+        for kept in self.KEPT:
+            assert kept in out, (kept, out)
+
+    def test_redact_credentials(self):
+        self._holds_no_password(redact_credentials(self.TEXT)[0])
+
+    def test_redact_or_withhold(self):
+        from personalclaw.security import redact_or_withhold
+
+        self._holds_no_password(redact_or_withhold(self.TEXT))
+
+    def test_the_display_and_model_masks(self):
+        from personalclaw.security import redact_for_display, redact_for_model
+
+        self._holds_no_password(redact_for_display(self.TEXT))
+        self._holds_no_password(redact_for_model(self.TEXT))
+
+    def test_a_log_record_the_masking_formatter_writes(self):
+        from personalclaw.security import MaskingFormatter
+
+        record = logging.LogRecord(
+            "personalclaw.example", logging.WARNING, __file__, 1, "git said: %s", (self.TEXT,), None
+        )
+        line = MaskingFormatter("%(levelname)s %(message)s").format(record)
+        assert line.startswith("WARNING git said: ")
+        self._holds_no_password(line)
+
+    def test_what_a_child_printed(self):
+        from personalclaw.security import mask_child_output
+
+        self._holds_no_password(mask_child_output(self.TEXT, limit=None))
+
+    @pytest.mark.parametrize(
+        "proxy",
+        ["http://ada:p@ss@proxy.example.com:3128", "http://ada:p@ss/w0rd@proxy.example.com:3128"],
+    )
+    def test_a_proxy_address_keeps_working_without_any_of_its_login(self, proxy):
+        """Taken out whole, not only up to its first `@`: what was left of it was sent to the
+        proxy as the user name."""
+        from personalclaw.security import strip_url_userinfo
+
+        assert strip_url_userinfo(proxy) == "http://proxy.example.com:3128"

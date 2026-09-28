@@ -23,15 +23,23 @@ whole of this file is a **differential** test: the obvious alternative fix — c
 and masking anything over the cap — would have been worse for the common case. A long run that IS a
 credential is already replaced whole; a long run that is innocuous (a base64 image, a minified
 bundle) is preserved verbatim, and a cap would silently mask it. So the requirement here is not
-"still redacts credentials", it is **byte-identical output on every input**, and the pre-#2637
-implementation is kept below as the oracle that proves it.
+"still redacts credentials", it is **byte-identical output on every input**, against a reference
+that says the rule as plainly as it can be said.
 
-Two facts carry the equivalence, and `TestTheEquivalenceRestsOnTwoFacts` pins both:
+The rule has since changed on purpose. It stopped at the FIRST `@`, so a password holding one
+(`https://ada:p@ss@host`) left its tail, `ss@host`, in every line it masked, and it did not see an
+scp-style `user:password@host:path` at all. The credential now runs to the last `@` of the
+authority, or past an authority a password cut short, and an scp-style login is masked too. The
+reference below was rewritten with the rule, from plain loops over the text, so the fast scan in
+`security.py` is still held to byte-identity on every input here.
+
+`TestTheFastScanRestsOnThreeFacts` pins what the fast scan's correctness rests on:
 
   * `:` is not a scheme character, so the run of scheme characters ending at a `://` can only be
-    the maximal one — every shorter split the old form backtracked through was a guaranteed failure.
-  * `@` is not a userinfo character, so the userinfo run can only be followed by `@` at its
-    maximal length, which is what makes the possessive `++` free.
+    the maximal one, and the backward walk may take it without trying a shorter split.
+  * the authority class excludes every character that ends an authority and holds `@`, so its one
+    possessive run IS the authority, and the last `@` in it is `str.rfind`'s answer.
+  * the scheme class and the scheme pattern agree character by character.
 """
 
 from __future__ import annotations
@@ -46,29 +54,124 @@ import pytest
 
 from personalclaw import security as S
 
-# ── the oracle: `redact_credentials` exactly as it stood before #2637 ──
-# Kept verbatim rather than described. A prose claim of equivalence is what let the cost sit here
-# unnoticed; an executable one cannot drift from the thing it certifies.
+# ── the reference: the rule, said as plainly as it can be ──
+# Plain loops over the text, no memo and no possessive run, so the fast scan's shortcuts are what
+# is under test. It shares only leaf grammars with `security.py` (what a host is, the tag, the
+# shape-based patterns), never the scanning. The shape-based pass is spelled as it stood before
+# #2717, a fresh leftmost `replace` per match, which the splice tests below hold the fast one to.
 
-_PRE_2637_URL_USERINFO_RE = re.compile(
-    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<userinfo>[^/?#\s@]+)@"
-)
-
-
-def _pre_2637_redact_url_userinfo(text: str) -> tuple[str, list[str]]:
-    warnings: list[str] = []
-
-    def _sub(m: "re.Match[str]") -> str:
-        warnings.append(f"Redacted credential in a {m.group('scheme')[:-3]} URL")
-        return f"{m.group('scheme')}{S._URL_USERINFO_TAG}@"
-
-    return _PRE_2637_URL_USERINFO_RE.sub(_sub, text), warnings
+_SCHEME_CHAR = set(string.ascii_letters + string.digits + "+.-")
+#: What ends an authority, besides whitespace and a `:` that begins another `://`.
+_AUTHORITY_END = set('/?#"<>`{}|\\^')
 
 
-def _pre_2637_redact_credentials(text: str) -> tuple[str, list[str]]:
-    warnings: list[str] = []
-    result, url_warnings = _pre_2637_redact_url_userinfo(text)
-    warnings.extend(url_warnings)
+def _ends_authority(text: str, i: int) -> bool:
+    ch = text[i]
+    return ch.isspace() or ch in _AUTHORITY_END or (ch == ":" and text.startswith("//", i + 1))
+
+
+def _reference_url_spans(text: str) -> list[tuple[int, int, str]]:
+    """``(start, end, scheme)`` of each URL credential, found the slow and obvious way."""
+    spans: list[tuple[int, int, str]] = []
+    covered = 0
+    i = 0
+    while (sep := text.find("://", i)) != -1:
+        begin = end = sep + 3
+        while end < len(text) and not _ends_authority(text, end):
+            end += 1
+        i = end
+        if sep < covered:
+            continue  # inside the credential just found
+        run = sep
+        while run > 0 and text[run - 1] in _SCHEME_CHAR:
+            run -= 1
+        first = next((k for k in range(run, sep) if text[k] in string.ascii_letters), None)
+        if first is None:
+            continue  # no scheme
+        at = text.rfind("@", begin, end)
+        host = text[max(at + 1, begin) : end]
+        if (at != -1 or ":" in host) and not S._URL_HOST_RE.fullmatch(host):
+            # Cut short inside a password: read on, to whitespace or the quote the URL is in.
+            stop = len(text)
+            if first and text[first - 1] in "\"'":
+                close = text.find(text[first - 1], end)
+                stop = len(text) if close == -1 else close
+            stop = next((k for k in range(end, stop) if text[k].isspace()), stop)
+            later = text.rfind("@", end, stop)
+            if later != -1:
+                at = later
+        if at <= begin:
+            continue  # no credential, or an empty one
+        covered = at + 1
+        spans.append((first, covered, text[first:sep]))
+    return spans
+
+
+def _reference_redact_url_userinfo(text: str) -> tuple[str, list[str]]:
+    spans = _reference_url_spans(text)
+    if not spans:
+        return text, []
+    out: list[str] = []
+    pos = 0
+    for start, end, scheme in spans:
+        out.append(text[pos:start] + f"{scheme}://{S._URL_USERINFO_TAG}@")
+        pos = end
+    out.append(text[pos:])
+    return "".join(out), [f"Redacted credential in a {scheme} URL" for _s, _e, scheme in spans]
+
+
+def _reference_scp_spans(text: str) -> list[tuple[int, int]]:
+    """Where each scp-style login lies: the last `@` of a whitespace-free run that a host and its
+    `:` follow, back to the first `name:` there that starts the run or follows an opener."""
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while pos < len(text):
+        if text[pos].isspace():
+            pos += 1
+            continue
+        stop = pos
+        while stop < len(text) and not text[stop].isspace():
+            stop += 1
+        run, base, pos = text[pos:stop], pos, stop
+        at = next(
+            (
+                k
+                for k in range(len(run) - 1, 0, -1)
+                if run[k] == "@"
+                and (host := S._SCP_HOST_RE.match(run, k + 1))
+                and S._names_an_scp_host(host.group()[:-1])
+            ),
+            None,
+        )
+        if at is None:
+            continue
+        for colon in (c for c in range(at) if run[c] == ":"):
+            begin = colon
+            while begin and run[begin - 1] in S._SCP_USER_CHARS:
+                begin -= 1
+            if (
+                begin < colon
+                and (run[begin].isalnum() or run[begin] == "_")
+                and (not begin or run[begin - 1] in S._SCP_OPENERS)
+                and not run.startswith("//", colon + 1)
+            ):
+                spans.append((base + begin, base + at))
+                break
+    return spans
+
+
+def _reference_redact_credentials(text: str) -> tuple[str, list[str]]:
+    result, warnings = _reference_redact_url_userinfo(text)
+    spans = _reference_scp_spans(result)
+    if spans:
+        out, pos = [], 0
+        for begin, end in spans:
+            out.append(result[pos:begin] + S._URL_USERINFO_TAG)
+            pos = end
+        result = "".join(out) + result[pos:]
+        warnings += ["Redacted credential in an scp-style address"] * len(spans)
+    result, webhook_warnings = S.redact_webhook_urls(result)
+    warnings += webhook_warnings
     for m in S._CREDENTIAL_PATTERNS.finditer(result):
         matched = m.group()
         result = result.replace(matched, "[REDACTED: credential]", 1)
@@ -99,6 +202,18 @@ CREDENTIALS = [
     "fake-bot-token-1",
     "AIza" + "b" * 35,
     "client_secret: swordfish99",
+    # A password holding `@`, `:` or `/`, raw, and an scp-style login.
+    "https://ada:p@ss@git.example.com/acme/repo.git",
+    "https://ada:pa:ss@git.example.com/acme/repo.git",
+    "https://ada:pa/ss@git.example.com/acme/repo.git",
+    "https://ada:p@s:s/w@git.example.com/acme/repo.git",
+    "https://ada:p@ss/w0rd@git.example.com/acme/repo.git",
+    '{"remote":"https://ada:p@ss/w@git.example.com","by":"ops@example.com"}',
+    "fatal: unable to access 'https://ada:pa/ss@git.example.com/r.git/': URL rejected",
+    "deploy:p@ss/w0rd@build.example.com:acme/repo.git",
+    "rsync -av ada:hunter2@backup.example.com::data/srv",
+    "HTTPS_PROXY=ada:pa:ss@proxy.example.com:3128",
+    "scp ada:s3cr3t@[2001:db8::1]:/srv/x .",
 ]
 
 #: Near-misses. A rule that fired on these would make every log worse, so they pin the other edge.
@@ -115,6 +230,17 @@ NEAR_MISSES = [
     "the password is unset",
     "fake-key-short",
     "bearer x",
+    "https://registry.example.com/@scope/pkg",
+    "https://registry.example.com:8443/@scope/pkg",
+    "http://localhost/@user",
+    "pip install git+https://github.com/org/repo.git@v1.2#egg=x",
+    '{"url":"https://api.example.com","mail":"ops@example.com"}',
+    "image nginx:1.25@sha256:0123456789abcdef0123456789abcdef",
+    "css2?family=Inter:wght@100..900: a variable font",
+    "family=Roboto:wght@400:",
+    # A URL is no scp-style login, whatever `@name:` its path holds (a chat handle, here).
+    "https://matrix.example/#/@alice:matrix.example",
+    "https://example.com/p@host.example:x",
 ]
 
 #: Long innocuous runs — the shapes this defect actually fired on. Each is preserved VERBATIM
@@ -155,6 +281,39 @@ ADVERSARIAL = [
     f"repo_url: https://{S._URL_USERINFO_TAG}@github.com/a/b.git",
     "q://u@h " * 200,
     "s://" + "a" * 100 + "@h",
+    # The cut-short reading: its quote, its whitespace, and a run that holds no `@`.
+    "a://b:c/d",
+    "a://b:c/d@e",
+    "a://b:c/d@e f@g",
+    '"a://b:c/d@e"@f',
+    "'a://b:c/d@e'@f",
+    "a://b:c/a://b:c/a://b:c/@",
+    # A run found to hold no `@` is not looked in again; the next run is.
+    "a://b:c/d a://b:c/d@e",
+    "a://b:c/d@e a://b:c/f a://b:c/g@h",
+    "'a://b:c/d' a://b:c/d@e",
+    "a://b:c/d '@e' a://b:c/f@g",
+    "a://@b:c/d@e",
+    "a://b:/d@e",
+    "a://b:1/d@e",
+    "a://[::1]:1/d@e",
+    "a://[::1:/d@e",
+    "a://u@db/app@x",
+    "a://u@db:1/app@x",
+    "a://u@localhost/app@x",
+    # The scp reading: the first login of the run, the last `@` a host follows, and openers.
+    "a:b@c:d",
+    "a:b@c:d e:f@g:h",
+    "=a:b@c:d",
+    "(a:b@c:d)",
+    "x/a:b@c:d",
+    "a:b@c.d:e,f:g@h:i",
+    "a:b@sha256:c",
+    "a:b@1:c",
+    "a:b@1.2.3.4:c",
+    "a:b@[::1]:c",
+    ".a:b@c:d",
+    "a:b@c:d@e:f",
 ]
 
 #: Unicode, including the separators a naive character walk gets wrong.
@@ -200,19 +359,19 @@ class TestTheOutputIsByteIdentical:
     """Any input where the new implementation differs is a defect in the change, not a fix."""
 
     @pytest.mark.parametrize("text", CORPUS, ids=lambda t: (t[:32] or "empty").replace("\n", "|"))
-    def test_the_corpus_redacts_exactly_as_before(self, text):
-        assert S.redact_credentials(text) == _pre_2637_redact_credentials(text)
+    def test_the_corpus_redacts_exactly_as_the_reference(self, text):
+        assert S.redact_credentials(text) == _reference_redact_credentials(text)
 
     @pytest.mark.parametrize("kb", [1, 16, 64])
-    def test_a_mixed_document_redacts_exactly_as_before(self, kb):
+    def test_a_mixed_document_redacts_exactly_as_the_reference(self, kb):
         text = _mixed_document(kb * 1024)
-        assert S.redact_credentials(text) == _pre_2637_redact_credentials(text)
+        assert S.redact_credentials(text) == _reference_redact_credentials(text)
 
     def test_the_url_pre_pass_alone_is_identical_too(self):
         """`redact_url_userinfo` is public — a caller that only handles URLs uses it directly, so
         its own return value is part of the contract, not just its contribution downstream."""
         for text in CORPUS:
-            assert S.redact_url_userinfo(text) == _pre_2637_redact_url_userinfo(text), text[:60]
+            assert S.redact_url_userinfo(text) == _reference_redact_url_userinfo(text), text[:60]
 
     def test_exhaustive_over_the_characters_that_decide_a_match(self):
         """Every string up to length 5 over the alphabet the rule actually branches on.
@@ -225,13 +384,25 @@ class TestTheOutputIsByteIdentical:
         for n in range(6):
             for tup in itertools.product(alphabet, repeat=n):
                 text = "".join(tup)
-                assert S.redact_credentials(text) == _pre_2637_redact_credentials(text), text
+                assert S.redact_credentials(text) == _reference_redact_credentials(text), text
+                checked += 1
+        assert checked == sum(len(alphabet) ** n for n in range(6))
+
+    def test_exhaustive_over_quotes_and_whitespace_too(self):
+        """The same over what bounds a cut-short credential and an scp-style run: a quote before a
+        scheme, and whitespace. 9,331 strings."""
+        alphabet = 'a:/@" '
+        checked = 0
+        for n in range(6):
+            for tup in itertools.product(alphabet, repeat=n):
+                text = "".join(tup)
+                assert S.redact_credentials(text) == _reference_redact_credentials(text), text
                 checked += 1
         assert checked == sum(len(alphabet) ** n for n in range(6))
 
     def test_randomised_over_credential_fragments(self):
         """Fuzz over fragments chosen to collide: separators, tags, and real key prefixes."""
-        pieces = list("aZ19:/@?#.-+_= \n'\",;") + [
+        pieces = list("aZ19:/@?#.-+_= \n'\",;([<") + [
             "://",
             "http",
             "https",
@@ -245,18 +416,24 @@ class TestTheOutputIsByteIdentical:
             S._URL_USERINFO_TAG,
             "A" * 45,
             "A" * 44 + "==",
+            "@host.example:",
+            "sha256",
+            "[::1]",
+            "localhost",
+            ":8080",
         ]
         rnd = random.Random(20260907)
         for _ in range(4000):
             text = "".join(rnd.choice(pieces) for _ in range(rnd.randint(0, 12)))
-            assert S.redact_credentials(text) == _pre_2637_redact_credentials(text), repr(text)
+            assert S.redact_credentials(text) == _reference_redact_credentials(text), repr(text)
 
 
-class TestTheEquivalenceRestsOnTwoFacts:
-    """Pinned because the rewrite is only correct while both hold.
+class TestTheFastScanRestsOnThreeFacts:
+    """Pinned because the fast scan is only correct while these hold.
 
-    Add `:` to the scheme class or `@` to the userinfo class and the backward walk stops being
-    equivalent to the old regex — silently, on inputs no functional test plants.
+    Add `:` to the scheme class, or let the authority class take a character that ends an
+    authority, and the fast scan stops agreeing with the reference — silently, on inputs no
+    functional test plants.
     """
 
     def test_a_colon_is_not_a_scheme_character(self):
@@ -264,14 +441,19 @@ class TestTheEquivalenceRestsOnTwoFacts:
         allowed to take it without considering any shorter split."""
         assert ":" not in S._SCHEME_CHARS
 
-    def test_an_at_sign_is_not_a_userinfo_character(self):
-        """So the greedy userinfo run can only ever be followed by `@` at its maximal length —
-        which is what makes the possessive `++` free rather than a behaviour change."""
-        m = S._URL_USERINFO_CORE_RE.search("://a@b@")
-        assert m is not None and m.group("userinfo") == "a"
+    @pytest.mark.parametrize("end", sorted(_AUTHORITY_END) + [" ", "\n", "\t", "://"])
+    def test_the_authority_run_stops_at_every_character_that_ends_one(self, end):
+        """So the one possessive run is the whole authority, and nothing past it is read as one."""
+        m = S._URL_AUTHORITY_RE.match(f"://a@b{end}c@d")
+        assert m is not None and m.group("authority") == "a@b", end
+
+    def test_the_authority_run_holds_every_at_sign_in_it(self):
+        """So the last `@` of the authority is `rfind`'s answer: `ada:p@ss@host` is one login."""
+        m = S._URL_AUTHORITY_RE.match("://ada:p@ss@host:22/x")
+        assert m is not None and m.group("authority") == "ada:p@ss@host:22"
 
     def test_the_scheme_class_and_the_pattern_agree(self):
-        """`_SCHEME_CHARS` is a `str` for `rstrip` and the old rule was a character class. A
+        """`_SCHEME_CHARS` is a `str` for `rstrip` and the reference reads a character class. A
         divergence between them is the one way the backward walk can find the wrong run start."""
         old_class = re.compile(r"[A-Za-z0-9+.\-]")
         for ch in S._SCHEME_CHARS:
@@ -281,8 +463,12 @@ class TestTheEquivalenceRestsOnTwoFacts:
             assert bool(old_class.fullmatch(ch)) == (ch in S._SCHEME_CHARS), ch
 
     def test_the_tag_is_still_unmatchable_by_construction(self):
-        assert " " in S._URL_USERINFO_TAG
-        assert not S._URL_USERINFO_CORE_RE.search(f"https://{S._URL_USERINFO_TAG}@host/x")
+        """The tag holds a space straight after its `:`, so an authority read from it is
+        `[REDACTED:` with nothing after it, and an scp-style login needs a `name:` in the run
+        before the `@`, which the tag's last word does not have."""
+        assert "[REDACTED: " in S._URL_USERINFO_TAG
+        once = f"https://{S._URL_USERINFO_TAG}@host/x and {S._URL_USERINFO_TAG}@host:path"
+        assert S.redact_credentials(once) == (once, [])
 
 
 class TestTheCostTracksNothingQuadratic:
@@ -336,6 +522,58 @@ class TestTheCostTracksNothingQuadratic:
         assert ratio < 8.0, f"cost grew ×{ratio:.1f} for ×4 input — that is not linear"
 
 
+class TestTheReadingsPastTheAuthorityStayLinear:
+    """A cut-short credential and an scp-style login are read past where a URL's authority ends,
+    so each reading is held to linear cost on the input built to make it quadratic: one where
+    every candidate reads on and finds nothing."""
+
+    #: The shape, and how many units of it the smaller input holds.
+    SHAPES = {
+        # Every authority is cut short and the run holds no `@`: each URL would read to its end.
+        "cut short": ("a://b:c/", 16_000),
+        "cut short, quoted": ('"a://b:c/', 16_000),
+        # Every `@` is tried as the one before a host, and none has a host after it.
+        "scp, no host": ("@x", 60_000),
+        # A login-shaped name at every comma, and one host at the end.
+        "scp, every opener": (",a:", 40_000),
+    }
+
+    @staticmethod
+    def _cost(text: str) -> float:
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            S.redact_credentials(text)
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    @staticmethod
+    def _text(shape: str, units: int) -> str:
+        unit, _ = TestTheReadingsPastTheAuthorityStayLinear.SHAPES[shape]
+        if shape == "scp, no host":
+            return "u:" + unit * units
+        if shape == "scp, every opener":
+            return unit * units + "@h.example:x"
+        return unit * units
+
+    def test_each_shape_reaches_the_reading_it_is_named_for(self):
+        """Vacuity floor: a shape that never reached its reading would pass the bound below on a
+        tree without that reading at all. Each is masked, or not, exactly as the reading says."""
+        tag = S._URL_USERINFO_TAG
+        assert S.redact_credentials("a://b:c/" * 3 + "@h")[0] == f"a://{tag}@h"
+        # A quoted URL reads only to the next quote, so the first finds no `@` and the second does.
+        assert S.redact_credentials('"a://b:c/' * 2 + '@h"')[0] == f'"a://b:c/"a://{tag}@h"'
+        assert S.redact_credentials(self._text("scp, no host", 3))[0] == "u:@x@x@x"
+        assert S.redact_credentials(self._text("scp, every opener", 3))[0] == f",{tag}@h.example:x"
+
+    @pytest.mark.parametrize("shape", sorted(SHAPES))
+    def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape):
+        units = self.SHAPES[shape][1]
+        small, large = self._text(shape, units), self._text(shape, 4 * units)
+        ratio = self._cost(large) / max(self._cost(small), 1e-6)
+        assert ratio < 8.0, f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+
 # ── #2717: the per-match rebuild ────────────────────────────────────────────────────────────────
 #
 # Pass 1 used to be `finditer` with `result = result.replace(matched, tag, 1)` INSIDE the loop —
@@ -348,10 +586,10 @@ class TestTheCostTracksNothingQuadratic:
 # replacing the loop with a span splice is a behaviour question before it is an optimisation, and
 # it needed its own equivalence argument rather than riding on #2716's.
 #
-# `_pre_2637_redact_credentials` above is the reference for BOTH fixes: it predates each, so every
-# byte-identity test in this file already covers this change. These add the shape those tests do
-# not reach — the same credential appearing more than once, which is exactly where leftmost and
-# found could diverge.
+# `_reference_redact_credentials` above spells pass 1 as it stood before this change, so every
+# byte-identity test in this file already covers it. These add the shape those tests do not reach
+# — the same credential appearing more than once, which is exactly where leftmost and found could
+# diverge.
 
 #: Documents where a credential repeats. The reason the old loop was not provably correct.
 REPEATED = [
@@ -372,8 +610,8 @@ class TestRepeatedCredentialsRedactIdentically:
     """The span splice must agree with the old leftmost-replace on repeated credentials."""
 
     @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
-    def test_a_repeated_credential_redacts_exactly_as_before(self, text):
-        assert S.redact_credentials(text) == _pre_2637_redact_credentials(text)
+    def test_a_repeated_credential_redacts_exactly_as_the_reference(self, text):
+        assert S.redact_credentials(text) == _reference_redact_credentials(text)
 
     @pytest.mark.parametrize("text", REPEATED, ids=lambda t: t[:36].replace(" ", "_"))
     def test_every_copy_is_masked_not_just_the_first(self, text):
@@ -429,7 +667,7 @@ class TestTheSpliceIsEquivalentUnderFuzzing:
         "\t",
     ]
 
-    def test_generated_documents_redact_exactly_as_before(self):
+    def test_generated_documents_redact_exactly_as_the_reference(self):
         rnd = random.Random(20260908)
         pool = self._CREDS + self._FILLER
         for _ in range(4000):
@@ -441,7 +679,7 @@ class TestTheSpliceIsEquivalentUnderFuzzing:
                     piece = rnd.choice(parts)
                 parts.append(piece)
             text = "".join(parts)
-            assert S.redact_credentials(text) == _pre_2637_redact_credentials(text), repr(text)
+            assert S.redact_credentials(text) == _reference_redact_credentials(text), repr(text)
 
     def test_the_generator_really_produces_repeats_and_matches(self):
         """Vacuity floor on the fuzz: a generator emitting no credentials, or no repeats, would
