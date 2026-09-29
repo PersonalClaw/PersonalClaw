@@ -734,6 +734,17 @@ def sign_in_needed_text(server: str) -> str:
     return f"{server} needs you to sign in. Use Sign in on its card on the Tools page."
 
 
+def token_or_sign_in_text(server: str) -> str:
+    """What a server says that refused the connection with a bare Bearer challenge: it wants a
+    token, and its answer does not say whether a sign-in gives one or it takes a static token (an
+    API key), so the sentence claims neither. The Tools page's probe finds out, and its card says
+    which (`mcp_discovery._probe_remote`)."""
+    return (
+        f"{server} refused the connection: it wants a sign-in or a token it was not sent. Its card "
+        "on the Tools page says which, and what to do."
+    )
+
+
 def _say_signed_out(server: str) -> str:
     return f"You are signed out of {server}. Sign in again on the Tools page."
 

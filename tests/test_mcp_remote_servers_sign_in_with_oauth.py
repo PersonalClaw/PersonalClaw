@@ -301,20 +301,14 @@ def home(monkeypatch, tmp_path):
     from personalclaw.dashboard.handlers import mcp as mcp_handlers
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
-    # Each test's own probe caches and connections. The every-server background probe `GET
-    # /api/mcp` starts is stubbed: the rebuild adds PersonalClaw's own stdio server to the agent
-    # config, and probing it would spawn a child in no isolated home. The one-server re-probe a
-    # sign-in starts, which is what these tests read, runs for real.
+    # Each test's own probe cache and connections. The probes a read of `GET /api/mcp` starts are
+    # stubbed: the rebuild adds PersonalClaw's own stdio server to the agent config, and probing it
+    # would spawn a child in no isolated home. The one-server re-probe a sign-in or a save starts,
+    # which is what these tests read, runs for real.
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_cache", [])
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_ts", 0.0)
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_in_progress", False)
-
-    async def _no_fleet_probe() -> None:
-        mcp_handlers._mcp_probe_in_progress = False
-
-    monkeypatch.setattr(mcp_handlers, "_bg_mcp_probe", _no_fleet_probe)
+    monkeypatch.setattr(mcp_discovery, "_probing", {})
+    monkeypatch.setattr(mcp_handlers, "_start_probes", lambda request, servers: None)
     home = config_loader.config_dir()
     agents = home / "agents"
     agents.mkdir(parents=True, exist_ok=True)

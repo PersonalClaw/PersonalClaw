@@ -132,6 +132,25 @@ describe('a server that asks for a sign-in', () => {
     await waitFor(() => expect(screen.queryByText('http://127.0.0.1:10000/api/mcp/oauth/callback')).toBeNull())
   })
 
+  it('a Sign in the server does not have is refused, and the card then says why and offers none', async () => {
+    // A server that takes a token answers like one that signs in. The gateway refuses the sign-in
+    // and probes the server again; the page reads the list again, so the card stops offering Sign in
+    // and says, in place, what the server wants. It used to keep "asks you to sign in" after a toast.
+    servers = [asking]
+    mockModules()
+    const { ApiError } = await import('../../lib/api')
+    const refusal = 'linear refused the connection but does not publish how to sign in: https://mcp.example.test serves no authorization server metadata. If it takes an API key, add it to the server as a header instead.'
+    startMcpSignIn.mockRejectedValueOnce(new ApiError(refusal, 409, 'mcp_sign_in_not_offered'))
+    await mount()
+    servers = [{ name: 'linear', transport: 'http', status: 'error', enabled: true, tools: [], error: refusal }]
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining('does not publish how to sign in'), 'error'))
+    expect(opened.close).toHaveBeenCalled()
+    expect(await screen.findByText(`Not connected — ${refusal}`)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+    expect(screen.queryByText(/asks you to sign in/)).toBeNull()
+  })
+
   it('a sign-in that cannot start says why, and closes the tab it opened', async () => {
     servers = [asking]
     mockModules()

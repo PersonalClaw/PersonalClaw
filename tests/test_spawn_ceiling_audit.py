@@ -114,7 +114,7 @@ _CEILING_WRAPPED: dict[str, str] = {
         "app background worker → tool ceiling via spawn_shim_argv (argv-prepend; NOT preexec_fn)"
     ),
     # MCP stdio discovery probe (tool profile).
-    "mcp_discovery.py::probe_server::create_subprocess_limited": (
+    "mcp_discovery.py::_probe::create_subprocess_limited": (
         "MCP probe → tool ceiling via create_subprocess_limited"
     ),
     # MCP stdio client — the SDK spawns; we shim-prepend the command in the argv.
@@ -675,7 +675,7 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         "action_providers/bash_provider.py::BashActionProvider.execute::"
         "create_subprocess_limited",
         "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen",
-        "mcp_discovery.py::probe_server::create_subprocess_limited",
+        "mcp_discovery.py::_probe::create_subprocess_limited",
         "mcp_client.py::McpServerConn._open_transport::StdioServerParameters",
         # EI-1 routed the ACP session_host spawn through the sandbox provider handle — the
         # single seam every routed spawn now funnels through — so the ACP ceiling is asserted

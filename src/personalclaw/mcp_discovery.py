@@ -15,7 +15,6 @@ import logging
 import os
 import re
 import shutil
-import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,10 +40,6 @@ def _get_probe_timeout() -> int:
         return AppConfig.load().dashboard.mcp_probe_timeout_secs
     except Exception:
         return _PROBE_TIMEOUT_SECS
-
-
-# Probe results expire after 30 minutes → status becomes "outdated"
-_PROBE_TTL_SECS = 1800
 
 
 # PersonalClaw discovers MCP servers ONLY from its own config. A Claude-Code-only server
@@ -245,40 +240,69 @@ def as_agents_see_it(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+# ── what the last probe of a server found ───────────────────────────────────────────────────
+#
+# 🔴 A RESULT IS A RESULT OF ONE DEFINITION. The cache was keyed by the server's NAME alone and
+# nothing that writes a server touched it, so the Tools page's card said what the last probe had
+# found about something else: an edit that broke a server still read "ready", and a server removed
+# and added again under its name showed the removed one's "command not found: docker" beside the
+# new one's tools. Each result now carries what it was probed as (:func:`_probed_as`), and a
+# server is shown only a result for what it is now. Anything else reads ``probing`` while a probe
+# of it runs, and ``unknown`` until one starts.
+
+#: A server a probe is checking now, and has no result for yet as it is defined now.
+PROBING = "probing"
+
+
 @dataclass
 class _ProbeResult:
-    """Cached probe result for a single server."""
+    """What the last probe of one server found, and what it probed."""
 
     status: str
     tools: list[dict[str, Any]]  # each entry: {"name", "description", "inputSchema"}
     error: str
-    probed_at: float
+    #: The definition the result is of (:func:`_probed_as`).
+    probed_as: str
 
 
 # Module-level probe cache: server name → result
 _probe_cache: dict[str, _ProbeResult] = {}
 
+#: How many probes of each server are running now, by name.
+_probing: dict[str, int] = {}
 
-def _get_cached(name: str) -> tuple[str, list[dict[str, Any]], str]:
-    """Return (status, tools, error) from cache.
 
-    If within TTL: returns original status + tools.
-    If expired: returns "outdated" + tools (tools always preserved).
-    If not cached: returns ("unknown", [], "").
-    """
-    cached = _probe_cache.get(name)
-    if cached is None:
-        return "unknown", [], ""
-    age = time.monotonic() - cached.probed_at
-    if age <= _PROBE_TTL_SECS:
+def _probed_as(server: "McpServerInfo") -> str:
+    """What a probe of *server* is a probe OF: what it runs or where it connects, as its owner
+    allows it (`mcp_grants.definition`), and who its sign-in is with. A value behind a reference
+    is not in it: a save from the Tools page probes again whatever it changed (:func:`recheck`)."""
+    from personalclaw import mcp_grants
+    from personalclaw.config.secret_refs import MCP_SIGN_IN
+    from personalclaw.mcp_oauth import sign_in_identity
+
+    seal = {
+        **mcp_grants.definition(server),
+        "signIn": sign_in_identity({MCP_SIGN_IN: server.sign_in}),
+    }
+    return json.dumps(seal, sort_keys=True, separators=(",", ":"))
+
+
+def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str]:
+    """``(status, tools, error)`` of the last probe of *server* as it is defined now; else
+    ``probing`` while one runs, and ``unknown`` before one starts.
+
+    However old the result, it stands until the next probe replaces it: the Tools page re-probes
+    every server on its own schedule, and meanwhile the last answer is the one there is."""
+    cached = _probe_cache.get(server.name)
+    if cached is not None and cached.probed_as == _probed_as(server):
         return cached.status, cached.tools, cached.error
-    # Expired — mark outdated but preserve tools
-    return "outdated", cached.tools, ""
+    if _probing.get(server.name):
+        return PROBING, [], ""
+    return "unknown", [], ""
 
 
 def forget_probe(name: str) -> None:
-    """Drop server ``name``'s cached probe: what it said is no longer true (its owner just signed
-    in or out), so it reads ``unknown`` until it is probed again."""
+    """Drop server ``name``'s cached probe: what it said is no longer true."""
     _probe_cache.pop(name, None)
 
 
@@ -288,8 +312,65 @@ def _cache_probe(server: "McpServerInfo") -> None:
         status=server.status,
         tools=list(server.tools),
         error=server.error,
-        probed_at=time.monotonic(),
+        probed_as=_probed_as(server),
     )
+
+
+def _probe_started(name: str) -> None:
+    _probing[name] = _probing.get(name, 0) + 1
+
+
+def _probe_ended(name: str) -> None:
+    left = _probing.get(name, 0) - 1
+    if left > 0:
+        _probing[name] = left
+    else:
+        _probing.pop(name, None)
+
+
+#: The re-probes :func:`recheck` started for a caller that holds no task set of its own.
+_RECHECKS: set["asyncio.Task[Any]"] = set()
+
+
+def recheck(
+    names: Iterable[str],
+    *,
+    hold: set["asyncio.Task[Any]"] | None = None,
+    forget: bool = True,
+) -> "asyncio.Task[Any] | None":
+    """Probe the servers *names* again, in the background, and say so until it lands.
+
+    For what just changed a server — it was added, edited, allowed, switched on, signed in or
+    out — ``forget`` drops what its last probe said, since it no longer holds; each then reads
+    ``probing`` from this call on, until its new result lands. The Tools page's own periodic
+    re-probe passes ``forget=False``: a server keeps its last result on screen meanwhile.
+
+    The task is added to *hold* (the dashboard's background tasks, which shutdown and tests
+    await), else kept here. Called on the event loop; ``None`` when there is nothing to probe.
+    """
+    wanted = list(dict.fromkeys(str(n) for n in names))
+    if not wanted:
+        return None
+    for name in wanted:
+        if forget:
+            forget_probe(name)
+        _probe_started(name)  # before the task runs, so the very next read says it
+
+    async def _run() -> None:
+        await asyncio.gather(*(probe_one(n) for n in wanted), return_exceptions=True)
+
+    def _ended(_task: "asyncio.Task[Any]") -> None:
+        # A done callback, not a `finally`: it runs for a task cancelled before it ever started
+        # too (a shutdown), which would otherwise leave each server reading `probing` for good.
+        for n in wanted:
+            _probe_ended(n)
+
+    task = asyncio.get_running_loop().create_task(_run())
+    task.add_done_callback(_ended)
+    tasks = hold if hold is not None else _RECHECKS
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    return task
 
 
 @dataclass
@@ -303,8 +384,10 @@ class McpServerInfo:
     cwd: str = ""  # working dir for the spawn (app-shipped servers set this to the app dir)
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
-    # unknown | ok | error | signin | probing | outdated (UNSERVED is only shown). ``signin``: a
-    # remote server that refused the connection until its owner signs in, or signs in again.
+    # unknown | ok | error | signin | probing (UNSERVED and ``waiting`` are only shown). ``signin``:
+    # a remote server that refused the connection until its owner signs in, or signs in again —
+    # only one that offers a sign-in (`_probe_remote`). ``probing``: a probe of it is running, and
+    # there is no result yet for it as it is defined now.
     status: str = "unknown"
     # Each tool entry is a dict with at least "name"; optionally "description"
     # and "inputSchema" populated by tools/list responses. Plain strings are
@@ -558,9 +641,9 @@ def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
         if name in servers and "disabledTools" in spec:
             servers[name].disabled_tools = spec.get("disabledTools", [])
 
-    # 3. Merge cached probe results
+    # 3. Merge cached probe results: each server's own, for what it is now (`_get_cached`).
     for s in servers.values():
-        status, tools, error = _get_cached(s.name)
+        status, tools, error = _get_cached(s)
         s.status = status
         s.tools = tools
         s.error = error
@@ -579,7 +662,11 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
 
     A server that refuses the connection until its owner signs in — a 401 with a Bearer
     challenge, or a sign-in that has ended — reads ``signin``, which the Tools page answers with
-    its Sign in control.
+    its Sign in control. Only one that offers a sign-in: a server that takes a static token (an
+    API key, a personal access token) refuses a request without one the same way, and reads
+    ``error`` with what it wants instead (:func:`_sign_in_unavailable`), so the page never offers
+    a Sign in that cannot start. A probe that ran out of time says what it was waiting for
+    (:func:`_why_no_answer`).
     """
     from personalclaw.config.secret_refs import (
         MCP_SIGN_IN,
@@ -596,9 +683,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         # No request was made and no value was read: the whole sentence is this server's error.
         server.status = "error"
         server.error = str(exc)
-        _cache_probe(server)
         return server
-    server.status = "probing"
     if server.transport not in MCP_TRANSPORTS:
         server.status = "error"
         server.error = f"PersonalClaw cannot connect over the {server.transport!r} transport"
@@ -607,26 +692,129 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         if server.sign_in:
             spec[MCP_SIGN_IN] = server.sign_in
         conn = McpServerConn(server.name, spec)
+        waited = _get_probe_timeout()
+        tools: list[Any] = []
+        timed_out = False
         try:
-            tools = await asyncio.wait_for(conn.list_tools(), timeout=_get_probe_timeout())
-            if conn.error:
-                server.status = "signin" if conn.sign_in_needed else "error"
-                server.error = conn.error
-            else:
-                server.status = "ok"
-                server.tools = [
-                    {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-                    for t in tools
-                ]
+            tools = await asyncio.wait_for(conn.list_tools(), timeout=waited)
         except asyncio.TimeoutError:
-            server.status = "error"
-            server.error = "timeout"
+            timed_out = True
         finally:
             await conn.shutdown()
+        if timed_out:
+            server.status = "error"
+            server.error = await _why_no_answer(server.url, waited)
+        elif conn.error:
+            server.status, server.error = "error", conn.error
+            if conn.sign_in_needed:
+                # A sign-in it holds has ended: signing in again is the answer. One it never had
+                # is offered only if the server says how to sign in.
+                why_not = None if server.sign_in else await _sign_in_unavailable(server, headers)
+                if why_not is None:
+                    server.status = "signin"
+                else:
+                    server.error = why_not
+        else:
+            server.status = "ok"
+            server.tools = [
+                {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                for t in tools
+            ]
     if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
-    _cache_probe(server)
     return server
+
+
+async def _sign_in_unavailable(server: McpServerInfo, headers: Mapping[str, str]) -> str | None:
+    """Why *server*, which refused the connection with a Bearer challenge and holds no sign-in,
+    cannot be signed in to, or ``None`` when it can.
+
+    Asked the way Sign in asks it (`mcp_oauth.discover`, through the same egress guard, sending no
+    token): a server that takes a static token answers a request without one exactly like one that
+    signs in with OAuth, and only the metadata it publishes tells the two apart. Its sentence says
+    what the server wants instead. A look that does not finish in the probe's time says neither,
+    and the server did ask for a sign-in, so Sign in is offered, and says why if it cannot start.
+    """
+    from personalclaw.mcp_oauth import SignInFailed, discover
+
+    try:
+        await asyncio.wait_for(
+            discover(server.name, server.url, server.transport, headers),
+            timeout=_get_probe_timeout(),
+        )
+    except SignInFailed as exc:
+        return str(exc)
+    except asyncio.TimeoutError:
+        return None
+    return None
+
+
+#: How long a probe that ran out of time spends looking the host's name up again, to say whether
+#: the name was what it waited for.
+_NAME_LOOKUP_SECS = 5.0
+
+
+def _seconds(n: float) -> str:
+    return f"{n:g} second" if n == 1 else f"{n:g} seconds"
+
+
+def _is_address(host: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def _proxied(url: str, host: str) -> bool:
+    """Whether the connection to *url* goes through a proxy, which then looks the name up, not
+    this computer. Read the way the HTTP client reads it (``urllib.request.getproxies``)."""
+    import urllib.request
+
+    proxies = urllib.request.getproxies()
+    scheme = urlsplit(url).scheme.lower()
+    if not (proxies.get(scheme) or proxies.get("all")):
+        return False
+    return not urllib.request.proxy_bypass(host)
+
+
+async def _why_no_answer(url: str, waited: float) -> str:
+    """What a probe of the server at *url*, which ran out of time, was waiting for.
+
+    Often the host's name: a name no name server answers for takes as long to fail as the
+    resolver's own retries, which can be longer than the probe waits, and the card then read
+    "timeout" for a host that does not exist. So the name is looked up once more, briefly, and a
+    lookup that fails or hangs is named as the cause. Not when the host is an address already, or
+    when a proxy makes the connection (the proxy looks the name up, and this computer may not
+    know it)."""
+    import socket
+
+    from personalclaw.mcp_client import slow_lookup_text, unresolved_host_text
+
+    host = urlsplit(url).hostname or ""
+    no_answer = f"{host or 'The server'} did not answer within {_seconds(waited)}."
+    if not host or _is_address(host) or _proxied(url, host):
+        return no_answer
+    budget = min(_NAME_LOOKUP_SECS, float(waited))
+    try:
+        await asyncio.wait_for(_look_up(host), timeout=budget)
+    except socket.gaierror:
+        return unresolved_host_text(host)
+    except asyncio.TimeoutError:
+        return slow_lookup_text(host, _seconds(budget))
+    except OSError:
+        return no_answer
+    return no_answer
+
+
+async def _look_up(host: str) -> None:
+    """Look *host*'s name up the way a connection to it does (the resolver's ``getaddrinfo``).
+    Raises ``socket.gaierror`` for a name that does not resolve."""
+    import socket
+
+    await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
 
 
 async def _drain_stderr_reason(proc: Any) -> str:
@@ -658,18 +846,40 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
     Updates server.status and server.tools in place and returns it. A server the owner has not
     allowed as it is defined now (`mcp_grants`) is neither spawned nor connected to: it reads
     ``waiting``, with the sentence that says what to do. Nor is one they switched off.
+
+    Every other outcome is what the Tools page shows for the server until the next probe, so it
+    is kept (`_cache_probe`) whatever it was, a failure included. A probe that kept only its
+    successes left each failure on screen as whatever an older probe had said.
     """
+    from personalclaw import mcp_grants
+
+    _probe_started(server.name)
+    try:
+        await _probe(server)
+    except Exception as exc:  # noqa: BLE001 — a probe that broke is this server's answer
+        server.status = "error"
+        server.error = str(exc)[:200]
+        logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
+    finally:
+        _probe_ended(server.name)
+    # Whether it waits, and whether it is switched off, are read when the server is shown.
+    if server.status not in (mcp_grants.WAITING, "disabled"):
+        _cache_probe(server)
+    return server
+
+
+async def _probe(server: McpServerInfo) -> None:
+    """The probe itself (:func:`probe_server`): *server*'s status, tools and error, in place."""
     problem = server_name_problem(server.name)
     if problem is not None:
         # Never started, by the native client or here: the sentence is this server's status.
         server.status = "error"
         server.error = problem
-        _cache_probe(server)
-        return server
+        return
     if server.disabled:
         server.status = "disabled"
         server.error = "Switched off. It does not run until you switch it on."
-        return server
+        return
 
     from personalclaw import mcp_grants
 
@@ -677,17 +887,17 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         server.status = mcp_grants.WAITING
         server.error = mcp_grants.WAITING_REASON
         server.tools = []
-        _cache_probe(server)
-        return server
+        return
 
     if server.is_remote:
-        return await _probe_remote(server)
+        await _probe_remote(server)
+        return
 
     if not server.command:
         server.status = "error"
         server.error = "no command"
         logger.warning("MCP probe failed [%s]: no command configured", server.name)
-        return server
+        return
 
     from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
 
@@ -699,9 +909,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         # Nothing was spawned and no value was read: the whole sentence is this server's error.
         server.status = "error"
         server.error = str(exc)
-        _cache_probe(server)
-        return server
-    server.status = "probing"
+        return
     proc = None
     try:
         env = stdio_spawn_env(server_env, server=server.name)
@@ -714,7 +922,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
             logger.warning(
                 "MCP probe failed [%s]: command not found: %s", server.name, server.command
             )
-            return server
+            return
 
         # Resource ceiling: an MCP server is agent-influenced (its command comes
         # from a discovered/installed server spec). Deliver the ``tool`` ceiling via the
@@ -765,13 +973,13 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
             # (a common cause: wrong Node/interpreter version). Surface the
             # child's stderr so the reason is legible instead of "no response".
             server.error = await _drain_stderr_reason(proc) or "no response"
-            return server
+            return
 
         resp = json.loads(line.decode())
         if "error" in resp:
             server.status = "error"
             server.error = resp["error"].get("message", "unknown error")
-            return server
+            return
 
         # Send initialized notification
         notif = (
@@ -844,9 +1052,6 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
                 except Exception:
                     pass
 
-    _cache_probe(server)
-    return server
-
 
 async def probe_one(name: str) -> McpServerInfo | None:
     """Probe a SINGLE configured MCP server by name — backs per-provider reconnect
@@ -857,34 +1062,13 @@ async def probe_one(name: str) -> McpServerInfo | None:
     server = next((s for s in list_servers(include_disabled=True) if s.name == name), None)
     if server is None:
         return None
-    try:
-        return await probe_server(server)
-    except Exception as exc:  # noqa: BLE001
-        server.status = "error"
-        server.error = str(exc)[:200]
-        logger.warning("MCP probe failed [%s]: %s", name, server.error)
-        return server
+    return await probe_server(server)
 
 
 async def probe_all() -> list[McpServerInfo]:
-    """Discover and probe all configured MCP servers."""
-    servers = list_servers()
-    if not servers:
-        return []
-    results = await asyncio.gather(
-        *(probe_server(s) for s in servers),
-        return_exceptions=True,
-    )
-    out: list[McpServerInfo] = []
-    for i, r in enumerate(results):
-        if isinstance(r, Exception):
-            servers[i].status = "error"
-            servers[i].error = str(r)[:200]
-            logger.warning("MCP probe failed [%s]: %s", servers[i].name, servers[i].error)
-            out.append(servers[i])
-        else:
-            out.append(r)  # type: ignore[arg-type]
-    return out
+    """Discover and probe all configured MCP servers. A probe that breaks is that server's
+    error (:func:`probe_server`), so every server comes back."""
+    return list(await asyncio.gather(*(probe_server(s) for s in list_servers())))
 
 
 def discover_servers_to_sync() -> list[McpServerInfo]:
@@ -1019,15 +1203,24 @@ def _names_with_presence(values: Any) -> list[dict[str, Any]]:
     return [{"name": str(k), "hasValue": v not in (None, "")} for k, v in values.items()]
 
 
-# ── what a browser may see of another tool's server definition ──────────────
+# ── what a browser may see of a server's definition ─────────────────────────
 #
 # A server's arguments and URL are where a token goes when it is not in the environment or a
-# header: ``--api-key sk-…``, ``--header "Authorization: Bearer …"``, ``?token=…``,
-# ``https://user:pw@…``, or the secret path segment a hosted endpoint embeds. The import picker
-# needs to show which server a row is, not how it authenticates, so those parts reach the browser
-# as the mask the edit form uses. Deliberately biased toward masking: an over-masked argument
+# header: ``--api-key sk-…``, ``--api-token=4c1f…``, ``--header "Authorization: Bearer …"``,
+# ``?token=…``, ``https://user:pw@…``, or the secret path segment a hosted endpoint embeds. Every
+# surface that shows one masks it with the functions below and no other: the import picker, the
+# Allow question (`mcp_grants.shown`), the Tools page's edit form and the MCP Tool Servers card in
+# Settings → Providers. The edit form used the generic display mask instead, which knows token
+# SHAPES but not credential-named flags, so ``--api-token=<hex>`` was in the form in clear beside
+# the Allow question that masked it. Deliberately biased toward masking: an over-masked argument
 # costs a little recognisability, an under-masked one is a token in the page and in its session
-# storage.
+# storage. An argument with nothing to mask is shown exactly as it is, so an edit form seeded from
+# it saves it back unchanged.
+#
+# A form that shows a mask gets it back on save, and the ``keep_masked_*`` functions put the
+# stored value in its place: the mask stands for the value, and nothing else. The value itself
+# still sits in ``mcp.json`` as written (only ``env`` and ``headers`` values are kept in the
+# credential store), which `docs/security/limitations.md` says.
 
 #: Flags whose NEXT argument is an HTTP header (``mcp-remote --header "Authorization: Bearer …"``,
 #: curl's ``-H``): its name stays, its value is masked.
@@ -1066,7 +1259,8 @@ def masked_url(url: str) -> str:
 
     Scheme, host, port and path stay, so the server is recognisable. Userinfo, every query value,
     the fragment and any path segment shaped like a token are masked. Text that is not a URL with
-    a host is masked whole if it looks like a credential and kept otherwise.
+    a host is masked whole if it looks like a credential and kept otherwise. A URL with nothing to
+    mask comes back exactly as written.
     """
     try:
         parts = urlsplit(url)
@@ -1086,7 +1280,8 @@ def masked_url(url: str) -> str:
         (SECRET_MASK if _looks_secret(key) else key) + (f"={SECRET_MASK}" if value else "")
         for key, value in parse_qsl(parts.query, keep_blank_values=True)
     )
-    return urlunsplit((parts.scheme, netloc, path, query, SECRET_MASK if parts.fragment else ""))
+    shown = urlunsplit((parts.scheme, netloc, path, query, SECRET_MASK if parts.fragment else ""))
+    return shown if SECRET_MASK in shown else url
 
 
 def masked_args(args: Iterable[Any]) -> list[str]:
@@ -1096,21 +1291,110 @@ def masked_args(args: Iterable[Any]) -> list[str]:
     named by :func:`~personalclaw.apps.secret_fields.is_credential_field_name`, the repository's
     one rule), a header's value (``--header "Authorization: Bearer X"``), a URL's credential parts
     (:func:`masked_url`), and an argument shaped like a credential. A shell string (``sh -c "…"``)
-    is read word by word by the same rules. Everything else stays, so the command line still says
-    which server it starts.
+    is read word by word by the same rules. Everything else stays exactly as written, so the
+    command line still says which server it starts.
     """
     out: list[str] = []
     carries: str | None = None
     for raw in args:
         arg = str(raw)
         if carries == "header":
-            out.append(_masked_header(arg))
+            shown = _masked_header(arg)
         elif carries == "value":
-            out.append(SECRET_MASK)
+            shown = SECRET_MASK
         else:
-            out.append(_masked_word(arg))
+            shown = _masked_word(arg)
+        out.append(shown if SECRET_MASK in shown else arg)
         carries = _what_flag_carries(arg)
     return out
+
+
+def masked_command(command: str) -> str:
+    """A server's command as a browser may see it: its words masked as arguments are
+    (:func:`masked_args`), and kept exactly as written when there is nothing to mask."""
+    shown = _masked_word(command)
+    return shown if SECRET_MASK in shown else command
+
+
+#: A save's refusal when a value it sends still shows the mask, and what is around the mask
+#: changed, so the stored value it stood for cannot be matched to it.
+MASK_MOVED = (
+    f"A value shown as {SECRET_MASK} stands for one PersonalClaw did not show you, and the text "
+    "around it changed, so it cannot tell which saved value you mean. Nothing was saved. Type the "
+    f"value in place of {SECRET_MASK}, or put back what was around it."
+)
+
+
+def _hidden_value_key(args: list[str], i: int) -> tuple[str, str]:
+    """What names the value argument *i* hides: the argument as shown, and for one that is the
+    mask and nothing else (``--api-key``'s value), the flag before it too. Two such arguments show
+    alike, so the flag is what says which value each stands for."""
+    return (args[i - 1] if i > 0 and args[i] == SECRET_MASK else "", args[i])
+
+
+def keep_masked_args(submitted: Iterable[Any], stored: Iterable[Any]) -> list[str]:
+    """The arguments a save stores when its form was seeded from :func:`masked_args` over
+    *stored*: an argument that still reads exactly as a stored one was shown (with the flag before
+    it, for a masked flag value) is that stored argument again, at the same place first, then any
+    other not yet claimed, so arguments added, removed or moved around it keep what they hold.
+    Anything else is what was typed.
+
+    One that holds the mask and matches no stored argument (its flag renamed, part of it typed
+    over, or nothing is stored for it) raises :class:`~personalclaw.security.MaskConflict`: saving
+    it would store the mask as the value.
+    """
+    from personalclaw.security import MaskConflict
+
+    kept = [str(a) for a in stored]
+    shown = masked_args(kept)
+    sent = [str(a) for a in submitted]
+    claimed: set[int] = set()
+    out: list[str] = []
+    for index, arg in enumerate(sent):
+        if SECRET_MASK not in arg:
+            out.append(arg)
+            continue
+        want = _hidden_value_key(sent, index)
+        order = ([index] if index < len(shown) else []) + [
+            i for i in range(len(shown)) if i != index
+        ]
+        match = next(
+            (i for i in order if i not in claimed and _hidden_value_key(shown, i) == want), None
+        )
+        if match is None:
+            raise MaskConflict(MASK_MOVED)
+        claimed.add(match)
+        out.append(kept[match])
+    return out
+
+
+def keep_masked_command(submitted: str, stored: str) -> str:
+    """The command a save stores when its form was seeded from :func:`masked_command`: the
+    stored one when it came back as it was shown, what was typed when it shows no mask, and a
+    :class:`~personalclaw.security.MaskConflict` otherwise."""
+    from personalclaw.security import MaskConflict
+
+    if SECRET_MASK not in submitted:
+        return submitted
+    if submitted.strip() == masked_command(stored):
+        return stored
+    raise MaskConflict(MASK_MOVED)
+
+
+def keep_masked_url(submitted: str, stored: str) -> str:
+    """The URL a save stores when its form was seeded from :func:`masked_url`: the stored one
+    when it came back as it was shown, and what was typed when it shows no mask.
+
+    A URL that changed around a mask is refused (:class:`~personalclaw.security.MaskConflict`)
+    rather than given the hidden value: a credential is never carried to an address its owner
+    typed without seeing it there."""
+    from personalclaw.security import MaskConflict
+
+    if SECRET_MASK not in submitted:
+        return submitted
+    if submitted.strip() == masked_url(stored):
+        return stored
+    raise MaskConflict(MASK_MOVED)
 
 
 def _what_flag_carries(arg: str) -> str | None:

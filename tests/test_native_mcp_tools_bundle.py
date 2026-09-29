@@ -71,6 +71,36 @@ def test_the_bundle_declares_nothing_a_seed_cannot_install():
     assert not raw.get("dependencies") and not raw.get("pythonDependencies"), raw
 
 
+def test_it_names_every_transport_it_connects_over_and_no_other():
+    """The card's words and its Transport choices are the transports the native client connects
+    over (`mcp_discovery.MCP_TRANSPORTS`): stdio, Streamable HTTP and SSE. The manifest said
+    "stdio or SSE transport" and offered only those two, while most remote servers speak
+    Streamable HTTP."""
+    from personalclaw.mcp_discovery import MCP_TRANSPORTS
+
+    raw = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))
+    transport = raw["provider"]["settingsSchema"]["properties"]["transport"]
+    assert tuple(transport["enum"]) == MCP_TRANSPORTS
+    for text in (raw["description"], (_BUNDLE / "README.md").read_text(encoding="utf-8")):
+        for named in ("stdio", "Streamable HTTP", "SSE"):
+            assert named in text, f"{named!r} is not named in: {text[:200]!r}"
+        assert "stdio or SSE" not in text
+
+
+def test_the_card_can_save_a_streamable_http_server():
+    """The card writes back what it read, and its schema refused a Streamable HTTP server's own
+    transport, so no edit of one could be saved there."""
+    from personalclaw.providers.mcp_instances import _spec_to_instance
+    from personalclaw.providers.settings import ProviderSettings
+
+    schema = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))["provider"][
+        "settingsSchema"
+    ]
+    card = _spec_to_instance("docs", {"type": "http", "url": "https://mcp.example.test/mcp"})
+    assert card.config["transport"] == "http"
+    assert ProviderSettings.validate(card.config, schema) == []
+
+
 # ── what shipping it on every install does, and does not, add ─────────────────
 
 

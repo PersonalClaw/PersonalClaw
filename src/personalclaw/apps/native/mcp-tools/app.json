@@ -2,7 +2,7 @@
   "name": "mcp-tools",
   "version": "0.1.0",
   "displayName": "MCP Tool Servers",
-  "description": "Connect Model Context Protocol (MCP) servers to provide tools via stdio or SSE transport.",
+  "description": "Connect Model Context Protocol (MCP) servers to provide tools: one PersonalClaw starts with a command (stdio), or one at a URL over Streamable HTTP or the older SSE transport.",
   "icon": "Plug",
   "author": "PersonalClaw",
   "license": "MIT",
@@ -26,11 +26,12 @@
           "default": "stdio",
           "enum": [
             "stdio",
+            "http",
             "sse"
           ],
           "x-meta": {
             "label": "Transport",
-            "help": "How to connect to the MCP server."
+            "help": "How PersonalClaw reaches the server: stdio starts it with a command, http connects to its URL over Streamable HTTP, and sse over the older SSE transport."
           }
         },
         "command": {
@@ -45,14 +46,14 @@
           "default": "",
           "x-meta": {
             "label": "Arguments",
-            "help": "Space-separated arguments for the command."
+            "help": "Space-separated arguments for the command. A value in them that looks like a credential is shown masked: leave the mask to keep that value, or type over it to replace it. Arguments are kept in mcp.json as written; a token in the server's environment, set on the Tools page, is kept in your credential store instead."
           }
         },
         "endpoint": {
           "type": "string",
           "x-meta": {
-            "label": "SSE Endpoint",
-            "help": "URL for SSE transport (e.g. http://localhost:8080/sse).",
+            "label": "URL",
+            "help": "The server's MCP endpoint for the http or sse transport (e.g. https://mcp.example.com/mcp). A part of it that can carry a credential is shown masked: leave the URL as it is to keep it, or type it in full, the credential included, to change it.",
             "tags": [
               "advanced"
             ]

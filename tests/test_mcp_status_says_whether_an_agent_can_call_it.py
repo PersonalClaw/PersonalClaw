@@ -96,9 +96,8 @@ async def _tools_page(spec: dict[str, Any], monkeypatch) -> AsyncIterator[TestCl
     allow_configured(SERVER)
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_cache", [])
+    monkeypatch.setattr(mcp_discovery, "_probing", {})
     monkeypatch.setattr(mcp_handlers, "_mcp_probe_ts", 0.0)
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_in_progress", False)
     for registry_state in ("_providers", "_provider_app", "_registrations", "_claims"):
         monkeypatch.setattr(tool_registry, registry_state, {})
     app = web.Application()

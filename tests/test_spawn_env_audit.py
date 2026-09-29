@@ -77,7 +77,7 @@ _BUILT: dict[str, str] = {
     "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run": (
         "a connector pack's parse script"
     ),
-    "mcp_discovery.py::probe_server::create_subprocess_limited": (
+    "mcp_discovery.py::_probe::create_subprocess_limited": (
         "an MCP server probe (`stdio_spawn_env`: an app's server gets the allowlist; a server of "
         "the owner's own gets the gateway's environment, like a program the owner starts)"
     ),

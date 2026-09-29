@@ -484,7 +484,7 @@ _NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
     "workflows/review_service.py::_git::proc": (
         "outstanding: run-workspace `git diff` pid-killed; forks under fsmonitor/LFS"
     ),
-    "mcp_discovery.py::probe_server::proc": (
+    "mcp_discovery.py::_probe::proc": (
         "outstanding: two of its four deadlines tear down, one does not; the stdio "
         "lifecycle also tears down in a `finally`, so this needs its own read"
     ),

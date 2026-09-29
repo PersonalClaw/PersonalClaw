@@ -464,10 +464,12 @@ A secret still appears in plaintext in these places:
 - **A value typed into `mcp.json` or `config.json` by hand** (`personalclaw config edit`, an
   editor) stays in the file until the gateway next starts and moves it.
 - **A token in an MCP server's arguments or URL.** Only `env` and `headers` values are stored.
-  A key passed as an argument (`--api-key …`) or carried in the URL (`?token=…`, `https://user:pw@…`)
-  stays in `mcp.json` as written and travels with an export. The server's edit form, the import
-  list and the list of configured servers mask or leave out both, but the file keeps them.
-  Put a token in an environment variable or a header instead.
+  A key passed as an argument (`--api-key …`, `--api-token=…`) or carried in the URL (`?token=…`,
+  `https://user:pw@…`) stays in `mcp.json` as written and travels with an export. Every page that
+  shows a server masks both with one mask — the Tools page's edit form, the MCP Tool Servers card in
+  Settings → Providers, the import list and the question Allow asks — and the list of configured
+  servers leaves them out; a save keeps a masked value as it was, or replaces it with what you type
+  over the mask. The file keeps them. Put a token in an environment variable or a header instead.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
   home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude

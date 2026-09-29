@@ -12,19 +12,11 @@ from urllib.parse import urlsplit
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_json_write
-from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted
-from personalclaw.security import (
-    MaskConflict,
-    keep_masked_spans,
-    keep_masked_values,
-    redact_credentials,
-    redact_exfiltration_urls,
-    redact_for_display,
-)
+from personalclaw.security import MaskConflict, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
@@ -148,8 +140,8 @@ def _with_allow(row: dict[str, Any], server: Any) -> dict[str, Any]:
     (`mcp_grants`). One that waits reads ``waiting``, with the sentence and no tools (any it
     listed were a definition's that is gone), and carries the ``allowRevision`` its Allow names.
 
-    Asked at every read, not taken from a probe's cache: a yes given, or a definition changed,
-    after the last probe is what the row must say."""
+    Asked at every read, and never kept by a probe: a yes given, or a definition changed, after
+    the last probe is what the row must say."""
     from personalclaw import mcp_grants
 
     allowed = mcp_grants.allowed(server)
@@ -159,20 +151,47 @@ def _with_allow(row: dict[str, Any], server: Any) -> dict[str, Any]:
         row["error"] = mcp_grants.WAITING_REASON
         row["tools"] = []
         row["allowRevision"] = mcp_grants.revision(server)
-    elif row.get("status") == mcp_grants.WAITING:
-        # A probe's row from before the yes: it no longer waits, and has not been probed since.
-        row["status"], row["error"] = "unknown", ""
-        row.pop("allowRevision", None)
     return row
+
+
+def _server_row(server: Any, specs: dict[str, Any]) -> dict[str, Any]:
+    """One server as every route the Tools page reads hands it out: what the last probe found for
+    it as it is defined now (`mcp_discovery`), its sign-in, whether its owner allowed it, its
+    switch (``specs`` is ``mcp.json``'s servers), and whether an agent can call it."""
+    from personalclaw.mcp_discovery import as_agents_see_it
+
+    row = server.to_dict()
+    spec = specs.get(server.name, {})
+    disabled = server.disabled or (isinstance(spec, dict) and bool(spec.get("disabled")))
+    row["enabled"] = not disabled
+    if disabled:
+        row["status"] = "disabled"
+    return as_agents_see_it(_with_allow(_with_sign_in(row, server), server))
+
+
+def _tasks(request: web.Request) -> set[asyncio.Task[Any]] | None:
+    """The dashboard's background tasks, which its shutdown awaits: a re-probe a request starts is
+    held there. ``None`` for an app with no such set (`mcp_discovery.recheck` holds it itself)."""
+    tasks = getattr(request.app.get("state"), "_background_tasks", None)
+    return tasks if isinstance(tasks, set) else None
+
+
+def _recheck(request: web.Request, *names: str) -> None:
+    """What was just written changed these servers: each is probed again in the background, and
+    reads ``probing`` until its new result lands (`mcp_discovery.recheck`). The Tools page reads
+    the list again while one does, so its card says what the server is now."""
+    from personalclaw.mcp_discovery import recheck
+
+    recheck(names, hold=_tasks(request))
 
 
 # ── MCP Servers ──
 
 
-_mcp_probe_cache: list[dict] = []
+#: When the last every-server probe started. The Tools page's reads start the next one ten minutes
+#: after (`_start_probes`); meanwhile each server keeps its last result.
 _mcp_probe_ts: float = 0.0
 _MCP_PROBE_CACHE_SECS = 600  # 10 min
-_mcp_probe_in_progress = False
 
 
 def _sync_mcp_to_agent(name: str, enabled: bool) -> None:
@@ -300,38 +319,39 @@ def _sync_mcp_to_agent_batch(names: list[str], enabled: bool) -> None:
 
 
 async def _bg_mcp_probe() -> None:
-    """Background MCP probe — populates cache at startup."""
-    global _mcp_probe_ts, _mcp_probe_in_progress
+    """Probe every server once, at the gateway's start. What each probe finds is what the Tools
+    page shows for it (`mcp_discovery`); the page's reads probe again ten minutes on."""
+    global _mcp_probe_ts
+    _mcp_probe_ts = time.time()
     try:
-        from personalclaw.mcp_discovery import list_servers, probe_server  # noqa: F811
+        from personalclaw.mcp_discovery import probe_all  # noqa: F811
 
-        mcp_specs = _read_mcp_json()
-
-        all_servers = list_servers()
-        probed = await asyncio.gather(
-            *(probe_server(s) for s in all_servers), return_exceptions=True
-        )
-        result: list[dict[str, Any]] = []
-        for i, r in enumerate(probed):
-            if isinstance(r, BaseException):
-                s = all_servers[i]
-                s.status = "error"
-                s.error = str(r)[:200]
-            else:
-                s = r
-            d = _with_allow(_with_sign_in(s.to_dict(), s), s)
-            spec = mcp_specs.get(s.name, {})
-            d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
-            if isinstance(spec, dict) and spec.get("disabledTools"):
-                d["disabledTools"] = spec["disabledTools"]
-            result.append(d)
-        _mcp_probe_cache[:] = result
-        _mcp_probe_ts = time.time()
-        logger.info("MCP probe complete: %d servers", len(result))
+        logger.info("MCP probe complete: %d servers", len(await probe_all()))
     except Exception:
         logger.debug("Background MCP probe failed", exc_info=True)
-    finally:
-        _mcp_probe_in_progress = False
+
+
+def _start_probes(request: web.Request, servers: list[Any]) -> None:
+    """Probe, in the background, what a read of the Tools page must not show stale.
+
+    Every server once the last every-server probe is ten minutes old, each keeping its last
+    result on screen meanwhile. Otherwise each server with no result for what it is now: one just
+    added, or changed by something other than this page (an app, a pack, a hand edit of
+    ``mcp.json``), which reads ``probing`` in this very answer. A server switched off, or one that
+    waits for its owner's Allow, is never probed, so it is never a reason to."""
+    global _mcp_probe_ts
+    from personalclaw import mcp_grants
+    from personalclaw.mcp_discovery import PROBING, recheck
+
+    runnable = [s for s in servers if not s.disabled and mcp_grants.allowed(s)]
+    if time.time() - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS:
+        _mcp_probe_ts = time.time()
+        recheck([s.name for s in runnable], hold=_tasks(request), forget=False)
+    else:
+        recheck([s.name for s in runnable if s.status == "unknown"], hold=_tasks(request))
+    for s in runnable:
+        if s.status == "unknown":
+            s.status = PROBING
 
 
 async def api_mcp_servers(request: web.Request) -> web.Response:
@@ -339,59 +359,18 @@ async def api_mcp_servers(request: web.Request) -> web.Response:
 
     Reads from ``~/.personalclaw/mcp.json`` — the global MCP config.
     Agent-level ``mcpServers`` and ``includeMcpJson`` are merged at runtime.
-    """
-    global _mcp_probe_in_progress
-    from personalclaw.mcp_discovery import as_agents_see_it, list_servers  # circular import
 
-    # Kick off a background re-probe if the handler cache is stale,
-    # so the next request gets fresh results.
-    now = time.time()
-    should_reprobe = now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress
+    Each server's status is what the last probe found for it AS IT IS DEFINED NOW, or ``probing``
+    while one runs (`_start_probes`). A result for anything else — the definition before an
+    edit, a server removed and added again under its name — is never shown for it.
+    """
+    from personalclaw.mcp_discovery import list_servers  # circular import
 
     # Switched-off servers too: this list is what the Tools page draws, switch included.
     servers = list_servers(include_disabled=True)
-
-    # Overlay handler-level probe cache (last successful probe results)
-    # so that "outdated" from the expired discovery cache is replaced with
-    # the actual last-known status.  Without this, every page load after
-    # 30 min shows "Outdated" even though the servers are healthy.
-    cached_by_name: dict[str, dict] = {s["name"]: s for s in _mcp_probe_cache}
-
-    # Also re-probe if a new server appeared (e.g. fresh install from
-    # marketplace) so status transitions from "Unknown" to "ok"/"error" on the
-    # next page refresh without waiting out the 30-min TTL. A server switched off is not probed,
-    # so it is never a reason to.
-    if not should_reprobe and not _mcp_probe_in_progress:
-        for srv in servers:
-            if srv.name not in cached_by_name and not srv.disabled:
-                should_reprobe = True
-                break
-
-    if should_reprobe:
-        _mcp_probe_in_progress = True
-        state: DashboardState = request.app["state"]
-        task = asyncio.create_task(_bg_mcp_probe())
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-
-    # mcp.json holds each server's disabled state
+    _start_probes(request, servers)
     mcp_specs = _read_mcp_json()
-    result: list[dict] = []
-    for s in servers:
-        d = s.to_dict()
-        # Prefer handler cache status over discovery cache "outdated"
-        cached = cached_by_name.get(s.name)
-        if cached and d["status"] in ("outdated", "unknown"):
-            d["status"] = cached.get("status", d["status"])
-            d["tools"] = cached.get("tools", d["tools"])
-            d["error"] = cached.get("error", d["error"])
-        spec = mcp_specs.get(s.name, {})
-        is_disabled = s.disabled or (isinstance(spec, dict) and bool(spec.get("disabled")))
-        d["enabled"] = not is_disabled
-        if is_disabled:
-            d["status"] = "disabled"
-        result.append(as_agents_see_it(_with_allow(_with_sign_in(d, s), s)))
-    return web.json_response(result)
+    return web.json_response([_server_row(s, mcp_specs) for s in servers])
 
 
 async def api_mcp_active(request: web.Request) -> web.Response:
@@ -457,98 +436,44 @@ async def api_mcp_active(request: web.Request) -> web.Response:
 async def api_mcp_probe(request: web.Request) -> web.Response:
     """POST /api/mcp/probe — probe all MCP servers and return live status.
 
-    Merges ``enabled`` and ``disabledTools`` from mcp.json so
-    probe results don't reset user's previous enable/disable choices.
+    Each row carries the user's enable and disabledTools choices from mcp.json, and what the
+    probe found is what every later read shows (`mcp_discovery`) until the next probe.
     """
     global _mcp_probe_ts
-    from personalclaw.mcp_discovery import as_agents_see_it, probe_all  # noqa: F811
+    from personalclaw.mcp_discovery import probe_all  # noqa: F811
 
+    _mcp_probe_ts = time.time()
     servers = await probe_all()
-    # mcp.json holds the enabled/disabledTools state
     mcp_specs = _read_mcp_json()
-    result: list[dict[str, Any]] = []
-    for s in servers:
-        d = _with_allow(_with_sign_in(s.to_dict(), s), s)
-        spec = mcp_specs.get(s.name, {})
-        d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
-        if isinstance(spec, dict) and spec.get("disabledTools"):
-            d["disabledTools"] = spec["disabledTools"]
-        result.append(d)
-    # The cache keeps what the probe found; whether an agent can call a server is decided
-    # when it is shown, because the provider that serves it can arrive after the probe.
-    _mcp_probe_cache[:] = result
-    _mcp_probe_ts = time.time()
-    return web.json_response([as_agents_see_it(d) for d in result])
-
-
-async def _probe_and_cache_one(name: str) -> dict[str, Any] | None:
-    """Probe ONE server and put its row in the probe cache, keeping the user's enable and
-    disabledTools choices (as :func:`api_mcp_probe` does). ``None`` when no server has the name."""
-    global _mcp_probe_ts
-    from personalclaw.mcp_discovery import probe_one  # noqa: F811
-
-    info = await probe_one(name)
-    if info is None:
-        return None
-    d = _with_allow(_with_sign_in(info.to_dict(), info), info)
-    # Preserve the user's enable/disabledTools choices (mirror api_mcp_probe).
-    spec = _read_mcp_json().get(name, {})
-    d["enabled"] = not (isinstance(spec, dict) and spec.get("disabled"))
-    if isinstance(spec, dict) and spec.get("disabledTools"):
-        d["disabledTools"] = spec["disabledTools"]
-    # Update just this server's row in the cache (leave the rest untouched).
-    replaced = False
-    for i, row in enumerate(_mcp_probe_cache):
-        if row.get("name") == name:
-            _mcp_probe_cache[i] = d
-            replaced = True
-            break
-    if not replaced:
-        _mcp_probe_cache.append(d)
-    _mcp_probe_ts = time.time()
-    return d
+    return web.json_response([_server_row(s, mcp_specs) for s in servers])
 
 
 async def api_mcp_probe_one(request: web.Request) -> web.Response:
     """POST /api/mcp/probe/{name} — reconnect (re-probe) a SINGLE MCP server.
 
     Lets the user recover one timed-out/errored provider without re-probing the
-    whole fleet (a slow server shouldn't force an all-provider re-probe). Updates
-    just this server's entry in the probe cache + merges its enabled/disabledTools
-    so the page reflects it immediately. 404 if no server by that name."""
+    whole fleet (a slow server shouldn't force an all-provider re-probe). Answers this
+    server's row as every read shows it from now on. 404 if no server by that name."""
     name = request.match_info["name"].strip()
     if not name:
         return web.json_response({"error": "server name is required"}, status=400)
-    from personalclaw.mcp_discovery import as_agents_see_it  # noqa: F811
+    from personalclaw.mcp_discovery import probe_one  # noqa: F811
 
-    d = await _probe_and_cache_one(name)
-    if d is None:
+    info = await probe_one(name)
+    if info is None:
         return web.json_response({"error": f"no MCP server {name!r} configured"}, status=404)
-    return web.json_response(as_agents_see_it(d))
+    return web.json_response(_server_row(info, _read_mcp_json()))
 
 
 async def api_mcp_probe_cached(request: web.Request) -> web.Response:
-    """GET /api/mcp/probe — return cached probe results (non-blocking)."""
-    global _mcp_probe_in_progress
-    from personalclaw.mcp_discovery import as_agents_see_it, list_servers
+    """GET /api/mcp/probe — return cached probe results (non-blocking): each switched-on server
+    as the last probe found it, the way ``GET /api/mcp`` reads it."""
+    from personalclaw.mcp_discovery import list_servers
 
-    now = time.time()
-    if now - _mcp_probe_ts > _MCP_PROBE_CACHE_SECS and not _mcp_probe_in_progress:
-        _mcp_probe_in_progress = True
-        state: DashboardState = request.app["state"]
-        task = asyncio.create_task(_bg_mcp_probe())
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-    # Whether each is allowed is asked now, not taken from the probe that cached the row.
-    known = {s.name: s for s in list_servers(include_disabled=True)}
-    return web.json_response(
-        [
-            as_agents_see_it(
-                _with_allow(dict(d), known[d["name"]]) if d.get("name") in known else d
-            )
-            for d in _mcp_probe_cache
-        ]
-    )
+    servers = list_servers()
+    _start_probes(request, servers)
+    mcp_specs = _read_mcp_json()
+    return web.json_response([_server_row(s, mcp_specs) for s in servers])
 
 
 async def api_mcp_pool_stats(request: web.Request) -> web.Response:
@@ -701,7 +626,20 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
         async with _get_agent_file_lock():
             _sync_mcp_to_agent(name, enabled)
 
+    _switched(request, [name], enabled)
     return web.json_response({"ok": True, "name": name, "enabled": enabled, "applied": True})
+
+
+def _switched(request: web.Request, names: list[str], enabled: bool) -> None:
+    """Servers just switched on are probed again, so their cards say what they do now rather than
+    what they did before they were switched off; one switched off forgets its last probe."""
+    from personalclaw.mcp_discovery import forget_probe
+
+    if enabled:
+        _recheck(request, *names)
+        return
+    for name in names:
+        forget_probe(name)
 
 
 async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
@@ -835,6 +773,7 @@ async def api_mcp_toggle_all(request: web.Request) -> web.Response:
         async with _get_agent_file_lock():
             _sync_mcp_to_agent_batch(toggled, enabled)
 
+    _switched(request, toggled, enabled)
     return web.json_response({"ok": True, "enabled": enabled, "count": len(servers)})
 
 
@@ -884,20 +823,22 @@ def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
     the masked one, which is all the form ever sees.
     """
     from personalclaw.config.secret_refs import mcp_env_view, mcp_headers_view
-    from personalclaw.mcp_discovery import mcp_transport
+    from personalclaw.mcp_discovery import masked_args, masked_command, masked_url, mcp_transport
 
     reason = _not_editable_reason(name, spec)
     if reason is not None:
         return {"name": name, "editable": False, "reason": reason}
     transport = mcp_transport(spec)
+    # A command, its arguments and a URL can each carry a token (`--api-token=…`, `?token=…`),
+    # which is why the list withholds them (`McpServerInfo.to_dict`). Masked here with the mask
+    # the Allow question and the import list use (`mcp_discovery.masked_args`), so no read of a
+    # server shows what another masks; a save puts each value back (`_keep_masked_definition`).
     if transport != "stdio":
         return {
             "name": name,
             "editable": True,
             "transport": transport,
-            # Masked: a URL can carry a token (`?token=…`), which is why the list withholds it
-            # (`MCPServerInfo.to_dict`). A save restores it (`_keep_masked_definition`).
-            "url": redact_for_display(str(spec.get("url") or "")),
+            "url": masked_url(str(spec.get("url") or "")),
             "headers": mcp_headers_view(spec),
         }
     args = spec.get("args")
@@ -905,30 +846,33 @@ def _definition_view(name: str, spec: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "editable": True,
         "transport": transport,
-        # Masked like the URL: a command and its arguments can carry a token (`--api-key …`).
-        "command": redact_for_display(str(spec.get("command") or "")),
-        "args": [redact_for_display(str(a)) for a in args] if isinstance(args, list) else [],
+        "command": masked_command(str(spec.get("command") or "")),
+        "args": masked_args(args) if isinstance(args, list) else [],
         "env": mcp_env_view(spec),
     }
 
 
 def _keep_masked_definition(body: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
-    """*body* with each marker the edit form echoes back restored from the saved definition.
+    """*body* with each mask the edit form echoes back replaced by the saved value it stands for.
 
     The form is seeded from :func:`_definition_view`, which masks a server's command, arguments
-    and URL, and it sends all three back, so each would be saved as the marker. Restored before
-    the request is parsed, which judges the URL and the command as they will be saved.
+    and URL, and it sends all three back, so each would be saved as the mask. A mask left where it
+    was shown keeps the saved value; one typed over is replaced by what was typed; one whose
+    surroundings changed is refused (`mcp_discovery.keep_masked_args`). Restored before the
+    request is parsed, which judges the URL and the command as they will be saved.
     """
+    from personalclaw.mcp_discovery import keep_masked_args, keep_masked_command, keep_masked_url
+
     out = dict(body)
     if isinstance(out.get("command"), str):
-        out["command"] = keep_masked_spans(out["command"], str(stored.get("command") or ""))
-    if isinstance(out.get("args"), list):
+        out["command"] = keep_masked_command(out["command"], str(stored.get("command") or ""))
+    sent = out.get("args")
+    # A list holding anything but strings is left for the parse to refuse as it is.
+    if isinstance(sent, list) and all(isinstance(a, str) for a in sent):
         saved = stored.get("args")
-        out["args"] = keep_masked_values(
-            out["args"], [str(a) for a in saved] if isinstance(saved, list) else []
-        )
+        out["args"] = keep_masked_args(sent, saved if isinstance(saved, list) else [])
     if isinstance(out.get("url"), str):
-        out["url"] = keep_masked_spans(out["url"], str(stored.get("url") or ""))
+        out["url"] = keep_masked_url(out["url"], str(stored.get("url") or ""))
     return out
 
 
@@ -1273,6 +1217,11 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
             resources=name,
         )
         if removed:
+            # What its last probe said goes with it: a server added later under the name is not
+            # this one, and must not be shown this one's state.
+            from personalclaw.mcp_discovery import forget_probe
+
+            forget_probe(name)
             return web.json_response({"ok": True, "name": name, "removed": True}, status=200)
         # The 404 body must carry an `error` key like every other refusal on this handler
         # (the 409 branch above already does) — otherwise the frontend funnel has nothing
@@ -1401,6 +1350,9 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
+    # Whatever the save changed — what the server runs, where it connects, a value behind a
+    # reference — its last probe no longer says what it does: it is probed again as saved.
+    _recheck(request, name)
 
     logger.info("MCP register via REST: %s (%s)", name, transport)
     sel().log_api_access(
@@ -1493,25 +1445,18 @@ def _dashboard_origin(request: web.Request) -> str:
 
 
 def _forget_connections(request: web.Request, name: str) -> None:
-    """After a sign-in or a sign-out: every live connection to ``name`` is closed (the next use
-    opens one with the new sign-in, its spawn breaker reset), what its last probe said is dropped
-    from both caches, and it is probed again in the background, so the Tools page sees it anew."""
+    """After an Allow, a sign-in or a sign-out: every live connection to ``name`` is closed (the
+    next use opens one with the new sign-in, its spawn breaker reset), and it is probed again
+    (:func:`_recheck`), so the Tools page sees it anew."""
     from personalclaw.mcp_client import close_servers
-    from personalclaw.mcp_discovery import forget_probe
 
     close_servers(lambda n: n == name)
-    forget_probe(name)
-    _mcp_probe_cache[:] = [row for row in _mcp_probe_cache if row.get("name") != name]
-    task = asyncio.create_task(_probe_and_cache_one(name))
-    # Held until it finishes: the loop keeps only a weak reference to a task.
-    tasks = getattr(request.app.get("state"), "_background_tasks", None)
-    held: set[asyncio.Task[Any]] = tasks if isinstance(tasks, set) else _SIGN_IN_PROBES
-    held.add(task)
-    task.add_done_callback(held.discard)
+    _recheck(request, name)
 
 
-#: The re-probes a sign-in started when the app has no background-task set to hold them.
-_SIGN_IN_PROBES: set[asyncio.Task[Any]] = set()
+#: The sign-in refusals that are the server's own answer — it offers no sign-in, or its metadata
+#: cannot be used — rather than this page's (a dashboard address, a client ID to type).
+_SERVER_REFUSED_SIGN_IN = frozenset({"mcp_sign_in_not_offered", "mcp_sign_in_failed"})
 
 
 async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
@@ -1590,6 +1535,10 @@ async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
             client_secret=client_secret.strip(),
         )
     except SignInFailed as exc:
+        if exc.code in _SERVER_REFUSED_SIGN_IN:
+            # The card offered a Sign in the server does not have. Probed again, so the card
+            # stops offering it and says what the server wants instead, in the refusal's words.
+            _recheck(request, name)
         return _sign_in_refusal(exc)
     return web.json_response({"authorizationUrl": url, "redirectUri": redirect_uri})
 

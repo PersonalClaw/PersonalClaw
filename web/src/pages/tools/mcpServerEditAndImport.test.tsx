@@ -230,6 +230,48 @@ describe('Edit on an MCP server', () => {
     }, 'r1')
   })
 
+  it('shows a credential in the arguments as the gateway masked it, says what the mask is, and saves it back', async () => {
+    // The gateway masks a credential-named flag's value (`--api-token=…`) the way the Allow question
+    // does, and puts the stored value back when the mask comes back where it was shown. The field
+    // says what the mask stands for, and that arguments are kept in mcp.json as written.
+    mockApi({
+      name: 'gh', editable: true, transport: 'stdio', command: 'uvx', args: ['todo-mcp', `--api-token=${STORED_VALUE_MASK}`],
+      env: [],
+    })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit gh' }))
+    const argsField = await screen.findByRole('textbox', { name: 'Arguments' })
+    expect((argsField as HTMLInputElement).value).toBe(`todo-mcp --api-token=${STORED_VALUE_MASK}`)
+    expect(screen.getByText(/hides a value that looks like a credential/)).toBeInTheDocument()
+    expect(screen.getByText(/Arguments are kept in mcp\.json as written/)).toBeInTheDocument()
+
+    fireEvent.change(argsField, { target: { value: `todo-mcp --api-token=${STORED_VALUE_MASK} --verbose` } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveMcpServer).toHaveBeenCalledTimes(1))
+    expect(saveMcpServer).toHaveBeenCalledWith('gh', {
+      transport: 'stdio', command: 'uvx', args: ['todo-mcp', `--api-token=${STORED_VALUE_MASK}`, '--verbose'],
+    }, 'r1')
+  })
+
+  it('says what a masked part of an address stands for, and only when there is one', async () => {
+    mockApi({
+      name: 'gh', editable: true, transport: 'http', url: `https://mcp.example.test/mcp?token=${STORED_VALUE_MASK}`, headers: [],
+    })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit gh' }))
+    await screen.findByRole('textbox', { name: 'URL' })
+    expect(screen.getByText(/hides a part of the address that can carry a credential/)).toBeInTheDocument()
+    expect(screen.getByText(/to change it, type it in full, the credential included/)).toBeInTheDocument()
+  })
+
+  it('an address with nothing masked says nothing about a mask', async () => {
+    mockApi({ name: 'gh', editable: true, transport: 'http', url: 'https://mcp.example.test/mcp', headers: [] })
+    await mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit gh' }))
+    await screen.findByRole('textbox', { name: 'URL' })
+    expect(screen.queryByText(/hides a part of the address/)).toBeNull()
+  })
+
   it('a server the form does not own opens to the reason, with nothing to save', async () => {
     mockApi({ name: 'gh', editable: false, reason: 'PersonalClaw manages this server itself and sets it up again on every start.' })
     await mount()

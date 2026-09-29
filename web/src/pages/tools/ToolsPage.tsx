@@ -73,13 +73,33 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }
   if (s.status === 'unserved') return { state: "agents can't call it", tone: 'var(--color-warn)', detail: s.error }
   if (s.status === 'signin') return { state: 'sign-in needed', tone: 'var(--color-warn)', detail: s.error }
+  // The gateway is checking it, after a change or for the first time: no result is shown for it
+  // yet, because the last one was about something else (`mcp_discovery._get_cached`).
+  if (s.status === 'probing') return { state: 'checking', tone: 'var(--color-on-surface-low)' }
   return { state: s.status || 'unknown', tone: 'var(--color-warn)', detail: s.error }
+}
+
+/** What an MCP server's card says in place of the tools it does not list, and why.
+ *
+ *  "Not connected", not "Not responding": a server that refused the connection for want of a token,
+ *  or whose host has no name to look up, did not fail to respond, and the reason after the dash is
+ *  the gateway's own sentence. Exported for test. */
+export function noToolsLine(server: McpServer | undefined, healthState: string | undefined, signInState: string | undefined): string {
+  if (!server?.enabled) return 'Server disabled.'
+  if (healthState === 'error') return `Not connected — ${(server.error || 'no tools available').replace(/[.\s]+$/, '')}.`
+  if (server.status === 'probing') return 'Checking the server…'
+  if (signInState && signInState !== 'signed_in') return 'Its tools show here once you sign in.'
+  return 'No tools exposed yet.'
 }
 
 /** How long the page keeps looking for a sign-in to finish in the other tab before it stops. */
 const SIGN_IN_WAIT_MS = 5 * 60_000
 /** How often it looks. The callback re-probes the server itself, so a look finds it ready. */
 const SIGN_IN_POLL_MS = 2_000
+/** While a server reads `probing`, how often the page reads the list again, and for how long at
+ *  most: a probe gives up on its own well before then (`dashboard.mcp_probe_timeout_secs`). */
+const PROBE_POLL_MS = 1_500
+const PROBE_WAIT_MS = 3 * 60_000
 
 /** A sign-in the owner started from this page and is finishing in another tab. */
 interface PendingSignIn { name: string; url: string; since: number }
@@ -327,6 +347,10 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         }
       }
       notify(`Couldn't start signing in to "${s.name}": ${readableErrText(e) || 'the gateway did not answer'}`, 'error')
+      // A server that turns out to have no sign-in is probed again by the gateway: the card is read
+      // again, so it stops offering Sign in and says, in place, what the server wants instead. A
+      // toast alone left the card still saying "asks you to sign in".
+      load()
       return false
     }
   }
@@ -357,6 +381,23 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     window.addEventListener('focus', load)
     return () => { window.clearInterval(timer); window.removeEventListener('focus', load) }
   }, [pendingSignIn, servers])
+
+  // 🔴 A CARD SAID WHAT THE READ JUST AFTER A CHANGE COULD KNOW, AND NOTHING READ IT AGAIN. After an
+  // add, an edit, an Allow or a switch-on, the gateway probes the server and says `probing` until the
+  // probe lands, which takes as long as the server takes to start or to answer. The page read the list
+  // once, 400 ms after the change, so a server that was fine read "unknown" until Re-probe. Now it
+  // reads the list again while any server is being checked. `refresh`, not `load`: a read already on
+  // the wire is joined, never stacked behind another.
+  const probingNames = servers.filter((sv) => sv.status === 'probing').map((sv) => sv.name).join('\n')
+  useEffect(() => {
+    if (!probingNames) return
+    const since = Date.now()
+    const timer = window.setInterval(() => {
+      if (Date.now() - since > PROBE_WAIT_MS) window.clearInterval(timer)
+      else refresh()
+    }, PROBE_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [probingNames, refresh])
 
   async function removeServer(s: McpServer) {
     // The body names the whole blast radius: the delete takes the server out of mcp.json AND the
@@ -826,7 +867,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
       {waiting ? null : g.kind === 'mcp' && g.tools.length === 0 ? (
         <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} />
-          {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : signInState && signInState !== 'signed_in' ? 'Its tools show here once you sign in.' : 'No tools exposed yet.'}
+          {noToolsLine(g.server, health?.state, signInState)}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-s sm:grid-cols-2">
@@ -1292,6 +1333,17 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
 /** The Environment hint on the EDIT form: what the mask is and the three things a line can do. */
 const EDIT_ENV_HINT = `One KEY=value per line. ${STORED_VALUE_MASK} is a value already in your credential store: leave it to keep that value, type over it to replace it, or move the line to Plain values to keep it readable in mcp.json. Delete a line to remove the variable.`
 
+/** The EDIT form's hints for a command line or an address the gateway sent with a credential in it
+ *  masked (`mcp_discovery.masked_args`, the Allow question's mask). Unlike a variable's, that value
+ *  is not in the credential store: it is kept in mcp.json as written, and these say so. */
+const EDIT_ARGS_MASK_HINT = `${STORED_VALUE_MASK} hides a value that looks like a credential, which this page is not shown: leave it to keep that value, or type over it to replace it. Arguments are kept in mcp.json as written; a token in Environment is kept in your credential store instead.`
+const EDIT_URL_MASK_HINT = `${STORED_VALUE_MASK} hides a part of the address that can carry a credential, which this page is not shown. Leave the URL as it is to keep it; to change it, type it in full, the credential included. It is kept in mcp.json as written; a token in Headers is kept in your credential store instead.`
+
+/** A field's hint, with what its mask means when the value it was seeded with holds one. */
+function maskedHint(base: string, seeded: string | undefined, maskHint: string): string {
+  return seeded?.includes(STORED_VALUE_MASK) ? `${base} ${maskHint}` : base
+}
+
 /** One server's definition as the edit form reads it, with the revision that read reported. */
 type McpServerRead = McpServerDefinition & { revision: string }
 
@@ -1369,17 +1421,17 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
               <Segmented value={transport} onChange={(t) => { set('transport', t as McpTransport); setErr('') }} options={TRANSPORT_OPTIONS} />
             </Field>
             {remote ? (<>
-              <Field label="URL" hint={URL_HINT}>
+              <Field label="URL" hint={maskedHint(URL_HINT, base?.value.url, EDIT_URL_MASK_HINT)}>
                 <TextInput value={form.url} onChange={(v) => set('url', v)} placeholder="https://mcp.example.com/mcp" size="md" surface="high" mono />
               </Field>
               <Field label="Headers" hint={EDIT_HEADERS_HINT}>
                 <TextArea value={form.headers} onChange={(v) => set('headers', v)} rows={3} placeholder="Authorization: Bearer …" mono size="md" />
               </Field>
             </>) : (<>
-              <Field label="Command" hint="The executable that starts the server over stdio.">
+              <Field label="Command" hint={maskedHint('The executable that starts the server over stdio.', base?.value.command, EDIT_ARGS_MASK_HINT)}>
                 <TextInput value={form.command} onChange={(v) => set('command', v)} placeholder="npx" size="md" surface="high" mono />
               </Field>
-              <Field label="Arguments" hint={ARGS_HINT}>
+              <Field label="Arguments" hint={maskedHint(ARGS_HINT, base?.value.args, EDIT_ARGS_MASK_HINT)}>
                 <TextInput value={form.args} onChange={(v) => set('args', v)} placeholder="-y @modelcontextprotocol/server-filesystem /path" size="md" surface="high" mono />
               </Field>
               <Field label="Environment" hint={EDIT_ENV_HINT}>

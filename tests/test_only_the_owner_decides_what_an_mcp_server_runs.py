@@ -137,9 +137,8 @@ async def _tools_page(monkeypatch) -> AsyncIterator[TestClient]:
     """The routes the Tools page calls, over a home that starts with no server at all."""
     monkeypatch.setattr(mcp_client, "_registry", None)
     monkeypatch.setattr(mcp_discovery, "_probe_cache", {})
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_cache", [])
+    monkeypatch.setattr(mcp_discovery, "_probing", {})
     monkeypatch.setattr(mcp_handlers, "_mcp_probe_ts", 0.0)
-    monkeypatch.setattr(mcp_handlers, "_mcp_probe_in_progress", False)
     # The agent config's rebuild is not what this is about, and it adds PersonalClaw's own server,
     # which the page's probe would then start.
     monkeypatch.setattr(mcp_handlers, "_rebuild_agent_config_logged", lambda: None)
@@ -324,9 +323,11 @@ async def test_the_tools_page_add_asks_first_and_saves_nothing_until_the_owner_a
 
         saved = await http.put("/api/mcp/servers/notes", json={**body, "confirm": True})
         assert saved.status == 200, await saved.text()
-        row = await _row(http, "POST", "/api/mcp/probe/notes", "notes")
-        assert row["allowed"] is True and [t["name"] for t in row["tools"]] == ["hello"]
+        # Allowed as it was saved, it is probed as saved, and the page's next read says so.
+        await _settled(http)
         assert server.launches == 1
+        row = await _row(http, "GET", "/api/mcp", "notes")
+        assert row["allowed"] is True and [t["name"] for t in row["tools"]] == ["hello"]
 
 
 @pytest.mark.asyncio

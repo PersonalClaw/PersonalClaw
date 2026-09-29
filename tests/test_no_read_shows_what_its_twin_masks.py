@@ -712,12 +712,15 @@ def _mcp(method: str, name: str, body: dict | None = None, headers: dict | None 
 
 
 def test_a_servers_edit_form_shows_its_arguments_masked_and_a_save_keeps_them(mcp_home):
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
     added = _mcp(
         "PUT", "search", confirmed({"command": UNRESOLVABLE, "args": ["--api-key", SECRET]})
     )
     assert added.status == 200, added.text
     read = json.loads(_mcp("GET", "search").text)
-    assert MASK in read["args"] and SECRET not in json.dumps(read)
+    # The mask the Allow question and the import list show for the same argument.
+    assert read["args"] == ["--api-key", SECRET_MASK] and SECRET not in json.dumps(read)
     # What the edit form sends: the definition it was seeded with, one argument added.
     resp = _mcp(
         "PUT",

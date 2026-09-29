@@ -29,6 +29,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from personalclaw import trace_recorder as _trace
 from personalclaw.cancellation import cancel_and_wait
@@ -471,6 +472,38 @@ def _wants_sign_in(exc: BaseException) -> bool:
     return getattr(response, "status_code", None) == 401 and bearer_challenge(response) is not None
 
 
+def _lookup_failure(exc: BaseException) -> BaseException | None:
+    """The failed name lookup under a connection error, or ``None``: the ``socket.gaierror`` that
+    httpx and aiohttp raise their connect errors from, anywhere in its chain."""
+    import socket
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, socket.gaierror):
+            return cur
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return None
+
+
+def unresolved_host_text(host: str) -> str:
+    """What a server whose host's name could not be looked up says, wherever it is said: the
+    lookup is the cause, and nothing past it was tried."""
+    return (
+        f"PersonalClaw could not look up {host}, so it never reached the server. Check the URL, "
+        f"and that this computer can reach the network {host} is on."
+    )
+
+
+def slow_lookup_text(host: str, waited: str) -> str:
+    """What a server says whose host's name was still being looked up when the probe gave up."""
+    return (
+        f"Looking up {host} did not finish within {waited}, so PersonalClaw never reached the "
+        f"server. Check the URL, and that this computer can reach the network {host} is on."
+    )
+
+
 def _failure_text(exc: BaseException, url: str = "", server: str = "") -> str:
     """One line saying why a connection failed — the Tools page shows it, and so does the log.
 
@@ -478,17 +511,29 @@ def _failure_text(exc: BaseException, url: str = "", server: str = "") -> str:
     only "unhandled errors in a TaskGroup (1 sub-exception)". An HTTP refusal reads as its status
     (``HTTP 401 Unauthorized``) rather than httpx's sentence, which spells out the URL, and a URL
     can carry a token — so any other message has the server's URL replaced by its masked form. A
-    401 with a Bearer challenge is the server asking its owner to sign in, and says so.
+    401 with a Bearer challenge is the server asking for a token: one naming its resource metadata
+    asks its owner to sign in, and says so, and a bare one may want a sign-in or a token, which the
+    probe finds out (`mcp_discovery._probe_remote`). A name that could not be looked up says that,
+    not the resolver's own words.
     """
     exc = _leaf(exc)
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
     if isinstance(status, int):
         if status == 401 and _wants_sign_in(exc):
-            from personalclaw.mcp_oauth import sign_in_needed_text
+            from personalclaw.mcp_oauth import (
+                bearer_challenge,
+                sign_in_needed_text,
+                token_or_sign_in_text,
+            )
 
-            return sign_in_needed_text(server or "This server")
+            if (bearer_challenge(response) or {}).get("resource_metadata"):
+                return sign_in_needed_text(server or "This server")
+            return token_or_sign_in_text(server or "This server")
         return f"HTTP {status} {getattr(response, 'reason_phrase', '') or ''}".strip()
+    host = urlsplit(url).hostname if url else None
+    if host and _lookup_failure(exc) is not None:
+        return unresolved_host_text(host)
     text = str(exc) or exc.__class__.__name__
     if url and url in text:
         from personalclaw.mcp_discovery import masked_url

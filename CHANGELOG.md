@@ -138,6 +138,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The embedding re-index embeds every memory with an Ollama embedding model, where it used to fail on every other one and leave half of them read by keyword.**
 
 - **Settings → Secrets no longer lists a switch PersonalClaw sets for itself as a credential inherited from the host, and Settings → Security no longer says the credential store is always in `~/.personalclaw`.**
+- **A tool server's card says what the server does after every add, edit, Allow, removal or switch-on, reading "checking" until its probe lands, and never shows a removed server's state.**
+
+- **Sign in is offered only on a tool server that has a sign-in; one that takes a token instead says what it wants, on its card.**
+
+- **A tool server whose host cannot be looked up says so, instead of reading as a timeout.**
+
+- **MCP Tool Servers names every transport it connects over (a command, Streamable HTTP and SSE), and its card in Settings → Providers can save a Streamable HTTP server.**
 
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
@@ -642,6 +649,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
 - **The libraries PersonalClaw's model features load report nothing and write nothing outside your PersonalClaw home: onnxruntime starts no telemetry and leaves no device identifier, the Hugging Face library keeps no list of AI tools in your shared Hugging Face folder and sends no usage pings, and the code map's grammars download into the home.**
+- **An MCP server's command, arguments and URL show every credential in them masked on the Tools page's edit form and in Settings → Providers, as the Allow question does, and a save keeps or replaces a masked value.**
 
 - **A sync writes nothing outside the stores it syncs: a path another machine names outside them is refused, nothing of that change is taken in, and the sync report names it.**
 

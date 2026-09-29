@@ -479,7 +479,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/mcp/importable` — MCP servers configured in an external backend
 - `GET /api/mcp/oauth/callback` — where an authorization server sends the browser back to.
 - `GET /api/mcp/pool-stats` — the in-process MCP connection-pool observability tile
-- `GET /api/mcp/probe` — return cached probe results (non-blocking).
+- `GET /api/mcp/probe` — return cached probe results (non-blocking): each switched-on server
 - `POST /api/mcp/probe` — probe all MCP servers and return live status.
 - `POST /api/mcp/probe/{name}` — reconnect (re-probe) a SINGLE MCP server.
 - `DELETE /api/mcp/servers/{name}` — read, add or edit, or remove one MCP server.

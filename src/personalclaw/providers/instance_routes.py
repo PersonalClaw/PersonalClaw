@@ -57,6 +57,7 @@ from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.security import MaskConflict
 from personalclaw.stale_write import revision_of, stale_write_refusal
 
 if TYPE_CHECKING:
@@ -84,6 +85,21 @@ def _allow_as_saved(planned: "McpServerInfo") -> None:
     stored = _mcp.saved(planned.name)
     if stored is not None and mcp_grants.definition(stored) == mcp_grants.definition(planned):
         mcp_grants.give(stored)
+
+
+def _mcp_changed(
+    request: web.Request, name: str, *, config: dict | None, enabled: bool | None
+) -> None:
+    """After the card wrote the MCP server *name*: one whose definition changed, or that was
+    switched on, is probed again, so the Tools page's card says what it does now
+    (`mcp_discovery.recheck`); one removed or switched off forgets its last probe."""
+    from personalclaw.mcp_discovery import forget_probe, recheck
+
+    if config is None and enabled is not True:
+        forget_probe(name)
+        return
+    tasks = getattr(request.app.get("state"), "_background_tasks", None)
+    recheck([name], hold=tasks if isinstance(tasks, set) else None)
 
 
 async def _refresh_multi_instance_provider_safe(name: str) -> None:
@@ -279,6 +295,7 @@ async def handle_create_instance(request: web.Request) -> web.Response:
             return json_error("bad_request", message=str(exc), status=400)
         _allow_as_saved(server)
         _rebuild_agent_config_safe()
+        _mcp_changed(request, inst.id, config=config, enabled=True)
         return web.json_response({"instance": _revisioned(mask_instance(inst, schema))}, status=201)
 
     try:
@@ -411,25 +428,30 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         # An edit that changes what the server runs is asked about first, like the Tools page's
         # Edit (`mcp_grants`); switching it on or off is not.
         server = None
-        if config is not None:
-            try:
-                server = _mcp.planned(instance_id, config, create=False)
-            except LookupError:
-                return json_error(
-                    "not_found", message="No instance exists with that id.", status=404
-                )
-            if not mcp_grants.allowed(server) and not confirm_granted(body):
-                return consent_required(
-                    f"mcp.servers.{instance_id}",
-                    mcp_grants.consent(server, saving=True),
-                    title=mcp_grants.title(server),
-                )
-        inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
+        try:
+            if config is not None:
+                try:
+                    server = _mcp.planned(instance_id, config, create=False)
+                except LookupError:
+                    return json_error(
+                        "not_found", message="No instance exists with that id.", status=404
+                    )
+                if not mcp_grants.allowed(server) and not confirm_granted(body):
+                    return consent_required(
+                        f"mcp.servers.{instance_id}",
+                        mcp_grants.consent(server, saving=True),
+                        title=mcp_grants.title(server),
+                    )
+            inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
+        except MaskConflict as exc:
+            # A masked argument or address whose surroundings changed: nothing is saved.
+            return json_error("mask_conflict", message=str(exc), status=409)
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
         if server is not None:
             _allow_as_saved(server)
         _rebuild_agent_config_safe()
+        _mcp_changed(request, instance_id, config=config, enabled=body.get("enabled"))
         return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 
     try:
@@ -464,6 +486,7 @@ async def handle_delete_instance(request: web.Request) -> web.Response:
         if not _mcp.delete_instance(instance_id):
             return json_error("not_found", message="No instance exists with that id.", status=404)
         _rebuild_agent_config_safe()
+        _mcp_changed(request, instance_id, config=None, enabled=False)
         return web.json_response({"ok": True})
     deleted = delete_instance(name, instance_id)
     if not deleted:

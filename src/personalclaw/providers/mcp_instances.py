@@ -14,7 +14,10 @@ Each ``mcpServers`` entry maps to one :class:`ExtensionInstance`:
 * ``config`` = ``{transport, command, args, endpoint}`` matching the card's
   ``settingsSchema`` (``transport`` is the spec's ``type``, read by
   ``mcp_discovery.mcp_transport``; ``args`` is a space-joined string; ``endpoint`` is a
-  remote server's ``url``)
+  remote server's ``url``), each with every credential in it masked the way the Tools page's
+  edit form masks it (``mcp_discovery.masked_args``). An instance is only ever this card's
+  VIEW of a server — the store is ``mcp.json`` — so the view is what it holds, and a write puts
+  each masked value back from the server as ``mcp.json`` has it (:func:`_config_to_spec`).
 * ``enabled`` = NOT the spec's ``disabled`` flag
 
 Writes preserve any ``env``/``headers`` already on the spec so editing from the
@@ -71,17 +74,18 @@ def _save(data: dict[str, Any]) -> None:
 
 
 def _spec_to_instance(name: str, spec: dict[str, Any]) -> ExtensionInstance:
-    from personalclaw.mcp_discovery import mcp_transport
+    from personalclaw.mcp_discovery import masked_args, masked_command, masked_url, mcp_transport
 
-    url = spec.get("url", "")
     args = spec.get("args", [])
     config: dict[str, Any] = {
         # The server's real transport, not "sse" for every URL: the card writes back what it
         # read, so a Streamable HTTP server read as "sse" was turned into one on the next save.
         "transport": mcp_transport(spec),
-        "command": spec.get("command", ""),
-        "args": " ".join(args) if isinstance(args, list) else str(args or ""),
-        "endpoint": url,
+        # Masked like the Tools page's edit form: each of these can carry a token (`--api-key …`,
+        # `?token=…`), and this list is read on every visit to Settings → Providers.
+        "command": masked_command(str(spec.get("command") or "")),
+        "args": " ".join(masked_args(args)) if isinstance(args, list) else str(args or ""),
+        "endpoint": masked_url(str(spec.get("url") or "")),
     }
     return ExtensionInstance(
         id=name,
@@ -98,29 +102,36 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
     Preserves ``env``/``headers`` from any existing spec so credential material
     configured outside the card survives an edit — and ``plainEnv``, which says which of those
     values are settings rather than secrets, so an edit does not move a setting into the store.
+
+    The card was seeded masked (:func:`_spec_to_instance`), so each mask it sends back is put back
+    to the value it stands for in *existing*, and one that stands for nothing it can match raises
+    :class:`~personalclaw.security.MaskConflict` (a ``ValueError``) rather than being saved as the
+    value (`mcp_discovery.keep_masked_args`).
     """
     from personalclaw.config.secret_refs import MCP_PLAIN_ENV
+    from personalclaw.mcp_discovery import keep_masked_args, keep_masked_command, keep_masked_url
 
+    stored = existing if isinstance(existing, dict) else {}
     spec: dict[str, Any] = {}
-    if isinstance(existing, dict):
-        for k in ("env", "headers", MCP_PLAIN_ENV):
-            if existing.get(k):
-                spec[k] = existing[k]
-        if existing.get("disabled") is True:
-            spec["disabled"] = True
+    for k in ("env", "headers", MCP_PLAIN_ENV):
+        if stored.get(k):
+            spec[k] = stored[k]
+    if stored.get("disabled") is True:
+        spec["disabled"] = True
 
     transport = config.get("transport") or ("sse" if config.get("endpoint") else "stdio")
     if transport != "stdio":
         # Spelled out (`type`, the key every MCP reader asks — `mcp_discovery.mcp_transport`).
         spec["type"] = transport
-        spec["url"] = (config.get("endpoint") or "").strip()
+        url = (config.get("endpoint") or "").strip()
+        spec["url"] = keep_masked_url(url, str(stored.get("url") or ""))
     else:
-        spec["command"] = (config.get("command") or "").strip()
+        command = (config.get("command") or "").strip()
+        spec["command"] = keep_masked_command(command, str(stored.get("command") or ""))
         raw_args = config.get("args") or ""
-        if isinstance(raw_args, list):
-            spec["args"] = raw_args
-        else:
-            spec["args"] = raw_args.split() if raw_args.strip() else []
+        args = raw_args if isinstance(raw_args, list) else raw_args.split()
+        saved = stored.get("args")
+        spec["args"] = keep_masked_args(args, saved if isinstance(saved, list) else [])
     return spec
 
 

@@ -774,39 +774,32 @@ class TestProbeCache:
         _clear_cache()
 
     def test_cache_miss_returns_unknown(self) -> None:
-        status, tools, error = _get_cached("nonexistent")
+        status, tools, error = _get_cached(McpServerInfo(name="nonexistent", command="x"))
         assert status == "unknown"
         assert tools == []
         assert error == ""
 
-    def test_cache_hit_within_ttl(self) -> None:
+    def test_cache_hit_for_the_same_definition(self) -> None:
         server = McpServerInfo(
             name="test-srv", command="x", status="ok", tools=["t1", "t2"], error=""
         )
         _cache_probe(server)
-        status, tools, error = _get_cached("test-srv")
+        status, tools, error = _get_cached(McpServerInfo(name="test-srv", command="x"))
         assert status == "ok"
         assert tools == ["t1", "t2"]
         assert error == ""
 
-    def test_cache_expired_returns_outdated_with_tools(self, monkeypatch) -> None:
-        server = McpServerInfo(
-            name="test-srv", command="x", status="ok", tools=["t1", "t2"], error=""
-        )
-        _cache_probe(server)
-        # Simulate expiry by backdating probed_at
-        _probe_cache["test-srv"].probed_at = time.monotonic() - 2000
-        status, tools, error = _get_cached("test-srv")
-        assert status == "outdated"
-        assert tools == ["t1", "t2"]
-        assert error == ""
+    def test_a_result_for_another_definition_is_not_this_servers(self) -> None:
+        _cache_probe(McpServerInfo(name="test-srv", command="x", status="ok", tools=["t1"]))
+        status, tools, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
+        assert (status, tools) == ("unknown", [])
 
     def test_cache_error_preserved(self) -> None:
         server = McpServerInfo(
             name="err-srv", command="x", status="error", tools=[], error="timeout"
         )
         _cache_probe(server)
-        status, tools, error = _get_cached("err-srv")
+        status, tools, error = _get_cached(McpServerInfo(name="err-srv", command="x"))
         assert status == "error"
         assert error == "timeout"
 
@@ -1131,7 +1124,8 @@ class TestProbeRemoteTimeout:
 
     @pytest.mark.asyncio
     async def test_probe_remote_timeout_uses_config(self) -> None:
-        """A server that never answers reads ``timeout`` after ``_get_probe_timeout()``."""
+        """A server that never answers says so after ``_get_probe_timeout()``, once its host's
+        name is known to resolve (looked up here without the network)."""
         from personalclaw.mcp_discovery import _probe_remote
 
         server = McpServerInfo(name="remote", url="https://example.com/mcp", transport="http")
@@ -1140,15 +1134,19 @@ class TestProbeRemoteTimeout:
             await asyncio.sleep(30)
             return []
 
+        async def resolves(host: str) -> None:
+            return None
+
         with (
             patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
+            patch("personalclaw.mcp_discovery._look_up", resolves),
             patch("personalclaw.mcp_client.McpServerConn.list_tools", never_answers),
         ):
             started = time.monotonic()
             result = await _probe_remote(server)
 
         assert result.status == "error"
-        assert result.error == "timeout"
+        assert result.error == "example.com did not answer within 0.2 seconds."
         assert time.monotonic() - started < 5, "the probe outlived its configured timeout"
 
 
