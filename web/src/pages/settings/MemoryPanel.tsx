@@ -20,7 +20,8 @@ import {
   type RecallRanking,
 } from '../../lib/api'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
-import { confirm, confirmDelete, confirmDestructive } from '../../ui/dialog'
+import { confirm, confirmDelete } from '../../ui/dialog'
+import { confirmForgetPreference } from './forgetPreference'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, InlineLoadError, LoadError, EmptyState } from '../../ui/ListScaffold'
@@ -139,7 +140,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
           {tab === 'health' && <HealthTab onChanged={reloadStats} />}
           {tab === 'audit' && <AuditTab />}
           {tab === 'inspect' && <InspectTab />}
-          {tab === 'settings' && <SettingsTab stats={stats} onConsolidated={reloadStats} />}
+          {tab === 'settings' && <SettingsTab stats={stats} onConsolidated={reloadStats} focusPref={query.pref || undefined} />}
         </ToolTabBody>
       )}
     </div>
@@ -218,6 +219,26 @@ interface StudioItem {
   doc?: { which: 'preferences' | 'projects' | 'history'; label: string }
   entity?: MemoryEntity
   slot?: MemorySlot
+  /** A fact that IS a learned preference (`pref.facet.*`), read out of its stored value. */
+  facet?: StudioFacet
+}
+
+/** A learned preference as the Studio shows it. A forgotten one stays in the store, marked, so
+ *  it is never learned again; it says so rather than reading as one the assistant still gets. */
+type StudioFacet = { cls: string; text: string; forgotten: boolean }
+
+/** The learned preference a `pref.facet.*` fact holds, or null for any other fact.
+ *
+ *  Such a row was listed as its md5 key over the raw JSON it is stored as, and inspected with a
+ *  JSON editor, where a slip corrupts the preference. It reads as the preference instead, and its
+ *  inspector points to the Learned preferences list, which owns pinning and forgetting it. */
+export function facetOf(fact: SemanticEntry): StudioFacet | null {
+  if (!fact.key.startsWith('pref.facet.')) return null
+  const v = storedValueOf(fact.value_json)
+  if (!v || typeof v !== 'object') return null
+  const { cls, text, forgotten } = v as { cls?: unknown; text?: unknown; forgotten?: unknown }
+  if (typeof text !== 'string' || !text) return null
+  return { cls: typeof cls === 'string' ? cls : '', text, forgotten: forgotten === true }
 }
 
 const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> = {
@@ -370,7 +391,10 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
     // kind owns that surface (and is the only one that can enforce the cap on a write).
     for (const f of facts ?? []) {
       if (f.key.startsWith('slot.')) continue
-      out.push({ uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
+      const facet = facetOf(f)
+      out.push(facet
+        ? { uid: `fact:${f.key}`, kind: 'fact', title: facet.text, preview: `${facet.forgotten ? 'Forgotten' : 'Learned'} ${facet.cls || 'style'} preference`, ref: `sem:${f.key}`, fact: f, facet }
+        : { uid: `fact:${f.key}`, kind: 'fact', title: f.key, preview: readValue(f.value_json), ref: `sem:${f.key}`, fact: f })
     }
     for (const l of lessons ?? []) out.push({ uid: `lesson:${l.rule}`, kind: 'lesson', title: l.rule, preview: lessonPreview(l), ref: lessonRef(l.rule), lesson: l })
     for (const e of episodics ?? []) out.push({ uid: `epi:${e.id}`, kind: 'episodic', title: e.text.slice(0, 80), preview: e.created_at ? fmtDate(e.created_at) : 'episodic', ref: null, episodic: e })
@@ -728,8 +752,11 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
   // already exists in the store (tombstone the entity, drop the links pointing at it, keep the
   // records), so the honest move is to state that consequence in the confirm dialog rather than
   // withhold the action.
-  const deletable = item.kind === 'fact' || item.kind === 'episodic' || item.kind === 'lesson'
-    || item.kind === 'entity'
+  // A learned preference is FORGOTTEN, not deleted: a deleted row is learned again the next time
+  // the same words are seen, while a forgotten one never is. Its inspector links the list that
+  // forgets it instead of offering the delete.
+  const deletable = (item.kind === 'fact' && !item.facet) || item.kind === 'episodic'
+    || item.kind === 'lesson' || item.kind === 'entity'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-outline-variant/30 px-3 py-2.5">
@@ -749,7 +776,33 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
         )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {item.kind === 'fact' && item.fact && (
+        {item.kind === 'fact' && item.fact && item.facet && (
+          <div data-type="body-s" className="flex flex-col gap-3">
+            <p className="leading-snug text-on-surface">{item.facet.text}</p>
+            <StudioMeta pairs={[
+              ['Kind', `${item.facet.forgotten ? 'forgotten' : 'learned'} ${item.facet.cls || 'style'} preference`],
+              ['Updated', item.fact.updated_at ? fmtDate(item.fact.updated_at) : '—'],
+            ]} />
+            {item.facet.forgotten ? (
+              <p data-type="caption" className="text-on-surface-low">
+                Forgotten: it no longer reaches the assistant, and the same request never learns it
+                again. It stays here, and among the forgotten ones in{' '}
+                <TextLink href="#/settings/memory?tab=settings">Learned preferences</TextLink>, so the
+                retirement stays visible.
+              </p>
+            ) : (
+              <p data-type="caption" className="text-on-surface-low">
+                Learned from how you asked, and shown to the assistant on every turn while it holds.
+                The Learned preferences list shows how strongly it is held now, and pins or
+                forgets it.{' '}
+                <TextLink href={`#/settings/memory?tab=settings&pref=${encodeURIComponent(item.fact.key)}`}>
+                  Manage in Learned preferences →
+                </TextLink>
+              </p>
+            )}
+          </div>
+        )}
+        {item.kind === 'fact' && item.fact && !item.facet && (
           <div data-type="body-s" className="flex flex-col gap-3">
             {/* Keyed: a different fact is a different edit, restored from `factDrafts` if it has one. */}
             <FactValueEditor key={item.fact.key} fact={item.fact} onSaved={onSaved} drafts={factDrafts} />
@@ -832,7 +885,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
             separate report. Facts and episodes ONLY — those are the two `from_kind` values
             anything writes. A lesson has no links at all, so rendering a permanently empty
             "no entity links" panel for one would present a surface that can never fill. */}
-        {(item.kind === 'fact' || item.kind === 'episodic') && <RecordLinks item={item} />}
+        {((item.kind === 'fact' && !item.facet) || item.kind === 'episodic') && <RecordLinks item={item} />}
       </div>
     </div>
   )
@@ -1997,20 +2050,29 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
 // these rows are what those knobs govern: the profile block the toggles above inject is
 // assembled from exactly this list, strongest first.
 //
-// Deliberately NOT in the Studio: `pref.facet.*` rows already appear there under Facts as
-// raw JSON with md5 keys, and a second list would be the two-browsers-over-one-collection
-// drift this panel keeps producing. What the Studio cannot show is the DECAYED score or the
-// two flags — which is the whole reason this exists.
+// Deliberately NOT a second list in the Studio: `pref.facet.*` rows appear there under Facts,
+// read as the preference (`facetOf`) with a link here, and a second browser over the same rows
+// would be the two-browsers-over-one-collection drift this panel keeps producing. What the
+// Studio cannot show is the DECAYED score or the two flags — which is the whole reason this exists.
 
 const FACET_CLASS_LABEL: Record<string, string> = {
   style: 'style', identity: 'identity', tooling: 'tooling',
   goal: 'goal', channel: 'channel', veto: 'veto',
 }
 
-function LearnedPreferencesSection() {
+function LearnedPreferencesSection({ focusKey }: { focusKey?: string }) {
   const { data, loading, error, refresh } = useQuery('settings:memory-facets', () => api.memoryFacets())
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
+  // The chat's learned chip links here with the preference's key: its row is brought into view
+  // and takes focus, so the Pin and Forget beside it are the next thing a keyboard reaches.
+  const focusedRowRef = useRef<HTMLDivElement>(null)
+  const hasFocusRow = !!focusKey && !!data?.some((f) => f.key === focusKey && !f.forgotten)
+  useEffect(() => {
+    if (!hasFocusRow) return
+    focusedRowRef.current?.scrollIntoView({ block: 'nearest' })
+    focusedRowRef.current?.focus({ preventScroll: true })
+  }, [hasFocusRow])
 
   // 🔑 `busy` IS PER-ROW AND SO ARE THE CONTROLS. An earlier shape gated every row on
   // `disabled={!!busy}`, which dims and announces `aria-disabled` — "you cannot do this" — about
@@ -2026,22 +2088,8 @@ function LearnedPreferencesSection() {
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Could not change that pin.') }
     setBusy((b) => (b === f.key ? '' : b))
   }
-  // `confirmDestructive`, not `confirmDelete`: the verb is not delete and the row survives,
-  // so the prompt has to state what is actually irreversible rather than lean on the word.
   const forget = async (f: MemoryFacet) => {
-    const ok = await confirmDestructive(
-      'Forget this preference?',
-      <>
-        <p>“{f.text}” drops out of the profile block immediately and its strength reads 0.</p>
-        <p className="mt-s">
-          This cannot be undone — not by pinning it, and not by the assistant observing the same
-          preference again. The row stays in the memory log, marked forgotten, so it is never
-          re-learned.
-        </p>
-      </>,
-      { confirmLabel: 'Forget' },
-    )
-    if (!ok) return
+    if (!(await confirmForgetPreference(f.text))) return
     setBusy(f.key); setMsg('')
     try { await api.memoryFacetForget(f.key); setMsg('Forgotten — it no longer reaches the model.'); refresh() }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Could not forget that preference.') }
@@ -2068,7 +2116,8 @@ function LearnedPreferencesSection() {
       ) : (
         <div className="flex flex-col gap-1.5">
           {live.map((f) => (
-            <div key={f.key} className="flex items-start gap-2 rounded-lg bg-surface-high px-2.5 py-1.5">
+            <div key={f.key} className={`flex items-start gap-2 rounded-lg bg-surface-high px-2.5 py-1.5 ${f.key === focusKey ? 'ring-2 ring-primary' : ''}`}
+              {...(f.key === focusKey ? { ref: focusedRowRef, tabIndex: -1, 'aria-current': true } : {})}>
               <div className="min-w-0 flex-1">
                 <p data-type="caption" className="text-on-surface">{f.text}</p>
                 <p data-type="caption" className="text-on-surface-low">
@@ -2109,7 +2158,12 @@ function LearnedPreferencesSection() {
 }
 
 // ── Settings (retention + consolidate) ───────────────────────────────────────
-function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | undefined; onConsolidated: () => void }) {
+function SettingsTab({ stats, onConsolidated, focusPref }: {
+  stats: MemoryStats | null | undefined
+  onConsolidated: () => void
+  /** A learned preference's key (`?pref=`, from the chat's learned chip) to open the list at. */
+  focusPref?: string
+}) {
   // 🔴 NO FALLBACK. `.catch(() => null)` resolved a failed read to `null`, the `!s` gate below then
   // drew its skeleton forever — no message, no Retry — and `persist` kept the `null` for the next
   // visit to paint the same spinner from cache.
@@ -2233,7 +2287,7 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
 
       {/* Directly under the injection knobs: the profile block those toggles inject is
           assembled from these rows, so the override belongs next to what it overrides. */}
-      <LearnedPreferencesSection />
+      <LearnedPreferencesSection focusKey={focusPref} />
 
       <Section title="Consolidation" hint="Force an immediate consolidation pass instead of waiting for idle rollup.">
         <div className="flex items-center gap-3">

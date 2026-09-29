@@ -86,6 +86,10 @@ export interface ActivitySegment {
   // `learnedSurface()`, which degrades an unrecognised value to a non-tappable chip
   // rather than guessing a surface.
   origin?: string
+  // What undoing a `learned` artifact needs: a learned preference's key (`origin: 'facet'`).
+  // Absent for the other origins, which are reviewed where the chip links rather than undone
+  // from it.
+  ref?: string
 }
 
 /** A turn-level error (the model/provider rejected the turn, e.g. a Bedrock
@@ -115,12 +119,12 @@ export const appendThinking = (segs: Segment[], chunk: string): Segment[] => {
   return [...segs, { kind: 'thinking', text: chunk }]
 }
 
-/** One episodic memory surfaced into an assistant turn's prompt, resolvable from a
- *  `[Memory N]` citation the reply emits. `id` is the
- *  episode's stable record id (used to deep-link the memory studio); it may be null
- *  when the recall layer had no per-record id, in which case the chip degrades to a
- *  non-navigable label. */
-export interface MemoryCitation { n: number; id: string | null; preview?: string }
+/** One episodic memory — or, with `kind: 'lesson'`, one recalled lesson — surfaced into an
+ *  assistant turn's prompt, resolvable from the `[Memory N]` (`[Lesson N]`) citation the reply
+ *  emits. `id` is the episode's stable record id, or the lesson's rule as the Memory studio lists
+ *  it (used to deep-link the memory studio); it may be null when the recall layer had no
+ *  per-record id, in which case the chip degrades to a non-navigable label. */
+export interface MemoryCitation { n: number; id: string | null; preview?: string; kind?: 'lesson' }
 
 /** One skill whose content actually reached this turn's prompt (LEARNING-VISIBILITY
  *  T2.1). Rides the `meta.skills_used` of the message that STARTED the turn — the user's, or
@@ -193,8 +197,8 @@ export function skillsUsedTitle(skills: SkillUsed[]): string {
   return `Skills used this turn:\n${lines.join('\n')}`
 }
 
-/** Stamp `origin` onto the activity segment `insertActivity` just created, given the
- *  arrays before (`prev`) and after (`next`) that call.
+/** Stamp `origin` (and `ref`, when the emitter sent one) onto the activity segment
+ *  `insertActivity` just created, given the arrays before (`prev`) and after (`next`) that call.
  *
  *  Exists so `TextRunOwnership.activity` doesn't have to widen `insertActivity`'s signature (and
  *  re-baseline its K42/K44/K45 suite) just to carry one optional field. It identifies the new
@@ -205,10 +209,13 @@ export function skillsUsedTitle(skills: SkillUsed[]): string {
  *
  *  Returns `next` either way; a falsy origin is a no-op, which is the pre-T2.2 wire and every
  *  non-`learned` activity kind. */
-export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: string): Segment[] {
+export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: string, ref?: string): Segment[] {
   if (!origin || next === prev) return next
   const added = next.find((sg) => sg.kind === 'activity' && !prev.includes(sg))
-  if (added) (added as ActivitySegment).origin = origin
+  if (added) {
+    (added as ActivitySegment).origin = origin
+    if (ref) (added as ActivitySegment).ref = ref
+  }
   return next
 }
 
@@ -226,22 +233,30 @@ export function stampActivityOrigin(prev: Segment[], next: Segment[], origin?: s
  *    does NOT route to the Learning page: that page is the `/api/learning/proposals`
  *    inbox, a different artifact class (flywheel `lesson_batch` proposals), which can
  *    neither show nor edit an after-turn lesson.
- *  - `facet` → `upsert_facet` writes a typed facet to the vector store, and the veto branch
- *    writes a lesson instead; the Memory Studio owns both.
+ *  - `facet` → `upsert_facet` writes a learned preference, and Settings → Memory → Learned
+ *    preferences is where one is pinned or forgotten — the link opens that list at the row
+ *    (`?pref=<key>`). The veto branch writes a lesson instead, and its chip says `lesson`.
  *
  *  Returns null for an absent or unrecognised origin. That is the graceful-degrade
  *  contract, not an oversight: every message persisted, and anything a future
  *  emitter adds, arrives without a mapping, and a chip that guessed a surface would send
  *  the user somewhere the artifact isn't. The chip still renders — it just isn't a link. */
 export interface LearnedSurface { href: string; label: string }
-export function learnedSurface(origin?: string | null): LearnedSurface | null {
+
+/** One entry of an assistant message's `meta.learned` — what the turn learned, as its chip said
+ *  (`chat_session_map.LEARNED_KEY`). `ref` is a learned preference's key. */
+export interface LearnedRecord { origin?: string; text: string; ref?: string }
+export function learnedSurface(origin?: string | null, ref?: string | null): LearnedSurface | null {
   switch (origin) {
     case 'proposal':
       return { href: '#/skills?mode=proposals', label: 'Review in Skill proposals →' }
     case 'lesson':
       return { href: '#/settings/memory?tab=studio', label: 'Review lessons in Memory →' }
     case 'facet':
-      return { href: '#/settings/memory?tab=studio', label: 'Manage in Memory →' }
+      return {
+        href: `#/settings/memory?tab=settings${ref ? `&pref=${encodeURIComponent(ref)}` : ''}`,
+        label: 'Manage in Learned preferences →',
+      }
     default:
       return null
   }
@@ -421,7 +436,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string } } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; is_read_only?: string; grant_agent?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -558,6 +573,13 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // sentence was persisted has none, and the turn shows no telemetry row, as before.
       const statsLine = m.meta?.turn_telemetry?.line
       if (typeof statsLine === 'string' && statsLine) at.segments.push({ kind: 'activity', text: statsLine, activityKind: 'stats' })
+      // What the turn learned, from the same last message: live it arrives as the learned chip's
+      // `activity_event`, which a reload — or a restart mid-turn — never replays, so a preference
+      // could be saved with nothing on the page saying so. One segment per entry, in order.
+      for (const l of Array.isArray(m.meta?.learned) ? m.meta!.learned : []) {
+        if (!l || typeof l.text !== 'string' || !l.text) continue
+        at.segments.push({ kind: 'activity', text: `Learned: ${l.text}`, activityKind: 'learned', origin: l.origin, ...(l.ref ? { ref: l.ref } : {}) })
+      }
       // Regenerated answers persist as ONE assistant message carrying every version
       // in `variants` (the active one's content == m.content). Carry the count + index
       // onto the turn so the ‹n/N› switcher rehydrates on reload.

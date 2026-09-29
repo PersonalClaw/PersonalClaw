@@ -452,18 +452,24 @@ class MemoryService:
         vs = self._vs
         return (vs.get_semantic_context(query_text=query_text, cap=cap) or "") if vs else ""
 
-    def lessons_context(self, workspace: str | None = None) -> str:
+    def lessons_context(
+        self, workspace: str | None = None, *, citations_out: list[dict] | None = None
+    ) -> str:
         """The lessons block for injection (empty if none / no vector store).
 
         ``workspace`` is the reading session's working directory — the only thing that
         makes a workspace-scoped lesson visible. A caller that omits it (the dashboard
         grill-tree recall, the debug preview) gets GLOBAL lessons only, which is why a
         workspace lesson cannot leak through a path that has no workspace identity.
+
+        With *citations_out*, each lesson is listed as ``[Lesson N]`` and the manifest is
+        filled — see :meth:`VectorMemoryStore.get_lessons_context`.
         """
         vs = self._vs
         if vs is None:
             return ""
-        return vs.get_lessons_context(normalize_workspace_ref(workspace) or None) or ""
+        ws = normalize_workspace_ref(workspace) or None
+        return vs.get_lessons_context(ws, citations_out=citations_out) or ""
 
     def search_episodic(
         self,

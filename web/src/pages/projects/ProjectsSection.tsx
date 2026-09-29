@@ -26,6 +26,7 @@ import { WorkspacePicker } from '../code/WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { api, ApiError, MAX_NAME_LEN, type ProjectImportResult, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkOutcome, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { downloadFrom } from '../../lib/download'
 import { DEFAULT_PROJECT_KEY, useDefaultProject } from '../../lib/defaultProject'
 import { notify } from '../../app/appSdk'
 import { PageTitle } from '../../ui/PageTitle'
@@ -877,11 +878,12 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       <HeaderControl icon={MessageSquare} label="Chat" onClick={launchChat} />
       {/* Export this project as a manifest ZIP — the brief, context ledgers, templates, artifact
           metadata and run digests, each sha256'd. Credentials never travel; the archive names the
-          ones the far side must re-enter. A plain navigation rather than a fetch, so the browser's
-          own download machinery handles a multi-megabyte archive instead of buffering it in JS. */}
+          ones the far side must re-enter. A download link rather than a fetch, so the browser's
+          own download machinery handles a multi-megabyte archive instead of buffering it in JS,
+          and rather than pointing the tab at it, so a refusal never replaces the app. */}
       <HeaderControl icon={Download} label="Export" priority="low"
         hint="Download this project as a portable archive (no credentials)"
-        onClick={() => { window.location.href = api.projectExportUrl(id) }} />
+        onClick={() => downloadFrom(api.projectExportUrl(id))} />
     </>
   )
   // The side panel: a task list's tasks, or a directory tree. Keyed so switching

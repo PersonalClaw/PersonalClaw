@@ -2212,6 +2212,11 @@ IGNORED: tuple[str, ...] = (
     # high-churn sidecar state whose whole meaning is "a process on THIS machine holds this
     # trigger", the same posture as `locks` and `*.lock` above.
     "trigger-claims",
+    # The regenerate retake records (`artifacts/retakes.py`): which images the answer being
+    # regenerated RIGHT NOW made, so the replayed turn saves its image as their next version. One
+    # turn's scratch, closed when the turn ends and named for the gateway process that opened it;
+    # restored anywhere it names a dead process and is discarded unread. Nothing is lost.
+    "retakes",
     # The task lease sidecars (`workflows/pool.py`): the claim-store argument above, for tasks.
     # A lease names the worker renewing it once a minute, and a restored one would show a task as
     # claimed by a worker that does not exist until it expired. The module's own contract is that

@@ -8,6 +8,9 @@ export is the ONLY pass those ever get before the text leaves the machine.
 from __future__ import annotations
 
 import json
+import os
+import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -286,19 +289,116 @@ def test_export_filename_keeps_non_ascii_because_the_route_can_now_carry_it():
     assert se.export_filename("日本語のチャット", "fallback-key", "json") == "日本語のチャット.json"
 
 
+@contextmanager
+def _machine_zone(name: str):
+    """Pin the zone a stored naive time was written in (``datetime.now()``) and shown in."""
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
 def test_json_export_carries_provenance():
-    payload = json.loads(
-        se.render_json(
-            title="T",
-            key="dashboard:abc",
-            meta={"agent": "personalclaw", "model": "m", "created_at": "2026-07-30"},
-            messages=[],
+    with _machine_zone("America/Toronto"):
+        payload = json.loads(
+            se.render_json(
+                title="T",
+                key="dashboard:abc",
+                meta={"agent": "personalclaw", "model": "m", "created_at": "2026-07-30T09:00:00"},
+                messages=[],
+            )
         )
-    )
     assert payload["key"] == "dashboard:abc"
     assert payload["agent"] == "personalclaw"
     assert payload["model"] == "m"
-    assert payload["created_at"] == "2026-07-30"
+    assert payload["created_at"] == "2026-07-30T09:00:00-04:00"
+
+
+def test_export_times_say_which_zone_they_are_in():
+    """A stored time is this machine's local time with no offset, so an export read anywhere
+    else could not tell 12:42 in Toronto from 12:42 in Lisbon. Every time now carries its
+    offset: to the second in the Markdown a person reads, in full in the JSON."""
+    msgs = [{"role": "user", "content": "hello", "ts": "2026-09-29T12:42:01.542422"}]
+    meta = {"created_at": "2026-09-29T12:39:25.546173"}
+    with _machine_zone("America/Toronto"):
+        md = se.render_markdown(title="t", key="k", meta=meta, messages=msgs)
+        payload = json.loads(se.render_json(title="t", key="k", meta=meta, messages=msgs))
+    assert "## You · 2026-09-29T12:42:01-04:00" in md
+    assert "- **Created:** 2026-09-29T12:39:25-04:00" in md
+    assert payload["messages"][0]["ts"] == "2026-09-29T12:42:01.542422-04:00"
+    assert payload["created_at"] == "2026-09-29T12:39:25.546173-04:00"
+
+
+def test_an_export_time_that_already_has_an_offset_keeps_its_instant():
+    msgs = [{"role": "user", "content": "hello", "ts": "2026-09-29T16:42:01+00:00"}]
+    with _machine_zone("America/Toronto"):
+        md = se.render_markdown(title="t", key="k", meta={}, messages=msgs)
+    assert "## You · 2026-09-29T12:42:01-04:00" in md
+
+
+def test_an_export_time_that_is_not_a_time_is_shown_as_stored():
+    msgs = [{"role": "user", "content": "hello", "ts": "sometime"}]
+    md = se.render_markdown(title="t", key="k", meta={}, messages=msgs)
+    assert "## You · sometime" in md
+
+
+_ROOM_MSGS = [
+    {"role": "user", "content": "@talk-editor you first"},
+    {"role": "assistant", "content": "Record it.", "speaker": "talk-editor"},
+    {"role": "assistant", "content": "I agree with talk-editor.", "speaker": "code-reviewer"},
+    # A line the ROOM wrote about a member, not the member's own words.
+    {"role": "system", "content": "code-reviewer may only read here.", "speaker": "code-reviewer"},
+    # A member who has since left the room still said what they said.
+    {"role": "assistant", "content": "One more thing.", "speaker": "former-member"},
+]
+_ROSTER = {"talk-editor": "tough editor", "code-reviewer": "failure-mode skeptic"}
+
+
+def test_a_room_export_names_who_said_each_line():
+    """Every member exported as "Assistant", so who argued what was lost."""
+    md = se.render_markdown(title="t", key="k", meta={}, messages=_ROOM_MSGS, members=_ROSTER)
+    headings = [line for line in md.splitlines() if line.startswith("## ")]
+    assert headings == [
+        "## You",
+        "## talk-editor — tough editor",
+        "## code-reviewer — failure-mode skeptic",
+        "## Room note · code-reviewer",
+        "## former-member",
+    ]
+
+
+def test_a_room_json_export_keeps_each_speaker_and_the_roster():
+    payload = json.loads(
+        se.render_json(title="t", key="k", meta={}, messages=_ROOM_MSGS, members=_ROSTER)
+    )
+    assert [m.get("speaker", "") for m in payload["messages"]] == [
+        "",
+        "talk-editor",
+        "code-reviewer",
+        "code-reviewer",
+        "former-member",
+    ]
+    assert payload["members"] == [
+        {"name": "talk-editor", "role": "tough editor"},
+        {"name": "code-reviewer", "role": "failure-mode skeptic"},
+    ]
+
+
+def test_a_chat_export_has_no_roster_and_keeps_its_labels():
+    msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    md = se.render_markdown(title="t", key="k", meta={}, messages=msgs)
+    assert [line for line in md.splitlines() if line.startswith("## ")] == [
+        "## You",
+        "## Assistant",
+    ]
+    assert "members" not in json.loads(se.render_json(title="t", key="k", meta={}, messages=msgs))
 
 
 def test_markdown_header_states_that_it_is_redacted():

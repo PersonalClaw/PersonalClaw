@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, ArrowLeft, Download, PanelRight, Send, Users } from 'lucide-react'
 import { api, hasApiCode, isTransientFailure, type RoomListenPolicy } from '../../lib/api'
 import { useQuery } from '../../lib/data'
+import { downloadFrom } from '../../lib/download'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
@@ -264,7 +265,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
               <HeaderControl
                 icon={Download}
                 label="Export transcript"
-                onClick={() => { window.location.href = api.roomExportUrl(room.id, 'md') }} />
+                onClick={() => downloadFrom(api.roomExportUrl(room.id, 'md'))} />
               <HeaderControl
                 icon={Archive}
                 label="Archive"

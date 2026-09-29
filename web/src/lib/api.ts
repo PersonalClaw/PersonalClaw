@@ -1602,7 +1602,7 @@ export interface ChatHistoryMsg {
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
   // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
   // absent when the reply finished on its own.
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string }
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string; kind?: 'lesson' }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string }
 }
 
 // ── workspace / build entity types ──
@@ -6040,6 +6040,16 @@ export interface VoiceProfileDraft {
 }
 /** surface → profile id. `default` is a legal key alongside `channel:`/`agent:`/`client:`. */
 export type VoiceBindings = Record<string, string>
+/** A registered text-to-speech engine a voice profile can name, and whether it can clone. */
+export interface VoiceEngine { name: string; display_name: string; clones: boolean }
+/** `GET /api/voice/profiles`. `bound_engine` is the engine Models binds (`''` when none), the one
+ *  a profile that names no engine speaks with. */
+export interface VoiceProfilesListing {
+  profiles: VoiceProfile[]
+  bindings: VoiceBindings
+  engines: VoiceEngine[]
+  bound_engine: string
+}
 export interface VoiceResolution {
   surface: string
   /** False means nothing resolved and the built-in voice speaks — a real answer,
@@ -8122,7 +8132,7 @@ export const api = {
 
   // ── Voice profiles + bindings ──────────────────────────────────────────────
   /** Every profile plus the binding map, in one read. */
-  voiceProfiles: () => get<{ profiles: VoiceProfile[]; bindings: VoiceBindings }>('/api/voice/profiles'),
+  voiceProfiles: () => get<VoiceProfilesListing>('/api/voice/profiles'),
   voiceProfileCreate: (body: VoiceProfileDraft) => post<VoiceProfile>('/api/voice/profiles', body),
   /** Patch the mutable fields. The server decides which are mutable; a rejected
    *  field comes back as a typed reason, so never pre-filter here. */

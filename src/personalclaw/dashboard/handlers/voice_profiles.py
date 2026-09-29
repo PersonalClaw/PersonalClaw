@@ -69,13 +69,35 @@ def _broadcast(request: web.Request, event: str, profile: vp.VoiceProfile | None
 
 
 async def api_voice_profiles_list(request: web.Request) -> web.Response:
-    """GET /api/voice/profiles — every profile plus the binding map."""
+    """GET /api/voice/profiles — every profile, the binding map, and the engines.
+
+    ``engines`` says which registered text-to-speech engine can clone and ``bound_engine``
+    which one Models binds, so the form can say what a clone voice needs where it is chosen.
+    """
+    from personalclaw.tts.registry import engine_catalog
+
     return web.json_response(
         {
             "profiles": [vp.profile_payload(p) for p in vp.list_profiles()],
             "bindings": vb.load_bindings(),
+            **engine_catalog(),
         }
     )
+
+
+def _clone_refused(kind: str, provider: str) -> web.Response | None:
+    """The 409 for a clone voice whose engine cannot clone, or None when it can speak.
+
+    Refused when the voice is saved rather than first when it speaks: synthesis refuses the
+    same voice (``tts.registry.guard_synthesis_capability``), so saving it would store a voice
+    that can never be heard.
+    """
+    if kind != "clone":
+        return None
+    from personalclaw.tts.registry import clone_refusal
+
+    reason = clone_refusal(provider)
+    return json_error("cloning_unsupported", message=reason, status=409) if reason else None
 
 
 async def api_voice_profile_create(request: web.Request) -> web.Response:
@@ -84,6 +106,9 @@ async def api_voice_profile_create(request: web.Request) -> web.Response:
     # Written BACK, not merely checked: `require_string` returns the stripped value, and a
     # door that validates and then forwards the raw one stores `" x "` after refusing `" "`.
     body["name"] = require_string(body, "name")
+    refused = _clone_refused(str(body.get("kind") or ""), str(body.get("provider") or ""))
+    if refused is not None:
+        return refused
     try:
         profile = vp.create_profile(**body)
     except vp.VoiceProfileError as exc:
@@ -111,6 +136,12 @@ async def api_voice_profile_update(request: web.Request) -> web.Response:
     if name is not MISSING:
         body["name"] = name
     try:
+        if "provider" in body:
+            # A clone moved to an engine that cannot clone is the create door's refusal again.
+            kind = vp.require_profile(request.match_info["id"]).kind
+            refused = _clone_refused(kind, str(body.get("provider") or ""))
+            if refused is not None:
+                return refused
         profile = vp.update_profile(request.match_info["id"], **body)
     except vp.VoiceProfileError as exc:
         return json_error(exc.reason, message=exc.message, status=exc.status)

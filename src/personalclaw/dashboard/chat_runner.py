@@ -33,6 +33,7 @@ from personalclaw.dashboard.chat_persistence import (
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_finish_reason,
+    stamp_learned,
     stamp_model_substitution,
     stamp_turn_summary,
     stamp_turn_telemetry,
@@ -415,6 +416,29 @@ def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=
     )
 
 
+def _announce_learned(state, session, origin: str, text: str, ref: str = "") -> dict:
+    """Say what this turn learned: the live chip, and the record the turn keeps of it.
+
+    Returns the record :func:`stamp_learned` persists on the turn, so a reload — or a
+    restart that dropped the live event — still shows it. ``ref`` is what undoing it
+    needs (a facet's key); the text is masked once, here, for both.
+    """
+    label, _ = redact_credentials(redact_exfiltration_urls(text[:200])[0])
+    # `origin`: every learned-chip capture shares `kind: "learned"`, so without a
+    # discriminator the frontend cannot route a tap on the chip to the surface that can
+    # approve, edit or undo THAT artifact.
+    event = {
+        "session": session.key,
+        "kind": "learned",
+        "origin": origin,
+        "text": f"Learned: {label}",
+    }
+    if ref:
+        event["ref"] = ref
+    state.broadcast_ws("activity_event", event)
+    return {"origin": origin, "text": label, **({"ref": ref} if ref else {})}
+
+
 def _maybe_after_turn_review(
     state,
     session,
@@ -423,7 +447,7 @@ def _maybe_after_turn_review(
     tool_calls: int,
     provider=None,
     decision=None,
-) -> None:
+) -> bool:
     """Run the after-turn self-improvement review when the turn warrants it.
 
     Eligibility comes from ONE :class:`LearningGate` decision, computed by
@@ -432,7 +456,9 @@ def _maybe_after_turn_review(
     same object. Two independent computations of one rule is how they drift.
 
     The actual capture is best-effort and synchronous-but-cheap (a heuristic + a
-    guarded write_lesson — no LLM call in this path). Surfaces a 'Learned: …' chip.
+    guarded write_lesson — no LLM call in this path). Surfaces a 'Learned: …' chip and
+    records it on the turn; returns whether it did, because this runs after the turn's
+    save and the caller must save again for the record to outlive a reload.
     """
     from personalclaw import after_turn_review as atr
     from personalclaw.config.loader import AppConfig
@@ -450,7 +476,7 @@ def _maybe_after_turn_review(
         from personalclaw.learning import record_denial
 
         record_denial(decision)
-        return
+        return False
     correction = atr.is_correction_signal(user_message)
     from personalclaw.memory_service import service_for
 
@@ -460,8 +486,8 @@ def _maybe_after_turn_review(
     svc = service_for(memory)
     # Preference-facet capture is a cheap no-LLM heuristic and the passive-learning
     # core — it must run on EVERY (non-ephemeral) turn, NOT be gated behind the
-    # expensive-review threshold (≥N tools / correction). A bare conversational
-    # style nudge ("keep it concise") does no tool work and isn't a correction, so
+    # expensive-review threshold (≥N tools / correction). A standing style preference
+    # ("keep your answers concise") does no tool work and isn't a correction, so
     # gating it there silently dropped the common case. Run it first, unconditionally.
     facet_learned = atr.capture_preference_facet(svc, user_message)
     # Glossary capture rides the same pre-gate position for the same reason: "by CR I mean a
@@ -470,20 +496,16 @@ def _maybe_after_turn_review(
     # edit or delete it (Settings → Memory → Slots → Glossary), and a chip that linked
     # anywhere else would be the wrong surface.
     atr.capture_glossary_term(svc, user_message)
-    if facet_learned and getattr(cfg, "surface_chip", True):
-        _flabel, _ = redact_credentials(redact_exfiltration_urls(facet_learned[:200])[0])
-        # `origin`: all three learned-chip captures below share
-        # `kind: "learned"`, so without a discriminator the frontend cannot route a tap on the
-        # chip to the surface that can approve or edit THAT artifact. Additive key on the
-        # existing event — `kind` is unchanged because live consumers key on it.
-        state.broadcast_ws(
-            "activity_event",
-            {
-                "session": session.key,
-                "kind": "learned",
-                "origin": "facet",
-                "text": f"Learned: {_flabel}",
-            },
+    # What this turn learned, said live AND kept on the turn: a chip that only rode the socket
+    # was gone after a reload or a restart, so a preference could be saved with nothing on the
+    # page ever saying so. A veto the detector finds is a LESSON, so its chip says lesson.
+    announced: list[dict] = []
+    surface = getattr(cfg, "surface_chip", True)
+    if facet_learned and surface:
+        announced.append(
+            _announce_learned(
+                state, session, facet_learned.origin, facet_learned.text, facet_learned.ref
+            )
         )
     # The expensive review (procedural drain + correction→lesson) needs the strict
     # answer — `worthwhile`, not just `permitted`. Same decision object as the
@@ -495,7 +517,7 @@ def _maybe_after_turn_review(
         from personalclaw.learning import record_denial
 
         record_denial(decision)
-        return
+        return stamp_learned(session, announced)
     # Procedural memory (M5d): drain this turn's tool outcomes into how-to-work priors.
     # BOTH runtimes accumulate them now — the native ReAct loop from inside its own
     # dispatch, and the ACP providers from the translated event stream (`G7`, see
@@ -525,17 +547,8 @@ def _maybe_after_turn_review(
         correction=correction,
         capture_facets=False,  # already captured before the gate, above
     )
-    if learned and getattr(cfg, "surface_chip", True):
-        _label, _ = redact_credentials(redact_exfiltration_urls(learned[:200])[0])
-        state.broadcast_ws(
-            "activity_event",
-            {
-                "session": session.key,
-                "kind": "learned",
-                "origin": "lesson",
-                "text": f"Learned: {_label}",
-            },
-        )
+    if learned and surface:
+        announced.append(_announce_learned(state, session, "lesson", learned))
     # Self-model observer: the ONLY learning path that learns from what quietly
     # WORKS. Runs on the SAME `worthwhile` gate as the review above (a "significant turn"), reusing
     # its already-computed answer — a second heuristic here is how two capture paths in one turn
@@ -560,7 +573,10 @@ def _maybe_after_turn_review(
         except Exception:
             logger.debug("self-model observer failed", exc_info=True)
     _maybe_refine_stumble(state, session, user_message, assistant_text, tool_outcomes, cfg)
-    _stage_turn_capture(session, user_message, learned or facet_learned, cfg)
+    _stage_turn_capture(
+        session, user_message, learned or (facet_learned.text if facet_learned else None), cfg
+    )
+    return stamp_learned(session, announced)
 
 
 def _maybe_refine_stumble(
@@ -5313,7 +5329,9 @@ async def run_chat(
                 logger.debug("learning gate evaluation failed", exc_info=True)
                 _turn_learning = None
             try:
-                _maybe_after_turn_review(
+                # Runs after the save above (it may take a guarded lesson write), so a turn that
+                # learned something is saved once more to keep the record of it on the turn.
+                if _maybe_after_turn_review(
                     state,
                     session,
                     message,
@@ -5321,7 +5339,8 @@ async def run_chat(
                     _turn_tool_call_count,
                     provider=client,
                     decision=_turn_learning,
-                )
+                ):
+                    save_session_to_history(state, session)
             except Exception:
                 logger.debug("after-turn review failed", exc_info=True)
             # Skill axis (4-tier ladder): a background LLM review that may PROPOSE a

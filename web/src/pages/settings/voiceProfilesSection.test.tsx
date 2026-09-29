@@ -25,6 +25,7 @@ const voiceResolve = vi.fn()
 const voiceMigrate = vi.fn()
 const voiceBindingSet = vi.fn()
 const voiceProfileLock = vi.fn()
+const voiceProfileCreate = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     voiceProfiles: (...a: unknown[]) => voiceProfiles(...a),
@@ -35,7 +36,7 @@ vi.mock('../../lib/api', () => ({
     voiceProfileUnlock: vi.fn(),
     voiceProfileDelete: vi.fn(),
     voiceBindingClear: vi.fn(),
-    voiceProfileCreate: vi.fn(),
+    voiceProfileCreate: (...a: unknown[]) => voiceProfileCreate(...a),
   },
 }))
 
@@ -228,5 +229,53 @@ describe('locking pins a generation the user already heard', () => {
 
     // Newest = last index, not the count: an off-by-one here pins the wrong take.
     await waitFor(() => expect(voiceProfileLock).toHaveBeenCalledWith('vp-a1b2c3d4', 2))
+  })
+})
+
+describe('a clone voice says what it needs where it is chosen', () => {
+  const piper = { name: 'piper', display_name: 'Piper TTS', clones: false }
+  const cloner = { name: 'cloner', display_name: 'Clone Engine', clones: true }
+
+  async function chooseClone(engines: typeof piper[]) {
+    voiceProfiles.mockResolvedValue({ profiles: [], bindings: {}, engines, bound_engine: 'piper' })
+    const view = render(<VoiceProfilesSection />)
+    fireEvent.click(await view.findByText('Create one manually'))
+    fireEvent.change(view.getByLabelText('Voice name'), { target: { value: 'My voice' } })
+    fireEvent.change(view.getByLabelText('Voice kind'), { target: { value: 'clone' } })
+    return view
+  }
+
+  it('on the bound engine that cannot clone, names it, sends her to the apps and holds Create', async () => {
+    const { getByRole, getByText } = await chooseClone([piper])
+
+    const need = getByRole('status')
+    expect(need.textContent).toContain("Piper TTS can't clone a voice.")
+    expect(need.textContent).toContain('None of your engines can clone')
+    expect(getByRole('link', { name: 'Browse text-to-speech apps' }).getAttribute('href'))
+      .toBe('#/apps?view=store&stag=tts')
+    const create = getByText('Create voice').closest('button')!
+    expect(create.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(create)
+    expect(voiceProfileCreate).not.toHaveBeenCalled()
+  })
+
+  it('names the engine that can, and creates the voice on it once it is chosen', async () => {
+    voiceProfileCreate.mockResolvedValue(profile({ kind: 'clone', provider: 'cloner' }))
+    const { getByRole, getByLabelText, getByText, queryByRole } = await chooseClone([piper, cloner])
+    expect(getByRole('status').textContent).toContain('Choose Clone Engine as the engine.')
+
+    fireEvent.change(getByLabelText('Voice engine'), { target: { value: 'cloner' } })
+    expect(queryByRole('status'), 'nothing is missing any more').toBeNull()
+    fireEvent.click(getByText('Create voice'))
+
+    await waitFor(() => expect(voiceProfileCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'clone', provider: 'cloner' })))
+  })
+
+  it('asks nothing of a design voice', async () => {
+    voiceProfiles.mockResolvedValue({ profiles: [], bindings: {}, engines: [piper], bound_engine: 'piper' })
+    const { findByText, queryByRole } = render(<VoiceProfilesSection />)
+    fireEvent.click(await findByText('Create one manually'))
+    expect(queryByRole('status')).toBeNull()
   })
 })

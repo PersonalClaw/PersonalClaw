@@ -137,6 +137,64 @@ def _provider_by_app_name(name: str) -> TtsProvider | None:
     return _providers.get(key)
 
 
+def profile_engine(provider_name: str) -> TtsProvider | None:
+    """The engine a voice profile naming *provider_name* speaks with, or None.
+
+    The named engine when it is registered, else the one bound in Models — the order
+    :func:`active_voice_params` resolves in, because it asks this. The same answer backs the
+    create-time check (:func:`clone_refusal`), so the form cannot accept a voice the resolver
+    would then hand to a different engine.
+    """
+    named = _provider_by_app_name(provider_name)
+    if named is not None:
+        return named
+    bound = active_tts()
+    return bound[0] if bound else None
+
+
+def _engine_label(engine: object) -> str:
+    return str(getattr(engine, "display_name", "") or getattr(engine, "name", "") or "")
+
+
+def clone_refusal(provider_name: str) -> str:
+    """Why a CLONE voice naming *provider_name* could never speak, or ``""`` when it can.
+
+    Asked when the voice is created or its engine changes, rather than first at synthesis,
+    which refuses the same request (:func:`guard_synthesis_capability`) only after the voice
+    was saved as if it worked.
+    """
+    engine = profile_engine(provider_name)
+    if engine is None:
+        return (
+            "Cloning needs a text-to-speech engine that can clone a voice from a reference "
+            "clip, and none is set up. Add one from Apps, then choose it as this voice's engine."
+        )
+    if getattr(engine, "supports_cloning", False):
+        return ""
+    return (
+        f"{_engine_label(engine)} can't clone a voice. Cloning needs a text-to-speech engine "
+        "that can clone from a reference clip: choose one as this voice's engine, or add one "
+        "from Apps."
+    )
+
+
+def engine_catalog() -> dict[str, Any]:
+    """The engines a voice profile can name, whether each can clone, and the bound one."""
+    _ensure_registered()
+    bound = active_tts()
+    return {
+        "engines": [
+            {
+                "name": str(getattr(p, "name", "") or ""),
+                "display_name": _engine_label(p),
+                "clones": bool(getattr(p, "supports_cloning", False)),
+            }
+            for p in list_providers()
+        ],
+        "bound_engine": str(getattr(bound[0], "name", "") or "") if bound else "",
+    }
+
+
 def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | None:
     """Resolve provider-neutral synthesis params from the unified store + settings.
 
@@ -171,21 +229,18 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
     profile = get_profile(pid) if pid else None
 
     resolved = active_tts()
-    if resolved is None:
-        # No flat selection: a profile can still stand alone, but only if the engine
-        # it names is actually registered (otherwise there is nothing to render with).
-        prov = _provider_by_app_name(profile.provider) if profile is not None else None
-        if profile is None or prov is None:
+    if profile is None:
+        if resolved is None:
             return None
-        provider, voice_id = prov, profile.model
-    else:
         provider, voice_id = resolved
-        if profile is not None:
-            prov = _provider_by_app_name(profile.provider)
-            if prov is not None:
-                provider = prov
-            if profile.model:
-                voice_id = profile.model
+    else:
+        # The profile's own engine when it is registered, else the flat selection's; with
+        # neither there is nothing to render with.
+        engine = profile_engine(profile.provider)
+        if engine is None:
+            return None
+        provider = engine
+        voice_id = profile.model or (resolved[1] if resolved else "")
 
     settings = load_use_case_settings("tts")
     try:

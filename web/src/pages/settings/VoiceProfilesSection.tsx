@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Mic2, Plus, Trash2, Lock, Unlock, ShieldCheck, Wand2 } from 'lucide-react'
 import {
   api,
+  type VoiceEngine,
   type VoiceProfile,
   type VoiceProfileKind,
   type VoiceBindings,
@@ -54,6 +55,24 @@ function bindWarningCopy(reason: string): string {
   return BIND_WARNING_COPY[reason] ?? reason
 }
 
+/** The text-to-speech apps in the Store, where an engine that can clone comes from. */
+const STORE_TTS_APPS_HREF = '#/apps?view=store&stag=tts'
+
+/** Why a CLONE voice on *engine* could never speak, or `''` when it can — said where the kind is
+ *  chosen, in the server's terms (`tts.registry.clone_refusal`, which refuses the same voice on
+ *  create). A clone was offered on any engine and refused only when it was spoken with. */
+export function cloneRequirement(engine: VoiceEngine | undefined, engines: VoiceEngine[]): string {
+  if (engine?.clones) return ''
+  const cloners = engines.filter((e) => e.clones).map((e) => e.display_name)
+  const cause = engine
+    ? `${engine.display_name} can't clone a voice.`
+    : 'No text-to-speech engine is set up to clone with.'
+  const fix = cloners.length
+    ? `Choose ${cloners.join(' or ')} as the engine.`
+    : 'None of your engines can clone: add one from Apps.'
+  return `${cause} Cloning needs an engine that can clone from a reference clip. ${fix}`
+}
+
 /** Voice profiles + per-surface bindings + the one-click migration (MULTIMODAL-IO
  *  §1/§3/§6, change MI-5).
  *
@@ -88,6 +107,12 @@ export function VoiceProfilesSection() {
   if (!data) return <ListSkeleton rows={3} what="voice profiles" />
 
   const { profiles, bindings } = data
+  const engines = data.engines ?? []
+  const bound = engines.find((e) => e.name === data.bound_engine)
+  // The engine this draft would speak with: the one chosen, else the one Models binds — the
+  // order the resolver uses (`tts.registry.profile_engine`).
+  const draftEngine = draftProvider ? engines.find((e) => e.name === draftProvider) : bound
+  const cloneBlocked = draftKind === 'clone' ? cloneRequirement(draftEngine, engines) : ''
 
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(label); setErr(''); setBindWarning('')
@@ -169,23 +194,35 @@ export function VoiceProfilesSection() {
               the upload store fills a slot ON an existing profile, so the record has
               to exist before a clip can arrive. The row states the gap ("no reference
               clip") rather than the form pretending the kind is unavailable. */}
-          <Field label="Kind" hint="A design voice is parameters and instructions. A clone voice conditions on a reference clip, which you add to the profile after creating it.">
+          <Field label="Kind" hint="A design voice is parameters and instructions. A clone voice conditions on a reference clip, which you add to the profile after creating it, and needs an engine that can clone.">
             <Select value={draftKind} onChange={(v) => setDraftKind(v as VoiceProfileKind)}
               ariaLabel="Voice kind"
               options={[
                 { value: 'design', label: 'Design — parameters and instructions' },
                 { value: 'clone', label: 'Clone — conditioned on a reference clip' },
               ]} />
+            {cloneBlocked && (
+              <p role="status" className="mt-xs text-warn" data-type="body-s">
+                {cloneBlocked}{' '}
+                {!engines.some((e) => e.clones) && (
+                  <TextLink href={STORE_TTS_APPS_HREF}>Browse text-to-speech apps</TextLink>
+                )}
+              </p>
+            )}
           </Field>
-          <Field label="Engine" hint="Leave blank to use whichever text-to-speech model is bound in Models.">
+          <Field label="Engine" hint="The text-to-speech engine this voice speaks with, and its model. The first choice follows whatever Models binds.">
             <div className="flex items-center gap-s">
-              <TextInput value={draftProvider} onChange={setDraftProvider} placeholder="provider" ariaLabel="Voice provider" />
+              <Select value={draftProvider} onChange={setDraftProvider} ariaLabel="Voice engine"
+                options={[
+                  { value: '', label: bound ? `The engine bound in Models (${bound.display_name})` : 'The engine bound in Models (none yet)' },
+                  ...engines.map((e) => ({ value: e.name, label: e.clones ? `${e.display_name} — can clone` : e.display_name })),
+                ]} />
               <TextInput value={draftModel} onChange={setDraftModel} placeholder="model" ariaLabel="Voice model" />
             </div>
           </Field>
           <div className="mt-s flex items-center gap-s">
-            <Button onClick={create} disabled={!draftName.trim()} loading={busy === 'create'}
-              disabledReason={!draftName.trim() ? 'Name the voice first.' : undefined}>
+            <Button onClick={create} disabled={!draftName.trim() || !!cloneBlocked} loading={busy === 'create'}
+              disabledReason={!draftName.trim() ? 'Name the voice first.' : cloneBlocked || undefined}>
               Create voice
             </Button>
             <Button variant="ghost" onClick={() => { setCreating(false); setErr('') }}>Cancel</Button>

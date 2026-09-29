@@ -842,7 +842,7 @@ The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/rooms/{room_id}` | {round_budget} — the room's own budget override. |
 | `POST` | `/api/rooms/{room_id}/archive` | archive a room. Idempotent. |
 | `POST` | `/api/rooms/{room_id}/continue` | finish an interrupted round. |
-| `GET` | `/api/rooms/{room_id}/export` | the transcript, redacted. |
+| `GET` | `/api/rooms/{room_id}/export` | the transcript, redacted, as a download. |
 | `POST` | `/api/rooms/{room_id}/members` | {name, role_blurb?, listen_policy?, profile_narrowing?}. |
 | `DELETE` | `/api/rooms/{room_id}/members/{name}` | remove a member. |
 | `POST` | `/api/rooms/{room_id}/messages` | {content} — the human speaks, then the room answers. |
@@ -987,7 +987,7 @@ The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/voice/bindings` | the surface → profile map. |
 | `PUT` | `/api/voice/bindings` | {surface, profile_id} — bind one surface. |
 | `POST` | `/api/voice/migrate` | {name?} — profile from the current voice, then default. |
-| `GET` | `/api/voice/profiles` | every profile plus the binding map. |
+| `GET` | `/api/voice/profiles` | every profile, the binding map, and the engines. |
 | `POST` | `/api/voice/profiles` | {name, kind, provider, model, …}. |
 | `DELETE` | `/api/voice/profiles/{id}` | record, artifacts, and any bindings. |
 | `GET` | `/api/voice/profiles/{id}` | _(no summary)_ |

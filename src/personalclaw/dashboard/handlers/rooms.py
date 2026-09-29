@@ -40,6 +40,7 @@ from aiohttp import web
 
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard import session_export
+from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     RequestValidationError,
@@ -48,6 +49,7 @@ from personalclaw.request_validation import (
     string_field,
 )
 from personalclaw.rooms import arbiter, posture, store
+from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
 
@@ -515,12 +517,16 @@ def _start_round(state: Any, room_id: str) -> None:
 
 
 async def api_room_export(request: web.Request) -> web.Response:
-    """GET /api/rooms/{room_id}/export?format=md|json — the transcript, redacted.
+    """GET /api/rooms/{room_id}/export?format=md|json — the transcript, redacted, as a download.
 
     The render happens HERE rather than in the store: ``session_export.render`` is the
     shipped renderer for both formats, and ``rooms/`` may not import it because a domain
     module reaching up into the HTTP surface is the edge the structural import-direction
     ratchet refuses. The store hands over the payload; presentation stays on this side.
+
+    The roster rides along so every line names the member who said it and the role it argues
+    from. Served as an ATTACHMENT, like a chat's export: served inline, the browser opened the
+    raw Markdown in place of the app.
     """
     room_id = request.match_info["room_id"]
     fmt = request.query.get("format", "md")
@@ -528,7 +534,12 @@ async def api_room_export(request: web.Request) -> web.Response:
         _require_enabled()
         room, meta, messages = store.export_payload(room_id)
         text, content_type = session_export.render(
-            fmt, title=room.title, key=room.id, meta=meta, messages=messages
+            fmt,
+            title=room.title,
+            key=room.id,
+            meta=meta,
+            messages=messages,
+            members={m.name: m.role_blurb for m in room.members},
         )
     except store.RoomError as exc:
         return _refusal(exc)
@@ -536,4 +547,24 @@ async def api_room_export(request: web.Request) -> web.Response:
         # session_export.render's contract for an unknown format, translated into this
         # surface's envelope rather than leaking a 500 from a caller typo.
         return json_error("room_export_format_invalid", status=400)
-    return web.Response(text=text, content_type=content_type)
+    sel().log_api_access(
+        caller="dashboard",
+        operation="rooms.export",
+        outcome="allowed",
+        source="dashboard",
+        resources=f"format={fmt} messages={len(messages)}",
+    )
+    body = text.encode("utf-8")
+    return web.Response(
+        body=body,
+        content_type=content_type,
+        charset="utf-8",
+        headers={
+            "Content-Disposition": attachment_disposition(
+                session_export.export_filename(room.title, room.id, fmt)
+            ),
+            "Content-Length": str(len(body)),
+            # A transcript is user content being served back; keep sniffing off.
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

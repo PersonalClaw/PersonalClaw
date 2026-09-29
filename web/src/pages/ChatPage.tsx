@@ -112,6 +112,7 @@ import { SnapshotReplay } from './chat/snapshotReplay'
 import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
 import { chatDoneOutcome, TURN_RESPONDING, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './chat/turnOutcome'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
+import { downloadFrom } from '../lib/download'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
 import { useComposerData } from '../lib/useComposerData'
@@ -1421,12 +1422,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // activity kind, and absent on a `learned` event from a build — which
         // `learnedSurface()` renders as a non-tappable chip rather than a wrong link.
         const origin = String(d.origin ?? '')
+        // What undoing a learned preference needs (its key), when the emitter sent one.
+        const ref = String(d.ref ?? '')
         // Keeps a mid-stream activity line BEFORE the coalescer's active text run so the next
         // flush replaces-in-place instead of pushing a duplicate (K42); de-dupes adjacent
         // identical lines; tool cards win; carries `origin` onto the new segment. Whether the
         // run is live is decided HERE, not inside the updater: the stats line that ends every
         // turn can share a render batch with `chat_done`, which releases the run first.
-        patchLastAssistant(textRun.activity(text, kind, origin))
+        patchLastAssistant(textRun.activity(text, kind, origin, ref))
         break
       }
       case 'tool_call': {
@@ -2498,7 +2501,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // appeared. The reason stays until it is dismissed or the next send.
     const failed = transcriptionFailure(r)
     if (failed) {
-      notice.showError(failed)
+      notice.showError(failed, 'voice-input')
       return ''
     }
     // The echo filter dropped this capture. Say so — silence
@@ -2507,7 +2510,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       notice.showInfo('Ignored the assistant’s own voice coming back through the microphone.')
       return ''
     }
-    notice.clear()
+    // Dictation worked, so a microphone or transcription failure no longer holds; a notice
+    // something else raised is not dictation's to take down.
+    notice.clear('voice-input')
     return r.text ?? ''
   }
 
@@ -2766,10 +2771,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Surface TTS failures instead of silently doing nothing after the Speak button's brief
     // spinner. The two refusals are the server's own sentences, and each names its fix: no
     // text-to-speech model set up (`tts_unbound`), or text-to-speech switched off (`tts_disabled`).
-    return api.voiceSynthesize(text, s ?? '').catch((e: Error) => {
+    // A Speak that works takes such a line down: once the reply is playing, "switched off" is false.
+    return api.voiceSynthesize(text, s ?? '').then(() => notice.clear('speak'), (e: Error) => {
       setSpeakingTurn((cur) => (cur === turnIndex ? null : cur))
       const refused = hasApiCode(e, 'tts_unbound') || hasApiCode(e, 'tts_disabled')
-      notice.showError(refused ? e.message : `Couldn’t play audio: ${e.message}`)
+      notice.showError(refused ? e.message : `Couldn’t play audio: ${e.message}`, 'speak')
     })
   }
 
@@ -3482,7 +3488,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={notice.showError} canQueue contextPct={contextPct}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue contextPct={contextPct}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />
@@ -4476,17 +4482,19 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
   // pulled OUT of the inline flow and consolidated into one collapsible ledger at
   // the turn footer — holistic, non-intrusive, on demand (not three scattered lines).
-  const ledger: { fed?: string; learned?: string; learnedOrigin?: string; stats?: string } = {}
+  const ledger: { fed?: string; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
   for (const s of segments) {
     if (s.kind !== 'activity') continue
     const ak = (s as ActivitySegment).activityKind
     if (ak === 'context') ledger.fed = (s as ActivitySegment).text
-    // The learned row carries its emitter's `origin` too — the ledger is where the
-    // chip lives, so the discriminator has to travel with the text or the tap has nothing
-    // to route on. Read off the SAME segment, so the two can never describe different events.
+    // The learned row carries its emitter's `origin` (and a preference's key) too — the
+    // ledger is where the chip lives, so the discriminator has to travel with the text or the
+    // tap has nothing to route on. Read off the SAME segment, so the two can never describe
+    // different events.
     else if (ak === 'learned') {
       ledger.learned = (s as ActivitySegment).text
       ledger.learnedOrigin = (s as ActivitySegment).origin
+      ledger.learnedRef = (s as ActivitySegment).ref
     }
     else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
   }
@@ -4596,7 +4604,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
           actually paying for" a thing you have to go looking for. */}
       {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
 
-      {hasLedger && <ContextLedger fed={ledger.fed} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} stats={ledger.stats} />}
+      {hasLedger && <ContextLedger fed={ledger.fed} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} />}
 
       {/* Agent-driven one-click escalation (TM8): the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips
@@ -5051,17 +5059,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     invalidateKeys(detailKey(s.key))
     load()
   }
-  /** Download a transcript. Uses a real link click rather than fetch+blob so the
-   *  browser handles Content-Disposition and a long conversation never has to be
-   *  buffered in JS. The export is credential-redacted server-side; say so, because a
-   *  user about to attach this to an email should know what it does and doesn't contain. */
+  /** Download a transcript (`downloadFrom`). The export is credential-redacted server-side;
+   *  say so, because a user about to attach this to an email should know what it does and
+   *  doesn't contain. */
   function downloadExport(key: string, format: 'md' | 'json') {
-    const a = document.createElement('a')
-    a.href = api.sessionExportUrl(key, format)
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    downloadFrom(api.sessionExportUrl(key, format))
     notify('Exporting this chat — credentials are redacted from the file.', 'info')
   }
   /** Share a chat as a read-only artifact in THIS instance's library. Nothing is
@@ -5172,9 +5174,9 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         label: s.never_archive ? 'Allow auto-archive' : 'Never auto-archive',
         onSelect: () => setNeverArchive(s.key, !s.never_archive),
       },
-      // Export navigates to the endpoint rather than fetching: the response carries
-      // Content-Disposition, so the browser saves the file and never renders it, and a
-      // long transcript is streamed instead of buffered through JS.
+      // Export is a download link to the endpoint rather than a fetch: the browser saves what
+      // the route names in its Content-Disposition, the app stays on screen, and a long
+      // transcript is streamed instead of buffered through JS.
       { icon: <Download size={15} />, label: 'Export as Markdown', onSelect: () => downloadExport(s.key, 'md') },
       { icon: <Download size={15} />, label: 'Export as JSON', onSelect: () => downloadExport(s.key, 'json') },
       // Share sits beside export because it is the same intent one step further: export

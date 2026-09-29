@@ -59,6 +59,25 @@ describe('the composer notice', () => {
     expect(screen.getByRole('alert').textContent).toContain(REASON)
   })
 
+  it('an error goes when the action that raised it works, and only then', () => {
+    render(<Host />)
+    act(() => notice.showError('Text-to-speech is switched off.', 'speak'))
+
+    act(() => notice.clear('voice-input'))
+    expect(screen.getByRole('alert').textContent, 'dictation working says nothing about Speak')
+      .toContain('switched off')
+
+    act(() => notice.clear('speak'))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('a success clears nothing when no notice of its own is showing', () => {
+    render(<Host />)
+    act(() => notice.showError(REASON))
+    act(() => notice.clear('speak'))
+    expect(screen.getByRole('alert').textContent).toContain(REASON)
+  })
+
   it('a notice cleared before its time leaves no clock behind to clear the next one', () => {
     render(<Host />)
     act(() => notice.showInfo('This run is parked — approve the plan below to resume it.'))

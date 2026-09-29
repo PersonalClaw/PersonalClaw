@@ -66,9 +66,12 @@ def key(svc, store):
     stability, which decides whether the facet is Active at all, which is the entire
     premise of the pin/forget effects measured below.
     """
-    assert capture_preference_facet(svc, MESSAGE) == TEXT, "the detector no longer fires"
+    learned = capture_preference_facet(svc, MESSAGE)
+    assert learned is not None and learned.text == TEXT, "the detector no longer fires"
     facets = load_facets(store)
     assert len(facets) == 1, f"expected one captured facet, got {[k for k, _ in facets]}"
+    # The capture names the key it wrote: that is what the chat's "Forget it" undoes.
+    assert (learned.origin, learned.ref) == ("facet", facets[0][0])
     return facets[0][0]
 
 
@@ -220,7 +223,8 @@ async def test_re_observing_a_forgotten_preference_does_not_resurrect_it(handler
     user who retired a facet must not have to keep retiring it — and must not get a
     second row for the same text either, which is why the facet count is checked."""
     await handlers.api_memory_facet_forget(_request(match={"key": key}))
-    assert capture_preference_facet(svc, MESSAGE) == TEXT  # the detector fires again
+    learned = capture_preference_facet(svc, MESSAGE)
+    assert learned is not None and learned.text == TEXT  # the detector fires again
     assert [k for k, _ in load_facets(store)] == [key], "reinforced the same row, not a new one"
     assert _facet(store, key).forgotten is True
     assert TEXT not in render_profile_block(store)

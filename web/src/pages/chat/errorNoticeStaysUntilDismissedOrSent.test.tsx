@@ -154,6 +154,19 @@ describe('an error above the composer', () => {
     expect(screen.queryByText(REFUSED)).toBeNull()
   })
 
+  it('goes once Speak works, because what it said no longer holds', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await open()
+    await refusedSpeak(user)
+
+    // She switched text-to-speech on in Settings and pressed Speak again: it plays.
+    h.voiceSynthesize.mockReset().mockResolvedValue({ ok: true })
+    await user.click(await screen.findByRole('button', { name: 'Speak' }))
+
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByText(REFUSED), 'a stale "switched off"').toBeNull())
+  })
+
   it('goes when the user sends again', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     await open('Try once more.')

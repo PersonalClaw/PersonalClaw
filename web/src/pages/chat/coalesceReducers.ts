@@ -35,9 +35,9 @@ export class TextRunOwnership {
   }
 
   /** A native activity line, placed against the run as it stands NOW (see insertActivity). */
-  activity(text: string, activityKind: string, origin?: string): SegmentsUpdate {
+  activity(text: string, activityKind: string, origin?: string, ref?: string): SegmentsUpdate {
     const live = this.live
-    return (segs) => stampActivityOrigin(segs, insertActivity(segs, text, activityKind, live), origin)
+    return (segs) => stampActivityOrigin(segs, insertActivity(segs, text, activityKind, live), origin, ref)
   }
 
   /** The trailing text segment was hydrated from the server's in-flight partial and the

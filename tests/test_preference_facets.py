@@ -206,6 +206,60 @@ def test_detect_no_false_positive_on_plain_questions():
         assert pf.detect_facet_candidate(msg) is None, f"false positive: {msg!r}"
 
 
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # A request about one piece of work. Filed as a style facet, it rode every later
+        # prompt as a "stable learned preference" and nothing told the user.
+        "Thanks. Now a shorter version of those notes, about 400 words, for the 15-minute slot.",
+        "Make it shorter.",
+        "Shorter, please.",
+        "Can you make this more concise?",
+        "A more concise summary of the incident, please.",
+        "Keep it short.",
+        "Write a toast for my brother's wedding and keep it short.",
+        "Summarize this article, be brief.",
+        "Rewrite the intro without comments.",
+        "Give me just the code for the parser.",
+        "Keep this reply to the point.",
+        # Scoped to now in so many words, whatever else the sentence says.
+        "Be more concise this time.",
+        "Keep your answers short for now.",
+    ],
+)
+def test_a_request_about_one_piece_of_work_is_not_a_style_preference(msg):
+    """The style rule: a hint is a standing preference only in a standing frame."""
+    assert pf.detect_facet_candidate(msg) is None, f"one-off learned as a preference: {msg!r}"
+
+
+@pytest.mark.parametrize(
+    "msg,expect",
+    [
+        # A standing-scope marker in the sentence.
+        ("From now on, keep it short.", "keep it short"),
+        ("Always get to the point.", "get to the point"),
+        ("In general, less preamble.", "less preamble"),
+        ("Be brief whenever you reply.", "be brief"),
+        # The assistant's replies in general as the object.
+        ("I prefer shorter answers.", "shorter answers"),
+        ("Going forward, make your replies more concise.", "make your replies more concise"),
+        ("keep answers short", "keep answers short"),
+        # A sentence that is the manner instruction and nothing else.
+        ("No fluff, please.", "no fluff"),
+        ("Can you be more direct?", "be more direct"),
+        # A one-off earlier in the message does not hide the standing preference after it.
+        (
+            "Make it shorter. Also, from now on keep your answers brief.",
+            "keep your answers brief",
+        ),
+    ],
+)
+def test_a_standing_style_preference_still_lands(msg, expect):
+    cand = pf.detect_facet_candidate(msg)
+    assert cand is not None, f"missed standing preference: {msg!r}"
+    assert cand == ("style", expect, "explicit")
+
+
 # ── persistence + render ──
 
 

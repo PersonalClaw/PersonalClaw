@@ -3,6 +3,7 @@ import { AlertTriangle, ExternalLink, FileText, UserRound } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Segmented } from '../../ui/Segmented'
+import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
 import type { IdentityReportView } from '../../lib/api'
 import { api } from '../../lib/api'
@@ -223,6 +224,9 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
           count={report.facets.count}
           shown={report.facets.items.length}
           lines={report.facets.items.map((f) => `${f.text} — ${f.cls}, ${f.state}`)}
+          manage={report.facets.count > 0
+            ? { href: '#/settings/memory?tab=settings', label: 'Pin or forget them' }
+            : undefined}
         />
         <Group
           title="Lessons I follow"
@@ -251,11 +255,15 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
  *
  *  The two are separate props rather than `lines.length` twice, so a capped sample cannot make
  *  the heading lie — and the "of N" note appears only when something really was dropped. */
-function Group({ title, count, shown, lines }: {
+function Group({ title, count, shown, lines, manage }: {
   title: string
   count: number
   shown: number
   lines: string[]
+  /** Where the listed things are changed, when they can be: a learned preference is pinned or
+   *  forgotten in Settings → Memory, and a list of them with no way there is a report she cannot
+   *  act on. */
+  manage?: { href: string; label: string }
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-s rounded-lg bg-surface-container px-l py-l">
@@ -275,6 +283,7 @@ function Group({ title, count, shown, lines }: {
       {shown < count && (
         <p className="text-on-surface-low text-[0.6875rem]">Showing {shown} of {count}.</p>
       )}
+      {manage && <TextLink href={manage.href} size="xs">{manage.label}</TextLink>}
     </div>
   )
 }

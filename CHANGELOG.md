@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An answer drawn from a learned lesson can cite it as [Lesson N], which opens that lesson in Memory (`ContextBuilder.build_session_context` and `MemoryService.lessons_context` take an optional `citations_out`: an SDK addition no app has to change for).**
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
 - **A diarization app can say why it could not tell the speakers apart: `personalclaw.sdk.diarization.DiarizationError`, used by `diarization-onnx` and `diarization-pyannote`.**
@@ -137,6 +138,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**
 - **A loop's workers are told where the loop's status file and brief are, and a read repeated with its output thrown away (`2>/dev/null`) counts as a repeat.**
+- **A request about one piece of work, such as “a shorter version of those notes”, is no longer saved as a standing preference; a preference that is saved is said on its turn, still after a reload, can be forgotten from there, and reads in words in Memory rather than as stored data.**
+- **A room's Export transcript downloads the file instead of replacing the app with it, and names the member who said each line; every time in a chat or room export carries its UTC offset.**
+- **The “text-to-speech is switched off” line under a chat goes away once Speak works.**
+- **Voices says what a clone voice needs where it is chosen, and refuses one its engine cannot speak with.**
+- **Regenerating an answer that made an image saves the new image as that image's next version, not as a second image.**
 - **Stopping or restarting the gateway waits a few seconds for the app package repair its start began, so an app it has just repaired stops with the rest instead of starting again after them.**
 - **A scheduled automation's notification and chat message say what it produced, or why it failed, instead of its name alone; an automation that had nothing to do says nothing.**
 - **A failed automation whose failures go to the Inbox is an item in the Inbox, not only a notification.**

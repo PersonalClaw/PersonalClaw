@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
+from personalclaw.artifacts import retakes
 from personalclaw.dashboard.chat_persistence import _TURN_DISPATCH_ROLES, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
+from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.mcp_artifacts import images_made_in
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -104,6 +107,12 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             if len(variants) > _MAX_VARIANTS:
                 variants = variants[-_MAX_VARIANTS:]
 
+        # The images the replaced attempt made are what the replay RETAKES: a generation in
+        # the new turn lands as each one's next version instead of a second image beside it.
+        # Recorded under the key the turn hands its runtime, which is the one its tools
+        # resolve; the chat's own name is not it.
+        retake_key = _history_key_for(session.key)
+        retakes.open_retakes(retake_key, images_made_in(msgs[u_idx + 1 :]))
         del session.messages[u_idx + 1 :]
         session._dirty = True
         session._pending_variants = variants
@@ -141,6 +150,8 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
                 session._pending_variants = []
 
         task.add_done_callback(_clear_pending_on_done)
+        # However the replayed turn ends, nothing is left for a later turn to retake.
+        task.add_done_callback(lambda _t: retakes.close_retakes(retake_key))
     state.push_sessions_update()
     return web.json_response({"ok": True})
 
@@ -330,8 +341,6 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # its own history and doesn't know we truncated the dashboard list). Only on
         # rewind — the last-turn path relies on the provider absorbing the resend.
         if rewind:
-            from personalclaw.dashboard.chat_utils import _history_key_for
-
             await state.sessions.reset(_history_key_for(session.key))
             state.broadcast_ws(
                 "chat_rewound",

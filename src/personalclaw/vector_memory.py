@@ -33,6 +33,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
+from personalclaw.security import redact_values_for_display
 from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 
@@ -3708,7 +3709,9 @@ class VectorMemoryStore(MemoryProvider):
                 deleted = True
         return deleted
 
-    def get_lessons_context(self, workspace: str | None = None) -> str:
+    def get_lessons_context(
+        self, workspace: str | None = None, *, citations_out: list[dict] | None = None
+    ) -> str:
         """Format lessons for prompt injection — scope-filtered AND confidence-gated.
 
         Reads through :meth:`lessons_visible_in`, so a caller that does not declare a
@@ -3720,6 +3723,12 @@ class VectorMemoryStore(MemoryProvider):
         accumulating observations — and simply does not appear in this block. That is
         the whole point of the atom: injection is gated on evidence rather than on the
         row existing, so one unrepeated inference cannot steer every future turn.
+
+        When *citations_out* is supplied (a chat turn), each lesson is listed as
+        ``[Lesson N]``, the header says to cite by that number, and one manifest entry per
+        lesson is appended — ``{"kind": "lesson", "n", "id", "preview"}``, ``id`` being the
+        rule as the Memory studio lists it — so a reply's ``[Lesson N]`` can open the lesson.
+        Left None, the block is byte-identical to the uncited format.
         """
         lessons = self.lessons_visible_in(workspace, limit=50)
         if not lessons:
@@ -3732,12 +3741,24 @@ class VectorMemoryStore(MemoryProvider):
         ]
         if not lessons:
             return ""
-        lines = [
+        header = (
             "[Learned corrections — user-taught rules from past mistakes.\n"
-            "ALWAYS follow these. They override default behavior.]"
-        ]
-        for e in lessons:
-            lines.append(f"- {json.loads(e['value_json'])}")
+            "ALWAYS follow these. They override default behavior."
+        )
+        if citations_out is not None:
+            header += (
+                "\nWhen an answer rests on one of them, cite it inline by its number, "
+                "as [Lesson N]."
+            )
+        lines = [header + "]"]
+        for n, e in enumerate(lessons, start=1):
+            rule = json.loads(e["value_json"])
+            if citations_out is None:
+                lines.append(f"- {rule}")
+                continue
+            lines.append(f"- [Lesson {n}] {rule}")
+            shown = str(redact_values_for_display(rule))
+            citations_out.append({"kind": "lesson", "n": n, "id": shown, "preview": shown[:160]})
         lines.append("[End of learned corrections]\n")
         return "\n".join(lines)
 

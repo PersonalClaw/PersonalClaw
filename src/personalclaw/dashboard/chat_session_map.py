@@ -107,6 +107,12 @@ FINISH_REASON_LENGTH = "length"
 #: on the same last assistant message. Absent = the chosen model answered.
 MODEL_SUBSTITUTION_KEY = "model_substitution"
 
+#: The ``meta`` key that records what the turn LEARNED — ``[{origin, text, ref?}]``, one entry per
+#: learned-chip the after-turn review announced (a preference, or a lesson), on the same last
+#: assistant message. The live chip is an ``activity_event``; this is the copy a reload reads.
+#: Absent = the turn learned nothing.
+LEARNED_KEY = "learned"
+
 #: A summary is a RAIL LABEL, deliberately shorter than :data:`PREVIEW_CAP`: it occupies
 #: the same one-line slot the preview would, and a label that spends the whole preview
 #: budget reads as a truncated sentence rather than a title.
@@ -441,10 +447,11 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
     as the turn starts): past it, the last assistant message is the PREVIOUS turn's
     answer, which then carried this turn's numbers and summary.
 
-    Must be called BEFORE the turn's ``save_session_to_history`` — that function
-    rewrites the whole transcript file from the buffer, so a key stamped after it is
+    Must be called BEFORE a ``save_session_to_history`` — that function rewrites the
+    whole transcript file from the buffer, so a key stamped after the last save is
     in-memory only and dies at the next reload, which is the very failure the durable
-    half of this module exists to fix.
+    half of this module exists to fix. (:func:`stamp_learned` is stamped after the turn's
+    save, and its caller saves again.)
     """
     if not value:
         return False
@@ -487,6 +494,15 @@ def stamp_model_substitution(session: Any, sentence: str) -> bool:
     constraint as the telemetry.
     """
     return _stamp_on_last_assistant(session, MODEL_SUBSTITUTION_KEY, sentence)
+
+
+def stamp_learned(session: Any, learned: list[dict[str, Any]]) -> bool:
+    """Record what the turn learned on its last assistant message (:data:`LEARNED_KEY`).
+
+    The one stamp here that runs AFTER the turn's save: the after-turn review that learns it
+    runs once the reply is safely on disk, so a ``True`` here obliges the caller to save again.
+    """
+    return _stamp_on_last_assistant(session, LEARNED_KEY, list(learned))
 
 
 def stamp_turn_summary(session: Any, summary: str | None) -> bool:

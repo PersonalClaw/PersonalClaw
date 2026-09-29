@@ -268,11 +268,26 @@ def record_procedural_outcomes(service, outcomes, *, scope_ref: str | None = Non
     return n
 
 
-def capture_preference_facet(service, user_message: str) -> str | None:
+@dataclass(frozen=True)
+class Learned:
+    """One thing a capture learned: what the chip saying so shows, and where it lives.
+
+    ``origin`` names the store that holds it — ``facet`` (a learned preference) or ``lesson``
+    — because the two are reviewed and undone in different places, and a veto the preference
+    detector finds is a LESSON. ``ref`` is the facet's key for a facet (what undoing it needs),
+    and empty for a lesson.
+    """
+
+    origin: str
+    text: str
+    ref: str = ""
+
+
+def capture_preference_facet(service, user_message: str) -> Learned | None:
     """No-LLM preference-facet capture (C15): run the cheap heuristic detector over the
     user message and upsert a typed, decaying facet when it fires — a "never do X" →
-    veto (routed to write_lesson), a style nudge → a style facet. Reinforces on
-    recurrence via upsert. Best-effort; returns the facet text learned, or None.
+    veto (routed to write_lesson), a standing style preference → a style facet. Reinforces
+    on recurrence via upsert. Best-effort; returns what was learned, or None.
 
     Reuses the after-turn pass (no new LLM call). Vetoes unify with the lesson store
     (upsert_facet returns None for veto; the caller writes the lesson)."""
@@ -297,9 +312,9 @@ def capture_preference_facet(service, user_message: str) -> str | None:
             # never quote …" and "Never: always avoid …".
             rule = text[:1].upper() + text[1:]
             service.write_lesson(rule, category="preference", source="facet_veto")
-            return text
-        upsert_facet(vs, cls, text, cue=cue)
-        return text
+            return Learned("lesson", text)
+        key = upsert_facet(vs, cls, text, cue=cue)
+        return Learned("facet", text, key or "")
     except Exception:
         logger.debug("preference-facet capture failed", exc_info=True)
         return None
@@ -548,15 +563,16 @@ def run_after_turn_review(
     + the guardrail that protects the whole learning loop.
 
     Also runs the two no-LLM detectors on EVERY reviewed turn (not just corrections):
-    the preference-facet detector (C15) — a style nudge / veto becomes a typed decaying
-    facet that the ambient USER PROFILE block renders — and the glossary detector, which
-    offers an explicitly-defined project term to the workspace-scoped `glossary` slot.
+    the preference-facet detector (C15) — a standing style preference becomes a typed
+    decaying facet that the ambient USER PROFILE block renders, a veto a lesson — and the
+    glossary detector, which offers an explicitly-defined project term to the
+    workspace-scoped `glossary` slot.
     """
-    # Cheap no-LLM captures: both run regardless of the correction gate (a style nudge like
-    # "keep it shorter", or "by CR I mean a code review", is not a correction-signal but IS
-    # worth keeping). The dashboard hot path runs both BEFORE this expensive-review gate (so
-    # a toolless conversational hint isn't dropped) and passes capture_facets=False to avoid
-    # a double-write; direct/test callers keep the default.
+    # Cheap no-LLM captures: both run regardless of the correction gate (a standing style
+    # preference like "keep your answers short", or "by CR I mean a code review", is not a
+    # correction-signal but IS worth keeping). The dashboard hot path runs both BEFORE this
+    # expensive-review gate (so a toolless conversational hint isn't dropped) and passes
+    # capture_facets=False to avoid a double-write; direct/test callers keep the default.
     if capture_facets:
         capture_preference_facet(service, user_message)
         capture_glossary_term(service, user_message)

@@ -293,7 +293,10 @@ def _learned(events: list[tuple[str, dict]]) -> list[dict]:
     [
         # Facet capture runs unconditionally on a permitted turn — below the expensive
         # gate, so `worthwhile=False` isolates it from the lesson path.
-        ("prefers terse replies", None, False, "facet"),
+        (("facet", "keep your answers short", "pref.facet.style.k"), None, False, "facet"),
+        # A veto the preference detector finds is written as a LESSON, so its chip says so
+        # and its tap lands where lessons are reviewed, not on the learned preferences.
+        (("lesson", "never force-push to main", ""), None, False, "lesson"),
         # …and the expensive review's correction→lesson, with the facet path silent.
         (None, "always run make lint before pushing", True, "lesson"),
     ],
@@ -303,7 +306,8 @@ def test_after_turn_review_origins(monkeypatch, facet, lesson, worthwhile, expec
     import personalclaw.after_turn_review as atr
     import personalclaw.learning as learning
 
-    monkeypatch.setattr(atr, "capture_preference_facet", lambda *_a, **_k: facet)
+    learned = atr.Learned(*facet) if facet else None
+    monkeypatch.setattr(atr, "capture_preference_facet", lambda *_a, **_k: learned)
     monkeypatch.setattr(atr, "run_after_turn_review", lambda **_k: lesson)
     monkeypatch.setattr(atr, "is_correction_signal", lambda *_a, **_k: True)
     monkeypatch.setattr(atr, "record_procedural_outcomes", lambda *_a, **_k: None)
@@ -327,6 +331,68 @@ def test_after_turn_review_origins(monkeypatch, facet, lesson, worthwhile, expec
     assert len(chips) == 1, f"expected exactly one learned chip, got {state.events}"
     assert chips[0]["kind"] == "learned"  # unchanged: live FE consumers key on this
     assert chips[0]["origin"] == expected_origin
+
+
+def _stub_captures(monkeypatch, facet):
+    import personalclaw.after_turn_review as atr
+    import personalclaw.learning as learning
+
+    monkeypatch.setattr(atr, "capture_preference_facet", lambda *_a, **_k: facet)
+    monkeypatch.setattr(atr, "capture_glossary_term", lambda *_a, **_k: None)
+    monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: object())
+    monkeypatch.setattr(learning, "record_denial", lambda *_a, **_k: None)
+
+
+def test_what_a_turn_learned_is_kept_on_the_turn(monkeypatch):
+    """The chip rode the socket only, so a reload or a restart lost it and a preference was
+    saved with nothing on the page saying so. The turn now keeps the record, with the key the
+    chat's "Forget it" needs, and says so, because its caller has to save once more."""
+    import personalclaw.after_turn_review as atr
+
+    _stub_captures(
+        monkeypatch, atr.Learned("facet", "keep your answers short", "pref.facet.style.k")
+    )
+    session = _learning_session()
+    session.messages = [
+        {"role": "user", "content": "From now on, keep your answers short."},
+        {"role": "assistant", "content": "Will do."},
+    ]
+    state = _learning_state()
+
+    kept = chat_runner._maybe_after_turn_review(
+        state,
+        session,
+        user_message="From now on, keep your answers short.",
+        assistant_text="Will do.",
+        tool_calls=0,
+        decision=SimpleNamespace(permitted=True, worthwhile=False, allowed=True),
+    )
+
+    assert kept is True
+    assert session.messages[-1]["meta"]["learned"] == [
+        {"origin": "facet", "text": "keep your answers short", "ref": "pref.facet.style.k"}
+    ]
+    (chip,) = _learned(state.events)
+    assert chip["text"] == "Learned: keep your answers short"
+    assert chip["ref"] == "pref.facet.style.k"
+
+
+def test_a_turn_that_learned_nothing_keeps_no_record(monkeypatch):
+    _stub_captures(monkeypatch, None)
+    session = _learning_session()
+    session.messages = [{"role": "assistant", "content": "Here is the summary."}]
+
+    kept = chat_runner._maybe_after_turn_review(
+        _learning_state(),
+        session,
+        user_message="Summarize the notes.",
+        assistant_text="Here is the summary.",
+        tool_calls=0,
+        decision=SimpleNamespace(permitted=True, worthwhile=False, allowed=True),
+    )
+
+    assert kept is False
+    assert "meta" not in session.messages[-1]
 
 
 @pytest.mark.asyncio
@@ -363,8 +429,17 @@ async def test_skill_ladder_origin_is_proposal():
 
 
 def test_the_three_origins_are_distinct_and_closed():
-    """A discriminator whose values collide routes two captures to one surface."""
-    origins = set(re.findall(r'"origin":\s*"([a-z]+)"', Path(chat_runner.__file__).read_text()))
+    """A discriminator whose values collide routes two captures to one surface.
+
+    Read from every spelling an origin is written in: a literal on the event, a literal handed
+    to ``_announce_learned``, and the ``Learned`` records the preference capture returns.
+    """
+    import personalclaw.after_turn_review as atr
+
+    runner = Path(chat_runner.__file__).read_text()
+    origins = set(re.findall(r'"origin":\s*"([a-z]+)"', runner))
+    origins |= set(re.findall(r'_announce_learned\(\s*state,\s*session,\s*"([a-z]+)"', runner))
+    origins |= set(re.findall(r'Learned\(\s*"([a-z]+)"', Path(atr.__file__).read_text()))
     assert origins == {"facet", "lesson", "proposal"}
 
 

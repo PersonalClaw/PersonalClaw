@@ -44,3 +44,41 @@ describe('Markdown memory citations', () => {
     expect(container.textContent).toContain('[Memory 1]')
   })
 })
+
+// A lesson recalled into the turn is cited as `[Lesson N]` and opens THAT lesson in Memory. The
+// reply could only say "Source: [Learned corrections]" before: the block gave a lesson nothing
+// to cite. Numbered apart from the episodes, so `[Lesson 1]` and `[Memory 1]` are two sources.
+describe('Markdown lesson citations', () => {
+  const rule = 'carrier-webhooks dedupes in Postgres, the LRU is only a fast path.'
+  const cites: MemoryCitation[] = [
+    { n: 1, id: '42', preview: 'deployed billing on friday' },
+    { kind: 'lesson', n: 1, id: rule, preview: rule },
+  ]
+
+  it('renders a resolvable [Lesson N] as a chip that opens the lesson', () => {
+    const { getByRole } = render(
+      <Markdown citations={cites}>{'Dedupe keys live in Postgres [Lesson 1].'}</Markdown>,
+    )
+    const link = getByRole('link', { name: /Lesson 1/ })
+    expect(link).toHaveAttribute(
+      'href', `#/settings/memory?tab=studio&sel=${encodeURIComponent(`lesson:${rule}`)}`)
+    expect(link).toHaveAttribute('title', rule)
+  })
+
+  it('keeps a lesson and an episode with the same number apart', () => {
+    const { getByRole } = render(
+      <Markdown citations={cites}>{'Shipped [Memory 1], and dedupes in Postgres [Lesson 1].'}</Markdown>,
+    )
+    expect(getByRole('link', { name: /Memory 1/ })).toHaveAttribute(
+      'href', '#/settings/memory?tab=studio&sel=epi%3A42')
+    expect(getByRole('link', { name: /Lesson 1/ }).getAttribute('href')).toContain('lesson%3A')
+  })
+
+  it('leaves a [Lesson N] the manifest does not hold as plain text', () => {
+    const { container, queryByRole } = render(
+      <Markdown citations={cites}>{'See [Lesson 4].'}</Markdown>,
+    )
+    expect(queryByRole('link', { name: /Lesson/ })).toBeNull()
+    expect(container.textContent).toContain('[Lesson 4]')
+  })
+})

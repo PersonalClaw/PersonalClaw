@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Brain, ChevronRight, Gauge, Sparkles, type LucideIcon } from 'lucide-react'
 import { spring } from '../../design/motion'
+import { api } from '../../lib/api'
 import { TextLink } from '../../ui/TextLink'
+import { confirmForgetPreference } from '../settings/forgetPreference'
 import { learnedSurface } from './chatTypes'
 
 /** Holistic per-turn context-transparency footer. Consolidates the three
@@ -17,7 +19,9 @@ import { learnedSurface } from './chatTypes'
  *  page that owns a socket and a composer cannot be mounted to prove one. See
  *  `contextLedgerReach.test.tsx`, which renders exactly this component with the real
  *  handler wired and taps it the way a user does. */
-export function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: string; learned?: string; learnedOrigin?: string; stats?: string }) {
+export function ContextLedger({ fed, learned, learnedOrigin, learnedRef, stats }: {
+  fed?: string; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
+}) {
   const [open, setOpen] = useState(false)
   const learnedRowRef = useRef<HTMLDivElement>(null)
   const fedChars = fed?.match(/([\d,]+)\s*chars/)?.[1] ?? ''
@@ -27,8 +31,26 @@ export function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: st
   // hardcoded Memory link this row used to carry for all three origins — which was right for
   // a facet and wrong for a skill proposal. `null` for an absent/unknown origin: the row
   // still renders its text, it just isn't a link, because we don't know which surface owns it.
-  const surface = learnedSurface(learnedOrigin)
+  const surface = learnedSurface(learnedOrigin, learnedRef)
   const learnedHref = surface?.href ?? null
+  // A learned PREFERENCE can be undone right where it is announced: it reaches every later
+  // prompt, so one it got wrong should not cost a trip to Settings. The same confirm, and the
+  // same irreversible forget, as the Learned preferences list.
+  const canForget = learnedOrigin === 'facet' && !!learnedRef
+  const [forgetPending, setForgetPending] = useState(false)
+  const [forgotten, setForgotten] = useState(false)
+  const [forgetError, setForgetError] = useState('')
+  const forget = async () => {
+    if (!learnedRef || !(await confirmForgetPreference(learnedText))) return
+    setForgetPending(true); setForgetError('')
+    try {
+      await api.memoryFacetForget(learnedRef)
+      setForgotten(true)
+    } catch (e) {
+      setForgetError(e instanceof Error ? e.message : 'Could not forget that preference.')
+    }
+    setForgetPending(false)
+  }
 
   // ── ONE action, not two (LV-2 owner ruling, 2026-08-26) ────────────────────────────────
   //
@@ -94,6 +116,10 @@ export function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: st
                 <LedgerRow icon={Sparkles} label="Learned & saved" contentRef={learnedRowRef}>
                   <span className="text-on-surface-var">{learnedText || 'A preference was captured.'}</span>
                   {surface && <>{' '}<TextLink href={surface.href}>{surface.label}</TextLink></>}
+                  {canForget && (forgotten
+                    ? <span className="text-ok">{' · '}Forgotten — it no longer reaches the model.</span>
+                    : <>{' · '}<TextLink onClick={() => void forget()} disabled={forgetPending}>Forget it</TextLink></>)}
+                  {forgetError && <span role="alert" className="block text-danger">{forgetError}</span>}
                 </LedgerRow>
               )}
               {stats && (

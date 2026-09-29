@@ -361,6 +361,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_speed": "The speed must be a number.",
     "invalid_kind": "The voice profile kind is not one of the supported kinds.",
     "kind_immutable": "A voice profile's kind cannot be changed after creation.",
+    # A clone voice whose engine (the one it names, else the one bound in Models) cannot clone:
+    # refused when the voice is saved, not first when it speaks. The message names the engine.
+    "cloning_unsupported": (
+        "A clone voice needs a text-to-speech engine that can clone from a reference clip, "
+        "and the engine this voice would use cannot."
+    ),
     "invalid_extension": "The audio file extension is not supported.",
     "name_required": "A non-empty name is required.",
     "consent_text_required": "Consent text is required for a cloned voice.",

@@ -167,6 +167,22 @@ describe('the room transcript', () => {
   })
 })
 
+describe('exporting the transcript', () => {
+  it('downloads it and leaves the room on screen', async () => {
+    const clicked: HTMLAnchorElement[] = []
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this)
+    })
+    const before = window.location.href
+    mount()
+    await userEvent.click(await screen.findByRole('button', { name: 'Export transcript' }))
+    expect(clicked.map((a) => a.getAttribute('href'))).toEqual(['/api/rooms/pricing-debate/export?format=md'])
+    expect(clicked[0].hasAttribute('download')).toBe(true)
+    expect(window.location.href, 'the app is not replaced by the Markdown').toBe(before)
+    click.mockRestore()
+  })
+})
+
 describe('the pause card', () => {
   it('appears when the room is paused, with the queue it still owes', async () => {
     H.room.fn = async () => detail({

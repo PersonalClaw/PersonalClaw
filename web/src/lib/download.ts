@@ -13,6 +13,23 @@ export function downloadText(filename: string, content: string, mime = 'text/pla
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+/** Save what the gateway serves at *url* (an export route) as a file, and stay on the page.
+ *
+ *  A link click the browser handles itself, so a long transcript or an archive of several
+ *  megabytes never has to be held in memory here, and the route's own `Content-Disposition`
+ *  names the file. The `download` attribute is what keeps the app on screen: pointing the tab
+ *  at the URL (`window.location.href = …`) replaced the whole app with whatever came back
+ *  whenever the response was not an attachment, until the user pressed Back. */
+export function downloadFrom(url: string): void {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = ''
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 /** Slugify a title into a safe file basename (keeps unicode letters/digits). */
 export function safeFilename(name: string, fallback = 'download'): string {
   const base = (name || '').trim().replace(/[\s/\\:*?"<>|]+/g, '-').replace(/^-+|-+$/g, '')

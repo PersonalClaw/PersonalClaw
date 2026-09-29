@@ -124,8 +124,12 @@ describe('learnedSurface — a tap lands where the artifact can be approved or e
     expect(learnedSurface('lesson')?.href).not.toContain('/learning')
   })
 
-  it('routes a preference FACET to the Memory Studio', () => {
-    expect(learnedSurface('facet')?.href).toBe('#/settings/memory?tab=studio')
+  it('routes a learned preference to the list that can pin or forget it, at its row', () => {
+    // Not the Studio: it lists the same row as a raw fact, with no Forget.
+    expect(learnedSurface('facet', 'pref.facet.style.abc')?.href)
+      .toBe('#/settings/memory?tab=settings&pref=pref.facet.style.abc')
+    expect(learnedSurface('facet')?.href).toBe('#/settings/memory?tab=settings')
+    expect(learnedSurface('facet')?.label).toContain('Learned preferences')
   })
 
   it('discriminates: a proposal and a lesson do NOT land on the same surface', () => {
@@ -416,10 +420,12 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // The WS handler must actually stamp the wire's `origin`, and the ledger must read it off
     // the same segment — otherwise `learnedSurface` is only ever called with `undefined` and
     // every chip degrades, which would look exactly like "old messages" forever.
-    expect(chatPage).toContain('textRun.activity(text, kind, origin)')
+    expect(chatPage).toContain('textRun.activity(text, kind, origin, ref)')
     expect(textRunOwner).toContain('stampActivityOrigin(segs, insertActivity(')
     expect(chatPage).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
-    expect(ledger).toContain('learnedSurface(learnedOrigin)')
+    // …and a learned preference's key, which is what its "Forget it" and its link need.
+    expect(chatPage).toContain("ledger.learnedRef = (s as ActivitySegment).ref")
+    expect(ledger).toContain('learnedSurface(learnedOrigin, learnedRef)')
     expect(ledger).toContain('<TextLink href={surface.href}>')
     // Vacuity floor for this whole block: the pre-LV-2 hardcoded link must be GONE. Without
     // this, the three positive scans above pass while the old unconditional Memory link is
@@ -434,6 +440,7 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // renders — the exact inert-control shape this block exists to catch.
     expect(chatPage).toContain('<ContextLedger fed={ledger.fed}')
     expect(chatPage).toContain('learnedOrigin={ledger.learnedOrigin}')
+    expect(chatPage).toContain('learnedRef={ledger.learnedRef}')
     expect(chatPage).toContain("import { ContextLedger } from './chat/ContextLedger'")
     // And ChatPage no longer carries a second, private copy of it.
     expect(chatPage).not.toContain('function ContextLedger(')

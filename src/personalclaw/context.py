@@ -1357,6 +1357,11 @@ class ContextBuilder:
         # (the chat runner). When given, the history block is built from it and the log is
         # not read — the log may already hold the in-flight message. None = read the log.
         prior_transcript: list[dict] | None = None,
+        *,
+        # When a list is supplied (a chat turn), each lesson the prompt shows is listed as
+        # `[Lesson N]` and this list gains one `{"kind": "lesson", …}` entry per lesson that
+        # reached the prompt, so the reply can cite it and the chat can open it.
+        citations_out: list[dict] | None = None,
     ) -> str:
         """Build context for a new session (memory + skills + history).
 
@@ -1659,6 +1664,7 @@ class ContextBuilder:
         # service. There is no parallel JSONL store (WF2LEA-3 retired it), so the
         # dual-source read that let a global + a workspace lesson disagree is gone.
         lessons_ctx = ""
+        lesson_cites: list[dict] | None = [] if citations_out is not None else None
         if not blocks_reads:
             from personalclaw.memory_service import service_for
 
@@ -1668,7 +1674,11 @@ class ContextBuilder:
             # exactly that). Global lessons come back regardless; a lesson scoped to a
             # different directory does not.
             lessons_ctx = (
-                _guarded_recall("lessons", lambda: service_for(memory).lessons_context(cwd)) or ""
+                _guarded_recall(
+                    "lessons",
+                    lambda: service_for(memory).lessons_context(cwd, citations_out=lesson_cites),
+                )
+                or ""
             )
 
         # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
@@ -1689,6 +1699,10 @@ class ContextBuilder:
         )
         if _ambient:
             parts.append(_ambient)
+        # A lesson's reference is citable only if the budget above let the lesson into the
+        # prompt: a manifest entry for one it dropped would resolve a number the model never saw.
+        if citations_out is not None and lesson_cites:
+            citations_out.extend(c for c in lesson_cites if f"[Lesson {c['n']}] " in _ambient)
 
         # No block reads ANOTHER session's transcript. An "[Other chat tabs]" block once
         # copied other dashboard sessions' latest messages into every new session's first
@@ -1893,6 +1907,7 @@ class ContextBuilder:
                 dropped_out=notices_out,
                 window=_window,
                 prior_transcript=prior_transcript,
+                citations_out=citations_out,
             )
             if session_ctx:
                 from personalclaw.prompt_providers.runtime import render_snippet_block
@@ -1995,6 +2010,9 @@ class ContextBuilder:
             from personalclaw.memory_service import service_for
 
             memory = self.get_memory_for(cwd, memory_store)
+            # The manifest may already hold the session context's lesson entries, so the
+            # episodes' share is what this call adds.
+            cited_before = len(citations_out) if citations_out is not None else 0
             episodic_ctx = service_for(memory).episodic_context(
                 query_text=text, cap=3000, citations_out=citations_out
             )
@@ -2004,11 +2022,11 @@ class ContextBuilder:
                 # Cite-by-index + admit-ignorance clauses.
                 # Placed adjacent to the block so the model reads the fragments and the
                 # rule together. The cite clause is emitted only when the block carries
-                # `[Memory N]` markers (citations_out supplied AND non-empty) — no marker,
-                # no instruction to cite one. The admit-ignorance clause is unconditional
-                # on an injected block: the whole point is to bound the reply to what was
-                # actually recalled.
-                if citations_out:
+                # `[Memory N]` markers (the episodic call added manifest entries) — no
+                # marker, no instruction to cite one. The admit-ignorance clause is
+                # unconditional on an injected block: the whole point is to bound the reply
+                # to what was actually recalled.
+                if citations_out is not None and len(citations_out) > cited_before:
                     parts.add(
                         "[Memory citation] When you use a fact from the episodic "
                         "memory above, cite it inline as `[Memory N]` using its number, "

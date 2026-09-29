@@ -174,18 +174,113 @@ def reinforce(facet: Facet, cue: str, *, now: datetime | None = None) -> Facet:
 
 # ── Heuristic candidate producers (no LLM) ──
 
+# ── The style rule (stated once, here) ──
+#
+# A style word is not a preference on its own. "a shorter version of those notes", "make
+# it more concise", "keep it short", "just the code for the parser" each ask for something
+# about ONE piece of work, and the detector's output is an explicit-cue facet: Active at
+# once, and rendered into the USER PROFILE block of every later prompt as a "stable learned
+# preference". Matching the bare word "shorter" filed a request about one set of notes as
+# a standing rule for every answer after it. So a style hint is learned only when its
+# sentence frames it as standing, in one of three ways:
+#
+#   1. a standing-scope marker in the same sentence — "from now on", "always", "going
+#      forward", "in general", "whenever you reply" (:data:`_STANDING_SCOPE_RE`);
+#   2. the assistant's replies IN GENERAL as its object — a plural reply noun ("keep your
+#      answers short", "I prefer shorter answers", "make your replies more concise"); or
+#   3. a sentence that IS the manner instruction, addressed to the assistant and naming no
+#      work ("Be more terse.", "Get to the point.", "No fluff, please.").
+#
+# Which frames a hint may use depends on what it says (the groups of
+# :data:`_STYLE_HINT_RE`): a ``replies`` hint names the replies, so it stands by itself; a
+# ``manner`` hint needs frame 1 or 3; a ``work`` hint ("keep it short", "shorter", "just
+# the code") reads as a request about the work at hand, so only frame 1 makes it standing.
+# A sentence that scopes itself to now ("this time", "for now") is never standing, and
+# every hint in the message is tried, so a one-off before a real preference does not hide
+# it. Precision over recall, for the veto rule's reason: a missed preference is cheap (the
+# after-turn summarizer produces the richer set), while a false one steers every future turn.
+#
+# Sentences split on ``.!?`` and newlines, never on commas: "Summarize this, be brief" is one
+# instruction about one summary, and "From now on, be brief" keeps its marker.
+
+_MANNER_ADJ = (
+    r"(?:terse|concise|brief|short|shorter|succinct|verbose|detailed|formal|casual|direct)"
+)
+_KEEP_ADJ = r"(?:short|shorter|concise|brief|terse|to the point|detailed|formal|casual)"
+_REPLY_NOUNS = r"(?:responses|answers|replies|messages|explanations)"
+
 _STYLE_HINT_RE = re.compile(
-    # "keep [your|the] [it|them|responses|answers|things|it] <adj>" — an optional
-    # possessive/article between "keep" and the object so "keep your responses
-    # concise" / "keep the answers short" match, not just "keep responses concise".
-    r"\b(be (?:more |less )?(?:terse|concise|brief|verbose|detailed|formal|casual|direct)|"
-    r"keep (?:your |the )?(?:it|them|responses?|answers?|replies|things?|it) "
-    r"(?:short|shorter|concise|brief|terse|to the point|detailed|formal|casual)|"
-    r"(?:no|less|more|without) (?:preamble|explanation|explanations|comments|filler|fluff)|"
-    r"just (?:the )?(?:code|answer|facts)|get to the point|to the point|"
-    r"shorter|more concise|be brief|stop explaining)\b",
+    r"\b(?:"
+    r"(?P<replies>keep (?:your |the )?(?:responses|answers|replies) " + _KEEP_ADJ + r"|"
+    r"make (?:your |the )?" + _REPLY_NOUNS + r" (?:more |less )?" + _MANNER_ADJ + r"|"
+    r"(?:more |less )?" + _MANNER_ADJ + r" " + _REPLY_NOUNS + r")"
+    r"|(?P<manner>be (?:more |less )?"
+    r"(?:terse|concise|brief|succinct|verbose|detailed|formal|casual|direct)|"
+    r"(?:no|less|more|without) (?:preamble|explanations?|comments|filler|fluff)|"
+    r"get to the point|stop explaining)"
+    r"|(?P<work>keep (?:your |the )?(?:it|them|this|that|things?|response|answer|reply) "
+    + _KEEP_ADJ
+    + r"|just (?:the )?(?:code|answer|facts)|to the point|shorter|more concise)"
+    r")\b",
     re.IGNORECASE,
 )
+
+#: Frame 1 of the style rule: the sentence says the hint holds beyond this request.
+_STANDING_SCOPE_RE = re.compile(
+    r"\b(?:from now on|going forward|from here on(?: out)?|(?:in|for) (?:the )?future|"
+    r"always|by default|in general|generally|as a rule|every time|each time|whenever|"
+    r"all the time|at all times|henceforth|"
+    r"in (?:all|every) (?:of )?(?:your )?(?:replies|reply|answers?|responses?|messages?)|"
+    r"when(?:ever)? you (?:reply|answer|respond|write|explain))\b",
+    re.IGNORECASE,
+)
+
+#: A sentence that scopes itself to now is never a standing preference.
+_ONE_OFF_SCOPE_RE = re.compile(
+    r"\b(?:this time|for now|just this once|this once|for this one|right now)\b",
+    re.IGNORECASE,
+)
+
+#: Words that may surround a manner instruction without naming any work (frame 3): the
+#: politeness and softening around "be more direct", and nothing that could be a task.
+_MANNER_FILLER = frozenset("""
+    please pls kindly thanks thank you ok okay just try to can could would will and also
+    hey hi oh so a bit little lot much way
+    """.split())
+
+_SENTENCE_END_RE = re.compile(r"[.!?\n]")
+
+
+def _sentence_around(msg: str, start: int, end: int) -> str:
+    """The sentence of *msg* that holds ``msg[start:end]`` (split on ``.!?`` and newlines)."""
+    left = max((m.end() for m in _SENTENCE_END_RE.finditer(msg, 0, start)), default=0)
+    right = _SENTENCE_END_RE.search(msg, end)
+    return msg[left : right.start() if right else len(msg)]
+
+
+def _only_the_instruction(sentence: str, hint: str) -> bool:
+    """Frame 3: *sentence* is *hint* plus politeness, and names no work."""
+    rest = sentence.lower().replace(hint.lower(), " ", 1)
+    return all(tok in _MANNER_FILLER for tok in _CLAUSE_TOKEN_RE.findall(rest))
+
+
+def style_hint(user_message: str) -> str | None:
+    """The distilled style hint of a STANDING preference in *user_message*, or None.
+
+    Implements the style rule stated above; every hint in the message is tried in order.
+    """
+    msg = user_message or ""
+    for m in _STYLE_HINT_RE.finditer(msg):
+        hint = m.group(0)
+        sentence = _sentence_around(msg, m.start(), m.end())
+        if _ONE_OFF_SCOPE_RE.search(sentence):
+            continue
+        standing = bool(_STANDING_SCOPE_RE.search(sentence))
+        if m.group("replies") or standing:
+            return hint.strip().lower()[:120]
+        if m.group("manner") and _only_the_instruction(sentence, hint):
+            return hint.strip().lower()[:120]
+    return None
 
 
 # ── The veto rule (stated once, here) ──
@@ -280,14 +375,17 @@ def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
     """Cheap heuristic → ``(cls, text, cue)`` candidate, or None.
 
     A 'never/don't' PROHIBITING AN ACTION → a **veto** (which the caller routes to a
-    lesson); a style nudge → a ``style`` facet. Deliberately conservative — the existing
-    summarizer produces the richer set; this catches the obvious in-the-moment ones.
+    lesson); a STANDING style preference → a ``style`` facet. Deliberately conservative —
+    the existing summarizer produces the richer set; this catches the obvious
+    in-the-moment ones.
 
     The facet ``text`` is the DISTILLED hint (the matched style span / veto clause),
     not the whole raw message — a durable "stable learned preference" must not carry
     a one-off task instruction into the always-on USER PROFILE (that would pollute it
-    and read as a prompt-injection artifact). A bare fragment is the same failure from
-    the other side: see the veto rule above for what a veto must contain to qualify.
+    and read as a prompt-injection artifact). A request about one piece of work is the
+    same failure in another shape, and the style rule above is what keeps it out; a bare
+    fragment is the same failure from the other side, and the veto rule is what keeps
+    that out.
     """
     msg = (user_message or "").strip()
     if not msg:
@@ -295,9 +393,9 @@ def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
     veto = veto_clause(msg)
     if veto:
         return ("veto", veto[:120], "explicit")
-    style = _STYLE_HINT_RE.search(msg)
+    style = style_hint(msg)
     if style:
-        return ("style", style.group(1).strip().lower()[:120], "explicit")
+        return ("style", style, "explicit")
     return None
 
 

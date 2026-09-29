@@ -79,6 +79,13 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr("personalclaw.voice.profiles.config_dir", lambda: root)
     monkeypatch.setattr("personalclaw.voice.bindings.config_dir", lambda: root)
     monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: _FakeSel())
+    # Both engines are registered, so a clone profile naming the cloning one is a voice it
+    # can speak with; the flat selection (Models) is piper, which cannot clone.
+    monkeypatch.setattr(
+        "personalclaw.tts.registry._providers",
+        {"piper": _StubTts("piper"), "voice-clone-tts": _CloningTts("voice-clone-tts")},
+    )
+    monkeypatch.setattr("personalclaw.tts.registry._ensure_registered", lambda: None)
     # flat selection for /resolve + migration; behavioral settings kept trivial.
     monkeypatch.setattr(
         "personalclaw.tts.registry.active_tts", lambda: (_StubTts("piper"), "en_US-amy")

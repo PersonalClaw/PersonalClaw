@@ -170,6 +170,95 @@ class TestCrud:
             assert (await r.json())["error"]["code"] == "not_found"
 
 
+# ── a clone voice needs an engine that can clone, said where it is chosen ─────
+
+
+class _Engine:
+    def __init__(self, name, display, clones):
+        self.name, self.display_name, self.supports_cloning = name, display, clones
+
+
+@pytest.fixture
+def engines(monkeypatch):
+    """Piper (cannot clone) bound in Models; a cloning engine registered beside it."""
+    from personalclaw.tts import registry as tr
+
+    piper = _Engine("piper", "Piper TTS", False)
+    cloner = _Engine("cloner", "Clone Engine", True)
+    monkeypatch.setattr(tr, "_providers", {"piper": piper, "cloner": cloner})
+    monkeypatch.setattr(tr, "_ensure_registered", lambda: None)
+    monkeypatch.setattr(tr, "active_tts", lambda: (piper, "en_US-amy"))
+    return tr
+
+
+class TestACloneNeedsAnEngineThatCanClone:
+    @pytest.mark.asyncio
+    async def test_a_clone_on_the_bound_engine_that_cannot_clone_is_refused_when_created(
+        self, home, tmp_path, monkeypatch, engines
+    ):
+        """Refused only at synthesis before, long after the form said nothing about it."""
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            r = await client.post("/api/voice/profiles", json={"name": "Mine", "kind": "clone"})
+            assert r.status == 409
+            error = (await r.json())["error"]
+        assert error["code"] == "cloning_unsupported"
+        assert "Piper TTS" in error["message"]
+        assert vp.list_profiles() == [], "a refused voice must not be half-created"
+
+    @pytest.mark.asyncio
+    async def test_a_clone_on_an_engine_that_can_clone_is_created(
+        self, home, tmp_path, monkeypatch, engines
+    ):
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            r = await client.post(
+                "/api/voice/profiles", json={"name": "Mine", "kind": "clone", "provider": "cloner"}
+            )
+            assert r.status == 201
+
+    @pytest.mark.asyncio
+    async def test_a_design_voice_needs_no_cloning(self, home, tmp_path, monkeypatch, engines):
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            r = await client.post("/api/voice/profiles", json={"name": "Mine", "kind": "design"})
+            assert r.status == 201
+
+    @pytest.mark.asyncio
+    async def test_a_clone_with_no_engine_at_all_is_refused(self, home, tmp_path, monkeypatch):
+        from personalclaw.tts import registry as tr
+
+        monkeypatch.setattr(tr, "_providers", {})
+        monkeypatch.setattr(tr, "_ensure_registered", lambda: None)
+        monkeypatch.setattr(tr, "active_tts", lambda: None)
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            r = await client.post("/api/voice/profiles", json={"name": "Mine", "kind": "clone"})
+            assert r.status == 409
+            assert (await r.json())["error"]["code"] == "cloning_unsupported"
+
+    @pytest.mark.asyncio
+    async def test_moving_a_clone_to_an_engine_that_cannot_clone_is_refused(
+        self, home, tmp_path, monkeypatch, engines
+    ):
+        profile = vp.create_profile(name="Mine", kind="clone", provider="cloner")
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            r = await client.put(f"/api/voice/profiles/{profile.id}", json={"provider": "piper"})
+            assert r.status == 409
+            assert (await r.json())["error"]["code"] == "cloning_unsupported"
+            renamed = await client.put(f"/api/voice/profiles/{profile.id}", json={"name": "Me"})
+            assert renamed.status == 200, "an edit that keeps a capable engine still saves"
+        assert vp.get_profile(profile.id).provider == "cloner"
+
+    @pytest.mark.asyncio
+    async def test_the_list_says_which_engines_can_clone_and_which_is_bound(
+        self, home, tmp_path, monkeypatch, engines
+    ):
+        async with TestClient(TestServer(_app(home, tmp_path, monkeypatch))) as client:
+            listed = await (await client.get("/api/voice/profiles")).json()
+        assert listed["engines"] == [
+            {"name": "piper", "display_name": "Piper TTS", "clones": False},
+            {"name": "cloner", "display_name": "Clone Engine", "clones": True},
+        ]
+        assert listed["bound_engine"] == "piper"
+
+
 # ── rail 1: verified_own_voice is recomputed, never believed ────────────────
 
 

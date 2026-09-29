@@ -9,9 +9,12 @@ attributed as the agent so updates snapshot + emit lifecycle events.
 """
 
 import logging
+import re
 from typing import Any
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
+from personalclaw.artifacts import retakes
+from personalclaw.artifacts.models import is_valid_slug
 from personalclaw.mcp_core import _resolve_session_key
 from personalclaw.tool_providers.base import BUILDS_META_KEY, tool_failure
 from personalclaw.validation import decode_json_text
@@ -853,12 +856,42 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     return f"Unknown artifact tool: {name}"
 
 
+#: The slug in one of ``image_generate``'s three result sentences — "Generated image '…' (slug:
+#: …)", "Edited image artifact '…' → version N (slug: …)" and "Regenerated image '…' → version N
+#: (slug: …)" below. Parsed back out of an answer's tool rows by :func:`images_made_in`, so the
+#: parser lives beside the sentences it reads.
+_IMAGE_RESULT_SLUG_RE = re.compile(
+    r"^(?:Generated image|Edited image artifact|Regenerated image) '.*?\(slug: ([a-z0-9-]+)\)",
+    re.DOTALL,
+)
+
+
+def images_made_in(messages: list[dict]) -> list[str]:
+    """The image artifacts *messages* (one answer's rows) generated or edited, in order.
+
+    Read from each tool row's recorded result, which names its slug; a slug named twice is
+    listed once. What a Regenerate of that answer retakes (:mod:`personalclaw.artifacts.retakes`).
+    """
+    out: list[str] = []
+    for msg in messages:
+        meta = msg.get("meta") if isinstance(msg, dict) else None
+        if not isinstance(meta, dict) or msg.get("role") != "tool":
+            continue
+        found = _IMAGE_RESULT_SLUG_RE.match(str(meta.get("output") or ""))
+        if found and is_valid_slug(found.group(1)) and found.group(1) not in out:
+            out.append(found.group(1))
+    return out
+
+
 def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any) -> str:
     """image_generate: resolve the image_gen capability, generate/edit, save kind:image.
 
     Thin wrapper over the capability (image_gen/registry.active_image_gen) — the
     real work is the provider's; this materializes the result + lands a versioned
     binary artifact + returns the slug.
+
+    A generation in a turn that REGENERATES an answer lands as the next version of the image
+    that answer made (:mod:`personalclaw.artifacts.retakes`), not as a second image.
     """
     import tempfile
     from pathlib import Path
@@ -926,6 +959,20 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     data, mime = materialized
 
     display_name = str(args.get("name", "")).strip() or prompt[:60]
+    retake = "" if edit_slug else retakes.take_retake(sk or "")
+    retaken = prov.get(retake) if retake else None
+    if retaken is not None and retaken.kind == "image":
+        art = prov.update_binary(retake, data=data, mime=mime, actor="agent", session_id=sk)
+        if art is not None:
+            _audit("success", art.slug)
+            raw_url = f"/api/artifacts/{art.slug}/raw?version={art.version}"
+            return (
+                f"Regenerated image '{art.name}' → version {art.version} (slug: {art.slug}). "
+                "This turn regenerates an earlier answer, so the image is saved as the next "
+                "version of the one that answer made.\n\n"
+                f"Show it to the user by embedding this markdown image in your reply:\n"
+                f"![{art.name}]({raw_url})"
+            )
     if edit_slug:
         art = prov.update_binary(edit_slug, data=data, mime=mime, actor="agent", session_id=sk)
         if art is None:

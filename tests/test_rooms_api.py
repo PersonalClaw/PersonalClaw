@@ -253,6 +253,45 @@ def _export_room(room_id, fmt):
     )
 
 
+def test_the_room_export_is_a_download_named_for_the_room(cfg):
+    """It was served inline, so the tab navigated to raw Markdown and the app was gone."""
+    from personalclaw.dashboard import session_export as se
+
+    room_id = _body(_create("Is the live demo worth it?"))["room"]["id"]
+    for fmt in ("md", "json"):
+        response = _export_room(room_id, fmt)
+        disposition = response.headers["Content-Disposition"]
+        assert disposition.startswith("attachment;")
+        assert se.export_filename("Is the live demo worth it?", room_id, fmt) in disposition
+        assert response.headers["Content-Length"] == str(len(response.body))
+
+
+def test_the_room_export_names_each_member_it_quotes(cfg):
+    room_id = _body(_create("Crash demo"))["room"]["id"]
+    assert _add_member(room_id, {"name": "analyst", "role_blurb": "numbers"}).status == 201
+    store.append_message(room_id, role="user", content="should we?")
+    store.append_message(room_id, role="assistant", content="Yes.", speaker="analyst")
+
+    markdown = _export_room(room_id, "md").text
+    assert "## analyst — numbers" in markdown
+    assert "## Assistant" not in markdown
+    as_json = json.loads(_export_room(room_id, "json").text)
+    assert as_json["messages"][1]["speaker"] == "analyst"
+
+
+def _same_instant(exported: str, stored: str) -> bool:
+    """The export states a stored naive local time WITH its offset; both name one instant.
+
+    To the second: the Markdown a person reads drops the microseconds the JSON keeps.
+    """
+    from datetime import datetime
+
+    exported_at = datetime.fromisoformat(exported)
+    assert exported_at.tzinfo is not None, f"no offset on {exported!r}"
+    stored_at = datetime.fromisoformat(stored).astimezone()
+    return abs((exported_at - stored_at).total_seconds()) < 1
+
+
 def test_both_export_formats_report_the_ROOMs_creation_time(cfg):
     """The two surfaces disagreed about the same room in the same request cycle.
 
@@ -268,8 +307,11 @@ def test_both_export_formats_report_the_ROOMs_creation_time(cfg):
 
     assert _body(_get(room_id))["room"]["created_at"] == created["created_at"]
 
-    assert json.loads(_export_room(room_id, "json").text)["created_at"] == created["created_at"]
-    assert f"- **Created:** {created['created_at']}" in _export_room(room_id, "md").text
+    exported = json.loads(_export_room(room_id, "json").text)["created_at"]
+    assert _same_instant(exported, created["created_at"])
+    markdown = _export_room(room_id, "md").text
+    row = next(line for line in markdown.splitlines() if line.startswith("- **Created:** "))
+    assert _same_instant(row.removeprefix("- **Created:** "), created["created_at"])
 
 
 def test_a_room_nobody_has_spoken_in_still_exports_a_created_at_and_its_header_row(cfg):
@@ -284,10 +326,13 @@ def test_a_room_nobody_has_spoken_in_still_exports_a_created_at_and_its_header_r
 
     as_json = json.loads(_export_room(room_id, "json").text)
     assert as_json["messages"] == []
-    assert as_json["created_at"] == created["created_at"] != ""
+    assert as_json["created_at"] != "" and _same_instant(
+        as_json["created_at"], created["created_at"]
+    )
 
     markdown = _export_room(room_id, "md").text
-    assert f"- **Created:** {created['created_at']}" in markdown
+    row = next(line for line in markdown.splitlines() if line.startswith("- **Created:** "))
+    assert _same_instant(row.removeprefix("- **Created:** "), created["created_at"])
     assert "- **Messages:** 0" in markdown
 
 

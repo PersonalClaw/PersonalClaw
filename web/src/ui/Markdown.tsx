@@ -482,38 +482,45 @@ function linkifyFiles(children: any, onFileClick: (path: string) => void): any {
   })
 }
 
-// `[Memory N]` citation tokens the model emits when it used an injected episodic
-// memory. Bounded index so a stray "[Memory 999999]"
+// `[Memory N]` / `[Lesson N]` citation tokens the model emits when it used an injected
+// episodic memory or a recalled lesson. Bounded index so a stray "[Memory 999999]"
 // can't match something absurd; resolution against the manifest is what actually
 // gates whether a chip renders.
-const MEMORY_CITE_RE = /\[Memory (\d{1,4})\]/g
+const MEMORY_CITE_RE = /\[(Memory|Lesson) (\d{1,4})\]/g
 
-/** Turn `[Memory N]` tokens in a markdown text node into deep-link chips to the
- *  cited episode. `N` resolves against the turn's citation manifest; an
+/** The token a manifest entry answers to: an episode is `Memory N`, a lesson `Lesson N`. The two
+ *  are numbered apart, so the kind is part of the key. */
+const citeLabel = (c: MemoryCitation) => `${c.kind === 'lesson' ? 'Lesson' : 'Memory'} ${c.n}`
+
+/** Where a chip opens its source in the Memory studio: the episode, or the lesson by its rule. */
+const citeSel = (c: MemoryCitation) => (c.kind === 'lesson' ? `lesson:${c.id}` : `epi:${c.id}`)
+
+/** Turn `[Memory N]` and `[Lesson N]` tokens in a markdown text node into deep-link chips to
+ *  the cited episode or lesson. `N` resolves against the turn's citation manifest; an
  *  unresolvable index (hallucinated, or a memory with no record id) degrades to
  *  the plain text so a bad citation is never a broken link. Mirrors linkifyFiles:
  *  operates only on plain strings, leaving already-rendered React children alone. */
 function linkifyMemory(children: any, citations: MemoryCitation[]): any {
-  const byN = new Map(citations.map((c) => [c.n, c]))
+  const byLabel = new Map(citations.map((c) => [citeLabel(c), c]))
   return (Array.isArray(children) ? children : [children]).flatMap((child, ci) => {
     if (typeof child !== 'string') return [child]
     const parts: any[] = []
     let last = 0, m: RegExpExecArray | null
     MEMORY_CITE_RE.lastIndex = 0
     while ((m = MEMORY_CITE_RE.exec(child)) !== null) {
-      const n = Number(m[1])
-      const cite = byN.get(n)
+      const label = `${m[1]} ${Number(m[2])}`
+      const cite = byLabel.get(label)
       if (m.index > last) parts.push(child.slice(last, m.index))
       // No manifest entry, or an entry with no record id → leave the literal token
       // (honest: we can't point anywhere). A resolvable one becomes a compact chip.
       if (!cite || !cite.id) {
         parts.push(m[0])
       } else {
-        const href = `#/settings/memory?tab=studio&sel=${encodeURIComponent(`epi:${cite.id}`)}`
+        const href = `#/settings/memory?tab=studio&sel=${encodeURIComponent(citeSel(cite))}`
         parts.push(
-          <a key={`${ci}-${m.index}`} href={href} title={cite.preview || `Memory ${n}`}
+          <a key={`${ci}-${m.index}`} href={href} title={cite.preview || label}
             className="mx-0.5 inline-flex items-baseline rounded-sm bg-surface-high px-1.5 align-baseline text-[0.8em] text-primary-emphasis no-underline decoration-primary/40 transition-colors hover:bg-surface-highest hover:underline">
-            Memory {n}
+            {label}
           </a>,
         )
       }
