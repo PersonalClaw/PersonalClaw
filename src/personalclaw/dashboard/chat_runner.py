@@ -2730,24 +2730,25 @@ async def run_chat(
         if _sess_acp_mode:
             acp_mode = _sess_acp_mode
 
-        # §2.3 (gap 3) — UNIFY unattended across every automation, not just loops.
-        # ``session._unattended`` is set by the loop manager alone, so a cron or
-        # scheduled run-prompt turn on an ACP provider was classified attended: it
-        # got no bypassPermissions and, worse, its permission prompts parked on a
-        # human who was asleep. ``is_unattended_session`` is the canonical
-        # by-construction classifier (cron:/subagent:/channel:/inbox:/side:/loop
-        # prefixes, the ``unattended:`` dispatch identity and the ``_bg`` key) and is
-        # already what picks the HEADLESS safety profile — so deriving from it here
-        # makes one definition of "nobody is watching" govern both the safety profile
-        # and the permission path, instead of two that can disagree.
+        # §2.3 (gap 3) — who answers this turn's asks. A session whose owner decided it says
+        # so (``session._unattended``): the loop manager sets it from the loop's Mode each time it
+        # arms a worker, True for an Unattended loop and False for an Attended one, because a
+        # loop's key names a loop and not whether anybody is watching it. Every other session is
+        # classified by its key (``is_unattended_session``: cron:/subagent:/channel:/inbox:/side:
+        # prefixes, a loop's, the ``unattended:`` dispatch identity and the ``_bg`` key), the
+        # by-construction classifier that also picks the HEADLESS safety profile. So a cron or
+        # scheduled turn on an ACP provider is unattended without anyone flagging it (it used to
+        # park its permission prompts on a human who was asleep), and an Attended loop's worker
+        # puts its asks to a person instead of having each one declined unasked.
         #
         # An INTERACTIVE session matches no prefix, so it stays attended and keeps
         # The clamp. That is the safety-critical direction of this change and it
         # has its own regression test.
         from personalclaw.guardrails.policy import is_unattended_session
 
-        _unattended_turn = bool(getattr(session, "_unattended", False)) or is_unattended_session(
-            session.key
+        _decided = getattr(session, "_unattended", None)
+        _unattended_turn = (
+            bool(_decided) if _decided is not None else is_unattended_session(session.key)
         )
         if _unattended_turn and provider_kind.startswith("acp") and not acp_mode:
             # No human can answer a prompt on this turn, so ask the dialect for the

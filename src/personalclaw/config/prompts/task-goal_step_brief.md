@@ -10,7 +10,7 @@ APPROVED ARTIFACTS SO FAR (build on these — stay consistent):
 THE USER COMMENTED ON YOUR LAST DRAFT — address every point:
 {{comments_block}}{% endif %}
 
-Investigate context as needed (the goal may point at internal docs/tickets reachable via MCP, or the web). Then PRODUCE THIS STEP'S ARTIFACT as JSON written to `{{artifact_sentinel}}` in your current directory.
+Investigate context as needed (the goal may point at internal docs/tickets reachable via MCP, or the web). Then PRODUCE THIS STEP'S ARTIFACT as JSON written to `{{artifact_sentinel}}` (that exact path: the loop's own folder, not the workspace).
 
 {{artifact_contract}}
 

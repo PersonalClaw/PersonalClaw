@@ -116,4 +116,13 @@ describe('a loop link to a run-backed loop lands on its run page', () => {
     render(<LoopsSection sub="r1" navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('workflows/runs/r1', { replace: true }))
   })
+
+  it('and a #/loops/<id> link to a code loop lands in the Code section, where it is watched', async () => {
+    // An approval a code loop's worker asks for links to `#/loops/<id>` (`approvalDestination`),
+    // which knows the loop's id and not its kind; `loopRoute` is the one answer for where it opens.
+    STORE.loops = [row({ id: '0a1b2c3d', kind: 'code', run_id: undefined })]
+    const navigate = vi.fn()
+    render(<LoopsSection sub="0a1b2c3d" navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('code/0a1b2c3d', { replace: true }))
+  })
 })

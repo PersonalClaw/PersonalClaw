@@ -131,6 +131,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
+- **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
+- **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**
+- **A loop's workers are told where the loop's status file and brief are, and a read repeated with its output thrown away (`2>/dev/null`) counts as a repeat.**
 - **Stopping or restarting the gateway waits a few seconds for the app package repair its start began, so an app it has just repaired stops with the rest instead of starting again after them.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
@@ -744,6 +748,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **An Attended loop asks before its workers act: a call that needs your approval, from any of its workers, the per-task workers' included, waits for your answer on the loop's page, the bell and your approval channel, as a chat's does, and "This loop" lets its workers act without asking until the run ends. An Unattended loop's standing grant ends for every worker when its trust window does.**
+- **The agent's file tools, and a file sent to you, refuse a path with a control character in it, as the Files view already did.**
 - **What the dashboard shows from models, tools, feeds, pages, files, apps and other people is Markdown only: HTML in it reads as text (plain formatting tags such as `<kbd>` and `<br>` aside), only web and email links open, images load only over https or from the artifact library, and a `<widget>` runs only in a chat reply.**
 - **A saved page, an uploaded or watched-folder HTML file and a mirrored document artifact are stored as their words, and feed and page items and document artifacts stored as markup before are converted once.**
 - **The dashboard's page policy lets no form post to another site and no WebSocket reach another port on this machine.**

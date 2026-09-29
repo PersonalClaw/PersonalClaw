@@ -1,11 +1,16 @@
 """Shared planner-pass runner — spawn a tool-equipped planner agent, arm a bounded
 autonudge run with a brief, poll for a sentinel file, return its text, tear down.
 
-Used by BOTH the Code feature and Goal Loop for every pass of the stepwise
-walkthrough (design pass + each step pass). The runner is feature-agnostic: callers
-pass the resolved primitives (session key, agent name, the agent's cwd, the dir
-where the sentinel + STOP file live, the model/ACP binding). Feature modules wrap
-this with their own project/loop lookup.
+Used by every kind's stepwise planning walkthrough (design pass + each step pass). The
+runner is feature-agnostic: callers pass the resolved primitives (session key, agent
+name, the agent's cwd, the loop's own folder where the sentinel + STOP file live, the
+model/ACP binding).
+
+The planner works in the bound workspace, and its files belong to the loop: its brief
+names the absolute path in the loop's own folder, that folder is the only place a
+sentinel is read or cleared, and nothing in the workspace is read or removed, whatever
+its name. A file the planner writes into the workspace anyway (the bare name lands in its
+working directory) is moved to the loop's folder, and only when this pass created it.
 
 The autonudge loop self-halts the moment the sentinel appears (via the STOP file),
 so the planner is a bounded one-author task, never a runaway loop.
@@ -16,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import time
 
 logger = logging.getLogger(__name__)
@@ -28,34 +34,64 @@ PLANNER_POLL_SECS = 4
 PLANNER_TIMEOUT_SECS = 600
 
 
-def read_sentinel(workspace_dir: str, files_dir: str, sentinel: str) -> str:
-    """Read ``sentinel`` from the agent's cwd (``workspace_dir``) or the feature's
-    files dir, whichever has it. Returns '' if neither exists."""
-    for base in [(workspace_dir or "").strip(), (files_dir or "").strip()]:
-        if not base:
+def read_sentinel(files_dir: str, sentinel: str) -> str:
+    """The text of ``sentinel`` in the loop's own folder, or '' when it is not there."""
+    base = (files_dir or "").strip()
+    if not base:
+        return ""
+    try:
+        with open(os.path.join(base, sentinel), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def clear_sentinels(files_dir: str, sentinels: list[str]) -> None:
+    """Remove the walkthrough's files from the loop's own folder so a pass never reads a
+    prior pass's output. Best-effort."""
+    base = (files_dir or "").strip()
+    if not base:
+        return
+    for s in sentinels:
+        try:
+            p = os.path.join(base, s)
+            if os.path.isfile(p):
+                os.unlink(p)
+        except OSError:
+            pass
+
+
+def _present(folder: str, names: list[str]) -> set[str]:
+    """Which of ``names`` exist in ``folder`` (as anything: a file, a folder, a link)."""
+    base = (folder or "").strip()
+    if not base:
+        return set()
+    return {name for name in names if os.path.lexists(os.path.join(base, name))}
+
+
+def reclaim_misplaced(
+    workspace_dir: str, files_dir: str, names: list[str], present_before: set[str]
+) -> None:
+    """Move a walkthrough file the planner wrote into the workspace to the loop's own folder.
+
+    Only a regular file that was NOT in the workspace when the pass began is moved
+    (``present_before``): one that was is the user's own, and is never read, moved or
+    removed. Best-effort.
+    """
+    ws = (workspace_dir or "").strip()
+    base = (files_dir or "").strip()
+    if not ws or not base or os.path.realpath(ws) == os.path.realpath(base):
+        return
+    for name in names:
+        if name in present_before:
+            continue
+        src = os.path.join(ws, name)
+        if os.path.islink(src) or not os.path.isfile(src):
             continue
         try:
-            p = os.path.join(base, sentinel)
-            if os.path.isfile(p):
-                return open(p, encoding="utf-8").read()
+            shutil.move(src, os.path.join(base, name))
         except OSError:
-            continue
-    return ""
-
-
-def clear_sentinels(workspace_dir: str, files_dir: str, sentinels: list[str]) -> None:
-    """Remove stale sentinel files from both dirs so a pass never reads a prior
-    pass's output. Best-effort."""
-    for base in [(workspace_dir or "").strip(), (files_dir or "").strip()]:
-        if not base:
-            continue
-        for s in sentinels:
-            try:
-                p = os.path.join(base, s)
-                if os.path.isfile(p):
-                    os.unlink(p)
-            except OSError:
-                pass
+            logger.debug("planner: could not move %s out of the workspace", src, exc_info=True)
 
 
 async def run_planner_pass(
@@ -80,19 +116,19 @@ async def run_planner_pass(
     """Run ONE planner pass and return the sentinel's raw text (or None on
     timeout/no-output). Spawns (or reuses) the planner session cwd'd to
     ``workspace_dir``, arms a bounded autonudge run with ``brief``, polls for
-    ``sentinel`` in workspace/files dir, writes the STOP file the moment it lands to
-    halt the loop, and tears the loop down in ``finally``. Never raises.
+    ``sentinel`` in ``files_dir``, writes the STOP file the moment it lands to halt
+    the loop, and tears the loop down in ``finally``. Never raises.
 
-    ``workspace_dir`` is the agent's cwd; ``files_dir`` is where the sentinel + STOP
-    file are looked for/written (often == workspace_dir, or a feature's own dir when
-    no workspace is bound). The two are searched in that order.
+    ``workspace_dir`` is the agent's cwd; ``files_dir`` is the loop's own folder, where
+    the sentinel + STOP file live (the cwd too when no workspace is bound). The planner
+    session reaches it with its file tools.
 
-    ``extra_sentinels`` names OTHER walkthrough sentinels this pass might leave as
-    scratch in the cwd — a step pass (``step_artifact.json``) commonly has the planner
-    re-create the decomposition file (``plan_steps.json``) while it works. They're
-    cleared alongside ``sentinel`` (pre-pass + teardown) so none of the walkthrough's
-    scratch files survive in the user's bound workspace repo. Never READ from — only
-    the active ``sentinel`` is the pass's output.
+    ``extra_sentinels`` names OTHER walkthrough files this pass might write — a step
+    pass (``step_artifact.json``) commonly has the planner re-create the decomposition
+    file (``plan_steps.json``) while it works. They're cleared from ``files_dir``
+    alongside ``sentinel`` (pre-pass + teardown), and moved there first when the
+    planner wrote them into the workspace (:func:`reclaim_misplaced`). Never READ from —
+    only the active ``sentinel`` is the pass's output.
     """
     skey = session_key
     _scratch = [sentinel, *(s for s in extra_sentinels if s and s != sentinel)]
@@ -104,7 +140,9 @@ async def run_planner_pass(
     if _ws and not os.path.isdir(_ws):
         _ws = ""
     cwd = (_ws or files_dir or "").strip()
-    clear_sentinels(workspace_dir, files_dir, _scratch)
+    clear_sentinels(files_dir, _scratch)
+    # The user's own files of these names, if any: never read, moved or removed.
+    users_own = _present(_ws, _scratch)
     stop_path = os.path.join(files_dir, stop_sentinel_name) if files_dir else ""
     if stop_path:
         try:
@@ -121,6 +159,8 @@ async def run_planner_pass(
             app=app,
         )
         session._trust = True
+        if files_dir and files_dir not in (session._extra_tool_roots or []):
+            session._extra_tool_roots = [*(session._extra_tool_roots or []), files_dir]
         if provider:
             session.acp_provider = provider
             session.acp_provider_agent = provider_agent
@@ -159,7 +199,8 @@ async def run_planner_pass(
         _GRACE_POLLS = 2
         while time.time() < deadline:
             await asyncio.sleep(PLANNER_POLL_SECS)
-            raw = read_sentinel(workspace_dir, files_dir, sentinel)
+            reclaim_misplaced(_ws, files_dir, _scratch, users_own)
+            raw = read_sentinel(files_dir, sentinel)
             if raw:
                 if stop_path:
                     try:
@@ -196,13 +237,10 @@ async def run_planner_pass(
                 os.unlink(stop_path)
         except OSError:
             pass
-        # Remove the output sentinel too: its content was already captured into the
-        # return value above. The planner runs cwd'd to the workspace, so for a
-        # brownfield project the sentinel (e.g. plan_steps.json) is written INTO the
-        # user's repo — leaving it would pollute their git status + the cockpit
-        # Changes tab with planning scratch files they never authored. We clear ALL
-        # walkthrough scratch sentinels (not just this pass's active one): a step pass
-        # outputs step_artifact.json but its planner routinely re-creates the
-        # decomposition file plan_steps.json as scratch — clearing only the active
-        # sentinel orphaned that file in the user's source tree.
-        clear_sentinels(workspace_dir, files_dir, _scratch)
+        # The output was already captured into the return value above. Every walkthrough
+        # file goes, not just this pass's: a step pass outputs step_artifact.json, and
+        # its planner routinely re-creates plan_steps.json as well. One the planner put
+        # in the workspace during this pass is moved out first, so none is left in the
+        # user's tree (their git status, the cockpit's Changes tab).
+        reclaim_misplaced(_ws, files_dir, _scratch, users_own)
+        clear_sentinels(files_dir, _scratch)

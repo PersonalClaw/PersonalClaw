@@ -226,6 +226,54 @@ async def run_cycle_hook(strategy, loop: Loop, findings: list, ctx: CycleContext
         return False
 
 
+async def run_schedule_hook(strategy, loop: Loop, ctx: CycleContext) -> bool:
+    """Run a kind's optional per-poll scheduler, if it defines one.
+
+    A kind that runs work of its own beside the loop's worker (code: parallel task workers in
+    worktrees) implements ``async schedule(loop, ctx) -> bool``; the watchdog asks it on every
+    poll of a running loop, whether or not a finding landed, and it returns True iff the loop
+    paused for its owner. A kind without one is left alone. Never raises into the poll loop."""
+    hook = getattr(strategy, "schedule", None)
+    if hook is None:
+        return False
+    try:
+        return bool(await hook(loop, ctx))
+    except Exception:  # pragma: no cover - defensive; a kind bug must not wedge the poll
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "loop kind %s schedule errored", getattr(strategy, "kind", "?"), exc_info=True
+        )
+        return False
+
+
+def attendedness_lines(loop: Loop, *, subject: str = "task") -> list[str]:
+    """The worker brief's words for the loop's Mode: who answers its calls, and whether it may ask.
+
+    One wording for every kind, and the one the loop's own posture enforces
+    (``manager._arm_posture``): an Attended worker's calls are answered by the user, an
+    Unattended worker's run on the loop's standing grant. *subject* names what the loop works
+    on ("task", "goal") in the question rule."""
+    if loop.attended:
+        return [
+            "",
+            "**Attended:** the user is watching this loop. Your tool calls ask for their "
+            "approval the way a chat's do (a shell command, a file edit), and one they decline "
+            "comes back refused: do not retry it; take another way, or ask. If the "
+            f"{subject} is genuinely ambiguous in a way that would change your direction, you "
+            'MAY write {"question", "why"} to questions.json in the loop\'s own folder and end '
+            "the turn: the loop pauses for the user. Keep the bar high; otherwise proceed on a "
+            "best-reasoned assumption and record it.",
+        ]
+    return [
+        "",
+        "**Unattended:** nobody is watching, so your calls run without asking, inside the "
+        "user's safety rules. Do NOT pause to ask the user: investigate ambiguities yourself, "
+        "pick the best-reasoned answer, record the assumption in your finding, and proceed. "
+        "Never write questions.json in this mode.",
+    ]
+
+
 _REGISTRY: dict[str, LoopKindStrategy] = {}
 
 

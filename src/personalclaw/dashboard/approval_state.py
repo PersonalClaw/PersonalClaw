@@ -93,14 +93,35 @@ def chat_approval_id(session_key: str, request_id: str | int) -> str:
     return f"{session_key}:{request_id}"
 
 
+def _loop_name_of(session: str) -> str | None:
+    """The name of the loop whose worker holds *session* ("" for a loop with none, or one that is
+    gone), or None when *session* is not a loop worker's."""
+    from personalclaw.loop import manager as loop_manager
+
+    loop_id = loop_manager.worker_loop_id(session)
+    if not loop_id:
+        return None
+    try:
+        from personalclaw.loop import store
+
+        loop = store.get(loop_id)
+    except Exception:  # noqa: BLE001 - a wording helper never fails the approval it describes
+        return ""
+    return str(getattr(loop, "name", "") or "").strip() if loop is not None else ""
+
+
 def _who_asked(entry: dict[str, Any]) -> str:
     """Who is waiting on an approval, as the Inbox says it — the chat's agent and the chat, a
-    subagent of a chat, or a background task. The one wording both of an approval's Inbox rows use
-    (the ask, and the note it leaves when nobody answered)."""
+    loop's worker and the loop, a subagent of a chat, or a background task. The one wording both
+    of an approval's Inbox rows use (the ask, and the note it leaves when nobody answered)."""
     agent = str(entry.get("agent") or "")
     title = str(entry.get("session_title") or "")
     if agent:
         # Only a chat-held approval names its agent; that is how the two origins are told apart.
+        # A loop's worker asks on the chat path too, and it is the loop the owner knows it by.
+        loop_name = _loop_name_of(str(entry.get("session") or ""))
+        if loop_name is not None:
+            return f"{agent} in the loop “{loop_name}”" if loop_name else f"{agent} in a loop"
         return f"{agent} in “{title}”" if title else f"{agent} in a chat"
     if entry.get("trigger"):
         # Work a trigger started (its action's agent): the trigger is what the owner knows it by,
@@ -192,6 +213,19 @@ class DashboardApprovalState:
         from personalclaw.approval_grants import approval_window_secs
 
         return approval_window_secs()
+
+    def waiting_on_owner(self, session: str) -> bool:
+        """Whether a call *session* made is waiting on its owner's answer right now.
+
+        True while a pending approval names the session: an ask of its own turn, or of a subagent
+        it started. A loop's worker in that state is waiting on a person, not stuck, so neither the
+        bound on its turn nor the loop's watchdog counts the wait against it; the approval window
+        (:meth:`approval_window_secs`) is what bounds it.
+        """
+        key = str(session or "")
+        return bool(key) and any(
+            str(entry.get("session") or "") == key for entry in self._pending_approvals.values()
+        )
 
     async def request_approval(
         self,
@@ -1151,6 +1185,17 @@ class DashboardApprovalState:
             for s in self._sessions.values():
                 self.sessions.set_approval_policy(f"dashboard:{s.key}", "auto")
             action = "approved"
+        # A loop's worker asks for its loop. A standing grant given on its card reaches every
+        # worker of this run of the loop — the stage worker, its task workers, and the ones the
+        # scheduler starts later — rather than the one session that happened to ask
+        # (`loop.manager.grant_every_worker`). An agent-wide grant does too: the other workers
+        # would otherwise not read the agent's new floor until they are armed again.
+        if original_action in ("trust", "trust_agent"):
+            from personalclaw.loop import manager as loop_manager
+
+            loop_id = loop_manager.worker_loop_id(name)
+            if loop_id:
+                loop_manager.grant_every_worker(self, loop_id)
         resolved = action if action in ("approved", "approved_trust_reads") else "rejected"
         session._approval_futures[request_id].set_result(resolved)
         # Persist resolved state into the permission message so it survives tab switches.

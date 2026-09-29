@@ -395,7 +395,7 @@ class LoopWatchdog:
                         kind=self._ATTENTION_EVENTS[event],
                         item_kind=ItemKind.NEEDS_INPUT.value,
                         title=title,
-                        body=self._loop_name(loop_id),
+                        body=self._waiting_body(loop_id, data),
                         refs={"loop": loop_id, "loop_kind": loop.kind if loop else ""},
                         dedup_key=self._attention_dedup_key(loop_id, event),
                     )
@@ -408,6 +408,21 @@ class LoopWatchdog:
                     )
             except Exception:
                 logger.debug("loop notify failed", exc_info=True)
+
+    def _waiting_body(self, loop_id: str, data: Any) -> str:
+        """The Inbox row for a loop waiting on its owner: the loop, then why it waits — the
+        stall's reason, the question it asks. A row with the loop's name alone said a loop
+        needed direction and nothing about which, why, or what to give it."""
+        name = self._loop_name(loop_id)
+        why = str((data or {}).get("reason") or "").strip() if isinstance(data, dict) else ""
+        if not why:
+            question = loop_files.pending_question(loop_id) or {}
+            why = str(question.get("question") or "").strip()
+        if not why:
+            return name
+        from personalclaw.security import redact_for_display
+
+        return f"{name}\n{redact_for_display(why)}"
 
     def _publish_cycle_verdict(self, loop_id: str, cycle: int) -> None:
         """Publish the third-party done-ness verdict a kind persisted for ``cycle``
@@ -1047,10 +1062,16 @@ class LoopWatchdog:
             cid = loop.id
             session = self._state._sessions.get(manager.session_key(cid))
 
-            # 1. Trust TTL — expire the worker's auto-approve grant → NEEDS_INPUT.
-            if loop.started_at and time.time() - loop.started_at > cfg.trust_ttl_secs:
-                if session is not None:
-                    session._trust = False
+            # 1. Trust TTL — expire an Unattended run's standing grant → NEEDS_INPUT, on every
+            # worker it armed (`manager.end_unattended_grant`). An Attended loop holds no such
+            # grant (its owner answers each call, `manager._arm_posture`), so there is nothing of
+            # it to expire and no re-authorization to ask for.
+            if (
+                not loop.attended
+                and loop.started_at
+                and time.time() - loop.started_at > cfg.trust_ttl_secs
+            ):
+                manager.end_unattended_grant(self._state, cid)
                 loop_files.write_question(
                     cid,
                     "Auto-approval expired after the trust window. "
@@ -1064,6 +1085,14 @@ class LoopWatchdog:
             if self._handle_question(cid, attended=loop.attended):
                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                 self._publish(cid, "needs_input")
+                continue
+
+            # 2b. A kind that runs work beside the loop's worker (code's task workers) is
+            # scheduled on every poll, not only when a finding lands — so a stage fans out
+            # before its stage worker's first cycle, a finished task worker is merged, and the
+            # stage worker stands back up once its task workers drain.
+            strat = kinds.get_or_none(loop.kind)
+            if strat is not None and await kinds.run_schedule_hook(strat, loop, self._cycle_ctx()):
                 continue
 
             # Ingest any new worker finding files into the ledger BEFORE reading them back — the
@@ -1120,7 +1149,6 @@ class LoopWatchdog:
                 # hook, which OWNS the cycle's done-ness (and its own side effects:
                 # stage-advance, provisioning, publish). A kind without one falls
                 # through to the policy's declared point-in-time done-signal.
-                strat = kinds.get_or_none(loop.kind)
                 # The convergence decision is a DECLARED policy, not pluggable
                 # Python. `policy_for_kind` resolves the kind (+ its goal_type variant) to the ONE
                 # SupervisorPolicy the ONE evaluator reads, so this branch no longer asks the
@@ -1285,7 +1313,13 @@ class LoopWatchdog:
                 # 4b. Unresponsive check.
                 now = time.time()
                 reprompt = bool(getattr(session, "_suppress_autonudge_rearm", False))
-                if (session is not None and getattr(session, "running", False)) or reprompt:
+                if self._waiting_on_owner(cid):
+                    # A worker whose call waits on its owner's answer is waiting on a person,
+                    # not wedged: its approval's window bounds the wait, and the time spent in
+                    # it is not a turn running too long.
+                    self._running_since.pop(cid, None)
+                    self._last_activity[cid] = now
+                elif (session is not None and getattr(session, "running", False)) or reprompt:
                     started = self._running_since.setdefault(cid, now)
                     if now - started <= _MAX_TURN_SECS or reprompt:
                         self._last_activity[cid] = now
@@ -1325,3 +1359,11 @@ class LoopWatchdog:
         self._last_count.pop(cid, None)
         self._last_activity.pop(cid, None)
         self._running_since.pop(cid, None)
+
+    def _waiting_on_owner(self, cid: str) -> bool:
+        """Whether any worker of loop *cid* (its stage worker or a task worker) has a call
+        waiting on its owner's answer (``DashboardState.waiting_on_owner``)."""
+        waiting = getattr(self._state, "waiting_on_owner", None)
+        if not callable(waiting):
+            return False
+        return any(waiting(key) for key in manager.worker_session_keys(self._state, cid))

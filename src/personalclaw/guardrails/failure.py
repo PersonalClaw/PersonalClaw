@@ -96,10 +96,46 @@ class GuardError(Exception):
     mode: FailureMode = FailureMode.PROVIDER_ERROR
 
 
+def use_case_binding(use_case: str) -> str:
+    """Where a use case's model is bound, named the way Settings → Models labels it."""
+    if not use_case:
+        return "its use case in Settings → Models"
+    return f"the {use_case.replace('_', ' ').capitalize()} use case in Settings → Models"
+
+
 class ModelCallTimeout(GuardError):
-    """A single model-call attempt exceeded its hard wall-clock timeout."""
+    """One automated model call ran past the spend guard's ceiling (``ModelCallGuard``).
+
+    Only a provider that keeps no wait of its own is held to that ceiling: one whose instance
+    keeps a Request Timeout is bounded by it, and says so in its own words
+    (:class:`FirstTokenTimeout`). Typed, with the call's use case, provider and model, so the
+    chat names what took too long and what to change instead of reporting a failure nobody
+    recognizes — measured, a loop's worker failed on "model call for use case 'loops' (provider
+    'ollama') exceeded 300s", shown as an unrecognized error.
+    """
 
     mode = FailureMode.TIMEOUT
+
+    def __init__(self, *, use_case: str, provider: str, model: str, waited_secs: float) -> None:
+        self.use_case = use_case
+        self.provider = provider
+        self.model = model
+        self.waited_secs = waited_secs
+        super().__init__(self.sentence())
+
+    def sentence(self, *, room_member: str = "") -> str:
+        who = f"{self.model} on {self.provider}" if self.model else (self.provider or "The model")
+        secs = max(1, int(round(self.waited_secs)))
+        fix = (
+            f"give the {room_member} agent a faster model on the Agents page"
+            if room_member
+            else f"bind a faster model to {use_case_binding(self.use_case)}"
+        )
+        return (
+            f"{who} did not finish answering within {secs} second{'' if secs == 1 else 's'}, "
+            "the longest one automated model call may run, so the call was stopped. "
+            f"Try again, or {fix}."
+        )
 
 
 class CircuitOpenError(GuardError):

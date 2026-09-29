@@ -1,8 +1,8 @@
 """Tests for the shared planner-runner sentinel helpers — the pure filesystem
-bits of :mod:`personalclaw.planning.runner` (read from cwd-or-files-dir, clear from
-both). The full spawn→poll→teardown path is exercised via the code/loops plan
-walkthrough tests; this pins the sentinel I/O in isolation, including that a
-brownfield run's output sentinel is cleaned out of the user's workspace.
+bits of :mod:`personalclaw.planning.runner` (read from and clear the loop's own
+folder, and nothing else). The full spawn→poll→teardown path is exercised via the
+code/loops plan walkthrough tests; this pins the sentinel I/O in isolation, including
+that a file the planner wrote into the user's workspace does not stay there.
 """
 
 from __future__ import annotations
@@ -15,41 +15,32 @@ import pytest
 from personalclaw.planning import runner as R
 
 
-def test_read_sentinel_prefers_workspace_then_files_dir(tmp_path):
-    ws = tmp_path / "ws"
+def test_read_sentinel_reads_the_loops_own_folder(tmp_path):
     fd = tmp_path / "fd"
-    ws.mkdir()
     fd.mkdir()
-    # only the files dir has it → read from there
     (fd / "out.json").write_text("from-files")
-    assert R.read_sentinel(str(ws), str(fd), "out.json") == "from-files"
-    # the workspace copy wins when both exist (it's the agent's cwd)
-    (ws / "out.json").write_text("from-ws")
-    assert R.read_sentinel(str(ws), str(fd), "out.json") == "from-ws"
+    assert R.read_sentinel(str(fd), "out.json") == "from-files"
 
 
 def test_read_sentinel_missing_returns_empty(tmp_path):
-    assert R.read_sentinel(str(tmp_path), "", "nope.json") == ""
-    assert R.read_sentinel("", "", "nope.json") == ""
+    assert R.read_sentinel(str(tmp_path), "nope.json") == ""
+    assert R.read_sentinel("", "nope.json") == ""
 
 
-def test_clear_sentinels_removes_from_both_dirs(tmp_path):
-    ws = tmp_path / "ws"
+def test_clear_sentinels_removes_only_the_named_files(tmp_path):
     fd = tmp_path / "fd"
-    ws.mkdir()
     fd.mkdir()
-    (ws / "a.json").write_text("x")
     (fd / "a.json").write_text("y")
-    (ws / "keep.txt").write_text("k")
-    R.clear_sentinels(str(ws), str(fd), ["a.json"])
-    assert not (ws / "a.json").exists()
+    (fd / "keep.txt").write_text("k")
+    R.clear_sentinels(str(fd), ["a.json"])
     assert not (fd / "a.json").exists()
-    assert (ws / "keep.txt").exists()  # unrelated files untouched
+    assert (fd / "keep.txt").exists()  # unrelated files untouched
 
 
 def test_clear_sentinels_missing_is_noop(tmp_path):
     # no raise when the files (or a dir) don't exist
-    R.clear_sentinels(str(tmp_path), "", ["ghost.json"])
+    R.clear_sentinels(str(tmp_path), ["ghost.json"])
+    R.clear_sentinels("", ["ghost.json"])
 
 
 # ── poll-loop early-exit (a deactivated/gone planner loop must not poll to 600s) ──
@@ -92,6 +83,7 @@ class _FakeState:
             acp_provider_agent=None,
             reasoning_effort="",
             acp_mode="",
+            _extra_tool_roots=[],
         )
 
     def push_sessions_update(self):
@@ -231,11 +223,14 @@ async def test_poll_returns_sentinel_when_written(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_teardown_clears_extra_sentinels_from_workspace(tmp_path, monkeypatch):
-    # A STEP pass outputs step_artifact.json, but its planner routinely re-creates the
-    # decomposition file plan_steps.json as scratch in the cwd (the bound workspace).
-    # Teardown must clear BOTH so neither survives in the user's source tree — clearing
-    # only the active sentinel orphaned plan_steps.json in their repo (real gap, run 1).
+async def test_walkthrough_files_the_planner_wrote_into_the_workspace_do_not_stay(
+    tmp_path, monkeypatch
+):
+    # The brief names the loop's own folder, and a planner can still write the bare names,
+    # which land in its cwd (the bound workspace). A STEP pass outputs step_artifact.json,
+    # and its planner routinely re-creates the decomposition file plan_steps.json too.
+    # Both were created by this pass, so both leave the user's source tree: the active one
+    # is read, and neither survives.
     monkeypatch.setattr(R, "PLANNER_POLL_SECS", 0.01)
     monkeypatch.setattr(R, "PLANNER_FIRST_IDLE", 0)
     ws = tmp_path / "ws"

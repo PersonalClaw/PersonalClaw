@@ -698,6 +698,17 @@ def add_worktree(
     return path
 
 
+def has_uncommitted_changes(workspace: str) -> bool:
+    """Whether ``workspace`` has changes to tracked files that are not committed.
+
+    A task's worktree is cut from HEAD, so it cannot see them, and merging its branch back
+    would collide with them. Untracked files are not counted: they block a merge only when the
+    branch adds the same path. A status git cannot give reads as uncommitted, the direction
+    that keeps work out of worktrees rather than in them."""
+    rc, out = _git(workspace, "status", "--porcelain", "--untracked-files=no")
+    return rc != 0 or bool(out.strip())
+
+
 def ensure_base_commit(workspace: str) -> bool:
     """Guarantee HEAD points at a commit so worktrees can branch from it. A freshly
     ``git init``'d repo has an unborn HEAD; stage + commit whatever's there (or an

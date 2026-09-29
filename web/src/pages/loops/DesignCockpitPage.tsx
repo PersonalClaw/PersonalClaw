@@ -21,6 +21,7 @@ import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATU
 import { useRunStream } from './useRunStream'
 import { phaseKey } from './loopPhases'
 import { CockpitPromptBar } from './CockpitPromptBar'
+import { LoopApprovals } from './LoopApprovals'
 import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
 import { accentChip } from '../../design/accent'
@@ -393,6 +394,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2xl py-l">
         <StaleWriteNotice guard={guard} what="This design system" className="mb-l max-w-[64rem]" />
+        {/* An Attended loop's workers ask before they act, and their asks are answered here. */}
+        <LoopApprovals loopId={id} className="mb-l max-w-[64rem]" />
         {tab === 'tokens' && <TokensView tokens={tokens} tokensErr={tokensErr} scheme={scheme} overrideCount={overrideCount} onRefresh={loadTokens} onOverride={setTokenOverride} readOnly={specFrozen} locked={held ? TOKEN_EDIT_HELD : undefined} />}
         {tab === 'canvas' && <CanvasView artifacts={reactArtifacts} loopId={id} />}
         {tab === 'palette' && <PaletteView onApply={applyColorOverride} readOnly={specFrozen} locked={held ? TOKEN_EDIT_HELD : undefined} />}

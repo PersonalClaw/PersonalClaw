@@ -120,6 +120,37 @@ stretch's `started_at` (the trust window and deadline are measured from it), and
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.
 
+### Mode: Attended and Unattended
+
+A loops-table loop's Mode (`loop.attended`) decides who answers its workers' tool calls. It is set on
+every worker, the stage worker and each per-task worker alike, each time the loop arms it
+(`manager._arm_posture`), so a resume never carries one run's posture into the next.
+
+- **Attended.** A worker's call that needs approval goes through the same path a chat's does
+  (`approval_state._hold_approval`): the card on the loop's page (`LoopApprovals`, in the loop, code
+  and design cockpits), the bell and Inbox row, a phone push and the channel approvals go to. The
+  grants that stand for chats stand here too (an agent's "Always allow" or "Trust reads", YOLO, the
+  operator's hook patterns), and the card's "This loop" scope lets every worker of this run act
+  without asking until the run ends: a pause, a stop or a restart ends it
+  (`manager.grant_every_worker`). A worker may also write one question and pause the loop. The time
+  a turn spends waiting on your answer does not count against it: the watchdog does not read the
+  wait as a wedged worker, and the cycle's own time bound stops while it waits
+  (`cancellation.wait_for_unpaused`). An Attended loop holds no standing grant, so nothing of it
+  expires.
+- **Unattended.** Nobody is there to ask, so the workers run on a standing grant: their calls go
+  ahead without asking, inside the deny-list, your hooks and the operator ceiling, and a call the
+  grant cannot cover is declined at once rather than left waiting. An agent CLI is told the mode
+  that stops it asking. The grant lasts `loops.trust_ttl_secs` from the start of the running stretch;
+  then every worker loses it (`manager.end_unattended_grant`) and the loop waits for you
+  (`needs_input`) to resume it. A stray question is discarded.
+
+A worker's model call rides the spend guard every automated call does (`ModelCallGuard`). The guard
+puts no clock of its own on a call whose provider instance keeps one (`ModelProvider.request_timeout_secs`:
+an Ollama instance's Request Timeout, the wait for the first word and then between the parts of the
+answer); for a provider that keeps none it stops the call at 300 s. A call stopped either way says
+which model on which instance, how long it waited, and that a faster model can be bound to Loops in
+Settings → Models (`guardrails.failure.ModelCallTimeout`).
+
 A loop stays on the machine that ran it. The watchdog's first poll re-arms every loop it finds
 running with no worker (`watchdog._boot_sweep`), so `loop/loops.db` and each loop's folder under
 `loop/` are `machine_local` and not `merged_in` (`durability/inventory.py`): no sync carries them,
@@ -207,6 +238,18 @@ The supervisor does not take the worker's word for it:
   `projects/<project_id>/worktrees/<task_id>` (never the user's workspace);
   worktrees merge back when the phase's tasks finish. A non-git workspace
   falls back to sequential execution.
+- **One writer at a time.** The code kind's scheduler (`CodeKind.schedule`, asked on every
+  watchdog poll) never lets the stage worker and task workers write at once. A worktree is cut
+  from HEAD, so a phase fans out only from a tree with no uncommitted changes to tracked files and
+  only while the stage worker is between cycles; otherwise its tasks stay the stage worker's. While
+  task workers run, the stage worker's cycles stand down, and it stands back up when they drain. A
+  loop whose model runs on this machine (`routing.policy.is_local_ref`) runs one task worker at a
+  time, since calls sent to one machine's model at once only queue behind each other.
+- **The planner's files.** The planner works in the bound workspace, but the files it writes for the
+  walkthrough (`plan_steps.json`, `step_artifact.json`) go to the loop's own folder: its brief names
+  the absolute path, and the runner (`planning/runner.py`) reads and clears only there. A file of
+  that name the planner wrote into the workspace during the pass is moved out; one that was there
+  before is the user's own and is never read or touched.
 
 ## Cockpit dispatch (frontend)
 

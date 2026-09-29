@@ -12,7 +12,7 @@ from __future__ import annotations
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.goal_meta import GOAL_TYPES as _GOAL_TYPES
 from personalclaw.loop.goal_meta import GRANULARITIES as _GRANULARITIES
-from personalclaw.loop.kinds import LoopKindStrategy, register
+from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
 from personalclaw.loop.loop import Loop
 
 
@@ -254,22 +254,7 @@ class GoalKind(LoopKindStrategy):
                 "`context/decisions.md`) — the project's long-term memory, not this "
                 "run's scratch (that goes in your cycle finding).",
             ]
-        if loop.attended:
-            lines += [
-                "",
-                "**Clarification allowed (attended):** if the goal is genuinely "
-                "ambiguous in a way that would change your direction, you MAY ask ONE "
-                'high-leverage question — write {"question", "why"} to '
-                "questions.json and end the turn. Keep the bar high; otherwise proceed "
-                "on a best-reasoned assumption and record it.",
-            ]
-        else:
-            lines += [
-                "",
-                "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
-                "yourself, record the assumption in your cycle finding, and proceed. "
-                "Never write questions.json in this mode.",
-            ]
+        lines += attendedness_lines(loop, subject="goal")
         if goal_type == "verifiable" and verify_command:
             lines += [
                 "",
@@ -335,8 +320,9 @@ class GoalKind(LoopKindStrategy):
         deliverable = self.deliverable_name(loop)
         lines = [
             f"Run the next autonomous cycle for goal loop {loop.id} "
-            f"(working dir for loop files: {loop_dir}). Steps: (1) check status.json — "
-            "if not 'running', stop; (2) read brief.md; (3) apply + delete guidance.txt "
+            f"(the loop's own folder: {loop_dir}). Steps: (1) check {loop_dir}/status.json "
+            f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply + delete "
+            f"{loop_dir}/guidance.txt "
             "if present; (4) do ONE adaptive step toward the goal.",
             "",
             f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "
@@ -425,16 +411,18 @@ class _GoalWalkthrough:
 
         return pw.default_steps()
 
-    def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
+    def build_design_brief(
+        self, task: str, workspace_dir: str, design_inputs=None, *, out_dir: str
+    ) -> str:
         return ""  # fixed mode — no design pass
 
     def parse_steps_sentinel(self, raw: str):
         return None  # fixed mode — no design pass
 
-    def build_step_brief(self, task, step, *, approved, workspace_dir):
+    def build_step_brief(self, task, step, *, approved, workspace_dir, out_dir):
         from personalclaw.loop import goal_plan_briefs as pw
 
-        return pw.build_step_brief(task, step, approved=approved)
+        return pw.build_step_brief(task, step, approved=approved, out_dir=out_dir)
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import goal_plan_briefs as pw

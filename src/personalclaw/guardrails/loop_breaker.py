@@ -115,7 +115,6 @@ _POLL_COMMAND_HINTS = (
     "is-enabled",
     "systemctl status",
     "--status",
-    " status",
     "pgrep",
     "ps -",
     "curl -sf",
@@ -124,6 +123,10 @@ _POLL_COMMAND_HINTS = (
     "docker ps",
     "git status",
 )
+#: ``status`` as a command's own word (``service web status``, ``kubectl rollout status x``),
+#: matched against the signature, where the command sits inside JSON quotes. Not a name that
+#: starts with it: ``find / -name status.json`` searches for a file, and is no probe.
+_STATUS_WORD_RE = re.compile(r"\sstatus(?=[\s\"]|$)")
 #: Read-only file tools exempted from the no-progress rule entirely. Re-reading a file is how
 #: an agent CONFIRMS an edit landed, and scanning a tree is ordinary work; the warning told it
 #: that reading was looping. A read cannot make progress by itself, so its repetition is not
@@ -143,6 +146,10 @@ REPEAT_CIRCUIT_THRESHOLD = 8
 #: Tools whose whole job is to let time pass: after one, a read may rightly answer anew.
 WAIT_TOOLS = frozenset({"wait", "wait_for"})
 
+#: An output redirect to nowhere (``2>/dev/null``, ``>/dev/null``, ``&>/dev/null``) or stderr
+#: joined to stdout (``2>&1``): neither writes anything, so the command still only reads.
+_DISCARDED_OUTPUT_RE = re.compile(r"\s*(?:[12&]?>>?\s*/dev/null\b|2>&1)")
+
 
 def only_reads(title: str, tool_kind: str, tool_input: object, declared: object = "") -> bool:
     """Whether a call only reads — the one kind the loop breaker refuses for repeating.
@@ -152,11 +159,14 @@ def only_reads(title: str, tool_kind: str, tool_input: object, declared: object 
     is such a read: ``ls -R | grep -E "a|b" | sort -u`` only reads, though the screen — built to
     let a call through unasked, where a wrong "yes" is the costly error — passes no pipe it
     cannot prove. Here a wrong "yes" costs one refused re-run of a command that already answered
-    three times, so the first command is enough.
+    three times, so the first command is enough, and output it throws away
+    (:data:`_DISCARDED_OUTPUT_RE`) does not make it act: ``find / -name status.json 2>/dev/null``
+    is the search a loop worker ran six times in one cycle.
     """
     if reads_only(title, tool_kind, tool_input, declared):
         return True
     first = shell_command(title, tool_kind, tool_input, declared).split("|", 1)[0]
+    first = _DISCARDED_OUTPUT_RE.sub("", first)
     return bool(first.strip()) and is_read_only_bash(first)
 
 
@@ -199,7 +209,9 @@ def _is_poll_signature(sig: str) -> bool:
         return True
     if tool in SHELL_TOOLS:
         lowered = sig.split("\x1f", 1)[0].lower()
-        return any(hint in lowered for hint in _POLL_COMMAND_HINTS)
+        return any(hint in lowered for hint in _POLL_COMMAND_HINTS) or bool(
+            _STATUS_WORD_RE.search(lowered)
+        )
     return False
 
 

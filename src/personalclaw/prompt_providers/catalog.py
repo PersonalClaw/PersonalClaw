@@ -570,7 +570,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="loop_dir",
                 default="",
-                description="The loop's data directory (findings/guidance live here).",
+                description="The loop's own folder (status.json, brief.md, findings and guidance live here).",  # noqa: E501
             ),
             PromptVariable(
                 name="task_description",
@@ -638,7 +638,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="artifact_sentinel",
                 required=True,
-                description="The artifact JSON filename to write (step_artifact.json).",
+                description="Where the artifact JSON goes: the absolute path of step_artifact.json in the loop's own folder.",  # noqa: E501
             ),
             PromptVariable(
                 name="artifact_contract",
@@ -676,7 +676,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="steps_sentinel",
                 required=True,
-                description="The step-list JSON filename to write (plan_steps.json).",
+                description="Where the step-list JSON goes: the absolute path of plan_steps.json in the loop's own folder.",  # noqa: E501
             ),
             PromptVariable(
                 name="code_map_block",
@@ -730,7 +730,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="artifact_sentinel",
                 required=True,
-                description="The artifact JSON filename to write (step_artifact.json).",
+                description="Where the artifact JSON goes: the absolute path of step_artifact.json in the loop's own folder.",  # noqa: E501
             ),
             PromptVariable(
                 name="artifact_contract",
@@ -774,7 +774,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="steps_sentinel",
                 required=True,
-                description="The step-list JSON filename to write (plan_steps.json).",
+                description="Where the step-list JSON goes: the absolute path of plan_steps.json in the loop's own folder.",  # noqa: E501
             ),
         ),
     ),
@@ -822,7 +822,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
             PromptVariable(
                 name="artifact_sentinel",
                 required=True,
-                description="The artifact JSON filename to write (step_artifact.json).",
+                description="Where the artifact JSON goes: the absolute path of step_artifact.json in the loop's own folder.",  # noqa: E501
             ),
             PromptVariable(
                 name="artifact_contract",
@@ -1407,7 +1407,7 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
             PromptVariable(
                 name="loop_dir",
                 required=True,
-                description="The working dir for loop files (findings/brief/guidance).",
+                description="The loop's own folder (status.json, brief.md, guidance and findings).",
             ),
             PromptVariable(
                 name="has_deliverables",

@@ -50,13 +50,15 @@ def default_steps() -> list[dict]:
     return [{"kind": k, "title": titles[k], "objective": desc} for k, desc in RESEARCH_STEP_GUIDE]
 
 
-def build_step_brief(task: str, step: PlanStep, *, approved: list[PlanStep] | None = None) -> str:
+def build_step_brief(
+    task: str, step: PlanStep, *, approved: list[PlanStep] | None = None, out_dir: str
+) -> str:
     """Brief for ONE research-planning step. Delegates the generic assembly (task, prior
-    approved artifacts, user comments) to the goal helper, then appends the
-    research-specific artifact contract for this step kind."""
+    approved artifacts, user comments, where the artifact goes) to the goal helper, then
+    appends the research-specific artifact contract for this step kind."""
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
-    base = _gpb.build_step_brief(task, step, approved=approved)
+    base = _gpb.build_step_brief(task, step, approved=approved, out_dir=out_dir)
     # The goal helper embeds the GOAL artifact contract; for the research-only step kinds
     # (subtopics/output) it falls back to a generic key_points contract, so append the
     # precise research contract to steer the artifact JSON. (intent/execution_plan reuse

@@ -150,7 +150,7 @@ class _BackgroundRuntime:
 
         if not self.announced:
             raise ModelCallTimeout(
-                "model call for use case 'background' (provider 'slow') exceeded 300s"
+                use_case="background", provider="slow", model="model-a", waited_secs=300
             )
         self.announced = False
         yield LLMEvent(
@@ -202,7 +202,9 @@ def test_a_consolidation_no_model_answered_is_one_line_with_what_happened(tmp_pa
 
     class _Dead(_BackgroundRuntime):
         async def stream(self, _prompt):
-            raise ModelCallTimeout("model call for use case 'background' exceeded 300s")
+            raise ModelCallTimeout(
+                use_case="background", provider="slow", model="model-a", waited_secs=300
+            )
             yield  # pragma: no cover
 
     consolidator = HistoryConsolidator(

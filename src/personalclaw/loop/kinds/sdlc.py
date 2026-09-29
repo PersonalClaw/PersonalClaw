@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 
 from personalclaw.loop import files as loop_files
-from personalclaw.loop.kinds import LoopKindStrategy, register
+from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.security import redact_for_display
 
@@ -43,6 +43,27 @@ def _task_scope_texts(task) -> list[str]:
 
 _POOL_CAP = 4  # max concurrent task-workers per loop
 _CONFLICT_REDO_CAP = 2  # auto-resolve a task's merge conflict at most this many times
+
+
+def _pool_cap(loop: Loop) -> int:
+    """How many task workers a loop runs at once: :data:`_POOL_CAP`, or one when the loop's
+    model runs on this machine.
+
+    A model on this machine has one machine's compute: requests sent to it at once take turns,
+    so a second worker is not a second pair of hands but a second queue on the same one, and
+    each call waits out the others' before its own answer starts (measured: two workers' calls
+    on one local model aged past their timeout while queued). An agent CLI brings its own model,
+    so a loop that runs one keeps the pool. Local is the one rule every other reader uses
+    (``routing.policy.is_local_ref``): where the entry serving the loop's model sends."""
+    if loop.provider:
+        return _POOL_CAP
+    from personalclaw.llm_helpers import use_case_chain
+    from personalclaw.routing.policy import is_local_ref
+
+    ref = loop.model if ":" in (loop.model or "") else next(iter(use_case_chain("loops")), "")
+    return 1 if ref and is_local_ref(ref) else _POOL_CAP
+
+
 _STALL_FINDINGS = 5  # a stage grinding this many findings w/o clearing its gate is "stuck"
 
 # Manifests that signal a workspace is buildable by a given toolchain. A verify/test
@@ -279,6 +300,10 @@ class CodeKind(LoopKindStrategy):
         # (observed: a multi-module build tripped the 5-finding spin cap while every
         # cycle actually completed + committed a task).
         self._stall_progress: dict[str, int] = {}
+        # Loops whose stage worker this scheduler stood down while their task workers run
+        # (`_one_writer`), so it stands back up only the ones it stood down. In memory: after
+        # a restart the stage worker is armed afresh and the next poll decides again.
+        self._stood_down: set[str] = set()
 
     def _is_parallel(self, loop: Loop) -> bool:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
@@ -583,22 +608,7 @@ class CodeKind(LoopKindStrategy):
                 "something future work needs. High-signal long-term memory — not this "
                 "run's scratch (that goes in your finding).",
             ]
-        if loop.attended:
-            lines += [
-                "",
-                "**Clarification allowed (attended):** if the task is genuinely ambiguous "
-                "in a way that would change your direction, you MAY write "
-                '{"question", "why"} to questions.json in the loop files dir and end '
-                "the turn — the project pauses for the user. Keep the bar high; otherwise "
-                "proceed on a best-reasoned assumption.",
-            ]
-        else:
-            lines += [
-                "",
-                "**Unattended:** do NOT pause to ask the user. Investigate ambiguities "
-                "yourself, pick the best-reasoned answer, record the assumption in your "
-                "finding, and proceed. Never write questions.json in this mode.",
-            ]
+        lines += attendedness_lines(loop, subject="task")
         if verify_command:
             lines += [
                 "",
@@ -858,7 +868,9 @@ class CodeKind(LoopKindStrategy):
             )
         except (KeyError, store.TransitionError):
             pass
-        ctx.publish(loop.id, "blocked", {"loop_id": loop.id, "stage": stage})
+        ctx.publish(
+            loop.id, "blocked", {"loop_id": loop.id, "stage": stage, "reason": error_message}
+        )
         return True
 
     # Deliverable-labels with no concrete filename → nothing to resolve on disk (the
@@ -1417,22 +1429,70 @@ class CodeKind(LoopKindStrategy):
             logger.debug("autopilot_queue failed for %s", cid, exc_info=True)
             return None
 
-    async def on_new_cycle(self, loop: Loop, findings: list[dict], ctx) -> bool:
-        """Per-cycle SDLC orchestration: (autopilot) keep the active stage's tasks
-        queued; gate the active stage; on pass, mark it done, advance (re-arm the
-        brief for the next stage) or COMPLETE on the last stage. Returns True iff the
-        loop completed. The sequential core + autopilot queueing — the parallel
-        task-worker SCHEDULER (worktree spawn/merge) lands in 2c(iv.e). Owns this
-        cycle's done-ness (the watchdog skips its generic signal)."""
+    async def schedule(self, loop: Loop, ctx) -> bool:
+        """Keep the active stage's work moving with ONE writer at a time — the watchdog asks this
+        every poll, and :meth:`on_new_cycle` asks it before it judges a stage.
+
+        (Autopilot) queue the stage's tasks; in parallel mode reap finished task workers and
+        start ready ones in their own worktrees; then stand the stage worker down while any task
+        worker runs, and stand it back up when none does (:meth:`_one_writer`). Asked every poll,
+        not only when a finding lands, so a stage fans out before the stage worker's first cycle
+        on it rather than after the stage worker has already done the work in the main tree.
+        Returns True iff the loop paused for its owner (a merge the scheduler could not settle,
+        a task that ran out of cycles)."""
         from personalclaw.loop import store
 
-        cid = loop.id
-        # Autopilot: ensure the active stage's tasks are queued (the scheduler/worker
-        # always has the full stage to drive). One-by-one mode leaves queueing to the user.
         if loop.autopilot:
             refreshed = await self.autopilot_queue(loop)
             if refreshed is not None:
                 loop = refreshed
+        idx = self.active_stage_index(loop)
+        if idx < 0:
+            return False
+        if self._is_parallel(loop):
+            stage = self.phase_key((loop.plan or [])[idx])
+            if await self._schedule_parallel(loop, stage, (loop.workspace_dir or "").strip(), ctx):
+                return True
+            loop = store.get(loop.id) or loop
+        await self._one_writer(loop, ctx)
+        return False
+
+    async def _one_writer(self, loop: Loop, ctx) -> None:
+        """The stage worker and the task workers never write at once.
+
+        While a task worker runs, the stage worker's cycles stand down (its nudge loop is
+        deactivated, not removed); once none runs, it stands back up to carry the stage — its
+        remaining tasks, a gate its work has to clear. Only a stand-down this scheduler made is
+        undone here: a stage worker that ran out of cycles, or that a stall paused, is left as
+        it is. Two writers on one tree is how a stage worker's uncommitted edit and a task
+        worker's copy of the same task (cut from HEAD, without it) both landed, and how two
+        sessions queued on one local model until every call timed out."""
+        from personalclaw.loop.manager import session_key
+
+        stage_worker = ctx.svc.get_by_session(session_key(loop.id))
+        if stage_worker is None:
+            return
+        if self._live_task_workers(loop, ctx.svc):
+            if getattr(stage_worker, "active", False):
+                self._stood_down.add(loop.id)
+                await ctx.svc.update(stage_worker.id, active=False)
+        elif loop.id in self._stood_down:
+            self._stood_down.discard(loop.id)
+            await ctx.svc.update(stage_worker.id, active=True)
+
+    async def on_new_cycle(self, loop: Loop, findings: list[dict], ctx) -> bool:
+        """Per-cycle SDLC orchestration: schedule the stage's work (:meth:`schedule`); gate the
+        active stage; on pass, mark it done, advance (re-arm the brief for the next stage) or
+        COMPLETE on the last stage. Returns True iff the loop completed. Owns this cycle's
+        done-ness (the watchdog skips its generic signal)."""
+        from personalclaw.loop import store
+
+        cid = loop.id
+        # The scheduler first, so a task worker that just finished is merged before its stage
+        # is judged. A merge conflict it can't auto-resolve pauses the loop.
+        if await self.schedule(loop, ctx):
+            return False  # paused NEEDS_INPUT — watchdog stops the cycle
+        loop = store.get(cid) or loop
         plan = loop.plan or []
         idx = self.active_stage_index(loop)
         if idx < 0:
@@ -1440,15 +1500,6 @@ class CodeKind(LoopKindStrategy):
             # (the project-level "prove it" gate). Otherwise keep going.
             return await self._no_stage_done(loop, findings)
         stage = self.phase_key(plan[idx])
-        # Parallel mode: run the worktree scheduler (reap+merge finished task-workers,
-        # spawn ready ones). It owns this cycle until the active stage's tasks drain;
-        # a merge conflict it can't auto-resolve pauses the loop (returns True).
-        ws = (loop.workspace_dir or "").strip()
-        if self._is_parallel(loop):
-            paused = await self._schedule_parallel(loop, stage, ws, ctx)
-            if paused:
-                return False  # paused NEEDS_INPUT — watchdog stops the cycle
-            loop = store.get(cid) or loop
         # Don't let a lenient gate advance a stage while it still has READY QUEUED
         # tasks the worker hasn't run — that would skip the user's other queued work.
         # (Only bites when work is actually queued; an empty queue = the old free-run.)
@@ -1508,12 +1559,18 @@ class CodeKind(LoopKindStrategy):
 
     async def _schedule_parallel(self, loop: Loop, phase_key: str, ws: str, ctx) -> bool:
         """Run the active phase's ready tasks concurrently — one worker per task in its
-        own worktree, capped at _POOL_CAP. Reap+merge finished workers (freeing slots),
-        then fill free slots with ready tasks. Returns True iff the loop paused
-        (NEEDS_INPUT on a merge conflict that couldn't auto-resolve). Ported from
-        code/watchdog._schedule_parallel onto the Loop entity + ctx."""
+        own worktree, at most :func:`_pool_cap` at once. Reap+merge finished workers (freeing
+        slots), then fill free slots with ready tasks. Returns True iff the loop paused
+        (NEEDS_INPUT on a merge conflict that couldn't auto-resolve).
+
+        A worker whose turn is still running is not reaped (it may be writing its worktree,
+        which a merge removes), and no worktree is cut while the stage worker is mid-turn or its
+        tree carries uncommitted changes: a worktree is cut from HEAD, so it would miss them and
+        its merge back would collide with them. Those tasks stay the stage worker's, one writer
+        on the one tree (:meth:`_one_writer`)."""
         from personalclaw.loop import store, tasks_link, worktree
         from personalclaw.loop.manager import (
+            session_key,
             spawn_task_worker,
             task_session_key,
             teardown_task_worker,
@@ -1523,6 +1580,8 @@ class CodeKind(LoopKindStrategy):
         for tid in list((loop.kind_config or {}).get("queued_task_ids", []) or []):
             skey = task_session_key(loop.id, tid)
             sess = ctx.state._sessions.get(skey)
+            if sess is not None and getattr(sess, "running", False):
+                continue  # its turn is still writing
             if sess is None:
                 task = await self._get_task(tid)
                 if (
@@ -1556,12 +1615,23 @@ class CodeKind(LoopKindStrategy):
                     return True
         # 2. Fill free slots with ready, not-yet-running tasks.
         loop = store.get(loop.id) or loop
-        slots = _POOL_CAP - len(self._live_task_workers(loop, ctx.svc))
+        slots = _pool_cap(loop) - len(self._live_task_workers(loop, ctx.svc))
         if slots <= 0:
             return False
         ready = await tasks_link.ready_queued_tasks(loop, phase_key)
-        if not ready or not worktree.ensure_base_commit(ws):
+        if not ready:
             return False
+        stage_worker = ctx.state._sessions.get(session_key(loop.id))
+        if stage_worker is not None and getattr(stage_worker, "running", False):
+            return False  # the stage worker is writing; fan out once its cycle ends
+        if not worktree.ensure_base_commit(ws) or worktree.has_uncommitted_changes(ws):
+            return False
+        # The stage worker stands down BEFORE the first task worker starts, so its next cycle
+        # cannot fire in between (`_one_writer` stands it back up when the task workers drain).
+        stage_nudge = ctx.svc.get_by_session(session_key(loop.id))
+        if stage_nudge is not None and getattr(stage_nudge, "active", False):
+            self._stood_down.add(loop.id)
+            await ctx.svc.update(stage_nudge.id, active=False)
         # Create this phase's worktrees as ONE batch. Creation was serial
         # here, and HC-1 measured ~5.2 s per worktree on a 10K-file repo — a fan-out of
         # 4 spent ~21 s before any worker started. The pool is bounded
@@ -1718,20 +1788,24 @@ class _CodeWalkthrough:
     def default_steps(self) -> list[dict]:
         return []  # dynamic mode — the design pass authors the steps
 
-    def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
+    def build_design_brief(
+        self, task: str, workspace_dir: str, design_inputs=None, *, out_dir: str
+    ) -> str:
         from personalclaw.loop import code_plan_briefs as pw
 
-        return pw.build_design_brief(task, workspace_dir)
+        return pw.build_design_brief(task, workspace_dir, out_dir=out_dir)
 
     def parse_steps_sentinel(self, raw: str):
         from personalclaw.loop import code_plan_briefs as pw
 
         return pw.parse_steps_sentinel(raw)
 
-    def build_step_brief(self, task, step, *, approved, workspace_dir):
+    def build_step_brief(self, task, step, *, approved, workspace_dir, out_dir):
         from personalclaw.loop import code_plan_briefs as pw
 
-        return pw.build_step_brief(task, step, approved=approved, workspace_dir=workspace_dir)
+        return pw.build_step_brief(
+            task, step, approved=approved, workspace_dir=workspace_dir, out_dir=out_dir
+        )
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import code_plan_briefs as pw

@@ -499,8 +499,9 @@ class TestKindRegistry:
         s = kinds.get("goal")
         att = s.build_brief(Loop(id="abcd1234", name="n", kind="goal", task="t", attended=True))
         un = s.build_brief(Loop(id="abcd1234", name="n", kind="goal", task="t", attended=False))
-        assert "Clarification allowed" in att
-        assert "Unattended" in un and "Never write questions.json" in un
+        assert "**Attended:**" in att and "ask for their approval" in att
+        assert "questions.json" in att
+        assert "**Unattended:**" in un and "Never write questions.json" in un
 
     def test_classify_preserves_planner_reason_fields(self, monkeypatch):
         # The planner's entry/rigor/strategy rationale must survive classify

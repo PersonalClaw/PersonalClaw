@@ -504,6 +504,9 @@ class OllamaProvider(ModelProvider):
         self._model = model
         self._endpoint = endpoint.rstrip("/")
         self._timeout = timeout
+        # The instance's Request Timeout, declared (``ModelProvider.request_timeout_secs``): it is
+        # what bounds a call to this instance, so no automated caller's clock cuts one shorter.
+        self.request_timeout_secs = float(timeout)
         # The instance this provider was built for — the name a timeout's fix is found under in
         # Settings → Providers, since each instance keeps its own Request Timeout.
         self._instance = instance

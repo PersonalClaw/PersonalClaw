@@ -127,6 +127,32 @@ const REMEMBER_SCOPES = [
 
 type RememberScope = (typeof REMEMBER_SCOPES)[number]['key']
 
+/** Whose words the scopes are said in: a chat's, or a loop's (`pages/loops/LoopApprovals`). */
+export type ScopeWords = 'chat' | 'loop'
+
+/** The same three scopes and the same actions, said for a loop's worker. `trust` on a loop worker
+ *  reaches every worker of this run of the loop and ends with the run
+ *  (`loop/manager.grant_every_worker`); `trust_agent` saves on the agent as it does from a chat,
+ *  and without a profile to save on it is that same run-long grant. */
+const LOOP_SCOPE_WORDS: Record<RememberScope, { label: string; promise: (grantAgent: string) => string }> = {
+  once: { label: 'Just this once', promise: () => 'Nothing is remembered. The next tool call asks again.' },
+  chat: {
+    label: 'This loop',
+    promise: () => 'Every worker of this loop runs its tools without asking until this run ends. A pause, a stop or a restart asks again.',
+  },
+  agent: {
+    label: 'This agent',
+    promise: (grantAgent: string) =>
+      grantAgent
+        ? `Saved on ${grantAgent}: every tool runs without asking, in this loop and in future chats and loops.`
+        : 'This run of the loop only — its agent has no saved profile, so nothing carries past this run.',
+  },
+}
+
+function wordsFor(scope: (typeof REMEMBER_SCOPES)[number], words: ScopeWords) {
+  return words === 'loop' ? LOOP_SCOPE_WORDS[scope.key] : scope
+}
+
 /** Which scopes the card OFFERS for this call — the #506 rule on the approval surface.
  *
  *  The risk chip described and nothing gated: widening to a standing grant cost one click on a
@@ -167,7 +193,12 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean) {
  *  is what is genuinely chat's: the transcript segment shape, the settled-outcome collapse,
  *  the risk chip, the blast-radius chips, and the chat-scoped trust vocabulary.
  */
-export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id: string, action: Action) => void }) {
+export function ApprovalCard({ seg, onAct, scopeWords = 'chat' }: {
+  seg: ApprovalSegment
+  onAct: (id: string, action: Action) => void
+  /** The scopes' words: a chat's, or a loop's on the loop's own page. */
+  scopeWords?: ScopeWords
+}) {
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
   // grants once and remembers nothing. Broadening is always a deliberate act.
   const [scope, setScope] = useState<RememberScope>('once')
@@ -196,7 +227,8 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
   // grant selected — a scope the user can no longer see must not be the one Allow posts.
   const offered = offeredScopes(seg.risk, widened)
   const chosen = offered.find((s) => s.key === scope) ?? offered[0]
-  const promise = chosen.promise(seg.grantAgent || '')
+  const chosenWords = wordsFor(chosen, scopeWords)
+  const promise = chosenWords.promise(seg.grantAgent || '')
   return (
     <ApprovalPrompt
       tool={seg.tool}
@@ -209,7 +241,10 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
           <div className="flex flex-wrap items-center gap-2">
             <span data-type="caption" className="text-on-surface-low">Remember this choice</span>
             <Segmented size="sm" ariaLabel="Remember this choice"
-              options={offered.map((s) => ({ key: s.key, label: s.label, title: s.promise(seg.grantAgent || '') }))}
+              options={offered.map((s) => {
+                const w = wordsFor(s, scopeWords)
+                return { key: s.key, label: w.label, title: w.promise(seg.grantAgent || '') }
+              })}
               value={chosen.key} onChange={(k) => setScope(k as RememberScope)} />
           </div>
           {/* The promise, in plain sight rather than only in a tooltip: a scope the user
@@ -240,7 +275,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
           // The SAME promise string the visible line shows, not a second copy of it: a
           // truthful sentence beside an over-claiming accessible name is the same defect for
           // the user who only hears one of them (#541).
-          name: `Allow ${seg.tool} — ${chosen.label.toLowerCase()}: ${promise}`,
+          name: `Allow ${seg.tool} — ${chosenWords.label.toLowerCase()}: ${promise}`,
           onClick: () => onAct(seg.id, chosen.action),
         },
         {
@@ -258,4 +293,4 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
 // Exported for the test that enumerates the scope vocabulary as a CLOSED set: every option
 // must map to a distinct action `api_chat_session_approve` already implements, and no
 // option may promise a persistence the backend does not perform.
-export { REMEMBER_SCOPES, type RememberScope }
+export { REMEMBER_SCOPES, LOOP_SCOPE_WORDS, type RememberScope }

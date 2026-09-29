@@ -126,6 +126,13 @@ class ModelProvider(ABC):
     # including the zero-config fallback, which is a registry entry and not a binding.
     served_ref: str = ""
 
+    # How long this provider's INSTANCE waits for an answer to start, and then between its parts,
+    # in seconds (the instance's Request Timeout), or None when the instance keeps no wait of its
+    # own. Declared, because the spend guard every automated call rides (``ModelCallGuard``) adds
+    # no clock of its own to a call the instance already bounds: one there cut a local model's
+    # call short at a number nobody set, under the one its owner did.
+    request_timeout_secs: float | None = None
+
     async def served_context_window(self) -> int | None:
         """The context window, in tokens, this provider will serve its next completion with.
 

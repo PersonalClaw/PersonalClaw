@@ -15,7 +15,7 @@ THEN decide which steps this target needs and in what order. Standard step kinds
 
 Narrate what you read/found as you go (your investigation must be visible).
 
-When ready, WRITE the step list as JSON to `{{steps_sentinel}}` in your current directory, with this exact shape:
+When ready, WRITE the step list as JSON to `{{steps_sentinel}}` (that exact path: the loop's own folder, not the workspace), with this exact shape:
 {
   "summary": "<1-2 sentences: what you found + why these steps>",
   "steps": [

@@ -14,7 +14,7 @@ THEN decide which design phases this task needs and in what order. Standard phas
 
 Narrate what you considered as you go (your reasoning must be visible).
 
-When ready, WRITE the step list as JSON to `{{steps_sentinel}}` in your current directory, with this exact shape:
+When ready, WRITE the step list as JSON to `{{steps_sentinel}}` (that exact path: the loop's own folder, not the workspace), with this exact shape:
 {
   "summary": "<1-2 sentences: your read of the task + why these phases>",
   "steps": [

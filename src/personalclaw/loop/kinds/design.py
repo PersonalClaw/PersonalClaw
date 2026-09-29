@@ -449,8 +449,9 @@ class DesignKind(LoopKindStrategy):
         return "\n".join(
             [
                 f"Run the next autonomous cycle for design loop {loop.id} "
-                f"(working dir for loop files: {loop_dir}). Steps: (1) check status.json — "
-                "if not 'running', stop; (2) read brief.md; (3) apply + delete guidance.txt "
+                f"(the loop's own folder: {loop_dir}). Steps: (1) check {loop_dir}/status.json "
+                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply + delete "
+                f"{loop_dir}/guidance.txt "
                 "if present; (4) advance the CURRENT design step (tokens, a component, a "
                 "palette decision) toward the design system.",
                 "",
@@ -490,20 +491,26 @@ class _DesignWalkthrough:
     def default_steps(self) -> list[dict]:
         return []  # dynamic mode — the design pass authors the steps
 
-    def build_design_brief(self, task: str, workspace_dir: str, design_inputs=None) -> str:
+    def build_design_brief(
+        self, task: str, workspace_dir: str, design_inputs=None, *, out_dir: str
+    ) -> str:
         from personalclaw.loop import design_plan_briefs as pw
 
-        return pw.build_design_brief(task, workspace_dir, design_inputs=design_inputs)
+        return pw.build_design_brief(
+            task, workspace_dir, design_inputs=design_inputs, out_dir=out_dir
+        )
 
     def parse_steps_sentinel(self, raw: str):
         from personalclaw.loop import design_plan_briefs as pw
 
         return pw.parse_steps_sentinel(raw)
 
-    def build_step_brief(self, task, step, *, approved, workspace_dir):
+    def build_step_brief(self, task, step, *, approved, workspace_dir, out_dir):
         from personalclaw.loop import design_plan_briefs as pw
 
-        return pw.build_step_brief(task, step, approved=approved, workspace_dir=workspace_dir)
+        return pw.build_step_brief(
+            task, step, approved=approved, workspace_dir=workspace_dir, out_dir=out_dir
+        )
 
     def parse_artifact_sentinel(self, raw: str):
         from personalclaw.loop import design_plan_briefs as pw

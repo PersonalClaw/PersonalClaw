@@ -25,6 +25,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
+from personalclaw.guardrails.failure import use_case_binding
 from personalclaw.workflows.models import RETRYABLE_CLASSES, Failure, FailureClass
 
 __all__ = [
@@ -75,13 +76,6 @@ def classify_exception(exc: BaseException, *, use_case: str = "") -> Failure:
     return _by_text(type(exc).__name__, str(exc), timed_out=isinstance(exc, TimeoutError))
 
 
-def _binding(use_case: str) -> str:
-    """Where a use case's model is bound, named the way Settings → Models labels it."""
-    if not use_case:
-        return "its use case in Settings → Models"
-    return f"the {use_case.replace('_', ' ').capitalize()} use case in Settings → Models"
-
-
 def _typed(exc: BaseException, use_case: str) -> Failure | None:
     """The class an exception's TYPE (or the status it carries) decides, or None."""
     from personalclaw.guardrails.failure import (
@@ -120,7 +114,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             failure_class=FailureClass.TRANSIENT,
             remediation=(
                 "the model provider did not answer in time; Retry once it is responding, or "
-                f"bind a faster model to {_binding(use_case)}"
+                f"bind a faster model to {use_case_binding(use_case)}"
             ),
             recoverable=True,
         )
@@ -137,7 +131,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             failure_class=FailureClass.USER,
             remediation=(
                 "shorten this step's input, or bind a model with a larger context window to "
-                f"{_binding(use_case)}"
+                f"{use_case_binding(use_case)}"
             ),
         )
     if isinstance(exc, CredentialMissing):
@@ -150,7 +144,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
         # in the WHAT/WHY/FIX envelope; a registry refusal names an entry or type that is not there.
         agent_error = getattr(exc, "agent_error", None)
         fix = str(getattr(agent_error, "fix", "") or "") or (
-            f"check the model bound to {_binding(use_case)}"
+            f"check the model bound to {use_case_binding(use_case)}"
         )
         return Failure(failure_class=FailureClass.USER, remediation=f"{fix}; {_THEN_FORK}")
     status = _http_status(exc)
@@ -193,17 +187,17 @@ def _by_status(status: int, use_case: str) -> Failure:
     elif status == 402:
         fix = (
             "the provider account is out of credit; top it up, or bind another model to "
-            f"{_binding(use_case)}, {_THEN_FORK}"
+            f"{use_case_binding(use_case)}, {_THEN_FORK}"
         )
     elif status == 404:
         fix = (
-            f"the provider has no such model; bind one it lists to {_binding(use_case)}, "
+            f"the provider has no such model; bind one it lists to {use_case_binding(use_case)}, "
             f"{_THEN_FORK}"
         )
     elif status in (408, 425, 429):
         fix = (
             "the provider is rate-limiting or overloaded; Retry in a moment, or bind another "
-            f"model to {_binding(use_case)}"
+            f"model to {use_case_binding(use_case)}"
         )
     elif status >= 500:
         fix = (
@@ -213,7 +207,7 @@ def _by_status(status: int, use_case: str) -> Failure:
     else:
         fix = (
             f"the provider refused the request (HTTP {status}), and a retry would send the same "
-            f"one; change the model bound to {_binding(use_case)} or this step's input"
+            f"one; change the model bound to {use_case_binding(use_case)} or this step's input"
         )
     cls = http_status_class(status)
     return Failure(failure_class=cls, remediation=fix, recoverable=cls in RETRYABLE_CLASSES)

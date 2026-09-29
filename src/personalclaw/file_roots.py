@@ -226,6 +226,22 @@ def within(canonical: str, roots: Iterable[str], *, home: str = "") -> bool:
 #: looking short. `len(name)` would have passed exactly the inputs the OS refuses.
 MAX_NAME_BYTES = 255
 
+#: C0 controls and DEL: the characters no file surface takes in a path or a name. The Files view
+#: refuses them in a name it creates and in a path it reads or writes (``validation``'s file-path
+#: pattern spells the same set), the agent's file tools refuse them in any path, and a file is not
+#: sent to the user with one in its name. A newline in a name starts a line of its own in every
+#: listing, log line and command that shows the path, and a name that ends in one is a file nobody
+#: sees to clear.
+CONTROL_CHARS = frozenset(chr(code) for code in (*range(0x20), 0x7F))
+
+
+def control_character_in(text: str) -> str:
+    """The first of :data:`CONTROL_CHARS` in *text*, written ``U+000A``; ``""`` for none."""
+    for ch in text:
+        if ch in CONTROL_CHARS:
+            return f"U+{ord(ch):04X}"
+    return ""
+
 
 def admit(raw: str, roots: Iterable[str]) -> str | None:
     """The canonical path *raw* names when it lies inside one of *roots*, else ``None``.

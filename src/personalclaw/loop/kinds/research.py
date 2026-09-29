@@ -234,10 +234,10 @@ class _ResearchWalkthrough(_GoalWalkthrough):
 
         return pw.default_steps()
 
-    def build_step_brief(self, task, step, *, approved, workspace_dir):
+    def build_step_brief(self, task, step, *, approved, workspace_dir, out_dir):
         from personalclaw.loop import research_plan_briefs as pw
 
-        return pw.build_step_brief(task, step, approved=approved)
+        return pw.build_step_brief(task, step, approved=approved, out_dir=out_dir)
 
     def project_to_spec(self, session) -> dict:
         """Project intent/subtopics/output/execution_plan into the unified spec:

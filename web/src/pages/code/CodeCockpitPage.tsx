@@ -53,6 +53,7 @@ import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
+import { LoopApprovals } from '../loops/LoopApprovals'
 import { useMode } from '../../app/theme'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { overlayEnter, messageEnter, listItemEnter, stagger, physics } from '../../design/motion'
@@ -3374,6 +3375,8 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
   return (
     <div className="shrink-0 border-t border-outline-variant/40">
       <div className="max-h-[40vh] overflow-y-auto px-2 pt-2">
+        {/* An Attended build's workers ask before they act, and their asks are answered here. */}
+        <LoopApprovals loopId={project.id} className="mb-2" />
         {/* Attended question — the call to action; answer in the steer box below. */}
         {project.status === 'needs_input' && project.pending_question?.question && (
           <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"

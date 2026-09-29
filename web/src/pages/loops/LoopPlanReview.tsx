@@ -22,6 +22,7 @@ import { planReviewReducer, emptyPlanReview } from './planReviewFold'
 import { QuestionSlider } from './QuestionSlider'
 import { PlanStreamReview } from './PlanStreamReview'
 import type { SliderQuestion } from './sliderState'
+import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 
 const GOAL_TYPES: { id: GoalType; label: string }[] = [
   { id: 'verifiable', label: 'Verifiable' },
@@ -981,7 +982,7 @@ function LaunchStep({ loop, title, goalType, subGoals, verifyCommand, skillIds, 
 
       <div data-type="body-s" className="flex flex-col gap-1.5 text-on-surface-low">
         <div>Title: <span className="text-on-surface-var">{title || loop.name}</span></div>
-        <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var">{loop.attended ? 'Attended' : 'Unattended'}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
+        <div>Type: <span className="text-on-surface-var">{typeLabel}</span> · Mode: <span className="text-on-surface-var" title={loopModeMeaning(!!loop.attended)}>{loopModeLabel(!!loop.attended)}</span> · Granularity: <span className="text-on-surface-var">{granularityLabel}</span></div>
         {goalType === 'verifiable' && verifyCommand.trim() && (
           <div>Verify: <code className="text-on-surface-var font-mono">{verifyCommand.trim()}</code></div>
         )}

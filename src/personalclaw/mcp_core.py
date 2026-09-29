@@ -1357,12 +1357,27 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         from pathlib import Path
 
         from personalclaw.config.loader import outbox_dir
+        from personalclaw.file_roots import control_character_in
         from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
         from personalclaw.security import redact
         from personalclaw.sel import sel
 
         src = Path(args.get("path", ""))
         desc = redact(args.get("description", ""))
+        # The copy in the outbox keeps the source's name, so a name no file surface takes is
+        # refused here too (`file_roots.CONTROL_CHARS`).
+        bad = control_character_in(str(args.get("path", "")))
+        if bad:
+            sel().log_tool_invocation(
+                session_key="mcp_core",
+                source="mcp",
+                tool_name="notify_attachment",
+                outcome="denied",
+                error=f"control_character: {bad}",
+            )
+            return tool_failure(
+                f"the path has a control character ({bad}) in it; rename the file without it first"
+            )
         try:
             raw = safe_read_file_bytes(str(src))
         except FileTooLargeError as e:

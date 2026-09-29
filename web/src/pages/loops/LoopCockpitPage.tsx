@@ -31,6 +31,8 @@ import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
 import { downloadText, safeFilename } from '../../lib/download'
 import { useRunStream } from './useRunStream'
+import { LoopApprovals } from './LoopApprovals'
+import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
@@ -639,7 +641,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={c.work_dir.split('/').pop() || c.work_dir} title={`Works in: ${c.work_dir}`} />}
       <MetaPill icon={<Bot size={11} />} text={c.agent || 'default'} title="Worker agent" />
       {modelLabel && <MetaPill icon={<Cpu size={11} />} text={modelLabel} title={c.model} />}
-      <MetaPill text={c.attended ? 'Attended' : 'Unattended'} title="Mode" />
+      <MetaPill text={loopModeLabel(c.attended)} title={loopModeMeaning(c.attended)} />
       {(c as { kind?: string }).kind === 'goal' && <>
         <MetaPill text={GOAL_TYPE_LABEL[c.goal_type] ?? c.goal_type} tone="primary" title="Goal type" />
         <MetaPill text={cap(c.granularity)} title="Granularity" />
@@ -798,6 +800,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.
             </div>
           )}
+          {/* An Attended loop's workers ask before they act, and their asks are answered here. */}
+          <LoopApprovals loopId={id} />
           {c.status === 'needs_input' && c.pending_question && (
             <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
               <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> The agent needs your input</div>

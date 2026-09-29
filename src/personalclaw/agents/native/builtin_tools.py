@@ -600,9 +600,19 @@ class NativeBuiltinToolProvider(ToolProvider):
         symlinks and ``..`` resolved, no credential or secret file — a protected home location
         (``~/.ssh``, ``~/.aws``, the keychain, the home's own ``.env``, ``auth/``,
         ``governance/``), PersonalClaw's own keys wherever they sit, a ``.env``, ``*.key``,
-        ``*.pem`` or ``*.secret`` — and nothing an alias of one reaches."""
-        from personalclaw.file_roots import within
+        ``*.pem`` or ``*.secret`` — and nothing an alias of one reaches.
 
+        First of all, no control character (``file_roots.CONTROL_CHARS``): the Files view refuses
+        them in every path and name, and a model that wrote its file name with a trailing newline
+        left a file in the user's tree that no listing showed plainly and nothing cleared."""
+        from personalclaw.file_roots import control_character_in, within
+
+        bad = control_character_in(rel)
+        if bad:
+            raise ValueError(
+                f"path {rel!r} has a control character ({bad}) in it, which no file name may "
+                "hold; write the path without it"
+            )
         allowed = self._roots()
         base = allowed[0]
         p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()

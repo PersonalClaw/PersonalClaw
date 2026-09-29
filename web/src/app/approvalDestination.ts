@@ -49,6 +49,31 @@ export function workflowApprovalOf(session: string, runId: string): boolean {
   return parsed !== null && parsed.runId === runId
 }
 
+/** The session key a loop's worker holds: `loop-<id>` for its stage worker, `loop-<id>-<task>`
+ *  for a per-task worker (`loop/manager.session_key`, `task_session_key`). A loop id is eight hex
+ *  characters, so the planner's `loop-plan-<id>` and a chat named "loop-…" are not mistaken for
+ *  one. */
+const LOOP_SESSION = /^loop-([a-f0-9]{8})(?:-(.+))?$/
+
+export interface LoopApprovalSession {
+  loopId: string
+  /** The task a per-task worker works on; "" for the loop's stage worker. */
+  taskId: string
+}
+
+/** Decode a loop worker's approval session, or `null` for anything else. */
+export function loopApprovalSession(session: string): LoopApprovalSession | null {
+  const m = LOOP_SESSION.exec(session)
+  return m ? { loopId: m[1], taskId: m[2] ?? '' } : null
+}
+
+/** Is this approval one of *loopId*'s workers asked? The loop's page claims its own approvals out
+ *  of `/api/approvals` with the same parse the nudge links with. */
+export function loopApprovalOf(session: string, loopId: string): boolean {
+  const parsed = loopApprovalSession(session)
+  return parsed !== null && parsed.loopId === loopId
+}
+
 export interface ApprovalDestination {
   /** The in-app hash route that ANSWERS this approval. */
   href: string
@@ -75,6 +100,16 @@ export function approvalDestination(session: string): ApprovalDestination {
       // are looking at when the run is blocked.
       label: `the ${wf.nodeId} step of workflow run ${wf.runId}`,
       linkLabel: 'Open the workflow run',
+    }
+  }
+  // A loop's worker asks on the loop's own page (`LoopApprovals`): its key is no chat anyone
+  // opened, and `#/loops/<id>` lands on whichever cockpit the loop's kind has (`LoopsSection`).
+  const loop = loopApprovalSession(session)
+  if (loop) {
+    return {
+      href: `#/loops/${loop.loopId}`,
+      label: `loop ${loop.loopId}`,
+      linkLabel: 'Open the loop',
     }
   }
   // A chat session (including a subagent escalating to its parent). Encoded the way every

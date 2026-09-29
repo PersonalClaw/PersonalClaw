@@ -334,13 +334,14 @@ class _ChatSession:
         # the worker's cwd is the user workspace, so without this the workspace-
         # confined file tools would reject those engine-file paths. Empty for chat.
         self._extra_tool_roots: list[str] = []
-        # Unattended run: no human is present to answer a tool-approval prompt or
-        # an option-prompt-shaped tool. Set for unattended loop workers and
-        # scheduled run-prompt/run-workflow turns (T5). The native runtime strips
-        # interactive tools + fails the approval gate fast so the turn can't wedge.
-        # Complements the loop watchdog's "unattended NEVER pauses" enforcement —
-        # this closes the tool-availability layer the watchdog can't reach.
-        self._unattended: bool = False
+        # Who answers this session's asks, when the session's owner decided it: True = nobody
+        # (an Unattended loop's worker), False = a person (an Attended loop's worker), None =
+        # nobody decided, so the session key does (``guardrails.policy.is_unattended_session``).
+        # The loop manager sets it from the loop's Mode each time it arms a worker, because a
+        # loop's key names a loop, not whether anybody is watching it. Unattended: the native
+        # runtime strips interactive tools and declines an ask at once, so the turn can't wedge
+        # waiting for a person who is not there.
+        self._unattended: bool | None = None
         self.created_at: str = datetime.now(timezone.utc).isoformat()
         # The transcript: one entry per thing the user wrote or saw, and nothing else.
         # It is never trimmed — the whole-file save rewrites the transcript FROM this

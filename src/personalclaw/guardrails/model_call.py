@@ -68,10 +68,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Generous default hard ceiling on a single non-interactive call. Chosen NOT to
-# clip a legitimately slow reasoning call (high-effort o-series / large local
-# models run for minutes) — the breaker, not this timeout, is the fast-fail path
-# during an outage. Config wiring (per-use-case override) lands in Session 2.
+# Generous default hard ceiling on a single non-interactive call to a provider that keeps no
+# wait of its own. Chosen NOT to clip a legitimately slow reasoning call (high-effort o-series
+# runs for minutes) — the breaker, not this timeout, is the fast-fail path during an outage. A
+# provider whose instance keeps a Request Timeout (``ModelProvider.request_timeout_secs``) is
+# bounded by that alone: it says how long a request waits to start and between the parts of its
+# answer, and is deliberately not a cap on the whole answer.
 _DEFAULT_TIMEOUT_SECS = 300.0
 
 
@@ -187,7 +189,7 @@ class ModelCallGuard(ModelProvider):
         use_case: str,
         provider_name: str,
         model: str,
-        timeout_secs: float = _DEFAULT_TIMEOUT_SECS,
+        timeout_secs: float | None = None,
         breaker: CircuitBreaker | None = None,
         budget: "Budget | None" = None,
         run_budget: "Budget | None" = None,
@@ -200,6 +202,16 @@ class ModelCallGuard(ModelProvider):
         scan_mode_source: "Callable[[], str] | None" = None,
     ) -> None:
         self._inner = inner
+        # The instance's own wait, mirrored like ``supports_tools`` so the guard reads as the
+        # provider it wraps.
+        self.request_timeout_secs = getattr(inner, "request_timeout_secs", None)
+        # The call's clock. A caller's own number is kept (a routed local attempt's short one,
+        # which is what lets a stalled local model hand over to the next model quickly). With
+        # none, an instance that keeps a Request Timeout is bounded by it alone and raises its own
+        # sentence naming the setting (``FirstTokenTimeout``), so the guard adds no second clock;
+        # a provider that keeps none gets the guard's default ceiling. 0 means no clock here.
+        if timeout_secs is None:
+            timeout_secs = 0.0 if self.request_timeout_secs else _DEFAULT_TIMEOUT_SECS
         # Where the three settings above are read from at EACH call (`guardrails.budgets` and
         # `guardrails.scan_mode`), when the resolution seam hands them: a guard lives as long as
         # the runtime holding it (the background session, a loop worker), so values read when it
@@ -530,8 +542,10 @@ class ModelCallGuard(ModelProvider):
                 )
                 _mark(call, FAILED)
             raise ModelCallTimeout(
-                f"model call for use case {self._use_case!r} (provider "
-                f"{self._provider_name!r}) exceeded {self._timeout_secs:.0f}s"
+                use_case=self._use_case,
+                provider=self._provider_name,
+                model=self._model,
+                waited_secs=self._timeout_secs,
             ) from None
         except (asyncio.CancelledError, GeneratorExit):
             # Cooperative cancellation / caller closed the guard mid-stream: not a
@@ -753,7 +767,7 @@ def wrap_model_call_guard(
     meter: SpendMeter | None = None,
     scan_mode: str = "warn",
     breaker: CircuitBreaker | None = None,
-    timeout_secs: float = _DEFAULT_TIMEOUT_SECS,
+    timeout_secs: float | None = None,
     routed: bool = False,
     routed_fallback: bool = False,
     budget_source: Callable[[], Budget] | None = None,

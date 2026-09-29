@@ -37,6 +37,7 @@ import contextvars
 import logging
 import os
 import signal
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Iterator
 
@@ -371,6 +372,46 @@ async def cancel_and_wait(
             ", ".join(sorted(_task_label(task) for task in left)),
         )
     return left
+
+
+#: How often :func:`wait_for_unpaused` reads whether its clock is paused.
+PAUSED_CLOCK_TICK_SECS = 5.0
+
+
+async def wait_for_unpaused(
+    awaitable: Awaitable[Any],
+    timeout: float,
+    *,
+    paused: Callable[[], bool],
+    what: str,
+) -> Any:
+    """``asyncio.wait_for``, with a clock that stops while *paused* says so.
+
+    For work that may wait on a person: a loop worker's turn is bounded so a wedged one cannot
+    hold its session forever, and an Attended worker's turn waits on its owner for each call it
+    asks about, for as long as the approval window says. That wait is not the turn running long.
+    *paused* is read every :data:`PAUSED_CLOCK_TICK_SECS`; a slice it reads paused is not
+    counted. Out of time, the work is cancelled (:func:`cancel_and_wait`, bounded) and
+    ``asyncio.TimeoutError`` is raised, as ``asyncio.wait_for`` raises it.
+    """
+    task = asyncio.ensure_future(awaitable)
+    clock = asyncio.get_running_loop()
+    spent = 0.0
+    try:
+        while spent < timeout:
+            began = clock.time()
+            done, _pending = await asyncio.wait(
+                {task}, timeout=min(PAUSED_CLOCK_TICK_SECS, timeout - spent)
+            )
+            if task in done:
+                return task.result()
+            if not paused():
+                spent += clock.time() - began
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    await cancel_and_wait([task], what=what)
+    raise asyncio.TimeoutError
 
 
 def _task_label(task: asyncio.Future[Any]) -> str:

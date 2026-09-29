@@ -104,15 +104,14 @@ _LOOP_ENDINGS = {
 def _loop_ended(session_key: str) -> str:
     if not session_key.startswith("loop-"):
         return ""
-    from personalclaw.loop import files as loop_files
     from personalclaw.loop import store as loop_store
     from personalclaw.loop.loop import ENDED_STATUSES
+    from personalclaw.loop.manager import worker_loop_id
 
-    # `loop-<id>` is the worker, `loop-<id>-<task>` a parallel task-worker; a loop id carries no
-    # dash, so the owner is the first segment. `loop-plan-<id>` is a planner, not a loop's worker,
-    # and "plan" is not a loop id — so it has no owner here, rather than a wrong one.
-    loop_id = session_key[len("loop-") :].split("-", 1)[0]
-    if not loop_files.valid_loop_id(loop_id):
+    # A loop's stage worker or one of its task workers; a planner is not a loop's worker, so it
+    # has no owner here, rather than a wrong one.
+    loop_id = worker_loop_id(session_key)
+    if not loop_id:
         return ""
     loop = loop_store.get(loop_id)
     if loop is None:

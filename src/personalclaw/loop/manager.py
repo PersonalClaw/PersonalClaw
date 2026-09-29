@@ -28,9 +28,86 @@ def session_key(loop_id: str) -> str:
     return f"loop-{loop_id}"
 
 
-def loop_id_from_session_key(key: str) -> str:
-    """Inverse of :func:`session_key` — '' if ``key`` isn't a loop worker key."""
-    return key[len("loop-") :] if key.startswith("loop-") else ""
+def worker_loop_id(key: str) -> str:
+    """The loop whose worker *key* is, or ``""``: ``loop-<id>`` is its stage worker and
+    ``loop-<id>-<task>`` a parallel task worker (a loop id carries no dash). The planner's
+    ``loop-plan-<id>`` is not a worker, and ``plan`` is not a loop id, so it names none."""
+    if not key.startswith("loop-"):
+        return ""
+    loop_id = key[len("loop-") :].split("-", 1)[0]
+    return loop_id if loop_files.valid_loop_id(loop_id) else ""
+
+
+#: Loops whose owner said "every tool, for the rest of this run" on one of their workers'
+#: approval cards (:func:`grant_every_worker`). In memory, like the per-session grant it
+#: extends: a run of the loop that begins again (a resume, a restart) asks again.
+_LOOP_GRANTS: set[str] = set()
+
+
+def _arm_posture(worker, loop: Loop) -> None:
+    """Set who answers *worker*'s tool calls from its loop's Mode, each time the loop arms it.
+
+    **Unattended:** nobody is there to ask, so the worker runs under a standing grant: its tool
+    calls run without asking (the deny-list, your hooks and the operator ceiling still apply)
+    until the trust window ends (``loops.trust_ttl_secs``), and a call nothing can approve is
+    declined at once rather than left waiting. An agent CLI is told the mode that stops it asking.
+
+    **Attended:** a person answers each call the way a chat's calls are answered — the card on
+    the loop's page, the bell, the channel approvals go to — and the grants that already stand
+    for chats stand here too: an agent's "Always allow", Trust reads, YOLO, an operator's hook
+    pattern, and "This loop" from one of this run's own cards (:func:`grant_every_worker`).
+
+    Set on every arm, the per-session grants included, because a loop's Mode can change between
+    runs: a resume must never carry an unattended run's grant into an attended one. The agent
+    floor re-seeds at the worker's next turn (``chat_runner._apply_approval_floor``).
+    """
+    unattended = not loop.attended
+    worker._unattended = unattended
+    worker._trust = unattended or loop.id in _LOOP_GRANTS
+    worker._trust_reads = False
+    worker._trust_from_floor = ""
+    worker._agent_floor_seeded = False
+    if loop.provider:
+        worker.acp_mode = "bypassPermissions" if unattended else ""
+
+
+def grant_every_worker(state, loop_id: str) -> None:
+    """ "This loop" on an approval card: every worker of *loop_id* runs its tools without asking
+    until this run of the loop ends (a pause, a stop, or a restart ends it; see
+    :func:`_arm_posture`). Its live workers take the grant now, mid-turn included; a task
+    worker the scheduler starts later takes it when it is armed. Each is bounded by the
+    operator ceiling where it is applied (``SessionManager.set_approval_policy``)."""
+    from personalclaw.constants import dashboard_session_key
+
+    _LOOP_GRANTS.add(loop_id)
+    for key in worker_session_keys(state, loop_id):
+        worker = state._sessions.get(key)
+        if worker is None:
+            continue
+        worker._trust = True
+        worker._trust_from_floor = ""
+        try:
+            state.sessions.set_approval_policy(dashboard_session_key(key), "auto")
+        except Exception:
+            logger.warning("loop: could not extend the grant to %s", key, exc_info=True)
+
+
+def end_unattended_grant(state, loop_id: str) -> None:
+    """An Unattended run's trust window ended: none of its workers runs a call unasked any more,
+    its task workers included, and an agent CLI is no longer told to skip its asks. With nobody
+    there to answer, their calls are declined until the owner resumes the loop, which arms each
+    worker afresh (:func:`_arm_posture`). A standing grant of the owner's own (an agent's "Always
+    allow") re-seeds at the worker's next turn, as it does in a chat."""
+    for key in worker_session_keys(state, loop_id):
+        worker = state._sessions.get(key)
+        if worker is None:
+            continue
+        worker._trust = False
+        worker._trust_reads = False
+        worker._trust_from_floor = ""
+        worker._agent_floor_seeded = False
+        if getattr(worker, "acp_mode", "") == "bypassPermissions":
+            worker.acp_mode = ""
 
 
 def _context_dir(loop: Loop) -> str:
@@ -153,6 +230,8 @@ async def start(state, svc, loop_id: str) -> Loop:
 
     d = loop_files.loop_dir(loop_id)
     cfg = AppConfig.load().loops
+    # A run of the loop beginning (again) asks again: "This loop" was for the run it was given in.
+    _LOOP_GRANTS.discard(loop_id)
 
     session = state.get_or_create_session(
         name=session_key(loop_id),
@@ -183,29 +262,12 @@ async def start(state, svc, loop_id: str) -> Loop:
         session.acp_provider = loop.provider
         session.acp_provider_agent = loop.provider_agent
         session.reasoning_effort = loop.reasoning_effort
-        if not loop.attended:
-            # Unattended: an ACP agent in its default permission mode would self-gate
-            # file writes; bypass so it executes (host gate + SEL audit still govern).
-            session.acp_mode = "bypassPermissions"
 
-    # Per-session tool trust so the loop never stalls on per-tool approval. The
-    # watchdog expires it after trust_ttl_secs → NEEDS_INPUT re-auth. Mirror it
-    # onto the SessionManager approval_policy ("auto") — the same field a chat's
-    # Trust/YOLO toggle sets — so subagents this loop spawns INHERIT auto-approval
-    # (parent_policy=="auto") and run their tools instead of stalling/denying.
-    session._trust = True
-    try:
-        state.sessions.set_approval_policy(session.key, "auto")
-    except Exception:
-        logger.warning(
-            "loop: failed to set auto approval_policy for %s", session.key, exc_info=True
-        )
-    # Unattended loop: strip interactive tools from the worker's toolset (T5) so a
-    # cycle can't wedge on an option-prompt-shaped tool. Pairs with the watchdog's
-    # "unattended NEVER pauses" question-discard — that handles a stray question
-    # post-hoc; this removes the tool that would ask it in the first place.
-    if not loop.attended:
-        session._unattended = True
+    # Who answers the worker's tool calls: its loop's Mode (`_arm_posture`). The chat runner
+    # syncs the session's approval policy from it at the start of each turn, which is also what
+    # a subagent the worker spawns inherits (an Unattended worker's "auto"; an Attended one's
+    # asks go to its owner).
+    _arm_posture(session, loop)
     state.push_sessions_update()
 
     msg = _build_nudge_message(strat, loop, d)
@@ -216,6 +278,17 @@ async def start(state, svc, loop_id: str) -> Loop:
         max_cycles=loop.max_cycles,
         stop_sentinel_path=str(d / loop_files.STOP_SENTINEL) if d else "",
     )
+    # A pause stood the parallel task workers down along with the stage worker (`pause`); a
+    # resume stands them back up, each on its loop's Mode as it is now.
+    prefix = f"{session_key(loop_id)}-"
+    for task_loop in svc.list_all():
+        name = str(getattr(task_loop, "session_name", ""))
+        if not name.startswith(prefix):
+            continue
+        worker = state._sessions.get(name)
+        if worker is not None:
+            _arm_posture(worker, loop)
+        await svc.update(task_loop.id, active=True)
     logger.info("loop: started %s (kind=%s) on session %s", loop_id, loop.kind, session.key)
     return updated
 
@@ -262,7 +335,7 @@ async def rearm_nudge_message(svc, loop_id: str) -> None:
         logger.debug("rearm_nudge_message failed for %s", loop_id, exc_info=True)
 
 
-def _worker_session_keys(state, loop_id: str) -> list[str]:
+def worker_session_keys(state, loop_id: str) -> list[str]:
     """The live worker sessions of ``loop_id``: the main worker and every parallel task-worker."""
     main = session_key(loop_id)
     return [
@@ -293,7 +366,7 @@ async def halt_worker_turns(state, loop_id: str) -> int:
 
     sessions = getattr(state, "sessions", None)
     halted = 0
-    for key in _worker_session_keys(state, loop_id):
+    for key in worker_session_keys(state, loop_id):
         session = state._sessions.get(key)
         if session is None:
             continue
@@ -510,9 +583,15 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         f"You are one of several parallel workers on loop {loop.id}. Your ENTIRE job "
         f"is the single task below — work ONLY on it, in this checkout ({worktree_dir}). "
         "Do not touch other tasks.",
-        "",
-        f"TASK: {task.title}",
     ]
+    if loop_dir:
+        lines += [
+            "",
+            f"The loop's own files are in {loop_dir}, not in this checkout, so never search "
+            f'for them. First read {loop_dir}/status.json: if its status is not "running", '
+            f"end the turn. The loop's brief is {loop_dir}/brief.md.",
+        ]
+    lines += ["", f"TASK: {task.title}"]
     if getattr(task, "description", ""):
         lines.append(task.description)
     if plan:
@@ -558,16 +637,9 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
         session.acp_provider = loop.provider
         session.acp_provider_agent = loop.provider_agent
         session.reasoning_effort = loop.reasoning_effort
-        if not loop.attended:
-            session.acp_mode = "bypassPermissions"
-    session._trust = True
-    # Mirror trust onto approval_policy so loop-spawned subagents inherit auto-approve.
-    try:
-        state.sessions.set_approval_policy(session.key, "auto")
-    except Exception:
-        logger.warning(
-            "loop: failed to set auto approval_policy for %s", session.key, exc_info=True
-        )
+    # The same posture as the stage worker: its loop's Mode, and "This loop" when this run of
+    # the loop was given it (`_arm_posture`).
+    _arm_posture(session, loop)
     d = loop_files.loop_dir(loop.id)
     roots = [str(d)] if d is not None else []
     ctx = _context_dir(loop)
@@ -646,6 +718,7 @@ async def _teardown(svc, loop_id: str) -> None:
     clean up the loop's git worktrees + branches. Without the worktree cleanup, every
     parallel code loop that's torn down (stop/delete) leaks its `.worktrees/<id>` dirs
     + `pclaw/task-*` branches in the user's repo."""
+    _LOOP_GRANTS.discard(loop_id)
     main = svc.get_by_session(session_key(loop_id))
     if main is not None:
         await svc.remove(main.id)

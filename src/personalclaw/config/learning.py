@@ -93,8 +93,9 @@ class LoopsConfig:
         default=24 * 3600,
         metadata=_meta(
             "Trust TTL Seconds",
-            "How long a loop's worker keeps auto-approved tool trust before "
-            "the supervisor expires it and requires re-authorization.",
+            "How long an Unattended loop's workers run their tool calls without asking "
+            "before the supervisor pauses the loop for you to resume it. An Attended loop "
+            "asks you for each call and holds no such grant.",
         ),
     )
     judge_use_case: str = field(

@@ -2,7 +2,7 @@ import { useRef } from 'react'
 import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
-import { approvalDestination } from './approvalDestination'
+import { approvalDestination, loopApprovalSession } from './approvalDestination'
 import { approvalRiskOf, readOnlyOf } from '../pages/chat/approvalMeta'
 
 /** Shell-level watcher: surfaces a toast when a tool-approval is requested for a
@@ -39,8 +39,11 @@ export function useApprovalToasts(activeSession: string) {
     // Ordinary chat-session approvals broadcast NO source key (only the
     // subagent/background paths set one) — don't mislabel them as background.
     const source = String(d.source ?? '')
+    // A loop's worker asks through the chat path, so its frame carries no source either: its
+    // session key is what says a loop is asking.
     const who = source === 'subagent' ? 'A subagent'
-      : source ? 'A background task' : 'Another chat session'
+      : source ? 'A background task'
+        : loopApprovalSession(session) ? 'A loop' : 'Another chat session'
     // The compact form of the same brief the card renders — one shared facet
     // vocabulary, two presentations, no second approval renderer. `risk` rides the same
     // `approval` frame the card reads it from (chat_runner broadcasts the EFFECTIVE risk);

@@ -21,6 +21,7 @@ walkthrough (general/design today) returns ``None`` from ``Loop`` strategy's
 from __future__ import annotations
 
 import logging
+import os
 from typing import Protocol, runtime_checkable
 
 from personalclaw.loop import files as loop_files
@@ -31,8 +32,10 @@ from personalclaw.planning.session import PlanSession, PlanStep
 
 logger = logging.getLogger(__name__)
 
-# Sentinels the planner writes into its working dir, one per pass. Distinct names so
-# a stale design-pass file is never mistaken for a step artifact.
+# The files the planner writes, one per pass, in the loop's own folder: it works in the
+# bound workspace, and its briefs name the absolute path, so none of them lands in the
+# user's tree. Distinct names so a stale design-pass file is never mistaken for a step
+# artifact.
 STEPS_SENTINEL = "plan_steps.json"
 ARTIFACT_SENTINEL = "step_artifact.json"
 
@@ -55,9 +58,15 @@ class Walkthrough(Protocol):
         ...
 
     def build_design_brief(
-        self, task: str, workspace_dir: str, design_inputs: list[dict] | None = None
+        self,
+        task: str,
+        workspace_dir: str,
+        design_inputs: list[dict] | None = None,
+        *,
+        out_dir: str,
     ) -> str:
-        """DYNAMIC mode only — the pass-1 brief: investigate + design the step list.
+        """DYNAMIC mode only — the pass-1 brief: investigate + design the step list,
+        written to ``plan_steps.json`` in ``out_dir`` (the loop's own folder).
         ``design_inputs`` (design kind only) are the user's multi-modal reference
         inputs to work through; other kinds ignore it."""
         ...
@@ -67,10 +76,17 @@ class Walkthrough(Protocol):
         ...
 
     def build_step_brief(
-        self, task: str, step: PlanStep, *, approved: list[PlanStep], workspace_dir: str
+        self,
+        task: str,
+        step: PlanStep,
+        *,
+        approved: list[PlanStep],
+        workspace_dir: str,
+        out_dir: str,
     ) -> str:
         """The pass-2 brief: produce ONE step's artifact, given the approved prior
-        artifacts + the kind's artifact contract."""
+        artifacts + the kind's artifact contract, written to ``step_artifact.json`` in
+        ``out_dir`` (the loop's own folder)."""
         ...
 
     def parse_artifact_sentinel(self, raw: str) -> dict | None:
@@ -127,13 +143,18 @@ def seed_steps(session: PlanSession, steps: list[dict]) -> PlanSession:
 # ── orchestration: spawn the planner per pass, gate, persist ──
 
 
+def _loop_folder(loop) -> str:
+    """The loop's own folder: where the planner's files go, and the only place they are read."""
+    return str(loop_files.loop_dir(loop.id) or "")
+
+
 async def _run_pass(
     state, svc, loop, wt: Walkthrough, *, brief: str, sentinel: str, timeout_secs: int | None = None
 ) -> str | None:
     """One planner pass via the shared runner, resolving the loop's primitives."""
     from personalclaw.planning import runner
 
-    files_dir = str(loop_files.loop_dir(loop.id) or "")
+    files_dir = _loop_folder(loop)
     return await runner.run_planner_pass(
         state,
         svc,
@@ -150,10 +171,9 @@ async def _run_pass(
         reasoning_effort=getattr(loop, "reasoning_effort", ""),
         stop_sentinel_name=loop_files.STOP_SENTINEL,
         timeout_secs=timeout_secs,
-        # Both walkthrough sentinels are scratch in the cwd regardless of which pass
-        # is active — a step pass (step_artifact.json) routinely has the planner
-        # re-create the decomposition file (plan_steps.json). Clear BOTH on teardown
-        # so neither survives in the user's bound workspace repo.
+        # Both walkthrough files, whichever pass is active: a step pass
+        # (step_artifact.json) routinely has the planner re-create the decomposition
+        # file (plan_steps.json) while it works.
         extra_sentinels=(STEPS_SENTINEL, ARTIFACT_SENTINEL),
     )
 
@@ -185,7 +205,10 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
         loop,
         wt,
         brief=wt.build_design_brief(
-            loop.task, loop.workspace_dir or "", design_inputs=design_inputs
+            loop.task,
+            loop.workspace_dir or "",
+            design_inputs=design_inputs,
+            out_dir=_loop_folder(loop),
         ),
         sentinel=STEPS_SENTINEL,
     )
@@ -226,8 +249,13 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         loop_files.write_plan_session(session)
 
     approved = [s for s in session.steps if s.status == PS.StepStatus.APPROVED.value]
+    artifact_path = os.path.join(_loop_folder(loop), ARTIFACT_SENTINEL)
     base_brief = wt.build_step_brief(
-        loop.task, step, approved=approved, workspace_dir=loop.workspace_dir or ""
+        loop.task,
+        step,
+        approved=approved,
+        workspace_dir=loop.workspace_dir or "",
+        out_dir=_loop_folder(loop),
     )
     raw = await _run_pass(state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief)
     artifact = wt.parse_artifact_sentinel(raw or "")
@@ -241,10 +269,11 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         # a diff, hung the whole walkthrough.)
         correction = (
             f"\n\n# CRITICAL — your previous attempt produced NO usable artifact.\n"
-            f"You must persist the artifact by CALLING the write_file tool to "
-            f"`{ARTIFACT_SENTINEL}` in your current directory. Do NOT paste the JSON, a "
-            f"diff, or a code block into your reply — only an actual write_file call "
-            f"creates the file we read. Re-emit the artifact now via write_file."
+            f"You must persist the artifact by CALLING the write_file tool with the path "
+            f"`{artifact_path}` (that exact path: the loop's own folder, not the "
+            f"workspace). Do NOT paste the JSON, a diff, or a code block into your reply "
+            f"— only an actual write_file call creates the file we read. Re-emit the "
+            f"artifact now via write_file."
         )
         raw = await _run_pass(
             state, svc, loop, wt, sentinel=ARTIFACT_SENTINEL, brief=base_brief + correction

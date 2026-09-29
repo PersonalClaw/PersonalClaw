@@ -18,6 +18,7 @@ def test_design_brief_lists_multimodal_inputs():
             {"type": "react", "ref": "Button.tsx"},
             {"type": "design_md", "ref": "DESIGN.md"},
         ],
+        out_dir="/loop",
     )
     assert "REFERENCE INPUTS" in brief
     assert "https://example.com" in brief and "FETCH" in brief
@@ -27,7 +28,7 @@ def test_design_brief_lists_multimodal_inputs():
 
 
 def test_design_brief_no_inputs_omits_block():
-    brief = pw.build_design_brief("a system", "", None)
+    brief = pw.build_design_brief("a system", "", None, out_dir="/loop")
     assert "REFERENCE INPUTS" not in brief
     # still a valid design pass brief ending in build_plan
     assert "build_plan" in brief

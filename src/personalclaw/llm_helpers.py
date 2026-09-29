@@ -1101,7 +1101,9 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       (Bedrock's model access, a data-retention policy). The map would replace either with a
       generic line.
     * ``FirstTokenTimeout`` names the instance's own timeout setting and where it is, which the
-      generic "did not answer in time" for an untyped timeout cannot.
+      generic "did not answer in time" for an untyped timeout cannot; ``ModelCallTimeout``, an
+      automated call that ran past the spend guard's ceiling, names the model, the limit and the
+      use case whose model to change.
     * A connection that failed or timed out, known by its type or its cause's
       (:func:`_transport_failure_sentence`): a provider SDK's "Request timed out." has words the
       matcher knows nothing in, and read by them it was a failure PersonalClaw doesn't recognize.
@@ -1133,6 +1135,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     one that carries a message it recognizes nothing in."""
     from personalclaw.guardrails.failure import (
         FirstTokenTimeout,
+        ModelCallTimeout,
         NoModelAnswered,
         PromptExceedsWindow,
         request_exceeds_window_sentence,
@@ -1142,7 +1145,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
 
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence(room=bool(room_member))
-    if isinstance(exc, (NoModelAnswered, FirstTokenTimeout)):
+    if isinstance(exc, (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout)):
         return exc.sentence(room_member=room_member)
     if isinstance(exc, ProviderResolutionError) and str(exc).strip():
         return str(exc).strip()

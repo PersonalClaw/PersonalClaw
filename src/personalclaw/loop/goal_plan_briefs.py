@@ -7,10 +7,12 @@ Slice 2e). Legacy loops.plan_walkthrough re-exports these until it's deleted."""
 
 from __future__ import annotations
 
+import os
+
 from personalclaw.planning.session import PlanStep
 
-# Sentinels the planner writes (one per pass); distinct so a stale design file is never
-# mistaken for a step artifact.
+# The files the planner writes (one per pass), in the loop's own folder; distinct so a stale
+# design file is never mistaken for a step artifact.
 STEPS_SENTINEL = "plan_steps.json"
 ARTIFACT_SENTINEL = "step_artifact.json"
 
@@ -58,10 +60,13 @@ def _comments_block(step: PlanStep) -> str:
     return "\n".join(out)
 
 
-def build_step_brief(goal: str, step: PlanStep, *, approved: list[PlanStep] | None = None) -> str:
+def build_step_brief(
+    goal: str, step: PlanStep, *, approved: list[PlanStep] | None = None, out_dir: str
+) -> str:
     """Produce the brief for ONE goal-planning step — carries the goal, the prior
     approved artifacts (so each step builds on the last), and any user comments on this
-    step (re-draft feedback)."""
+    step (re-draft feedback). The artifact goes to ``step_artifact.json`` in *out_dir*,
+    the loop's own folder."""
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     approved = approved or []
@@ -74,7 +79,7 @@ def build_step_brief(goal: str, step: PlanStep, *, approved: list[PlanStep] | No
             "objective": step.objective.strip(),
             "approved_block": _approved_block(approved),
             "comments_block": _comments_block(step),
-            "artifact_sentinel": ARTIFACT_SENTINEL,
+            "artifact_sentinel": os.path.join(out_dir, ARTIFACT_SENTINEL),
             "artifact_contract": _artifact_contract(step.kind),
         },
     )
@@ -102,7 +107,8 @@ def build_step_brief(goal: str, step: PlanStep, *, approved: list[PlanStep] | No
         "",
         "Investigate context as needed (the goal may point at internal docs/tickets "
         "reachable via MCP, or the web). Then PRODUCE THIS STEP'S ARTIFACT as JSON "
-        f"written to `{ARTIFACT_SENTINEL}` in your current directory.",
+        f"written to `{os.path.join(out_dir, ARTIFACT_SENTINEL)}` (that exact path: the "
+        "loop's own folder, not the workspace).",
         "",
         _artifact_contract(step.kind),
         "",

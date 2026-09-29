@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { ApprovalCard, REMEMBER_SCOPES } from './ApprovalCard'
+import { ApprovalCard, LOOP_SCOPE_WORDS, REMEMBER_SCOPES } from './ApprovalCard'
 import type { ApprovalSegment } from './chatTypes'
 
 // The approval brief is a four-zone DESCRIPTION of a pending tool call:
@@ -183,10 +183,10 @@ describe('ApprovalCard — the brief describes, it never advocates', () => {
     return [container.textContent ?? '', ...attrs].join(' \n ')
   }
 
-  it('contains no advocacy copy in any zone, at any risk level, under any scope', () => {
-    for (const risk of ['safe', 'caution', 'destructive'] as const) {
+  it('contains no advocacy copy in any zone, at any risk level, under any scope, in a chat’s words or a loop’s', () => {
+    for (const [risk, words] of (['safe', 'caution', 'destructive'] as const).flatMap((r) => [[r, 'chat'], [r, 'loop']] as const)) {
       const { container, unmount } = render(
-        <ApprovalCard seg={seg({ tool: 'bash', input: 'ls -la', purpose: 'Listing the repo root', risk, grantAgent: 'researcher' })} onAct={() => {}} />,
+        <ApprovalCard seg={seg({ tool: 'bash', input: 'ls -la', purpose: 'Listing the repo root', risk, grantAgent: 'researcher' })} onAct={() => {}} scopeWords={words} />,
       )
       // A destructive call withholds the two standing-grant scopes until the unlock is ticked
       // (#506), so the scan ticks it FIRST — otherwise this would silently stop covering the
@@ -201,12 +201,12 @@ describe('ApprovalCard — the brief describes, it never advocates', () => {
         expect(unlock, 'the cheaper tiers must not grow a rung').toBeNull()
       }
       for (const s of REMEMBER_SCOPES) {
-        fireEvent.click(scopeTab(s.label))
+        fireEvent.click(scopeTab(words === 'loop' ? LOOP_SCOPE_WORDS[s.key].label : s.label))
         const text = readableText(container)
         // Vacuity guard: the scan is looking at a real, fully rendered card.
         expect(text).toContain('Permission needed')
-        expect(text.length, `${risk}/${s.key}`).toBeGreaterThan(200)
-        for (const pattern of ADVOCACY) expect(text, `${risk}/${s.key} ${pattern}`).not.toMatch(pattern)
+        expect(text.length, `${risk}/${words}/${s.key}`).toBeGreaterThan(200)
+        for (const pattern of ADVOCACY) expect(text, `${risk}/${words}/${s.key} ${pattern}`).not.toMatch(pattern)
       }
       unmount()
     }

@@ -13,12 +13,14 @@ free-run" case it was before."""
 from __future__ import annotations
 
 import logging
+import os
 
 from personalclaw.planning.session import PlanStep
 
 logger = logging.getLogger(__name__)
 
-# Distinct sentinels so a stale design-pass file is never mistaken for a step artifact.
+# The files the planner writes, in the loop's own folder. Distinct so a stale design-pass
+# file is never mistaken for a step artifact.
 STEPS_SENTINEL = "plan_steps.json"
 ARTIFACT_SENTINEL = "step_artifact.json"
 
@@ -92,7 +94,7 @@ def design_inputs_block(inputs: list[dict] | None) -> list[str]:
 
 
 def build_design_brief(
-    task: str, workspace_dir: str = "", design_inputs: list[dict] | None = None
+    task: str, workspace_dir: str = "", design_inputs: list[dict] | None = None, *, out_dir: str
 ) -> str:
     """Pass 1 — design the ordered step list for THIS design task.
 
@@ -113,7 +115,7 @@ def build_design_brief(
             "design_inputs_block": "\n".join(inputs_lines[1:]) if inputs_lines else "",
             "workspace_dir": workspace_dir.strip(),
             "guide": guide,
-            "steps_sentinel": STEPS_SENTINEL,
+            "steps_sentinel": os.path.join(out_dir, STEPS_SENTINEL),
         },
     )
     if rendered is not None:
@@ -145,8 +147,8 @@ def build_design_brief(
         "",
         "Narrate what you considered as you go (your reasoning must be visible).",
         "",
-        f"When ready, WRITE the step list as JSON to `{STEPS_SENTINEL}` in your current "
-        "directory, with this exact shape:",
+        f"When ready, WRITE the step list as JSON to `{os.path.join(out_dir, STEPS_SENTINEL)}` "
+        "(that exact path: the loop's own folder, not the workspace), with this exact shape:",
         "{",
         '  "summary": "<1-2 sentences: your read of the task + why these phases>",',
         '  "steps": [',
@@ -187,8 +189,10 @@ def build_step_brief(
     *,
     approved: list[PlanStep] | None = None,
     workspace_dir: str = "",
+    out_dir: str,
 ) -> str:
-    """Pass 2 — produce the artifact for ONE design-planning step."""
+    """Pass 2 — produce the artifact for ONE design-planning step, written to
+    ``step_artifact.json`` in *out_dir*, the loop's own folder."""
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     approved = approved or []
@@ -202,7 +206,7 @@ def build_step_brief(
             "approved_block": _approved_block(approved),
             "comments_block": _comments_block(step),
             "workspace_dir": workspace_dir.strip(),
-            "artifact_sentinel": ARTIFACT_SENTINEL,
+            "artifact_sentinel": os.path.join(out_dir, ARTIFACT_SENTINEL),
             "artifact_contract": _artifact_contract(step.kind),
         },
     )
@@ -231,7 +235,8 @@ def build_step_brief(
     lines += [
         "",
         "Produce THIS STEP'S ARTIFACT as JSON written to "
-        f"`{ARTIFACT_SENTINEL}` in your current directory.",
+        f"`{os.path.join(out_dir, ARTIFACT_SENTINEL)}` (that exact path: the loop's own "
+        "folder, not the workspace).",
         "",
         _artifact_contract(step.kind),
         "",

@@ -9,7 +9,7 @@ is the generic mechanics, not domain breakdown.
 
 from __future__ import annotations
 
-from personalclaw.loop.kinds import LoopKindStrategy, register
+from personalclaw.loop.kinds import LoopKindStrategy, attendedness_lines, register
 from personalclaw.loop.loop import Loop
 
 
@@ -100,11 +100,7 @@ class GeneralKind(LoopKindStrategy):
                 f"**Definition of Done:** {loop.success_criteria}",
                 "Make real progress toward this each cycle; a separate check decides done.",
             ]
-        lines += [
-            "",
-            "**Unattended by default:** investigate ambiguities yourself, record the "
-            "assumption in your finding, and proceed.",
-        ]
+        lines += attendedness_lines(loop, subject="task")
         return "\n".join(lines)
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
@@ -114,8 +110,9 @@ class GeneralKind(LoopKindStrategy):
         return "\n".join(
             [
                 f"Run the next autonomous cycle for loop {loop.id} "
-                f"(working dir for loop files: {loop_dir}). Steps: (1) check status.json — "
-                "if not 'running', stop; (2) read brief.md; (3) apply + delete guidance.txt "
+                f"(the loop's own folder: {loop_dir}). Steps: (1) check {loop_dir}/status.json "
+                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply + delete "
+                f"{loop_dir}/guidance.txt "
                 "if present; (4) do ONE adaptive step toward the goal.",
                 "",
                 f"Before you end this turn you MUST write findings/cycle_NNN.json to {loop_dir} "

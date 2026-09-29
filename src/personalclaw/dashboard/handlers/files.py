@@ -26,6 +26,7 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.file_roots import MAX_NAME_BYTES
 from personalclaw.file_roots import admit as _admit_path
+from personalclaw.file_roots import control_character_in
 from personalclaw.file_roots import dashboard_roots as _dashboard_roots
 from personalclaw.file_roots import is_system_root as _is_system_root
 from personalclaw.file_roots import screenshot_dir as _screenshot_dir
@@ -1085,14 +1086,6 @@ def _path_rejection(exc: "ValidationError") -> str:
             "(pass resolve=1 to resolve a relative path)"
         )
     return f"path: {exc.message}"
-
-
-#: C0 controls + DEL — the ONLY characters this area refuses in a name or a path (#296).
-#: Kept as an explicit frozenset rather than a regex because `_reject_name` reports WHICH
-#: rule refused a name, and the identical rule is expressed on the read/write side as
-#: `validation._FILE_PATH_RE`'s `[^\x00-\x1f\x7f]`. The two must stay the same set; the
-#: whole point of #296 was that the two ends of this namespace disagreed about characters.
-_CONTROL_CHARS = frozenset(chr(c) for c in list(range(0x20)) + [0x7F])
 
 
 def _validate_dashboard_path(raw: str, allowed_roots: tuple[str, ...] | None = None) -> str | None:
@@ -2535,9 +2528,10 @@ def _reject_name(name: str) -> str:
     read/write pinned `^[~/][-\\w.@~/ ]+$`, so the explorer wrote `notes (draft).md` and then
     400'd on every attempt to reopen it. The fix drops the read side's allowlist — it was
     never the traversal defence — and both ends now refuse exactly one thing about the
-    characters: C0 controls and DEL. `sanitize_string` preserves `\\n`/`\\r`/`\\t`, so without
-    this a created name could carry a newline into SEL's `resources=` field and into every
-    log line composed from the path.
+    characters: C0 controls and DEL (`file_roots.CONTROL_CHARS`, the one set every file
+    surface refuses). `sanitize_string` preserves `\\n`/`\\r`/`\\t`, so without this a created
+    name could carry a newline into SEL's `resources=` field and into every log line composed
+    from the path.
     """
     if not name:
         return "a name is required"
@@ -2545,7 +2539,7 @@ def _reject_name(name: str) -> str:
         return "a name may not contain a path separator"
     if name in (".", ".."):
         return "a name may not be '.' or '..'"
-    if any(ch in name for ch in _CONTROL_CHARS):
+    if control_character_in(name):
         return "a name may not contain control characters"
     encoded = len(name.encode("utf-8"))
     if encoded > MAX_NAME_BYTES:

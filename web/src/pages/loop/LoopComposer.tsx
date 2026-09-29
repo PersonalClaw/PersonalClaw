@@ -18,6 +18,7 @@ import { optimizeFailure, optimizeOutcome } from '../../ui/composer/optimizeOutc
 import { ComposerNoticeLine, useComposerNotice } from '../../ui/composer/ComposerNotice'
 import { classifyFailure } from './classifyFailure'
 import type { ComposerControls } from '../../ui/composer/types'
+import { loopModeLabel, loopModeMeaning } from '../../lib/loopMode'
 
 /** The ONE Loop front door — a single composer with a kind slider (General / Goal /
  *  Code / Design) + an optional project chooser. The slider drives which kind is
@@ -306,7 +307,10 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
           options={[{ key: 'greenfield', label: 'Fresh start' }, { key: 'brownfield', label: 'Existing codebase' }]} />
       )}
       <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
-        options={[{ key: 'unattended', label: 'Unattended' }, { key: 'attended', label: 'Attended' }]} />
+        options={[
+          { key: 'unattended', label: loopModeLabel(false), title: loopModeMeaning(false) },
+          { key: 'attended', label: loopModeLabel(true), title: loopModeMeaning(true) },
+        ]} />
       {/* The qualifier is the widest thing in this row and the least load-bearing — the title
           already explains it in full. It drops below `lg`, where the header is fighting for
           room. The checkbox carries an EXPLICIT aria-label so its accessible name is the same

@@ -672,19 +672,19 @@ class TestPlanningContext:
         from personalclaw.loop.code_plan_briefs import build_design_brief
 
         _index(workspace)
-        brief = build_design_brief("Add a widget", str(workspace))
+        brief = build_design_brief("Add a widget", str(workspace), out_dir="/loop")
         assert "[code map:" in brief
 
     def test_brief_is_unchanged_without_an_index(self, tmp_path):
         from personalclaw.loop.code_plan_briefs import build_design_brief
 
-        brief = build_design_brief("Add a widget", str(tmp_path / "unindexed"))
+        brief = build_design_brief("Add a widget", str(tmp_path / "unindexed"), out_dir="/loop")
         assert "[code map:" not in brief
 
     def test_brief_without_a_workspace_has_no_map(self):
         from personalclaw.loop.code_plan_briefs import build_design_brief
 
-        assert "[code map:" not in build_design_brief("Add a widget", "")
+        assert "[code map:" not in build_design_brief("Add a widget", "", out_dir="/loop")
 
     @needs_grammar
     def test_map_block_is_budget_bounded(self, tmp_path):

@@ -40,7 +40,7 @@ from personalclaw import (
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
-from personalclaw.cancellation import cancel_and_wait, kill_timed_out
+from personalclaw.cancellation import cancel_and_wait, kill_timed_out, wait_for_unpaused
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -3268,7 +3268,15 @@ class GatewayOrchestrator:
 
             async def _run_one(_sess, _msg, turn_timeout: float) -> None:
                 try:
-                    await asyncio.wait_for(run_chat(dstate, _sess, _msg), timeout=turn_timeout)
+                    # The bound is on the turn's own work: while one of its calls waits on the
+                    # owner's answer (an Attended loop's worker asks about each), the clock
+                    # stops — the approval's window is what bounds that wait.
+                    await wait_for_unpaused(
+                        run_chat(dstate, _sess, _msg),
+                        turn_timeout,
+                        paused=lambda: dstate.waiting_on_owner(_sess.key),
+                        what=f"autonudge turn {_sess.key}",
+                    )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "AutoNudge: turn for %s exceeded %ss — cancelling wedged turn",

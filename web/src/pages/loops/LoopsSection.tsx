@@ -141,7 +141,10 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
     setKind(null); setMissing(false)
     api.uLoop(id).then((l) => {
       if (!alive) return
-      if (l?.run_id) { navigateRef.current(loopRoute(l), { replace: true }); return }
+      // A run-backed loop opens on its run page and a code loop in the Code section
+      // (`loopRoute`), so a `#/loops/<id>` link to either lands where the loop is watched,
+      // its approvals included.
+      if (l && loopRoute(l) !== `loops/${id}`) { navigateRef.current(loopRoute(l), { replace: true }); return }
       setKind(l?.kind ?? null)
     })
       .catch(() => { if (alive) setMissing(true) })

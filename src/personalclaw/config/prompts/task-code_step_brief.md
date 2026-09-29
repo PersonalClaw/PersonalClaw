@@ -12,7 +12,7 @@ THE USER COMMENTED ON YOUR LAST DRAFT OF THIS STEP — address every point:
 
 Workspace (read it as needed): {{workspace_dir}}{% endif %}
 
-Investigate anything you still need, then PRODUCE THIS STEP'S ARTIFACT as JSON written to `{{artifact_sentinel}}` in your current directory.
+Investigate anything you still need, then PRODUCE THIS STEP'S ARTIFACT as JSON written to `{{artifact_sentinel}}` (that exact path: the loop's own folder, not the workspace).
 
 {{artifact_contract}}
 
