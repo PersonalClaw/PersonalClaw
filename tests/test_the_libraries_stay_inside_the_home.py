@@ -16,8 +16,10 @@ calls:
 
 Every ``personalclaw`` command sets each library's own setting before an app can import it, and a
 child process gets the same values. Each library is driven for real, in a fresh interpreter (each
-reads its settings once), with a scratch ``HOME``, a scratch cache folder and a scratch Hugging
-Face folder. The controls prove where each library writes with the settings off.
+reads its settings once), with a scratch ``HOME``, a scratch cache folder, a scratch Hugging Face
+folder and none of the suite's own variables: a library reads markers there too (onnxruntime starts
+no telemetry on a CI runner), so the probe behaves as on the owner's machine wherever the suite
+runs. The controls prove where each library writes with the settings off.
 """
 
 from __future__ import annotations
@@ -48,11 +50,16 @@ GRAMMAR_CACHE = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 #: Neutral fakes: the library sends whatever string it holds, so nothing here needs a token's shape.
 _PLANTED = "fake-hub-token-planted-by-this-test"
 _HANDED = "fake-hub-token-handed-over-by-the-caller"
-#: Prefixes of every variable one of the libraries reads for these behaviours, and the two
-#: generic telemetry switches huggingface_hub also honours. None of the developer's own reaches a
-#: probe: each run holds the settings under test and nothing else.
-_LIBRARY_PREFIXES = ("HF_", "HUGGING_FACE_", "ORT_", "TREE_SITTER_", "XDG_")
-_GENERIC_TELEMETRY_SWITCHES = ("DISABLE_TELEMETRY", "DO_NOT_TRACK")
+#: All a probe inherits from the process that runs the suite: what starting a program needs. The
+#: libraries read far more than their own settings for these behaviours, from variables no list
+#: here could name: huggingface_hub honours the generic telemetry switches too, and onnxruntime
+#: starts no telemetry at all where a CI variable is set (`CI`, `GITHUB_ACTIONS` and eleven more
+#: that build services set). A probe that inherited the developer's variables, or a CI runner's,
+#: would show the library on that machine, not on the owner's; each run holds the settings under
+#: test and nothing else.
+_INHERITED = ("PATH",)
+#: The two variables every step of a GitHub Actions job carries, where this suite runs in CI.
+_CI_RUNNER = {"CI": "true", "GITHUB_ACTIONS": "true"}
 #: A proxy nothing listens on, so a library in a probe has nowhere to send what it would upload.
 _NOWHERE = "http://127.0.0.1:9"
 
@@ -92,21 +99,15 @@ def _offline(argv: list[str]) -> list[str]:
 
 
 def _fresh(tmp_path: Path, code: str, settings: dict[str, str]) -> str:
-    """The last line *code* prints in a fresh interpreter with *settings* and nothing else of ours:
-    its home, cache folder and Hugging Face folder are scratch (a planted token file in the last),
-    and any upload it attempts has no route."""
+    """The last line *code* prints in a fresh interpreter with *settings* and nothing else of ours
+    (:data:`_INHERITED`): its home, cache folder and Hugging Face folder are scratch (a planted
+    token file in the last), and any upload it attempts has no route."""
     home = tmp_path / "home"
     hf_home = tmp_path / "hf"
     for folder in (home, hf_home):
         folder.mkdir(exist_ok=True)
     (hf_home / "token").write_text(_PLANTED, encoding="utf-8")
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith(_LIBRARY_PREFIXES)
-        and k not in _GENERIC_TELEMETRY_SWITCHES
-        and "proxy" not in k.lower()
-    }
+    env = {name: os.environ[name] for name in _INHERITED if name in os.environ}
     env.update(
         {
             "HOME": str(home),
@@ -289,11 +290,19 @@ def test_the_hub_keeps_no_list_of_ai_tools_in_the_shared_folder(tmp_path, monkey
 
 
 @pytest.mark.skipif(not _installed("onnxruntime"), reason="needs onnxruntime (the [dev] extra)")
-def test_onnxruntime_leaves_no_device_identifier_behind(tmp_path, monkeypatch):
+@pytest.mark.parametrize("suite_env", ["as it is", "a CI runner's"])
+def test_onnxruntime_leaves_no_device_identifier_behind(tmp_path, monkeypatch, suite_env):
     """Loading onnxruntime starts its maker's telemetry: a device identifier and a queue of events
     about the machine, in a folder under the user's home. Told as every command tells it, it
     writes nothing there. The control runs with the telemetry on for the moment an import takes,
-    with no route to send anything (see :func:`_fresh`)."""
+    with no route to send anything (see :func:`_fresh`).
+
+    The library starts no telemetry where a CI variable is set, and every CI step sets one, so a
+    probe that inherited the suite's variables had a control that could not fire on the runners
+    the suite runs on. Run under a CI runner's variables here too, the control still fires."""
+    if suite_env == "a CI runner's":
+        for name, value in _CI_RUNNER.items():
+            monkeypatch.setenv(name, value)
     load = "import onnxruntime\nprint('loaded')"
     home = tmp_path / "home"
 
