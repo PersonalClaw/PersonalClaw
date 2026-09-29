@@ -342,6 +342,11 @@ how you use it and sends no usage data anywhere. It's single-user and self-hoste
 conversations, memory, and knowledge never leave your machine unless *you* wire up a remote
 provider app. Exports exclude credentials by design.
 
+**The libraries it runs models on are held to the same.** Some report on their use by default:
+onnxruntime (speech-to-text, voices, text recognition) starts its maker's telemetry as it loads,
+and the Hugging Face library pings the Hub. Every process PersonalClaw starts switches that off
+with each library's own setting, and keeps their caches in PersonalClaw's home.
+
 **One outbound call you should know about.** PersonalClaw asks GitHub whether a newer release
 exists, on a schedule — by default at most once every 12 hours (`updates.check_interval_hours`,
 `config/loader.py`) — identifying itself with a `personalclaw-update-check` User-Agent. It sends

@@ -1583,12 +1583,12 @@ def main() -> None:
     if _home_env.is_file() and _home_env != _cwd_env:
         _load_named_credentials(_home_env)
 
-    # Before an app can import huggingface_hub, and after a `.env` above may have named the home:
-    # the library sends only a token a caller handed it, never one it found outside the home by
-    # itself, and keeps its transfer cache in this home.
-    from personalclaw.local_models.hub_env import keep_the_hub_in_the_home
+    # Before an app can import a library, and after a `.env` above may have named the home: the
+    # libraries PersonalClaw's features load send only a token a caller handed them, keep their
+    # caches in this home, and start no telemetry (`library_env`).
+    from personalclaw.library_env import keep_the_libraries_in_the_home
 
-    keep_the_hub_in_the_home()
+    keep_the_libraries_in_the_home()
 
     # Validate PERSONALCLAW_PORT early — fail fast before anything else loads.
     _raw_port = os.environ.get("PERSONALCLAW_PORT")

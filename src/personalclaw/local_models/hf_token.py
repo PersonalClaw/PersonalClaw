@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 #: The credential-store key the managed token is written under: ``HF_TOKEN``, the name the Hugging
 #: Face tools use for it. A set here unblocks a gated download without a restart, because every
 #: download passes :func:`resolve_token`'s answer, which reads the store each time; the library's
-#: own lookup is off (``local_models.hub_env``).
+#: own lookup is off (``library_env``).
 CREDENTIAL_NAME = "HF_TOKEN"
 
 #: Environment variables read as source 2 (the current name first, then the legacy one HF

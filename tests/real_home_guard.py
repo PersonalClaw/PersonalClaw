@@ -28,10 +28,18 @@ naming the thread, the test that started it, the test that happened to be runnin
 stack.
 
 A child process is outside any in-process hook, so the kind that matters is checked at spawn:
-a PersonalClaw interpreter (``-m personalclaw…`` or the ``personalclaw`` entry point) started
+a PersonalClaw interpreter (``-m personalclaw…``, the ``personalclaw`` entry point, or a Python
+whose ``-c`` code imports the package) started
 with neither ``PERSONALCLAW_HOME`` nor ``HOME`` pointing away from the real home is refused the
 way an ``open`` would be. Measured before this existed: ``personalclaw gateway --help`` spawned
-that way loaded the owner's real ``~/.personalclaw/.env`` into the child.
+that way loaded the owner's real ``~/.personalclaw/.env`` into the child. Any other child is
+seen by what it leaves: when the real home was absent as a test started and there as it ended,
+or absent as the run started and there as it ends, the session fails, naming each test during
+which it appeared and the child processes that test started (it fails even when something
+removed the folder again before the end). Measured before this existed: the namespace sandbox's
+launcher, a plain ``python``
+child handed the home a test resolved, made an empty real ``~/.personalclaw`` from four tests
+while this guard reported that none touched it.
 
 What this REPLACED — a walk of the real home at session end comparing mtimes against the
 session start — and why that could not do this job:
@@ -49,8 +57,9 @@ session start — and why that could not do this job:
 What this does NOT see, stated rather than implied: native code opening files by itself (the
 SQLite C library is covered because the connection is refused before it opens; the one other
 native writer, ``faiss.write_index``, sits beside its store's own SQLite database, which is
-refused first); child processes that are not a PersonalClaw interpreter; and anything outside
-``~/.personalclaw`` (``tests/test_packs_external_formats.py`` guards ``~/.claude`` and
+refused first); what a child process that is not a PersonalClaw interpreter does in a real home
+that already exists (on a machine with no real home, making one is seen, as above); and anything
+outside ``~/.personalclaw`` (``tests/test_packs_external_formats.py`` guards ``~/.claude`` and
 ``~/.cursor`` itself).
 
 Detection is a :class:`Guard` over an arbitrary root, so it can be driven against a fake home
@@ -61,6 +70,7 @@ tree it guards cannot be told apart from one that never fires.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import sys
 import threading
@@ -86,6 +96,9 @@ REPORT_RELPATH = "reports/real-home-guard.txt"
 #: Frames kept per refusal: enough to reach the test or the thread target from inside
 #: ``pathlib``/``sqlite3``, few enough that a report of many refusals stays readable.
 _STACK_FRAMES = 18
+
+#: Child processes kept per test, by their command line, to name if the home appears during it.
+_SPAWNS_KEPT = 6
 
 #: Audit event → positional indices of the path arguments it carries.
 _PATH_ARGS: dict[str, tuple[int, ...]] = {
@@ -189,8 +202,18 @@ def _argv_words(argv: object) -> list[str]:
 EXEC_SHIM_MODULE = "personalclaw._spawn_exec_shim"
 
 
+#: Python code that loads the package: ``import personalclaw…`` or ``from personalclaw… import``.
+_IMPORTS_PERSONALCLAW = re.compile(r"(?:^|[;\s])(?:import|from)\s+personalclaw\b")
+
+
 def runs_personalclaw(words: list[str]) -> bool:
-    """Whether an argv starts a PersonalClaw interpreter: the entry point, or ``-m`` of it.
+    """Whether an argv starts a PersonalClaw interpreter: the entry point, ``-m`` of it, or a
+    Python whose ``-c`` code imports it.
+
+    The last is a PersonalClaw process like the others: the package resolves its home the same
+    way in it. A test's ``python -c "from personalclaw.vector_memory import …"``, started with an
+    environment that named no home, made the real ``~/.personalclaw`` as it read the bound
+    embedding model.
 
     The resource-ceiling shim (``python -m personalclaw._spawn_exec_shim <policy> -- <argv>``)
     is looked THROUGH: it imports nothing that resolves a home and ``execvp``s its target, so
@@ -208,6 +231,10 @@ def runs_personalclaw(words: list[str]) -> bool:
     for flag, module in zip(words, words[1:]):
         if flag == "-m" and (module == "personalclaw" or module.startswith("personalclaw.")):
             return True
+    if os.path.basename(words[0]).startswith("python"):
+        for flag, code in zip(words, words[1:]):
+            if flag == "-c" and _IMPORTS_PERSONALCLAW.search(code):
+                return True
     return False
 
 
@@ -234,6 +261,8 @@ class Guard:
         self.test: str | None = None
         #: Where the run is: ``collection``, ``setup``/``call``/``teardown``, ``between tests``.
         self.phase = "collection"
+        #: The first child processes the test in progress started, by their command line.
+        self.spawned: list[str] = []
 
     # ── matching ─────────────────────────────────────────────────────────────────────────
 
@@ -317,6 +346,8 @@ class Guard:
         else:
             argv, env = (args[1] if len(args) > 1 else None), (args[2] if len(args) > 2 else None)
         words = _argv_words(argv)
+        if self.test is not None and len(self.spawned) < _SPAWNS_KEPT:
+            self.spawned.append(" ".join(words)[:160])
         if not runs_personalclaw(words):
             return
         if self.isolates(os.environ if env is None else env):
@@ -361,6 +392,7 @@ class Guard:
         self._runner = threading.current_thread()
         self.test = nodeid
         self.phase = "setup"
+        self.spawned = []
 
     def end(self) -> None:
         self.test = None
@@ -432,22 +464,61 @@ def render_for_test(accesses: list[Access]) -> str:
     return "\n\n".join([head, *(access.render() for access in accesses)])
 
 
-def render_session(root: Path, rendered: list[str], tests_run: int) -> str:
-    if not rendered:
-        plural = "s" if tests_run != 1 else ""
-        return f"real-home guard: {tests_run} test{plural} ran; none touched {root}."
-    one = len(rendered) == 1
-    head = [
-        f"real-home guard FAILED: {len(rendered)} refused access{'' if one else 'es'} to "
-        f"{root} {'belongs' if one else 'belong'} to no running test.",
+def appeared_during(nodeid: str, spawned: list[str]) -> str:
+    """One test during which the real home appeared, with the child processes it started."""
+    if not spawned:
+        return f"{nodeid}, which started no child process"
+    return f"{nodeid}, which started: " + "; ".join(spawned)
+
+
+def render_appeared(root: Path, during: list[str]) -> str:
+    """What is said when the real home appeared during the run: it was absent as a test started
+    and there as the test ended, or absent as the run started and there as it ends.
+
+    Every access this process makes there is refused, so what made it was a child process, which
+    no in-process hook can see: one a test handed a path resolved in the test's process, or one
+    that works the home out by itself."""
+    lines = [
+        f"real-home guard FAILED: {root} appeared during this run.",
         "",
-        "Either a thread OUTLIVED the test that started it (the entry names that test) and",
-        "touched the home after the test's isolation was undone, or an import reached the home",
-        "during collection. Stop the thread when its owner stops, or resolve the path at call",
-        "time. Nothing was written: every access below was refused.",
+        "Every access this run's own processes made to it was refused, so a child process made",
+        "it: one a test handed the real home (a path resolved in the test's process and baked into",
+        "a script or an argument), or one that works the home out by itself. Give the child the",
+        "home tests/conftest.py isolates. A process outside this run may also have made it.",
         "",
     ]
-    return "\n".join(head) + "\n\n".join(rendered)
+    if during:
+        lines.append("It appeared during:")
+        lines.extend(f"  {entry}" for entry in during)
+    else:
+        lines.append("It appeared outside every test (during collection, or between tests).")
+    lines.append("The folder is left as it was found.")
+    return "\n".join(lines)
+
+
+def render_session(
+    root: Path, rendered: list[str], tests_run: int, appeared: list[str] | None = None
+) -> str:
+    """The session verdict. *appeared* is where the real home appeared during the run (see
+    :func:`render_appeared`), ``None`` when it did not."""
+    if not rendered and appeared is None:
+        plural = "s" if tests_run != 1 else ""
+        return f"real-home guard: {tests_run} test{plural} ran; none touched {root}."
+    parts = [] if appeared is None else [render_appeared(root, appeared)]
+    if rendered:
+        one = len(rendered) == 1
+        head = [
+            f"real-home guard FAILED: {len(rendered)} refused access{'' if one else 'es'} to "
+            f"{root} {'belongs' if one else 'belong'} to no running test.",
+            "",
+            "Either a thread OUTLIVED the test that started it (the entry names that test) and",
+            "touched the home after the test's isolation was undone, or an import reached the home",
+            "during collection. Stop the thread when its owner stops, or resolve the path at call",
+            "time. Nothing was written: every access below was refused.",
+            "",
+        ]
+        parts.append("\n".join(head) + "\n\n".join(rendered))
+    return "\n\n".join(parts)
 
 
 def write_report(rootdir: Path, report: str) -> Path | None:
@@ -470,17 +541,26 @@ class Plugin:
         self.guard = guard
         self._from_workers: list[str] = []
         self._tests_run = 0
+        # A child process is outside the audit hook, so what one does to the home is seen only by
+        # its result: a home absent as a test starts must be absent as it ends, and one absent as
+        # the run starts must be absent as it ends.
+        self._absent_at_start = not os.path.lexists(guard.root)
+        #: The tests during which the home appeared, with the children each started.
+        self._appeared: list[str] = []
 
     def pytest_collection_finish(self, session) -> None:  # noqa: ARG002 — hook signature
         self.guard.phase = "between tests"
 
     @pytest.hookimpl(wrapper=True, tryfirst=True)
     def pytest_runtest_protocol(self, item, nextitem):  # noqa: ARG002 — hook signature
+        present = os.path.lexists(self.guard.root)
         self.guard.begin(item.nodeid)
         self._tests_run += 1
         try:
             return (yield)
         finally:
+            if not present and os.path.lexists(self.guard.root):
+                self._appeared.append(appeared_during(item.nodeid, self.guard.spawned))
             self.guard.end()
 
     @pytest.hookimpl(tryfirst=True)
@@ -517,6 +597,7 @@ class Plugin:
         output = getattr(node, "workeroutput", {})
         self._from_workers.extend(output.get("real_home_guard", []))
         self._tests_run += output.get("real_home_guard_tests", 0)
+        self._appeared.extend(output.get("real_home_guard_appeared", []))
 
     def pytest_sessionfinish(self, session, exitstatus) -> None:  # noqa: ARG002 — hook signature
         rendered = [access.render() for access in self.guard.take_session()]
@@ -525,17 +606,23 @@ class Plugin:
             # An xdist worker: the controller owns the one terminal and the one report file.
             workeroutput["real_home_guard"] = rendered
             workeroutput["real_home_guard_tests"] = self._tests_run
+            workeroutput["real_home_guard_appeared"] = self._appeared
             return
         rendered += self._from_workers
-        report = render_session(self.guard.root, rendered, self._tests_run)
+        # A test during which it appeared fails the run even when something removed it again
+        # before the end.
+        made = self._absent_at_start and os.path.lexists(self.guard.root)
+        appeared = self._appeared if self._appeared or made else None
+        report = render_session(self.guard.root, rendered, self._tests_run, appeared)
+        failed = bool(rendered) or appeared is not None
         written = write_report(session.config.rootpath, report)
         reporter = session.config.pluginmanager.get_plugin("terminalreporter")
         if reporter is not None:
-            reporter.write_sep("=", "real-home guard", red=bool(rendered))
+            reporter.write_sep("=", "real-home guard", red=failed)
             reporter.write_line(report)
             if written is not None:
                 reporter.write_line(f"real-home guard report written to {written}")
         else:  # pragma: no cover - only when the terminal plugin is disabled
             print(report)
-        if rendered:
+        if failed:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED

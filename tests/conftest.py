@@ -290,19 +290,28 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     up first and torn down LAST. The singleton is cleared around every test, so the next
     ``sel()`` call constructs a fresh ``SecurityEventLog`` — and that construction must
     still find the redirected ``config_dir``, or the leak comes straight back.
+
+    Both resolvers are redirected, to the one path: ``resolve_config_dir()`` (where the home is,
+    never created) as well as ``config_dir()`` (that, created). Redirecting only the second left
+    every path built from the first pointing at the real home, and a child process handed one
+    made it where no in-process guard can see: the namespace sandbox's launcher, whose owner-only
+    fence names the home it holds, created an empty real ``~/.personalclaw`` from four tests of
+    ``test_sandbox_argv.py``. A call that names its own environment asks about another process's
+    home (a gateway run elsewhere), and is answered by the rule as it asked.
     """
     import personalclaw.config.loader as config_loader
 
     holder: list[Path] = []
 
     def tmp_home() -> Path:
-        # Created lazily: most tests never resolve an unspecified home, and eagerly
-        # minting a tmp dir per test would add thousands of empty dirs to basetemp.
+        # Named lazily and made only when `config_dir()` asks: most tests never resolve an
+        # unspecified home, and `resolve_config_dir()` must not make the home it names.
         if not holder:
-            holder.append(tmp_path_factory.mktemp("pclaw-home"))
+            holder.append(tmp_path_factory.mktemp("pclaw-home") / "home")
         return holder[0]
 
     original_config_dir = config_loader.config_dir
+    original_resolve_config_dir = config_loader.resolve_config_dir
 
     def guarded_config_dir() -> Path:
         if _caller_chose_a_home():
@@ -310,19 +319,32 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         # NB: return the tmp dir WITHOUT delegating first — config_dir() mkdirs whatever
         # it resolves, so delegating would create ~/.personalclaw on a machine that has
         # none before we could redirect it.
+        home = tmp_home()
+        home.mkdir(mode=0o700, exist_ok=True)
+        return home
+
+    def guarded_resolve_config_dir(env=None) -> Path:
+        if env is not None or _caller_chose_a_home():
+            return original_resolve_config_dir(env)
         return tmp_home()
 
-    monkeypatch.setattr(config_loader, "config_dir", guarded_config_dir)
+    guarded = {
+        original_config_dir: ("config_dir", guarded_config_dir),
+        original_resolve_config_dir: ("resolve_config_dir", guarded_resolve_config_dir),
+    }
+    for original, (name, replacement) in guarded.items():
+        monkeypatch.setattr(config_loader, name, replacement)
     # `from ... import config_dir` at module scope binds the function object into the
     # importing module, where patching the loader can never reach it (58 such modules).
-    # Re-point every binding of THIS function object — identity-matched, so nothing else
+    # Re-point every binding of THESE function objects — identity-matched, so nothing else
     # is touched. Function-local imports (95 sites, incl. every `as _cd` alias) resolve
     # from the loader at call time and are already covered by the patch above.
     for module in list(sys.modules.values()):
         if module is None or not getattr(module, "__name__", "").startswith("personalclaw"):
             continue
-        if getattr(module, "config_dir", None) is original_config_dir:
-            monkeypatch.setattr(module, "config_dir", guarded_config_dir)
+        for original, (name, replacement) in guarded.items():
+            if getattr(module, name, None) is original:
+                monkeypatch.setattr(module, name, replacement)
 
 
 @pytest.fixture(autouse=True)
@@ -805,14 +827,14 @@ def _disable_live_writes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _hub_env_restored(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every ``personalclaw`` command sets what huggingface_hub is told (``local_models.hub_env``)
-    in ``os.environ``, and a test that drives ``cli.main()`` would leave it set for every test after
-    it in the worker — the transfer cache pointed at that test's home. Unset here, so teardown puts
-    back what the process had, whatever the test set."""
-    from personalclaw.local_models.hub_env import HUB_ENV_NAMES
+def _library_env_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ``personalclaw`` command sets what the libraries its features load are told
+    (``library_env``) in ``os.environ``, and a test that drives ``cli.main()`` would leave it set
+    for every test after it in the worker — the transfer and grammar caches pointed at that test's
+    home. Unset here, so teardown puts back what the process had, whatever the test set."""
+    from personalclaw.library_env import LIBRARY_ENV_NAMES
 
-    for name in HUB_ENV_NAMES:
+    for name in LIBRARY_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
 
 

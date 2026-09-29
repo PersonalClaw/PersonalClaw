@@ -108,7 +108,7 @@ def test_registry_closure(entries):
 # ── Lazy SDK imports ─────────────────────────────────────────────────────
 
 
-def test_providers_import_no_sdk_leakage():
+def test_providers_import_no_sdk_leakage(tmp_path):
     """Importing personalclaw.providers does not trigger anthropic/openai/httpx."""
     import os as _os
     import subprocess
@@ -116,7 +116,7 @@ def test_providers_import_no_sdk_leakage():
     from pathlib import Path as _Path
 
     repo_src = str(_Path(__file__).resolve().parent.parent / "src")
-    env = {**_os.environ, "PYTHONPATH": repo_src}
+    env = {**_os.environ, "PYTHONPATH": repo_src, "PERSONALCLAW_HOME": str(tmp_path / "home")}
     result = subprocess.run(
         [
             _sys.executable,

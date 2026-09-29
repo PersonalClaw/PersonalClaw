@@ -32,6 +32,7 @@ def test_conftest_refuses_a_package_imported_from_another_worktree(tmp_path: Pat
 
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join((str(_REPO / "src"), str(invoking / "tests")))
+    env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
     pytest_args = [
         "-n0",
         "--no-cov",

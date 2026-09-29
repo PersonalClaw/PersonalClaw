@@ -440,11 +440,17 @@ Data leaving the running system:
   the machine-wide Hugging Face folder with its `huggingface-cli login` token, a subscription
   provider's sign-in) is declared in that module, is off until the owner turns it on in Settings →
   Security → Outside PersonalClaw's home (`security.outside_home`, a loosening the PATCH asks to
-  confirm), and is only read. The Hugging Face library would read that token itself for any call
-  that passes none, and keep its Xet transfer cache in that folder whatever folder a download was
-  told to fill, so every `personalclaw` command, and every child it starts, turns the lookup off and
-  moves the cache into the home (`HF_HUB_DISABLE_IMPLICIT_TOKEN`, `HF_XET_CACHE`,
-  `local_models/hub_env.py`); an app's download passes the token PersonalClaw resolved, or none.
+  confirm), and is only read. Some libraries a feature loads would write outside the home, or
+  report on their use, by themselves, so every `personalclaw` command, and every child it starts,
+  tells each one not to with the library's own setting (`library_env.py`): the Hugging Face
+  library reads no token it finds by itself (`HF_HUB_DISABLE_IMPLICIT_TOKEN`), keeps its Xet
+  transfer cache in the home whatever folder a download was told to fill (`HF_XET_CACHE`), and
+  fetches and keeps no list of AI tools in the shared folder and sends no usage pings
+  (`HF_HUB_DISABLE_TELEMETRY`); onnxruntime starts none of its maker's telemetry, the device
+  identifier and machine description it would keep under the user's home and upload
+  (`ORT_DISABLE_TELEMETRY`); and the code map's grammars download into the home
+  (`TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`). An app's download passes the token PersonalClaw
+  resolved, or none.
   An ACP adapter an agent app needs is npm-installed only as you install or enable the app, never
   at a gateway start (`acp/cli_resolve.py`). Deleting a skill that lives outside the home is refused (409). The
   Files page has no root for the home itself, whose `config.json`, `mcp.json` and automations it

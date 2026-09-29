@@ -261,6 +261,13 @@ def _popen(argv, env) -> tuple:
         [sys.executable, "-m", "personalclaw.seed_local_model"],
         ["/usr/local/bin/personalclaw", "doctor"],
         "personalclaw gateway --port 0",  # a shell string
+        # Python code that loads the package resolves its home like the CLI does.
+        [
+            sys.executable,
+            "-c",
+            "import json;from personalclaw.vector_memory import VectorMemoryStore",
+        ],
+        ["python3", "-c", "import personalclaw"],
     ],
 )
 def test_a_personalclaw_child_with_no_isolated_home_is_refused(guard, root, argv) -> None:
@@ -307,6 +314,8 @@ def test_an_inherited_environment_is_the_parent_s(guard, root, monkeypatch) -> N
         ["git", "-C", "/repo/src/personalclaw", "status"],  # names the PACKAGE dir, runs git
         [sys.executable, "-m", "pytest", "tests/"],
         [sys.executable, "-c", "print(1)"],
+        [sys.executable, "-c", "print('personalclaw')"],  # names it, loads nothing
+        ["/bin/sh", "-c", "echo from personalclaw import x"],  # not Python
     ],
 )
 def test_other_children_are_not_this_guard_s_business(guard, root, argv) -> None:
@@ -374,6 +383,30 @@ def test_the_suite_runs_under_the_guard(pytestconfig) -> None:
     assert pytestconfig.pluginmanager.get_plugin("real-home-guard") is not None
 
 
+def test_a_test_that_chose_no_home_resolves_its_own_both_ways(monkeypatch) -> None:
+    """Both resolvers answer the test's own home: the one that names it (never made) and the one
+    that makes it. Only the second was redirected, and a child handed a path built from the first
+    made the real home: the namespace sandbox's launcher, whose owner-only fence names it."""
+    from personalclaw.config.loader import config_dir, resolve_config_dir
+    from personalclaw.owner_only import owner_only_paths
+
+    monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
+    named = resolve_config_dir()
+
+    assert real_home_guard.GUARD.owns(named) is None, f"the real home, resolved: {named}"
+    assert not named.exists(), "named, not made: resolving must not create the home"
+    assert owner_only_paths()[0].parent == named, "the launcher's fence names the test's home"
+    assert config_dir() == named and named.is_dir()
+
+
+def test_a_home_an_environment_names_is_answered_as_asked(tmp_path) -> None:
+    """A call that names its own environment asks where another process's home is."""
+    from personalclaw.config.loader import resolve_config_dir
+
+    elsewhere = tmp_path / "another-gateway-home"
+    assert resolve_config_dir({"PERSONALCLAW_HOME": str(elsewhere)}) == elsewhere.resolve()
+
+
 # ── End to end: a real pytest session, a fake $HOME ──────────────────────────────────────
 
 _INNER_CONFTEST = """
@@ -387,10 +420,15 @@ def pytest_configure(config):
 """
 
 
-def _inner_session(tmp_path: Path, tests: str) -> tuple[subprocess.CompletedProcess, Path, Path]:
-    """Run ``tests`` in a child pytest whose ``$HOME`` is a directory under ``tmp_path``."""
+def _inner_session(
+    tmp_path: Path, tests: str, *, made: bool = True
+) -> tuple[subprocess.CompletedProcess, Path, Path]:
+    """Run ``tests`` in a child pytest whose ``$HOME`` is a directory under ``tmp_path``, with its
+    ``.personalclaw`` already there unless *made* is false."""
     home = tmp_path / "home"
-    (home / ".personalclaw").mkdir(parents=True)
+    home.mkdir()
+    if made:
+        (home / ".personalclaw").mkdir()
     work = tmp_path / "session"
     work.mkdir()
     (work / "conftest.py").write_text(_INNER_CONFTEST)
@@ -496,6 +534,71 @@ def test_end_to_end_a_thread_that_outlives_its_test_fails_the_session_naming_it(
 def test_end_to_end_a_clean_session_still_writes_its_verdict(tmp_path) -> None:
     proc, _home, work = _inner_session(tmp_path, "def test_fine():\n    assert True\n")
     assert proc.returncode == 0, proc.stdout[-2000:]
+    assert "1 test ran; none touched" in (work / real_home_guard.REPORT_RELPATH).read_text()
+
+
+def test_end_to_end_a_child_that_makes_the_home_fails_the_session_naming_its_test(tmp_path) -> None:
+    """No hook in this process sees what a child does. A home that did not exist as the run
+    started and exists as it ends fails the session, naming the test during which it appeared and
+    the child that test started: here a shell, which no spawn check counts as PersonalClaw."""
+    proc, home, work = _inner_session(
+        tmp_path,
+        """
+        import subprocess
+
+        def test_innocent():
+            assert True
+
+        def test_a_child_makes_the_home():
+            subprocess.run(["/bin/sh", "-c", 'mkdir "$HOME/.personalclaw"'], check=True)
+
+        def test_after_it():
+            assert True
+        """,
+        made=False,
+    )
+    out = proc.stdout
+    assert "3 passed" in out, "no test is failed for it: a child's act has no stack" + out[-3000:]
+    assert proc.returncode == 1, "…and the SESSION fails, because the home is there now"
+    assert home.is_dir(), "control: the child did make the home"
+    report = (work / real_home_guard.REPORT_RELPATH).read_text()
+    for text in (report, out):
+        assert "appeared during this run" in text
+        assert "test_inner.py::test_a_child_makes_the_home, which started: /bin/sh -c" in text
+        assert "test_innocent" not in text and "test_after_it" not in text
+
+
+def test_end_to_end_a_home_removed_again_before_the_end_still_fails_the_session(tmp_path) -> None:
+    """Whoever finds the stray folder removes it: the test during which it appeared is still
+    named, and the session still fails."""
+    proc, home, work = _inner_session(
+        tmp_path,
+        """
+        import subprocess
+
+        def test_a_child_makes_the_home():
+            subprocess.run(["/bin/sh", "-c", 'mkdir "$HOME/.personalclaw"'], check=True)
+
+        def test_someone_removes_it():
+            subprocess.run(["/bin/sh", "-c", 'rmdir "$HOME/.personalclaw"'], check=True)
+        """,
+        made=False,
+    )
+    out = proc.stdout
+    assert "2 passed" in out, out[-3000:]
+    assert not home.exists(), "control: the home is gone again as the run ends"
+    assert proc.returncode == 1, "…and the SESSION fails, because it appeared during a test"
+    report = (work / real_home_guard.REPORT_RELPATH).read_text()
+    for text in (report, out):
+        assert "appeared during this run" in text
+        assert "test_inner.py::test_a_child_makes_the_home, which started: /bin/sh -c" in text
+        assert "test_someone_removes_it" not in text
+
+
+def test_end_to_end_a_session_that_makes_no_home_passes(tmp_path) -> None:
+    proc, home, work = _inner_session(tmp_path, "def test_fine():\n    assert True\n", made=False)
+    assert proc.returncode == 0, proc.stdout[-2000:]
+    assert not home.exists()
     assert "1 test ran; none touched" in (work / real_home_guard.REPORT_RELPATH).read_text()
 
 

@@ -82,7 +82,11 @@ def _isolated(tmp_path, monkeypatch):
 
     Unconditional, like the dispatch suite's: a test that resolved the real keystone would read
     the developer's own arming state, and the refusal messages quote the resolved path.
+
+    A home of its own too, named in the environment, because the dispatch runs the driver in a
+    real child process: a PersonalClaw interpreter, which resolves its home from what it inherits.
     """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     monkeypatch.setenv(enable_state.ENABLE_PATH_ENV, str(tmp_path / "enable.json"))
     enable_state.reset_enable_state()
     service.reset_snapshots()

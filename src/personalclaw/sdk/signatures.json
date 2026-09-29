@@ -8581,6 +8581,11 @@
   ],
   "returns": "int"
  },
+ "personalclaw.sdk.testing.library_env": {
+  "kind": "function",
+  "params": [],
+  "returns": "dict[str, str]"
+ },
  "personalclaw.sdk.testing.neutral_git_env": {
   "kind": "function",
   "params": [

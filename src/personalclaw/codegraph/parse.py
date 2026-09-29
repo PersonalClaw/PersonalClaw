@@ -171,18 +171,28 @@ class ParserStatus:
     reason: str = ""  # "" exactly when available
 
 
-# The one actionable remedy every grammar-load failure names. The parser wheels are
-# DECLARED dependencies, so "not installed" is rarely the real story: the language
-# pack keeps each grammar as a shared library in a per-user cache and fetches it on
-# first use, which makes a cold cache's first load a network operation.
-PARSER_REMEDY = (
-    "No tree-sitter grammar could be loaded for this language. The parser wheels "
-    "(tree-sitter, tree-sitter-language-pack) are declared dependencies, and the "
-    "language pack downloads each grammar's shared library into a per-user cache on "
-    "first use — so a cold cache needs network access. Pre-fetch the grammars where "
-    'the network is available: python -c "from tree_sitter_language_pack import '
-    "download; download(['python'])\"."
-)
+def _parser_remedy() -> str:
+    """The one actionable remedy every grammar-load failure names.
+
+    The parser wheels are DECLARED dependencies, so "not installed" is rarely the real
+    story: the language pack keeps each grammar as a shared library in a cache and
+    fetches it on first use, which makes a cold cache's first load a network operation.
+    That cache is in the home (``library_env``), so a pre-fetch has to be told the same
+    folder or it fills the language pack's own one, which PersonalClaw does not read.
+    """
+    from personalclaw.library_env import library_env
+
+    folder = library_env()["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"]
+    return (
+        "No tree-sitter grammar could be loaded for this language. The parser wheels "
+        "(tree-sitter, tree-sitter-language-pack) are declared dependencies, and the "
+        "language pack downloads each grammar's shared library into PersonalClaw's home "
+        "the first time it is needed — so a cold cache needs network access. Pre-fetch "
+        "the grammars where the network is available: "
+        f'TREE_SITTER_LANGUAGE_PACK_CACHE_DIR="{folder}" python -c "from '
+        "tree_sitter_language_pack import download; download(['python'])\"."
+    )
+
 
 # Grammars this indexer actually asks for. A load failure for one of these is worth a
 # warning; a caller probing some other grammar is not.
@@ -219,7 +229,7 @@ def _record_load_failure(language: str, exc: BaseException) -> str:
                 language,
                 reason,
                 _grammar_cache_dir() or "unknown",
-                PARSER_REMEDY,
+                _parser_remedy(),
             )
         else:
             logger.debug("codegraph: no tree-sitter parser for %s — %s", language, reason)

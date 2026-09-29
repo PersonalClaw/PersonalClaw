@@ -574,7 +574,7 @@ def test_module_scope_import_closure_declares_no_http_client() -> None:
     assert len(root_statements) >= 5
 
 
-def test_importing_the_module_loads_no_networking_module() -> None:
+def test_importing_the_module_loads_no_networking_module(tmp_path) -> None:
     """Runtime proof: the DELTA this module adds to sys.modules is network-free.
 
     Scoped to the delta on purpose. ``personalclaw/__init__.py`` and
@@ -594,7 +594,11 @@ print(json.dumps(delta))
         [sys.executable, "-c", probe],
         capture_output=True,
         text=True,
-        env={"PYTHONPATH": str(SRC_ROOT), "PATH": "/usr/bin:/bin"},
+        env={
+            "PYTHONPATH": str(SRC_ROOT),
+            "PATH": "/usr/bin:/bin",
+            "PERSONALCLAW_HOME": str(tmp_path / "home"),
+        },
         check=True,
     )
     delta = json.loads(result.stdout.strip().splitlines()[-1])

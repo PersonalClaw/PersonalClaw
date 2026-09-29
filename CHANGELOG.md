@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An app's test suite can load model libraries the way PersonalClaw does, reporting nothing and writing nothing outside its home: `personalclaw.sdk.testing.library_env()`, used by the apps repository's test harness.**
+
 - **Settings → Usage → Model prices sets the price a model's calls are counted at, and lists each model you use with its price and where that comes from.**
 
 - **A provider type can say where an instance that names no endpoint sends, and that it runs inside the gateway: `ProviderCapability.default_endpoint` and `in_process` (SDK additions no app has to change for; every branded app declares its default through `register_branded_app`, and `ollama-models` and `bundled-chat` declare theirs).**
@@ -639,6 +641,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
+- **The libraries PersonalClaw's model features load report nothing and write nothing outside your PersonalClaw home: onnxruntime starts no telemetry and leaves no device identifier, the Hugging Face library keeps no list of AI tools in your shared Hugging Face folder and sends no usage pings, and the code map's grammars download into the home.**
 
 - **A sync writes nothing outside the stores it syncs: a path another machine names outside them is refused, nothing of that change is taken in, and the sync report names it.**
 

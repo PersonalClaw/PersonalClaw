@@ -521,7 +521,14 @@ class TestLouvainDeterminism:
                 [sys.executable, "-c", code],
                 capture_output=True,
                 text=True,
-                env={"PYTHONPATH": SRC, "PYTHONHASHSEED": hashseed, "PATH": "/usr/bin:/bin"},
+                # A home of its own: the store reads the bound embedding model from it, and with
+                # no home named the child resolved, and made, the developer's real one.
+                env={
+                    "PYTHONPATH": SRC,
+                    "PYTHONHASHSEED": hashseed,
+                    "PATH": "/usr/bin:/bin",
+                    "PERSONALCLAW_HOME": str(tmp_path / "child-home"),
+                },
                 cwd=str(tmp_path),
             )
             assert proc.returncode == 0, proc.stderr

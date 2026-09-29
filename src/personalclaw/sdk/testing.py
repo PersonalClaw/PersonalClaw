@@ -30,6 +30,15 @@ the machine's own; ``take()`` names each refusal, with the test that asked, so a
 fails that test by name. Core's own git reads the same files (``personalclaw.sdk.git.git_env``
 keeps ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_NOSYSTEM``).
 
+A test that loads a model library reaches the machine as well. Some of those libraries write
+outside any home by themselves, or report on their use to the people who make them: onnxruntime
+starts its maker's telemetry as it loads, a device identifier and a queue of events about the
+machine kept in a folder of the maker's, and huggingface_hub keeps a list it fetches in the
+Hugging Face folder other tools share. Every ``personalclaw`` command tells them not to, with each
+library's own setting. ``library_env()`` is those settings, for the home this process runs on: a
+suite's ``pytest_configure`` sets them before anything is collected, so its tests load the
+libraries the way PersonalClaw does.
+
 An ACP app's tests prove what its CLI is handed without launching the CLI.
 ``launch_acp_entry(options, work_dir)`` launches the command an ACP agent entry registers,
 through the transport every spawn from an entry uses, with the environment such a spawn gets,
@@ -60,12 +69,14 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.config.credentials import keychain_off  # noqa: F401
+from personalclaw.library_env import library_env  # noqa: F401
 
 __all__ = [
     "GitGuard",
     "PortGuard",
     "keychain_off",
     "launch_acp_entry",
+    "library_env",
     "neutral_git_env",
     "refuse_git_helpers",
     "refuse_ports",
