@@ -126,14 +126,17 @@ afterEach(() => { vi.unstubAllGlobals() })
 const ANSWER = 'Here is the reply, read out loud.'
 const base = { key: SESSION, title: SESSION, messages: [] as unknown[], running: false, queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent' }
 
+/** Open the chat and answer the read this opening issues. Returns the render, to close it with. */
 async function openWith(query: Record<string, string>, patch: Record<string, unknown> = {}) {
-  render(
+  const read = h.detailCalls.length
+  const view = render(
     <AppearanceProvider>
       <ChatPage sub={SESSION} navigate={() => {}} query={query} setQuery={() => {}} />
     </AppearanceProvider>,
   )
-  await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
-  await act(async () => { h.detailCalls[0].resolve({ ...base, ...patch }) })
+  await waitFor(() => expect(h.detailCalls.length).toBeGreaterThan(read))
+  await act(async () => { h.detailCalls[read].resolve({ ...base, ...patch }) })
+  return view
 }
 
 /** Send the seeded message the way a user does: press the composer's Send. */
@@ -196,6 +199,27 @@ describe('Speak replies aloud', () => {
     paintFrames()
     await new Promise((r) => setTimeout(r, 50))
     expect(h.voiceSynthesize).not.toHaveBeenCalled()
+  })
+
+  it('reads out the reply to a message queued behind a running turn, though its chat closed before the queue answered', async () => {
+    let answerTheSend!: (r: unknown) => void
+    h.sendChat.mockImplementationOnce(() => new Promise((resolve) => { answerTheSend = resolve }))
+    const earlier = [{ role: 'user', content: 'from the other tab', ts: 't1' }]
+    const view = await openWith({ seed: 'And then this.' }, { running: true, messages: earlier, stream_seq: 0 })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
+    await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
+    const ts = String(h.sendChat.mock.calls[0][2]?.client_ts)
+    view.unmount()
+    // Queued. The answer names no session, and the chat that sent the message has closed.
+    await act(async () => { answerTheSend({ ok: true, queued: true }) })
+    // Back on the chat, the queued message's own turn is running, and its reply finishes.
+    await openWith({}, {
+      running: true, stream_seq: 0,
+      messages: [...earlier, { role: 'assistant', content: 'An earlier answer.' }, { role: 'user', content: 'And then this.', ts }],
+    })
+    streamTheReply()
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION))
   })
 })
 

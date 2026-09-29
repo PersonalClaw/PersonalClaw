@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { STREAM_HEAL_WARNING, STREAM_SETTLED_GRACE_MS } from './streamStall'
 
 // ── A streamed answer renders ONCE and WHOLE, whatever React batches and whenever it reloads ──
 //
@@ -131,7 +132,10 @@ beforeEach(async () => {
   ;({ AppearanceProvider } = await import('../../app/appearance'))
 })
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 const page = (sub: string = SESSION, query: Record<string, string> = {}) => (
   <AppearanceProvider>
@@ -269,11 +273,12 @@ describe('a reload in the middle of an answer', () => {
 /** The page as the app's router holds it: `navigate` swaps the route at once, as `useHashRoute`
  *  applies a replace. So the session-create remount happens when `ensureSession` navigates, as it
  *  does in the app. Remounting it later, whenever the test next got round to it, kept the chat it
- *  replaces alive and streaming for that long — on a loaded host, past a tick of that chat's own
- *  stall reconciler, which then read the session beside the remount's read. */
-function Routed({ start, query }: { start: string; query: Record<string, string> }) {
+ *  replaces alive and streaming for that long. `onNavigate` runs as the send navigates, before the
+ *  route changes: the moment the replaced page has handed its run on. */
+function Routed({ start, query, onNavigate }: { start: string; query: Record<string, string>; onNavigate?: () => void }) {
   const [route, setRoute] = useState({ sub: start, query })
   const navigate = (path: string) => {
+    onNavigate?.()
     const [where, search = ''] = path.replace(/^#?\/?/, '').split('?')
     setRoute({ sub: where.replace(/^chat\/?/, ''), query: Object.fromEntries(new URLSearchParams(search)) })
   }
@@ -286,9 +291,9 @@ function Routed({ start, query }: { start: string; query: Record<string, string>
 
 /** Send the first message from a new chat, which remounts the page on the created key as the
  *  send navigates to it. Returns the send's client stamp. */
-async function sendFromNewChat() {
+async function sendFromNewChat(onNavigate?: () => void) {
   const user = userEvent.setup()
-  render(<Routed start="new" query={{ seed: 'Count, please.' }} />)
+  render(<Routed start="new" query={{ seed: 'Count, please.' }} onNavigate={onNavigate} />)
   await waitFor(() => expect(primaryAction()).toBe('Send message'))
   await user.click(screen.getByRole('button', { name: 'Send message' }))
   await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
@@ -317,6 +322,21 @@ describe("a new chat's first turn across the session-create remount", () => {
     paintFrames()
     expect(screen.getAllByText(WHOLE)).toHaveLength(1)
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
+  })
+
+  it('reads nothing from the page the send replaces, however slow the remount', async () => {
+    // The replaced page streams from the send until the remount removes it, and its stall
+    // reconciler ticks every two seconds meanwhile. A remount slow enough for one of those ticks
+    // to fall inside it, which a loaded machine produces, is made here by firing the tick as the
+    // send navigates: nothing has read the session yet, so any read then is the replaced page's.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let readsAtTheHandoff = -1
+    await sendFromNewChat(() => {
+      vi.advanceTimersByTime(2_100)
+      readsAtTheHandoff = h.detailCalls.length
+    })
+    expect(readsAtTheHandoff, 'the replaced page read the session it handed on').toBe(0)
+    await waitFor(() => expect(h.detailCalls).toHaveLength(1))
   })
 })
 
@@ -394,6 +414,57 @@ describe('a session read slower than the hold', () => {
     expect(screen.getByText(PARTIAL.trim())).toBeTruthy()
     expect(primaryAction()).toBe('Stop')
     expect(warn.mock.calls.flat().join(' ')).not.toContain('terminal frame never reached')
+    warn.mockRestore()
+  })
+})
+
+// ── 5. a chat that closes while one of its reads is out ─────────────────────────────────────
+//
+// A read outlives the chat that issued it when the chat closes first: the user opens another
+// chat, or a new chat's send replaces the page it was typed on. Whatever that read does when its
+// hold runs out or it lands belongs to a chat that is gone. Measured in this file: a chat closed
+// with its read out and a `chat_done` among the frames that read held replayed them into itself
+// four seconds later, and read its session again, a read the test running at that moment counted
+// as its own.
+
+/** Open the chat, and stream and end its answer while the first read is out, so that read holds
+ *  every frame of it. Returns the render, to close the chat with. */
+async function aChatWhoseReadHoldsTheAnswer() {
+  const view = render(page())
+  await waitFor(() => expect(h.detailCalls).toHaveLength(1))
+  for (const f of [...chunks(WHOLE, 1), DONE]) act(() => { deliver(f) })
+  return view
+}
+
+describe('a chat that closes while one of its reads is out', () => {
+  it('applies nothing the read held when its hold runs out', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const view = await aChatWhoseReadHoldsTheAnswer()
+    view.unmount()
+    act(() => { vi.advanceTimersByTime(PAST_THE_HOLD_MS) })
+    expect(h.detailCalls, 'the closed chat applied what its read held, and read its session again').toHaveLength(1)
+  })
+
+  it('adopts nothing and applies nothing the read held when it lands', async () => {
+    const view = await aChatWhoseReadHoldsTheAnswer()
+    view.unmount()
+    await answerRead(0, MID_ANSWER)
+    expect(h.detailCalls, 'the closed chat adopted its read and applied what it held').toHaveLength(1)
+  })
+
+  it('settles nothing when the stall reconciler’s read lands', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const view = render(page())
+    await answerRead(0, { running: true, messages: [QUESTION], stream_seq: 0 })
+    // Streaming and silent: the reconciler reads the chat on its next tick.
+    act(() => { vi.advanceTimersByTime(2_100) })
+    expect(h.detailCalls, 'the reconciler never read the chat').toHaveLength(2)
+    view.unmount()
+    // Its read lands after the chat closed, quiet past the settle grace, with the turn over.
+    act(() => { vi.advanceTimersByTime(STREAM_SETTLED_GRACE_MS) })
+    await answerRead(1, { running: false, messages: [QUESTION], stream_seq: 0 })
+    expect(warn.mock.calls.flat().join(' '), 'a chat that had closed was settled from its read').not.toContain(STREAM_HEAL_WARNING)
     warn.mockRestore()
   })
 })

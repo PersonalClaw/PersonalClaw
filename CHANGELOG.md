@@ -124,6 +124,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**
 - **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
 
 - **A second tab opened during first-run setup joins the setup where it is, with the name already entered, instead of starting over at step 1.**

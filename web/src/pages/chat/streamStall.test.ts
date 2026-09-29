@@ -93,8 +93,8 @@ function reconcilerBody(src: string): string {
   expect(anchor, 'the idle stream-reconciler must exist in ChatPage — the rail is keyed on it').toBeGreaterThan(-1)
   const start = src.lastIndexOf('useEffect(() => {', anchor)
   expect(start, 'the reconciler must live in a useEffect').toBeGreaterThan(-1)
-  const end = src.indexOf('}, [streaming, turns])', anchor)
-  expect(end, 'the reconciler effect must close on [streaming, turns]').toBeGreaterThan(start)
+  const end = src.indexOf('}, [streaming, turns, sessionId])', anchor)
+  expect(end, 'the reconciler effect must close on [streaming, turns, sessionId]').toBeGreaterThan(start)
   return stripComments(src.slice(start, end))
 }
 

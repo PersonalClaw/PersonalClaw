@@ -1285,6 +1285,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     })
     return () => { alive = false }
   }, [sessionId, loadAttempt])
+  // A closed chat follows no session. What it left in flight outlives it: a session read, the hold
+  // that read put on the stream, the stall reconciler's read. When one of them lands or runs out it
+  // meets this chat's session gates, which adopt a snapshot, apply a frame and settle a stall only
+  // for the session the chat follows. Left in place, the session still matched them all, so the
+  // frames a read held when the chat closed were applied to it, and a `chat_done` among them read
+  // the session again for a chat no longer on screen. (StrictMode's rehearsal remount opens it again:
+  // the load effect above sets the session.)
+  useEffect(() => () => { sessionRef.current = null }, [])
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -1776,14 +1784,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // not. Self-healing + cheap: fires only inside a silent-while-streaming window, and tears
   // itself down the moment the claim is corrected.
   useEffect(() => {
-    if (!streaming) return
+    // Only a chat opened on a session reconciles it. A new chat learns its key from the send that
+    // creates the session and hands the run to the page that replaces it, so a tick of its own
+    // between the two read the session beside the replacement's read.
+    if (!streaming || !sessionId) return
+    const s = sessionId
     // Restarts on every transcript change (the `turns` dep), so a turn that is still
     // painting can never satisfy the settled grace. That is what keeps a send whose dispatch
     // has not landed yet out of it — see STREAM_SETTLED_GRACE_MS.
     const transcriptChangedAt = Date.now()
     const iv = window.setInterval(() => {
-      const s = sessionRef.current
-      if (!s) return
       if (Date.now() - lastWsActivityRef.current < 3500) return  // WS still active — no need
       const showingApproval = turns.some((t) => t.segments.some((sg) => sg.kind === 'approval' && !(sg as ApprovalSegment).resolved))
       if (showingApproval) return  // card already up
@@ -1826,7 +1836,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }).catch(() => {}).finally(() => { probing.current = false })
     }, 2000)
     return () => window.clearInterval(iv)
-  }, [streaming, turns])
+  }, [streaming, turns, sessionId])
 
   // Global "/" shortcut → focus the composer (GitHub/Slack-style), unless the
   // user is already typing in a field or a menu/modal owns the key.
@@ -2216,13 +2226,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // the ts we send, and Edit & resend locates a message by it.
       const steerTs = new Date().toISOString()
       ensureSession()
-        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, 'steer'))
-        .then((r) => {
+        .then((s) => api.sendChat(t, s, { client_ts: steerTs }, 'steer').then((r) => [s, r] as const))
+        .then(([s, r]) => {
           setInput((cur) => (cur === t ? '' : cur))
           if (r?.steered) { setSteered((prev) => [...prev, t]); return }
-          // Queued or dispatched fresh, it gets a reply of its own; a steer does not.
-          const owedIn = r?.session || sessionRef.current
-          if (owedIn) oweSpokenReply(owedIn)
+          // Queued or dispatched fresh, it gets a reply of its own; a steer does not. Owed in the
+          // session it was sent to: a queued answer names none, and this chat may have closed.
+          oweSpokenReply(r?.session || s)
           if (r?.queued) return  // the paired queue_push frame renders the strip card
           // Dispatched as a fresh turn. Render exactly what the normal send path would:
           // the user's bubble, then arm streaming so its reply has somewhere to land.
