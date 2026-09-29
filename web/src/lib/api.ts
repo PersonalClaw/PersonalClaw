@@ -1920,6 +1920,9 @@ export interface WorkflowSurfacingFinding { name: string; code: string; detail: 
 // its fields from these, and a picker that could not reference the type would re-describe it.
 export interface WorkflowInputParam {
   type?: string; required?: boolean; default?: unknown; help?: string
+  /** Which loop column a loop-kind launch puts in this input (`InputParam.loop_field`): `task` marks
+   *  where the template takes the job it is given. Absent on every other input. */
+  loop_field?: string
 }
 export interface WorkflowDef {
   name: string; description?: string; version?: number; source?: string; provenance?: string

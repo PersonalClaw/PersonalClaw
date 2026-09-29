@@ -81,7 +81,7 @@ describe('#/triggers/new says its action list failed instead of blaming the user
       expect(save.getAttribute('title'), 'the reason must name the failed read, not a choice')
         .toMatch(/could ?n.t load the action providers/i)
     })
-    expect(save.getAttribute('title'), 'never the old blame').not.toMatch(/^Pick a provider/)
+    expect(save.getAttribute('title'), 'never the old blame').not.toMatch(/^Pick the action/)
   })
 
   it('still offers the picker — and no error — when the registry really is empty', async () => {

@@ -170,6 +170,7 @@ def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[Collec
     try:
         from personalclaw.ledger import read_events
         from personalclaw.ledger.kinds import EFFECT
+        from personalclaw.triggers.delivery import status_url
         from personalclaw.workflows import store as run_store
     except Exception:  # noqa: BLE001 - engine absent (a bare library import) → no run lane
         logger.warning("triage: run lane unavailable", exc_info=True)
@@ -210,7 +211,10 @@ def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[Collec
                     title=f"{run.workflow_name}: {status}{wrote}",
                     detail=str(getattr(run, "error_message", "") or "")[:DETAIL_CHARS],
                     materiality=materiality,
-                    permalink=f"/runs/{run.id}",
+                    # The run's page in the dashboard, from the one builder every run link
+                    # uses. It was the path `/runs/<id>`, which the gateway answers with the app
+                    # itself, so the card's link to the item opened Home.
+                    permalink=status_url(run_id=str(run.id)),
                     ts=created,
                 )
             )

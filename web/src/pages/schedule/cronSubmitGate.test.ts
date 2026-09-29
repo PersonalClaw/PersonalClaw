@@ -78,8 +78,10 @@ describe('both submit paths are gated on it', () => {
       expect(canSave, `canSave lost ${term}`).toContain(term)
     }
     expect(src).toContain('scheduleDraftInvalidReason(sched)')
-    // The button must SAY why, not just sit dead — the reason is the field's own sentence.
-    expect(src).toMatch(/disabledReason[\s\S]{0,600}scheduleReason \? scheduleReason/)
+    // The button must SAY why, not just sit dead — the reason is the field's own sentence. It is
+    // composed once as `saveReason`, which the button carries and the footer shows beside it.
+    expect(src).toMatch(/const saveReason =[\s\S]{0,900}scheduleReason \? scheduleReason/)
+    expect(src).toMatch(/disabledReason=\{saveReason/)
     // And the handler refuses even if something reached it with the button enabled.
     expect(src).toMatch(/if \(scheduleReason\) \{ setErr\(scheduleReason\); return \}/)
   })

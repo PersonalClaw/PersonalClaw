@@ -530,6 +530,10 @@ input is given, every input is its declared type), so a trigger that could
 never start its workflow is refused with that sentence instead of failing at
 every fire. A fire asks again, because the workflow can change after the
 trigger was saved, and starts the run with the declared defaults applied.
+Before that, the form says what it is waiting for beside **Create trigger** — the
+first requirement outstanding, a required action setting named by its label
+("“Workflow” is required") — and the trigger's panel reads back the workflow the
+action saved (`config.workflow`) and the inputs its run starts with.
 
 **The 900s cadence floor is for model calls.** `MIN_CLOCK_INTERVAL_SECS`
 warns only when the action can call a model: providers listed in

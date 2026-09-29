@@ -442,6 +442,20 @@ class TestTelemetryShapeIsHonest:
         assert stamp_turn_telemetry(s, {"events": 1}) is False
         assert stamp_turn_telemetry(s, None) is False
 
+    @pytest.mark.parametrize("started_by", ["user", "inject", "nudge", "subagent"])
+    def test_a_turn_that_wrote_no_reply_leaves_the_earlier_answer_alone(self, started_by):
+        # A turn a person, an automation, a loop's nudge or a subagent's report started, which
+        # ran a step and wrote nothing: the answer above it belongs to the turn before.
+        s = _ChatSession("x")
+        s.append("user", "q1", "msg msg-u")
+        s.append("assistant", "a1", "msg msg-a")
+        s.append(started_by, "q2", "msg")
+        s.append("tool", "Bash", "msg msg-tool", meta={"tool_call_id": "t"})
+        assert stamp_turn_telemetry(s, {"events": 1}) is False
+        assert stamp_turn_summary(s, "Ran Bash") is False
+        stamped = {TURN_TELEMETRY_KEY, TURN_SUMMARY_KEY}
+        assert not [m for m in s.messages if (m.get("meta") or {}).keys() & stamped]
+
 
 # ── the summary label: SSM-3 ─────────────────────────────────────────────────────
 #

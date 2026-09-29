@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Smartphone, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
@@ -120,6 +120,12 @@ const ROUTABLE = new Set([...NAV.map((n) => n.id), 'notifications', 'discover', 
  *  on the dashboard, because the correction fires on the handoff commit while `route` is still the
  *  stale `'onboarding'`. */
 const SHELL_ROUTES = new Set(['onboarding', 'companion'])
+/** The phone's own surface, as a row of the rail's DRAWER — the phone form only (`railItems`).
+ *  `#/companion` is a shell route rendered full-screen, not a desktop destination, so it stays out
+ *  of `NAV`; without this row a phone that left it for the full dashboard (its footer's "Open the
+ *  full dashboard") could come back only by typing its address. Pinned beside Settings: it is
+ *  where the device is, not a section of the product. */
+const COMPANION_RAIL_ITEM: NavItem = { id: 'companion', label: 'Companion', icon: Smartphone, pinBottom: true }
 /** Is there anything the shell can render for this hash — by the nav switch or by an early
  *  return? The corrector's question, and the reason it is not `ROUTABLE.has`. */
 const renderable = (route: string): boolean => ROUTABLE.has(route) || SHELL_ROUTES.has(route)
@@ -651,6 +657,10 @@ function AppInner() {
   // Which rail rows SHOW. Disclosure hides rows; it never removes a route (`rendered` above is
   // untouched by it) and never removes a command below.
   const disclosedItems = navItems.filter((n) => isDisclosed(n.id, navMode, navPinned))
+  // The phone form's drawer also carries the companion, ahead of Settings (`COMPANION_RAIL_ITEM`).
+  const railItems = isMobile
+    ? [...disclosedItems.filter((n) => !n.pinBottom), COMPANION_RAIL_ITEM, ...disclosedItems.filter((n) => n.pinBottom)]
+    : disclosedItems
   // What "Everything" would reveal — counted against starter whatever the current mode is, so
   // the expanded rail can say what collapsing costs.
   const moreCount = undisclosedCount(navItems.map((n) => n.id), navPinned)
@@ -671,7 +681,7 @@ function AppInner() {
   ]
   return (
     <div className="flex h-full" style={{ background: 'var(--color-canvas)' }}>
-      <NavRail items={disclosedItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
+      <NavRail items={railItems} activeId={active} onSelect={onNavSelect} collapsed={railCollapsed}
         overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
         disclosure={{
           expanded: navMode === 'expert',

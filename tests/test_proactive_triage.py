@@ -98,7 +98,7 @@ def _items() -> list[CollectedItem]:
             source_id="run-1",
             title=_RUN_TITLE,
             materiality="action",
-            permalink="/runs/run-1",
+            permalink="#/workflows/runs/run-1",
             ts="2026-08-24T03:00:00+00:00",
         ),
     ]

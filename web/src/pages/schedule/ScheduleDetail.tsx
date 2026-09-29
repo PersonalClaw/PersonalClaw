@@ -264,6 +264,11 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   })
   const warnings = job.warnings ?? []
   const otherFields = mm.key === 'other' ? actionFields(cfg, providers.find((p) => p.name === provider)) : []
+  // A Run workflow action's inputs, as the run will be handed them. Keyed by the workflow's own
+  // input names, which no provider schema declares, so each reads under its name in words.
+  const workflowInputs = provider === 'run-workflow' && cfg.inputs && typeof cfg.inputs === 'object' && !Array.isArray(cfg.inputs)
+    ? actionFields(cfg.inputs as Record<string, unknown>)
+    : []
   return (
     <div className="flex flex-col gap-l">
       {/* action row */}
@@ -351,10 +356,18 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           </div>
         </Section>
       ) : provider === 'run-workflow' ? (
+        // `workflow` is the key the action saves (the run-workflow manifest's only one), and its
+        // inputs ride beside it. This read `workflow_id`, a key nothing writes, so every Run
+        // workflow trigger showed "Workflow —" and none of the inputs it would start its run with.
         <Section label="Workflow">
           <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono break-words">
-            {String(cfg.workflow_id || '—')}
+            {String(cfg.workflow || '—')}
           </div>
+          {workflowInputs.length > 0 && (
+            <div className="mt-s" aria-label="The inputs its run starts with" role="group">
+              <ActionFieldList fields={workflowInputs} />
+            </div>
+          )}
         </Section>
       ) : mm.key === 'other' ? (
         // 🔴 NOT A COMMAND BOX. Every provider this form cannot edit (notify, the digests, …) fell

@@ -39,6 +39,11 @@ the spec to learn what it wants.
 **A required input has no default.** They contradict each other — a default
 means it can be omitted. The lint treats this as an error.
 
+**Say where the job goes.** Workflows › **Start from template** asks what you want to do,
+picks a template for it, and opens that template's run form with your sentence already in the
+input marked `"loop_field": "task"` — or, when no input carries the marker, in the first required
+text input. Mark the input a plain-language request belongs in, so it lands there.
+
 **Steering examples are not decoration.** The widget surfaces them and
 `workflow_plan` uses them as few-shot. Two kinds matter: a `kickoff` example
 (what driving this looks like) and a `mutation` example (what editing it

@@ -219,6 +219,22 @@ _FAILED: dict[str, Any] = {"ok": False}
 # which a legitimate result already occupies in the wave's `results` list.
 _DROPPED: Any = object()
 
+#: What the model is told, once, when it ran tools for a turn and then stopped without writing a
+#: word back. A local model measured doing exactly that after fifteen shell calls: its sixteenth
+#: answer was empty, the turn ended there, and the person got no reply at all. Resending their
+#: message would run every step again, so the turn goes on instead, with the results it already
+#: has, and asks for the reply. "What stopped you" is there because a model that went quiet was
+#: often stuck, and saying so is an answer too.
+ANSWER_OWED_NOTE = (
+    "You ran tools for this request and have not written your reply yet. Write it now from what "
+    "those steps found. If you could not do what was asked, say what stopped you."
+)
+
+#: The runtime surface of a loop's worker and planner (the `loops` model axis). Their deliverable
+#: is a file, not a reply, and the loop re-prompts a cycle that wrote none, so a turn there that
+#: ends on a tool call owes no answer.
+_LOOP_SURFACE = "loops"
+
 
 @dataclass(frozen=True, slots=True)
 class _PreparedCall:
@@ -356,6 +372,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._staged_images: list[str] = []
         self._turn_images: list[str] = []
         self._turn_message: dict | None = None
+        # Set for the one inference that asks a quiet model for its reply (`ANSWER_OWED_NOTE`);
+        # `_request_messages` lays the note on that request's tail and nowhere in the history.
+        self._answer_owed = False
         # Discovered tool surface, populated by start().
         self._tool_defs: list[Any] = []
         self._tool_schema: list[dict] = []
@@ -1002,6 +1021,12 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # turn scope, not per-inference: two separate transients in one turn mean
         # the provider is genuinely unhealthy, and the second failure surfaces.
         inference_retried = False
+        # ONE request for the reply per turn (``ANSWER_OWED_NOTE``): a model that goes quiet a
+        # second time ends the turn, and the surface says the turn has no answer. `wrote_text`
+        # is whether any inference of the turn wrote more than whitespace: a turn that answered
+        # and then made one closing call owes nothing.
+        answer_asked = False
+        wrote_text = False
         # The model this turn starts on, put back when it ends: a turn that fell back must not
         # leave the next one answering on the fallback with nothing saying so.
         home = (self._model, self._definition.model)
@@ -1277,6 +1302,10 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                         )
                     break
 
+                # The request for the reply rode the inference that just answered, and no other.
+                self._answer_owed = False
+                wrote_text = wrote_text or bool(assistant_text.strip())
+
                 if usage is not None:
                     agg_in += usage.input_tokens or 0
                     agg_out += usage.output_tokens or 0
@@ -1303,6 +1332,28 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 #    more inference so the steer lands inside the SAME answer, which is the
                 #    entire promise of steering.
                 if tool_calls == [] and not self._cancelled and self._drain_steers_into_history():
+                    continue
+                #    …or when the model ran tools this turn and has written nothing at all. It is
+                #    asked for its reply once, with the results it already has; a second silence
+                #    ends the turn, and the surface says it has no answer.
+                if (
+                    not tool_calls
+                    and not answer_asked
+                    and self._owes_an_answer(
+                        wrote_text=wrote_text, tool_calls_run=agg_tool_calls, usage=usage
+                    )
+                ):
+                    answer_asked = True
+                    # Not kept: it says nothing, and a provider may refuse an empty assistant
+                    # message in the history the next request replays.
+                    self._messages.pop()
+                    self._answer_owed = True
+                    logger.warning(
+                        "native: the model stopped after %d tool call(s) without a reply — "
+                        "asking it once for the answer (session=%s)",
+                        agg_tool_calls,
+                        self._session_key,
+                    )
                     continue
                 if not tool_calls or self._cancelled:
                     # If we're stopping with tool calls still pending (cancelled
@@ -1384,6 +1435,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             self._pending_substitution = ""
             self._turn_images = []
             self._turn_message = None
+            self._answer_owed = False
             self._cancel.end_turn()
 
     async def _tool_schema_budget(self) -> int | None:
@@ -2405,26 +2457,47 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         return True
 
     def _request_messages(self, mode: PromptCache) -> list[dict]:
-        """The message list one inference sends: the cache hint, then the turn's images.
+        """The message list one inference sends: the cache hint, the turn's images, and the
+        request for a reply the turn still owes.
 
         Never mutates ``_messages``. The images go onto the turn's own user message, found by
         identity (``mark_cacheable_prefix`` keeps positions), so a steer or a volatile note
         appended later in the turn never takes them. A turn message compaction folded away
-        takes its images with it — there is nothing left for them to belong to.
+        takes its images with it — there is nothing left for them to belong to. The request for
+        the reply (``ANSWER_OWED_NOTE``) is a volatile note at the tail, like the correction
+        note, so it rides every attempt of that one inference and never enters the history.
         """
-        msgs = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
-        if not self._turn_images or self._turn_message is None:
-            return msgs
-        idx = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
-        if idx < 0:
-            return msgs
-        out = list(msgs)
-        target = out[idx]
-        text = target.get("content")
-        parts: list[dict] = [{"type": "text", "text": str(text or "")}]
-        parts.extend({"type": "image_url", "image_url": {"url": u}} for u in self._turn_images)
-        out[idx] = {**target, "content": parts}
+        out = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
+        if self._turn_images and self._turn_message is not None:
+            idx = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+            if idx >= 0:
+                out = list(out)
+                target = out[idx]
+                text = target.get("content")
+                parts: list[dict] = [{"type": "text", "text": str(text or "")}]
+                parts.extend(
+                    {"type": "image_url", "image_url": {"url": u}} for u in self._turn_images
+                )
+                out[idx] = {**target, "content": parts}
+        if self._answer_owed:
+            out = [*out, {"role": "user", "content": ANSWER_OWED_NOTE, "_volatile": True}]
         return out
+
+    def _owes_an_answer(
+        self, *, wrote_text: bool, tool_calls_run: int, usage: AgentEvent | None
+    ) -> bool:
+        """Whether a turn its model just ended owes the person a reply it can still be asked for.
+
+        It does when the model ran tools this turn and wrote nothing at all. Not when it wrote
+        something, ran nothing (a blank turn is its surface's to retry: nothing ran, so resending
+        the message costs nothing), was stopped, or hit its output cap (asking again meets the
+        same cap); and never for a loop's worker, whose deliverable is a file.
+        """
+        if self._cancelled or tool_calls_run == 0 or wrote_text:
+            return False
+        if usage is not None and is_length_stop(usage.stop_reason):
+            return False
+        return self._surface != _LOOP_SURFACE
 
     def announce_failover(self) -> None:
         """Let the next turn fall back down its model chain, for a caller that shows it.

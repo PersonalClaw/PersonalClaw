@@ -1015,7 +1015,7 @@ def _attach_locator(item: dict, q_terms: set[str], chunk_locator: dict | None = 
     """Return the four citation fields for a result: ``source_type`` (the item kind),
     ``section`` (nearest structural header / slide / sheet above the best match, or None),
     ``line_range`` (1-based [start,end] of the best-matching line span in ``content``, or
-    None), and ``deep_link`` (``/knowledge/items/{id}?loc=…``). Pure: reads only the item
+    None), and ``deep_link`` (``#/knowledge/item/{id}?loc=…``). Pure: reads only the item
     dict, the already-computed query terms, and the optional winning-chunk locator; no DB,
     no I/O.
 
@@ -1088,9 +1088,11 @@ def _attach_locator(item: dict, q_terms: set[str], chunk_locator: dict | None = 
         if isinstance(fmeta, dict) and fmeta.get("page_count"):
             section = None  # no per-page offsets exist; leave section null, keep it honest
 
-    # deep_link: the item route + an optional line-locator query the FE can honor.
+    # deep_link: the item's page in the dashboard (`#/knowledge/item/<id>`, the route
+    # KnowledgeSection matches) + an optional line locator. It was the path
+    # `/knowledge/items/<id>`, which the gateway answers with the app itself, so it opened Home.
     loc = f"L{line_range[0]}-{line_range[1]}" if line_range else ""
-    deep_link = f"/knowledge/items/{iid}" + (f"?loc={loc}" if loc else "")
+    deep_link = f"#/knowledge/item/{iid}" + (f"?loc={loc}" if loc else "")
 
     return {
         "source_type": source_type,

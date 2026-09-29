@@ -9,6 +9,7 @@ import { api } from '../../lib/api'
 import { persistAvailableFrom, persistToggleCopy } from '../../lib/persistClaim'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
+import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import { PageTitle } from '../../ui/PageTitle'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { SandboxPicker, type SandboxProvider } from './SandboxPicker'
@@ -44,10 +45,15 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // ?active=X&split=X state the close is resolving.
   const setPanes = (p: PaneSelection) => setQuery({ active: p.active || null, split: p.split || null })
   const [busy, setBusy] = useState(false)
-  // A refused create (e.g. the server's 3-session cap → 429 "Max 3 sessions")
-  // must be visible on the page, not only in devtools — same contract as the
-  // drawer. Cleared on the next attempt.
+  // A refused create (e.g. the gateway's session limit) must be visible on the page, not only in
+  // devtools — same contract as the drawer. Cleared on the next attempt.
   const [error, setError] = useState('')
+  // Why New session was last refused, while the sessions it was said against are open
+  // (`standing`). For the limit (`terminal_session_limit`) the control stays unavailable with the
+  // sentence as its reason, since pressing it again earns the same refusal; a session opened or
+  // closed since makes it stale, in the same render as the tab.
+  const [refusal, setRefusal] = useState<OpenRefusal | null>(null)
+  const limitReason = standing(refusal, tabs)?.limit ? refusal?.text : undefined
   const [restored, setRestored] = useState(false)
   // P25: opt-in tmux-backed persistence — when on, terminal sessions survive a
   // gateway restart (the shell lives in a detached tmux daemon, re-attached on
@@ -121,7 +127,8 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   }, [])
 
   const newSession = useCallback(async (intoSplit = false) => {
-    setBusy(true); setError('')
+    const asked = tabs
+    setBusy(true); setError(''); setRefusal(null)
     try {
       // No cwd on purpose: the server resolves the default (configured terminal cwd → agent
       // WORKSPACE → $HOME, `handlers/terminal.py:default_terminal_cwd`), which is what makes the
@@ -136,10 +143,12 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       if (intoSplit) setSplit(r.session_id)
       else setActive(r.session_id)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not open a terminal session.')
+      const said = openRefusal(e, asked)
+      setError(said.text)
+      setRefusal(said)
     } finally { setBusy(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandbox])
+  }, [sandbox, tabs])
 
   const closeSession = useCallback(async (id: string) => {
     // 🔴 `catch(() => {})` then dropping the tab regardless told the user they had closed a terminal
@@ -208,11 +217,12 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
           {providers.some((p) => p.name !== 'none') && (
             <SandboxPicker providers={providers} value={sandbox} onChange={setSandbox} busy={busy} />
           )}
-          <HeaderControl icon={busy ? Loader2 : Plus} label="New terminal session" priority="primary" onClick={() => newSession(false)} />
+          <HeaderControl icon={busy ? Loader2 : Plus} label="New terminal session" priority="primary" onClick={() => newSession(false)}
+            disabled={!!limitReason} disabledReason={limitReason} />
         </HeaderActions>}
       />
 
-      {error && <InlineError icon className="mx-2 mt-2" onDismiss={() => setError('')}>{error}</InlineError>}
+      {error && <InlineError icon className="mx-s mt-s" onDismiss={() => setError('')}>{error}</InlineError>}
 
       {tabs.length > 0 && (
         // 🔴 THE STRIP ANNOUNCED TABS IT COULD NOT REACH. Each chip carried `role="tab"` on a bare

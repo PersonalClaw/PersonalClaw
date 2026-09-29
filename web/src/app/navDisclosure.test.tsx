@@ -364,6 +364,25 @@ describe('at a mobile viewport', () => {
     await waitFor(() => expect(readNavDisclosure().mode).toBe('expert'))
     await waitFor(() => expect(railLinks()).toContain('Tools'))
   })
+
+  it('the drawer carries the phone companion, so a phone never has to type its address', async () => {
+    // A paired phone that opened the full dashboard from its companion had no way back but
+    // typing `#/companion`: the route is a full-screen shell route, outside NAV by design.
+    setViewport(true)
+    setNavMode('starter')
+    const user = userEvent.setup()
+    renderApp()
+    await user.click(await screen.findByRole('button', { name: 'Expand sidebar' }))
+    await user.click(await within(rail()).findByRole('button', { name: 'Companion' }))
+    await waitFor(() => expect(location.hash).toBe('#/companion'))
+    expect(await screen.findByRole('heading', { name: 'Companion' })).toBeTruthy()
+  })
+
+  it('a desktop rail has no companion row — it is not a desktop destination', async () => {
+    renderApp()
+    await waitFor(() => expect(railLinks()).toContain('Home'))
+    expect(railLinks()).not.toContain('Companion')
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

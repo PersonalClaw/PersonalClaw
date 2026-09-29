@@ -16,8 +16,9 @@ import {
 import { intervalToSecs, scheduleWhenMet } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
+import { humanizeKey } from './DryRunResult'
 import { TRIGGER_PRESETS, findTriggerPreset, prefillDraft } from './triggerPresets'
-import { schemaProps } from '../tools/schema'
+import { schemaMeta, schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
   eventDormancyReason, eventIsDormant, eventIsAgentScoped, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
@@ -135,16 +136,25 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   // `command`) enabled Create with an empty command, so the button looked ready
   // but the backend rejected the submit. Every required prop must have a
   // non-empty value in `config`.
-  const requiredConfigMet = useMemo(() => {
-    if (!provider) return false
+  //
+  // Named, not counted: the first required setting still empty, by the label the form shows it
+  // under (`x-meta.label`). "Complete the required settings" said which settings nowhere, and only
+  // in a hover title — a Run workflow trigger with no workflow picked could not be saved, and the
+  // page never said why.
+  const missingSetting = useMemo(() => {
+    if (!provider) return ''
     const sel = providers.find((p) => p.name === provider)
-    const { required } = schemaProps(sel?.settingsSchema)
+    const { props, required } = schemaProps(sel?.settingsSchema)
     for (const key of required) {
       const v = config[key]
-      if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return false
+      if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
+        const schema = props.find(([k]) => k === key)?.[1]
+        return (schema ? schemaMeta(schema).label : undefined) ?? humanizeKey(key)
+      }
     }
-    return true
+    return ''
   }, [provider, providers, config])
+  const requiredConfigMet = !!provider && !missingSetting
 
   // A data-event pattern whose matcher is REQUIRED (InboxSender) cannot save empty — the backend
   // rejects it with `sender_glob_required`, so gate it here and point at the field rather than
@@ -161,6 +171,22 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
   const scheduleReason = kind === 'schedule' ? scheduleDraftInvalidReason(sched) : null
   const canSave = !!name.trim() && !!provider && requiredConfigMet && eventMatcherMet
     && scheduleWhenOk && !scheduleReason
+  // Why "Create trigger" is unavailable: the FIRST requirement outstanding, in the order the form
+  // presents them, rather than a recital of all of them. Said beside the button, where it can be
+  // read, and as the button's own reason. Empty while saving, where the label reads "Creating…".
+  const saveReason = saving || canSave ? ''
+    : !name.trim() ? 'Name the trigger first'
+      // Section 1 (TRIGGER) precedes section 2 (ACTION) on the page, so its unmet requirement is
+      // named first — and this reason is the field's own sentence, so the button and the red cron
+      // field never say two different things.
+      : scheduleReason ? scheduleReason
+        // The providers read comes FIRST among the action-shaped reasons: telling someone to pick
+        // from a list that failed to load asks for something they cannot do.
+        : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
+          : !provider ? 'Pick the action it runs'
+            : missingSetting ? `“${missingSetting}” is required`
+              : !scheduleWhenOk ? 'Pick the date & time to fire once'
+                : 'Set the event to match'
 
   async function create() {
     if (scheduleReason) { setErr(scheduleReason); return }
@@ -353,25 +379,11 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
-        <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex items-center justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+          {saveReason && <p data-type="body-s" className="mr-auto min-w-0 text-on-surface-var">{saveReason}</p>}
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
-          {/* `canSave` ANDs five requirements; the reason names the FIRST one outstanding, in the
-              order the form presents them, rather than reciting all five. Omitted while `saving`,
-              where the label already reads "Creating…". */}
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !canSave}
-            disabledReason={saving ? undefined
-              : !name.trim() ? 'Name the trigger first'
-                // Section 1 (TRIGGER) precedes section 2 (ACTION) on the page, so its unmet
-                // requirement is named first — and this reason is the field's own sentence, so the
-                // button and the red cron field never say two different things.
-                : scheduleReason ? scheduleReason
-                  // The providers read comes FIRST among the provider-shaped reasons: telling someone to
-                  // pick from a list that failed to load asks for something they cannot do.
-                  : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
-                    : !provider ? 'Pick a provider'
-                      : !requiredConfigMet ? 'Complete the required settings'
-                        : !scheduleWhenOk ? 'Pick the date & time to fire once'
-                          : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
+            disabledReason={saveReason || undefined}><Check size={16} /> Create trigger</Button>
         </div>
       </div>
     </div>

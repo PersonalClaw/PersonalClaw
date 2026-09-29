@@ -15,7 +15,7 @@ import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSo
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
-import { coerceInputs, inputFields, startsWithoutInput } from './templateStart'
+import { coerceInputs, inputFields, intentInput, startsWithoutInput } from './templateStart'
 import { preflightRemediations } from './preflightRemediation'
 import { suggestTemplate } from './templateSuggest'
 import { workflowPresets } from './workflowPresets'
@@ -120,10 +120,14 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     return [...matched].sort((a, b) => rank(a.name) - rank(b.name))
   }, [defs, q, surfacing, byDef])
 
-  const start = useCallback(async (name: string) => {
+  const start = useCallback(async (name: string, intent = '') => {
     // Every bundled template declares a required input, and starting with none is refused by the
     // engine (`WF_RUN_MISSING_INPUTS`) — so before this, every shipped template was unstartable
     // from the UI. Fetch the definition, ask for what it declares, then start.
+    //
+    // `intent` is what the user already typed into "Start from template". It opens in the input
+    // the template takes its job in (`intentInput`): the form used to open with that field empty,
+    // so the question had to be typed a second time.
     let def: WorkflowDef | null = null
     try {
       def = (await api.workflowDef(name)).definition
@@ -134,8 +138,11 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     }
 
     let inputs: Record<string, unknown> | undefined
-    if (def && !startsWithoutInput(def.inputs)) {
-      const fields = inputFields(def.inputs)
+    const into = def && intent ? intentInput(def.inputs) : ''
+    // A template with nothing required still shows the form when it has somewhere to put the
+    // intent, so what was typed is on screen before it runs rather than started with unseen.
+    if (def && (!startsWithoutInput(def.inputs) || into)) {
+      const fields = inputFields(def.inputs).map((f) => (f.name === into ? { ...f, initial: intent } : f))
       const example = def.metadata?.steering_examples?.find((e) => e.event === 'kickoff')
       const answers = await promptForm({
         title: `Run ${name}`,
@@ -198,7 +205,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
       notify('No single template matched — showing the closest ones to pick from.')
       return
     }
-    await start(template)
+    await start(template, intent)
   }, [defs, setTab, setQ, start])
 
   const remove = useCallback(async (name: string) => {

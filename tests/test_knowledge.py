@@ -654,7 +654,7 @@ class TestHybridRetriever:
         assert hit["source_type"] == "document"
         assert hit["section"] == "Rollback Procedure"  # nearest header above the match
         assert hit["line_range"] and len(hit["line_range"]) == 2
-        assert hit["deep_link"].startswith(f"/knowledge/items/{hit['id']}")
+        assert hit["deep_link"].startswith(f"#/knowledge/item/{hit['id']}")
         assert "loc=L" in hit["deep_link"]
 
     def test_locator_is_honest_null_for_structureless_item(self):
@@ -663,7 +663,7 @@ class TestHybridRetriever:
         loc = _attach_locator({"id": "img1", "item_type": "image", "content": ""}, {"cat"})
         assert loc["section"] is None and loc["line_range"] is None
         assert loc["source_type"] == "image"
-        assert loc["deep_link"] == "/knowledge/items/img1"
+        assert loc["deep_link"] == "#/knowledge/item/img1"
 
     def test_locator_no_query_match_yields_no_line_range(self):
         # Content exists but no query term hits any line → no fabricated span.
@@ -671,7 +671,7 @@ class TestHybridRetriever:
             {"id": "n1", "item_type": "note", "content": "alpha beta\ngamma delta"}, {"zeta"}
         )
         assert loc["line_range"] is None and loc["section"] is None
-        assert loc["deep_link"] == "/knowledge/items/n1"
+        assert loc["deep_link"] == "#/knowledge/item/n1"
 
     def test_rrf_fuse(self):
         list_a = [("item1", 1), ("item2", 2), ("item3", 3)]

@@ -107,6 +107,22 @@ export function coerceInputs(
   return out
 }
 
+/** The input a plain-language intent fills when "Start from template" opens a template's form.
+ *
+ *  The template's own declaration first: the input it marks `loop_field: "task"`, where the loop
+ *  door hands a template its job (`workflows/loop_aliases.template_intake`). A template with no
+ *  marker takes it in its first REQUIRED text input, in declaration order, which is where each
+ *  template the picker can suggest asks for the job (`task`, `brief`, `question`). '' when there
+ *  is none — the form then opens as it always did, and the intent is not put anywhere it would
+ *  have to be guessed. */
+export function intentInput(inputs: Record<string, WorkflowInputParam> | undefined): string {
+  const entries = Object.entries(inputs ?? {})
+  const marked = entries.find(([, p]) => p.loop_field === 'task')
+  if (marked) return marked[0]
+  const text = entries.find(([, p]) => p.required && (p.type ?? 'string') === 'string')
+  return text ? text[0] : ''
+}
+
 /** True when a template can be started with no dialog at all.
  *
  *  Worth checking: a template with no required inputs should start on ONE click. Opening an empty

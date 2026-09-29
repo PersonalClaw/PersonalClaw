@@ -20,7 +20,8 @@ function isSet(v: unknown): boolean {
   return true
 }
 
-function humanizeKey(key: string): string {
+/** A settings key the schema gives no label, as words: `idempotency_key` → "Idempotency key". */
+export function humanizeKey(key: string): string {
   const spaced = key.replace(/_/g, ' ').trim()
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }

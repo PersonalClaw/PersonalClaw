@@ -231,6 +231,20 @@ user can flip between alternative answers and the choice survives reload. The
 backend broadcasts variant switches; the frontend renders prev/next navigation
 on the message.
 
+Regenerate runs again the message that started the anchored turn: the user's,
+or the row an automation, a subagent's report or an auto-nudge dispatched it
+with. On a failed turn's error row it is a plain retry, and nothing is kept as
+a variant.
+
+**A turn with no answer.** A native turn that ran tools and then wrote nothing
+is asked once for its reply (`ANSWER_OWED_NOTE` in `agents/native/runtime.py`,
+a note on that one request that never enters the history). If it still writes
+nothing, the chat runner ends the turn in an error row ("The agent ran 3
+steps but did not write an answer. …"), the turn's outcome is `error`, a linked
+channel hears the same line, and the chat offers Retry on the notice, as on any
+notice a turn ends on. A turn that wrote nothing and ran nothing is resent
+once, silently. A loop's worker is left to its own re-prompt.
+
 ## Forking
 
 `dashboard/chat_fork.py` — `POST /api/chat/sessions/{session}/fork` copies a

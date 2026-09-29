@@ -49,7 +49,10 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
+from personalclaw.dashboard.chat_persistence import (
+    _TURN_DISPATCH_ROLES,
+    _rehydrate_session_from_history,
+)
 from personalclaw.dashboard.chat_utils import _prepare_messages, full_session_messages
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
@@ -432,7 +435,11 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
     Returns whether a message was stamped. The LAST assistant message, because a
     tool-using turn flushes several assistant segments and a per-turn record describes
     the whole turn; nothing at all when the turn produced no assistant message (a
-    cancelled or tool-only turn has nowhere honest to put one).
+    cancelled turn, or one that ran steps and wrote no reply, has nowhere honest to put
+    one). The search stops at the message that started the turn (the user's, or the row an
+    automation, a loop's nudge or a subagent's report dispatched it with, which is appended
+    as the turn starts): past it, the last assistant message is the PREVIOUS turn's
+    answer, which then carried this turn's numbers and summary.
 
     Must be called BEFORE the turn's ``save_session_to_history`` — that function
     rewrites the whole transcript file from the buffer, so a key stamped after it is
@@ -442,6 +449,8 @@ def _stamp_on_last_assistant(session: Any, key: str, value: Any) -> bool:
     if not value:
         return False
     for msg in reversed(getattr(session, "messages", []) or []):
+        if msg.get("role") in _TURN_DISPATCH_ROLES:
+            return False
         if msg.get("role") != "assistant":
             continue
         meta = msg.get("meta")

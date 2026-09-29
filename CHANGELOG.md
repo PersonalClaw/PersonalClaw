@@ -148,6 +148,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow step you allowed is not asked again when a restart resumes it, while every other start still asks (SDK: `SubagentInfo.request_key` and `approved_at`, and the same two on `SubagentManager.spawn`, additions `slack-channel` does not have to change for).**
 - **A page open across a restart or a dropped connection reads again what it may have missed, approvals first: a run's page shows the approval its resumed step asked for, the approval nudge still comes, and the Inbox, notifications, lists, artifacts and chat history catch up.**
 - **A restart no longer waits ten seconds on a page left open, or on a model's answer nobody will read, and its log names what a stop could not finish and whether the gateway restarts or exits.**
+- **A chat turn that ran its steps and wrote no answer asks its model once for the reply, and if none comes says the turn has no answer, with Retry, instead of "Response complete."**
+- **Regenerating a reply an automation, a subagent's report or an auto-nudge started runs that turn again, instead of deleting it and asking the question before it.**
+- **A phone that pairs opens on its companion, and on a phone the menu's Companion row leads back to it.**
+- **The Morning triage card's link to the item opens that run, and a knowledge result's link opens the item.**
+- **Opening a terminal past the limit says how many run at once and to close one, and New session waits until you do.**
+- **Start from template opens the chosen template's form with what you typed already in it.**
+- **A trigger that cannot be created yet says why beside Create trigger, naming a required setting by its label.**
+- **A Run workflow trigger's panel shows the workflow it starts and the inputs it starts it with.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**

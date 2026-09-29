@@ -212,36 +212,77 @@ def _skills_sent(decisions: list, headroom: object) -> list[dict]:
     return sent
 
 
-def is_empty_turn(
+#: A completed turn that wrote nothing and ran nothing: resent once, silently, since nothing ran.
+UNANSWERED_BLANK = "blank"
+#: A completed turn that ran steps and wrote nothing. Never resent — that would run every step
+#: again — so the turn ends in the error that says so (`no_answer_notice`), which the chat offers
+#: Retry on, as on any notice a turn ends on.
+UNANSWERED_AFTER_STEPS = "after_steps"
+
+
+def unanswered_turn(
     *,
-    assistant_text: str,
+    wrote_text: bool,
     stop_reason: str,
     saw_compaction: bool,
     needs_session_reset: bool,
     is_slash: bool,
     tool_call_count: int,
     is_loop: bool,
-) -> bool:
-    """True iff a completed turn produced nothing and is worth auto-retrying.
+) -> str:
+    """How a completed turn that wrote nothing at all is handled, or "" when it needs nothing.
 
-    An empty turn has no final assistant prose AND made no tool calls. It is NOT
-    counted empty (a benign no-op) when it was a user cancel, a compaction /
-    clear / agent-switch turn (each emits its own status line), a slash command,
-    a tool-only turn (the agent did real work, just no closing prose), or a goal
-    loop worker turn (loops own a dedicated deliverable-forcing re-prompt loop,
-    so the generic retry must stand aside).
+    ``wrote_text`` is whether any of the turn's text was more than whitespace. Writing nothing is
+    not a missing answer when the turn was a user cancel, a compaction / clear / agent-switch
+    turn (each emits its own status line), a slash command, or a goal loop worker turn (loops own
+    a dedicated deliverable-forcing re-prompt loop, so the chat's handling stands aside).
+    Otherwise it is :data:`UNANSWERED_BLANK` when the turn ran no tool either, and
+    :data:`UNANSWERED_AFTER_STEPS` when it did. The second used to count as finished ("the agent
+    did real work, just no closing prose"), so a turn of fifteen commands and no answer ended as
+    "Response complete." with nothing on screen, in the transcript or in the log.
     """
-    if assistant_text.strip():
-        return False
-    benign = (
+    if wrote_text:
+        return ""
+    if (
         is_cancelled_stop(stop_reason)
         or saw_compaction
         or needs_session_reset
         or is_slash
-        or tool_call_count > 0
         or is_loop
+    ):
+        return ""
+    return UNANSWERED_AFTER_STEPS if tool_call_count > 0 else UNANSWERED_BLANK
+
+
+def no_answer_notice(steps: int, *, asked_by_person: bool) -> str:
+    """What a turn that wrote nothing says where its answer should have been.
+
+    Product copy, and the same line reaches a linked channel, the OpenAI-compatible endpoint and
+    ``personalclaw run``, none of which has a Retry button, so it says how to retry in words.
+    A turn an automation, a subagent's report or an auto-nudge started has no message of the
+    person's to send again; the chat's Retry runs it again.
+    """
+    ran = "" if steps <= 0 else f" ran {steps} step{'' if steps == 1 else 's'} but"
+    retry = "Send your message again to retry." if asked_by_person else "Retry it from the chat."
+    return f"The agent{ran} did not write an answer. {retry}"
+
+
+def _say_the_turn_has_no_answer(
+    state: DashboardState, session: _ChatSession, *, steps: int, asked_by_person: bool
+) -> None:
+    """End the turn in the error that says it wrote nothing.
+
+    An errored turn, so ``chat_done`` says the turn ended in an error rather than "Response
+    complete.", the chat offers Retry on the notice, and a linked channel hears this sentence
+    (`say_how_an_unanswered_turn_ended`).
+    """
+    note = no_answer_notice(steps, asked_by_person=asked_by_person)
+    session.append("error", note, "msg msg-err")
+    state.broadcast_ws(
+        "chat_message",
+        {"session": session.key, "role": "error", "content": note},
     )
-    return not benign
+    session._last_turn_errored = True
 
 
 #: How a chat turn ended: the ``outcome`` of its final ``chat_done`` and session detail's
@@ -2285,6 +2326,11 @@ async def run_chat(
     # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
     # the history restore finds — and leaves out — the message now being sent.
     _in_flight_text = message
+    # Whether a person's own message started this turn, rather than the row an automation, a
+    # subagent's report or an auto-nudge dispatched it with: a turn with no answer says how to
+    # retry it (`no_answer_notice`). A turn with no row of its own was asked for directly.
+    _started_at = in_flight_index(session, _in_flight_text, nested=_prompt_depth > 0)
+    _asked_by_person = _started_at is None or session.messages[_started_at].get("role") == "user"
     # Phase 1 of the turn checkpoint: open a numbered turn and
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
@@ -2409,6 +2455,10 @@ async def run_chat(
                 state.sessions.set_channel_link(session_key, _link[0], _link[1])
 
     assistant_text = ""
+    # Whether any text this turn streamed was more than whitespace. `assistant_text` holds only
+    # what followed the last tool call, so it cannot tell a turn that answered and then made one
+    # closing call from a turn that never wrote a word (`unanswered_turn`).
+    _turn_wrote_text = False
     last_heartbeat = time.time()
     in_tool_group = False
     _pending_tools: dict[str, str] = {}  # tool_call_id -> tool_name
@@ -3564,6 +3614,7 @@ async def run_chat(
                 safe_chunk, _ = redact_exfiltration_urls(event.text)
                 safe_chunk, _ = redact_credentials(safe_chunk)
                 assistant_text += safe_chunk
+                _turn_wrote_text = _turn_wrote_text or bool(safe_chunk.strip())
                 # Grows the ONE streaming entry for this answer — never a row per chunk.
                 session.stream_chunk(safe_chunk)
                 # Push chunk to WS clients (HTTP SSE reader drains from session._pending).
@@ -5108,29 +5159,36 @@ async def run_chat(
                 {"session": session.key, "pct": None if pct is None else round(pct, 1)},
             )
 
-        # ── Empty-response auto-retry ───────────────────────────────────────
-        # A genuinely empty assistant turn (no text AND no tool calls) that is
-        # not a benign no-op self-corrects: silently re-queue once; only a SECOND
-        # consecutive empty surfaces a card. Benign no-ops that legitimately
-        # produce no final text are excluded — user cancel, a slash command, a
-        # compaction/clear/agent-switch turn (each appends its own status line),
-        # and tool-only turns (the agent did work, just no closing prose). The
-        # silent retry re-queues the same prompt at the head of the queue; usage
-        # for the empty turn was already recorded at EVENT_COMPLETE, and the retry
-        # is a fresh turn, so nothing is double-counted.
-        # Goal loop workers own a dedicated deliverable-forcing re-prompt loop
-        # (gateway _fire), so the generic empty-retry must stand aside for them —
-        # two retry mechanisms on the same turn would compete.
-        _is_empty = is_empty_turn(
-            assistant_text=assistant_text,
+        # ── A turn that wrote no reply ──────────────────────────────────────
+        # A BLANK turn (no text AND no tool calls) that is not a benign no-op
+        # self-corrects: silently re-queue once; only a SECOND consecutive blank
+        # surfaces a card. Benign no-ops that legitimately produce no final text
+        # are excluded — user cancel, a slash command, a compaction/clear/agent-switch
+        # turn (each appends its own status line). The silent retry re-queues the
+        # same prompt at the head of the queue; usage for the blank turn was already
+        # recorded at EVENT_COMPLETE, and the retry is a fresh turn, so nothing is
+        # double-counted. A turn that RAN STEPS and wrote nothing after the last one
+        # is never resent, which would run every step again: a native runtime has
+        # already asked its model once for the reply (`runtime.ANSWER_OWED_NOTE`), so
+        # the turn ends in the error that says it has no answer, where Retry is.
+        # A loop's worker and planner own a dedicated re-prompt loop (gateway _fire,
+        # the planner's nudge cycles), so this handling stands aside for them — two
+        # retry mechanisms on the same turn would compete.
+        _unanswered = unanswered_turn(
+            wrote_text=_turn_wrote_text,
             stop_reason=_stop_reason,
             saw_compaction=saw_compaction,
             needs_session_reset=needs_session_reset,
             is_slash=is_slash,
             tool_call_count=_turn_tool_call_count,
-            is_loop=getattr(session, "_app", "") == "loop",
+            is_loop=getattr(session, "_app", "") in _LOOP_WORK_APPS,
         )
-        if _is_empty:
+        if _unanswered:
+            # Whatever streamed was whitespace: no answer to keep. Left in, it would settle
+            # as the turn's reply behind the notice, and a Retry would anchor on it.
+            session.discard_stream()
+            assistant_text = ""
+        if _unanswered == UNANSWERED_BLANK:
             if _prompt_depth == 0 and session._empty_response_retries == 0:
                 # First empty → silently re-queue the same prompt. The finally
                 # block drains the queue (FIFO re-dispatch), same as the error
@@ -5145,17 +5203,22 @@ async def run_chat(
             elif session._empty_response_retries >= 1:
                 # Second consecutive empty → surface the card and reset the streak.
                 session._empty_response_retries = 0
-                _empty_msg = "Empty response — please retry."
-                session.append("error", _empty_msg, "msg msg-err")
-                state.broadcast_ws(
-                    "chat_message",
-                    {"session": session.key, "role": "error", "content": _empty_msg},
+                _say_the_turn_has_no_answer(
+                    state, session, steps=0, asked_by_person=_asked_by_person
                 )
-                session._last_turn_errored = True
                 return
         else:
-            # Any non-empty (or benign) turn clears the consecutive-empty streak.
+            # Any other turn clears the consecutive-blank streak.
             session._empty_response_retries = 0
+        if _unanswered == UNANSWERED_AFTER_STEPS:
+            _say_the_turn_has_no_answer(
+                state, session, steps=_turn_tool_call_count, asked_by_person=_asked_by_person
+            )
+            logger.warning(
+                "Turn for session %s ended with no answer after %d tool call(s)",
+                session.key,
+                _turn_tool_call_count,
+            )
 
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)

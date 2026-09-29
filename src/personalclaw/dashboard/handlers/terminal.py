@@ -40,6 +40,24 @@ logger = logging.getLogger(__name__)
 _MAX_SESSIONS = 3
 _ORPHAN_TIMEOUT_S = 300  # 5 min with no WS → reap PTY
 
+#: The refusal a terminal over the limit gets (`terminal_session_limit`): its `limit` rides the
+#: envelope beside the sentence, so a page can keep New session unavailable with the same words.
+ERR_SESSION_LIMIT = "terminal_session_limit"
+
+
+def session_limit_sentence(limit: int) -> str:
+    """What a terminal refused for the limit says: how many this gateway runs, and what to do.
+
+    It used to answer "Max 3 sessions" and the drawer showed nothing at all, so a fourth New
+    session did nothing anyone could see.
+    """
+    open_now = "terminal is" if limit == 1 else "terminals are"
+    return (
+        f"{limit} {open_now} already open, the most this gateway runs at once. "
+        "Close one to open another."
+    )
+
+
 # Requested cwd from POST /sessions, consumed by the WS spawn (create returns a
 # session_id but the PTY spawns on WS connect). Keyed by session_id.
 _pending_cwd: dict[str, str] = {}
@@ -376,7 +394,7 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             source="dashboard",
             resources=f"max_sessions={max_sessions}",
         )
-        return web.Response(status=429, text=f"Max {max_sessions} terminal sessions")
+        return web.Response(status=429, text=session_limit_sentence(max_sessions))
 
     tier = session_tier(session_id)
 
@@ -724,9 +742,11 @@ async def api_terminal_create(request: web.Request) -> web.Response:
             source="dashboard",
             resources=f"max_sessions={max_sessions}",
         )
-        return web.json_response(
-            {"error": f"Max {max_sessions} sessions"},
+        return json_error(
+            ERR_SESSION_LIMIT,
+            message=session_limit_sentence(max_sessions),
             status=429,
+            error_extra={"limit": max_sessions},
         )
 
     session_id = uuid.uuid4().hex[:12]

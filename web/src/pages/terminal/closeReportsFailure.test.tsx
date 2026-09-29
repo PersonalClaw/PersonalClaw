@@ -20,10 +20,10 @@ import { join } from 'node:path'
 // flipped `saved` regardless — a failed delete left the artifact on disk under a button now offering
 // to save it again.
 //
-// 🪤 THE FIRST FIX FOR THE DRAWER WAS INERT AND I CAUGHT IT BEFORE SHIPPING. Its `error` state looks
-// like the obvious channel, but it renders ONLY inside the `tabs.length === 0` branch — unreachable
-// after a failed close, because the tab stays — and its copy is hardcoded "Couldn't open a session",
-// the wrong noun for a close. So the Drawer reports through `notify`, while `TerminalPage`'s
+// 🪤 THE FIRST FIX FOR THE DRAWER WAS INERT AND I CAUGHT IT BEFORE SHIPPING. Its open error (now its
+// `refusal`) looked like the obvious channel, but it rendered ONLY inside the `tabs.length === 0` branch
+// then — unreachable after a failed close, because the tab stays — and its copy is headed "Couldn't open
+// a session", the wrong noun for a close. So the Drawer reports through `notify`, while `TerminalPage`'s
 // `InlineError` is NOT tab-gated and does carry the message. Two surfaces, two channels, because the
 // surfaces genuinely differ — asserted per surface below rather than assumed to match.
 
@@ -98,12 +98,14 @@ describe('no surface flips local state on a write it discarded', () => {
   })
 
   it('each surface reports through a channel that is actually visible to it', () => {
-    // 🪤 Asserted per surface BECAUSE they differ. The Drawer's `error` state is gated on
-    // `tabs.length === 0`, so setting it after a failed close would render nothing at all.
+    // 🪤 Asserted per surface BECAUSE they differ. The Drawer's `refusal` says why a session could
+    // not OPEN, under a "Couldn't open a session" heading, and stops showing once the open sessions
+    // change — so a failed close reported through it would be the wrong noun, or gone at once.
     const drawer = codeOf(join(SRC, 'pages/terminal/TerminalDrawer.tsx'))
     const at = drawer.indexOf('const closeSession')
-    expect(drawer.slice(at, at + 700), 'the Drawer must not use its open-gated error state')
-      .not.toMatch(/setError\(/)
+    expect(drawer, 'vacuity floor: the Drawer keeps its open refusal').toMatch(/setRefusal\(/)
+    expect(drawer.slice(at, at + 700), 'the Drawer must not use its open refusal')
+      .not.toMatch(/setRefusal\(|setError\(/)
     expect(drawer.slice(at, at + 700), 'and must notify instead').toMatch(/notify\(/)
 
     const page = codeOf(join(SRC, 'pages/terminal/TerminalPage.tsx'))

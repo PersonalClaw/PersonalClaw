@@ -300,6 +300,15 @@ class TestApiTerminalCreate:
             mock_sel.return_value.log_api_access = MagicMock()
             resp = await terminal.api_terminal_create(req)
         assert resp.status == 429
+        # It says the limit and what to do, in the envelope a page branches on — it answered
+        # "Max 3 sessions", and the drawer showed nothing at all.
+        err = json.loads(resp.body)["error"]
+        assert err["code"] == terminal.ERR_SESSION_LIMIT
+        assert err["limit"] == 3
+        assert err["message"] == (
+            "3 terminals are already open, the most this gateway runs at once. "
+            "Close one to open another."
+        )
 
     @pytest.mark.asyncio
     async def test_respects_custom_max_sessions(self):
@@ -314,6 +323,9 @@ class TestApiTerminalCreate:
             mock_sel.return_value.log_api_access = MagicMock()
             resp = await terminal.api_terminal_create(req)
         assert resp.status == 429
+        err = json.loads(resp.body)["error"]
+        assert err["limit"] == 1
+        assert err["message"].startswith("1 terminal is already open,")
 
     @pytest.mark.asyncio
     async def test_uses_configured_shell(self):

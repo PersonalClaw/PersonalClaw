@@ -190,6 +190,22 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     )
 
 
+#: The phone's own surface: approvals first, then what is running, its tasks and its inbox, with
+#: the full dashboard one tap away in its footer. The dashboard is a desktop layout, and a phone
+#: that paired used to land on it with no way to the companion but typing its address.
+COMPANION_HOME = "/#/companion"
+
+
+def landing_for(kind: str) -> str:
+    """Where a device that has just signed in by pairing lands: a phone on the companion, any
+    other device on the dashboard.
+
+    Chosen from the device kind the gateway derived and clamped (`session_store.DEVICE_KINDS`),
+    never from anything the request names, so a pairing can send the browser nowhere else.
+    """
+    return COMPANION_HOME if kind == "mobile" else "/"
+
+
 def _described(request: web.Request) -> tuple[str, str]:
     """``(name, kind)`` for a device that did not name or declare itself (C2 (b)).
 
@@ -289,6 +305,8 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
             "name": device.name,
             "kind": device.kind,
             "expires_in": ttl,
+            # Where the redeem page sends the device next (`landing_for`).
+            "landing": landing_for(device.kind),
         }
     )
     _set_session_cookie(request, resp, token, ttl)
@@ -317,12 +335,14 @@ async def pair_page(request: web.Request) -> web.Response:
     A browser that ALREADY holds a valid session is redirected home instead of being offered the
     form. That is not tidiness: redeeming a code here overwrites this browser's session cookie,
     so the owner's own laptop would silently become a "device" row while its previous session
-    row stayed behind unreachable, still counting against the browser limit.
+    row stayed behind unreachable, still counting against the browser limit. Home is where a
+    pairing would have landed it (`landing_for`): a phone that opens the link again goes to the
+    companion, as it did the first time.
     """
     from personalclaw.dashboard.handlers.auth import has_valid_session
 
     if has_valid_session(request, int(request.app.get("port") or 0)):
-        raise web.HTTPFound("/")
+        raise web.HTTPFound(landing_for(_described(request)[1]))
     return web.Response(
         text=_PAIR_HTML,
         content_type="text/html",
@@ -378,7 +398,13 @@ document.getElementById('f').addEventListener('submit', function (ev) {
       return { ok: r.ok, data: d };
     });
   }).then(function (res) {
-    if (res.ok) { window.location.href = '/'; return; }
+    if (res.ok) {
+      // Where the gateway says this device lands; only ever a path on this same gateway.
+      var to = res.data && res.data.landing;
+      var local = typeof to === 'string' && to.charAt(0) === '/' && to.charAt(1) !== '/';
+      window.location.href = local ? to : '/';
+      return;
+    }
     var code = (res.data && res.data.error && res.data.error.code)
       || 'device_pair_code_invalid';
     err.textContent = MESSAGES[code] || 'Pairing failed. Ask for a new code and try again.';

@@ -37,7 +37,7 @@ import pytest
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.llm.anthropic import _read_cache_usage as _anthropic_read_cache
-from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TOOL_CALL, AgentEvent
+from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, AgentEvent
 from personalclaw.llm.openai import _read_cache_usage as _openai_read_cache
 
 # The measured numbers from the issue: the provider reported 4224 cache reads and the
@@ -178,7 +178,12 @@ def test_a_multi_cycle_turn_sums_the_cache_counts_exactly_as_it_sums_input_token
         AgentEvent(kind=EVENT_TOOL_CALL, tool_call_id="c1", title="nope", tool_input="{}"),
         _complete(creation=10, read=100, inp=7, out=1),
     ]
-    second = [_complete(creation=20, read=200, inp=11, out=2)]
+    # The second cycle writes the reply: a cycle that wrote nothing after a tool call would be
+    # asked once for it (`runtime.ANSWER_OWED_NOTE`), which is a third cycle.
+    second = [
+        AgentEvent(kind=EVENT_TEXT_CHUNK, text="Done."),
+        _complete(creation=20, read=200, inp=11, out=2),
+    ]
 
     terminal = _terminal(asyncio.run(_drive(tmp_path, [first, second])))
 

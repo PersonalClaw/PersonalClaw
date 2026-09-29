@@ -815,6 +815,61 @@ async def test_a_browser_that_already_has_a_session_is_sent_home(_isolated) -> N
         assert (await client.get("/pair")).status == 200
 
 
+_PHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
+_LAPTOP = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/140.0 Safari/537.36"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_phone_that_pairs_lands_on_the_companion_and_a_laptop_on_the_dashboard(
+    _isolated,
+) -> None:
+    """A paired phone used to open the desktop Home, 390 px wide, with no way to its own surface."""
+    async with TestClient(TestServer(_app())) as client:
+        landed = {}
+        for agent in (_PHONE, _LAPTOP):
+            code = (await _start(client))["code"]
+            resp = await client.post(
+                "/api/devices/pair/complete", json={"code": code}, headers={"User-Agent": agent}
+            )
+            assert resp.status == 200
+            body = await resp.json()
+            landed[body["kind"]] = body["landing"]
+    assert landed == {"mobile": devices_h.COMPANION_HOME, "browser": "/"}
+    assert devices_h.COMPANION_HOME == "/#/companion"
+
+
+@pytest.mark.asyncio
+async def test_a_declared_kind_cannot_choose_the_landing(_isolated) -> None:
+    """The landing follows the clamped kind; an unknown declaration falls back to the agent's."""
+    async with TestClient(TestServer(_app())) as client:
+        code = (await _start(client))["code"]
+        resp = await _complete(client, code, kind="https://pair.example/phish")
+        body = await resp.json()
+    assert body["kind"] == "cli" and body["landing"] == "/"
+
+
+def test_the_redeem_page_goes_where_the_gateway_says_and_only_to_its_own_paths() -> None:
+    script = devices_h._PAIR_SCRIPT
+    assert "res.data.landing" in script, "the page ignores where the gateway sends the device"
+    assert "window.location.href = '/'; return;" not in script, "the page still hard-codes Home"
+    # Only a path on this gateway: a second slash would make it another host.
+    assert "to.charAt(0) === '/' && to.charAt(1) !== '/'" in script
+
+
+@pytest.mark.asyncio
+async def test_a_phone_that_is_already_signed_in_is_sent_to_the_companion(_isolated) -> None:
+    token = token_auth.generate_token("owner")
+    async with TestClient(TestServer(_app())) as client:
+        resp = await client.get(
+            f"/pair?token={token}", allow_redirects=False, headers={"User-Agent": _PHONE}
+        )
+    assert resp.status == 302
+    assert resp.headers["Location"] == devices_h.COMPANION_HOME
+
+
 def test_every_refusal_the_redeem_path_can_return_has_copy_on_the_page() -> None:
     """An unmapped code renders as a raw identifier, which is not a sentence.
 

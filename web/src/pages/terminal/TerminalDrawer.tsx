@@ -7,7 +7,9 @@ import { Terminal as TermIcon, Plus, X, ChevronDown, Maximize2, Loader2 } from '
 import { spring } from '../../design/motion'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { api } from '../../lib/api'
+import { InlineError } from '../../ui/InlineError'
 import { TerminalView } from './TerminalView'
+import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import type { TermTab } from './TerminalPage'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { useResizablePanel } from '../../ui/useResizablePanel'
@@ -28,7 +30,12 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
   const [tabs, setTabs] = useState<TermTab[]>([])
   const [active, setActive] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  // Why New session was last refused, shown only while the sessions it was said against are open
+  // (`standing`): a session opened or closed since makes it stale, and it goes in the same render
+  // as the tab. For the limit (`terminal_session_limit`) New session stays unavailable with it as
+  // the reason, since pressing it again earns the same refusal.
+  const [refusal, setRefusal] = useState<OpenRefusal | null>(null)
+  const refused = standing(refusal, tabs)
   // Height + drag/keyboard handlers from the shared window-splitter primitive. This drawer is
   // the one adopter that needed the primitive's two generalisations: a DYNAMIC max (the ceiling
   // is `innerHeight × MAX_FRAC`, viewport-relative, which a static `max` can't express), and a
@@ -44,24 +51,25 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const newSession = useCallback(async () => {
-    setBusy(true); setError('')
+    const asked = tabs
+    setBusy(true); setRefusal(null)
     try {
       const r = await api.createTerminal()
       setTabs((t) => [...t, { id: r.session_id, label: `Session ${t.length + 1}`, cwd: r.cwd, shell: r.shell }])
       setActive(r.session_id)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not open a terminal session.')
+      setRefusal(openRefusal(e, asked))
     } finally { setBusy(false) }
-  }, [])
+  }, [tabs])
 
   const closeSession = useCallback(async (id: string) => {
     // Same defect as TerminalPage's close: the tab disappeared whether or not the session did,
     // orphaning a live PTY behind a UI that no longer lists it.
     //
-    // 🪤 NOT this component's `error` state, which would have been an INERT fix: it renders only in
-    // the `tabs.length === 0` branch — unreachable here, because a failed close leaves the tab —
-    // and its copy is hardcoded "Couldn't open a session", the wrong noun for a close. `notify` is
-    // the channel the app already uses for a failed action on a surface that has no room for a line.
+    // 🪤 NOT this component's `refusal`: that is why a session could not OPEN — the empty state
+    // heads it "Couldn't open a session", the wrong noun for a close — and it stops showing as soon
+    // as the open sessions change. `notify` is the channel the app already uses for a failed action
+    // on a surface that has no room for a line.
     try {
       await api.deleteTerminal(id)
     } catch (e) {
@@ -123,7 +131,8 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
                 )
               })}
               </div>
-              <SquareIconButton label="New session" onClick={() => newSession()} className="shrink-0">
+              <SquareIconButton label="New session" onClick={() => newSession()} className="shrink-0"
+                disabled={!!refused?.limit} disabledReason={refused?.limit ? refused.text : undefined}>
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
               </SquareIconButton>
             </div>
@@ -131,13 +140,19 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
             <SquareIconButton icon={ChevronDown} iconSize={15} label="Hide terminal (⌘`)" onClick={onClose} className="shrink-0" />
           </div>
 
+          {/* A refused New session, said where the tabs are. The empty state below renders only
+              while no session is open, so with three open a refusal used to show nothing at all. */}
+          {tabs.length > 0 && refused && (
+            <InlineError icon className="mx-s mt-s" onDismiss={() => setRefusal(null)}>{refused.text}</InlineError>
+          )}
+
           {/* body — keep each session mounted so scrollback + socket persist */}
           <div className="relative min-h-0 flex-1">
             {tabs.length === 0 ? (
-              error ? (
+              refused ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
                   <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>Couldn’t open a session</div>
-                  <div className="max-w-md text-on-surface-low text-[0.8125rem]">{error}</div>
+                  <div className="max-w-md text-on-surface-low text-[0.8125rem]">{refused.text}</div>
                   <button type="button" onClick={() => newSession()} disabled={busy}
                     className="inline-flex items-center gap-1.5 rounded-pill px-4 h-9 text-[0.8125rem] disabled:opacity-50"
                     style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>

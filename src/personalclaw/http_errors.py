@@ -990,6 +990,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The sandbox this terminal was asked to open in is not installed or is turned off, so no "
         "terminal was opened."
     ),
+    # 429: as many terminals are open as this gateway runs at once (`dashboard.terminal.
+    # max_sessions`, 3 by default). The message names the limit and says to close one; the
+    # limit itself rides the error object as `limit`.
+    "terminal_session_limit": (
+        "As many terminals are open as this gateway runs at once; close one to open another."
+    ),
     # ── exporting your agents into Claude Code's agents folder (dashboard/handlers/agent_export.py
     #    — POST /api/agents/export) ──
     # 400: `agents` is missing, or names what is not one of your own agents (a built-in or the

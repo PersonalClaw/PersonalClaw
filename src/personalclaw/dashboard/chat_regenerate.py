@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
-from personalclaw.dashboard.chat_persistence import save_session_to_history
+from personalclaw.dashboard.chat_persistence import _TURN_DISPATCH_ROLES, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -58,7 +58,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         # The LAST answer-shaped turn anchors the operation — an "assistant"
         # message (classic regenerate) or an "error" message (a failed turn,
         # #254): there the user never got an answer, so Regenerate acts as a
-        # clean RETRY of the failed turn's own user message. Scanning for
+        # clean RETRY of the failed turn's own message. Scanning for
         # "assistant" alone did two wrong things on a failed turn: with no
         # prior assistant it 400'd ("no assistant message to regenerate" — the
         # orphaned-bubble bug), and WITH one it anchored on the previous
@@ -72,17 +72,24 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         if anchor_idx < 0:
             return web.json_response({"error": "no assistant message to regenerate"}, status=400)
         retrying_failed_turn = msgs[anchor_idx].get("role") == "error"
+        # The message that started the anchored turn, which is run again: the user's, or the
+        # row an automation, a subagent's report or an auto-nudge dispatched it with. Walking
+        # back to the latest USER row instead crossed such a turn's start, so regenerating an
+        # automation's reply deleted that reply and the turn before it, and asked the earlier,
+        # already-answered question again.
         u_idx = -1
         for i in range(anchor_idx - 1, -1, -1):
-            if msgs[i].get("role") == "user":
+            if msgs[i].get("role") in _TURN_DISPATCH_ROLES:
                 u_idx = i
                 break
         if u_idx < 0:
-            return web.json_response({"error": "no preceding user message"}, status=400)
+            return web.json_response({"error": "no message started this turn"}, status=400)
 
         user_msg = msgs[u_idx].get("content", "")
         if not user_msg:
-            return web.json_response({"error": "empty user message"}, status=400)
+            return web.json_response(
+                {"error": "the message that started this turn is empty"}, status=400
+            )
 
         variants: list[dict] = []
         if not retrying_failed_turn:
