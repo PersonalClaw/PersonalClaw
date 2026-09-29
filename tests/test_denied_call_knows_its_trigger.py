@@ -108,7 +108,7 @@ def test_an_unattended_fire_hands_it_the_trigger_too(seen):
 def _services(spawned: dict):
     def _spawn(**kw):
         spawned.update(kw)
-        return SimpleNamespace(done=False, error="")
+        return SimpleNamespace(id="c0ffee01", done=False, error="")
 
     return SimpleNamespace(subagents=SimpleNamespace(spawn=_spawn))
 

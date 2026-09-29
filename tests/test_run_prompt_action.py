@@ -26,7 +26,7 @@ def _services(spawn_sink, *, refused: str = ""):
 
     def _spawn(**kw):
         spawn_sink.update(kw)
-        return SimpleNamespace(done=bool(refused), error=refused)
+        return SimpleNamespace(id="c0ffee01", done=bool(refused), error=refused)
 
     return SimpleNamespace(subagents=SimpleNamespace(spawn=_spawn))
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Copy, KeyRound, Loader2, UserCheck, UserX } from 'lucide-react'
 import { api, type ChannelOwnerStatus } from '../../lib/api'
+import { untilSentence } from '../../lib/epoch'
 import { copyText } from '../../app/clipboard'
 import { Button } from '../../ui/Button'
 import { FieldError } from '../../ui/forms'
@@ -9,12 +10,6 @@ import { FieldError } from '../../ui/forms'
 const POLL_MS = 2000
 
 const msg = (e: unknown) => String((e as Error)?.message || e)
-
-/** An ISO time as a clock time, for "it works until 14:52". */
-function clock(iso: string): string {
-  const t = Date.parse(iso)
-  return Number.isNaN(t) ? '' : new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
 
 /** What the channel knows about you, in words: who it reaches you as, or that it can't. */
 function ownerLine(s: ChannelOwnerStatus): string {
@@ -133,7 +128,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
             </Button>
           </div>
           <div data-type="caption" className="text-on-surface-low">
-            It works once{clock(status.pairing.expires_at) ? `, until ${clock(status.pairing.expires_at)}` : ''}. Whoever sends it becomes {who}'s owner
+            {untilSentence('It works once', status.pairing.expires_at)} Whoever sends it becomes {who}'s owner
             {status.owner_id ? `, in place of ${status.owner_id}` : ''}.
           </div>
           <div className="flex items-center gap-s">
@@ -149,8 +144,8 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
               again — it says so, and offers the two ways out. */}
           {status.pairing.active && (
             <div data-type="caption" className="text-on-surface-low">
-              A pairing code is still waiting to be sent{clock(status.pairing.expires_at) ? `, until ${clock(status.pairing.expires_at)}` : ''}.
-              Pairing again replaces it.
+              {untilSentence('A pairing code is still waiting to be sent', status.pairing.expires_at)}
+              {' '}Pairing again replaces it.
             </div>
           )}
           <div className="flex items-center gap-s">

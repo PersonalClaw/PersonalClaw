@@ -27,9 +27,13 @@ action as it stood when they gave it; and nothing but that yes gives one.
   is the same switch sent on again), the create dialog and the editor, each after its consent
   question (:func:`question`); and the CLI's `cron add` and `cron update` with `--yes`. Everything
   else creates and edits without one. A trigger the chat makes (`automation_create`,
-  `set_onetime_task`, `set_recurring_task`) is not allowed to run until the owner allows it on the
-  Triggers page; a chat edit that needs a grant is saved with the trigger switched off
-  (`tools.update`); and the chat cannot switch one on.
+  `set_onetime_task`, `set_recurring_task`) is made without one, so one whose action needs a grant
+  does not run until the owner allows it on the Triggers page (an action that only reads, or only
+  sends the owner words they gave, needs none); a chat edit that needs a grant is saved with the
+  trigger switched off (`tools.update`); and the chat cannot switch one on.
+* **The agent an allowed action starts starts on that yes** (:func:`allows_its_agent`). The owner
+  who allowed a trigger "to use the “Invoke Agent” action when it runs" was asked whether its agent
+  may start, so its start does not ask again. What the agent then does asks as any agent's calls do.
 * **A restart gives nothing.** The capability backfill that granted every ungranted row whatever
   it ran, on every start, is gone: by the time it ran, the edit it rewarded was nobody's decision.
 
@@ -41,7 +45,10 @@ the Self-QA watch and a logged decision's review card. None of them takes an act
 
 from __future__ import annotations
 
+import logging
 from typing import Any, NamedTuple
+
+logger = logging.getLogger(__name__)
 
 
 class Question(NamedTuple):
@@ -310,6 +317,58 @@ def switched_off(
     if changed and set(providers) <= set(changed):
         return f"What {_uses(providers)} runs changed, and the change has not been allowed, {saved}"
     return f"It now uses {_uses(providers)}, which it has not been allowed to, {saved}"
+
+
+#: The actions that start an agent. Their grant is the owner's yes to that agent starting: "allows
+#: it to use the “Invoke Agent” action when it runs" is what the create dialog asked.
+_STARTS_AN_AGENT: frozenset[str] = frozenset({"invoke-agent", "run-prompt"})
+
+
+def allows_its_agent(trigger_id: str) -> bool:
+    """Whether the trigger ``trigger_id`` names may start the agent its action starts, now,
+    without asking the owner again.
+
+    True when its action starts an agent (``invoke-agent``, ``run-prompt``) and the owner's grant
+    covers that action as it is: they were asked when they created it, edited it or switched it
+    on, and a second question when the agent starts asked the same thing twice. The start only:
+    the agent's own calls ask as any agent's do.
+
+    Read when the agent starts, as every grant is (`approval_grants`): an edit that changed the
+    action, or a grant taken back since the fire, asks. A lifecycle hook is named
+    ``lifecycle:<id>`` (`hooks.LIFECYCLE_TRIGGER_PREFIX`). Anything that cannot be read (no such
+    trigger, a store that will not load) is False, so the start asks.
+    """
+    if not trigger_id:
+        return False
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
+        home = config_dir()
+        if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+            from personalclaw.hooks import ScriptHookStore
+
+            trigger: Any = ScriptHookStore(config_dir=home).get(
+                trigger_id.removeprefix(LIFECYCLE_TRIGGER_PREFIX)
+            )
+        else:
+            from personalclaw.triggers.store import TriggerStore
+
+            row = TriggerStore(base_dir=home).get(trigger_id)
+            trigger = row.trigger if row is not None else None
+    except Exception:  # noqa: BLE001 - an unreadable trigger allows nothing: the start asks
+        logger.warning("could not read trigger %s for its agent's start", trigger_id, exc_info=True)
+        return False
+    if trigger is None:
+        return False
+    workflow = getattr(trigger, "workflow", None)
+    action: dict[str, Any] = workflow if isinstance(workflow, dict) else {}
+    nested = action.get("inline")
+    if isinstance(nested, dict):
+        action = nested
+    if str(action.get("provider") or "").strip() not in _STARTS_AN_AGENT:
+        return False
+    return not missing(trigger)
 
 
 def give(trigger: Any) -> list[str]:

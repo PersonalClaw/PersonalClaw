@@ -36,6 +36,7 @@ except ImportError:
     get_description = None  # type: ignore[assignment]
 from croniter import croniter  # type: ignore[import-untyped]
 
+from personalclaw.cron_clock import next_fire as next_cron_fire
 from personalclaw.timezones import resolve_zone, resolve_zone_name
 
 logger = logging.getLogger(__name__)
@@ -401,13 +402,15 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
             # Through the one owner (#2520), so the humanized string and the armed fire can
             # never name different hours — this used to build its own `ZoneInfo`.
             tz = resolve_zone(tz_name)
-            # Evaluate in job timezone, same as the scheduler does
-            base = datetime.now(tz)
-            next_local = croniter(expr, base).get_next(datetime).astimezone(tz)
+            # The next fire on the zone's wall clock, as the scheduler arms it, so a description
+            # read across a change of the clocks names the hour it will really run at.
+            now = time.time()
+            next_local = datetime.fromtimestamp(next_cron_fire(expr, now, tz), tz)
             local_time = next_local.strftime("%-I:%M %p %Z")
-            # cron_descriptor produces UTC-based text; replace the time portion
-            utc_base = datetime.now(timezone.utc)
-            next_as_utc = croniter(expr, utc_base).get_next(datetime)
+            # cron_descriptor states the expression's own hour; find it to replace it.
+            next_as_utc = datetime.fromtimestamp(
+                next_cron_fire(expr, now, timezone.utc), timezone.utc
+            )
             utc_time = next_as_utc.strftime("%-I:%M %p")
             utc_time_padded = next_as_utc.strftime("%I:%M %p")
             result = desc.replace(f"At {utc_time}", f"At {local_time}")
@@ -492,9 +495,8 @@ def compute_next_run_ts(job: ScheduleJob, now: float | None = None) -> float | N
         if sched.kind == "at" and sched.at_ts is not None:
             return sched.at_ts if sched.at_ts > now else None
         if sched.kind == "cron" and sched.cron_expr is not None:
-            # croniter interprets cron_expr in base's timezone; get_next(float) returns UTC epoch
-            base = datetime.fromtimestamp(now, tz=_job_tz(job))
-            return croniter(sched.cron_expr, base).get_next(float)
+            # On the job zone's wall clock (`cron_clock`), as a UTC epoch; none found is unknown.
+            return next_cron_fire(sched.cron_expr, now, _job_tz(job)) or None
     except Exception:
         logger.warning("Failed to compute next run for job %s", job.id, exc_info=True)
         return None

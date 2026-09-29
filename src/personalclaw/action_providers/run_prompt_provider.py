@@ -280,12 +280,18 @@ class RunPromptActionProvider(ActionProvider):
             logger.warning("run-prompt: spawn failed", exc_info=True)
             return ActionResult(success=False, error=f"run-prompt: the agent did not start: {exc}")
         refused = spawn_refusal(info)
-        if refused:
+        if refused or info is None:  # `spawn_refusal` names why a None did not start
             return ActionResult(success=False, error=f"run-prompt: {refused}")
-        # "launched", not "succeeded": we only started the background turn; its
-        # real outcome is recorded by the spawned run itself (T7 honesty).
+        from personalclaw.subagent import agent_work_id
+
+        # "launched", not "succeeded": we only started the background turn (T7 honesty). The
+        # run's row names the agent, and says how it went when it ends.
         return ActionResult(
-            success=True, exit_code=0, stdout=f"launched {source_label}", outcome="launched"
+            success=True,
+            exit_code=0,
+            stdout=f"launched {source_label}",
+            outcome="launched",
+            work_id=agent_work_id(info.id),
         )
 
 

@@ -2,8 +2,9 @@
 
 A tool call or a spawn that needs approval is settled one of two ways. A person ANSWERS it (Allow,
 Deny, or nobody in time), or a GRANT approves it without asking: the chat's Trust, YOLO, "trust
-reads", an agent's "Always allow", a spawn's own ``approval_mode: "auto"``, the global
-Auto-approve setting, the operator's hook settings and patterns, the gateway's ``--approval`` flag.
+reads", an agent's "Always allow", a spawn's own ``approval_mode: "auto"``, the Allow a trigger
+that starts an agent was given, the global Auto-approve setting, the operator's hook settings and
+patterns, the gateway's ``--approval`` flag.
 This module owns the three rules every grant is held to, because each was broken somewhere:
 
 1. **It is read when the call is made.** A grant is the owner's setting as it is NOW. The subagent
@@ -62,6 +63,11 @@ AGENT_FLOOR = "agent_floor"
 PARENT_TRUST = "parent_trust"
 #: The spawn's own ``approval_mode: "auto"``: an automation's action, an unattended run's stage.
 APPROVAL_MODE = "approval_mode"
+#: The owner allowed the trigger's action to run (the create dialog, the editor, the Triggers
+#: page's switch or its Allow), and the action starts an agent: the agent starts on that yes. It
+#: covers the start only; the agent's own calls ask as any agent's do
+#: (`triggers.grants.allows_its_agent`).
+TRIGGER = "trigger_grant"
 #: The global Settings → Agent defaults → Approval mode "Auto", for an agent no chat started.
 SETTING = "setting"
 #: ``hooks.auto_approve_subagent_spawn`` / ``hooks.auto_approve_subagent_tools``.

@@ -135,6 +135,19 @@ WRITERS: tuple[Writer, ...] = (
         min_values=4,
     ),
     Writer(
+        # The ending of the agent a launched run started, written onto that run's row: `success`,
+        # `failure`, or `declined` for the owner's own Deny.
+        label="triggers/settle.py settles a launched run's ScheduleRun row",
+        path="triggers/settle.py",
+        table=H.SCHEDULE_STATUS_TO_OUTCOME,
+        table_name="SCHEDULE_STATUS_TO_OUTCOME",
+        kind="kwarg",
+        name="status",
+        call="settle_sync",
+        min_sites=1,
+        min_values=3,
+    ),
+    Writer(
         # The executor's runner is INJECTED, so its status source is open by design (an app's
         # provider, or `mcp_automation._http_runner`'s HTTP body). `classify`'s unrecognized→FAILED
         # rule plus `action_providers/base.py`'s "adding a member means updating these maps" note
@@ -446,6 +459,7 @@ def test_the_writer_file_census_is_pinned() -> None:
     """
     attr_files: set[str] = set()
     call_files: set[str] = set()
+    settle_files: set[str] = set()
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -462,6 +476,8 @@ def test_the_writer_file_census_is_pinned() -> None:
                 )
                 if called == "ScheduleRun":
                     call_files.add(rel)
+                if called == "settle_sync":
+                    settle_files.add(rel)
 
     assert attr_files == {
         "hooks.py",
@@ -488,6 +504,10 @@ def test_the_writer_file_census_is_pinned() -> None:
         # this rail rather than about the writer.
         "triggers/reaper.py",
     }, f"the set of modules constructing a ScheduleRun changed: {sorted(call_files)}"
+    # A row a launched run left is rewritten in one place, whose statuses the writer above pins.
+    assert settle_files == {
+        "triggers/settle.py"
+    }, f"the set of modules settling a run's row changed: {sorted(settle_files)}"
 
 
 def test_every_table_value_is_a_typed_outcome() -> None:

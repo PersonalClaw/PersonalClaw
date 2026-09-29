@@ -131,6 +131,8 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
                 <div className="flex items-center gap-3">
                   <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Slow' : 'Fast'}</span>
                   <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
+                    // A raw input reads no name from the Field around it: it names itself.
+                    aria-label="Speaking speed" aria-valuetext={`${speed.toFixed(2)}×`}
                     // Moves the shown value while dragging; saved on release.
                     onChange={(e) => show({ speed: Number(e.target.value) })}
                     onPointerUp={(e) => save({ speed: Number((e.target as HTMLInputElement).value) })}

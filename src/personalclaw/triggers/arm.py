@@ -21,10 +21,10 @@ that missing primitive, for every member of `CLOCK_KINDS`.
 **Semantics are inherited, not invented.** `schedule.compute_next_run_ts` is the shipped, live
 computation for the same question, and its two subtle rules are preserved verbatim here:
 
-* **A cron expression is evaluated in the trigger's OWN timezone**, by building the croniter base as
-  `datetime.fromtimestamp(now, tz=<trigger tz>)` — croniter interprets the expression in the base's
-  tz and `get_next(float)` returns a UTC epoch. Evaluating in UTC instead would silently shift every
-  tz-bearing job by the offset, which on a DST boundary is a moving target.
+* **A cron expression is evaluated on the wall clock of the trigger's OWN timezone**
+  (`cron_clock.next_fire`), and the fire is the UTC epoch of that wall time there. Evaluating in UTC
+  instead would silently shift every tz-bearing job by the offset; handing croniter an aware base
+  kept the offset the base was in, so a fire after the clocks changed landed an hour off.
 * **A past one-shot `at` returns 0.0 (never fires again)** rather than "now": re-arming an elapsed
   one-shot converts a missed appointment into an immediate surprise fire.
 """
@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -219,8 +219,10 @@ def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0)
                 # firing, and the row is already visible as broken in the store + doctor.
                 logger.debug("trigger %s has an invalid cron expr %r", trigger.id, expr)
                 return 0.0
-            base = datetime.fromtimestamp(now, tz=_trigger_tz(trigger))
-            return float(croniter(expr, base).get_next(float))
+            from personalclaw.cron_clock import next_fire as next_cron_fire
+
+            # On the zone's wall clock, so a fire after the clocks change keeps its time.
+            return next_cron_fire(expr, now, _trigger_tz(trigger))
 
         if kind in ("interval", "sequence"):
             secs = _positive(spec.get("interval_secs"))
@@ -367,11 +369,14 @@ def _min_cron_gap_secs(expr: str) -> float:
     0.0 when the gap cannot be measured (croniter refusing, exhausted iterator) — an
     unmeasurable cadence is reported by the validity check, not this one.
     """
-    from croniter import croniter  # type: ignore[import-untyped]
+    from personalclaw.cron_clock import next_fire as next_cron_fire
 
+    fires: list[float] = []
+    at = datetime(2026, 1, 6, 0, 0, tzinfo=timezone.utc).timestamp()
     try:
-        it = croniter(expr, datetime(2026, 1, 6, 0, 0, tzinfo=timezone.utc))
-        fires = [it.get_next(float) for _ in range(_CADENCE_SAMPLE_FIRES)]
+        for _ in range(_CADENCE_SAMPLE_FIRES):
+            at = next_cron_fire(expr, at, timezone.utc)
+            fires.append(at)
     except Exception:  # noqa: BLE001 - validity is the other check's job
         return 0.0
     gaps = [b - a for a, b in zip(fires, fires[1:]) if b > a]
@@ -392,8 +397,7 @@ def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
     that spec with its own ERROR row, so an extra inert-date warning on the same spec would
     be noise pointing at the wrong field.
     """
-    from croniter import croniter  # type: ignore[import-untyped]
-
+    from personalclaw.cron_clock import next_fire as next_cron_fire
     from personalclaw.timezones import UnknownTimeZone, resolve_zone
 
     try:
@@ -401,11 +405,11 @@ def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
     except UnknownTimeZone:
         return True
     try:
-        base = datetime(day.year, day.month, day.day, tzinfo=tz) - timedelta(seconds=1)
-        nxt = croniter(expr, base).get_next(datetime)
+        base = datetime(day.year, day.month, day.day, tzinfo=tz).timestamp() - 1
+        nxt = next_cron_fire(expr, base, tz)
     except Exception:  # noqa: BLE001 - validity is the other check's job
         return True
-    return bool(nxt.astimezone(tz).strftime("%Y-%m-%d") == day.isoformat())
+    return bool(datetime.fromtimestamp(nxt, tz).strftime("%Y-%m-%d") == day.isoformat())
 
 
 def semantic_spec_issues(

@@ -119,7 +119,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "reversal"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "failure_class"},
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "retry_after"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "summary"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "summary"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "work_id"}
    ],
    "returns": "None"
   },
@@ -3144,7 +3145,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cancelled"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "title"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "title"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "declined"}
    ],
    "returns": "None"
   },

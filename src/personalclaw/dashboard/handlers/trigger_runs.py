@@ -800,6 +800,9 @@ async def _record_manual_run(
                 summary=summary,
                 trace=trace or summary,
                 error=error,
+                # The agent a launched run started, so the row says how it went when it ends
+                # (`triggers.settle`).
+                work_id=str(getattr(result, "work_id", "") or "") if status == "launched" else "",
             )
         )
         # A park asks you, once, with the action's own card; a run that went through withdraws the

@@ -3,6 +3,7 @@ import { api, type NotificationSettings, type NotificationRulesDoc } from '../..
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { PanelHeader, Section, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { useFieldHintId } from '../../ui/forms'
 import { NotificationRulesMatrix, DigestSchedule } from './NotificationRulesMatrix'
 import { ApprovalChannelSection } from './ApprovalChannelSection'
 import { notify } from '../../app/appSdk'
@@ -87,9 +88,9 @@ export function NotificationsPanel() {
         {s.quiet_hours_enabled && (
           <Row label="Window" hint="Start and end (24-hour, server time).">
             <div className="flex items-center gap-2">
-              <TimeInput value={s.quiet_hours_start} onChange={(v) => patch({ quiet_hours_start: v })} />
+              <TimeInput ariaLabel="Quiet hours window start" value={s.quiet_hours_start} onChange={(v) => patch({ quiet_hours_start: v })} />
               <span data-type="body-s" className="text-on-surface-low">to</span>
-              <TimeInput value={s.quiet_hours_end} onChange={(v) => patch({ quiet_hours_end: v })} />
+              <TimeInput ariaLabel="Quiet hours window end" value={s.quiet_hours_end} onChange={(v) => patch({ quiet_hours_end: v })} />
             </div>
           </Row>
         )}
@@ -116,12 +117,16 @@ export function NotificationsPanel() {
   )
 }
 
-function TimeInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function TimeInput({ value, onChange, ariaLabel }: { value: string; onChange: (v: string) => void; ariaLabel: string }) {
+  // Named on its own: a settings `Row` names nothing (its control does), and the two time fields read
+  // to a screen reader as "time, edit" twice. The name holds the row's visible "Window", so a speech
+  // user who says what they see reaches it; the row's hint is its description.
+  const hintId = useFieldHintId()
   // Only propagate a complete HH:MM — clearing the field emits '' which the
   // backend rejects (an unparseable time silently disabled quiet hours at the
   // delivery gate). The controlled value snaps back, so a clear is a no-op.
   return (
-    <input type="time" value={value} onChange={(e) => { if (e.target.value) onChange(e.target.value) }}
+    <input type="time" aria-label={ariaLabel} aria-describedby={hintId} value={value} onChange={(e) => { if (e.target.value) onChange(e.target.value) }}
       data-type="body-s" className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }

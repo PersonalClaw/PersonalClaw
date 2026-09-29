@@ -77,6 +77,12 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     "ran_late": Outcome.RAN_LATE.value,
     # See the module docstring: started ≠ succeeded.
     "launched": Outcome.DEFERRED.value,
+    # A launched run whose agent asked its owner to start and was declined
+    # (`triggers.settle.settle_agent_run`). `SKIPPED_GATE`, for the reasons `held_for_rung` gives in
+    # the hook table: nothing ran and nothing was spent, it is not a verdict on the action
+    # (`REFUSED`), and it is not deferred work that still starts. Above all it is not `FAILED`:
+    # the owner's own Deny must never read as the automation breaking, or count toward autopause.
+    "declined": Outcome.SKIPPED_GATE.value,
     # `on_overlap: queue` held the start behind a run already in flight. DEFERRED's
     # "parked / resource-busy" half, and `LEDGER` weight follows for the same reason
     # `launched` gets it: no run directory or journal exists for it yet.
@@ -233,6 +239,11 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
         reason = f"timed out: {reason}" if reason else "timed out"
     elif status == "launched":
         reason = reason or "action launched a background turn; outcome not yet known"
+    elif status == "declined":
+        # The settle writes its sentence into `summary`; only a row that lost it needs the words.
+        from personalclaw.triggers.settle import DECLINED_LINE
+
+        reason = reason or DECLINED_LINE
     elif status == "queued":
         reason = reason or "queued behind a run already in flight; it starts when that one ends"
     elif status == "waiting":

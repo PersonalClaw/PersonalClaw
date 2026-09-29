@@ -212,6 +212,12 @@ def tool_approval_id(agent_id: str, request_id: object) -> str:
     return f"subagent:{agent_id}:{request_id}"
 
 
+def agent_work_id(agent_id: str) -> str:
+    """How a trigger's history row names the agent its fire started (`ActionResult.work_id`), so
+    the row can say how that agent's run ended when it does."""
+    return f"subagent:{agent_id}"
+
+
 def approval_subagent_id(approval_id: str) -> str:
     """The subagent an approval belongs to, from either id above — "" when it is not one's."""
     if approval_id.startswith("spawn:"):
@@ -471,6 +477,10 @@ class SubagentInfo:
     # background-agents list lead with it. "" for a run nobody named, which reads by its task. After
     # `trigger_id` for the same reason `trigger_id` is last.
     title: str = ""
+    # The owner answered its start with Deny: it never ran, by their own decision, so nothing that
+    # reads how it ended calls that a failure (its trigger's history, the notes). `error` still says
+    # what happened, for the readers that show it. Last, for the reason `trigger_id` is.
+    declined: bool = False
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -520,6 +530,7 @@ class SubagentLimits:
 #: auditor's existing queries still match; ``decided_by`` beside it is the grant's own name.
 _SPAWN_GRANT_REASONS = {
     approval_grants.APPROVAL_MODE: "approval_mode_auto",
+    approval_grants.TRIGGER: "trigger_allowed",
     approval_grants.PARENT_TRUST: "parent_trusted",
     approval_grants.HOOK_SETTING: "tool_calls_gated",
     approval_grants.YOLO: "yolo",
@@ -660,11 +671,22 @@ class SubagentManager:
     # ── Who may approve, decided now (`approval_grants`) ──────────────────
 
     def _spawn_grant(self, info: SubagentInfo) -> str:
-        """The grant that starts *info* without asking, read now, or ``""`` (the spawn asks)."""
+        """The grant that starts *info* without asking, read now, or ``""`` (the spawn asks).
+
+        A trigger's agent starts on the Allow its trigger was given, when that trigger's action is
+        the one that starts it (`triggers.grants.allows_its_agent`): the owner said yes to "use
+        the “Invoke Agent” action when it runs", and asking again at the start asked it twice. It
+        is a grant for the start alone, so :meth:`_standing_grant` does not read it.
+        """
         if self._is_yolo and self._is_yolo():
             return approval_grants.YOLO
         if info.approval_mode == "auto":
             return approval_grants.APPROVAL_MODE
+        if info.trigger_id:
+            from personalclaw.triggers.grants import allows_its_agent
+
+            if allows_its_agent(info.trigger_id):
+                return approval_grants.TRIGGER
         if info.parent_session_key and self._sessions.get_approval_policy(
             info.parent_session_key
         ) in ("auto", "yolo"):
@@ -1108,7 +1130,8 @@ class SubagentManager:
         Approval priority (first match wins), read when the spawn is admitted:
 
         1. A standing grant (:meth:`_spawn_grant`: YOLO, ``approval_mode="auto"`` from the
-           caller, the parent chat's Trust, ``auto_approve_subagent_spawn``) → immediate
+           caller, the Allow of the trigger whose action starts it, the parent chat's Trust,
+           ``auto_approve_subagent_spawn``) → immediate
            execution, but only if the operator ceiling lets that grant stand
            (``approval_grants.stands``). Under ``approval: ask`` none does, and the spawn is
            asked like any other.
@@ -1707,6 +1730,11 @@ class SubagentManager:
         if not decision:
             info.done = True
             info.error = _spawn_refusal(decision)
+            # A person's Deny, and only that: a window nobody answered, or an approval that could
+            # not be asked, is not their decision.
+            info.declined = (
+                decision.outcome == "rejected" and decision.decided_by == approval_grants.YOU
+            )
             self._dec_running(info)
             self._drain_queue()
             self._tasks.pop(info.id, None)

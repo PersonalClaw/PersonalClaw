@@ -127,6 +127,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**
+
+- **An automation that starts an agent starts it on the Allow you gave the automation, without asking again; its run's history says how the agent's run went instead of "launched", and a start you decline reads "declined", with no note calling it a failure (SDK: `ActionResult.work_id` and `SubagentInfo.declined`, additions no app has to change for).**
+
+- **A schedule keeps its time across a change of the clocks: a cron whose next run falls after daylight saving time ends or begins runs, and is described, at the hour it names instead of an hour off, and a time the clocks skip runs as they jump.**
+
+- **Moving a task to another project from its editor saves it in that project, and a task in no project opens on "(none)".**
+
+- **`automation_create` tells the agent which automations wait for your Allow: one that sends your own words is active at once.**
+
+- **A pairing code says the time it stops working, with one full stop, on a channel's Owner and on Sender trust.**
+
+- **The quiet-hours window's two times and the speaking-speed slider have names a screen reader reads.**
+
 - **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
 
 - **A second tab opened during first-run setup joins the setup where it is, with the name already entered, instead of starting over at step 1.**

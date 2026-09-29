@@ -125,6 +125,11 @@ class ActionResult:
     # writes this so that the row a person reads is not the JSON. Empty = nothing to add, and the
     # row shows `stdout` (`schedule_history.summary_for_result`).
     summary: str = ""
+    # The work a `launched` action started and that ends later: `subagent:<id>` for the agent a
+    # run-prompt or invoke-agent action starts. The run's history row keeps it, so when that work
+    # ends the row says how it went instead of "launched" forever
+    # (`schedule_history.ScheduleRunStore.settle_sync`). Empty for everything else.
+    work_id: str = ""
 
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:

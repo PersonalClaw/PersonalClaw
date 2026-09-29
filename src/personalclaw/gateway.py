@@ -2303,6 +2303,9 @@ class GatewayOrchestrator:
                     summary=line if ok_exit else run_error,
                     trace=(output or line) if ok_exit else run_error,
                     error=run_error[:_ERROR_SUMMARY_MAX],
+                    # The agent a launched fire started, so the row says how it went when it ends
+                    # (`triggers.settle`).
+                    work_id=str(getattr(result, "work_id", "") or "") if ok_exit else "",
                 )
             )
             if ok_exit:
@@ -4075,10 +4078,30 @@ class GatewayOrchestrator:
             for _member in batch:
                 await _broadcast_subagent_status(_member, "done")
 
+            # The run of the trigger that started each member says how it went, on its history
+            # row: the fire recorded only that it launched (`triggers.settle`).
+            started_by_a_trigger: "list[SubagentInfo]" = []
+            for m in batch:
+                started_by = getattr(m, "trigger_id", "")
+                if isinstance(started_by, str) and started_by:
+                    started_by_a_trigger.append(m)
+            if started_by_a_trigger:
+                from personalclaw.triggers.settle import settle_agent_run
+
+                settled = [
+                    await asyncio.to_thread(settle_agent_run, m) for m in started_by_a_trigger
+                ]
+                if any(settled):
+                    self._push_trigger_refresh()
+
             # A trigger's own agent says how it went on the trigger's route now that it has ended,
             # wherever its reply goes: the fire, or the Run now, that started it said nothing
             # (`_reports_later`). When every member has, the plain subagent note would say it twice.
             def _reported(member: "SubagentInfo") -> bool:
+                # Its owner declined its start: it never ran, by their own decision, and they know.
+                # No note says so, least of all one calling it a failure.
+                if getattr(member, "declined", False) is True:
+                    return True
                 trigger_id = getattr(member, "trigger_id", "")
                 if not isinstance(trigger_id, str) or getattr(member, "silent", False):
                     return False
@@ -4100,7 +4123,9 @@ class GatewayOrchestrator:
                 # Subagent result → the parent transcript. A blind head-cut here was a
                 # real failure class; route long output through project_and_retain
                 # (Context Economy §2.5a) for a type-projected digest + raw_ref handle.
-                if member.error:
+                if member.declined is True:
+                    m_detail = member.error
+                elif member.error:
                     m_detail = f"Error: {member.error}"
                 else:
                     m_detail = member.result or "_No response._"
@@ -4118,8 +4143,14 @@ class GatewayOrchestrator:
             # reads the same text the announce carries.
             details = {m.id: _detail(m) for m in batch}
 
+            def _ended(member: "SubagentInfo") -> str:
+                """How a member ended, in one word: its owner's Deny is not a failure."""
+                if member.declined is True:
+                    return "declined"
+                return "failed" if member.error else "completed"
+
             def _one_block(member: "SubagentInfo") -> str:
-                m_status = "failed" if member.error else "completed"
+                m_status = _ended(member)
                 m_task, _ = redact_exfiltration_urls(member.task)
                 m_task, _ = redact_credentials(m_task)
                 m_task = m_task[:100]
@@ -4132,9 +4163,9 @@ class GatewayOrchestrator:
                 )
 
             blocks = [_one_block(m) for m in batch]
-            n_failed = sum(1 for m in batch if m.error)
+            n_failed = sum(1 for m in batch if _ended(m) == "failed")
             if len(batch) == 1:
-                status = "failed" if info.error else "completed"
+                status = _ended(info)
                 title = f"Subagent `{info.id}` {status}"
                 announce = "[Subagent completion event]\n" + blocks[0]
             else:
@@ -4153,7 +4184,8 @@ class GatewayOrchestrator:
                 # the run and IS what the agent said (the reminder, the summary), and it links back
                 # to the automation. The announce above stays the model-facing event it always was,
                 # and a batch keeps the generic note, since no one name covers several runs.
-                title = f"{info.title} — failed" if info.error else info.title
+                ended = _ended(info)
+                title = f"{info.title} — {ended}" if ended != "completed" else info.title
                 body = details[info.id]
                 if info.trigger_id:
                     from personalclaw.triggers.delivery import status_url as _trigger_status_url

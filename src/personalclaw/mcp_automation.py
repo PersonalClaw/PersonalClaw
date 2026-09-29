@@ -94,8 +94,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "agent runs. When the owner named the chat channel ('on Telegram'), give it in "
                 "`via`: it sends there and on no other channel. "
                 "Announced to you on creation with the time it read, and capped by "
-                "workflows.self_schedule_max_outstanding. It does not run until the owner allows "
-                "it on the Triggers page, so tell them it is waiting."
+                "workflows.self_schedule_max_outstanding. One that sends `say` is active at once; "
+                "one that runs `message` does not run until the owner allows it on the Triggers "
+                "page. The result says which, so tell the owner what it says."
             ),
             "inputSchema": {
                 "type": "object",

@@ -63,15 +63,14 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, tzinfo
+from datetime import tzinfo
 from pathlib import Path
 from uuid import uuid4
-
-from croniter import croniter  # type: ignore[import-untyped]
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.cron_clock import previous_fire as previous_cron_fire
 from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND as _RESEARCH_FINDING_KIND
 from personalclaw.schedule import ScheduleDefinition, validate_cron_expr
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -520,11 +519,10 @@ def is_due(defn: ReportDefinition, *, now: float) -> tuple[bool, str]:
                 # Fail CLOSED and name the expression: this is the reason the
                 # whole function is wrapped, and the user's only repair hint.
                 return False, f"invalid cron expression {expr!r}"
-            base = datetime.fromtimestamp(now, tz=_report_tz(defn))
-            # The most recent boundary at or before now. Comparing that single
-            # boundary against the anchor is what makes fifty skipped windows
-            # fire once (rule 3).
-            prev_fire = float(croniter(expr, base).get_prev(float))
+            # The most recent boundary at or before now, on the report zone's wall clock
+            # (`cron_clock`). Comparing that single boundary against the anchor is what makes
+            # fifty skipped windows fire once (rule 3).
+            prev_fire = previous_cron_fire(expr, now, _report_tz(defn))
             if prev_fire > anchor:
                 return True, f"cron {expr!r} boundary at {prev_fire:.0f} passed"
             return False, f"no cron {expr!r} boundary since {anchor:.0f}"

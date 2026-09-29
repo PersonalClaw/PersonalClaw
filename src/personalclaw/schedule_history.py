@@ -53,6 +53,17 @@ _MAX_SUPPRESSED_PER_JOB = _MAX_RECORDS_PER_JOB // 4
 #: automation vanished from the dashboard's cross-schedule view.
 _MAX_INDEX_PER_JOB = _MAX_RECORDS_PER_JOB
 
+#: The one status a row is settled FROM (`ScheduleRunStore.settle_sync`): the run only started work
+#: that ends later. A row that already says how it went is never rewritten.
+_UNSETTLED_STATUS = "launched"
+
+#: Endings that arrived before the row they settle, by `(history dir, job id, work id)`. A fire's
+#: row is written after its action returns, while the agent it started goes on by itself, so an
+#: agent refused at once can end first; the append then writes the row as it ended. Bounded: an
+#: ending whose row never comes (a recorder that failed) is dropped, oldest first.
+_EARLY_ENDINGS: dict[tuple[str, str, str], dict[str, Any]] = {}
+_EARLY_ENDINGS_CAP = 64
+
 _HISTORY_DIRNAME = "cron-history"
 _INDEX_NAME = "_index.jsonl"
 _LOCK_NAME = ".history.lock"
@@ -82,10 +93,15 @@ class ScheduleRun:
     #   is recorded by ITS own run, not this one. Honest "started ≠ succeeded"
     #   status (T7) — a green "ran" must not imply the work succeeded.
     # "skipped_noop": the action ran and had nothing to do (`status_for_result`).
+    # "declined": the work a launched run started asked its owner to start and they declined it
+    #   (`ScheduleRunStore.settle_sync`). Their own decision, not a failure.
     status: str = "success"
     summary: str = ""
     trace: str = ""
     error: str = ""
+    # The work a `launched` run started (`ActionResult.work_id`), which ends later: when it does,
+    # this row says how it went instead of "launched" (`ScheduleRunStore.settle_sync`).
+    work_id: str = ""
 
     def to_dict(self, *, include_trace: bool = True) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -98,6 +114,7 @@ class ScheduleRun:
             "status": self.status,
             "summary": self.summary,
             "error": self.error,
+            "work_id": self.work_id,
         }
         if include_trace:
             d["trace"] = self.trace
@@ -116,6 +133,7 @@ class ScheduleRun:
             summary=str(d.get("summary", "")),
             trace=str(d.get("trace", "")),
             error=str(d.get("error", "")),
+            work_id=str(d.get("work_id", "")),
         )
 
 
@@ -185,6 +203,22 @@ def _redact_stored(text: str | None) -> str:
     from personalclaw.security import redact_or_withhold
 
     return redact_or_withhold(str(text))
+
+
+def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool) -> None:
+    """Write an ending (`ScheduleRunStore.settle_sync`) onto a stored row, in place. The index's
+    rows carry no trace, and are given none."""
+    started = float(row.get("started_at") or 0.0)
+    finished = max(started, float(ending["finished_at"]))
+    row.update(
+        status=ending["status"],
+        summary=ending["summary"],
+        error=ending["error"],
+        finished_at=finished,
+        duration_ms=int((finished - started) * 1000),
+    )
+    if with_trace:
+        row["trace"] = ending["trace"]
 
 
 class ScheduleRunStore:
@@ -272,6 +306,17 @@ class ScheduleRunStore:
         job_path = self._job_path(run.job_id)
         with self._lock():
             self._dir.mkdir(parents=True, exist_ok=True)
+            # The work this row names ended before the row was written: it is written as it ended.
+            early = (
+                _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
+                if run.work_id and run.status == _UNSETTLED_STATUS
+                else None
+            )
+            if early is not None:
+                run.status = early["status"]
+                run.summary, run.trace, run.error = early["summary"], early["trace"], early["error"]
+                run.finished_at = max(run.started_at, early["finished_at"])
+                run.duration_ms = int((run.finished_at - run.started_at) * 1000)
             # Full record (with trace) on the per-job file.
             with job_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(run.to_dict(include_trace=True), ensure_ascii=False) + "\n")
@@ -293,6 +338,64 @@ class ScheduleRunStore:
         import asyncio
 
         await asyncio.to_thread(self.append_sync, run)
+
+    def settle_sync(
+        self,
+        job_id: str,
+        work_id: str,
+        *,
+        status: str,
+        summary: str = "",
+        trace: str = "",
+        error: str = "",
+        finished_at: float = 0.0,
+    ) -> bool:
+        """Say how the work a `launched` run started went, on that run's row.
+
+        A fire whose action starts an agent records its run the moment the agent starts, as
+        `launched` (started is not succeeded), naming the agent in `work_id`. When the agent
+        ends, this writes how on the same row — its `status`, what it said or why it failed, when
+        it finished — in the per-job file and the cross-job index both, redacted as `append_sync`
+        redacts. Only a row that still says `launched` changes: an ending that arrives twice
+        changes nothing the second time.
+
+        Returns whether the ending was taken: written now, or held until its row is written (the
+        agent ended before its fire recorded the run, see `_EARLY_ENDINGS`). False when there is
+        nothing to settle.
+        """
+        if not job_id or not work_id:
+            return False
+        import time
+
+        ending = {
+            "status": status,
+            "summary": _redact_stored(summary)[:_SUMMARY_CAP],
+            "trace": _redact_stored(trace or summary)[:_TRACE_CAP],
+            "error": _redact_stored(error),
+            "finished_at": finished_at or time.time(),
+        }
+        job_path = self._job_path(job_id)
+        with self._lock():
+            rows = self._read_jsonl(job_path)
+            named = [row for row in rows if row.get("work_id") == work_id]
+            if not named:
+                key = (str(self._dir), job_id, work_id)
+                _EARLY_ENDINGS[key] = ending
+                while len(_EARLY_ENDINGS) > _EARLY_ENDINGS_CAP:
+                    _EARLY_ENDINGS.pop(next(iter(_EARLY_ENDINGS)))
+                return True
+            row = named[-1]
+            if row.get("status") != _UNSETTLED_STATUS:
+                return False
+            run_id = row.get("run_id")
+            _settle_row(row, ending, with_trace=True)
+            self._write_jsonl(job_path, rows)
+            index = self._read_jsonl(self._index)
+            for entry in index:
+                if entry.get("job_id") == job_id and entry.get("run_id") == run_id:
+                    _settle_row(entry, ending, with_trace=False)
+            self._write_jsonl(self._index, index)
+        return True
 
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
 

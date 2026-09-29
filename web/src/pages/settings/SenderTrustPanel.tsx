@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Copy, KeyRound, Loader2, MessageCircle, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import { api } from '../../lib/api'
+import { untilSentence } from '../../lib/epoch'
 import type { ChannelSenderPairing, ChannelTrustProvider, ChannelTrustSender } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
@@ -69,12 +70,6 @@ function addedLabel(iso: string): string {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return 'date unknown'
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-}
-
-/** An ISO time as a clock time, for "it works until 14:52". */
-function clock(iso: string): string {
-  const t = Date.parse(iso)
-  return Number.isNaN(t) ? '' : new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
 export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => void } = {}) {
@@ -264,7 +259,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
               </Button>
             </div>
             <div data-type="caption" className="text-on-surface-low">
-              It works once{clock(code.expires_at) ? `, until ${clock(code.expires_at)}` : ''}. Whoever sends it can talk to your agent on {label}.
+              {untilSentence('It works once', code.expires_at)} Whoever sends it can talk to your agent on {label}.
             </div>
             <div className="flex items-center gap-s">
               <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low">
@@ -278,10 +273,10 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
           // there, and offer the way to close it.
           <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low">
             <KeyRound size={16} className="shrink-0" aria-hidden="true" />
+            {/* Until a TIME: a sender's code lasts ten minutes, and a date said nothing about when. */}
             <span>
-              A pairing code is outstanding for {label}
-              {p.pairing_expires_at ? ` until ${addedLabel(p.pairing_expires_at)}` : ''}. Anyone who
-              sends it becomes a trusted sender.
+              {untilSentence(`A pairing code is outstanding for ${label}`, p.pairing_expires_at, ' until ')}
+              {' '}Anyone who sends it becomes a trusted sender.
             </span>
             <Button size="xs" variant="ghost" onClick={cancelCode} loading={busy === 'cancel'} className="ml-auto">Cancel it</Button>
           </div>

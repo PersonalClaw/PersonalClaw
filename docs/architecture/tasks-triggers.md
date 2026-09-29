@@ -116,10 +116,17 @@ relative to `PersonalClaw/src/personalclaw/`.
   a trigger on (or Allow on one that is on, the same toggle sent on again), and
   `personalclaw cron add|update --yes`, which asks the same questions in the
   terminal and changes nothing without it. A trigger the chat makes
-  (`automation_create`, `set_onetime_task`, `set_recurring_task`) is not
-  allowed to run until the owner allows it; a chat edit that needs a grant is
+  (`automation_create`, `set_onetime_task`, `set_recurring_task`) is made with
+  no grant, so one whose action needs a grant does not run until the owner
+  allows it (words sent as written, `automation_create`'s `say`, need none and
+  are active at once); a chat edit that needs a grant is
   saved switched off; a chat edit that loosens the posture is refused; and the
-  chat cannot switch such a trigger on or run it. PersonalClaw's own triggers
+  chat cannot switch such a trigger on or run it. An action that starts an
+  agent (`invoke-agent`, `run-prompt`) starts it on its trigger's grant: the
+  owner allowed it "to use the “Invoke Agent” action when it runs", so the
+  agent's start does not ask again (`grants.allows_its_agent`, bounded by the
+  operator ceiling like every grant), and the agent's own calls ask as any
+  agent's do. PersonalClaw's own triggers
   are granted by the code that makes them, since each runs an action it fixes
   behind a switch the owner holds (an app's crons, the `system:*` singletons, a
   research report's schedule, the triage digest, the Self-QA watch, a logged
@@ -451,7 +458,14 @@ report for any of them (`gateway._reports_later`), since nothing has finished.
 The agent task reports on the trigger's route when it ends
 (`GatewayOrchestrator._report_to_its_trigger`, from the subagent completion):
 "X finished" and the agent's reply, or "X failed" and why, and the plain
-subagent note is not sent as well. A workflow run reports the same way from its
+subagent note is not sent as well. Its run's history row says the same: the row
+names the agent it started (`ActionResult.work_id`, kept as `ScheduleRun.work_id`),
+and the agent's ending rewrites `launched` into `success` and the reply, or
+`failure` and why (`triggers/settle.py`, `ScheduleRunStore.settle_sync`); an
+agent that ends before its fire wrote the row still lands on it. An agent whose
+start you declined is `declined` (`SubagentInfo.declined`, mapped to
+`skipped_gate`): your own decision, so it sends no note and never reads as a
+failure. A workflow run reports the same way from its
 terminal write (`workflows/run_finish.report_to_its_trigger`, wired as
 `EngineServices.report_to_trigger`) and links to the run; a run that was
 cancelled or declined says nothing, since whoever stopped it knows. A Run now

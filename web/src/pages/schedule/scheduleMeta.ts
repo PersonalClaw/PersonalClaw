@@ -1,4 +1,4 @@
-import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff } from 'lucide-react'
+import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
@@ -156,6 +156,9 @@ export function statusMeta(s?: string | null): StatusMeta {
   // "launched": started a background turn — honest "started ≠ succeeded" (T7).
   // Neutral tone, NOT ok-green: a green tick would imply the work succeeded.
   if (s === 'launched') return { label: 'launched', tone: 'var(--color-info)', icon: Rocket, noFault: true }
+  // A launched run whose agent asked you to let it start, and you declined (`triggers/settle.py`).
+  // Your own decision, not a fault: neutral, as the `skipped_gate` the runs feed maps it to.
+  if (s === 'declined') return { label: 'declined', tone: 'var(--color-on-surface-low)', icon: Ban, noFault: true }
   // 🔴 A SCREENED payload. The backend writes `blocked_injection` rows now, and without
   // this branch they fell through to "never run" — the worst possible label for a blocked attack:
   // the user reads "this automation has never run" when it in fact refused a hostile payload, and

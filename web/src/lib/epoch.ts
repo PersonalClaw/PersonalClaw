@@ -39,6 +39,31 @@ export function clockTime(ts?: number | string | null): string {
   return new Date(secs * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
+/** When something short-lived stops working — a pairing code's ten minutes — as the reader's clock
+ *  time, with the day in front when that is not today: `14:52`, or `Sep 30, 14:52`, per the reader's
+ *  locale. A date alone ("until Sep 29, 2026") said nothing about a code that lasts minutes.
+ *
+ *  Unreadable ⇒ `''`, as its siblings. `now` is epoch MILLISECONDS, for a test's fixed clock. */
+export function expiryStamp(ts?: number | string | null, now: number = Date.now()): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  const at = new Date(secs * 1000)
+  if (at.toDateString() === new Date(now).toDateString()) {
+    return at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  }
+  return at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** `sentence`, then until when the thing it is about works (`expiryStamp`), ended as a
+ *  sentence: "It works once, until 05:45 a.m." — with one full stop. The time is the last word, and
+ *  a locale that writes `05:45 a.m.` ended it "a.m.." when a stop was added after it regardless.
+ *  An unreadable time leaves the clause out. */
+export function untilSentence(sentence: string, ts?: number | string | null, join = ', until '): string {
+  const at = expiryStamp(ts)
+  const text = at ? `${sentence}${join}${at}` : sentence
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
 /** The same instant fully spelled out, for the `title` of a clock time.
  *
  *  `14:32` alone is ambiguous the moment a conversation is more than a day old, and the visible

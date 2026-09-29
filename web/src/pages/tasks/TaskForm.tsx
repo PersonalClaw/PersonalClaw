@@ -64,8 +64,16 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
           <Segmented collapse="wrap" options={PRIORITIES.map((p) => ({ key: p.key, label: p.label, tone: p.tone }))} value={draft.priority ?? 'medium'} onChange={(v) => set('priority', v)} />
         </Field>
         <div className={`grid grid-cols-2 ${compact ? 'gap-m' : 'gap-l'}`}>
-          <ProjectListPicker taskListId={draft.task_list_id ?? ''} onChange={(id) => set('task_list_id', id)}
-            onProjectChange={draft.id ? undefined : (id) => set('project_id', id)} />
+          {/* Every pick names the project it is in, in Edit as on a new task. Edit sent none, so
+              moving a task to another project sent only the cleared list, and the server, which
+              reads the project off the list, saved it in no project at all. Each pick is ONE change
+              of both fields: two `set`s in one event each spread the same old draft, and the second
+              put the old list back. An edited task's draft changes only when the user picks — its
+              opening writes nothing, so it cannot land on a field typed a moment before. */}
+          <ProjectListPicker taskListId={draft.task_list_id ?? ''} editing={!!draft.id}
+            onListChange={(listId, projectId) => onChange({ ...draft, task_list_id: listId, project_id: projectId })}
+            onProjectChange={(projectId) => onChange({ ...draft, task_list_id: '', project_id: projectId })}
+            onStartingProject={draft.id ? undefined : (projectId) => set('project_id', projectId)} />
         </div>
         {/* `auto-fit`, not `grid-cols-2`: a native date input cannot shrink below its content, so in
             the side panel at its 320px minimum the Due field spilled 5px past the panel and focusing
@@ -124,11 +132,25 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
 /** Project → TaskList picker. The structural FK is `task_list_id`; the project
  *  is only a grouping filter (resolved from the chosen list, so a task can sit
  *  directly under a project's default list or under a named list). The task's
- *  human-readable `project` label is derived server-side from this list. */
+ *  human-readable `project` label is derived server-side from this list, and a
+ *  project with no list chosen is sent as `project_id`, which the server files
+ *  under that project's General list.
+ *
+ *  `onProjectChange` is a project the user picks (which leaves the list they had),
+ *  `onListChange` a list they pick with the project it is in, and `onStartingProject`
+ *  the project a NEW task opens on. An edited task opens on the project it is in, and
+ *  one in no project on "(none)", and reports nothing until the user picks: opening
+ *  it moves nothing. */
 // Sentinel value the Project/TaskList selects use to trigger an inline create.
 const NEW = '__new__'
 
-function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskListId: string; onChange: (id: string) => void; onProjectChange?: (id: string) => void }) {
+function ProjectListPicker({ taskListId, editing, onListChange, onProjectChange, onStartingProject }: {
+  taskListId: string
+  editing: boolean
+  onListChange: (listId: string, projectId: string) => void
+  onProjectChange: (projectId: string) => void
+  onStartingProject?: (projectId: string) => void
+}) {
   const [projects, setProjects] = useState<ProjectItem[]>([])
   const [lists, setLists] = useState<TaskListItem[]>([])
   const [projectId, setProjectId] = useState('')
@@ -149,24 +171,28 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
     return () => { alive = false }
   }, [])
 
-  // Derive the starting project ONCE, when both reads have answered: the current task list
-  // (edit case) wins; else the user's default project if it still exists; else the Personal
-  // catch-all; else the first project. Waiting for the default is what keeps a new task from
-  // opening on Personal and jumping a moment later.
+  // Derive the starting project ONCE, when both reads have answered. An edited task starts on the
+  // project its list is in, or none. A new one starts on the user's default project if it still
+  // exists; else the Personal catch-all; else the first project. Waiting for the default is what
+  // keeps a new task from opening on Personal and jumping a moment later.
   const derived = useRef(false)
   useEffect(() => {
     if (derived.current || !loaded) return
     const cur = lists.find((l) => l.id === taskListId)
-    // The task's own list decides an edit; only a task without one waits for the default.
-    if (!cur?.project_id && !defaultSettled) return
+    if (editing) {
+      derived.current = true
+      setProjectId(cur?.project_id ?? '')
+      return
+    }
+    if (!defaultSettled) return
     derived.current = true
     const preferred = defaultProjectId && projects.some((p) => p.id === defaultProjectId) ? defaultProjectId : ''
     // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
     // each must fall through to the next when blank.
     const start = cur?.project_id || preferred || projects.find((p) => p.is_builtin)?.id || projects[0]?.id || ''
     setProjectId(start)
-    onProjectChange?.(start)
-  }, [loaded, defaultSettled, defaultProjectId, lists, projects, taskListId, onProjectChange])
+    onStartingProject?.(start)
+  }, [loaded, editing, defaultSettled, defaultProjectId, lists, projects, taskListId, onStartingProject])
 
   const projectLists = lists.filter((l) => l.project_id === projectId)
 
@@ -176,7 +202,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
     setBusy(true); setErr('')
     try {
       const p = await api.createProject({ name })
-      setProjects((ps) => [...ps, p]); setProjectId(p.id); onChange(''); onProjectChange?.(p.id)
+      setProjects((ps) => [...ps, p]); setProjectId(p.id); onProjectChange(p.id)
       setCreating(null); setNewName('')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Could not create project') }
     finally { setBusy(false) }
@@ -187,7 +213,7 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
     setBusy(true); setErr('')
     try {
       const l = await api.createTaskList({ name, project_id: projectId })
-      setLists((ls) => [...ls, l]); onChange(l.id)
+      setLists((ls) => [...ls, l]); onListChange(l.id, projectId)
       setCreating(null); setNewName('')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Could not create task list') }
     finally { setBusy(false) }
@@ -213,17 +239,20 @@ function ProjectListPicker({ taskListId, onChange, onProjectChange }: { taskList
     <>
       {/* A failed default read is SAID, on a new task only: the form still offers every project,
           but "Personal" pre-selected must not read as the user's choice when it was a fallback. */}
-      <Field label="Project" hint={onProjectChange && defaultErr ? 'Couldn’t load your default project — pick the one this task belongs to.' : undefined}>
+      <Field label="Project" hint={!editing && defaultErr ? 'Couldn’t load your default project — pick the one this task belongs to.' : undefined}>
         <Select value={projectId}
-          onChange={(id) => { if (id === NEW) { setCreating('project'); setNewName('') } else { setProjectId(id); onChange(''); onProjectChange?.(id) } }}
+          onChange={(id) => { if (id === NEW) { setCreating('project'); setNewName('') } else { setProjectId(id); onProjectChange(id) } }}
           options={[
+            // A task can be in no project (one made with no list); its editor says so rather than
+            // naming a project it is not in, and offers the way back to none.
+            ...(editing ? [{ value: '', label: '(none)' }] : []),
             ...projects.map((p) => ({ value: p.id, label: p.is_builtin ? `${p.name} (builtin)` : p.name })),
             { value: NEW, label: '＋ New project…' },
           ]} />
       </Field>
       <Field label="Task list">
         <Select value={taskListId}
-          onChange={(id) => { if (id === NEW) { setCreating('list'); setNewName('') } else onChange(id) }}
+          onChange={(id) => { if (id === NEW) { setCreating('list'); setNewName('') } else onListChange(id, projectId) }}
           disabled={!projectId}
           options={[
             { value: '', label: '(none)' },

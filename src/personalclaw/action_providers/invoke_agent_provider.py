@@ -7,10 +7,12 @@ blocks on the child:
 * **Recursion depth cap** (``_HOOK_INVOKE_MAX_DEPTH``): a spawned agent can have
   its own hooks that spawn agents. ``fire_for_ids`` injects ``__hook_depth``
   into the payload from the originating agent's depth; at the cap we refuse.
-* **Approval**: spawn is requested with ``approval_mode="auto"`` only when the
-  hook opts in (``approval_mode: "auto"``) or the global
-  ``auto_approve_subagent_spawn`` is set; otherwise SubagentManager.spawn
-  applies its normal approval gate (rejected if no interactive approver).
+* **Approval**: the agent starts on the Allow its trigger was given — the owner allowed the
+  trigger "to use the “Invoke Agent” action when it runs" — so its start does not ask again
+  (`triggers.grants.allows_its_agent`). Its own tool calls approve themselves only when the step
+  opts in (``approval_mode: "auto"``) or the global ``auto_approve_subagent_spawn`` is set, and
+  ask otherwise. A spawn with no trigger's Allow behind it takes SubagentManager.spawn's normal
+  approval gate (rejected if no interactive approver).
 
 How many hook-spawned agents run at once is the subagent manager's to bound: past its
 concurrency cap a spawn waits in its queue. A spawn it refuses outright (low memory, an
@@ -135,15 +137,18 @@ class InvokeAgentActionProvider(ActionProvider):
                 success=False, error=f"invoke-agent: the agent did not start: {exc}"
             )
         refused = spawn_refusal(info)
-        if refused:
+        if refused or info is None:  # `spawn_refusal` names why a None did not start
             return ActionResult(success=False, error=f"invoke-agent: {refused}")
-        # "launched", not "succeeded": the spawned agent's real outcome is recorded
-        # by its own run, not known here (T7 honest "started ≠ succeeded" status).
+        from personalclaw.subagent import agent_work_id
+
+        # "launched", not "succeeded": the agent's outcome is not known here (T7 honest "started ≠
+        # succeeded" status). The run's row names the agent, and says how it went when it ends.
         return ActionResult(
             success=True,
             exit_code=0,
             stdout=f"spawned agent for: {task[:80]}",
             outcome="launched",
+            work_id=agent_work_id(info.id),
         )
 
 
