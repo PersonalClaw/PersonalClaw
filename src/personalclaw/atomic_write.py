@@ -147,15 +147,16 @@ def ensure_private_dir(directory: Path | str) -> None:
 def is_in_home(path: Path | str) -> bool:
     """Whether ``path`` lies inside the PersonalClaw home this process writes into.
 
-    Asks ``config.loader.config_dir`` — the one resolver of the home, patched per test by the
-    suite's isolation fixture — at call time, never at import. ``False`` when the home cannot be
-    resolved at all, which leaves the write at the pre-existing umask default rather than
-    guessing.
+    Asks ``config.loader.resolve_config_dir`` — the one resolver of the home, patched per test by
+    the suite's isolation fixture — at call time, never at import. Where the home is, not the home
+    made: every atomic write asks this, and one outside the home (a build stamp in the checkout)
+    must not create a home by asking. ``False`` when the home cannot be resolved at all, which
+    leaves the write at the pre-existing umask default rather than guessing.
     """
     try:
         from personalclaw.config import loader  # lazy: loader imports this module
 
-        home = os.path.abspath(str(loader.config_dir()))
+        home = os.path.abspath(str(loader.resolve_config_dir()))
     except Exception:  # noqa: BLE001 — an unresolvable home must not fail an unrelated write
         return False
     target = os.path.abspath(str(path))

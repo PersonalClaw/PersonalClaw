@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import importlib
+import itertools
 import os
 import shutil
 import sys
@@ -94,6 +95,11 @@ def _caller_chose_a_home() -> bool:
     return (
         bool(os.environ.get("PERSONALCLAW_HOME")) or Path.home() != real_home_guard.REAL_HOME.parent
     )
+
+
+#: Numbers each test's home within this process's own temporary folder (an xdist worker has one
+#: of its own), so a home is named without making anything.
+_TEST_HOME_NUMBERS = itertools.count()
 
 
 # No module resolves the home at IMPORT (`tests/test_importing_personalclaw_touches_no_home.py`
@@ -302,12 +308,16 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     import personalclaw.config.loader as config_loader
 
     holder: list[Path] = []
+    base = tmp_path_factory.getbasetemp()
 
     def tmp_home() -> Path:
-        # Named lazily and made only when `config_dir()` asks: most tests never resolve an
-        # unspecified home, and `resolve_config_dir()` must not make the home it names.
+        # Named lazily, and made only when `config_dir()` asks: most tests never resolve an
+        # unspecified home, and `resolve_config_dir()` must not make the home it names, nor a
+        # folder to hold it. So it is a name here, not `mktemp()`, which makes the folder it
+        # numbers: a test that watches every `mkdir` saw one appear when a path check asked
+        # where the home is.
         if not holder:
-            holder.append(tmp_path_factory.mktemp("pclaw-home") / "home")
+            holder.append(base / f"pclaw-home-{next(_TEST_HOME_NUMBERS)}" / "home")
         return holder[0]
 
     original_config_dir = config_loader.config_dir
@@ -320,6 +330,7 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         # it resolves, so delegating would create ~/.personalclaw on a machine that has
         # none before we could redirect it.
         home = tmp_home()
+        home.parent.mkdir(mode=0o700, exist_ok=True)
         home.mkdir(mode=0o700, exist_ok=True)
         return home
 

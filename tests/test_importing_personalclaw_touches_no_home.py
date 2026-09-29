@@ -1,4 +1,5 @@
-"""Importing PersonalClaw creates and opens nothing; the offline reference renders with no home.
+"""Importing PersonalClaw creates and opens nothing; a command that needs no home makes none; the
+offline reference renders with no home.
 
 Importing a module is not running the product. A test collecting, a docs generator, an editor's
 language server, ``python -c "import personalclaw.x"`` — none of them asked for a home, and none
@@ -36,6 +37,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -228,6 +231,76 @@ def test_importing_every_module_creates_and_opens_nothing(tmp_path: Path) -> Non
         "a module froze the home into a value at import — a home established after import (the "
         "supported way to isolate a test) can never move it:\n  " + "\n  ".join(result["frozen"])
     )
+
+
+def _as_a_user(root: Path, argv: list[str]) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run *argv* the way a person runs PersonalClaw on a machine with no home: ``HOME`` an empty
+    folder under *root* and no ``PERSONALCLAW_HOME``, so the home would be the default one inside
+    that folder. Returns the process and what it left in that ``HOME``."""
+    home = root / "home"
+    home.mkdir(parents=True)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("PERSONALCLAW_", "PYTEST_", "COV_CORE_", "XDG_"))
+    }
+    env["HOME"] = str(home)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(_SRC), env.get("PYTHONPATH", "")) if p)
+    proc = subprocess.run(
+        [sys.executable, *argv], cwd=root, env=env, capture_output=True, text=True, timeout=110
+    )
+    assert proc.returncode == 0, f"the child failed:\n{proc.stderr[-4000:]}"
+    return proc, sorted(str(p.relative_to(home)) for p in home.rglob("*"))
+
+
+@pytest.mark.parametrize("argv", [["--version"], ["--help"], ["doctor", "--help"]])
+def test_a_command_that_needs_no_home_makes_none(tmp_path: Path, argv: list[str]) -> None:
+    """``personalclaw --version`` answers before any command runs. The start-up ahead of it worked
+    out two paths in the home (a ``.env`` to read, the folders the libraries are told) with the
+    resolver that CREATES the home, so every invocation made one, on a machine that had none and
+    for a command that never needed it."""
+    proc, left = _as_a_user((tmp_path / "scratch").resolve(), ["-m", "personalclaw", *argv])
+    assert "personalclaw" in proc.stdout, "vacuity floor: the command answered"
+    assert left == [], f"`personalclaw {' '.join(argv)}` left this in an empty HOME: {left}"
+
+
+#: Writes a file outside every home, then stamps a built SPA the way ``make web-build`` does
+#: (``scripts/spa_dist_freshness.py stamp``), in a repo-shaped tree under ``argv[1]``.
+_WRITE_OUTSIDE = r"""
+import sys
+from pathlib import Path
+
+from personalclaw.atomic_write import atomic_write, is_in_home
+from personalclaw.frontend import write_spa_build_stamp
+
+root = Path(sys.argv[1])
+elsewhere = root / "elsewhere" / "note.txt"
+elsewhere.parent.mkdir(parents=True)
+print("in the home:", is_in_home(elsewhere))
+atomic_write(elsewhere, "written")
+web = root / "repo" / "web"
+(root / "repo" / "src" / "personalclaw").mkdir(parents=True)
+(web / "src").mkdir(parents=True)
+(web / "src" / "App.tsx").write_text("export const App = () => null;\n")
+(web / "index.html").write_text("<div id=root></div>")
+(web / "vite.config.ts").write_text("export default {};\n")
+(web / "package.json").write_text('{"name":"web"}')
+(root / "repo" / "package-lock.json").write_text('{"lockfileVersion":3}')
+(web / "dist").mkdir()
+(web / "dist" / "index.html").write_text("<script src=/assets/app.js></script>")
+print("stamped:", bool(write_spa_build_stamp(root / "repo")))
+"""
+
+
+def test_a_write_outside_the_home_makes_no_home(tmp_path: Path) -> None:
+    """Every atomic write asks whether its file is in the home, to write it 0600 there. The
+    question was answered by the resolver that CREATES the home, so a write anywhere made one:
+    building the web app did, with its build stamp."""
+    root = (tmp_path / "scratch").resolve()
+    proc, left = _as_a_user(root, ["-c", _WRITE_OUTSIDE, str(root)])
+    assert "in the home: False" in proc.stdout and "stamped: True" in proc.stdout, proc.stdout
+    assert (root / "elsewhere" / "note.txt").read_text() == "written", "vacuity floor: it wrote"
+    assert left == [], f"writing outside the home left this in an empty HOME: {left}"
 
 
 def test_the_offline_reference_renders_without_touching_a_home(tmp_path: Path) -> None:

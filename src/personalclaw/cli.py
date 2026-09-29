@@ -35,9 +35,7 @@ from pathlib import Path
 
 from personalclaw import __version__
 from personalclaw.config import AppConfig, config_dir
-from personalclaw.config.loader import (
-    DASHBOARD_PORT,
-)
+from personalclaw.config.loader import DASHBOARD_PORT, resolve_config_dir
 from personalclaw.constants import BANNER
 from personalclaw.seed import seed_cmd
 
@@ -1579,7 +1577,9 @@ def main() -> None:
     _cwd_env = Path.cwd() / ".env"
     if _cwd_env.is_file():
         _load_named_credentials(_cwd_env)
-    _home_env = config_dir() / ".env"
+    # Where the home is, not the home made: a command that needs no home (`--version`, `--help`)
+    # answers below, and the code that writes into the home is what creates it.
+    _home_env = resolve_config_dir() / ".env"
     if _home_env.is_file() and _home_env != _cwd_env:
         _load_named_credentials(_home_env)
 

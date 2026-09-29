@@ -219,15 +219,17 @@ def _host_secret_names() -> list[str]:
     vault's by construction; :func:`list_presence` subtracts the vault's names, and what remains
     is genuinely host-supplied.
 
-    Less what PersonalClaw sets in its own environment (``local_models.hub_env``): its value
-    replaces whatever the host set, so it is not the host's, and editing it where the gateway is
-    launched changes nothing. ``HF_HUB_DISABLE_IMPLICIT_TOKEN`` is a switch, credential-shaped by
-    name only, and it was listed here as a credential the gateway had inherited.
+    Less what PersonalClaw sets in its own environment (``library_env``): its value replaces
+    whatever the host set, so it is not the host's, and editing it where the gateway is launched
+    changes nothing. ``HF_HUB_DISABLE_IMPLICIT_TOKEN`` is a switch, credential-shaped by name only,
+    and it was listed here as a credential the gateway had inherited.
     """
-    from personalclaw.local_models.hub_env import HUB_ENV_NAMES
+    from personalclaw.library_env import LIBRARY_ENV_NAMES
     from personalclaw.workflows.workspace import looks_secret
 
-    return sorted(name for name in os.environ if looks_secret(name) and name not in HUB_ENV_NAMES)
+    return sorted(
+        name for name in os.environ if looks_secret(name) and name not in LIBRARY_ENV_NAMES
+    )
 
 
 def list_presence(

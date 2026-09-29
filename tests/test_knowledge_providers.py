@@ -358,6 +358,76 @@ def test_an_updated_item_does_not_leave_a_stale_index_entry(home, ctx, persist):
     assert fresh
 
 
+# ── persist hands the item to enrichment ──
+
+
+def test_a_persisted_item_is_enriched_by_the_gateways_ingest_queue(home, ctx, persist, monkeypatch):
+    """Embedding and entity extraction ride the ingest queue, the one ingestion path. The
+    provider reached for a module that never existed and a broad `except` logged the failure at
+    debug, so nothing a workflow persisted was ever embedded, and semantic recall never found
+    it. Driven through the gateway's own queue, started, with a bound embedder."""
+    from fakes import BoundEmbedder
+
+    from personalclaw.action_providers.services import ActionServices
+    from personalclaw.knowledge.ingest_queue import KnowledgeIngestQueue
+    from personalclaw.knowledge.pipeline import ensure_nodes_registered
+
+    ensure_nodes_registered()
+    store = _open(home)
+
+    class _Gateway:
+        """What of the dashboard's state the provider reaches: the ingest queue."""
+
+        def __init__(self, queue: KnowledgeIngestQueue) -> None:
+            self.queue = queue
+
+        def knowledge_ingest_queue(self) -> KnowledgeIngestQueue:
+            return self.queue
+
+    async def go():
+        queue = KnowledgeIngestQueue(store, embedder_factory=BoundEmbedder)
+        queue.start()
+        monkeypatch.setattr(
+            "personalclaw.action_providers.services._services",
+            ActionServices(state=_Gateway(queue)),  # type: ignore[arg-type]
+        )
+        result = await persist.execute(
+            {"kind": "fact", "title": "Cold starts", "content": "4.2s"}, ctx
+        )
+        item_id = body(result)["item_id"]
+        for _ in range(100):
+            if store.get_item(item_id)["processing_status"] == "done":
+                break
+            await asyncio.sleep(0.05)
+        queue.stop()
+        return store.get_item(item_id)
+
+    item = run(go())
+    assert item["processing_status"] == "done", item["processing_error"]
+    embedded = store.db.execute("SELECT embedding FROM items WHERE id = ?", (item["id"],))
+    assert embedded.fetchone()["embedding"], "the queue embedded the persisted body"
+
+
+def test_an_item_persisted_where_no_queue_is_reached_waits_queued(home, ctx, persist, monkeypatch):
+    """The queue lives in the gateway's memory, and re-enqueues every `queued` row when it
+    starts. So a write that reaches no queue is still born `queued`, and so is a changed body,
+    whose old vector would otherwise answer for what the item no longer says."""
+    from personalclaw.knowledge.ingest_queue import KnowledgeIngestQueue
+
+    monkeypatch.setattr("personalclaw.action_providers.services._services", None)
+    item_id = body(run(persist.execute({"kind": "fact", "title": "T", "content": "v1"}, ctx)))[
+        "item_id"
+    ]
+    store = _open(home)
+    assert store.get_item(item_id)["processing_status"] == "queued"
+    assert KnowledgeIngestQueue(store).recover_pending() == 1
+
+    store.update_item(item_id, processing_status="done", touch=False)
+    store.db.commit()
+    run(persist.execute({"kind": "fact", "title": "T", "content": "v2"}, ctx))
+    assert store.get_item(item_id)["processing_status"] == "queued", "a new body is re-enriched"
+
+
 # ── retrieve ──
 
 

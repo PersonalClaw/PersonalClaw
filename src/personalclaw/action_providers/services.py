@@ -25,10 +25,11 @@ class DashboardStateProtocol(Protocol):
     """What native action providers use of the dashboard's state object.
 
     ``notify`` for push notifications, ``broadcast_ws`` and ``push_refresh`` for live updates,
-    ``channel_delivery`` and ``owner_id`` for routing a message to the owner. Declared here so
-    ``action_providers`` never imports ``dashboard.state``, not even under ``TYPE_CHECKING``:
-    ``DashboardState`` satisfies it structurally, and mypy checks that where the dashboard
-    wires :class:`ActionServices`.
+    ``channel_delivery`` and ``owner_id`` for routing a message to the owner,
+    ``knowledge_ingest_queue`` for the enrichment of what ``knowledge-persist`` writes (its
+    ``enqueue(item_id)``). Declared here so ``action_providers`` never imports
+    ``dashboard.state``, not even under ``TYPE_CHECKING``: ``DashboardState`` satisfies it
+    structurally, and mypy checks that where the dashboard wires :class:`ActionServices`.
     """
 
     owner_id: str
@@ -38,6 +39,7 @@ class DashboardStateProtocol(Protocol):
     def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None: ...
     def push_refresh(self, *kinds: str) -> None: ...
     def broadcast_ws(self, msg_type: str, data: object) -> None: ...
+    def knowledge_ingest_queue(self) -> Any: ...
 
 
 @dataclass

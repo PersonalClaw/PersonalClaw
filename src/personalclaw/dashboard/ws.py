@@ -63,9 +63,9 @@ def _check_ws_origin(request: web.Request) -> None:
     middleware — so this admission is attributable and reversible in a way a widened origin
     list would not be.
 
-    **No new origin exemption:** ``build_allowed_origins`` is untouched and the allowed set is
-    byte-identical. A client that DOES send an Origin still has to be in it, device session or
-    not — a paired device gets no help forging an origin it does not have.
+    **No new origin exemption:** this admission adds nothing to ``build_allowed_origins``. A
+    client that DOES send an Origin still has to be in it, device session or not — a paired
+    device gets no help forging an origin it does not have.
     """
     if check_origin(request, require=True):
         return

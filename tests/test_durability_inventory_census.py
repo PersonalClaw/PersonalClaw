@@ -763,6 +763,12 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"personalclaw/snapshot.py"}),
         "a restore-plan row for a store the inventory's merge selectors name",
     ),
+    "/destination": (
+        frozenset({"personalclaw/standing_instructions.py"}),
+        "an instruction file the import wrote, as its ledger records it (home-relative, from "
+        "`onboarding_import.writers._rel_to_home`); only one inside the memory folder's "
+        "`instructions/` is read",
+    ),
 }
 
 

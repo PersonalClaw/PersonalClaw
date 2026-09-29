@@ -64,10 +64,17 @@ def test_dashboard_state_satisfies_every_protocol_member():
 def test_the_protocol_declares_what_its_consumers_use():
     """`notify` (the notify, send-message and proactive paths), `channel_delivery` and
     `owner_id` (send-message's owner routing), `broadcast_ws` and `push_refresh` (the inbox
-    items those paths raise)."""
+    items those paths raise), `knowledge_ingest_queue` (knowledge-persist's enrichment)."""
     from personalclaw.action_providers.services import DashboardStateProtocol
 
-    for attr in ("notify", "channel_delivery", "owner_id", "broadcast_ws", "push_refresh"):
+    for attr in (
+        "notify",
+        "channel_delivery",
+        "owner_id",
+        "broadcast_ws",
+        "push_refresh",
+        "knowledge_ingest_queue",
+    ):
         assert attr in DashboardStateProtocol.__protocol_attrs__, attr
 
 

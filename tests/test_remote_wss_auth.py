@@ -249,17 +249,21 @@ def test_token_nonce_fails_closed_on_anything_unreadable(bad: str) -> None:
 # ── "no new origin exemption" (the change's own clause) ──────────────────────────────────────
 
 
-def test_the_allowed_origin_set_is_byte_identical(monkeypatch) -> None:
+@pytest.mark.parametrize("home", ["unset", "a home of its own"])
+def test_the_allowed_origin_set_is_byte_identical(monkeypatch, tmp_path, home) -> None:
     """The clause is structural, so assert it structurally: nothing was added to the allowlist.
 
     Pinned as a LITERAL set — not derived from the function's own output, which would pin
     nothing — so that ANY future widening, whatever host it names, has to come here and say so.
-    The two environment-driven entries (`PERSONALCLAW_HOME` → `:3000`, `PERSONALCLAW_CORS_ORIGINS`)
-    and the machine hostname (`local_only=False`) are excluded by construction so the literal is
-    the same on a laptop and in CI.
+    The environment-driven entry (`PERSONALCLAW_CORS_ORIGINS`) and the machine hostname
+    (`local_only=False`) are excluded by construction so the literal is the same on a laptop and
+    in CI. The home the gateway runs on is not excluded: it adds nothing, whichever it is.
     """
-    monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
     monkeypatch.delenv("PERSONALCLAW_CORS_ORIGINS", raising=False)
+    if home == "unset":
+        monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
+    else:
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "pclaw-home"))
     assert build_allowed_origins(PORT, local_only=True, configured_host="") == {
         f"http://127.0.0.1:{PORT}",
         f"http://localhost:{PORT}",

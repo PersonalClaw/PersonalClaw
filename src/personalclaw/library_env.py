@@ -50,13 +50,14 @@ XET_CACHE_DIRNAME = "huggingface-xet"
 
 
 def library_env() -> dict[str, str]:
-    """The settings, for the home this process runs on. Each library makes its folder the first
-    time it writes there; the grammars land in ``tree-sitter-language-pack`` inside the folder the
-    language pack is given."""
+    """The settings, for the home this process runs on. Working them out makes nothing, not even
+    the home: every command asks for them before it knows whether it needs a home at all. Each
+    library makes its folder the first time it writes there; the grammars land in
+    ``tree-sitter-language-pack`` inside the folder the language pack is given."""
     from personalclaw._installer import INSTALLER_CACHE_DIRNAME
-    from personalclaw.config.loader import config_dir
+    from personalclaw.config.loader import resolve_config_dir
 
-    installers = config_dir() / INSTALLER_CACHE_DIRNAME
+    installers = resolve_config_dir() / INSTALLER_CACHE_DIRNAME
     return {
         "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1",
         "HF_XET_CACHE": str(installers / XET_CACHE_DIRNAME),

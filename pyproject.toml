@@ -119,9 +119,11 @@ dependencies = [
     # an extra, so `code_map` is simply present everywhere — an accelerator that half
     # the installs lack is one nobody can rely on. The language pack ships prebuilt
     # wheels, so there's no compiler requirement. Indexing still fails SOFT: no
-    # parser, no graph, and everything falls back to grep/read.
+    # parser, no graph, and everything falls back to grep/read. 1.15.7 is the first language
+    # pack that reads TREE_SITTER_LANGUAGE_PACK_CACHE_DIR, the setting that keeps the grammars
+    # it downloads inside the home (library_env.py); an older one keeps them in the user's cache.
     "tree-sitter>=0.21,<1",
-    "tree-sitter-language-pack>=1.0,<2",
+    "tree-sitter-language-pack>=1.15.7,<2",
     # NOTE — openai / anthropic are NOT core deps. Their provider
     # adapters (llm/openai.py, llm/anthropic.py, stt/tts openai_provider.py) import
     # the SDK LAZILY and raise MissingSDKError naming the exact remedy when absent.

@@ -248,8 +248,9 @@ TURN_COMPLETE = "complete"
 TURN_STOPPED = "stopped"
 TURN_ERROR = "error"
 
-#: Said where a conversation is when its turn stopped before it finished and nobody asked for the
-#: stop: its runtime was reset under it, the gateway restarted, a queued turn ran out of time.
+#: Said where a conversation is when its turn stopped before it finished, nobody asked for the
+#: stop, and nothing said why: its runtime was reset under it, the gateway restarted, a queued turn
+#: ran out of time. A stop that says why (the loop breaker's) is that turn's error instead.
 TURN_CUT_SHORT_NOTICE = "The reply stopped before it finished. Send your message again to retry."
 #: Said on the channel a conversation is linked to when the owner stopped its turn from the
 #: dashboard, where the stop card already says so.
@@ -261,15 +262,19 @@ def terminal_outcome_for_turn(
 ) -> str:
     """How a turn ended, from facts the turn itself established.
 
-    ``stopped`` wins over ``error``. A stop that escalates kills the runtime, and what a dying
-    stream raises depends on the runtime; the user asked for the stop and got it. The transcript
-    is deliberately not consulted: a retry notice is an error row in it, and the retry that
-    follows can still finish the turn.
+    A stop that was asked for wins over ``error``. A stop that escalates kills the runtime, and
+    what a dying stream raises depends on the runtime; the user asked for the stop and got it. A
+    stop nobody asked for does not: when the turn also errored, the stop was how the error ended it
+    (the loop breaker refusing to go on, in its own sentence), so the turn ended in that error and
+    is not also said to have stopped. The transcript is deliberately not consulted: a retry notice
+    is an error row in it, and the retry that follows can still finish the turn.
     """
-    if cancelled or stop_requested or is_cancelled_stop(stop_reason):
+    if cancelled or stop_requested:
         return TURN_STOPPED
     if errored:
         return TURN_ERROR
+    if is_cancelled_stop(stop_reason):
+        return TURN_STOPPED
     return TURN_COMPLETE
 
 

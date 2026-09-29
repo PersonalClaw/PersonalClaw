@@ -305,16 +305,17 @@ class TestScopesAndRefusals:
     def test_a_switch_personalclaw_sets_for_itself_is_not_an_inherited_credential(
         self, vault: Path, monkeypatch
     ):
-        """Every PersonalClaw process sets the Hugging Face library's switches in its own
-        environment (`keep_the_hub_in_the_home`). `HF_HUB_DISABLE_IMPLICIT_TOKEN` has TOKEN in its
+        """Every PersonalClaw process sets its libraries' switches in its own environment
+        (`keep_the_libraries_in_the_home`). `HF_HUB_DISABLE_IMPLICIT_TOKEN` has TOKEN in its
         name, so Settings → Secrets listed it as a credential inherited from the host, to be edited
         where the gateway is launched: it was neither, and an edit there changes nothing."""
-        from personalclaw.local_models.hub_env import hub_env
+        from personalclaw.library_env import library_env
 
-        for name, value in hub_env().items():
+        for name, value in library_env().items():
             monkeypatch.setenv(name, value)
         host = {r.name for r in sv.list_presence() if r.scope == sv.SCOPE_HOST}
         assert "HF_HUB_DISABLE_IMPLICIT_TOKEN" not in host
+        assert not host & set(library_env()), "no switch PersonalClaw sets is a host credential"
         assert "EI10_HOST_TOKEN" in host, "a credential the host did set is still listed"
 
     def test_inherited_from_host_cannot_contradict_scope(self):

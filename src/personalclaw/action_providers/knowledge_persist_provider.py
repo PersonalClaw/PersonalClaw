@@ -549,7 +549,14 @@ def _upsert_item(
     creating: bool,
 ) -> None:
     """Write the row. `created_at` is preserved on update — an article's birthday does not
-    change because it was edited."""
+    change because it was edited.
+
+    The row is `queued` for enrichment in the same statement that writes its body, on create and
+    on a content change alike: the body is what the chunk index embeds, so a new body left with
+    its old chunks is one that semantic recall finds by what it used to say. The ingest queue
+    lives in the gateway's memory and re-enqueues every `queued` row when it starts, so the status
+    set here is what makes enrichment happen even when :func:`_enqueue_enrichment` reaches no
+    queue."""
     now = _now()
     blob = json.dumps(metadata, ensure_ascii=False)
     # BEFORE the write: what the FTS index currently holds for this row.
@@ -557,8 +564,8 @@ def _upsert_item(
     if creating:
         store.db.execute(
             "INSERT INTO items (id, item_type, title, content, summary, created_at, updated_at, "
-            "kind, logical_key, content_hash, expires_at, last_verified, file_metadata) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "kind, logical_key, content_hash, expires_at, last_verified, file_metadata, "
+            "processing_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 item_id,
                 DEFAULT_ITEM_TYPE,
@@ -573,13 +580,14 @@ def _upsert_item(
                 expires_at,
                 now,
                 blob,
+                "queued",
             ),
         )
     else:
         store.db.execute(
             "UPDATE items SET title=?, content=?, summary=?, updated_at=?, kind=?, "
-            "logical_key=?, content_hash=?, expires_at=?, last_verified=?, file_metadata=? "
-            "WHERE id=?",
+            "logical_key=?, content_hash=?, expires_at=?, last_verified=?, file_metadata=?, "
+            "processing_status=? WHERE id=?",
             (
                 title,
                 content,
@@ -591,6 +599,7 @@ def _upsert_item(
                 expires_at,
                 now,
                 blob,
+                "queued",
                 item_id,
             ),
         )
@@ -1185,17 +1194,22 @@ def _merge_claims(
 
 
 def _enqueue_enrichment(item_id: str) -> None:
-    """Hand the item to the existing ingest queue. Fire-and-forget.
+    """Hand the item to the gateway's ingest queue, the one ingestion path. Fire-and-forget.
 
     A synthesis stage must not wait on an embedder that may not even be configured, and an
-    enrichment failure must not lose a write that already succeeded.
+    enrichment failure must not lose a write that already succeeded. The row is already
+    `queued` (:func:`_upsert_item`), so a queue this cannot reach (no gateway wired the action
+    services) only delays enrichment until the queue next starts.
     """
-    try:
-        from personalclaw.knowledge.ingest import enqueue_item  # type: ignore[attr-defined]
+    from personalclaw.action_providers.services import get_action_services
 
-        enqueue_item(item_id)
-    except Exception:
-        logger.debug("knowledge enrichment enqueue unavailable for %s", item_id, exc_info=True)
+    services = get_action_services()
+    if services is None:
+        return
+    try:
+        services.state.knowledge_ingest_queue().enqueue(item_id)
+    except Exception:  # noqa: BLE001 — the row stays queued; the queue's start recovers it
+        logger.warning("could not hand %s to the knowledge ingest queue", item_id, exc_info=True)
 
 
 def _scope_metadata(

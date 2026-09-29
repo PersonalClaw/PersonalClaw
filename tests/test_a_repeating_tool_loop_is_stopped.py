@@ -402,6 +402,68 @@ async def test_the_chat_shows_the_sentence_a_native_turn_was_stopped_with(tmp_pa
     assert session._last_turn_errored is True
 
 
+def _outcomes(state) -> list[str]:
+    return [
+        c.args[1]["outcome"] for c in state.broadcast_ws.call_args_list if c.args[0] == "chat_done"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_breaker_stop_is_said_once_in_its_own_words_where_the_conversation_is(tmp_path):
+    """Nobody asked for the stop, and the breaker said why: the turn ended in that error. Told as
+    a stop nobody explained, the chat and its channel also got "Send your message again to retry",
+    which is false here: the same message loops the same way."""
+    state, client = _chat_state(tmp_path, "native")
+    state.tell_linked_channel = AsyncMock()
+    stopped = lb.repeat_circuit_message(lb.REPEAT_CIRCUIT_THRESHOLD + 1)
+    client.stream = MagicMock(
+        side_effect=lambda *a, **kw: _events(
+            [AgentEvent(kind=EVENT_COMPLETE, stop_reason="cancelled", text=stopped)]
+        )
+    )
+    session = _ChatSession("chat-6-loop")
+
+    await _chat_turn(state, session)
+
+    assert [c.args[1] for c in state.tell_linked_channel.call_args_list] == [stopped]
+    assert [m.get("content") for m in session.messages if m.get("role") == "error"] == [stopped]
+    assert _outcomes(state) == ["error"]
+
+
+@pytest.mark.asyncio
+async def test_an_acp_turn_the_breaker_cancels_ends_in_its_sentence_alone(tmp_path):
+    """The breaker cancels the CLI's turn, so its stream ends with a cancelled stop, as a pressed
+    Stop's does: the breaker's sentence is still the only thing said about it."""
+    state, client = _chat_state(tmp_path, "acp:test-cli")
+    frames = []
+    for i in range(lb.REPEAT_CIRCUIT_THRESHOLD + 4):
+        frames += [
+            AgentEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=f"t{i}",
+                title="bash",
+                tool_input='{"command": "ls -F"}',
+            ),
+            AgentEvent(
+                kind=EVENT_TOOL_RESULT,
+                tool_call_id=f"t{i}",
+                tool_output="knowledge/\nmemory/\n",
+                tool_meta={"ok": True},
+            ),
+        ]
+    frames.append(AgentEvent(kind=EVENT_COMPLETE, stop_reason="cancelled"))
+    client.stream = MagicMock(side_effect=lambda *a, **kw: _events(frames))
+    session = _ChatSession("chat-7-loop")
+    session.acp_provider = "acp:test-cli"
+
+    await _chat_turn(state, session)
+
+    errors = [str(m.get("content", "")) for m in session.messages if m.get("role") == "error"]
+    assert len(errors) == 1 and errors[0].startswith("Run aborted by the loop breaker: "), errors
+    client.cancel.assert_awaited()
+    assert _outcomes(state) == ["error"]
+
+
 @pytest.mark.asyncio
 async def test_an_acp_turn_repeating_one_answer_is_aborted(tmp_path):
     state, client = _chat_state(tmp_path, "acp:test-cli")

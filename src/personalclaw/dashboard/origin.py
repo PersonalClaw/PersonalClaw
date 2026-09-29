@@ -491,18 +491,6 @@ def format_dashboard_urls(
 # ---------------------------------------------------------------------------
 
 
-def _runs_on_a_dev_home() -> bool:
-    """Whether this gateway runs on a home other than the owner's default one — a dev or
-    isolated home, where a local frontend dev server is expected. An unresolvable home answers
-    ``False``: an origin allowlist fails closed."""
-    from personalclaw.config.loader import uses_default_home
-
-    try:
-        return not uses_default_home()
-    except OSError:
-        return False
-
-
 def build_allowed_origins(
     port: int, local_only: bool, configured_host: str = "", dashboard_url: str = ""
 ) -> set[str]:
@@ -511,14 +499,16 @@ def build_allowed_origins(
     When *dashboard_url* is provided, its origin (scheme + host + port)
     is added as-is so that reverse-proxy setups (e.g. Caddy with TLS on
     a custom domain) pass the CSRF check without code changes.
+
+    Which home the gateway runs on adds nothing. A frontend dev server on this machine (Vite's,
+    on :3100) is a loopback origin, and :func:`check_origin` trusts a loopback origin on any
+    port, so no port of one is listed here.
     """
     origins: set[str] = {
         f"http://127.0.0.1:{port}",
         f"http://localhost:{port}",
         f"http://personalclaw.localhost:{port}",
     }
-    if _runs_on_a_dev_home():
-        origins.add("http://localhost:3000")
     if configured_host:
         origins.add(f"http://{configured_host}:{port}")
     if dashboard_url:
