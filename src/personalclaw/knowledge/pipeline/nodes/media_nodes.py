@@ -174,18 +174,29 @@ class TranscriptionNode:
 
             # L2 hook: bias the decoder toward the user's Lexicon terms (context-scoped
             # to this item's siblings when available, else globally top-weighted). No-op
-            # until the Lexicon lands / for providers without supports_bias_terms.
+            # for providers without supports_bias_terms.
             bias_terms = await _lexicon_bias_terms(ctx)
             result = await transcribe_audio_detailed(audio, bias_terms=bias_terms)
         except Exception as exc:
+            # No transcript, and the sentence says why (speech-to-text off, no model, the
+            # provider's own reason, or a provider that gave back nothing): the step FAILED.
+            # This used to answer "done" with an empty transcript whenever the provider came
+            # back with nothing, so a video whose narration was never transcribed read
+            # "Transcription done".
             return NodeOutput(
                 node_type=self.node_type, backend=self.backend, success=False, error=str(exc)
             )
-        # An empty transcript is a valid result (silent / no-speech / music audio) —
-        # NOT a failure. Return success with empty text so the item lands 'done', not
-        # an alarming 'failed'. The transcription genuinely ran; there was just no speech.
-        if result is None:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, text="")
+        if not (result.text or "").strip():
+            # The provider heard no speech (silence, music): a true result, not a failure. It
+            # pools nothing, so the item is not flagged as a lying extractor, and ``no_speech``
+            # is promoted onto the item so it SAYS there is no transcript and why.
+            return NodeOutput(
+                node_type=self.node_type,
+                backend=self.backend,
+                text="",
+                pooled=False,
+                metadata={"no_speech": True},
+            )
         # Flat text flows to FTS + embeddings unchanged; the structured transcript (segments
         # + word timestamps) rides in metadata["transcript"] (L0.5 — the runner persists
         # node metadata to extracted_contents; no items/extracted_contents schema change).
@@ -220,17 +231,21 @@ class LexiconCorrectionNode:
         transcript = _transcript_from(inputs)
         flat = _transcript_flat_text(inputs)
         if transcript is None:
-            # Nothing structured to correct — pass the flat text through unchanged.
-            return NodeOutput(node_type=self.node_type, backend=self.backend, text=flat)
+            # Nothing structured to correct — pass the flat text through unchanged. With no
+            # text either (no speech, or the transcription failed) there is nothing to pool,
+            # and pooling an empty pass-through would flag the item as a lying extractor.
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, text=flat, pooled=bool(flat)
+            )
         try:
-            from personalclaw.lexicon import get_lexicon_service
+            from personalclaw.lexicon import current_lexicon
             from personalclaw.stt.provider import (
                 TranscriptResult,
                 TranscriptSegment,
                 TranscriptWord,
             )
 
-            svc = get_lexicon_service()
+            svc = current_lexicon()
             if svc.store.count_terms() == 0:
                 return NodeOutput(
                     node_type=self.node_type,
@@ -274,20 +289,24 @@ class LexiconCorrectionNode:
                 metadata={"transcript": transcript},
             )
 
+        corrected = result.to_dict()
         meta = {
-            "transcript": result.to_dict(),
+            "transcript": corrected,
             "corrections_applied": [c.__dict__ for c in outcome.applied],
             "corrections_suggested": [c.__dict__ for c in outcome.suggested],
         }
-        return NodeOutput(
-            node_type=self.node_type, backend=self.backend, text=result.text or flat, metadata=meta
-        )
+        # The corrected words keep their speakers. This used to hand on the transcript's plain
+        # text, so a two-voice recording lost the speaker labels speaker_fusion had put on it as
+        # soon as the Lexicon held a term.
+        text = _speaker_attributed_text(corrected) or result.text or flat
+        return NodeOutput(node_type=self.node_type, backend=self.backend, text=text, metadata=meta)
 
 
 class DiarizationNode:
     """Speaker diarization ("who spoke when") — core L1. Emits ``metadata['speaker_turns']``
-    = [{start,end,speaker}]. Skips gracefully (success, no turns) when no diarization model
-    is bound, so the audio graph works with or without it."""
+    = [{start,end,speaker}]. The executor skips it when no diarization model is bound, so the
+    audio graph works with or without one. Structural (``pooled=False``): its product is the
+    turns speaker_fusion reads, never text of its own."""
 
     node_type = "diarization"
     backend = "diarization"
@@ -304,16 +323,22 @@ class DiarizationNode:
 
             turns = await diarize_audio(audio)
         except Exception as exc:
+            # A bound model that could not diarize FAILED, with the sentence saying why. This
+            # used to be read as "no speakers" and reported done: a two-voice clip the
+            # provider could not even decode came back with one undivided transcript.
             return NodeOutput(
-                node_type=self.node_type, backend=self.backend, success=False, error=str(exc)
+                node_type=self.node_type,
+                backend=self.backend,
+                success=False,
+                error=str(exc),
+                pooled=False,
             )
-        if not turns:
-            # No model bound / no speech → pass through (fusion will no-op).
-            return NodeOutput(node_type=self.node_type, backend=self.backend, text="")
         meta = {
             "speaker_turns": [{"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns]
         }
-        return NodeOutput(node_type=self.node_type, backend=self.backend, metadata=meta)
+        return NodeOutput(
+            node_type=self.node_type, backend=self.backend, metadata=meta, pooled=False
+        )
 
 
 class SpeakerFusionNode:
@@ -333,7 +358,11 @@ class SpeakerFusionNode:
         turns = _speaker_turns_from(inputs)
         flat = _transcript_flat_text(inputs)
         if transcript is None:
-            return NodeOutput(node_type=self.node_type, backend=self.backend, text=flat)
+            # No structured transcript to label. An empty pass-through pools nothing, for the
+            # reason lexicon_correction gives.
+            return NodeOutput(
+                node_type=self.node_type, backend=self.backend, text=flat, pooled=bool(flat)
+            )
         if not turns:
             # No diarization → pass the transcript through untouched.
             return NodeOutput(
@@ -408,7 +437,11 @@ def _segment_from_words(words: list[dict], speaker: str | None) -> dict:
 
 
 def _speaker_attributed_text(transcript: dict) -> str:
-    """Flat text prefixed by speaker labels ("SPEAKER_00: …") for the consolidation arm."""
+    """Flat text prefixed by speaker labels ("SPEAKER_00: …") for the consolidation arm, or
+    ``""`` when fewer than two people speak in it: a label then tells no voices apart, and a
+    one-voice memo read "SPEAKER_00: …" from its first word."""
+    if len({s.get("speaker") for s in transcript.get("segments", []) if s.get("speaker")}) < 2:
+        return ""
     lines: list[str] = []
     last_spk = None
     for seg in transcript.get("segments", []):
@@ -701,10 +734,17 @@ class VideoConsolidateNode:
 
     async def run(self, inputs, ctx: NodeContext) -> NodeOutput:
         pieces = []
-        for nt in ("ocr", "vision", "transcription"):
-            o = inputs.get(nt)
+        # The transcript reaches this step through the last step that worked on it
+        # (lexicon_correction, in the video graph): this read only "transcription", which is not
+        # one of its inputs, so a video's narration was never part of its description.
+        for label, steps in (
+            ("ocr", ("ocr",)),
+            ("vision", ("vision",)),
+            ("transcription", ("lexicon_correction", "speaker_fusion", "transcription")),
+        ):
+            o = next((inputs[s] for s in steps if s in inputs), None)
             if o and o.success and o.text:
-                pieces.append(f"[{nt}]\n{o.text}")
+                pieces.append(f"[{label}]\n{o.text}")
         if not pieces:
             return NodeOutput(
                 node_type=self.node_type,

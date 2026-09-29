@@ -507,8 +507,7 @@ _NO_TIMEOUT_PATH: dict[str, str] = {
     "sandbox_providers/docker.py::_DockerHandle.exec::<unassigned>": "provider — caller waits",
     "sandbox_providers/lima.py::_LimaHandle.exec::<unassigned>": "provider — caller waits",
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::proc": "ffmpeg: awaited with no deadline",
-    "transcribe.py::_transcribe_segmented::proc": "ffmpeg: awaited with no deadline",
-    "transcribe.py::_transcribe_segmented_detailed::proc": "ffmpeg: awaited with no deadline",
+    "transcribe.py::_segment::proc": "ffmpeg: awaited with no deadline",
     "dashboard/handlers/terminal.py::api_terminal_ws::proc": (
         "long-lived interactive PTY — torn down by `_kill_pty_session` on close, not by a "
         "per-command deadline"

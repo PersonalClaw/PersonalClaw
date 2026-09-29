@@ -1157,7 +1157,9 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
             except OSError:
                 pass
 
-    text = transcript or ""
+    # The transcript, empty only when there was no speech: a transcription that could not run
+    # raised SttError above and answered 502 with its reason, instead of an empty "text".
+    text = transcript
     if text:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -1168,9 +1170,9 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
         route=ROUTE_TRANSCRIPTIONS,
         status=200,
         client_id=client_id,
-        bytes_out=len(text or ""),
+        bytes_out=len(text),
     )
-    return web.json_response({"text": text or ""}, headers={"Cache-Control": "no-store"})
+    return web.json_response({"text": text}, headers={"Cache-Control": "no-store"})
 
 
 async def handle_voices(request: web.Request) -> web.StreamResponse:

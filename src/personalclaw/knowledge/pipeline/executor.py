@@ -300,8 +300,13 @@ class PipelineExecutor:
         try:
             out = await asyncio.wait_for(node.run(inputs, ctx), timeout=timeout_s)
         except asyncio.TimeoutError:
+            # A sentence, because it is what the item's status line reads ("transcription:
+            # …"); the bare word "timeout" said neither how long nor that the step was stopped.
             result.outputs[node_type] = NodeOutput(
-                node_type=node_type, backend=backend, success=False, error="timeout"
+                node_type=node_type,
+                backend=backend,
+                success=False,
+                error=f"It did not finish within {_spoken_duration(timeout_s)}, so it was stopped.",
             )
             result.failed.append(node_type)
             self._notify(node_type, "failed")
@@ -324,9 +329,11 @@ class PipelineExecutor:
 
     # Model-backed media nodes whose work scales with media length. Their timeout
     # grows with the source's duration so a long video/audio can finish; pure-python
-    # nodes (av_split, frame_extract, exif) keep the flat spec default.
+    # nodes (av_split, frame_extract, exif) keep the flat spec default. Diarization reads
+    # the whole recording as transcription does, so it scales too: on the flat 120s a long
+    # meeting's speakers were never told apart.
     _DURATION_SCALED_NODES = frozenset(
-        {"transcription", "video_classify", "ocr", "vision", "video_consolidate"}
+        {"transcription", "diarization", "video_classify", "ocr", "vision", "video_consolidate"}
     )
     # Seconds of node budget per second of media, per node. Transcription is the
     # heaviest (even segmented, each segment is a model call); the others sample.
@@ -385,3 +392,14 @@ class PipelineExecutor:
                 self._on_node(node_type, phase)
             except Exception:
                 logger.debug("pipeline on_node callback failed", exc_info=True)
+
+
+def _spoken_duration(seconds: float) -> str:
+    """A node budget as a person says it: "90 seconds", "14 minutes", "3 hours"."""
+    whole = int(round(seconds))
+    if whole < 120:
+        return f"{whole} seconds"
+    minutes = round(whole / 60)
+    if minutes < 120:
+        return f"{minutes} minutes"
+    return f"{round(minutes / 60)} hours"

@@ -23,6 +23,16 @@ class SpeakerTurn:
     speaker: str  # e.g. "SPEAKER_00"
 
 
+class DiarizationError(Exception):
+    """A diarization provider could not tell the speakers apart, and its message says why.
+
+    The message is product copy, shown as written: what went wrong and what to do. It is what
+    separates a failed diarization from a recording with one speaker: both used to come back
+    as ``None`` or no turns, so a two-voice clip whose audio the provider could not even read
+    landed "Diarization done" with no speakers, and nothing said why.
+    """
+
+
 @dataclass
 class DiarizationModel:
     name: str
@@ -67,7 +77,14 @@ class DiarizationProvider(ABC):
         min_speakers: int | None = None,
         max_speakers: int | None = None,
     ) -> list[SpeakerTurn] | None:
-        """Return speaker turns for *audio_path*, or None on failure / no model."""
+        """Speaker turns for *audio_path*: ``[]`` when no one spoke in it.
+
+        *audio_path* is any recording the product accepts (a knowledge upload keeps its own
+        format: ``.m4a``, ``.mp3``, ``.webm``, a video's extracted ``.wav``), so a provider
+        decodes it to what its model needs. Raises :class:`DiarizationError` when it could not
+        diarize and can say why. ``None`` is a failure it cannot explain, and a call that names
+        no model is refused with ``None``.
+        """
         ...
 
     def info(self) -> dict[str, Any]:

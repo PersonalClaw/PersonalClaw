@@ -270,6 +270,41 @@ def test_scaled_timeout_grows_with_media_duration():
     assert ex._scaled_timeout("transcription", g.nodes["transcription"], "stt", ctx) == 120.0
 
 
+def test_diarization_gets_the_duration_scaled_budget_too():
+    """🔴 Red before: diarization reads the whole recording, as transcription does, but kept the
+    flat 120 s, so a long meeting's speakers were never told apart."""
+    g = _graph([NodeSpec("diarization", backend="stub", timeout_s=120.0)], [])
+    ex = PipelineExecutor(g)
+    ex._dur_cache = 1800.0  # a 30-minute meeting
+    ctx = NodeContext(item_id="i", item_type="audio", file_path="x")
+    assert ex._scaled_timeout("diarization", g.nodes["diarization"], "diarization", ctx) == 3600.0
+
+
+def test_a_step_that_runs_out_of_time_says_how_long_it_had():
+    """🔴 Red before: the step's error was the bare word ``timeout``, which is what the item's
+    status line then read ("transcription: timeout")."""
+
+    class _Slow(_StubNode):
+        async def run(self, inputs, ctx):
+            await asyncio.sleep(5)
+            return await super().run(inputs, ctx)
+
+    register_node(_Slow("slowstep"))
+    g = _graph([NodeSpec("slowstep", backend="stub", timeout_s=0.05)], [])
+    res = _run(PipelineExecutor(g).run(NodeContext(item_id="i", item_type="t")))
+    assert res.failed == ["slowstep"]
+    assert res.outputs["slowstep"].error == "It did not finish within 0 seconds, so it was stopped."
+
+
+def test_a_node_budget_is_spoken_in_the_unit_a_person_uses():
+    from personalclaw.knowledge.pipeline.executor import _spoken_duration
+
+    assert _spoken_duration(90) == "90 seconds"
+    assert _spoken_duration(840) == "14 minutes"
+    assert _spoken_duration(3600) == "60 minutes"
+    assert _spoken_duration(3 * 3600) == "3 hours"
+
+
 def test_executor_parallel_branch_independent_of_sibling_failure():
     # A failed node on one parallel branch must NOT block the independent sibling
     # branch (both depend only on the shared root). Mirrors av_split → {transcription

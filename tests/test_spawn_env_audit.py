@@ -237,8 +237,7 @@ _GATEWAY_ENV: dict[str, str] = {
         "ffprobe scene detect"
     ),
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": "ffmpeg",
-    "transcribe.py::_transcribe_segmented::asyncio.create_subprocess_exec": "ffmpeg",
-    "transcribe.py::_transcribe_segmented_detailed::asyncio.create_subprocess_exec": "ffmpeg",
+    "transcribe.py::_segment::asyncio.create_subprocess_exec": "ffmpeg",
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "ffmpeg wav stitch",
     "selfqa/evidence.py::_ffmpeg_ping::subprocess.run": "`ffmpeg -version`",
     "selfqa/evidence.py::_run_ffmpeg::subprocess.run": "ffmpeg contact sheet",

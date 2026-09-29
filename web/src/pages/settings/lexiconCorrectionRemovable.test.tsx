@@ -24,7 +24,8 @@ let deleteCorrection: Mock<(id: string) => Promise<{ ok: boolean }>>
 let confirmDelete: Mock<(entity: string, name?: string) => Promise<boolean>>
 let notified: string[]
 
-async function mountVoice(over: { deleteFails?: boolean; confirmed?: boolean } = {}) {
+async function mountVoice(over: { deleteFails?: boolean; confirmed?: boolean; terms?: LexiconTerm[] } = {}) {
+  const terms = over.terms ?? TERMS
   remaining = [...CORRECTIONS]
   notified = []
   deleteCorrection = vi.fn(async (id: string) => {
@@ -50,7 +51,7 @@ async function mountVoice(over: { deleteFails?: boolean; confirmed?: boolean } =
       voiceLoopConfig: () => Promise.resolve({}),
       voiceProfiles: () => Promise.resolve({ profiles: [], bindings: {} }),
       voiceResolve: () => Promise.resolve({ surface: '', resolved: true, level: 'built-in' }),
-      lexiconTerms: () => Promise.resolve({ terms: TERMS, total: TERMS.length }),
+      lexiconTerms: () => Promise.resolve({ terms, total: terms.length }),
       lexiconCorrections: () => Promise.resolve({ corrections: remaining }),
       lexiconDeleteCorrection: (id: string) => deleteCorrection(id),
     },
@@ -95,8 +96,24 @@ describe('each vocabulary term row names the term it acts on', () => {
   it('the delete and the prune toggle carry the term', async () => {
     await mountVoice()
     expect(await screen.findByRole('button', { name: 'Delete term Kubernetes' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Delete term Redis' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Disable (prune) Kubernetes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Disable (prune) Redis' })).toBeTruthy()
     expect(screen.queryAllByRole('button', { name: 'Delete' }), 'no bare shared name').toHaveLength(0)
+  })
+
+  it('🔴 a term from the knowledge graph is turned off, never deleted: it would come back at the next sync', async () => {
+    await mountVoice()
+    await screen.findByRole('button', { name: 'Delete term Kubernetes' })
+    expect(screen.queryByRole('button', { name: 'Delete term Redis' })).toBeNull()
+    expect(screen.getByTitle('From your knowledge graph, and kept in step with it. Turn it off to stop using it.').textContent).toBe('graph')
+  })
+})
+
+describe('an empty vocabulary says where its terms come from', () => {
+  it('🔴 the names in the knowledge library fill it by themselves — no Rebuild to press', async () => {
+    await mountVoice({ terms: [] })
+    const empty = await screen.findByText(/No terms yet\./)
+    expect(empty.textContent).toContain('appear here by themselves')
+    expect(empty.textContent).not.toMatch(/Rebuild/)
   })
 })

@@ -64,6 +64,25 @@ one case the label exists for. A push never fails the local write.
   - Media types (`image`, `audio`, `video`) → media graphs (`ImageGraph` runs
     exif ∥ ocr + vision); **model-backed nodes degrade gracefully** — no bound
     vision model means the node is skipped, never a hard failure.
+  - **A bound model that cannot answer fails its step, with the reason.**
+    `transcribe_audio(_detailed)` return a transcript (empty text = no speech)
+    or raise `SttError` with the sentence saying why there is none;
+    `diarize_audio` returns speaker turns (`[]` = no one spoke) or raises
+    `DiarizationError`. The transcription and diarization nodes turn either
+    error into a failed step whose sentence is the item's status line, so a
+    recording is never "done" without its transcript. A recording with no
+    speech is done, and says so: the runner promotes `no_speech` onto
+    `file_metadata`, which the detail view shows beside the step.
+    Transcription and diarization get the duration-scaled node budget, and a
+    budget that runs out says how long it was.
+  - **An item's text is what its graph's last step made** (`_item_text`):
+    `consolidate` for a document or an image, `video_consolidate` for a video
+    (it reads the narration through `lexicon_correction`, the last step that
+    worked on it), and `lexicon_correction` for a recording, whose text keeps
+    the speaker labels `speaker_fusion` put on it and the corrected words.
+    When that step made no text (skipped for want of a model), the item gets
+    the texts it would have brought together, in step order. A recording in
+    which fewer than two people speak carries no labels.
 - **Terminal stages are not graph nodes**: after a graph completes,
   `pipeline/runner.py` runs consolidate-pool → insights → chunk+embed once
   over the whole extracted-content bundle (they operate on the item bundle,
@@ -371,6 +390,18 @@ biases ALL speech transcription, within a hard budget (~64 terms / 200 chars —
 Whisper's initial-prompt window is 224 tokens; overflowing it silently empties
 transcripts). Graph resync prunes stale terms while preserving user-pruned
 flags.
+
+Its graph terms follow the knowledge graph by themselves: every consult (the
+bias hook, the correction node, the microphone route, the Vocabulary list)
+goes through `current_lexicon()`, which resyncs whenever the graph's
+fingerprint (entity count, latest change, surface lengths, mention count)
+differs from the one stored at the last sync, in one transaction. Rebuild
+forces the same sync. Ranking decides whose names fit the 200 characters:
+`graph_weight` puts people first, then named things, then concepts, and
+within a type the most-mentioned; every graph weight stays below a manual
+term's 2.0, and a resync never lowers a weight a learned correction raised.
+A graph term cannot be deleted (it would return at the next sync); turning it
+off sticks.
 
 ## Related docs
 

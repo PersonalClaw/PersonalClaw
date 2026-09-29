@@ -645,6 +645,18 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
               {typeof full.file_metadata?.page_count === 'number' ? ` of ${full.file_metadata.page_count}` : ''} pages
             </span>
           )}
+          {/* A recording the transcription heard no speech in says so: its Transcription step
+              reads done, and without this nothing explained why there is no transcript. A
+              transcription that could NOT run is a failed step with its reason instead. */}
+          {full.file_metadata?.no_speech === true && (
+            <span
+              data-type="caption"
+              title="Transcription ran and heard no speech in this recording, so it has no transcript."
+              className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center text-on-surface-var"
+            >
+              No speech found
+            </span>
+          )}
           {typeof full.file_metadata?.sheet_count === 'number' && <span>{full.file_metadata.sheet_count} sheet{full.file_metadata.sheet_count === 1 ? '' : 's'}</span>}
           {typeof full.file_metadata?.slide_count === 'number' && <span>{full.file_metadata.slide_count} slide{full.file_metadata.slide_count === 1 ? '' : 's'}</span>}
           {typeof full.file_metadata?.row_count === 'number' && full.file_metadata.row_count > 0 && <span>{full.file_metadata.row_count} row{full.file_metadata.row_count === 1 ? '' : 's'}</span>}

@@ -3,13 +3,17 @@
 Owns the four behaviors the design locks:
   * ``rebuild_from_graph`` — sync terms from knowledge-graph entities (name + aliases +
     entity_type), computing Double Metaphone keys. Incremental-friendly (upsert by id).
+    ``sync_from_graph`` runs it by itself whenever the knowledge graph has changed since the
+    last sync, and every consult goes through ``current_lexicon`` — so the Lexicon IS built
+    from the graph, as the Vocabulary section says. It used to fill only when someone pressed
+    Rebuild in Settings: a library whose notes named the owner's colleagues had an empty
+    Lexicon, and voice memos spelled those names however the recogniser heard them.
   * ``select_bias_terms``  — a ranked, budget-capped term list for PRE-decode biasing
     (LEX.3): context entities first (a meeting's own notes prime its audio), then global
     top-weighted top-ups.
-  * ``correct``            — POST-decode phonetic correction of a TranscriptResult (LEX.4):
-    fires only when it SOUNDS like a Lexicon term, is SPELLED differently, and the source
-    word is low-confidence; hybrid policy = auto-apply learned/high-confidence, propose the
-    rest.
+  * ``correct``            — POST-decode correction of a TranscriptResult (LEX.4): a learned
+    correction (one the user taught) is applied; a low-confidence word that SOUNDS like a
+    Lexicon word AND is spelled much like it is proposed, never applied on that evidence.
   * ``learn_correction``   — the feedback loop (LEX.5): upsert heard→meant, raise the
     term's weight, flip auto_apply past threshold.
 
@@ -19,13 +23,115 @@ A module-level ``select_bias_terms`` async wrapper is the seam the Transcription
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 
 from personalclaw.lexicon.phonetics import phonetic_keys
 from personalclaw.lexicon.store import LexiconStore
 
 logger = logging.getLogger(__name__)
+
+#: The knowledge graph's fingerprint at the last sync, in the store's ``meta`` table.
+_GRAPH_FINGERPRINT = "graph_fingerprint"
+
+#: How an entity's TYPE ranks its term. Decoder biasing hands the recogniser only the first
+#: ~200 characters of the ranked list (Whisper's prompt window), so the order decides whose
+#: names it is told about: people first, since their names are what it mishears and nothing
+#: later in the transcript can recover them; then the named things; general concepts last,
+#: as ordinary words it already knows. The types are the knowledge extractor's.
+_TYPE_RANK: dict[str, float] = {
+    "person": 0.6,
+    "org": 0.4,
+    "project": 0.4,
+    "place": 0.4,
+    "service": 0.3,
+    "api": 0.3,
+    "technology": 0.3,
+    "tool": 0.3,
+}
+#: Within a type, the entities the owner's items mention most rank first. Bounded, so every
+#: graph term stays below a manual term's weight (2.0): a word the owner added outranks any the
+#: graph supplied.
+_MENTION_RANK = 0.3
+
+
+def graph_weight(entity_type: str, mentions: int) -> float:
+    """The weight a graph-sourced term starts at: its type's rank, then how often it is
+    mentioned (see :data:`_TYPE_RANK`). Always in [1.0, 2.0)."""
+    count = max(0, int(mentions or 0))
+    rank = _TYPE_RANK.get((entity_type or "").strip().lower(), 0.0)
+    return round(1.0 + rank + _MENTION_RANK * count / (count + 2), 4)
+
+
+@dataclass(frozen=True)
+class GraphSnapshot:
+    """The knowledge graph as the Lexicon reads it: a cheap fingerprint that changes whenever
+    an entity or a mention does, and (once the fingerprint says they are needed) the entities
+    with their mention counts."""
+
+    fingerprint: str
+    entities: list[dict] = field(default_factory=list)
+
+
+def _knowledge_db():
+    """A READ-ONLY connection to the knowledge store's database, or ``None`` when there is no
+    knowledge store yet. Read-only and separate from the store's own connection, as the memory
+    graph's seeding reads it: the Lexicon must never write there, and a sync must not share a
+    connection with an ingest that may be mid-transaction on it."""
+    from personalclaw.knowledge import knowledge_db_path
+    from personalclaw.sqlite_compat import sqlite3
+
+    path = knowledge_db_path()
+    if not os.path.exists(path):
+        return None
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def read_knowledge_graph(*, with_entities: bool) -> GraphSnapshot:
+    """The knowledge graph's fingerprint, and its entities when *with_entities*.
+
+    Raises when the graph exists and cannot be read: a sync PRUNES graph terms whose entity is
+    gone, so a failed read taken for "no entities" would wipe them all. A home with no
+    knowledge store yet has an empty graph, which is not a failed read."""
+    db = _knowledge_db()
+    if db is None:
+        return GraphSnapshot(fingerprint="empty")
+    try:
+        count, latest, surfaces = db.execute(
+            "SELECT COUNT(*), COALESCE(MAX(updated_at), ''), "
+            "TOTAL(LENGTH(name) + LENGTH(COALESCE(aliases, ''))) FROM entities"
+        ).fetchone()
+        (mention_rows,) = db.execute("SELECT COUNT(*) FROM mentions").fetchone()
+        fingerprint = f"{count}:{latest}:{int(surfaces)}:{mention_rows}"
+        if not with_entities:
+            return GraphSnapshot(fingerprint=fingerprint)
+        mentions = {
+            r["entity_id"]: int(r["n"])
+            for r in db.execute("SELECT entity_id, COUNT(*) AS n FROM mentions GROUP BY entity_id")
+        }
+        entities: list[dict] = []
+        for r in db.execute("SELECT id, name, entity_type, aliases FROM entities"):
+            try:
+                aliases = json.loads(r["aliases"] or "[]")
+            except (TypeError, ValueError):
+                aliases = []
+            entities.append(
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "entity_type": r["entity_type"],
+                    "aliases": aliases if isinstance(aliases, list) else [],
+                    "mentions": mentions.get(r["id"], 0),
+                }
+            )
+        return GraphSnapshot(fingerprint=fingerprint, entities=entities)
+    finally:
+        db.close()
+
 
 # Whisper's initial_prompt budget is ~224 tokens; keep the bias list well under that.
 _BIAS_BUDGET = 64
@@ -37,6 +143,13 @@ _STOP_WORDS = frozenset(
 )
 # Only correct words at/below this per-word confidence (L0 synergy — leave confident words).
 _LOW_PROB = 0.6
+#: How alike a word must be SPELLED to the Lexicon word it sounds like (difflib's ratio) before
+#: it is proposed as that word. Double Metaphone keys are coarse — "Okay", "echo" and "Aku"
+#: all key to AK — and the score used to RISE as the spellings diverged, so once the Lexicon
+#: held a colleague's name, a transcript's "Okay" was rewritten into it. A real mishearing
+#: keeps much of the word ("Acu" for "Aku" is 0.67, "kubernetis" for "Kubernetes" 0.9);
+#: a different word that only shares a key does not ("Okay" for "Aku" is 0.29).
+_MIN_SPELLING = 0.5
 
 
 def _prefix_match(a: str, b: str, min_len: int = 3) -> bool:
@@ -69,38 +182,55 @@ class LexiconService:
     # ── LEX.1 sources: rebuild from graph entities ──────────────────────────────
     def rebuild_from_graph(self, entities: list[dict]) -> int:
         """Sync the Lexicon's graph-sourced terms from a list of entity dicts
-        (``{id, name, entity_type, aliases}``). Returns the number of terms upserted.
+        (``{id, name, entity_type, aliases, mentions}``). Returns the number of terms upserted.
         A true resync: graph terms whose entity no longer exists are pruned, and a
         user-disabled (pruned) graph term stays disabled. Manual/learned terms are
-        untouched (upsert_term won't downgrade their source)."""
+        untouched (upsert_term won't downgrade their source). Each term's weight is
+        :func:`graph_weight`, and one transaction carries the whole resync."""
         n = 0
         synced_ids: set[str] = set()
-        for e in entities:
-            name = (e.get("name") or "").strip()
-            if not name:
-                continue
-            aliases = e.get("aliases") or []
-            if isinstance(aliases, str):
-                aliases = [aliases]
-            keys: list[str] = []
-            for surface in [name, *aliases]:
-                for tok in str(surface).split():
-                    keys.extend(phonetic_keys(tok))
-            term_id = f"graph_{e.get('id') or name.lower()}"
-            self.store.upsert_term(
-                term_id=term_id,
-                canonical=name,
-                aliases=[str(a) for a in aliases],
-                phonetic_keys=sorted(set(keys)),
-                entity_type=str(e.get("entity_type") or ""),
-                weight=1.0,
-                source="graph",
-            )
-            synced_ids.add(term_id)
-            n += 1
-        pruned = self.store.prune_graph_terms(keep=synced_ids)
+        with self.store.batch():
+            for e in entities:
+                name = (e.get("name") or "").strip()
+                if not name:
+                    continue
+                aliases = e.get("aliases") or []
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                keys: list[str] = []
+                for surface in [name, *aliases]:
+                    for tok in str(surface).split():
+                        keys.extend(phonetic_keys(tok))
+                term_id = f"graph_{e.get('id') or name.lower()}"
+                entity_type = str(e.get("entity_type") or "")
+                self.store.upsert_term(
+                    term_id=term_id,
+                    canonical=name,
+                    aliases=[str(a) for a in aliases],
+                    phonetic_keys=sorted(set(keys)),
+                    entity_type=entity_type,
+                    weight=graph_weight(entity_type, e.get("mentions") or 0),
+                    source="graph",
+                )
+                synced_ids.add(term_id)
+                n += 1
+            pruned = self.store.prune_graph_terms(keep=synced_ids)
         if pruned:
             logger.info("lexicon rebuild: pruned %d stale graph terms", pruned)
+        return n
+
+    def sync_from_graph(self, *, force: bool = False) -> int | None:
+        """Bring the graph-sourced terms up to date with the knowledge graph: a resync when the
+        graph's fingerprint differs from the one at the last sync, or when *force* (Rebuild).
+        Returns how many terms it synced, or ``None`` when the graph had not changed. Raises
+        when the graph cannot be read, leaving every term as it was."""
+        current = read_knowledge_graph(with_entities=False)
+        if not force and current.fingerprint == self.store.get_meta(_GRAPH_FINGERPRINT):
+            return None
+        graph = read_knowledge_graph(with_entities=True)
+        n = self.rebuild_from_graph(graph.entities)
+        self.store.set_meta(_GRAPH_FINGERPRINT, graph.fingerprint)
+        logger.info("lexicon: synced %d terms from the knowledge graph", n)
         return n
 
     def add_manual_term(
@@ -147,14 +277,18 @@ class LexiconService:
 
     # ── LEX.4 post-decode phonetic correction ───────────────────────────────────
     def correct(self, result) -> CorrectionOutcome:
-        """Correct mis-heard terms in a TranscriptResult in place (auto-apply branch) +
-        collect proposals (propose branch). ``result`` is an stt.provider.TranscriptResult.
+        """Correct mis-heard terms in a TranscriptResult in place + collect proposals.
+        ``result`` is an stt.provider.TranscriptResult.
 
-        For each word: if it sounds like a Lexicon term but is spelled differently and
-        isn't a common word, and (learned auto-correction OR low source confidence), rewrite
-        it (auto) or attach a suggestion (propose). Timestamps are preserved."""
+        A learned correction (heard → meant, one the user taught) is APPLIED. Otherwise a
+        low-confidence word that sounds like a word of a Lexicon term and is spelled much like
+        it (:data:`_MIN_SPELLING`) is PROPOSED as that word — never applied on that evidence:
+        a sound-alike key is too coarse to rewrite a transcript by itself. A word already
+        spelled as a term, or one of its aliases or words, is left alone. Timestamps are
+        preserved."""
         outcome = CorrectionOutcome()
         auto = self.store.auto_corrections()
+        known = self._known_words()
         for seg in result.segments:
             words = seg.words or []
             for w in words:
@@ -169,20 +303,14 @@ class LexiconService:
                         w.word = w.word.replace(bare, meant)
                         outcome.applied.append(Correction(w.start, w.end, bare, meant, 1.0))
                     continue
-                # 2. Phonetic match against Lexicon terms.
+                # 2. Spelled as a Lexicon word already, or heard with confidence → right.
+                if bare.lower() in known or (w.prob or 1.0) > _LOW_PROB:
+                    continue
+                # 3. Sounds like, and is spelled much like, a Lexicon word → propose it.
                 cand = self._best_phonetic_match(bare)
-                if cand is None:
-                    continue
-                term, score = cand
-                # Fire only when it SOUNDS like the term but is SPELLED differently.
-                if term.lower() == bare.lower():
-                    continue
-                low_conf = (w.prob or 1.0) <= _LOW_PROB
-                if score >= 0.9 and low_conf:
-                    w.word = w.word.replace(bare, term)
-                    outcome.applied.append(Correction(w.start, w.end, bare, term, score))
-                elif low_conf:
-                    outcome.suggested.append(Correction(w.start, w.end, bare, term, score))
+                if cand is not None:
+                    suggested, score = cand
+                    outcome.suggested.append(Correction(w.start, w.end, bare, suggested, score))
         # Re-derive segment text from (possibly rewritten) words, and the flat text.
         for seg in result.segments:
             if seg.words:
@@ -191,34 +319,54 @@ class LexiconService:
             result.text = " ".join(s.text for s in result.segments if s.text).strip() or result.text
         return outcome
 
+    def _known_words(self) -> set[str]:
+        """Every word of every enabled term, lowercased: its canonical form's and its
+        aliases'. A transcript word spelled as one of these is not a mishearing."""
+        known: set[str] = set()
+        for term in self.store.enabled_terms():
+            for surface in [term.canonical, *term.aliases]:
+                for tok in str(surface).split():
+                    tok = tok.strip(".,!?;:\"'()[]").lower()
+                    if tok:
+                        known.add(tok)
+        return known
+
     def _best_phonetic_match(self, word: str) -> tuple[str, float] | None:
-        """Return (canonical, score) of the best same-sound Lexicon term, or None. Score
-        blends phonetic-key overlap with a literal-difference bonus (sounds same, spelled
-        different is the strongest signal)."""
+        """``(the Lexicon word *word* most likely is, score)``, or ``None``.
+
+        The candidate is a single WORD of a term (``"Aku"`` of ``"Aku Lehto"``), never the
+        whole term, since one heard word is one word. It must share a Double Metaphone key
+        with *word* and be spelled alike to at least :data:`_MIN_SPELLING`; the score is
+        ``0.5 + 0.5 × spelling``. A truncating mishearing whose key is a PREFIX of the word's
+        (real case: "Cubeer"=KPR for "Kubernetes"=KPRN) is considered only when no exact key
+        matched, and scores 0.1 lower."""
         from difflib import SequenceMatcher
 
-        best: tuple[str, float] | None = None
+        heard = word.lower()
         keys = phonetic_keys(word)
+        best: tuple[str, float] | None = None
+
+        def consider(terms, sounds_alike, penalty: float) -> None:
+            nonlocal best
+            for term in terms:
+                for surface in [term.canonical, *term.aliases]:
+                    for tok in str(surface).split():
+                        tok = tok.strip(".,!?;:\"'()[]")
+                        tkeys = phonetic_keys(tok)
+                        if not any(sounds_alike(k, tk) for k in keys for tk in tkeys):
+                            continue
+                        spelling = SequenceMatcher(None, heard, tok.lower()).ratio()
+                        if spelling < _MIN_SPELLING:
+                            continue
+                        score = round(0.5 + 0.5 * spelling - penalty, 3)
+                        if best is None or score > best[1]:
+                            best = (tok, score)
+
         for key in keys:
-            for term in self.store.terms_for_phonetic_key(key):
-                literal = SequenceMatcher(None, word.lower(), term.canonical.lower()).ratio()
-                # exact key (sounds alike) + spelled differently (low literal) → high score.
-                score = 0.7 + (1.0 - literal) * 0.3
-                if best is None or score > best[1]:
-                    best = (term.canonical, round(score, 3))
-        # Prefix fallback: a severe mishearing can truncate the word to a shorter metaphone
-        # key (real case: "Cubeer"=KPR vs "Kubernetes"=KPRN). Only when no exact-key match
-        # won, and scored lower (prefix is a weaker signal → stays in the "propose" band).
+            consider(self.store.terms_for_phonetic_key(key), lambda a, b: a == b, 0.0)
         if best is None:
             for key in keys:
-                for term in self.store.terms_for_phonetic_prefix(key):
-                    tkeys = phonetic_keys(term.canonical)
-                    if not any(_prefix_match(key, tk) for tk in tkeys):
-                        continue
-                    literal = SequenceMatcher(None, word.lower(), term.canonical.lower()).ratio()
-                    score = 0.6 + (1.0 - literal) * 0.2  # weaker → proposes, won't auto-apply
-                    if best is None or score > best[1]:
-                        best = (term.canonical, round(score, 3))
+                consider(self.store.terms_for_phonetic_prefix(key), _prefix_match, 0.1)
         return best
 
     # ── LEX.5 learned-corrections loop ───────────────────────────────────────────
@@ -260,7 +408,7 @@ async def select_bias_terms(
     siblings when available, else falls back to globally top-weighted terms. Returns []
     when the Lexicon is empty/unavailable so transcription just runs unbiased."""
     try:
-        svc = get_lexicon_service()
+        svc = current_lexicon()
         if svc.store.count_terms() == 0:
             return []
         context_terms: list[str] = []
@@ -297,3 +445,16 @@ def get_lexicon_service() -> LexiconService:
     if _service is None:
         _service = LexiconService()
     return _service
+
+
+def current_lexicon() -> LexiconService:
+    """The Lexicon as a transcription (or the Vocabulary list) consults it: its graph terms
+    first brought up to date with the knowledge graph. Cheap when nothing changed (one small
+    read of the graph's fingerprint). Best-effort: a sync that fails is logged and leaves the
+    terms as they were — a Lexicon problem must never stop a transcription."""
+    svc = get_lexicon_service()
+    try:
+        svc.sync_from_graph()
+    except Exception:
+        logger.warning("lexicon: could not sync from the knowledge graph", exc_info=True)
+    return svc

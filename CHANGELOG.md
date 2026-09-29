@@ -12,6 +12,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
+- **A diarization app can say why it could not tell the speakers apart: `personalclaw.sdk.diarization.DiarizationError`, used by `diarization-onnx` and `diarization-pyannote`.**
+
 - **An app's test suite can load model libraries the way PersonalClaw does, reporting nothing and writing nothing outside its home: `personalclaw.sdk.testing.library_env()`, used by the apps repository's test harness.**
 
 - **Settings → Usage → Model prices sets the price a model's calls are counted at, and lists each model you use with its price and where that comes from.**
@@ -79,6 +81,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Agents → Export to Claude Code writes your agents into Claude Code's agents folder, after you confirm it, and never over a file PersonalClaw did not write.**
 
 ### Changed
+
+- **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
 
 - **The snapshot is the backup: Settings → Backups and `personalclaw backup` say so, and that the hourly export and sync carry your records only, not your skills, scripts or uploads.**
 
@@ -158,6 +162,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A title you give an upload, the file's own name included, is kept after enrichment; the suggested title stays on the item.**
 
 - **Labels that name a type read as English: "Choose an audio file", "New PDF", "an 8-cycle budget".**
+
+- **A video or voice memo whose speech could not be transcribed no longer reads "Transcription done": the step fails with the reason, and a recording with no speech says "No speech found".**
+
+- **The microphone and the OpenAI-compatible transcription endpoint answer a transcription that could not run with its reason, instead of an empty transcript.**
+
+- **Speaker diarization that cannot tell the speakers apart fails its step with the reason, instead of finishing with no speakers, and long recordings get the time transcription gets.**
+
+- **A recording's text keeps who said what and the corrections the Vocabulary made, and a video's text and description include its narration alongside its slides' text.**
+
+- **The Vocabulary builds itself from your knowledge graph, people first, so transcriptions are biased toward the names in your notes without pressing Rebuild; a word that only sounds like a term is proposed, never rewritten, and a graph term is turned off rather than deleted.**
 
 - **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
 

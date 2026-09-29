@@ -4,6 +4,10 @@ List terms (source-badged: graph / manual / learned), add a manual term (+aliase
 (disable) / delete, rebuild from the knowledge graph, and view + toggle learned corrections'
 auto_apply. The Minutes app's transcript-edit UX also POSTs corrections here (LEX.5), gated
 by its ``/api/lexicon`` permission.
+
+The graph terms follow the knowledge graph by themselves (``current_lexicon``), so the list is
+read after that sync, Rebuild forces it, and a graph term is turned off rather than deleted:
+deleting one whose entity is still in the graph would only bring it back at the next sync.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ import logging
 
 from aiohttp import web
 
-from personalclaw.lexicon import get_lexicon_service
+from personalclaw.lexicon import current_lexicon, get_lexicon_service
 from personalclaw.request_validation import (
     RequestValidationError,
     json_object_body,
@@ -47,8 +51,8 @@ def _corr_dict(c) -> dict:
 
 
 async def api_lexicon_terms(request: web.Request) -> web.Response:
-    """GET /api/lexicon/terms?source=&search= — list vocabulary terms."""
-    svc = get_lexicon_service()
+    """GET /api/lexicon/terms?source=&search= — list vocabulary terms, the graph's current."""
+    svc = current_lexicon()
     source = request.query.get("source", "")
     search = request.query.get("search", "")
     terms = svc.list_terms(source=source, search=search)
@@ -97,43 +101,41 @@ async def api_lexicon_update_term(request: web.Request) -> web.Response:
 
 
 async def api_lexicon_delete_term(request: web.Request) -> web.Response:
-    """DELETE /api/lexicon/terms/{id} — remove a term entirely."""
+    """DELETE /api/lexicon/terms/{id} — remove a term you added, or one learned from a fix.
+
+    A term from the knowledge graph is refused (409): it follows its entity, so it would be
+    back at the next sync, and "deleted" would be untrue. Turning it off sticks."""
     svc = get_lexicon_service()
-    if not svc.store.delete_term(request.match_info["id"]):
+    term_id = request.match_info["id"]
+    term = svc.store.get_term(term_id)
+    if term is None:
         return web.json_response({"error": "term not found"}, status=404)
+    if term.source == "graph":
+        return web.json_response(
+            {
+                "error": (
+                    f"{term.canonical} comes from your knowledge graph, so it would come back "
+                    "at the next sync. Turn it off instead."
+                )
+            },
+            status=409,
+        )
+    svc.store.delete_term(term_id)
     return web.json_response({"ok": True})
 
 
 async def api_lexicon_rebuild(request: web.Request) -> web.Response:
-    """POST /api/lexicon/rebuild — resync graph-sourced terms from knowledge entities
-    (upserts current ones, prunes graph terms whose entity left the graph)."""
+    """POST /api/lexicon/rebuild — resync graph-sourced terms from knowledge entities now
+    (upserts current ones, prunes graph terms whose entity left the graph). The same sync
+    runs by itself whenever the graph changed; this one runs even when it did not."""
+    svc = get_lexicon_service()
     try:
-        from personalclaw.knowledge import get_knowledge_store
-
-        store = get_knowledge_store()
-        import json as _json
-
-        entities = []
-        for r in store.db.execute("SELECT id, name, entity_type, aliases FROM entities"):
-            try:
-                aliases = _json.loads(r["aliases"] or "[]")
-            except Exception:
-                aliases = []
-            entities.append(
-                {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "entity_type": r["entity_type"],
-                    "aliases": aliases,
-                }
-            )
+        n = svc.sync_from_graph(force=True) or 0
     except Exception:
-        # Don't rebuild against a failed read — the resync now PRUNES absent graph
-        # terms, so treating a read failure as "no entities" would wipe them all.
+        # Don't rebuild against a failed read — the resync PRUNES absent graph terms, so
+        # treating a read failure as "no entities" would wipe them all.
         logger.warning("lexicon rebuild: could not read entities", exc_info=True)
         return web.json_response({"error": "could not read knowledge entities"}, status=500)
-    svc = get_lexicon_service()
-    n = svc.rebuild_from_graph(entities)
     return web.json_response({"ok": True, "synced": n, "total": svc.store.count_terms()})
 
 
@@ -182,7 +184,8 @@ async def api_lexicon_delete_correction(request: web.Request) -> web.Response:
 
 
 async def api_lexicon_reset(request: web.Request) -> web.Response:
-    """POST /api/lexicon/reset — drop all terms + corrections (rebuild repopulates graph).
+    """POST /api/lexicon/reset — drop all terms + corrections (the next sync repopulates the
+    graph terms).
 
     ``confirm: true`` is required. "Rebuild repopulates" holds only for terms DERIVED from the
     graph; the CORRECTIONS are user-authored — someone typed each one to teach the system a word

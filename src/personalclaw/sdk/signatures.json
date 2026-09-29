@@ -3981,7 +3981,7 @@
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "audio_path"}
   ],
-  "returns": "str | None"
+  "returns": "str"
  },
  "personalclaw.sdk.channel.trust_mode": {"kind": "module", "module": "personalclaw.trust_mode"},
  "personalclaw.sdk.channel.trust_policies": {
@@ -4111,6 +4111,10 @@
   "kind": "async function",
   "params": [],
   "returns": "HfTokenResolution"
+ },
+ "personalclaw.sdk.diarization.DiarizationError": {
+  "bases": ["Exception"],
+  "kind": "class"
  },
  "personalclaw.sdk.diarization.DiarizationModel": {
   "bases": ["object"],

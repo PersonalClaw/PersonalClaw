@@ -5,6 +5,14 @@ Transcription resolves through the typed STT registry: the active model is the
 (enabled, language) lives in ``use_case_settings/stt.json``. faster-whisper (the
 in-process CTranslate2 Whisper) is the sole bundled backend; it depends on
 ``ffmpeg`` for ``.webm`` decoding.
+
+**One answer per call.** :func:`transcribe_audio` and :func:`transcribe_audio_detailed` return
+the transcript, whose text is empty when the recording holds no speech, or raise
+:class:`~personalclaw.stt.provider.SttError` with the sentence saying why there is none:
+speech-to-text is off, no model is chosen, the provider said why, or the provider gave back
+nothing and did not say. They used to return ``None`` for all of those, and every caller read
+``None`` as a recording with no speech in it: a knowledge video whose narration was never
+transcribed said "Transcription done".
 """
 
 import logging
@@ -13,6 +21,26 @@ import os
 from personalclaw.stt.provider import SttError
 
 logger = logging.getLogger(__name__)
+
+#: Why a transcription cannot start, in the words :func:`unavailable_sentence` also uses.
+NO_STT_MODEL = (
+    "No speech-to-text model is chosen, so nothing can be transcribed. Choose one under "
+    "Speech-to-text in Settings → Models."
+)
+STT_TURNED_OFF = (
+    "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → Speech & "
+    "Transcription."
+)
+#: The sensitive-path guard refused the file (a credential or system location).
+SENSITIVE_AUDIO_PATH = (
+    "This file is in a folder PersonalClaw never reads, so it was not transcribed."
+)
+#: A provider that answered ``None``: it could not transcribe and did not say why. Not "no
+#: speech": a provider that heard none answers with empty text.
+NO_TRANSCRIPT_NO_REASON = (
+    "The speech-to-text model gave back no transcript and its provider doesn't say why. Check "
+    "the gateway log, or choose another model under Speech-to-text in Settings → Models."
+)
 
 # Above this size a single audio file is segmented (via ffmpeg) into fixed-length
 # chunks that are transcribed sequentially and stitched — so a 1 GB audio doesn't
@@ -99,15 +127,9 @@ async def unavailable_sentence() -> str:
     from personalclaw.stt.registry import active_stt
 
     if active_stt() is None:
-        return (
-            "No speech-to-text model is chosen, so nothing can be transcribed. Choose one under "
-            "Speech-to-text in Settings → Models."
-        )
+        return NO_STT_MODEL
     if not use_case_enabled("stt", load_use_case_settings("stt")):
-        return (
-            "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → Speech & "
-            "Transcription."
-        )
+        return STT_TURNED_OFF
     return (
         "The speech-to-text model can't run right now, and its provider doesn't say why. Check "
         "the gateway log, or choose another model under Speech-to-text in Settings → Models."
@@ -120,93 +142,73 @@ def _ffmpeg_present() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-async def transcribe_audio(audio_path: str) -> str | None:
-    """Transcribe an audio file via the active STT provider. Returns text or None.
-
-    A provider that could not transcribe and says why raises
-    :class:`~personalclaw.stt.provider.SttError`, and it reaches the caller unchanged: the
-    caller shows the reason instead of reading the failure as a recording with no speech.
-    """
+def _resolve(audio_path: str):
+    """``(provider, model_id, language)`` for transcribing *audio_path*, or :class:`SttError`
+    saying why nothing can: speech-to-text is off, the file is somewhere PersonalClaw never
+    reads, or no model is chosen."""
     from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
+    from personalclaw.security import is_sensitive_path
     from personalclaw.stt.registry import active_stt
 
     settings = load_use_case_settings("stt")
     if not use_case_enabled("stt", settings):
-        logger.debug("STT disabled in settings")
-        return None
-
-    from personalclaw.security import is_sensitive_path
-
+        raise SttError(STT_TURNED_OFF)
     if is_sensitive_path(audio_path):
         logger.error("Refusing to read sensitive path: %s", audio_path)
-        return None
-
+        raise SttError(SENSITIVE_AUDIO_PATH)
     resolved = active_stt()
     if resolved is None:
-        logger.debug("No active STT model selected")
-        return None
+        raise SttError(NO_STT_MODEL)
     provider, model_id = resolved
-
     ensure_ffmpeg_in_path()
-    language = str(settings.get("language_code", "") or "")
+    return provider, model_id, str(settings.get("language_code", "") or "")
 
-    # Large audio → ffmpeg-segment + transcribe each chunk, so a 1 GB recording
-    # doesn't depend on the provider tolerating the whole file in one call. Falls
-    # back to a single call when the file is small or ffmpeg isn't available.
+
+def _segmented(audio_path: str) -> bool:
+    """Whether *audio_path* is transcribed in parts: above the segment threshold, with ffmpeg
+    to cut it. A large recording must not depend on the provider taking the whole file in one
+    call; anything a naive or remote provider handles in one shot stays one call."""
     try:
         big = os.path.getsize(audio_path) > _stt_segment_threshold()
     except OSError:
         big = False
-    if big and _ffmpeg_present():
-        result = await _transcribe_segmented(provider, model_id, language, audio_path)
-    else:
-        result = await provider.transcribe(audio_path, model=model_id, language=language)
+    return big and _ffmpeg_present()
 
-    if result:
+
+async def transcribe_audio(audio_path: str) -> str:
+    """Transcribe an audio file via the active STT provider: its text, empty when there was
+    no speech.
+
+    Raises :class:`~personalclaw.stt.provider.SttError` when there is no transcript: the
+    provider's own reason unchanged, or the sentence for what stopped it (see the module
+    docstring). A caller shows it; it never reads a failure as a recording with no speech.
+    """
+    provider, model_id, language = _resolve(audio_path)
+    if _segmented(audio_path):
+        text = await _transcribe_segmented(provider, model_id, language, audio_path)
+    else:
+        text = await provider.transcribe(audio_path, model=model_id, language=language)
+        if text is None:
+            raise SttError(NO_TRANSCRIPT_NO_REASON)
+    if text:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
-        result, _ = redact_exfiltration_urls(result)
-        result, _ = redact_credentials(result)
-    return result
+        text, _ = redact_exfiltration_urls(text)
+        text, _ = redact_credentials(text)
+    return text
 
 
 async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | None = None):
-    """Rich transcription via the active STT provider (core L0). Returns a
-    ``TranscriptResult`` (flat text + segments + word timestamps) or ``None``.
+    """Rich transcription via the active STT provider (core L0): a ``TranscriptResult`` (flat
+    text + segments + word timestamps), whose text is empty when there was no speech.
 
     Mirrors :func:`transcribe_audio` (same active-STT resolution, sensitive-path guard,
-    credential/exfil redaction of the flat text) but preserves structure. For large files
-    the segmented path OFFSETS each chunk's segment/word times by the chunk's start so the
-    merged timeline is continuous. ``bias_terms`` is the Lexicon pre-decode hint (L2).
-    Like :func:`transcribe_audio`, a provider's ``SttError`` reaches the caller unchanged."""
-    from personalclaw.providers.use_cases import load_use_case_settings, use_case_enabled
-    from personalclaw.stt.registry import active_stt
-
-    settings = load_use_case_settings("stt")
-    if not use_case_enabled("stt", settings):
-        logger.debug("STT disabled in settings")
-        return None
-
-    from personalclaw.security import is_sensitive_path
-
-    if is_sensitive_path(audio_path):
-        logger.error("Refusing to read sensitive path: %s", audio_path)
-        return None
-
-    resolved = active_stt()
-    if resolved is None:
-        logger.debug("No active STT model selected")
-        return None
-    provider, model_id = resolved
-
-    ensure_ffmpeg_in_path()
-    language = str(settings.get("language_code", "") or "")
-
-    try:
-        big = os.path.getsize(audio_path) > _stt_segment_threshold()
-    except OSError:
-        big = False
-    if big and _ffmpeg_present():
+    credential/exfil redaction of the flat text, the same :class:`SttError` when there is no
+    transcript) but preserves structure. For large files the segmented path OFFSETS each
+    chunk's segment/word times by the chunk's start so the merged timeline is continuous.
+    ``bias_terms`` is the Lexicon pre-decode hint (L2)."""
+    provider, model_id, language = _resolve(audio_path)
+    if _segmented(audio_path):
         result = await _transcribe_segmented_detailed(
             provider, model_id, language, audio_path, bias_terms
         )
@@ -214,15 +216,87 @@ async def transcribe_audio_detailed(audio_path: str, *, bias_terms: list[str] | 
         result = await provider.transcribe_detailed(
             audio_path, model=model_id, language=language, bias_terms=bias_terms
         )
+        if result is None:
+            raise SttError(NO_TRANSCRIPT_NO_REASON)
 
     # Redact the flat text (the same guard transcribe_audio applies). Segment text mirrors
     # the flat text span-for-span; redacting the flat surface is what feeds FTS/embeddings.
-    if result is not None and result.text:
+    if result.text:
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
         result.text, _ = redact_exfiltration_urls(result.text)
         result.text, _ = redact_credentials(result.text)
     return result
+
+
+def _clock(seconds: float) -> str:
+    """``m:ss`` (or ``h:mm:ss``) for a position in a recording."""
+    total = int(seconds)
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+def _part_failed(index: int, total: int) -> str:
+    start = index * float(_STT_SEGMENT_SECONDS)
+    return (
+        f"This recording is transcribed in {total} parts, and part {index + 1} (from "
+        f"{_clock(start)}) could not be transcribed, so there is no transcript."
+    )
+
+
+async def _transcribe_part(call, index: int, total: int):
+    """One part's transcription, or :class:`SttError` saying which part had none.
+
+    A part used to be logged and SKIPPED, so a recording whose middle failed came back as the
+    rest of its words with nothing to say a stretch was missing. The provider's own
+    :class:`SttError` is raised unchanged: every part would fail the same way."""
+    try:
+        part = await call()
+    except SttError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — said, with the provider's words, not swallowed
+        from personalclaw.providers.failure_copy import sentence_with_detail
+
+        logger.warning("STT part %d of %d failed", index + 1, total, exc_info=True)
+        raise SttError(sentence_with_detail(_part_failed(index, total), exc)) from exc
+    if part is None:
+        raise SttError(f"{_part_failed(index, total)} {NO_TRANSCRIPT_NO_REASON}")
+    return part
+
+
+async def _segment(ffmpeg: str, audio_path: str, work: str) -> list[str]:
+    """Re-encode *audio_path* into uniform mono 16 kHz WAV parts of ``_STT_SEGMENT_SECONDS``
+    (what Whisper wants) under *work*; the part files in order, or ``[]`` when ffmpeg failed."""
+    import asyncio
+
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        audio_path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(_STT_SEGMENT_SECONDS),
+        os.path.join(work, "seg_%05d.wav"),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    rc = await proc.wait()
+    parts = sorted(os.path.join(work, f) for f in os.listdir(work) if f.startswith("seg_"))
+    if rc != 0:
+        logger.warning("STT segmentation failed (rc=%s); single call", rc)
+        return []
+    return parts
 
 
 async def _transcribe_segmented_detailed(
@@ -231,50 +305,30 @@ async def _transcribe_segmented_detailed(
     """Detailed variant of :func:`_transcribe_segmented`. Transcribes each ffmpeg chunk
     with ``transcribe_detailed`` and merges, OFFSETTING every segment/word time by the
     chunk's start offset (chunk N starts at N * _STT_SEGMENT_SECONDS) so the merged
-    timeline is continuous. Falls back to a single detailed call on any ffmpeg failure."""
-    import asyncio
+    timeline is continuous. Falls back to a single detailed call on any ffmpeg failure.
+    A part with no transcript raises :class:`SttError` naming it (:func:`_transcribe_part`)."""
     import shutil
     import tempfile
 
     from personalclaw.stt.provider import TranscriptResult, TranscriptSegment, TranscriptWord
 
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        return await provider.transcribe_detailed(
+    async def _whole():
+        result = await provider.transcribe_detailed(
             audio_path, model=model_id, language=language, bias_terms=bias_terms
         )
+        if result is None:
+            raise SttError(NO_TRANSCRIPT_NO_REASON)
+        return result
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return await _whole()
 
     work = tempfile.mkdtemp(prefix="stt_seg_")
     try:
-        pattern = os.path.join(work, "seg_%05d.wav")
-        cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            audio_path,
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-f",
-            "segment",
-            "-segment_time",
-            str(_STT_SEGMENT_SECONDS),
-            pattern,
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        rc = await proc.wait()
-        chunks = sorted(os.path.join(work, f) for f in os.listdir(work) if f.startswith("seg_"))
-        if rc != 0 or not chunks:
-            logger.warning("STT segmentation failed (rc=%s); single detailed call", rc)
-            return await provider.transcribe_detailed(
-                audio_path, model=model_id, language=language, bias_terms=bias_terms
-            )
+        chunks = await _segment(ffmpeg, audio_path, work)
+        if not chunks:
+            return await _whole()
 
         merged_segments: list[TranscriptSegment] = []
         text_parts: list[str] = []
@@ -282,19 +336,13 @@ async def _transcribe_segmented_detailed(
         total_duration = 0.0
         for idx, chunk in enumerate(chunks):
             offset = idx * float(_STT_SEGMENT_SECONDS)
-            try:
-                part = await provider.transcribe_detailed(
+            part = await _transcribe_part(
+                lambda chunk=chunk: provider.transcribe_detailed(
                     chunk, model=model_id, language=language, bias_terms=bias_terms
-                )
-            except SttError:
-                # The provider said why it cannot transcribe (its credentials, its bucket):
-                # every chunk would fail the same way, and skipping them all read as silence.
-                raise
-            except Exception:
-                logger.warning("STT segment failed: %s", os.path.basename(chunk), exc_info=True)
-                part = None
-            if part is None:
-                continue
+                ),
+                idx,
+                len(chunks),
+            )
             lang_out = lang_out or part.language
             for seg in part.segments:
                 merged_segments.append(
@@ -312,19 +360,14 @@ async def _transcribe_segmented_detailed(
             if part.text:
                 text_parts.append(part.text.strip())
             total_duration = offset + (part.duration or 0.0)
-        flat = " ".join(t for t in text_parts if t).strip()
-        if not flat and not merged_segments:
-            return None
         return TranscriptResult(
-            text=flat,
+            text=" ".join(t for t in text_parts if t).strip(),
             language=lang_out,
             duration=total_duration,
             segments=merged_segments,
         )
     finally:
-        import shutil as _sh
-
-        _sh.rmtree(work, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def _stt_segment_threshold() -> int:
@@ -339,69 +382,43 @@ def _stt_segment_threshold() -> int:
     return _STT_SEGMENT_THRESHOLD
 
 
-async def _transcribe_segmented(
-    provider, model_id: str, language: str, audio_path: str
-) -> str | None:
+async def _transcribe_segmented(provider, model_id: str, language: str, audio_path: str) -> str:
     """Split a large audio file into fixed-length segments (ffmpeg), transcribe each
     sequentially, and stitch the transcripts. Keeps peak memory + per-call size
     bounded regardless of the provider. Falls back to a single call on any ffmpeg
-    failure so a segmentation problem never silently drops the transcription."""
-    import asyncio
+    failure so a segmentation problem never silently drops the transcription. A part with no
+    transcript raises :class:`SttError` naming it (:func:`_transcribe_part`)."""
     import shutil
     import tempfile
 
+    async def _whole():
+        text = await provider.transcribe(audio_path, model=model_id, language=language)
+        if text is None:
+            raise SttError(NO_TRANSCRIPT_NO_REASON)
+        return text
+
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        return await provider.transcribe(audio_path, model=model_id, language=language)
+        return await _whole()
 
     work = tempfile.mkdtemp(prefix="stt_seg_")
     try:
-        # Re-encode to a uniform segmented WAV (mono 16k — what Whisper wants), so
-        # the segmenter works regardless of the source container/codec.
-        pattern = os.path.join(work, "seg_%05d.wav")
-        cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            audio_path,
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-f",
-            "segment",
-            "-segment_time",
-            str(_STT_SEGMENT_SECONDS),
-            pattern,
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        rc = await proc.wait()
-        segments = sorted(os.path.join(work, f) for f in os.listdir(work) if f.startswith("seg_"))
-        if rc != 0 or not segments:
-            logger.warning("STT segmentation failed (rc=%s); falling back to single call", rc)
-            return await provider.transcribe(audio_path, model=model_id, language=language)
+        segments = await _segment(ffmpeg, audio_path, work)
+        if not segments:
+            return await _whole()
 
         logger.info(
             "STT: transcribing %d segments of %s", len(segments), os.path.basename(audio_path)
         )
         parts: list[str] = []
-        for seg in segments:
-            try:
-                text = await provider.transcribe(seg, model=model_id, language=language)
-            except SttError:
-                raise  # the provider said why; see _transcribe_segmented_detailed
-            except Exception:
-                logger.warning("STT segment failed: %s", os.path.basename(seg), exc_info=True)
-                text = None
+        for idx, seg in enumerate(segments):
+            text = await _transcribe_part(
+                lambda seg=seg: provider.transcribe(seg, model=model_id, language=language),
+                idx,
+                len(segments),
+            )
             if text:
                 parts.append(text.strip())
-        return " ".join(p for p in parts if p) or ""
+        return " ".join(p for p in parts if p)
     finally:
-        import shutil as _sh
-
-        _sh.rmtree(work, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)

@@ -125,7 +125,8 @@ class TestMicLexiconWiring:
         """Best-effort doctrine: a broken Lexicon leaves the transcript untouched, not a 500.
 
         Patches the PACKAGE bindings (``personalclaw.lexicon.*``) — the names the route
-        resolves at call time — so both halves genuinely raise into the handler."""
+        resolves at call time: ``select_bias_terms`` for the bias half, ``current_lexicon`` (the
+        synced Lexicon) for the correction half — so both genuinely raise into the handler."""
 
         def _boom(*_a, **_kw):
             raise RuntimeError("lexicon store unavailable")
@@ -134,7 +135,7 @@ class TestMicLexiconWiring:
             raise RuntimeError("lexicon store unavailable")
 
         monkeypatch.setattr("personalclaw.lexicon.select_bias_terms", _aboom)
-        monkeypatch.setattr("personalclaw.lexicon.get_lexicon_service", _boom)
+        monkeypatch.setattr("personalclaw.lexicon.current_lexicon", _boom)
         monkeypatch.setattr(
             "personalclaw.transcribe.transcribe_audio_detailed",
             AsyncMock(return_value=_result(["still", "works"])),

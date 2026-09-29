@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.stt.provider import SttError
 from personalclaw.transcribe import is_available, transcribe_audio
 
 # ---------------------------------------------------------------------------
@@ -71,16 +72,27 @@ class TestIsAvailable:
 
 
 class TestTranscribeAudio:
-    @pytest.mark.asyncio
-    async def test_disabled_returns_none(self):
-        with patch(
-            "personalclaw.providers.use_cases.load_use_case_settings",
-            return_value={"enabled": False},
-        ):
-            assert await transcribe_audio("/tmp/test.webm") is None
+    """A transcription that cannot run SAYS why (``SttError``); it no longer answers ``None``,
+    which every caller read as a recording with no speech in it."""
 
     @pytest.mark.asyncio
-    async def test_no_active_model_returns_none(self):
+    async def test_disabled_says_speech_to_text_is_off(self):
+        from personalclaw.transcribe import STT_TURNED_OFF
+
+        with (
+            patch(
+                "personalclaw.providers.use_cases.load_use_case_settings",
+                return_value={"enabled": False},
+            ),
+            pytest.raises(SttError) as raised,
+        ):
+            await transcribe_audio("/tmp/test.webm")
+        assert str(raised.value) == STT_TURNED_OFF
+
+    @pytest.mark.asyncio
+    async def test_no_active_model_says_none_is_chosen(self):
+        from personalclaw.transcribe import NO_STT_MODEL
+
         with (
             patch(
                 "personalclaw.providers.use_cases.load_use_case_settings",
@@ -88,8 +100,10 @@ class TestTranscribeAudio:
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=False),
             patch("personalclaw.stt.registry.active_stt", return_value=None),
+            pytest.raises(SttError) as raised,
         ):
-            assert await transcribe_audio("/tmp/test.webm") is None
+            await transcribe_audio("/tmp/test.webm")
+        assert str(raised.value) == NO_STT_MODEL
 
     @pytest.mark.asyncio
     async def test_successful_transcription(self):
@@ -108,7 +122,10 @@ class TestTranscribeAudio:
         prov.transcribe.assert_awaited_once_with("/tmp/test.webm", model="turbo", language="en-US")
 
     @pytest.mark.asyncio
-    async def test_provider_returns_none(self):
+    async def test_a_provider_that_gives_back_nothing_is_a_failure_not_silence(self):
+        """🔴 Red before: ``None`` came back, and the knowledge pipeline read it as "no speech"."""
+        from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON
+
         prov = MagicMock()
         prov.transcribe = AsyncMock(return_value=None)
         with (
@@ -118,19 +135,43 @@ class TestTranscribeAudio:
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=False),
             patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
+            pytest.raises(SttError) as raised,
         ):
-            assert await transcribe_audio("/tmp/test.webm") is None
+            await transcribe_audio("/tmp/test.webm")
+        assert str(raised.value) == NO_TRANSCRIPT_NO_REASON
+
+    @pytest.mark.asyncio
+    async def test_no_speech_is_an_empty_transcript(self):
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(return_value="")
+        with (
+            patch(
+                "personalclaw.providers.use_cases.load_use_case_settings",
+                return_value={"enabled": True},
+            ),
+            patch("personalclaw.security.is_sensitive_path", return_value=False),
+            patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
+        ):
+            assert await transcribe_audio("/tmp/silence.webm") == ""
 
     @pytest.mark.asyncio
     async def test_sensitive_path_blocked(self):
+        from personalclaw.transcribe import SENSITIVE_AUDIO_PATH
+
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(return_value="secret")
         with (
             patch(
                 "personalclaw.providers.use_cases.load_use_case_settings",
                 return_value={"enabled": True},
             ),
             patch("personalclaw.security.is_sensitive_path", return_value=True),
+            patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
+            pytest.raises(SttError) as raised,
         ):
-            assert await transcribe_audio("/etc/shadow") is None
+            await transcribe_audio("/etc/shadow")
+        assert str(raised.value) == SENSITIVE_AUDIO_PATH
+        prov.transcribe.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_small_file_uses_single_call(self, tmp_path):
@@ -368,6 +409,100 @@ class TestTranscriptContract:
         assert r.segments[0].start == 0.0 and r.segments[0].end == 5.0
         assert r.segments[1].start == 600.0 and r.segments[1].end == 605.0
         assert r.segments[1].words[0].start == 600.0  # word times offset too
+
+    @pytest.mark.asyncio
+    async def test_a_detailed_provider_that_gives_back_nothing_is_a_failure(self, tmp_path):
+        """🔴 Red before: the knowledge node got ``None`` and reported "Transcription done"."""
+        from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON, transcribe_audio_detailed
+
+        f = tmp_path / "screencast.audio.wav"
+        f.write_bytes(b"\x00" * 32)
+        prov = MagicMock()
+        prov.transcribe_detailed = AsyncMock(return_value=None)
+        with (
+            patch(
+                "personalclaw.providers.use_cases.load_use_case_settings",
+                return_value={"enabled": True},
+            ),
+            patch("personalclaw.security.is_sensitive_path", return_value=False),
+            patch("personalclaw.stt.registry.active_stt", return_value=(prov, "turbo")),
+            pytest.raises(SttError) as raised,
+        ):
+            await transcribe_audio_detailed(str(f))
+        assert str(raised.value) == NO_TRANSCRIPT_NO_REASON
+
+
+def _segmenting(parts: int):
+    """Patches that make the ffmpeg segmenter yield *parts* part files without running it."""
+
+    async def _fake_exec(*a, **k):
+        proc = MagicMock()
+        proc.wait = AsyncMock(return_value=0)
+        return proc
+
+    names = [f"seg_{i:05d}.wav" for i in range(parts)]
+    return (
+        patch("shutil.which", return_value="/usr/bin/ffmpeg"),
+        patch("os.listdir", lambda p: list(names)),
+        patch("asyncio.create_subprocess_exec", _fake_exec),
+    )
+
+
+class TestAPartWithNoTranscript:
+    """A recording transcribed in parts no longer skips a part that failed: the result read as
+    the whole recording, with a stretch of it silently missing."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_a_part_that_gives_back_nothing_names_the_part(self, tmp_path, detailed):
+        from personalclaw import transcribe as T
+        from personalclaw.stt.provider import TranscriptResult
+
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(side_effect=["first part", None, "third part"])
+        prov.transcribe_detailed = AsyncMock(
+            side_effect=[TranscriptResult(text="first part"), None, TranscriptResult(text="third")]
+        )
+        which, listdir, exec_ = _segmenting(3)
+        with which, listdir, exec_, pytest.raises(SttError) as raised:
+            if detailed:
+                await T._transcribe_segmented_detailed(prov, "turbo", "", str(tmp_path / "a"), None)
+            else:
+                await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"))
+        message = str(raised.value)
+        assert "part 2 (from 10:00)" in message and "in 3 parts" in message
+        assert T.NO_TRANSCRIPT_NO_REASON in message
+
+    @pytest.mark.asyncio
+    async def test_a_part_that_raises_keeps_its_own_words(self, tmp_path):
+        from personalclaw import transcribe as T
+
+        prov = MagicMock()
+        prov.transcribe = AsyncMock(
+            side_effect=["first", RuntimeError("decoder ran out of memory")]
+        )
+        which, listdir, exec_ = _segmenting(2)
+        with which, listdir, exec_, pytest.raises(SttError) as raised:
+            await T._transcribe_segmented(prov, "turbo", "", str(tmp_path / "a"))
+        assert "part 2 (from 10:00)" in str(raised.value)
+        assert "Details: decoder ran out of memory" in str(raised.value)
+
+    @pytest.mark.asyncio
+    async def test_parts_with_no_speech_are_an_empty_transcript_not_a_failure(self, tmp_path):
+        """🔴 Red before: every part empty came back ``None`` from the detailed path."""
+        from personalclaw import transcribe as T
+        from personalclaw.stt.provider import TranscriptResult
+
+        prov = MagicMock()
+        prov.transcribe_detailed = AsyncMock(
+            side_effect=[TranscriptResult(text="", duration=600.0), TranscriptResult(text="")]
+        )
+        which, listdir, exec_ = _segmenting(2)
+        with which, listdir, exec_:
+            result = await T._transcribe_segmented_detailed(
+                prov, "turbo", "", str(tmp_path / "a"), None
+            )
+        assert result is not None and result.text == "" and result.segments == []
 
 
 # ---------------------------------------------------------------------------

@@ -578,7 +578,7 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
 
   return (
     <div ref={anchor} id="vocabulary" style={{ scrollMarginTop: '1rem' }}>
-      <Section title="Vocabulary & corrections" hint="Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Auto-built from your knowledge graph; add your own or prune wrong ones.">
+      <Section title="Vocabulary & corrections" hint="Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Built from the names in your knowledge graph, people first, and kept in step with it as your library grows; add your own, or turn off a wrong one.">
         {/* Both reads failed — nothing about the lexicon is known, so the error replaces the whole
             section rather than each list saying it separately. Before the skeleton, which a pair of
             rejections also satisfies (`data` stays `null`). */}
@@ -611,7 +611,7 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
               <InlineLoadError what="your vocabulary" error={termsQ.error} onRetry={reload} />
             ) : data.terms.length === 0 ? (
               <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
-                No terms yet. <span className="text-on-surface">Rebuild</span> to seed from your knowledge graph, or add one above.
+                No terms yet. The people, projects and other names found in your knowledge library appear here by themselves; add one above to start now.
               </div>
             ) : (
               // A lexicon holds hundreds of terms — cap the list and scroll INSIDE it
@@ -690,13 +690,17 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
   // Both icon buttons are named after the term. They were "Disable (prune)" and "Delete" on every row
   // — one name per row of a list that runs to hundreds — so nothing said which term they act on.
   const toggleLabel = `${term.enabled ? 'Disable (prune)' : 'Enable'} ${term.canonical}`
+  // A graph term follows its entity in the knowledge graph, so deleting it would only bring it back
+  // at the next sync (the server refuses it). Turning it off is the control that sticks.
+  const fromGraph = term.source === 'graph'
   return (
     <div className={`flex items-center gap-2 py-2 ${term.enabled ? '' : 'opacity-50'}`}>
       <span data-type="body-s" className="flex-1 truncate">
         {term.canonical}
         {term.aliases.length > 0 && <span data-type="caption" className="ml-1.5 text-on-surface-low">({term.aliases.join(', ')})</span>}
       </span>
-      <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}>{badge.label}</span>
+      <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}
+        title={fromGraph ? 'From your knowledge graph, and kept in step with it. Turn it off to stop using it.' : undefined}>{badge.label}</span>
       <button type="button" disabled={busy} title={toggleLabel} aria-label={toggleLabel}
         onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))}
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
@@ -707,8 +711,10 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
           primitive-adoption pass rather than being smuggled in here.
           🪤 And that sentence may not name the raw element it is about: `primitiveAdoption` counts
           the tag TEXT, comments included, so writing the literal reds the ratchet at +1.) */}
-      <SquareIconButton icon={Trash2} tone="danger" label={`Delete term ${term.canonical}`} loading={busy}
-        onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
+      {!fromGraph && (
+        <SquareIconButton icon={Trash2} tone="danger" label={`Delete term ${term.canonical}`} loading={busy}
+          onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
+      )}
     </div>
   )
 }

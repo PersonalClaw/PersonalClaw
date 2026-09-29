@@ -10,7 +10,7 @@ import personalclaw.knowledge.pipeline.executor as ex
 import personalclaw.knowledge.pipeline.registry as reg
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
-from personalclaw.knowledge.pipeline.types import NodeContext
+from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput
 
 
 def _set_resolvable(monkeypatch, fn):
@@ -193,6 +193,16 @@ def test_video_dag_routes_conditional_branch(monkeypatch, tmp_path):
     async def _transcribe(inputs, ctx):
         return NodeOutput(node_type="transcription", backend="stt", text="SPOKEN WORDS")
 
+    async def _diarize(inputs, ctx):
+        # Every use case resolves here, so diarization is a bound model too: stubbed like the
+        # others (the real node, with no diarization model actually bound, fails and says so).
+        return NodeOutput(
+            node_type="diarization",
+            backend="diarization",
+            pooled=False,
+            metadata={"speaker_turns": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}]},
+        )
+
     async def _consolidate(inputs, ctx):
         got = sorted(inputs.keys())
         return NodeOutput(
@@ -209,6 +219,7 @@ def test_video_dag_routes_conditional_branch(monkeypatch, tmp_path):
         ("ocr", _ocr),
         ("vision", _vision),
         ("transcription", _transcribe),
+        ("diarization", _diarize),
         ("video_consolidate", _consolidate),
     ]:
         node = reg.get_node(nt, graph_for("video").nodes[nt].backend)
@@ -283,18 +294,60 @@ def test_guess_mime_canonical_web_types():
 
 def test_transcription_empty_is_success_not_failure(monkeypatch):
     """A silent / no-speech audio yields an empty transcript — that's a VALID result,
-    not a failure (the item should land 'done', not an alarming 'failed')."""
+    not a failure (the item should land 'done', not an alarming 'failed'). It pools nothing and
+    says ``no_speech``, which the runner puts on the item so the item can say why it has no
+    transcript. (This test used to patch the flat ``transcribe_audio``, which the node never
+    calls, and passed on the ``None`` a missing model returned.)"""
     from personalclaw.knowledge.pipeline.nodes.media_nodes import TranscriptionNode
+    from personalclaw.stt.provider import TranscriptResult
 
-    async def _empty(_audio):
-        return ""
+    async def _silent(_audio, **_kw):
+        return TranscriptResult(text="", duration=4.0)
 
-    monkeypatch.setattr("personalclaw.transcribe.transcribe_audio", _empty)
+    monkeypatch.setattr("personalclaw.transcribe.transcribe_audio_detailed", _silent)
     node = TranscriptionNode()
     ctx = NodeContext(item_id="x", item_type="audio", file_path="/tmp/silent.wav")
     out = _run(node.run({}, ctx))
     assert out.success is True
     assert out.text == ""
+    assert out.pooled is False
+    assert out.metadata == {"no_speech": True}
+
+
+def test_a_transcription_with_no_transcript_and_no_reason_fails_it_is_not_silence(monkeypatch):
+    """🔴 A six-minute screen recording: its narration came back with nothing (``None``) and the
+    node answered success with an empty text, so the item read "Transcription done" beside no
+    transcript. Driven through the real ``transcribe_audio_detailed`` with a bound provider
+    that gives back nothing, as the local model did when it ran out of time."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from personalclaw.knowledge.pipeline.nodes.media_nodes import TranscriptionNode
+    from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON
+
+    provider = MagicMock()
+    provider.transcribe_detailed = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "personalclaw.knowledge.pipeline.nodes.media_nodes._lexicon_bias_terms",
+        AsyncMock(return_value=None),
+    )
+    ctx = NodeContext(item_id="v1", item_type="video", file_path="/tmp/screencast.mov")
+    split = NodeOutput(
+        node_type="av_split",
+        backend="ffmpeg",
+        pooled=False,
+        metadata={"audio": "/tmp/v1.audio.wav"},
+    )
+    with (
+        patch(
+            "personalclaw.providers.use_cases.load_use_case_settings",
+            return_value={"enabled": True},
+        ),
+        patch("personalclaw.security.is_sensitive_path", return_value=False),
+        patch("personalclaw.stt.registry.active_stt", return_value=(provider, "turbo")),
+    ):
+        out = _run(TranscriptionNode().run({"av_split": split}, ctx))
+    assert (out.success, out.error) == (False, NO_TRANSCRIPT_NO_REASON)
+    assert provider.transcribe_detailed.await_args.args[0] == "/tmp/v1.audio.wav"
 
 
 def test_transcription_no_audio_still_fails(monkeypatch):
@@ -325,3 +378,128 @@ def test_a_transcription_its_provider_could_not_run_fails_with_the_providers_rea
     out = _run(node.run({}, ctx))
 
     assert (out.success, out.error) == (False, reason)
+
+
+# ── diarization: a bound model that cannot answer is a failed step, not "no speakers" ──
+
+
+def _diarize_with(monkeypatch, provider):
+    """Bind *provider* as the active diarization model."""
+    monkeypatch.setattr(
+        "personalclaw.diarization.registry.active_diarization",
+        lambda: (provider, "fake-diarizer"),
+    )
+    monkeypatch.setattr("personalclaw.security.is_sensitive_path", lambda _p: False)
+
+
+def test_a_diarization_that_gives_back_nothing_fails_with_a_reason(monkeypatch):
+    """🔴 A two-voice clip: the provider could not read the file and answered ``None``,
+    and the node reported success with no turns, so the transcript had no speakers and no line
+    anywhere said why."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.diarize import NO_TURNS_NO_REASON
+    from personalclaw.knowledge.pipeline.nodes.media_nodes import DiarizationNode
+
+    provider = MagicMock()
+    provider.diarize = AsyncMock(return_value=None)
+    _diarize_with(monkeypatch, provider)
+    ctx = NodeContext(item_id="a1", item_type="audio", file_path="/tmp/snippet.m4a")
+    out = _run(DiarizationNode().run({}, ctx))
+    assert (out.success, out.error) == (False, NO_TURNS_NO_REASON)
+
+
+def test_a_diarization_error_is_the_steps_reason(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.knowledge.pipeline.nodes.media_nodes import DiarizationNode
+    from personalclaw.sdk.diarization import DiarizationError  # as an app raises it
+
+    reason = "Diarization could not read this recording: ffmpeg is not installed."
+    provider = MagicMock()
+    provider.diarize = AsyncMock(side_effect=DiarizationError(reason))
+    _diarize_with(monkeypatch, provider)
+    ctx = NodeContext(item_id="a1", item_type="audio", file_path="/tmp/snippet.m4a")
+    out = _run(DiarizationNode().run({}, ctx))
+    assert (out.success, out.error) == (False, reason)
+
+
+def test_an_unexpected_diarization_failure_keeps_its_own_words(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.diarize import DIARIZATION_FAILED
+    from personalclaw.knowledge.pipeline.nodes.media_nodes import DiarizationNode
+
+    provider = MagicMock()
+    provider.diarize = AsyncMock(side_effect=RuntimeError("Format not recognised."))
+    _diarize_with(monkeypatch, provider)
+    out = _run(
+        DiarizationNode().run(
+            {}, NodeContext(item_id="a1", item_type="audio", file_path="/tmp/snippet.m4a")
+        )
+    )
+    assert out.success is False
+    assert out.error == f"{DIARIZATION_FAILED} Details: Format not recognised."
+
+
+def test_speaker_turns_reach_fusion_and_label_the_transcript(monkeypatch):
+    """The control: a provider that answers turns labels the transcript. Diarization is
+    structural (``pooled=False``): its product is the turns, never text."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.diarization.provider import SpeakerTurn
+    from personalclaw.knowledge.pipeline.nodes import media_nodes as mn
+
+    provider = MagicMock()
+    provider.diarize = AsyncMock(
+        return_value=[SpeakerTurn(0.0, 4.0, "SPEAKER_00"), SpeakerTurn(4.0, 9.0, "SPEAKER_01")]
+    )
+    _diarize_with(monkeypatch, provider)
+    ctx = NodeContext(item_id="a1", item_type="audio", file_path="/tmp/snippet.m4a")
+    turns = _run(mn.DiarizationNode().run({}, ctx))
+    assert turns.success and turns.pooled is False
+    transcript = NodeOutput(
+        node_type="transcription",
+        text="release week good",
+        metadata={
+            "transcript": {
+                "text": "release week good",
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 9.0,
+                        "text": "release week good",
+                        "words": [
+                            {"start": 0.5, "end": 1.5, "word": " release", "prob": 0.9},
+                            {"start": 1.6, "end": 2.2, "word": " week", "prob": 0.9},
+                            {"start": 5.0, "end": 5.6, "word": " good", "prob": 0.9},
+                        ],
+                    }
+                ],
+            }
+        },
+    )
+    fused = _run(
+        mn.SpeakerFusionNode().run({"transcription": transcript, "diarization": turns}, ctx)
+    )
+    assert fused.text == "SPEAKER_00: release week\nSPEAKER_01: good"
+
+
+def test_an_empty_pass_through_pools_nothing(monkeypatch):
+    """With no transcript to fuse or correct (no speech, or a transcription that failed), the
+    pass-through steps contribute nothing to the text pool: pooling their empty output flagged
+    an audio item as a scan with no text layer."""
+    from personalclaw.knowledge.pipeline.nodes import media_nodes as mn
+
+    ctx = NodeContext(item_id="a1", item_type="audio", file_path="/tmp/silent.m4a")
+    silent = NodeOutput(
+        node_type="transcription", text="", pooled=False, metadata={"no_speech": True}
+    )
+    fused = _run(mn.SpeakerFusionNode().run({"transcription": silent}, ctx))
+    corrected = _run(mn.LexiconCorrectionNode().run({"speaker_fusion": fused}, ctx))
+    assert (fused.success, fused.pooled, corrected.success, corrected.pooled) == (
+        True,
+        False,
+        True,
+        False,
+    )

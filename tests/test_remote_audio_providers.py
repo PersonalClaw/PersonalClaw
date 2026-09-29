@@ -225,6 +225,59 @@ class TestOpenAISttProvider:
         assert kwargs["model"] == "whisper-1"
         assert kwargs["language"] == "en"
 
+    @pytest.mark.asyncio
+    async def test_an_answer_with_no_speech_is_empty_text_not_none(self, tmp_path):
+        """🔴 Red before: ``None``, which core now (rightly) reads as a failure it cannot explain."""
+        from personalclaw.stt.openai_provider import OpenAISttProvider
+
+        audio = tmp_path / "room-tone.webm"
+        audio.write_bytes(b"x")
+        fake_client = MagicMock()
+        fake_client.audio.transcriptions.create = AsyncMock(return_value=MagicMock(text="  "))
+        fake_client.close = AsyncMock()
+        fake_openai = MagicMock()
+        fake_openai.AsyncOpenAI = MagicMock(return_value=fake_client)
+        prov = OpenAISttProvider(provider_name="X", endpoint="", api_key="sk-x")
+        with patch.dict("sys.modules", {"openai": fake_openai}):
+            assert await prov.transcribe(str(audio), model="whisper-1") == ""
+
+    @pytest.mark.asyncio
+    async def test_a_failed_request_says_why(self, tmp_path):
+        """🔴 Red before: logged and ``None`` — read by every caller as silence."""
+        from personalclaw.stt.openai_provider import OpenAISttProvider
+        from personalclaw.stt.provider import SttError
+
+        audio = tmp_path / "memo.webm"
+        audio.write_bytes(b"x")
+        fake_client = MagicMock()
+        fake_client.audio.transcriptions.create = AsyncMock(
+            side_effect=RuntimeError("Error code: 401 - invalid_api_key")
+        )
+        fake_client.close = AsyncMock()
+        fake_openai = MagicMock()
+        fake_openai.AsyncOpenAI = MagicMock(return_value=fake_client)
+        prov = OpenAISttProvider(provider_name="Work cloud", endpoint="", api_key="sk-x")
+        with patch.dict("sys.modules", {"openai": fake_openai}), pytest.raises(SttError) as raised:
+            await prov.transcribe(str(audio), model="whisper-1")
+        assert str(raised.value) == (
+            "Work cloud could not transcribe this audio. Details: Error code: 401 - invalid_api_key"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_key_says_where_to_add_one(self, tmp_path):
+        from personalclaw.stt.openai_provider import OpenAISttProvider
+        from personalclaw.stt.provider import SttError
+
+        audio = tmp_path / "memo.webm"
+        audio.write_bytes(b"x")
+        prov = OpenAISttProvider(provider_name="Work cloud", endpoint="", api_key="")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.dict("sys.modules", {"openai": MagicMock()}),
+            pytest.raises(SttError, match="Add its key in Settings → Providers"),
+        ):
+            await prov.transcribe(str(audio), model="whisper-1")
+
     def test_remote_stt_is_inference_only_no_management(self):
         """Decoupled axes: a REMOTE STT provider implements ONLY inference (transcribe).
         It must NOT carry local-model management methods — those are the separate

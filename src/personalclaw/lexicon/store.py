@@ -9,6 +9,8 @@ its own file). Two tables:
   correction-count, drives bias-term ranking), ``source`` and ``enabled``.
 * ``corrections`` — the learned ``heard → meant`` loop; ``count`` bumps each time the user
   fixes the same mishearing, and ``auto_apply`` flips once past threshold / "always fix".
+* ``meta``        — small bookkeeping values, such as the knowledge graph's fingerprint at
+  the last sync, which is how the service knows when its graph terms are stale.
 
 Access mirrors KnowledgeStore (WAL, busy_timeout, Row factory, check_same_thread=False).
 """
@@ -18,6 +20,8 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from personalclaw.sqlite_compat import sqlite3
@@ -101,7 +105,36 @@ class LexiconStore:
                 PRIMARY KEY (phonetic_key, term_id)
             );
             CREATE INDEX IF NOT EXISTS idx_phon_key ON phonetic_index(phonetic_key);
+
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """)
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Run a group of writes as ONE transaction. The connection autocommits, so a resync
+        of a few hundred terms was a few thousand separately synced writes; a batch is one."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+        self.db.execute("COMMIT")
+
+    # ── meta ─────────────────────────────────────────────────────────────────
+    def get_meta(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.db.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
     # ── terms ────────────────────────────────────────────────────────────────
     def upsert_term(
@@ -122,7 +155,7 @@ class LexiconStore:
         keys_j = json.dumps(keys)
         # Preserve created_at + never downgrade a manual/learned source back to graph.
         existing = self.db.execute(
-            "SELECT source, created_at, enabled FROM terms WHERE id = ?", (term_id,)
+            "SELECT source, created_at, enabled, weight FROM terms WHERE id = ?", (term_id,)
         ).fetchone()
         created = existing["created_at"] if existing else now
         eff_source = source
@@ -130,8 +163,12 @@ class LexiconStore:
             eff_source = existing["source"]
         # A graph re-sync must not undo the user's prune: keep the stored enabled flag.
         eff_enabled = enabled
+        # …nor the weight a learned correction added (``bump_weight``): the graph's own
+        # weight is a floor, and a term the user had to correct keeps ranking above it.
+        eff_weight = weight
         if existing and source == "graph":
             eff_enabled = bool(existing["enabled"])
+            eff_weight = max(weight, float(existing["weight"] or 0.0))
         self.db.execute(
             """INSERT INTO terms (id, canonical, aliases_json, phonetic_keys_json, entity_type,
                                   weight, source, enabled, created_at, updated_at)
@@ -147,7 +184,7 @@ class LexiconStore:
                 aliases_j,
                 keys_j,
                 entity_type,
-                weight,
+                eff_weight,
                 eff_source,
                 1 if eff_enabled else 0,
                 created,
@@ -183,6 +220,10 @@ class LexiconStore:
         args.append(limit)
         return [_row_to_term(r) for r in self.db.execute(q, args)]
 
+    def enabled_terms(self) -> list[LexiconTerm]:
+        """Every term in use (not turned off), in no particular order."""
+        return [_row_to_term(r) for r in self.db.execute("SELECT * FROM terms WHERE enabled = 1")]
+
     def top_terms(self, limit: int) -> list[LexiconTerm]:
         rows = self.db.execute(
             "SELECT * FROM terms WHERE enabled = 1 ORDER BY weight DESC, canonical LIMIT ?",
@@ -210,6 +251,10 @@ class LexiconStore:
             (prefix + "%", prefix),
         )
         return [_row_to_term(r) for r in rows]
+
+    def get_term(self, term_id: str) -> LexiconTerm | None:
+        row = self.db.execute("SELECT * FROM terms WHERE id = ?", (term_id,)).fetchone()
+        return _row_to_term(row) if row else None
 
     def get_term_by_canonical(self, canonical: str) -> LexiconTerm | None:
         """Exact-canonical lookup (ASCII case-insensitive) — NOT a substring search."""
@@ -320,9 +365,11 @@ class LexiconStore:
         return cur.rowcount > 0
 
     def reset(self) -> None:
-        """Drop all learned/graph state (the user-facing 'reset' — rebuild repopulates)."""
+        """Drop all learned/graph state (the user-facing 'reset'). The graph terms come back
+        at the next sync, which the cleared fingerprint forces."""
         self.db.executescript(
-            "DELETE FROM phonetic_index; DELETE FROM terms; DELETE FROM corrections;"
+            "DELETE FROM phonetic_index; DELETE FROM terms; DELETE FROM corrections; "
+            "DELETE FROM meta;"
         )
 
 

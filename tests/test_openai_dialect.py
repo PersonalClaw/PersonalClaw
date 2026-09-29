@@ -1038,6 +1038,42 @@ async def test_a_failed_transcription_relays_the_providers_sentence_as_it_is(mon
 
 
 @pytest.mark.asyncio
+async def test_a_transcription_that_came_back_with_nothing_is_a_failure_not_empty_text(
+    monkeypatch,
+):
+    """🔴 Red before: ``{"text": ""}`` with a 200 — a failed transcription handed to a client as a
+    recording with no speech. Driven through the real transcribe path with a bound provider."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON
+
+    _enable(monkeypatch)
+    token = _token()
+    provider = MagicMock()
+    provider.is_available = AsyncMock(return_value=True)
+    provider.transcribe = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "personalclaw.stt.registry.active_stt", lambda: (provider, "fake-transcriber")
+    )
+    monkeypatch.setattr(
+        "personalclaw.providers.use_cases.load_use_case_settings", lambda _uc: {"enabled": True}
+    )
+    client, _ = await _client(monkeypatch)
+    try:
+        resp = await client.post(
+            dialect.ROUTE_TRANSCRIPTIONS, data={"file": _upload()}, headers=_auth(token)
+        )
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 502
+    assert (payload["error"]["code"], payload["error"]["message"]) == (
+        "transcription_failed",
+        NO_TRANSCRIPT_NO_REASON,
+    )
+
+
+@pytest.mark.asyncio
 async def test_transcriptions_503_says_the_bound_providers_reason(monkeypatch):
     """🔴 Red before: "Install a transcription model" for a bound model whose provider knew it
     could not sign in."""

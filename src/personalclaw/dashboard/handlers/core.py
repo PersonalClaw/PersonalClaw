@@ -378,17 +378,19 @@ async def api_stt_transcribe(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("lexicon bias-term selection failed (non-fatal)", exc_info=True)
 
+        # A transcript (empty when there was no speech), or SttError saying why there is none
+        # — answered below as a 502 with that sentence, never as an empty recording.
         result = await transcribe_audio_detailed(tmp, bias_terms=bias_terms)
-        if result is not None and result.segments:
+        if result.segments:
             try:
-                from personalclaw.lexicon import get_lexicon_service  # noqa: F811
+                from personalclaw.lexicon import current_lexicon  # noqa: F811
 
-                svc = get_lexicon_service()
+                svc = current_lexicon()
                 if svc.store.count_terms() > 0:
                     svc.correct(result)
             except Exception:
                 logger.debug("lexicon correction failed (non-fatal)", exc_info=True)
-        text = result.text if result is not None else None
+        text = result.text
         # The redaction below MUST stay downstream of correction: correct()
         # re-derives the flat text from raw segment words, which would undo any
         # redaction applied further up the transcribe layer.

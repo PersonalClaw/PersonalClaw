@@ -6,6 +6,7 @@ deterministic speaker-fusion node; the heavy models live in the app.
 """
 
 from personalclaw.diarization.provider import (  # noqa: F401
+    DiarizationError,
     DiarizationModel,
     DiarizationProvider,
     SpeakerTurn,
@@ -18,6 +19,7 @@ from personalclaw.diarization.registry import (  # noqa: F401
 
 __all__ = [
     "DiarizationProvider",
+    "DiarizationError",
     "DiarizationModel",
     "SpeakerTurn",
     "active_diarization",

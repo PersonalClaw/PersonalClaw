@@ -3802,7 +3802,7 @@ export interface KnowledgeItem {
   mime_type?: string; file_size?: number; thumbnail_path?: string; file_path?: string; word_count?: number
   // `ocr_*`: a scanned PDF's pages are rasterized to be OCR'd, and that is capped — these
   // three say whether the cap BIT, so a partial read is never presented as a whole document.
-  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number } & Record<string, unknown>
+  file_metadata?: { width?: number; height?: number; format?: string; page_count?: number; sheet_count?: number; slide_count?: number; row_count?: number; line_count?: number; ocr_pages_capped?: boolean; ocr_page_cap?: number; ocr_pages_rasterized?: number; no_speech?: boolean } & Record<string, unknown>
   insights?: Record<string, unknown> | null; ai_summary?: string; ai_title?: string
   // node-graph ingestion lifecycle (#30): queued|processing|done|partial|failed
   processing_status?: string; processing_error?: string

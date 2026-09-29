@@ -179,15 +179,9 @@ async def ingest_item(
         # Without this the Image/Video graph computes these and discards them.
         _persist_structural_metadata(store, item_id, item, result)
 
-        # Consolidated text = the merged bundle (the 'consolidate' node when present,
-        # else the single pooled text, else the item's existing content).
-        pooled = result.pooled_outputs()
-        consolidated = ""
-        if "consolidate" in result.outputs and result.outputs["consolidate"].success:
-            consolidated = result.outputs["consolidate"].text
-        elif pooled:
-            consolidated = pooled[0].text
-        consolidated = consolidated or (item.get("content") or "")
+        # Consolidated text = what the graph's last step made of the rest (see `_item_text`),
+        # else the item's existing content.
+        consolidated = _item_text(graph, result) or (item.get("content") or "")
 
         # Fallback descriptor: a file-backed item whose text extractors all degraded
         # (e.g. an image with no OCR/vision model configured) would otherwise be left
@@ -308,7 +302,11 @@ async def ingest_item(
     proc_error = None
     if status in ("failed", "partial") and result.failed:
         msgs = []
-        for nt in result.failed:
+        # In the graph's step order, not the order the steps happened to fail in: a recording
+        # whose transcription AND diarization failed led with the diarization's reason, and the
+        # 500-character cap then cut off the one that says why there is no transcript.
+        steps = {nt: i for i, nt in enumerate(graph.topo_order())}
+        for nt in sorted(result.failed, key=lambda n: steps.get(n, len(steps))):
             fout = result.outputs.get(nt)
             err = (getattr(fout, "error", "") or "").strip() if fout else ""
             msgs.append(f"{nt}: {err}" if err else nt)
@@ -425,6 +423,16 @@ async def ingest_item(
     meta_updates["ocr_pages_rasterized"] = (
         raster_meta.get("pages_rasterized") if raster_meta else None
     )
+    # A recording in which the transcription heard NO SPEECH says so on the item, for the same
+    # reason: that transcription pools nothing (there is no text to pool), so the detail UI
+    # showed "Transcription done" beside no transcript, and nothing said why there was none.
+    # `None` removes the key when a re-ingest does hear speech.
+    heard = result.outputs.get("transcription")
+    meta_updates["no_speech"] = (
+        True
+        if heard is not None and heard.success and (heard.metadata or {}).get("no_speech")
+        else None
+    )
     _merge_file_metadata(store, item_id, meta_updates)
 
     store.update_item(item_id, processing_status=status, processing_error=proc_error, touch=False)
@@ -521,6 +529,34 @@ def _merge_file_metadata(store, item_id: str, new_keys: dict) -> None:
             merged[key] = value
     store.update_item(item_id, file_metadata=merged, touch=False)
     store.db.commit()
+
+
+def _item_text(graph, result) -> str:
+    """The item's text: what the graph's last step made of everything before it.
+
+    A graph ends in the step that brings its texts together: ``consolidate`` for a document or
+    an image, ``video_consolidate`` for a video, and for a recording ``lexicon_correction``, its
+    transcript with the speakers on it and the corrected words. When that step made no text
+    (skipped for want of a model, or failed), the texts it would have brought together, in the
+    graph's step order; failing those, the first text any step made.
+
+    This used to be ``consolidate``'s text or else the FIRST text any step finished with. A
+    recording's item then held the raw transcription, without its speakers or its corrections,
+    and a video's held whichever of its transcript and its slides' text finished first.
+    """
+    order = graph.topo_order()
+    edges = [e for e in graph.edges if not e.loop]
+    read = {e.from_node for e in edges}
+    last = [n for n in order if n not in read]
+    texts = {o.node_type: o.text for o in result.pooled_outputs()}
+    made = [texts[n] for n in last if n in texts]
+    if not made:
+        fed = {e.from_node for e in edges if e.to_node in last}
+        made = [texts[n] for n in order if n in fed and n in texts]
+    if made:
+        return "\n\n".join(made)
+    pooled = result.pooled_outputs()
+    return pooled[0].text if pooled else ""
 
 
 def _lying_extractors(result) -> list[str]:

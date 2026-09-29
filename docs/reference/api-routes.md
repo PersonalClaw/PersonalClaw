@@ -594,11 +594,11 @@ The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/corrections` | {heard, meant, always?} — record a learned fix |
 | `DELETE` | `/api/lexicon/corrections/{id}` | forget one learned correction. |
 | `PATCH` | `/api/lexicon/corrections/{id}` | {auto_apply} — toggle 'always fix this'. |
-| `POST` | `/api/lexicon/rebuild` | resync graph-sourced terms from knowledge entities |
-| `POST` | `/api/lexicon/reset` | drop all terms + corrections (rebuild repopulates graph). |
-| `GET` | `/api/lexicon/terms` | list vocabulary terms. |
+| `POST` | `/api/lexicon/rebuild` | resync graph-sourced terms from knowledge entities now |
+| `POST` | `/api/lexicon/reset` | drop all terms + corrections (the next sync repopulates the |
+| `GET` | `/api/lexicon/terms` | list vocabulary terms, the graph's current. |
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
-| `DELETE` | `/api/lexicon/terms/{id}` | remove a term entirely. |
+| `DELETE` | `/api/lexicon/terms/{id}` | remove a term you added, or one learned from a fix. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
 | `POST` | `/api/logout` | sign every dashboard session out, everywhere. |
 | `GET` | `/api/logs` | SSE stream of live log entries. |

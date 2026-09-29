@@ -157,3 +157,25 @@ async def test_the_microphone_says_why_a_transcription_could_not_run(home, monke
         status, body = await _post(home)
 
     assert (status, body) == (502, {"error": REASON}), "no code: the composer names it a failure"
+
+
+class _GivesBackNothing(_Bound):
+    """Available, and then answers ``None``: it could not transcribe and did not say why."""
+
+    async def transcribe(self, audio_path: str, model: str = "", language: str = "") -> str | None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_the_microphone_says_a_transcription_came_back_with_nothing(home):
+    """🔴 Red before: ``{"text": ""}`` with a 200, which the composer shows as a recording with no
+    speech in it. Driven through the real transcribe path with the bound provider."""
+    from personalclaw.transcribe import NO_TRANSCRIPT_NO_REASON
+
+    with (
+        _bind(_GivesBackNothing(available=True)),
+        patch("personalclaw.transcribe._ffmpeg_present", return_value=True),
+    ):
+        status, body = await _post(home)
+
+    assert (status, body) == (502, {"error": NO_TRANSCRIPT_NO_REASON})

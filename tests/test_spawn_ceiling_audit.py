@@ -541,12 +541,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host-fact: tccd responsible-process probe (fixed argv, read-only, own timeout)"
     ),
     # Voice/transcribe — operator media (ffmpeg/whisper host tools), operator-initiated.
-    "transcribe.py::_transcribe_segmented::asyncio.create_subprocess_exec": (
-        "host tool: transcription ffmpeg"
-    ),
-    "transcribe.py::_transcribe_segmented_detailed::asyncio.create_subprocess_exec": (
-        "host tool: transcription ffmpeg"
-    ),
+    "transcribe.py::_segment::asyncio.create_subprocess_exec": "host tool: transcription ffmpeg",
     "voice_reply.py::stitch_wavs::asyncio.create_subprocess_exec": "host tool: wav stitch ffmpeg",
     # The quality verifier runs an app bundle's OWN pytest to check a `tested: true`
     # declaration. Exempt on two grounds, and the second is the load-bearing one:
