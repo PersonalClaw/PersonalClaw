@@ -326,6 +326,9 @@ class TestReattachNotReap:
             "transition to observe"
         )
         await wd.stop()
+        # Suspended, it waits for Resume, which clears the intent (`service.resume_run`).
+        assert store.pause_requested(run.id), "the sweep left the suspended run no pause intent"
+        store.clear_pause(run.id)
 
         controller = RunController(store.get(run.id), SPEC, services=EngineServices())
         assert (

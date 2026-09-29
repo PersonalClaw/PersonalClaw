@@ -114,27 +114,57 @@ class TestEntityDir:
         )
         assert r.written == 1 and r.skipped == 1
 
+    def test_a_folder_of_the_store_that_is_a_symlink_out_is_never_written_or_deleted_through(
+        self, tmp_path
+    ):
+        """What another machine's row — or an archive's, in a merge restore — names under a
+        folder of the store that leads out of it: neither its write nor its delete goes there."""
+        prompts = inv.by_id("prompts")
+        dest = tmp_path / "home" / "prompts"
+        dest.mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "gone.json").write_text("{}", encoding="utf-8")
+        (dest / "shared").symlink_to(elsewhere, target_is_directory=True)
+        rows = [
+            {"id": "shared/x.yaml", "text": "planted"},
+            {"id": "shared/gone", "deleted_at": "x"},
+        ]
+        r = writeback.apply_rows(prompts, dest, rows, read=Read())
+        assert sorted(p.name for p in elsewhere.iterdir()) == ["gone.json"], "written through"
+        assert (r.written, r.removed) == (0, 0)
+        assert r.refused == ["shared/x.yaml", "shared/gone.json"]
+
     @pytest.mark.parametrize(
-        "row",
+        "row,outside",
         [
-            {"id": "../escape", "data": {"x": 1}},
-            {"id": "../../escape", "text": "x"},
-            {"id": "/abs/olute", "text": "x"},
-            {"id": "sub/../../escape", "data": {}},
-            {"id": "runs/run-1/state", "data": {"status": "running"}},  # the run records' store
-            {"id": "runs.db", "base64": "AAAA"},
-            {"id": "defs/x/.lock", "text": ""},
-            {"id": "a\\b", "text": "x"},
-            {"id": "../escape", "deleted_at": "2026"},
+            ({"id": "../escape", "data": {"x": 1}}, True),
+            ({"id": "../../escape", "text": "x"}, True),
+            ({"id": "/abs/olute", "text": "x"}, True),
+            ({"id": "sub/../../escape", "data": {}}, True),
+            ({"id": "runs/run-1/state", "data": {"status": "running"}}, False),  # the run records'
+            ({"id": "runs.db", "base64": "AAAA"}, False),
+            ({"id": "defs/x/.lock", "text": ""}, False),
+            ({"id": "a\\b", "text": "x"}, True),
+            ({"id": "../escape", "deleted_at": "2026"}, True),
         ],
     )
-    def test_a_row_naming_a_path_that_is_not_the_stores_is_never_written(self, tmp_path, row):
+    def test_a_row_naming_a_path_that_is_not_the_stores_is_never_written(
+        self, tmp_path, row, outside
+    ):
+        """Never written, and said apart: a path out of the store is refused (named in
+        ``refused``, which a pull reports), a file of the folder that is not the store's is
+        skipped."""
         dest = tmp_path / "home" / "workflows"
         dest.mkdir(parents=True)
         (tmp_path / "home" / "escape.json").write_text("{}", encoding="utf-8")
         before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
         r = writeback.apply_rows(WORKFLOWS, dest, [row], read=Read())
-        assert r.skipped == 1 and r.written == 0 and r.removed == 0
+        assert r.written == 0 and r.removed == 0
+        if outside:
+            assert (r.refused, r.skipped) == ([writeback.row_rel(row)], 0)
+        else:
+            assert (r.refused, r.skipped) == ([], 1)
         assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == before
 
     def test_a_folder_where_the_file_would_be_is_left_alone(self, tmp_path):

@@ -25,6 +25,13 @@ is only ever appended to — the rows it did not hold, after what it holds — s
 it in between can be lost. A row that names a file the store does not hold
 (``shards.store_file``: a path outside the store, a database, runtime scratch) is never written.
 
+**Nothing outside the store.** A row's file is written, read and removed only where it is inside
+the store's folder once every symlink on the way is followed (``record_ids.is_path_in_store``):
+a name that climbs out, or a folder of the store that is a symlink to somewhere else, would carry
+another machine's write — or its delete — out of the home. Such a row is refused, and named in
+``refused``; a pull asks first (:func:`outside_the_store`) and takes nothing of a change that
+names one.
+
 ``sqlite`` and ``tree`` are NOT handled here — the cycle merges DBs via the ATTACH-OR-IGNORE
 path (``snapshot.py``) and a sync leaves trees alone — so routing one through
 :func:`apply_rows` is a caller bug, raised loudly, mirroring :func:`merge.merge_rows`. Each file
@@ -47,6 +54,7 @@ from personalclaw.durability.shards import (
     row_file,
     store_file,
 )
+from personalclaw.record_ids import is_path_in_store
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +72,8 @@ class ApplyResult:
     #: Row ids whose file is not as it was read — another writer changed or made it since, or a
     #: folder is where it would be: left as it now is.
     moved: list[str] = field(default_factory=list)
+    #: The files, inside the store's folder by name, that rows named outside it: never touched.
+    refused: list[str] = field(default_factory=list)
 
 
 def _is_tombstone(row: dict) -> bool:
@@ -126,6 +136,23 @@ def _swap(result: ApplyResult, rid: str, target: Path, expected: str | None) -> 
     return False
 
 
+def row_rel(row: dict) -> str | None:
+    """The path, inside its store's folder, of the file *row* writes — or removes, for a
+    tombstone — or ``None`` for a row with no string id, which names no file."""
+    rid = row.get("id")
+    if not isinstance(rid, str) or not rid:
+        return None
+    return f"{rid}.json" if _is_tombstone(row) else row_file(row)
+
+
+def outside_the_store(root: Path, rows: list[dict]) -> list[str]:
+    """The files *rows* — an entity directory's, at *root* — would write or remove outside it: a
+    name that climbs out, or a path that leaves it through a symlink. What :func:`apply_rows`
+    refuses, asked before anything is written."""
+    rels = (row_rel(row) for row in rows)
+    return [rel for rel in rels if rel is not None and not is_path_in_store(root, rel)]
+
+
 def _apply_entity_dir(
     entry: inv.StateEntry, root: Path, rows: list[dict], read: Read
 ) -> ApplyResult:
@@ -133,12 +160,16 @@ def _apply_entity_dir(
     result = ApplyResult()
     as_read = {str(r.get("id", "")): r for r in read.rows}
     for row in rows:
-        rid = row.get("id")
-        if not isinstance(rid, str) or not rid:
+        rel = row_rel(row)
+        if rel is None:
             result.skipped += 1
             logger.debug("apply_rows(entity_dir): row without a string id — skipped")
             continue
-        rel = f"{rid}.json" if _is_tombstone(row) else row_file(row)
+        rid = str(row["id"])
+        if not is_path_in_store(root, rel):
+            result.refused.append(rel)
+            logger.warning("apply_rows: %s names %r, outside the store — refused", entry.id, rel)
+            continue
         if not store_file(entry, rel):
             result.skipped += 1
             logger.warning(

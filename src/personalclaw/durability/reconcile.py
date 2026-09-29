@@ -102,6 +102,9 @@ class ReconcileResult:
     #: Both-sides-edited divergences recorded for review this reconcile. Their
     #: remote rows were HELD — the local rows are byte-identical to before.
     conflicts: int = 0
+    #: The files, by their path inside the store, that the peer's rows named outside it
+    #: (``writeback.ApplyResult.refused``): never written.
+    refused: list[str] = dataclass_field(default_factory=list)
     #: ``entity id → content sha`` for the ids where the merge landed on the row the PEER
     #: also holds (converged, the peer's edit taken in, or the remote won) — the only shas
     #: that are evidence of a common ancestor. Excludes every held (conflicted) id, and every
@@ -155,6 +158,16 @@ def _peer_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
 def handles_kind(kind: str) -> bool:
     """Whether :func:`reconcile_entry` owns this inventory kind (a row-merge kind)."""
     return kind in _ROW_KINDS
+
+
+def outside_their_store(home: Path, entry: inv.StateEntry, rows: list[dict]) -> list[str]:
+    """The files a peer's *rows* of *entry* would write or remove outside the store in *home*
+    (``writeback.outside_the_store``), by their path inside it. A pull asks before it takes in
+    anything of a change, and takes in nothing of one that names any; only an entity directory's
+    rows name a file each."""
+    if entry.kind != inv.KIND_JSON_ENTITY_DIR:
+        return []
+    return writeback.outside_the_store(Path(home) / entry.path, rows)
 
 
 def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
@@ -450,7 +463,7 @@ def reconcile_entry(
                 return _merged_document(entry, document, peer_document, arrived_order, merged.rows)
 
             record_files.rewrite(dest, change)
-            removed, moved = 0, []
+            removed, moved, refused = 0, [], []
         else:
             # This machine's own files of the folder are not the merge's: left out of what it
             # writes back, so the pull never touches them. The write is only what the merge
@@ -459,7 +472,7 @@ def reconcile_entry(
             merged = merge_into(_without_what_stays_here(entry, read.rows))
             outcome["merged"] = merged
             applied = writeback.apply_rows(entry, dest, merged.rows, read=read)
-            removed, moved = applied.removed, applied.moved
+            removed, moved, refused = applied.removed, applied.moved, applied.refused
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
         logger.warning("reconcile: %s failed (%s) — advancing past it", entry.id, exc)
         return ReconcileResult(entry.id, verdict=PAYLOAD_BAD, detail=str(exc))
@@ -473,6 +486,8 @@ def reconcile_entry(
         # next pull takes the peer's in again against it.
         detail += f" {len(moved)} left for the next pull (changed here meanwhile)"
         held = held | set(moved)
+    if refused:
+        detail += f" {len(refused)} refused (outside the store)"
     return ReconcileResult(
         entry.id,
         verdict=CONSUMED,
@@ -481,6 +496,7 @@ def reconcile_entry(
         removed=removed,
         detail=detail,
         conflicts=recorded,
+        refused=list(refused),
         new_ancestors={
             **{rid: sha for rid, sha in handed_back.items() if rid not in held},
             **_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),

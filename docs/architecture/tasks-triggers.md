@@ -407,6 +407,17 @@ that is not a file of the store (outside it, a database, a lock) is never
 written. The conflict review writes the same way, and refuses (`moved`) when
 this machine's file changed while it wrote.
 
+**A pull writes nothing outside what a sync may write.** Every path another
+machine names is resolved before anything of its change is written: each
+object's key, each path its export's manifest declares, the file each of its
+rows stands for, and its machine id, which names its folder of the remote. One
+that is not inside the export it came in or the store it names, every symlink
+on the way followed (`record_ids.is_path_in_store`), is refused: nothing of
+that change is taken in, the cursor moves past it, and the sync report names
+the path and why (`durability.pull_engine`), as a run that did not go well. A
+pulled key used to be joined onto the pull's scratch folder as it came, so
+`../` in one wrote a file anywhere this machine's user may.
+
 **A merge restore and an import take a folder in by the sync's rule.** A merge
 restore or an archive import brings a folder store's files in the way a sync
 brings another machine's (`durability.reconcile.bring_in_folder`): each file

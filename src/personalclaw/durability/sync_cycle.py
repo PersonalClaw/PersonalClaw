@@ -35,7 +35,7 @@ from personalclaw.durability.outbox import Outbox
 from personalclaw.durability.pull_engine import PullReport, pull_from_peers
 from personalclaw.durability.push_engine import PushReport, publish_export
 from personalclaw.durability.registry import REGISTRY_KEY, Registry
-from personalclaw.durability.shards import export_shards, left_out_sentence
+from personalclaw.durability.shards import export_shards, left_out_sentence, refused_sentence
 from personalclaw.sync_transports.base import RemoteRef, SyncTransportProvider
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,9 @@ class SyncCycleReport:
     #: This machine's files the export for the other machines could not carry, by path, with why
     #: (``shards.Read``): said in the report, never dropped in silence.
     left_out: dict[str, str] = field(default_factory=dict)
+    #: The paths another machine named outside what a sync may write, with why
+    #: (``pull_engine.PullReport.refused``): none was written, and the report says so.
+    refused: dict[str, str] = field(default_factory=dict)
 
     @property
     def detail(self) -> str:
@@ -73,6 +76,8 @@ class SyncCycleReport:
         )
         if self.conflicts:
             base += f"; {self.conflicts} conflict(s) queued"
+        if self.refused:
+            base += f"; {refused_sentence(self.refused)}"
         if self.left_out:
             base += f"; {left_out_sentence(self.left_out, what='synced')}"
         return base
@@ -178,6 +183,7 @@ def run_sync_cycle(
         report.rows_updated = report.pulled.updated
         report.rows_removed = report.pulled.removed
         report.conflicts = report.pulled.conflicts
+        report.refused = report.pulled.refused
     except Exception as exc:  # noqa: BLE001 — a bad cycle must not kill the service loop
         logger.warning("sync cycle: pull failed (%s)", exc, exc_info=True)
         report.ok = False

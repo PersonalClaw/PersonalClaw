@@ -24,6 +24,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.record_ids import is_path_in_store
 from personalclaw.sqlite_compat import sqlite3
 from personalclaw.workflows.models import (
     NodeInstance,
@@ -763,11 +764,6 @@ RESTORED_QUEUED = (
     "queued on, so it waits for you: Resume starts it."
 )
 
-#: The characters a run id may hold for a restore to write its pause under it: `new_run_id` mints
-#: 8 hex characters, and an id an archive holds with a separator or a dot in it could name a folder
-#: outside ``runs/``.
-_RUN_ID_CHARS = frozenset("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_")
-
 
 def hold_restored(home: Path) -> list[str]:
     """Hold every run the ledger in *home* has in flight, or queued to start, as a restore has
@@ -782,8 +778,10 @@ def hold_restored(home: Path) -> list[str]:
     it did and resume it.
 
     Reads and writes *home*'s own files, not the active home's: the restore names the home it
-    wrote. A run its owner paused, with the intent, is held already and left as it was. A row
-    whose id names no run folder is cancelled with the reason instead, since no intent can hold it.
+    wrote. A run paused with the intent — by its owner, or by the boot sweep that suspended it —
+    is held already and left as it was. A row whose id names no folder inside ``runs/``
+    (``record_ids.is_path_in_store``) is cancelled with the reason instead, since no intent can
+    hold it.
     """
     from personalclaw.workflows.overlap import QUEUED_KEY
 
@@ -817,14 +815,14 @@ def hold_restored(home: Path) -> list[str]:
                 continue  # a hand-made draft runs only when someone starts it
             reason = RESTORED_QUEUED if status == RunStatus.DRAFT.value else RESTORED_RUNNING
             run_id = str(run_id or "")
-            if not run_id or not set(run_id) <= _RUN_ID_CHARS or len(run_id) > 64:
+            if not is_path_in_store(runs, run_id):
                 conn.execute(
                     "UPDATE runs SET status = ?, error_message = ? WHERE id = ?",
                     (RunStatus.CANCELLED.value, reason, run_id),
                 )
                 continue
             if status == RunStatus.PAUSED.value and (runs / run_id / "PAUSE").is_file():
-                continue  # its owner paused it, and the watchdog leaves it be: it is held already
+                continue  # paused with the intent, which the watchdog honours: held already
             conn.execute(
                 "UPDATE runs SET status = ?, error_message = ? WHERE id = ?",
                 (RunStatus.PAUSED.value, reason, run_id),

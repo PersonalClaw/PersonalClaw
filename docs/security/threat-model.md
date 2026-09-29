@@ -447,6 +447,19 @@ Data leaving the running system:
   `tests/test_personalclaw_stays_inside_its_home.py` fails on code that names a location in the
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
+- **A path another machine or an archive names goes nowhere but where it may be written**
+  (`record_ids.is_path_in_store`: the name's shape, and the path once every symlink is followed).
+  A sync pull resolves every path a peer names before anything of its change is written: each
+  object's key, each path its export's manifest declares, the file each of its rows stands for,
+  and its machine id, which names its folder of the remote. One outside the export it came in or
+  the store it names is refused, nothing of that change is taken in, and the sync report names the
+  path (`durability/pull_engine.py`). A pack whose name or component id would build a path outside
+  its store is refused before any of it is parsed or written, and every path the pack layout
+  builds is checked again (`packs/import_.py::component_path`). A snapshot's tar refuses `..`,
+  absolute names and links as it is extracted (`snapshot._data_filter`), and an import's zip
+  extracts no member that climbs out (`portability.apply_import_zip`). A pulled key used to be
+  joined onto the pull's scratch folder as it came, so `../` in one wrote anywhere this machine's
+  user may, and a pack's prompt id of `../../../name` wrote its file outside the home.
 - **A file-backed artifact points only where those surfaces reach** (`artifacts/source_files.py`).
   Its `source_path` is a live pointer: every read of the artifact reads the file, and a save that
   carries a body, or a revert, writes it. A create with no body starts as the file and never writes

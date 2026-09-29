@@ -58,6 +58,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.durability import inventory as inv
+from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
 from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -200,18 +201,15 @@ def _outside_the_store(entry: inv.StateEntry, rel: str) -> bool:
 
 def store_file(entry: inv.StateEntry, rel: str) -> bool:
     """Whether *rel*, a path inside *entry*'s directory, names a file of that store: a plain
-    relative path that stays inside it, not a database, not the tombstone side-log, and not
-    outside the store (:func:`_outside_the_store`). The exporter reads these files and no others,
-    and a sync writes no others: a row another machine names by any other path is not one of the
-    store's."""
+    relative path that stays inside it (``record_ids.is_safe_relative_path``), not a database, not
+    the tombstone side-log, and not outside the store (:func:`_outside_the_store`). The exporter
+    reads these files and no others, and a sync writes no others: a row another machine names by
+    any other path is not one of the store's."""
     from personalclaw.durability.tombstones import TOMBSTONE_FILE
 
-    path = PurePosixPath(rel)
-    if not rel or "\\" in rel or "\x00" in rel or path.is_absolute():
+    if not is_safe_relative_path(rel):
         return False
-    if any(part in ("", ".", "..") for part in rel.split("/")):
-        return False
-    if rel == TOMBSTONE_FILE or path.suffix in (".db", ".db-journal"):
+    if rel == TOMBSTONE_FILE or PurePosixPath(rel).suffix in (".db", ".db-journal"):
         return False
     return not _outside_the_store(entry, rel)
 
@@ -343,6 +341,17 @@ def left_out_sentence(left_out: dict[str, str], *, what: str = "exported") -> st
     shown = ", ".join(f"{path} ({why})" for path, why in sorted(left_out.items())[:3])
     more = f" and {len(left_out) - 3} more" if len(left_out) > 3 else ""
     return f"{len(left_out)} file(s) could not be {what}: {shown}{more}"
+
+
+def refused_sentence(refused: dict[str, str]) -> str:
+    """The words that name what a pull refused (``pull_engine.PullReport.refused``): the paths
+    another machine named outside what a sync may write, the first few with why."""
+    shown = ", ".join(f"{path} ({why})" for path, why in sorted(refused.items())[:3])
+    more = f" and {len(refused) - 3} more" if len(refused) > 3 else ""
+    return (
+        f"refused {len(refused)} path(s) another machine named outside what a sync may write: "
+        f"{shown}{more}"
+    )
 
 
 def _year_of(row: dict) -> str:
@@ -711,10 +720,38 @@ class ValidationResult:
     problems: list[str] = field(default_factory=list)
     shards_checked: int = 0
     rows_checked: int = 0
+    #: The paths the manifest names outside the export, never read (:func:`validate`).
+    outside: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.problems
+
+
+class OutsideTheExport(ValueError):
+    """An export whose manifest names a path outside it: refused whole, and none of it read.
+
+    What another machine sends is read from where its manifest says, and ``Path``'s ``/`` takes
+    an absolute right side as the whole path, so a manifest could name any file of this machine
+    to be read as its rows. ``paths`` are the paths it named, for the sync report."""
+
+    def __init__(self, paths: list[str]) -> None:
+        self.paths = list(paths)
+        super().__init__(
+            "the export's manifest names a path outside it, so none of it is read: "
+            + ", ".join(self.paths[:5])
+        )
+
+
+def _outside_the_export(result: ValidationResult, shard_dir: Path, rel: str) -> bool:
+    """Whether *rel*, a path the manifest declares, is outside the export at *shard_dir*
+    (``record_ids.is_path_in_store``); recorded in *result* when it is, and never read. A record
+    with no path names nothing, and is reported missing."""
+    if not rel or is_path_in_store(shard_dir, rel):
+        return False
+    result.outside.append(rel)
+    result.problems.append(f"{rel}: names a path outside the export — not read")
+    return True
 
 
 def validate(shard_dir: Path) -> ValidationResult:
@@ -723,7 +760,8 @@ def validate(shard_dir: Path) -> ValidationResult:
     Checks the manifest parses and is well-formed, every declared shard exists,
     its byte length / row count / sha256 all re-derive to the recorded values, and
     every row re-parses as JSON. Any mismatch is reported (not raised) so a caller
-    can print all problems at once.
+    can print all problems at once. A declared path outside the export is a problem too, and
+    is never read (:class:`OutsideTheExport`).
     """
     result = ValidationResult()
     manifest_path = shard_dir / _MANIFEST
@@ -752,6 +790,8 @@ def validate(shard_dir: Path) -> ValidationResult:
     for record in shards:
         rel = str(record.get("path", ""))
         declared.add(rel)
+        if _outside_the_export(result, shard_dir, rel):
+            continue
         path = shard_dir / rel
         if not path.is_file():
             result.problems.append(f"{rel}: declared in manifest but missing on disk")
@@ -786,6 +826,8 @@ def validate(shard_dir: Path) -> ValidationResult:
     # field is absent, not empty-and-wrong.
     for record in manifest.get("databases", []) or []:
         rel = str(record.get("path", ""))
+        if _outside_the_export(result, shard_dir, rel):
+            continue
         path = shard_dir / rel
         if not path.is_file():
             result.problems.append(f"{rel}: declared database missing on disk")
@@ -882,6 +924,8 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
     nothing ever could — and nothing read the list.
     """
     report = validate(shard_dir)
+    if report.outside:
+        raise OutsideTheExport(report.outside)
     if not report.ok:
         raise ValueError(
             "refusing to import an invalid shard export:\n" + "\n".join(report.problems)

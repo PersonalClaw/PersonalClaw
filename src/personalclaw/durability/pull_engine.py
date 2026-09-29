@@ -23,6 +23,15 @@ behavior, and it keeps the row-entry convergence path (criterion 4) fully workin
 Aggregate verdict for a seq: any held entry (prerequisite-absent, or a DB entry with no
 merger) holds the whole seq; otherwise ``payload-bad`` if any entry was poison (advance past
 it), else ``consumed``. A prefix the remote can't actually serve yet (a partial push) holds.
+
+**Nothing another machine names lands outside where a sync may write.** Every path a peer names
+is resolved before anything is written, and refused unless it is inside the export it came in
+or inside the store it names, every symlink on the way followed (``record_ids.is_path_in_store``):
+an object's key, a path its manifest declares (``shards.OutsideTheExport``), the file each of its
+rows stands for (``reconcile.outside_their_store``), and its machine id, which names its folder of
+the remote. A seq that names one is ``payload-bad`` whole — nothing of it is written — and the
+paths are in ``refused``, with why, for the sync report. A pulled key used to be joined onto the
+scratch folder as it came, so ``../`` in one wrote anywhere this machine's user may.
 """
 
 from __future__ import annotations
@@ -40,7 +49,8 @@ from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT, Cursor
 from personalclaw.durability.registry import Registry, shard_prefix
-from personalclaw.durability.shards import import_shards
+from personalclaw.durability.shards import ImportResult, OutsideTheExport, import_shards
+from personalclaw.record_ids import is_path_in_store, is_safe_record_id
 from personalclaw.sync_transports.base import SyncTransportProvider
 
 logger = logging.getLogger(__name__)
@@ -64,6 +74,14 @@ class SeqOutcome:
     deferred_db: list[str] = field(default_factory=list)  # entry ids held for the DB seam
     conflicts: int = 0  # both-sides-edited divergences queued for review
     detail: str = ""
+    #: The paths this seq named outside what a sync may write, with why: never written.
+    refused: dict[str, str] = field(default_factory=dict)
+
+
+#: Why a path was refused, as the sync report says it.
+OUTSIDE_THE_EXPORT = "names a path outside the export it came in"
+OUTSIDE_THE_STORE = "names a file outside its store"
+NOT_ONE_NAME = "a machine id that is not one plain name, so it names another folder of the remote"
 
 
 @dataclass
@@ -71,6 +89,17 @@ class PullReport:
     """Every seq outcome from one pull sweep, plus roll-ups for the caller/doctor."""
 
     outcomes: list[SeqOutcome] = field(default_factory=list)
+    #: The peers not pulled from, by their machine id, with why.
+    peers_refused: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def refused(self) -> dict[str, str]:
+        """Every path the sweep refused, with why — each seq's, and each peer's it did not pull
+        from — for the sync report."""
+        out = dict(self.peers_refused)
+        for outcome in self.outcomes:
+            out.update(outcome.refused)
+        return out
 
     @property
     def advanced(self) -> int:
@@ -97,23 +126,55 @@ class PullReport:
         return sum(o.conflicts for o in self.outcomes)
 
 
-def _materialize(objs, prefix: str, dest: Path) -> int:
+def _materialize(objs, prefix: str, dest: Path) -> tuple[int, dict[str, str]]:
     """Write pulled objects into ``dest`` as a validatable shard dir, stripping ``prefix``
     from each key so paths are shard-dir-relative (``manifest.json``, ``tasks/entities.jsonl``).
-    Returns how many objects landed. Objects outside ``prefix`` are ignored defensively."""
-    written = 0
+    Returns how many objects landed, and the keys refused with why.
+
+    Every key is resolved first, and one that is not inside ``dest`` once the prefix is taken off
+    — outside the prefix it was pulled with, absolute, climbing out, or leaving through a symlink
+    — is refused. When any is, nothing is written: the seq it came in is not merged at all.
+    """
+    placed: list[tuple[Path, bytes]] = []
+    refused: dict[str, str] = {}
     for obj in objs:
         key = obj.key
-        if not key.startswith(prefix):
+        rel = key[len(prefix) :] if key.startswith(prefix) else ""
+        if key == prefix:
+            continue  # the prefix's own folder, as a listing may name it: no object
+        if not rel or not is_path_in_store(dest, rel):
+            refused[key] = OUTSIDE_THE_EXPORT
             continue
-        rel = key[len(prefix) :].lstrip("/")
-        if not rel:
-            continue
-        target = dest / rel
+        placed.append((dest.joinpath(*rel.split("/")), obj.data))
+    if refused:
+        return 0, refused
+    for target, data in placed:
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(target, obj.data)
-        written += 1
-    return written
+        atomic_write_bytes(target, data)
+    return len(placed), refused
+
+
+def _rows_outside_their_store(home: Path, imported: ImportResult) -> dict[str, str]:
+    """The files a peer's rows would write or remove outside their store
+    (``reconcile.outside_their_store``), by their path inside the home, with why."""
+    refused: dict[str, str] = {}
+    for entry_id, rows in imported.rows.items():
+        entry = inv.by_id(entry_id)
+        if entry is None:
+            continue  # an entry this build does not know is held, below
+        for rel in reconcile.outside_their_store(home, entry, rows):
+            refused[f"{entry.path}/{rel}"] = OUTSIDE_THE_STORE
+    return refused
+
+
+def _refuse(out: SeqOutcome, refused: dict[str, str]) -> SeqOutcome:
+    """*out* as a seq that named a path outside what a sync may write: ``payload-bad``, which the
+    cursor advances past — it can never become safe to take in — with the paths it named."""
+    out.verdict = PAYLOAD_BAD
+    out.refused = dict(refused)
+    shown = ", ".join(sorted(refused)[:5])
+    out.detail = f"refused: named a path outside what a sync may write ({shown})"
+    return out
 
 
 def _pull_one_seq(
@@ -161,17 +222,27 @@ def _pull_one_seq(
             return out
     with tempfile.TemporaryDirectory() as tmp:
         shard_dir = Path(tmp)
-        if _materialize(objs, prefix, shard_dir) == 0:
+        written, refused = _materialize(objs, prefix, shard_dir)
+        if refused:
+            return _refuse(out, refused)
+        if written == 0:
             out.verdict = PREREQ_ABSENT
             out.detail = "prefix listed but no bytes pulled"
             return out
         try:
             imported = import_shards(shard_dir)
+        except OutsideTheExport as exc:
+            return _refuse(out, {f"{prefix}{rel}": OUTSIDE_THE_EXPORT for rel in exc.paths})
         except (ValueError, OSError) as exc:
             # A structurally invalid export won't merge on retry — advance past it.
             out.verdict = PAYLOAD_BAD
             out.detail = f"import failed: {exc}"
             return out
+        # Every file the change would write, resolved before any is: one outside its store and
+        # nothing of the change is taken in.
+        refused = _rows_outside_their_store(home, imported)
+        if refused:
+            return _refuse(out, refused)
         held = False
         poison = False
         for entry_id, rows in imported.rows.items():
@@ -197,6 +268,11 @@ def _pull_one_seq(
                 out.updated += res.updated
                 out.removed += res.removed
                 out.conflicts += res.conflicts
+                # A file that left its store between the check above and the write — a folder
+                # made a symlink meanwhile — is refused by the writer, and named the same way.
+                out.refused.update(
+                    {f"{entry.path}/{rel}": OUTSIDE_THE_STORE for rel in res.refused}
+                )
                 if ancestors is not None:
                     # The records this home now holds as the peer does are what the two agree
                     # on, and the next divergence from this peer is measured from them.
@@ -247,6 +323,11 @@ def pull_from_peers(
     report = PullReport()
     seen = cursor.seen()
     for peer in registry.peers(self_id):
+        if not is_safe_record_id(peer.machine_id):
+            # Its id names its folder of the remote (`registry.shard_prefix`): one that is not a
+            # single plain name names some other folder, so nothing is pulled from it.
+            report.peers_refused[peer.machine_id] = NOT_ONE_NAME
+            continue
         already = int(seen.get(peer.machine_id, 0) or 0)
         for seq in range(already + 1, peer.seq + 1):
             outcome = _pull_one_seq(

@@ -127,7 +127,7 @@ def _removable_path(ref: str, lock: dict[str, str], home: Path, stage: str) -> P
     Compared lexically (``normpath``), never through ``resolve``: resolving would follow a symlink
     to wherever it points and then agree with itself.
     """
-    from personalclaw.packs.import_ import component_path, could_have_landed_as
+    from personalclaw.packs.import_ import PackImportRefused, component_path, could_have_landed_as
 
     kind, _, orig_id = ref.partition(":")
     recorded = Path(os.path.normpath(home / lock.get("path", "")))
@@ -140,7 +140,10 @@ def _removable_path(ref: str, lock: dict[str, str], home: Path, stage: str) -> P
         cid = recorded.stem
     if not could_have_landed_as(orig_id, cid):
         return None
-    expected = component_path(kind, cid, home, stage)
+    try:
+        expected = component_path(kind, cid, home, stage)
+    except PackImportRefused:
+        return None  # a folder on its way leads out of the store: never followed, so kept
     if expected is None or Path(os.path.normpath(expected)) != recorded:
         return None
     if recorded.is_symlink():

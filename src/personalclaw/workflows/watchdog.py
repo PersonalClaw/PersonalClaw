@@ -307,9 +307,9 @@ class WorkflowWatchdog:
 
         # The boot sweep runs ONCE, before the first adoption, so a run this process never
         # drove is decided honestly rather than blindly re-adopted as "still
-        # working". A run it SUSPENDED awaits an explicit Resume, so it is skipped by the
-        # adoption loop on this same poll — otherwise adoption would relaunch what the
-        # sweep just paused.
+        # working". A run it SUSPENDED awaits an explicit Resume: the sweep gives it the sticky
+        # pause intent, which every later poll honours below, and its id is skipped on this
+        # same poll too — otherwise adoption would relaunch what the sweep just paused.
         swept: set[str] = set()
         if not self._swept:
             swept = await self._boot_sweep()
@@ -398,6 +398,13 @@ class WorkflowWatchdog:
         decision = containers.sweep_decision(run, substrate)
         if decision.status is None or decision.status == run.status:
             return False
+        if decision.status == RunStatus.PAUSED:
+            # Suspended, it waits for Resume. The sticky pause intent is what keeps adoption off
+            # it: skipping the swept ids holds for this one poll, and the next adopted every
+            # suspended run and resumed it unasked. Written before the status, so a crash between
+            # the two leaves a running row the next sweep suspends again, never a paused one
+            # adoption takes on.
+            store.request_pause(run.id)
         run.status = decision.status
         run.completed_at = run.completed_at or _now()
         store.save(run)

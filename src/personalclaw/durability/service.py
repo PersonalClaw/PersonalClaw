@@ -529,11 +529,13 @@ def run_sync_job() -> JobResult:
             return JobResult(
                 "sync", ok=False, detail=str(exc), duration_secs=time.monotonic() - started
             )
-    outcome = "allowed" if report.ok else "denied"
-    _audit("durability_sync", report.detail, outcome=outcome)
+    # A path another machine named outside what a sync may write is refused, and the run says
+    # so as a failure: it is the one thing in a sync report its owner has to look at.
+    ok = report.ok and not report.refused
+    _audit("durability_sync", report.detail, outcome="allowed" if ok else "denied")
     return JobResult(
         "sync",
-        ok=report.ok,
+        ok=ok,
         detail=report.detail,
         duration_secs=time.monotonic() - started,
         extra={
@@ -541,6 +543,7 @@ def run_sync_job() -> JobResult:
             "rows_updated": report.rows_updated,
             "rows_removed": report.rows_removed,
             "seq_published": report.seq_published,
+            "refused": dict(report.refused),
         },
     )
 

@@ -49,7 +49,8 @@ from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.packs import lint as pack_lint
 from personalclaw.packs import roster as pack_roster
-from personalclaw.packs.build import SCHEMA_VERSION
+from personalclaw.packs.build import SCHEMA_VERSION, safe_component_id
+from personalclaw.record_ids import is_path_in_store, is_safe_record_id
 from personalclaw.skills.marketplace import SkillDetail, SkillEntry, SkillsMarketplace
 
 
@@ -487,21 +488,37 @@ def component_path(kind: str, cid: str, home: Path, stage: str) -> Path | None:
     staging area (``stage`` is the pack's name), never the live store. ``None`` for a kind packs
     do not install. The commit writes here, the fresh-id probe looks here, and uninstall
     (:mod:`packs.uninstall`) deletes only a path that equals this, so the three cannot disagree
-    about where a pack's files are.
+    about where a pack's files are. Each is inside its store (:func:`_inside`): the id comes from
+    the archive.
     """
     from personalclaw.skills.loader import SKILLS_DIR_NAME
 
     if kind == "skill":
-        return home / SKILLS_DIR_NAME / cid
+        return _inside(home / SKILLS_DIR_NAME, cid)
     if kind == "template":
-        return home / "workflows" / "defs" / cid / "workflow.json"
+        return _inside(home / "workflows" / "defs", f"{cid}/workflow.json")
     if kind == "prompt":
-        return home / "prompts" / f"{cid}.yaml"
+        return _inside(home / "prompts", f"{cid}.yaml")
     if kind == "agent":
-        return _agents_base(home) / cid / "agent.json"
+        return _inside(_agents_base(home), f"{cid}/agent.json")
     if kind == "trigger":
-        return _staged_dir(home, stage) / "triggers" / f"{cid}.json"
+        return _inside(_staged_dir(home, stage), f"triggers/{cid}.json")
     return None
+
+
+def _inside(base: Path, rel: str) -> Path:
+    """``base / rel``, a path of the pack layout, when it is inside *base* once every folder on the
+    way is followed (``record_ids.is_path_in_store``); else :class:`PackImportRefused`.
+
+    An id from the archive builds it, and a prompt's ``../../../name`` wrote its file outside the
+    home. :func:`_build_plan` refuses such a pack before any of it is parsed, so this is the floor
+    under every writer, the fresh-id probe and uninstall alike. The last segment is taken as it is
+    named: a commit replaces the file there, which replaces a link rather than writing through it,
+    the fresh-id probe reads a linked component as one this home has, and uninstall never removes
+    one (``uninstall._removable_path``)."""
+    if not is_path_in_store(base, rel, follow_last=False):
+        raise PackImportRefused("integrity", f"{rel!r} names a path outside {base.name}/")
+    return base.joinpath(*rel.split("/"))
 
 
 def _local_exists(home: Path, kind: str, cid: str) -> bool:
@@ -513,7 +530,10 @@ def _local_exists(home: Path, kind: str, cid: str) -> bool:
     """
     if kind == "trigger":
         return False
-    path = component_path(kind, cid, home, stage="")
+    try:
+        path = component_path(kind, cid, home, stage="")
+    except PackImportRefused:
+        return False  # a reference that names no path of the home names nothing installed in it
     if path is None:
         return False
     return (path / "SKILL.md").is_file() if kind == "skill" else path.is_file()
@@ -628,6 +648,14 @@ def _build_plan(
         if kind not in _KNOWN_KINDS:
             # Best-effort forward import: an unknown kind is noted, not fatal.
             continue
+        if not safe_component_id(cid):
+            # The id builds the component's path in the home (`component_path`), so a pack that
+            # names one that climbs out is not read further — as `_extract_quarantine` refuses a
+            # member name that does. The build never carries such an id.
+            raise PackImportRefused(
+                "integrity",
+                f"component {kind}:{cid!r} has an id that names a path outside its store",
+            )
         raw = members.get(path)
         if raw is None:
             lint_parse_errors.append(
@@ -991,8 +1019,9 @@ def _write_component_file(path: Path, text: str) -> None:
 def _staged_dir(home: Path, stage: str) -> Path:
     """The pack-scoped staging area for proposals a pack may NOT apply on install —
     disabled triggers + validated config_subset entries. Human-enabled from their own
-    surfaces later (§3.1 propose-don't-write)."""
-    return home / "packs" / "staged" / stage
+    surfaces later (§3.1 propose-don't-write). Named for the pack, so inside its folder
+    (:func:`_inside`)."""
+    return _inside(home / "packs" / "staged", stage)
 
 
 def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: str) -> Path:
@@ -1299,4 +1328,9 @@ def _read_manifest(members: dict[str, bytes]) -> dict[str, Any]:
         raise PackImportRefused("integrity", f"pack.json is not valid JSON: {exc}") from exc
     if not isinstance(manifest, dict):
         raise PackImportRefused("integrity", "pack.json must be a JSON object")
+    name = manifest.get("name")
+    if name not in (None, "") and not is_safe_record_id(name):
+        # The name is the folder its staged proposals go in (`_staged_dir`), and the start of
+        # its setup skill's id: one that is not a single plain name names another folder.
+        raise PackImportRefused("integrity", f"pack name {name!r} is not one plain name")
     return manifest

@@ -50,7 +50,9 @@ from pathlib import Path
 __all__ = [
     "MAX_RECORD_ID_LEN",
     "UnsafeRecordId",
+    "is_path_in_store",
     "is_safe_record_id",
+    "is_safe_relative_path",
     "record_path",
     "require_safe_record_id",
 ]
@@ -144,3 +146,38 @@ def record_path(
             f"{kind} {safe!r} resolves outside its store ({resolved} not under {root_resolved})"
         )
     return candidate
+
+
+def is_safe_relative_path(rel: object) -> bool:
+    """True when ``rel`` is a relative path of one or more segments, each a safe record id
+    (:func:`is_safe_record_id`), joined by ``/``: the shape of a path another machine, an
+    export or an archive names inside a store — ``tasks/entities.jsonl``, a nested skill's
+    ``utils/tiny-url``. No segment can climb out, none is empty, and it is not absolute."""
+    return isinstance(rel, str) and bool(rel) and all(map(is_safe_record_id, rel.split("/")))
+
+
+def is_path_in_store(root: Path, rel: object, *, follow_last: bool = True) -> bool:
+    """True when ``root / rel`` names a path inside ``root``: *rel* of the safe shape
+    (:func:`is_safe_relative_path`), and the path inside ``root`` once every symlink on the way to
+    it is followed. The path itself need not exist.
+
+    The shape is a statement about the name and the containment one about the filesystem: a
+    safe name under a folder that is a symlink to somewhere else still leads there, so both are
+    asked. ``root`` is taken where it is on disk — a store its owner moved behind a symlink is
+    still that store.
+
+    ``follow_last=False`` follows the folders on the way and takes the last segment as it is
+    named, for a caller that only ever replaces or removes the entry there — a rename over a
+    link replaces the link — and reads a link there as the entry it is."""
+    if not isinstance(rel, str) or not is_safe_relative_path(rel):
+        return False
+    parts = rel.split("/")
+    try:
+        root_resolved = root.resolve(strict=False)
+        if follow_last:
+            resolved = root.joinpath(*parts).resolve(strict=False)
+        else:
+            resolved = root.joinpath(*parts[:-1]).resolve(strict=False) / parts[-1]
+    except (OSError, RuntimeError):  # a symlink loop, on a Python that raises for one
+        return False
+    return resolved != root_resolved and root_resolved in resolved.parents

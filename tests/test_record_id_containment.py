@@ -130,6 +130,83 @@ class TestPrimitive:
         assert record_path(link, "ok").name == "ok.json"
 
 
+class TestPathInStore:
+    """The same rule for a path of several segments — what another machine, an export or an
+    archive names inside a store: every segment a safe id, and the whole inside the store once
+    every symlink on the way is followed."""
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["tasks/entities.jsonl", "team/weekly.yaml", "utils/tiny-url", "a/.hidden", "one"],
+    )
+    def test_a_nested_path_is_inside(self, rel, tmp_path):
+        from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
+
+        assert is_safe_relative_path(rel) and is_path_in_store(tmp_path, rel)
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            "../x",
+            "a/../../b",
+            "/abs",
+            "a//b",
+            "a/./b",
+            "a/",
+            "a\\b",
+            "a\x00b",
+            "",
+            "x/" + "y" * 201,
+        ],
+    )
+    def test_a_path_that_climbs_out_or_names_nothing_is_refused(self, rel, tmp_path):
+        from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
+
+        assert not is_safe_relative_path(rel), rel
+        assert not is_path_in_store(tmp_path, rel), rel
+
+    @pytest.mark.parametrize("rel", [None, 7, ["a"]])
+    def test_not_a_string_is_refused(self, rel, tmp_path):
+        from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
+
+        assert not is_safe_relative_path(rel) and not is_path_in_store(tmp_path, rel)
+
+    def test_a_folder_that_is_a_symlink_out_is_outside(self, tmp_path):
+        from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
+
+        root = tmp_path / "store"
+        root.mkdir()
+        (tmp_path / "elsewhere").mkdir()
+        (root / "shared").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+        assert is_safe_relative_path("shared/x.yaml"), "the name alone is safe"
+        assert not is_path_in_store(root, "shared/x.yaml"), "and it leads out of the store"
+
+    def test_a_store_its_owner_moved_behind_a_symlink_is_still_that_store(self, tmp_path):
+        from personalclaw.record_ids import is_path_in_store
+
+        moved = tmp_path / "moved-store"
+        moved.mkdir()
+        link = tmp_path / "store"
+        link.symlink_to(moved, target_is_directory=True)
+        assert is_path_in_store(link, "sub/x.json")
+
+    def test_follow_last_false_takes_the_last_segment_as_named(self, tmp_path):
+        """For a caller that replaces or removes the entry at a name: a link there is the entry,
+        and a folder on the way that leads out still refuses."""
+        from personalclaw.record_ids import is_path_in_store
+
+        root = tmp_path / "store"
+        (root / "sub").mkdir(parents=True)
+        (tmp_path / "elsewhere").mkdir()
+        (root / "linked.yaml").symlink_to(tmp_path / "elsewhere" / "victim.yaml")
+        (root / "out").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+        assert not is_path_in_store(root, "linked.yaml")
+        assert is_path_in_store(root, "linked.yaml", follow_last=False)
+        assert is_path_in_store(root, "sub/x.yaml", follow_last=False)
+        assert not is_path_in_store(root, "out/x.yaml", follow_last=False)
+        assert not is_path_in_store(root, "../x.yaml", follow_last=False)
+
+
 class TestTaskStoreRefusesTraversal:
     """#471 — GET/DELETE /api/tasks/{id} read and unlinked any .json on the filesystem."""
 

@@ -214,8 +214,11 @@ def _config_dir() -> Path:
     return config_dir()
 
 
-def _safe_id(cid: str) -> bool:
-    """A component id that cannot build a traversing path (segments validated, no ``..``)."""
+def safe_component_id(cid: str) -> bool:
+    """A component id that cannot build a traversing path (segments validated, no ``..``).
+
+    The one rule for a pack's ids: a build carries only ids that pass it, and an import refuses a
+    pack naming any other (``import_._build_plan``) — the id builds a path in the home."""
     if not cid or ".." in cid or "\\" in cid:
         return False
     return all(_SAFE_ID_SEG.match(seg) for seg in cid.split("/"))
@@ -419,7 +422,7 @@ def _walk_closure(
 
         kind, _, cid = ref.partition(":")
         resolver = _RESOLVERS.get(kind)
-        if resolver is None or not cid or not _safe_id(cid):
+        if resolver is None or not cid or not safe_component_id(cid):
             if ref not in req_seen:
                 req_seen.add(ref)
                 requirements.append(
