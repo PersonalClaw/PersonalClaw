@@ -7,6 +7,7 @@ import { api } from '../../lib/api'
 import { isStaleWrite } from '../../lib/staleWrite'
 import { notify } from '../../app/appSdk'
 import { buildSrcdoc, readThemeVars } from './widgetSrcdoc'
+import { useWidgetCss } from './widgetStyles'
 import { effectiveWidgetSlug } from './widgetSlug'
 import { useWidgetWire } from './useWidgetActionBridge'
 import { useArtifactIteration } from './useArtifactIteration'
@@ -95,11 +96,14 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   // Inline chat renders FRAMELESS (transparent iframe body, straight against the
   // app canvas); download/open-in-tab build a solid-bg standalone doc instead.
   const themeVars = useMemo(() => readThemeVars(), [mode])
+  // Tailwind for the widget's classes, compiled here (`widgetStyles`) — not while it streams,
+  // when its HTML changes with every chunk and nothing is shown but the skeleton.
+  const css = useWidgetCss(streaming ? null : html)
   // The iteration script rides the INLINE document only (the standalone download /
   // open-in-tab documents below deliberately keep the byte-identical body they had —
   // there is no parent to talk to outside the app).
-  const srcdoc = useMemo(() => buildSrcdoc({ html, themeVars, mode, includeHost: !streaming, transparentBody: true, editMode: !streaming }), [html, themeVars, mode, streaming])
-  const standaloneSrcdoc = useCallback(() => buildSrcdoc({ html, themeVars, mode, includeHost: false }), [html, themeVars, mode])
+  const srcdoc = useMemo(() => buildSrcdoc({ html, css, themeVars, mode, includeHost: !streaming, transparentBody: true, editMode: !streaming }), [html, css, themeVars, mode, streaming])
+  const standaloneSrcdoc = useCallback(() => buildSrcdoc({ html, css, themeVars, mode, includeHost: false }), [html, css, themeVars, mode])
 
   // blob: URL (own opaque origin) instead of srcdoc — srcdoc inherits the parent
   // CSP (script-src 'self' would block the widget's inline scripts).

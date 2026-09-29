@@ -90,6 +90,9 @@ FILES_SUBDIR = "webapp"
 #: it a fence rather than a formality:
 #:
 #: * ``default-src 'none'`` — nothing is fetchable unless a directive below allows it.
+#: * no other origin in ``script-src``/``style-src``/``font-src`` — a served page runs its
+#:   own files and inline code only, and reaches no third party (a react artifact's bundle
+#:   carries React itself; see ``build.py``).
 #: * ``connect-src 'none'`` — no fetch/XHR/WebSocket/EventSource/sendBeacon at all,
 #:   so the page cannot call ``/api`` even though it is same-origin.
 #: * ``form-action 'none'`` + ``base-uri 'none'`` — no exfiltration by form POST and
@@ -97,9 +100,8 @@ FILES_SUBDIR = "webapp"
 #: * ``frame-ancestors 'self'`` — embeddable in the dashboard's own pane, nowhere else.
 ARTIFACT_SERVE_CSP = (
     "default-src 'none'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-    "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
-    "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; "
     "font-src 'self' data:; "
     "connect-src 'none'; "

@@ -2,13 +2,14 @@
  *  existing best-in-class renderers, each conforming to PreviewProps. The
  *  registry (registerBuiltins.ts) lazy-loads these so the bundle stays flat as
  *  types are added. We WRAP the proven renderers (Markdown, the sandboxed widget
- *  iframe, the React+Babel frame, the file previews), never reinvent them. */
+ *  iframe, the React frame, the file previews), never reinvent them. */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, ShieldAlert, Sliders } from 'lucide-react'
 import type { PreviewProps } from './contentTypes'
 import { Markdown } from '../Markdown'
 import { SquareIconButton } from '../SquareIconButton'
 import { buildSrcdoc, readThemeVars } from '../widget/widgetSrcdoc'
+import { useWidgetCss } from '../widget/widgetStyles'
 import { ReactWidgetFrame } from '../widget/ReactWidgetFrame'
 import { useWidgetWire } from '../widget/useWidgetActionBridge'
 import { useArtifactIteration } from '../widget/useArtifactIteration'
@@ -65,7 +66,8 @@ export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode
   // The iteration child script ships ONLY when the host offers iteration, so every
   // other caller's document stays byte-identical to what it was.
   const editMode = !!iterate
-  const srcdoc = useMemo(() => buildSrcdoc({ html: content, themeVars: readThemeVars(), mode, editMode }), [content, mode, editMode])
+  const css = useWidgetCss(content)
+  const srcdoc = useMemo(() => buildSrcdoc({ html: content, css, themeVars: readThemeVars(), mode, editMode }), [content, css, mode, editMode])
   const blobUrl = useMemo(() => URL.createObjectURL(new Blob([srcdoc], { type: 'text/html;charset=utf-8' })), [srcdoc])
   useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
   const it = useArtifactIteration(frameRef, { source: content, target: iterate ?? {} })
@@ -94,7 +96,7 @@ export const RawHtmlPreview = memo(function RawHtmlPreview({ content }: PreviewP
   return <iframe src={blobUrl} sandbox="allow-scripts" title="HTML preview" className="h-full w-full border-none bg-white" />
 })
 
-/** React artifact/widget — JSX rendered in the Babel-in-iframe frame. */
+/** React artifact/widget — JSX compiled in this app and rendered in the sandboxed React frame. */
 export const ReactPreview = memo(function ReactPreview({ content, title }: PreviewProps) {
   return <div className="px-l py-m"><ReactWidgetFrame jsx={content} title={title} /></div>
 })

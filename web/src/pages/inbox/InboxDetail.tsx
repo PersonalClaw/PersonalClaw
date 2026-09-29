@@ -18,6 +18,8 @@ import { InboxSection as Section } from './InboxSection'
 import { TriggerParkActions } from './TriggerParkActions'
 import { BridgeConfirmActions } from './BridgeConfirmActions'
 import { SomeoneNewActions } from './SomeoneNewActions'
+import { ApprovalDecision } from '../../app/ApprovalDecision'
+import { mirroredApprovalId } from '../../lib/attentionLanes'
 import { invalidateKeys } from '../../lib/data'
 import { TextLink } from '../../ui/TextLink'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -100,6 +102,10 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   // Someone new, held by a channel that sends as you: answered here, with Reply, Pair or Ignore.
   // Ignore is the row's Dismiss, so the triage bar does not offer that twice.
   const someoneNew = !!item.refs?.someone_new
+  // A pending approval's row (`refs.approval`, the registry id): answered here, where it says a run
+  // is waiting for your decision. A trigger's run asks with no chat behind it, so this is the only
+  // place on the row that can answer it.
+  const approvalId = mirroredApprovalId(item)
 
   return (
     <div className="flex flex-col gap-l">
@@ -193,6 +199,14 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
       {triggerPark && (
         <Section label="Waiting on you">
           <TriggerParkActions item={item} onChanged={onChanged} />
+        </Section>
+      )}
+
+      {/* A tool call waiting on your approval (`dashboard/approval_state.py`). Read live, so a row
+          whose approval already ended says so instead of offering a decision nothing awaits. */}
+      {approvalId && (
+        <Section label="Approval">
+          <ApprovalDecision approvalId={approvalId} onDecided={onChanged} />
         </Section>
       )}
 

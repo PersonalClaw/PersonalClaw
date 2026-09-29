@@ -202,12 +202,23 @@ def candidates_from_extract(
     ``holder_attribution`` off means the axis is not persisted at all: the extracted
     holder/weight are dropped and the row is written as a plain fact, which is exactly
     the pre-MGAV-5 shape. That is the flag doing real work rather than decorating.
+
+    Two things a model returns are not candidates. A key another writer owns (a procedural
+    prior, the self-model's evidence, a lesson, a slot — :func:`~.vector_memory.is_fact_key`)
+    is not a fact to form, whatever the model says about it. And a ``null`` value is not a fact
+    either: to retire a key the model sets ``"delete": true``, so a null is the model having
+    nothing to say, and storing it replaced the row's value with nothing.
     """
+    from personalclaw.vector_memory import is_fact_key
+
     out: list[Candidate] = []
     for item in list(items)[:limit]:
         if not isinstance(item, dict) or "key" not in item:
             continue
         key = str(item["key"])
+        delete = bool(item.get("delete"))
+        if not is_fact_key(key) or (item.get("value") is None and not delete):
+            continue
         try:
             confidence = float(item.get("confidence", 0.5))
         except (TypeError, ValueError):
@@ -222,7 +233,7 @@ def candidates_from_extract(
                 confidence=confidence,
                 holder=holder,
                 weight=weight,
-                delete=bool(item.get("delete")),
+                delete=delete,
             )
         )
     return out
@@ -251,13 +262,21 @@ def gather(vs, candidates: Sequence[Candidate]) -> list[Candidate]:
     not on ``semantic_memory``, so a "vector_query over existing memories" would either
     search the wrong table or embed every fact on every consolidation. The graph arm is
     the recall path that actually covers the wording-independent case here.
+
+    Only FACTS can collide: a row another writer owns is never an overlap, because an overlap
+    is what Decide may UPDATE or SUPERSEDE, and a procedural prior or a slot is not formation's
+    to rewrite (:func:`~.vector_memory.is_fact_key`).
     """
+    from personalclaw.vector_memory import is_fact_key
+
     rows = vs.db.execute(
         "SELECT key, value_json, holder, weight FROM semantic_memory WHERE is_deleted = 0 "
         "ORDER BY key"
     ).fetchall()
     existing = {}
     for r in rows:
+        if not is_fact_key(r["key"]):
+            continue
         try:
             val = json.loads(r["value_json"])
         except (json.JSONDecodeError, TypeError):
@@ -448,10 +467,14 @@ def _as_stored(vs, key: str, value: object, replaces: str = "") -> tuple[str, ob
     of the fact it updates, or in a value it rewrote. Each is restored from the fact at that
     key, or from the fact it *replaces* when the key is new, the way a masked fact written back
     through the Memory page is. Raises :class:`MaskConflict` for a marker that stands for
-    nothing stored, so a marker is never saved over the value it hid.
+    nothing stored, so a marker is never saved over the value it hid. A marked key resolves
+    only to a FACT's key, for the reason :func:`gather` offers only facts as overlaps.
     """
+    from personalclaw.vector_memory import is_fact_key
+
     if mask_markers(key) and vs.get_semantic(key) is None:
-        known = stored_name(key, (str(e.get("key") or "") for e in vs.get_all_semantic()))
+        facts = (str(e.get("key") or "") for e in vs.get_all_semantic())
+        known = stored_name(key, (k for k in facts if is_fact_key(k)))
         if known is None:
             raise MaskConflict()
         key = known

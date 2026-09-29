@@ -4,7 +4,7 @@
  *  document) register here too once added.
  *
  *  Each preview renderer is lazy so the bundle stays flat as types grow (Monaco,
- *  Babel, Mermaid, AntV all dynamic-import already). */
+ *  Mermaid, AntV and the react frame's runtime all dynamic-import already). */
 import { lazy } from 'react'
 import {
   Box, Globe, Hash, Image, Braces, Code2, FileText, Table, FileCode, BarChart3, ScrollText, Film, Presentation, LayoutDashboard, type LucideIcon,
@@ -83,7 +83,7 @@ export function registerBuiltinContentTypes(): void {
     commentable: false,
   })
 
-  // ── react: JSX rendered in the Babel-in-iframe frame; editable as source. ──
+  // ── react: JSX compiled here, rendered in the sandboxed React frame; editable as source. ──
   registerContentType({
     id: 'react', label: 'React', icon: Box, tone: tone('#61dafb'),
     kinds: ['react'], exts: ['jsx', 'tsx'],

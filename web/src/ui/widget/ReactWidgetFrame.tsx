@@ -4,8 +4,11 @@ import { motion } from 'framer-motion'
 import { Maximize2, Minimize2, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useMode } from '../../app/theme'
 import { buildReactSrcdoc, readThemeVars } from './widgetSrcdoc'
+import { useWidgetCss } from './widgetStyles'
+import { useReactPreview } from './reactPreview'
 import { useWidgetWire } from './useWidgetActionBridge'
 import { SquareIconButton } from '../SquareIconButton'
+import { BlueprintSkeleton } from './BlueprintSkeleton'
 
 const MIN_HEIGHT = 80
 const MAX_HEIGHT = 640
@@ -19,10 +22,10 @@ interface Props {
 
 /** Renders a dynamic React (kind:'react') artifact as a sandboxed, theme-aware
  *  blob-iframe. Same isolation as WidgetFrame (sandbox="allow-scripts" off a
- *  blob null origin + strict CSP — see widgetSrcdoc.ts); React/ReactDOM + Babel
- *  load INSIDE the frame from the CSP-allowed CDNs (Babel ~3MB downloads only
- *  when a react artifact first renders). A render error surfaces inline via the
- *  child's `widget-error` postMessage instead of a blank frame. */
+ *  blob null origin + strict CSP — see widgetSrcdoc.ts). The JSX is compiled and
+ *  React inlined HERE, before the frame is built (`reactPreview`), so the frame
+ *  fetches nothing. A compile error is shown in place of the frame; a render error
+ *  surfaces inline via the child's `widget-error` postMessage instead of a blank frame. */
 export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   const { mode } = useMode()
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -39,11 +42,21 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const themeVars = useMemo(() => readThemeVars(), [mode])
-  const srcdoc = useMemo(() => buildReactSrcdoc({ jsx, themeVars, mode }), [jsx, themeVars, mode])
+  const preview = useReactPreview(jsx)
+  const css = useWidgetCss(jsx)
+  const srcdoc = useMemo(
+    () => (preview && 'code' in preview
+      ? buildReactSrcdoc({ code: preview.code, runtime: preview.runtime, css, themeVars, mode })
+      : null),
+    [preview, css, themeVars, mode],
+  )
+  /** A component that does not compile never reaches a frame; its error is shown instead. */
+  const compileError = preview && 'error' in preview ? preview.error : null
 
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   useEffect(() => {
     setError(null)
+    if (srcdoc === null) { setBlobUrl(null); return }
     const url = URL.createObjectURL(new Blob([srcdoc], { type: 'text/html;charset=utf-8' }))
     setBlobUrl(url)
     return () => URL.revokeObjectURL(url)
@@ -58,6 +71,7 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   })
 
   const openInNewTab = () => {
+    if (srcdoc === null) return
     const doc = document.implementation.createHTMLDocument(title)
     const charset = doc.createElement('meta'); charset.setAttribute('charset', 'utf-8')
     doc.head.insertBefore(charset, doc.head.firstChild)
@@ -81,20 +95,29 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
         : 'my-3 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-low'}>
       <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
         <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title}</span>
-        {error && (
+        {(error || compileError) && (
           <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-danger)' }}>
             <AlertTriangle size={11} /> error
           </span>
         )}
         <div className="ml-auto flex items-center gap-0.5">
-          <SquareIconButton label="Open in new tab" onClick={openInNewTab}><ExternalLink size={13} /></SquareIconButton>
+          <SquareIconButton label="Open in new tab" onClick={openInNewTab} disabled={srcdoc === null}
+            disabledReason={compileError ? 'the component did not compile' : 'the preview is still being prepared'}>
+            <ExternalLink size={13} />
+          </SquareIconButton>
           <SquareIconButton label={expanded ? 'Minimize' : 'Expand'} onClick={() => setExpanded((v) => !v)}>{expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</SquareIconButton>
         </div>
       </div>
-      {blobUrl && (
+      {compileError ? (
+        <pre data-type="caption" className="whitespace-pre-wrap px-m py-s font-mono" style={{ color: 'var(--color-danger)' }}>
+          {compileError}
+        </pre>
+      ) : blobUrl ? (
         <iframe ref={iframeRef} src={blobUrl} sandbox="allow-scripts" title={title}
           className="w-full border-none bg-surface"
           style={{ height: expanded ? 'calc(100% - 36px)' : Math.min(height, MAX_HEIGHT) }} />
+      ) : (
+        <BlueprintSkeleton height={240} />
       )}
       {expanded && <div className="fixed inset-0 -z-10 bg-black/55 backdrop-blur-sm" onClick={() => setExpanded(false)} />}
     </motion.div>

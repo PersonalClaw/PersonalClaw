@@ -320,7 +320,7 @@ describe('a host that offers no iteration is unchanged', () => {
     // byte-for-byte what it was. Asserting it here means a later edit to the assembly
     // (a stray newline from a new interpolation, say) reddens instead of silently
     // changing thousands of already-rendered widgets.
-    const opts = { html: SOURCE, themeVars: { '--bg': 'black' }, mode: 'dark' as const }
+    const opts = { html: SOURCE, css: '.p-4{padding:1rem}', themeVars: { '--bg': 'black' }, mode: 'dark' as const }
     const off = buildSrcdoc(opts)
     const on = buildSrcdoc({ ...opts, editMode: true })
     expect(off).not.toContain('__edit_mode_')

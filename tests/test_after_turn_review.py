@@ -209,6 +209,30 @@ def test_facet_capture_veto_routes_to_lesson(vs, svc):
     assert any("force-push" in v for v in vals)
 
 
+@pytest.mark.parametrize(
+    "said, lesson",
+    [
+        ("never force-push to main", "Never force-push to main"),
+        (
+            "please never quote consignee names or addresses.",
+            "Never quote consignee names or addresses",
+        ),
+        ("don't ever squash my commits", "Don't ever squash my commits"),
+        ("always avoid tabs in yaml files", "Always avoid tabs in yaml files"),
+    ],
+)
+def test_a_veto_lesson_reads_as_the_user_said_it(vs, svc, said, lesson):
+    """The veto's clause already starts with its own trigger word, so prefixing "Never: " to
+    it wrote "Never: never quote consignee names or addresses" — the lesson label the Memory
+    page showed."""
+    atr.run_after_turn_review(
+        service=svc, user_message=said, assistant_text="Understood.", correction=False
+    )
+    vals = [json.loads(le["value_json"]) for le in vs.get_lessons()]
+    assert lesson in vals, vals
+    assert not any(v.startswith("Never:") for v in vals), vals
+
+
 def test_facet_capture_does_not_learn_a_never_fragment_as_a_lesson(vs, svc):
     """G16: "…in exactly one sentence from now on, never more." used to write the
     durable lesson ``Never: never more`` — the word 'never' as a degree adverb read as

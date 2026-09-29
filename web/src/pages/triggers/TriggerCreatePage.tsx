@@ -16,7 +16,7 @@ import {
 import { intervalToSecs, scheduleWhenMet } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
 import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
-import { findTriggerPreset, prefillDraft } from './triggerPresets'
+import { TRIGGER_PRESETS, findTriggerPreset, prefillDraft } from './triggerPresets'
 import { schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
@@ -217,10 +217,25 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           {/* A seeded form looks exactly like a form someone else already filled in, which is
               disorienting if you do not know why. One quiet line names the preset and says the
               obvious thing out loud: nothing here is locked. */}
-          {seed && (
+          {seed ? (
             <p className="text-on-surface-low text-[0.8125rem]">
               Filled in from the <span style={fvs(600)}>{seed.name}</span> preset — change anything before saving.
             </p>
+          ) : (
+            // The presets, on the blank path. They were offered only by the Triggers list's empty
+            // state, and the triggers PersonalClaw registers for itself mean that list is never
+            // empty — so on a real home no preset could be reached at all, and "New trigger" opened
+            // straight onto this blank form. Picking one seeds it (`?preset=`), exactly as the empty
+            // state's cards do; `TriggersSection` remounts the page so every field takes the seed.
+            <div role="group" aria-labelledby="trigger-presets-label" className="flex flex-wrap items-center gap-s">
+              <span id="trigger-presets-label" data-type="body-s" className="text-on-surface-low">Start from a preset</span>
+              {TRIGGER_PRESETS.map((p) => (
+                <Button key={p.id} variant="tonal" size="sm" title={`${p.summary} — ${p.description}`}
+                  onClick={() => setQuery({ kind: 'schedule', preset: p.id })}>
+                  <p.icon size={14} aria-hidden /> {p.title}
+                </Button>
+              ))}
+            </div>
           )}
           <Field label="Name" hint="A short label for this trigger."><TextInput required value={name} onChange={setName} placeholder="Morning briefing" autoFocus /></Field>
 

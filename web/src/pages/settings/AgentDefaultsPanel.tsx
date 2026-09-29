@@ -138,7 +138,7 @@ export function AgentDefaultsPanel() {
           {/* Was a fixed two hours, so an approval asked at night was denied before anyone woke.
               Still fails closed: past the wait the call is denied, and the Inbox says so. */}
           <NumberRow label="Approval wait" cfg={cfg} field="approval_timeout_minutes" patch={patch} min={1} max={10080} suffix="min"
-            hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. A subagent's or workflow step's approval also ends with that work's own time limit. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds and the run says so. Unattended runs never wait: no one is there to ask." />
+            hint="How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after 45 seconds and the run says so. Unattended runs never wait: no one is there to ask." />
         </RowGroup>
       </Section>
 
@@ -148,7 +148,7 @@ export function AgentDefaultsPanel() {
         <RowGroup>
           <NumberRow label="Max concurrent subagents" hint="0 = auto-size from this host's CPU and memory." cfg={cfg} field="max_subagents" patch={patch} min={0} max={16} />
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
-          <NumberRow label="Subagent timeout" cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
+          <NumberRow label="Subagent timeout" hint="Counted from when a subagent starts running, not from when it was asked for." cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
           <StrListField label="Allowed working directories" hint="Folders besides the workspace a subagent may run in. Empty: the workspace only." cfg={cfg} field="subagent_cwd_allowed_roots" editList={editList} placeholder="Add path…" />
         </RowGroup>

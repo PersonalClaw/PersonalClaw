@@ -1,9 +1,16 @@
 import { sanitizeCssValue } from './cssSanitize'
 
-const TAILWIND_CDN = '<script src="https://cdn.tailwindcss.com"><\/script>'
-// Drive Tailwind's `dark:` variant off `class="dark"` on <body> rather than the
-// prefers-color-scheme media query — the iframe can't know the parent's theme.
-const TAILWIND_CONFIG = '<script>tailwind.config={darkMode:\'class\'}<\/script>'
+/** The CSP every widget document carries. Nothing is fetched: no `https:` source anywhere, so a
+ *  widget — or a script an agent put in one — reaches no third party. Tailwind rides in the
+ *  document as CSS this app compiled (`widgetStyles`), and a react artifact's React and compiled
+ *  JSX as inline scripts (`reactPreview`). `connect-src 'none'` keeps it off the network entirely.
+ *  Pinned by `widgetFetchesNothing.test.ts`. */
+const WIDGET_CSP =
+  "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; "
+  + "img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';"
+
+/** CSS that cannot end the `<style>` element it is placed in. */
+const styleSafe = (css: string) => css.replace(/<\/style/gi, '<\\/style')
 
 // NE design tokens (--color-*) exposed to widgets, each aliased to a short,
 // documented widget-facing name (--bg, --text, --accent, …) so agent widgets
@@ -279,6 +286,8 @@ const EDIT_MODE_SCRIPT = `<script>\n${EDIT_MODE_SCRIPT_SOURCE}\n<\/script>`
 
 export interface BuildSrcdocOpts {
   html: string
+  /** The Tailwind CSS this document's classes need (`widgetStyles`) — `''` for none. */
+  css: string
   themeVars: Record<string, string>
   mode: 'dark' | 'light'
   /** Include the height-reporter + action-forwarder (the inline host needs it; a
@@ -300,18 +309,23 @@ export interface BuildSrcdocOpts {
  *  origin, so widget content can't reach parent DOM, cookies, or storage (the
  *  Claude-artifacts model). Theme values pass sanitizeCssValue (char allowlist +
  *  dangerous-fn denylist + length cap); a strict CSP (connect-src 'none', img-src
- *  data: blob:) contains the content. DOMPurify intentionally NOT applied —
- *  widgets need <script> for Chart.js/D3; output is redacted upstream. */
-export function buildSrcdoc({ html, themeVars, mode, includeHost = true, transparentBody = false, editMode = false }: BuildSrcdocOpts): string {
+ *  data: blob:, no third-party source) contains the content. DOMPurify intentionally
+ *  NOT applied — widgets need <script> for their own drawing and interaction; output
+ *  is redacted upstream.
+ *
+ *  The document's defaults sit in Tailwind's `base` layer, so a utility on an element
+ *  (`mb-4` on an `h1`) wins over the default for that element, as it did when the
+ *  CDN's unlayered utilities came last. */
+export function buildSrcdoc({ html, css, themeVars, mode, includeHost = true, transparentBody = false, editMode = false }: BuildSrcdocOpts): string {
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';">
-${TAILWIND_CDN}
-${TAILWIND_CONFIG}
+<meta http-equiv="Content-Security-Policy" content="${WIDGET_CSP}">
+<style>${styleSafe(css)}</style>
 <style>
+@layer base {
   *, *::before, *::after { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   /* Match the parent app's hidden-scrollbar tenet — the iframe is its own
@@ -335,6 +349,7 @@ ${TAILWIND_CONFIG}
   table { border-collapse: collapse; }
   a { color: var(--accent); }
   ${themeStyleBlock(themeVars, mode, transparentBody)}
+}
 </style>
 </head>
 <body class="${mode}">
@@ -344,30 +359,39 @@ ${[editMode ? EDIT_MODE_SCRIPT : '', includeHost ? HOST_SCRIPT : ''].filter(Bool
 </html>`
 }
 
-// React-artifact CDNs (pinned majors). React/ReactDOM UMD globals + Babel
-// standalone for in-iframe JSX transform — all from the CDNs already allowed by
-// the shared CSP (jsdelivr/cdnjs). Babel (~3MB) loads only inside a react
-// iframe, which is created only when a kind:'react' widget actually renders.
-const REACT_CDN = [
-  '<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"><\/script>',
-  '<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"><\/script>',
-  '<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"><\/script>',
-].join('\n')
+// Registered BEFORE the component's own script, so an error that script throws while it loads
+// (a syntax error the compiler let through, an import this preview does not offer) is reported
+// the same way a render error is: a `widget-error` to the parent and the message in the frame.
+const REACT_TRAP = `(function(){
+  window.__previewError = function(err){
+    if (window.__previewFailed) return;
+    window.__previewFailed = true;
+    var message = String(err && err.message || err);
+    parent.postMessage({type:'widget-error', message: message}, '*');
+    var r = document.getElementById('root');
+    if (r) r.innerHTML = '<pre style="color:var(--danger);white-space:pre-wrap;font-family:monospace;font-size:13px">' + message.replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}) + '</pre>';
+  };
+  window.addEventListener('error', function(e){ window.__previewError(e.error || e.message); });
+})();`
 
-// Renders the agent's component (a top-level `App`, or a default-exported one)
-// inside an error boundary. A render/transform failure posts `widget-error` to
-// the parent (surfaced as an inline error) instead of a blank frame. Babel
-// transforms `type="text/babel"` scripts in document order, so this harness —
-// itself text/babel — runs AFTER the user code script and sees its globals.
-const REACT_HARNESS = `<script type="text/babel" data-presets="react">
-(function(){
+// Renders the agent's component — a top-level `App`, or the module's default export — inside an
+// error boundary. Plain JavaScript: it runs after the component's compiled script and sees its
+// globals. React is read off `window` because the component's script can declare its own
+// top-level `React` or `ReactDOM` (`import * as ReactDOM from 'react-dom'` compiles to one), and a
+// bare name here would find that binding instead of the frame's.
+const REACT_HARNESS = `(function(){
+  if (window.__previewFailed) return;
+  var React = window.React, ReactDOM = window.ReactDOM;
   function report(){
     var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
     parent.postMessage({type:'widget-height', height:h}, '*');
   }
   try {
+    var exported = window.module && window.module.exports;
     var Comp = (typeof App !== 'undefined' && App) ||
-               (typeof window.App !== 'undefined' && window.App) || null;
+               (typeof window.App !== 'undefined' && window.App) ||
+               (exported && (exported.default || exported.App)) ||
+               (typeof exported === 'function' ? exported : null);
     if (!Comp) { throw new Error('No component found. Define a top-level function named App.'); }
     class ErrorBoundary extends React.Component {
       constructor(p){ super(p); this.state = {err:null}; }
@@ -385,42 +409,41 @@ const REACT_HARNESS = `<script type="text/babel" data-presets="react">
     new ResizeObserver(report).observe(document.body);
     setTimeout(report, 100);
   } catch (e) {
-    parent.postMessage({type:'widget-error', message:String(e && e.message || e)}, '*');
-    var r = document.getElementById('root');
-    if (r) r.innerHTML = '<pre style="color:var(--danger);white-space:pre-wrap;font-family:monospace;font-size:13px">' + String(e && e.message || e).replace(/[&<>]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}) + '</pre>';
+    window.__previewError(e);
   }
-})();
-<\/script>`
+})();`
+
+/** Script text that cannot end the `<script>` element it is placed in: `<\/script` is the same
+ *  text to JavaScript. */
+const scriptSafe = (js: string) => js.replace(/<\/script/gi, '<\\/script')
 
 export interface BuildReactSrcdocOpts {
-  /** JSX source authored against window globals React / ReactDOM, defining a
-   *  top-level `App` component. */
-  jsx: string
+  /** The component, compiled to plain JavaScript (`reactPreview`): JSX authored against the
+   *  React / ReactDOM globals, defining a top-level `App` or exporting one. */
+  code: string
+  /** React for the frame (`reactFrameRuntime`), inlined: the frame fetches nothing. */
+  runtime: string
+  /** The Tailwind CSS the component's classes need (`widgetStyles`). */
+  css: string
   themeVars: Record<string, string>
   mode: 'dark' | 'light'
 }
 
 /** Build the sandboxed iframe document for a dynamic React (kind:'react')
  *  artifact. Same security model as :func:`buildSrcdoc` (sandbox="allow-scripts"
- *  off a blob/null origin + strict CSP + sanitized theme vars); additionally
- *  loads React/ReactDOM UMD + Babel from the CSP-allowed CDNs and renders the
- *  agent's `App` inside an error boundary. The JSX is embedded as a
- *  `type="text/babel"` script — NOT eval'd in the parent — so it executes only
- *  inside the sandboxed frame. */
-export function buildReactSrcdoc({ jsx, themeVars, mode }: BuildReactSrcdocOpts): string {
-  // Defang any closing script tag in the agent JSX so it can't break out of the
-  // text/babel <script> container (it still runs sandboxed regardless).
-  const safeJsx = jsx.replace(/<\/script>/gi, '<\\/script>')
+ *  off a blob/null origin + the same strict CSP + sanitized theme vars). Everything it
+ *  runs is inline — React, the compiled component, the harness — so it fetches nothing,
+ *  and the component executes only inside the sandboxed frame, never in the parent. */
+export function buildReactSrcdoc({ code, runtime, css, themeVars, mode }: BuildReactSrcdocOpts): string {
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';">
-${TAILWIND_CDN}
-${TAILWIND_CONFIG}
-${REACT_CDN}
+<meta http-equiv="Content-Security-Policy" content="${WIDGET_CSP}">
+<style>${styleSafe(css)}</style>
 <style>
+@layer base {
   *, *::before, *::after { box-sizing: border-box; }
   * { scrollbar-width: none; -ms-overflow-style: none; }
   *::-webkit-scrollbar { display: none; }
@@ -433,14 +456,23 @@ ${REACT_CDN}
   img, svg, canvas, video { max-width: 100%; height: auto; }
   a { color: var(--accent); }
   ${themeStyleBlock(themeVars, mode)}
+}
 </style>
 </head>
 <body class="${mode}">
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
-${safeJsx}
+<script>
+${scriptSafe(runtime)}
 <\/script>
+<script>
+${REACT_TRAP}
+<\/script>
+<script>
+${scriptSafe(code)}
+<\/script>
+<script>
 ${REACT_HARNESS}
+<\/script>
 </body>
 </html>`
 }

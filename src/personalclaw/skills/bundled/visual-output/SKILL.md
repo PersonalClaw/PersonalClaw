@@ -30,7 +30,8 @@ This skill covers both halves of visual output:
 ```
 
 - One widget per payload, self-contained.
-- Tailwind CSS is available inside the iframe.
+- Tailwind CSS (v4) classes work inside the iframe: the dashboard compiles the
+  ones a widget uses into its document, so there is nothing to load.
 - For large HTML (long dashboards, big tables), save it to a file or an
   Artifact (see the `artifacts` skill) and reference it — don't inline hundreds
   of lines into the chat.
@@ -107,18 +108,13 @@ arbitrary values like `bg-[var(--card)]`) so the widget tracks the theme:
 **Never** use `bg-gray-900`, `text-white`, `#fff`, or any hardcoded hex — they
 break on the opposite theme. Zero hardcoded colors.
 
-## Allowed scripts (CSP)
+## Everything inline (CSP)
 
-The iframe's Content-Security-Policy restricts `script-src` to inline scripts
-plus these CDNs only:
-
-- **Tailwind** — `https://cdn.tailwindcss.com` (preloaded; classes work out of the box)
-- `https://cdn.jsdelivr.net`
-- `https://cdnjs.cloudflare.com`
-
-Load charting/visualization libs (e.g. Chart.js) from jsDelivr or cdnjs. Scripts
-from any other origin are blocked. `connect-src` is `'none'` — widgets can't make
-network calls; render data you already have.
+The iframe's Content-Security-Policy allows inline `<script>` and `<style>` and
+nothing from anywhere else: a `<script src>` or `<link>` to a CDN is blocked,
+images must be `data:` or `blob:` URLs, and `connect-src` is `'none'` — widgets
+can't make network calls. Write the script a widget needs inline, and render data
+you already have. Tailwind needs no tag (see Format above).
 
 ## Interactive widgets
 
@@ -329,9 +325,12 @@ rather than repeating `stroke=` on every element — easier to keep consistent.
 
 ### Charts
 
-- For data charts prefer **Chart.js** (load from jsDelivr — see CSP above) over
-  hand-drawn SVG bars; pass theme-var colors into the dataset config so it tracks
-  the theme. Give the canvas a fixed-aspect wrapper (`position:relative; height:0;
+- Draw data charts yourself — there is no charting library to load (see CSP
+  above). Inline SVG suits bars, lines, areas and points: compute each mark's
+  coordinates in the viewBox and follow the responsive-SVG contract above. For
+  many points or animation, paint a `<canvas>` from a short inline script, read
+  theme colors with `getComputedStyle(document.documentElement).getPropertyValue('--accent')`,
+  and give it a fixed-aspect wrapper (`position:relative; height:0;
   padding-bottom:56.25%`) so it's responsive.
 - Always title the axes + the chart; never render a chart with unlabelled axes.
 

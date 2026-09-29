@@ -156,7 +156,7 @@ reads that entry:
 | Home's approvals count and **To triage**, Mission Control, the phone companion, the workflow run view, the desktop tray, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
-| The Inbox | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}` |
+| The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
 
 The entry carries enough to act on: which chat (`session`, `session_title`), which agent
 (`agent`), and what it wants to do (`tool`, redacted `tool_input`/`tool_purpose`, `risk`, and
@@ -191,6 +191,13 @@ through `decide_session_approval`: the same transcript record, the same SEL `too
 row, and the same waiting runner — whose refusal handling (the rest of a refused batch is refused
 rather than re-asked, so a Deny cannot be routed around with a second call) is therefore the same
 for every door.
+
+**Every surface that announces an approval answers it.** The Inbox row and its notification offer
+Approve and Deny in place (`web/src/app/ApprovalDecision.tsx`, through
+`POST /api/approvals/{id}/{action}`), as To triage, the workflow run view and the phone do. They read
+the entry live from `GET /api/approvals`, because a row and its notification outlive the approval
+they name: once it has ended they say so and offer neither. A trigger's run asks with no chat behind
+it, so these and To triage are where its approval is answered.
 
 **Only you answer.** Each entry records who asked it (`asked_by`: the chat's agent, the app that
 started the chat, a subagent, the run whose step asked, the trigger), and `resolve_approval` and
@@ -230,8 +237,10 @@ and however the approval ends, the channel's prompt is told how (`approved`, `re
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →
 Approval wait; two hours by default, one minute to one week), read per approval by
-`approval_window_secs`. An MCP server's question is cut shorter by its own call ceiling, and a
-subagent's or workflow step's approval also ends with that work's time limit. Past the window
+`approval_window_secs`. An MCP server's question is cut shorter by its own call ceiling, and an
+approval a RUNNING subagent or workflow step asks for also ends with that work's time limit, which
+counts from the start of its run: a subagent waiting for its owner to approve its start, or for a
+slot, is not running yet and waits the whole window. Past the window
 the call is denied: it fails closed. An unattended run (a trigger's session, a loop worker, a
 channel delivery, a subagent) never waits at all. It declines a call that needs approval at
 once, because nobody is there to ask: `chat_runner`'s fail-fast for a runtime that asks, and

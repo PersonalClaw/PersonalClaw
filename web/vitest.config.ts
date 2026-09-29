@@ -14,6 +14,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Vitest turns every stylesheet import into an empty string, a `?raw` read included. Widget
+    // styles compile Tailwind from its stylesheet's TEXT (`src/ui/widget/widgetStyles.ts`), and an
+    // empty stylesheet compiles to nothing at all — so that one read is left to Vite.
+    css: { include: [/\/tailwindcss\/index\.css\?raw$/] },
     // Vitest 5 uses maxWorkers for every pool, including the default forks pool.
     // Keep bare local invocations from claiming every core; CI can override this
     // through Vitest's built-in VITEST_MAX_WORKERS environment variable.

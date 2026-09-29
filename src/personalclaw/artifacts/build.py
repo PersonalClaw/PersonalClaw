@@ -3,10 +3,11 @@
 A ``kind='react'`` artifact's body is JSX defining a top-level ``App`` component,
 authored against the ``React``/``ReactDOM`` globals (the contract
 ``web/src/ui/widget/widgetSrcdoc.ts`` established for the in-chat preview). That
-preview transforms the JSX **in the browser** with Babel and pulls React from a
-CDN — fine for a bubble, impossible for a deployed page: the serve route
-fences the document with ``default-src 'none'`` and ``connect-src 'none'``, so a
-served page can load only ``'self'``. Hence this module: transform and bundle the
+preview compiles the JSX **in the dashboard**, with the TypeScript its code editor
+ships, and writes React into the frame's own document — possible only where the
+dashboard is running, which a deployed page is not: the serve route fences the
+document with ``default-src 'none'`` and ``connect-src 'none'``, so a served page
+can load only ``'self'``. Hence this module: transform and bundle the
 JSX **once, on the server**, and write plain static files into the artifact's
 ``webapp/`` directory for :func:`~personalclaw.artifacts.handlers.serve_deployed_artifact`
 to hand out. No per-artifact dev server, no CDN, no runtime transform.
@@ -233,8 +234,8 @@ def build_argv(toolchain: Toolchain, entry: Path, out_js: Path, metafile: Path) 
     ``package.json``: ``esbuild --bundle`` resolves every import on disk, and no
     install verb appears here.
 
-    Classic JSX (``React.createElement``) mirrors the in-chat harness's Babel
-    ``preset-react`` default, so a body written for the preview bundles unchanged.
+    Classic JSX (``React.createElement``) mirrors the in-chat preview's compile
+    (``jsx: React``), so a body written for the preview bundles unchanged.
 
     ``--metafile`` is not diagnostics — it is the second half of the no-network
     property, and it exists because the first half is not enough. MEASURED with

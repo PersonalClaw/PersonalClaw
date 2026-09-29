@@ -13,11 +13,15 @@
  *  exactly how a same-page attacker would try to forge one. The human-gesture half
  *  of the invariant (`e.isTrusted`) lives in the child's HOST_SCRIPT and is asserted
  *  in widgetHostScript.test.ts, where it runs. */
-import { render, act } from '@testing-library/react'
+import { render, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { WidgetFrame } from './WidgetFrame'
 import { ReactWidgetFrame } from './ReactWidgetFrame'
 import { api } from '../../lib/api'
+
+// The JSX compile runs in the code editor's language worker, which jsdom cannot host. These
+// tests assert the wire, so the component passes through as written.
+vi.mock('./reactJsx', () => ({ transformJsx: async (jsx: string) => ({ code: jsx }) }))
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -124,9 +128,12 @@ describe('widget wire — WidgetFrame (the action producer)', () => {
 describe('widget wire — ReactWidgetFrame (height + error, same provenance rule)', () => {
   async function mount(jsx: string) {
     const view = render(<ReactWidgetFrame jsx={jsx} title="R" />)
-    await act(async () => {})
-    const iframe = view.container.querySelector('iframe')
-    if (!iframe) throw new Error('ReactWidgetFrame rendered no iframe')
+    // The frame appears once its document is prepared (compiled component + inlined React).
+    const iframe = await waitFor(() => {
+      const f = view.container.querySelector('iframe')
+      if (!f) throw new Error('ReactWidgetFrame rendered no iframe')
+      return f
+    })
     return { view, iframe, child: iframe.contentWindow }
   }
 

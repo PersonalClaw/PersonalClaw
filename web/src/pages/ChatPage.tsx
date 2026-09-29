@@ -40,6 +40,7 @@ import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { joinsATurnStartedElsewhere } from './chat/joinTurn'
+import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
 import { chatContextChips } from './chat/ChatContextLine'
@@ -179,17 +180,6 @@ const TRANSCRIPT_FRAMES = new Set([
 // = deny. (`trust_reads`/`yolo` remain valid backend actions the Permission axis uses,
 // but the card no longer offers them — the card speaks only scope.)
 type ApproveAction = 'approved' | 'rejected' | 'trust' | 'trust_agent' | 'trust_reads' | 'yolo'
-
-// Memory mode for the NEXT new session — lives in the chat header gearbox (not
-// the composer). Mirrors the composer's old MemoryPill options.
-const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
-  { id: 'persistent', label: 'Persistent', hint: 'Remember across sessions' },
-  { id: 'temporary', label: 'Temporary', hint: 'Forget when the session ends' },
-  // Incognito suppresses WRITES only — `_ChatSession.blocks_reads` (state.py) is true for
-  // `temporary` alone, so memory context is still injected here. This hint is what the user
-  // reads while CHOOSING the mode, so it must not over-promise (issue 367).
-  { id: 'incognito', label: 'Incognito', hint: 'Reads memory, writes nothing back' },
-]
 
 // Options for the chat-header segmented controls. Permission mirrors the
 // composer's approval modes; memory mirrors MEMORY_MODES — both as the canonical
@@ -3260,25 +3250,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // `data-tour="chat"` — the product tour's chat stop points at the composer stage
     // (ONBOARDING-UX T5.1). On the chat route this wrapper is the composer.
     <div data-tour="chat" className="w-full" style={{ maxWidth: 'var(--content-width)' }}>
-      {/* Memory-mode notice: incognito/temporary sessions look identical to a
-          normal one otherwise, so surface a subtle reminder above the composer
-          that this chat won't be remembered — important before the user types.
-
-          The incognito sentence claimed TWO things the backend does not do (issue 367). Reads:
-          `blocks_reads` is `memory_mode == 'temporary'` (state.py), so incognito injects
-          memory context exactly as a persistent chat does — only writes are suppressed
-          (`is_restricted`, which gates consolidation + lessons). History: the transcript IS
-          persisted — `chat_persistence.py` reads `memory_mode` back out of saved session
-          metadata on load, which is only possible for a chat that was written to disk.
-          Exclusion from history is the separate `ephemeral` flag, and `createChatSession`
-          never sends it. Say what the mode actually guarantees; a privacy promise that
-          over-states itself is worse than a narrower true one. */}
+      {/* Memory-mode notice: incognito/temporary sessions look identical to a normal one
+          otherwise, so say what this mode does before the user types. The words are
+          `memoryModeCopy`'s, which holds each clause to what the backend does; a privacy
+          promise that over-states itself is worse than a narrower true one. */}
       {memoryMode !== 'persistent' && (
         <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
           {memoryMode === 'incognito' ? <EyeOff size={13} className="shrink-0" /> : <Clock size={13} className="shrink-0" />}
-          <span>{memoryMode === 'incognito'
-            ? 'Incognito — memory is still read for context, but nothing from this chat is written back to it. The chat itself is saved in your history.'
-            : 'Temporary — this chat is forgotten when the session ends.'}</span>
+          <span>{MEMORY_MODE_NOTICE[memoryMode]}</span>
         </div>
       )}
       {/* An app's conversation: what you send runs under the APP's grant, not your approval

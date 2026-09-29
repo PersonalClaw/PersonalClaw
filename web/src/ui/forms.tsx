@@ -61,12 +61,12 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **376** hinted publishers render today — **322** DIRECT call sites (Field 163,
- *  settingsUI's Row 92, NumberRow 67) plus **54** that arrive through seven local wrappers which
+ *  expected to follow. **377** hinted publishers render today — **323** DIRECT call sites (Field 163,
+ *  settingsUI's Row 92, NumberRow 68) plus **54** that arrive through seven local wrappers which
  *  forward a hint into one of those three (ToggleRow 34, StrListField 5, SelectRow 4, TextRow 4,
  *  CheckList 3, EnumRow 2, SegRow 2). Recounted **2026-09-29** with the depth-tracking scan
  *  `fieldHintCounts.test.ts` runs; the 357/305 reading of 2026-09-26 (Field 152, Row 87, NumberRow 66)
- *  is stale — three days of feature work added 19 hinted publishers, one of them the settings list
+ *  is stale — three days of feature work added 20 hinted publishers, one of them the settings list
  *  editor's. The 336/284 reading of 2026-09-19 (Field 133, Row 84, NumberRow 67) is staler, and the
  *  289/253 (Field 132, Row 82, NumberRow 39) reading before it staler again — closing the nine config
  *  sections that were PATCH-editable with no Settings control (#752,
@@ -82,7 +82,7 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  reds on healthy growth is a rail someone weakens. The floor catches the failure that matters — the
  *  scan breaking, or publishers disappearing — and the test names the command to refresh the prose.
  *
- *  None of the 357 has to change — the id is published here and claimed by the same controls that
+ *  None of the 377 has to change — the id is published here and claimed by the same controls that
  *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }

@@ -24,7 +24,7 @@ function attr(attrs: string | undefined, name: string): string | undefined {
   return m ? m[1] : undefined
 }
 function widgetSeg(attrs: string | undefined, html: string, complete: boolean): WidgetSegment {
-  // `kind="react"` selects the React+Babel renderer; default (absent) is the
+  // `kind="react"` selects the React renderer; default (absent) is the
   // plain HTML widget iframe. The inner body is JSX source for a react widget.
   return { type: 'widget', title: attr(attrs, 'title') || 'Widget', slug: attr(attrs, 'slug'), html: html.trim(), complete, kind: attr(attrs, 'kind') }
 }

@@ -245,8 +245,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
                 // A blank create form here opens on the full ontology (four trigger kinds, ~15
                 // lifecycle events, every action provider), so the empty state offers finished
-                // presets that SEED that same form instead. The expert blank path is untouched:
-                // it is still the top bar's "New trigger", and it is repeated under the grid.
+                // presets that SEED that same form instead. The expert blank path is still the top
+                // bar's "New trigger", repeated under the grid. This branch is rare on a real home:
+                // the triggers PersonalClaw registers for itself fill the list, which is why the
+                // blank form "New trigger" opens offers the same presets at its top.
                 <PresetEmptyState
                   title="No triggers"
                   // No em dash in this hint on purpose: at the centered 520px measure it wrapped

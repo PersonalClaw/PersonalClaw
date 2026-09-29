@@ -542,3 +542,57 @@ def test_every_ZERO_TOKEN_entry_names_a_REAL_provider_and_no_model_one_is_listed
         "selfqa-commit-watch",
     }
     assert not (ZERO_TOKEN_PROVIDERS & model_invoking), ZERO_TOKEN_PROVIDERS & model_invoking
+
+
+# ── the floor governs a cadence someone authored, not one the product chose ──
+
+
+def test_a_SYSTEM_row_at_the_cadence_its_code_chose_is_NOT_warned(home, state):
+    """🔴 A WARNING NOBODY COULD ACT ON. The heartbeat pass registers itself every 60s with an
+    action that can call a model, and its row wore "60s is below the 900s floor … confirm this is
+    intended" — on a trigger the owner never created, about a cadence the product chose on purpose,
+    with nothing to confirm it with. The floor guards against a typed accident; a row the product
+    wrote has none. Registered by its real registrar, so the row is the one a fresh home holds."""
+    from personalclaw.action_providers.heartbeat_tasks_provider import (
+        HEARTBEAT_TASKS_TRIGGER_ID,
+        INTERVAL_SECS,
+        reconcile_heartbeat_tasks_trigger,
+    )
+
+    assert 0 < INTERVAL_SECS < MIN_CLOCK_INTERVAL_SECS, "the premise: the pass IS under the floor"
+    reconcile_heartbeat_tasks_trigger(T._trigger_store())
+    row = _row_from_list(state, f"schedule:{HEARTBEAT_TASKS_TRIGGER_ID}")
+    assert row["warnings"] == [] and row["broken"] == [], row
+    report = _body(_run(T.api_triggers_doctor(_req("GET", "/api/triggers/doctor", state))))
+    assert report["findings"] == [], report["findings"]
+
+
+def test_who_chose_the_cadence_decides_for_BOTH_floors():
+    """The control for the test above, through both copies of the floor — the interval one
+    (`validate_spec`, at load) and the cron one (`arm.semantic_spec_issues`, the doctor's). The same
+    spec and action warn when a person or an agent wrote the row and not when the product did, so
+    the verdict follows who chose the cadence rather than a floor that stopped firing."""
+    from personalclaw.triggers.arm import semantic_spec_issues
+    from personalclaw.triggers.models import parse_trigger
+
+    action = {"inline": {"provider": "heartbeat-tasks", "config": {}}}
+
+    def interval_floor(created_by):
+        raw = {
+            "id": "t",
+            "name": "t",
+            "kind": "clock",
+            "created_by": created_by,
+            "spec": {"kind": "interval", "interval_secs": 60},
+            "workflow": action,
+        }
+        return [i for i in parse_trigger(raw)[1] if i.path == "spec.interval_secs"]
+
+    def cron_floor(created_by):
+        spec = {"kind": "cron", "expr": "* * * * *"}
+        issues = semantic_spec_issues("clock", spec, action, created_by=created_by)
+        return [i for i in issues if i.path == "spec.expr"]
+
+    for floor in (interval_floor, cron_floor):
+        assert floor("user") and floor("agent"), floor.__name__
+        assert floor("system") == [], floor.__name__

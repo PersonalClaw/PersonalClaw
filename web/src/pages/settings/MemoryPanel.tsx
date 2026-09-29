@@ -172,13 +172,20 @@ function Stat({ label, value, sub, title }: { label: string; value: number; sub?
   )
 }
 
-/** value_json is JSON-encoded (sometimes doubly) — unwrap to a readable string. */
+/** value_json is JSON-encoded (sometimes doubly) — unwrap to a readable string.
+ *
+ *  A record whose stored value is JSON `null` holds nothing, and says so: "null" is how the
+ *  serializer spells nothing, and printed as the value it read as the record's content. Only the
+ *  STORED value decides that — a string someone saved as "null" is text, and stays "null". */
 function readValue(raw?: string): string {
   if (raw == null) return ''
   let v: unknown = raw
   for (let i = 0; i < 2; i++) {
     if (typeof v !== 'string') break
-    try { v = JSON.parse(v) } catch { break }
+    let next: unknown
+    try { next = JSON.parse(v) } catch { break }
+    if (next === null) return i === 0 ? 'No value' : v
+    v = next
   }
   return typeof v === 'string' ? v : JSON.stringify(v)
 }

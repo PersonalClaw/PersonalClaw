@@ -85,6 +85,6 @@ file via `content_file=` (absolute path — a Workspace/cwd file).
 > **User (next day):** "Add a burndown chart to the team dashboard."
 
 1. `artifact_get(slug="team-dashboard")` → current HTML.
-2. Add the chart (Chart.js from jsDelivr — see the `widgets` skill for CSP/theme).
+2. Add the chart, drawn in inline SVG (see the `visual-output` skill for CSP/theme).
 3. `artifact_update(slug="team-dashboard", content="<new HTML>")` → new version.
 4. Re-render in chat with `<widget title="Team Dashboard" slug="team-dashboard">…`.

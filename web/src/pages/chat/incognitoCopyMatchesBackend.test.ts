@@ -9,16 +9,21 @@ import { join } from 'node:path'
 // with memory context exactly as a persistent one is. Only WRITES are suppressed
 // (`is_restricted`, i.e. `!= 'persistent'`, which gates consolidation + lessons).
 //
-// The banner also claimed the chat "stays out of your history". Also false: `chat_persistence`
-// reads `memory_mode` back out of SAVED session metadata on load, which is only possible for a
-// transcript that was written to disk. History exclusion is the separate `ephemeral` flag, and
-// `createChatSession` has no such parameter to send.
+// The banner also claimed the chat "stays out of your history", which was false when this was
+// written. It is true now: the chat list and its search leave incognito and temporary chats out,
+// while their transcript is still saved — so the notice says both halves, and
+// `memoryModeNoticeIsTrue.test.ts` holds those words to the backend lines they rest on. This file
+// keeps the half about memory: reads and writes.
 //
 // This rails the COPY against the backend contract rather than against a fixed string, so if
-// incognito is ever widened to block reads this test names the copy that must move with it.
+// incognito is ever widened to block reads this test names the copy that must move with it. The
+// words live in `memoryModeCopy.ts`, the one owner the picker and the notice both read.
 
 const CHAT_PAGE = join(__dirname, '..', 'ChatPage.tsx')
+const COPY = join(__dirname, 'memoryModeCopy.ts')
 const STATE_PY = join(__dirname, '..', '..', '..', '..', 'src', 'personalclaw', 'dashboard', 'state.py')
+/** Every surface a mode's words can be written on: the owner, and the page that renders them. */
+const surfaces = () => [readFileSync(COPY, 'utf8'), readFileSync(CHAT_PAGE, 'utf8')].join('\n')
 
 describe('incognito copy matches the backend contract', () => {
   it('the backend still blocks reads for `temporary` only', () => {
@@ -29,7 +34,7 @@ describe('incognito copy matches the backend contract', () => {
   })
 
   it('no incognito surface claims memory is not read', () => {
-    const src = readFileSync(CHAT_PAGE, 'utf8')
+    const src = surfaces()
     const claims = src
       .split('\n')
       .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
@@ -38,18 +43,8 @@ describe('incognito copy matches the backend contract', () => {
     expect(claims).toEqual([])
   })
 
-  it('no incognito surface claims the chat stays out of history', () => {
-    const src = readFileSync(CHAT_PAGE, 'utf8')
-    const claims = src
-      .split('\n')
-      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
-      .filter((l) => /[Ii]ncognito/.test(l))
-      .filter((l) => /out of your history|stays out of|not saved|never saved/i.test(l))
-    expect(claims).toEqual([])
-  })
-
   it('still tells the user writes are suppressed — the guarantee incognito does make', () => {
-    const src = readFileSync(CHAT_PAGE, 'utf8')
+    const src = surfaces()
     expect(src).toMatch(/writes nothing back/)
     expect(src).toMatch(/nothing from this chat is written back to it/)
   })

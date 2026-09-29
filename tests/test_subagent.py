@@ -5,11 +5,13 @@ when configured, gating spawn execution behind user approval.
 """
 
 import asyncio
+import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
 from personalclaw.subagent import _TURN_LIMIT, SubagentManager
 
 # How long a stand-in coroutine hangs when a test needs a cap to fire. It only has to
@@ -269,7 +271,7 @@ class TestSpawnWithApprovalCallback:
 
         approval_callback.assert_awaited_once()
         assert info.done is True
-        assert info.error == "spawn rejected"
+        assert info.error == "spawn declined, so it never started"
         assert info.result == ""
         on_done_callback.assert_awaited_once_with([info])  # batch contract
 
@@ -310,7 +312,9 @@ class TestSpawnWithApprovalCallback:
             await manager._tasks[info.id]
 
         assert info.done is True
-        assert info.error == "spawn rejected"
+        assert (
+            info.error == "spawn not approved: asking for the approval failed, so it never started"
+        )
         assert manager._running_count == 0
 
     @pytest.mark.asyncio
@@ -604,6 +608,94 @@ class TestSubagentReaper:
         assert info.result == "all good"
         assert info.error == ""
 
+    @staticmethod
+    async def _one_sweep(manager: SubagentManager) -> None:
+        """One real reaper sweep: the first sleep returns, the second ends the loop."""
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError])),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await manager._reaper_loop()
+
+    @pytest.mark.asyncio
+    async def test_the_reaper_leaves_a_spawn_waiting_for_its_owners_approval(self) -> None:
+        """A loop step asked its owner to approve its start, and the reaper stopped it half an
+        hour in, measured from the REQUEST, while the approval had an hour and a half to run.
+        The loop reported that as its iteration failing. Not working is not overrunning work."""
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder(), is_yolo=lambda: False
+        )
+        info = SubagentInfo(
+            id="wait0001", task="draft a note", started=time.time() - _TIMEOUT_SECS - 600
+        )
+        manager._agents["wait0001"] = info
+        manager._running_count = 1
+
+        await self._one_sweep(manager)
+
+        assert (info.done, info.reaped, info.error) == (False, False, "")
+        assert manager._running_count == 1
+
+    @pytest.mark.asyncio
+    async def test_the_reaper_leaves_a_spawn_waiting_in_the_queue(self) -> None:
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder(), is_yolo=lambda: True
+        )
+        info = SubagentInfo(
+            id="queue001", task="later", started=time.time() - _TIMEOUT_SECS - 600, queued=True
+        )
+        manager._agents["queue001"] = info
+        manager._queue.append(info)
+
+        await self._one_sweep(manager)
+
+        assert (info.done, info.reaped, info.error) == (False, False, "")
+        assert manager._queue == [info]
+
+    @pytest.mark.asyncio
+    async def test_the_reaper_still_stops_a_run_past_the_limit(self) -> None:
+        """The control: a run that began past the limit ago is reaped, as it always was."""
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder(), is_yolo=lambda: True
+        )
+        info = SubagentInfo(id="work0001", task="grind", started=time.time() - _TIMEOUT_SECS - 60)
+        manager._agents["work0001"] = info
+        manager._running_count = 1
+        manager._run_started["work0001"] = time.monotonic() - _TIMEOUT_SECS - 60
+
+        await self._one_sweep(manager)
+
+        assert info.done is True and info.reaped is True
+        assert info.error.startswith("Reaped after "), info.error
+        assert f"(exceeded {_TIMEOUT_SECS}s deadline) [" in info.error, info.error
+
+    @pytest.mark.asyncio
+    async def test_a_reaped_run_that_was_waiting_for_its_owner_says_so(self) -> None:
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder(), is_yolo=lambda: True
+        )
+        info = SubagentInfo(id="ask00001", task="ask", started=time.time() - _TIMEOUT_SECS - 60)
+        manager._agents["ask00001"] = info
+        manager._running_count = 1
+        manager._run_started["ask00001"] = time.monotonic() - _TIMEOUT_SECS - 60
+        manager._asking_owner["ask00001"] = "ls"
+
+        await self._one_sweep(manager)
+
+        assert info.reaped is True
+        assert "deadline) while waiting for you to answer ls [" in info.error, info.error
+        assert manager._asking_owner == {}
+
     @pytest.mark.asyncio
     async def test_reaper_handles_reset_timeout(self) -> None:
         """Reaper falls back to SIGKILL when reset() hangs past deadline."""
@@ -761,28 +853,20 @@ class TestConfigurableTimeout:
             is_yolo=lambda: True,
         )
 
-        # Agent started 35 min ago — past default 1800s but within custom 3600s
+        # Its run began 35 min ago — past the default 1800s but within the custom 3600s
         info = SubagentInfo(
             id="alive001",
             task="long task",
-            started=time.time() - 2100,  # 35 min
+            started=time.time() - 2100,
             parent_session_key="dashboard:default",
         )
-        info.done = False
         manager._agents["alive001"] = info
         manager._running_count = 1
+        manager._run_started["alive001"] = time.monotonic() - 2100
 
-        # Run one iteration of the reaper loop logic inline
-        # (mirrors _reaper_loop's inner check)
-        now = time.time()
-        elapsed = now - info.started
-        assert elapsed > 1800  # would be killed with default timeout
-        assert elapsed <= custom_timeout  # but within custom timeout
+        await TestSubagentReaper._one_sweep(manager)
 
-        # Simulate what the reaper does: skip if elapsed <= _default_timeout
-        should_reap = elapsed > manager._default_timeout
-        assert not should_reap
-        assert not info.done
+        assert not info.done and not info.reaped
         assert manager._running_count == 1
 
     @pytest.mark.asyncio
@@ -829,6 +913,133 @@ class TestConfigurableTimeout:
         assert info.done is True
         assert "Reaped" in info.error
         assert manager._running_count == 0
+
+
+class TestATimeLimitThatEndsAWaitSaysSo:
+    """An approval a RUNNING agent asks for ends with that work's own time limit — Settings says
+    so, under Approval wait. When the limit ends such a wait, the agent's error says it was
+    waiting for you: "Timed out after 30 minutes" alone read, in the loop's Inbox note, as the
+    iteration failing at its work."""
+
+    LIMIT = 1  # seconds; an int, as the setting is
+
+    @staticmethod
+    def _asked() -> LLMEvent:
+        return LLMEvent(
+            kind=EVENT_PERMISSION_REQUEST,
+            title="ls",
+            tool_kind="execute",
+            request_id="req-1",
+            tool_input='{"command": "ls -la /tmp"}',
+        )
+
+    async def _run(self, script: list, *, answer_after: float):
+        """Run one agent whose turn is *script*: events it yields, and floats that are seconds
+        of its own work. Its owner answers each call it asks after *answer_after* seconds."""
+        import personalclaw.config.loader as loader
+        from personalclaw.hooks import ToolHookResult
+        from personalclaw.subagent import SubagentInfo
+
+        (loader.config_dir() / "config.json").write_text(
+            json.dumps({"agent": {"approval_mode": "interactive"}}), encoding="utf-8"
+        )
+        sessions = _mock_sessions()
+        sessions.get_approval_policy = MagicMock(return_value="")
+        client = sessions.get_or_create.return_value[0]
+
+        async def _stream(*_a, **_kw):
+            for step in [*script, LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")]:
+                if isinstance(step, float):
+                    await asyncio.sleep(step)
+                else:
+                    yield step
+
+        client.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+        ctx = _mock_ctx_builder()
+        ctx.hooks.on_tool_call = MagicMock(return_value=ToolHookResult.allow())
+        ctx.hooks.auto_approve_subagent_tools = False
+
+        async def _owner(*_a, **_kw) -> bool:
+            await asyncio.sleep(answer_after)
+            return True
+
+        manager = SubagentManager(
+            sessions=sessions,
+            ctx_builder=ctx,
+            is_yolo=lambda: False,
+            on_tool_approval=AsyncMock(side_effect=_owner),
+            default_timeout=self.LIMIT,
+        )
+        info = SubagentInfo(id="clock001", task="look it up", parent_session_key="")
+        manager._agents[info.id] = info
+        manager._running_count = 1
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            await manager._run(info)
+        return info, client, manager
+
+    @pytest.mark.asyncio
+    async def test_the_limit_ending_a_wait_for_the_owner_says_it_was_waiting(self) -> None:
+        """🔴 Before: "Timed out after 0 minutes [turn 0/0 | elapsed: 1s]" — nothing said the
+        agent had been waiting for you all along."""
+        info, client, manager = await self._run([self._asked()], answer_after=2.0)
+        assert info.error.startswith(
+            "Timed out after 0 minutes while waiting for you to answer ls ["
+        ), info.error
+        client.approve_tool.assert_not_awaited()
+        assert manager._asking_owner == {} and manager._run_started == {}
+
+    @pytest.mark.asyncio
+    async def test_the_limit_ending_work_says_nothing_of_waiting(self) -> None:
+        """The control: work past the limit is the plain timeout it always was."""
+        info, _, _ = await self._run([2.0], answer_after=0.0)
+        assert info.error.startswith("Timed out after 0 minutes ["), info.error
+
+    @pytest.mark.asyncio
+    async def test_an_answered_wait_is_not_blamed_for_a_later_stop(self) -> None:
+        info, client, _ = await self._run([self._asked(), 2.0], answer_after=0.0)
+        client.approve_tool.assert_awaited_once_with("req-1")
+        assert info.error.startswith("Timed out after 0 minutes ["), info.error
+
+
+class TestASpawnThatAskedSaysHowItEnded:
+    """A spawn that waited for its owner and never started says why, in the words its failure is
+    read in — a loop step's cause, the loop's Inbox note. "spawn rejected" said it of every
+    ending, so a request nobody answered read as the owner refusing it."""
+
+    @staticmethod
+    async def _refused(decision) -> str:
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_spawn_approval=AsyncMock(return_value=decision),
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            info = manager.spawn("draft a short note")
+            assert info is not None
+            await manager._tasks[info.id]
+        assert info.done is True and info.result == ""
+        return info.error
+
+    @pytest.mark.asyncio
+    async def test_nobody_answering_in_time_says_so_and_names_the_setting(self) -> None:
+        from personalclaw.approval_grants import NOBODY, ToolDecision
+
+        error = await self._refused(ToolDecision(False, "expired", NOBODY))
+        assert error == (
+            "spawn not approved in time: nobody answered within 120 minutes "
+            "(Settings → Agent defaults → Approval wait), so it never started"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_approval_that_ended_unanswered_says_so(self) -> None:
+        from personalclaw.approval_grants import NOBODY, ToolDecision
+
+        error = await self._refused(ToolDecision(False, "cancelled", NOBODY))
+        assert error.startswith("spawn not approved: its approval ended before anyone answered")
+
+    @pytest.mark.asyncio
+    async def test_the_owner_declining_says_declined(self) -> None:
+        assert await self._refused(False) == "spawn declined, so it never started"
 
 
 class TestFireEvent:

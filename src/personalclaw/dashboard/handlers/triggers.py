@@ -2083,7 +2083,12 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
     from personalclaw.triggers.calendar import Finding
 
     for row in store_rows:
-        for issue in semantic_spec_issues(row.trigger.kind, row.trigger.spec, row.trigger.workflow):
+        for issue in semantic_spec_issues(
+            row.trigger.kind,
+            row.trigger.spec,
+            row.trigger.workflow,
+            created_by=row.trigger.created_by,
+        ):
             is_error = issue.severity == "error"
             report.findings.append(
                 Finding(

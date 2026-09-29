@@ -6,12 +6,16 @@
  *  A second way into chat would be the dual path this repo forbids, so the assertion
  *  is deliberately narrow: `launchChat` is called, and the staged turn is exactly the
  *  text the widget produced. */
-import { render, act } from '@testing-library/react'
+import { render, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { IframeHtmlPreview } from '../content/renderers'
 import { PinnedTiles } from '../../pages/dashboard/PinnedTiles'
 import { ReactWidgetFrame } from './ReactWidgetFrame'
 import { takePendingWidgetAction, useWidgetActionLauncher } from './useWidgetActionBridge'
+
+// The JSX compile runs in the code editor's language worker, which jsdom cannot host; the
+// component passes through as written.
+vi.mock('./reactJsx', () => ({ transformJsx: async (jsx: string) => ({ code: jsx }) }))
 
 const launched: unknown[] = []
 vi.mock('../../app/appSdk', () => ({
@@ -97,8 +101,14 @@ describe('dashboard tile band', () => {
 describe('react widget host', () => {
   it('does not forward actions — its child document has no human-gesture gate', async () => {
     const view = render(<Shell><ReactWidgetFrame jsx="const App = () => null" title="R" /></Shell>)
-    await act(async () => {})
-    const child = view.container.querySelector('iframe')?.contentWindow ?? null
+    // A frame must exist, or a post "from" it proves nothing: a null source is refused anyway.
+    const iframe = await waitFor(() => {
+      const f = view.container.querySelector('iframe')
+      if (!f) throw new Error('the react host rendered no widget frame')
+      return f
+    })
+    const child = iframe.contentWindow
+    expect(child).not.toBeNull()
     postFrom(child, action)
     expect(launched).toEqual([])
     expect(takePendingWidgetAction()).toBeNull()

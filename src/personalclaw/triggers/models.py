@@ -359,6 +359,20 @@ def action_invokes_model(workflow: Any) -> bool:
     return not provider_is_zero_token(action.get("provider"))
 
 
+def cadence_floor_governs(workflow: Any, created_by: str = "") -> bool:
+    """Whether the `MIN_CLOCK_INTERVAL_SECS` floor governs a trigger's cadence.
+
+    The floor guards against an ACCIDENT: a cadence somebody typed (`* * * * *`, "every 1 minute")
+    on an action that can call a model (`action_invokes_model`). A row the product registers itself
+    (`created_by == "system"` — the heartbeat pass, the digests, the reports) runs at the cadence
+    its own code chose on purpose, so there is no accident to flag. Warned anyway, the heartbeat
+    row told its owner "60s is below the 900s floor … confirm this is intended" on a trigger they
+    never created, about a choice they never made, with nothing to confirm it with. Editing such a
+    row's cadence still shows the floor where the new value is typed (the schedule form's hint).
+    """
+    return created_by != "system" and action_invokes_model(workflow)
+
+
 def provider_is_zero_token(provider: Any) -> bool:
     """Whether the named action provider can never reach a model call (`ZERO_TOKEN_PROVIDERS`)."""
     return isinstance(provider, str) and provider in ZERO_TOKEN_PROVIDERS
@@ -546,7 +560,9 @@ def _event_spec_issues(spec: dict[str, Any] | None) -> list[Issue]:
     return issues
 
 
-def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list[Issue]:
+def validate_spec(
+    kind: str, spec: dict[str, Any], workflow: Any = None, *, created_by: str = ""
+) -> list[Issue]:
     """Structural issues in one kind's spec. NEVER raises.
 
     Reports unknown keys with a suggestion and missing required ones as errors.
@@ -555,9 +571,9 @@ def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list
     failure at author time would reject a trigger the service could have run. Structure here,
     semantics there.
 
-    `workflow` is the trigger's action, read by exactly one rule: the interval floor, which governs
-    only a trigger that can call a model (`action_invokes_model`). Omitted, the action is unknown
-    and the floor applies — the direction a caller that cannot see the action should get.
+    `workflow` (the trigger's action) and `created_by` are read by exactly one rule: the interval
+    floor, which governs only what `cadence_floor_governs` says it does. Omitted, the action is
+    unknown and the floor applies — the direction a caller that cannot see the action should get.
     """
     issues: list[Issue] = []
     known = SPEC_KEYS.get(kind)
@@ -645,7 +661,7 @@ def validate_spec(kind: str, spec: dict[str, Any], workflow: Any = None) -> list
                 secs = int((spec or {}).get("interval_secs") or 0)
             except (TypeError, ValueError):
                 secs = 0
-            if 0 < secs < MIN_CLOCK_INTERVAL_SECS and action_invokes_model(workflow):
+            if 0 < secs < MIN_CLOCK_INTERVAL_SECS and cadence_floor_governs(workflow, created_by):
                 issues.append(
                     Issue(
                         path="spec.interval_secs",
@@ -1221,7 +1237,11 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     raw_gates = data.get("gates")
     spec: dict[str, Any] = dict(raw_spec) if isinstance(raw_spec, dict) else {}
     gates: dict[str, Any] = dict(raw_gates) if isinstance(raw_gates, dict) else {}
-    issues.extend(validate_spec(kind, spec, data.get("workflow")))
+    issues.extend(
+        validate_spec(
+            kind, spec, data.get("workflow"), created_by=str(data.get("created_by", "") or "")
+        )
+    )
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
     issues.extend(_resume_target_issues(data.get("workflow")))

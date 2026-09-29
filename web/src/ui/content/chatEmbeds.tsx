@@ -19,7 +19,7 @@ export const HtmlWidgetEmbed = memo(function HtmlWidgetEmbed({ content, title, s
   return <WidgetFrame html={content} title={title} slug={slug} messageTs={messageTs} widgetIndex={widgetIndex} streaming={streaming} />
 })
 
-/** React widget — JSX in the Babel-in-iframe frame (no partial render). */
+/** React widget — JSX compiled here and rendered in the sandboxed React frame (no partial render). */
 export const ReactWidgetEmbed = memo(function ReactWidgetEmbed({ content, title }: EmbedProps) {
   return <ReactWidgetFrame jsx={content} title={title} />
 })

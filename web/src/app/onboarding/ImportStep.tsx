@@ -258,10 +258,11 @@ export function ImportStep({ onDone, onSkip }: {
       setScan(s)
       setReading(s.reading ?? null)
       // Everything that CAN come over starts ticked: the user came here to bring their
-      // setup over, and un-ticking is a smaller act than hunting for what to tick. The one
-      // exception is an item the other tool itself does not use (`preselected: false` — a
-      // project's MCP server nobody approved there, a file an override replaces): bringing that
-      // over is the user's call, and the item's note says why.
+      // setup over, and un-ticking is a smaller act than hunting for what to tick. The
+      // exceptions (`preselected: false`) are an item the other tool itself does not use — a
+      // project's MCP server nobody approved there, a file an override replaces — and a skill
+      // whose security scan warned: bringing either over is the user's call, and the item's
+      // note says why.
       setPicked(new Set(s.sources.filter((x) => x.detected)
         .flatMap((x) => x.items.filter(startsTicked).map((i) => i.fingerprint))))
       setOpen(new Set())
@@ -491,8 +492,16 @@ export function ImportStep({ onDone, onSkip }: {
    *  tool" read as one tool on a machine that has two, and "its setup" could only mean one. */
   const found = detected.map((s) => s.display_name).join(' and ')
   const one = detected.length === 1
-  /** New items the step leaves unticked, so "everything is ticked" stays true. */
-  const unticked = choosable.filter((i) => !startsTicked(i)).length
+  /** New items the step leaves unticked, so "everything is ticked" stays true — counted by WHY,
+   *  because the two reasons are different facts: an item the other tool does not use, and a skill
+   *  the other tool uses but whose security scan warned, which comes over only when its own row
+   *  accepts the warnings. One count under the first reason told the user that about both. */
+  const warned = choosable.filter(needsAcceptance).length
+  const unused = choosable.filter((i) => !startsTicked(i) && !needsAcceptance(i)).length
+  const exceptions = [
+    unused ? `${plural(unused, 'item', 'items')} the other tool does not use` : '',
+    warned ? `${plural(warned, 'skill', 'skills')} the security scan warned about` : '',
+  ].filter(Boolean)
   const nothingNewSentence = unreadable === 0
     ? `Everything we found in ${found} is already here, or differs from what you have — nothing new to bring over.`
     : anyItems
@@ -512,7 +521,7 @@ export function ImportStep({ onDone, onSkip }: {
               <p data-type="body-s" className="text-on-surface-var">
                 {nothingNew
                   ? nothingNewSentence
-                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, and nothing in ${one ? 'it' : 'them'} is changed. Everything is ticked${unticked ? `, except ${plural(unticked, 'item', 'items')} the other tool does not use` : ''}; choose item by item inside any group.`}
+                  : `We found ${found} on this machine. Bring ${one ? 'its' : 'their'} setup over — ${one ? 'it is' : 'they are'} only read, and nothing in ${one ? 'it' : 'them'} is changed. Everything is ticked${exceptions.length ? `, except ${exceptions.join(' and ')}` : ''}; choose item by item inside any group.`}
               </p>
 
               <ReadingLine reading={reading ?? scan.reading ?? null} />

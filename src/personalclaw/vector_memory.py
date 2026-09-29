@@ -753,12 +753,26 @@ _MAX_BACKFILLS_PER_CALL = 5  # cap lazy embedding backfills to bound latency
 # OWN bounded block in `build_session_context`, so leaving it in the fact block would charge the
 # same text to the budget twice AND miscategorise the harness-facing slots: `slot.self_notes`
 # read back as a fact would assert the assistant's working notes as claims about the user.
-_NON_FACT_KEY_CLAUSE = (
-    "key NOT LIKE 'lesson.%' AND key NOT LIKE 'user.procedural.%' "
-    "AND key NOT LIKE 'user.persona.%' AND key NOT LIKE 'user.commitment.%' "
-    "AND key NOT LIKE 'user.selfmodel.%' AND key NOT LIKE 'user.approval.%' "
-    "AND key NOT LIKE 'slot.%'"
+#
+# Each of these rows has a writer of its own, so consolidation's formation pass (which writes
+# FACTS) must neither be shown them nor write to them: shown a procedural prior, a model answered
+# `"value": null` for it and formation stored that over the prior. One list, read by the SQL
+# clause and by :func:`is_fact_key`, so the two can never disagree about what a fact is.
+_NON_FACT_KEY_PREFIXES = (
+    "lesson.",
+    "user.procedural.",
+    "user.persona.",
+    "user.commitment.",
+    "user.selfmodel.",
+    "user.approval.",
+    "slot.",
 )
+_NON_FACT_KEY_CLAUSE = " AND ".join(f"key NOT LIKE '{p}%'" for p in _NON_FACT_KEY_PREFIXES)
+
+
+def is_fact_key(key: str) -> bool:
+    """Whether *key* names a fact about the user or the world, not a row another writer owns."""
+    return not key.startswith(_NON_FACT_KEY_PREFIXES)
 
 
 # ── Helpers ──

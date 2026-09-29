@@ -409,7 +409,7 @@ def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
 
 
 def semantic_spec_issues(
-    kind: str, spec: dict[str, Any] | None, workflow: Any = None
+    kind: str, spec: dict[str, Any] | None, workflow: Any = None, *, created_by: str = ""
 ) -> "list[Any]":
     """Semantic problems in a clock spec — the half ``models.validate_spec`` leaves out.
 
@@ -423,9 +423,9 @@ def semantic_spec_issues(
     * a valid 5-field expression whose sampled gap sits under the
       ``MIN_CLOCK_INTERVAL_SECS`` floor gets the same WARNING the interval kind gets —
       overridable, but never the accident you get from a typo (#612). Like the interval
-      floor it governs only an action that can call a model: ``workflow`` is the
-      trigger's action (``models.action_invokes_model``), and omitted means unknown, so
-      the floor applies,
+      floor it governs only what ``models.cadence_floor_governs`` says: an authored
+      cadence on an action that can call a model. ``workflow`` is the trigger's action
+      and ``created_by`` what wrote it; omitted means unknown, so the floor applies,
     * a skip date that is not ``YYYY-MM-DD`` can never match the fire path's
       ``%Y-%m-%d`` string comparison, so it is protection the user believes in and
       does not have (#270),
@@ -435,7 +435,7 @@ def semantic_spec_issues(
     Pure, never raises, and returns ``models.Issue`` rows so callers fold them into
     the same reporting the structural checks use.
     """
-    from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, Issue, action_invokes_model
+    from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, Issue, cadence_floor_governs
 
     issues: list[Issue] = []
     if kind != "clock" or not isinstance(spec, dict):
@@ -536,7 +536,7 @@ def semantic_spec_issues(
         else:
             cron_usable = True
             gap = _min_cron_gap_secs(expr)
-            if 0 < gap < MIN_CLOCK_INTERVAL_SECS and action_invokes_model(workflow):
+            if 0 < gap < MIN_CLOCK_INTERVAL_SECS and cadence_floor_governs(workflow, created_by):
                 # WARNING, not error — same overridability contract as the interval
                 # floor above (models.py S109): a fast local-model poll is a legitimate
                 # choice, it just should not be an accident.

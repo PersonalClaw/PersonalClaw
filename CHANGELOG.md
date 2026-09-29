@@ -168,6 +168,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A model that did not answer is logged as one warning naming the model and the cause, not a traceback, for a chat turn and for an auto-title.**
 
+- **An approval is answered where it is announced: its Inbox row and its notification offer Approve and Deny, and once it has ended they say so instead.**
+
+- **The trigger presets are on the form New trigger opens, so Morning briefing and the others can be picked on a home that already has triggers.**
+
+- **PersonalClaw's own triggers no longer ask you to confirm their cadence: the cadence floor warns only about one someone set, not the heartbeat pass's designed every 60s.**
+
+- **A subagent waiting for you to approve its start is not stopped by its time limit, which counts from when it starts running, so the loop or trigger that asked is not reported as failed while it waits; one that does end while waiting on you says so.**
+
+- **Memory consolidation no longer turns PersonalClaw's own records (procedures, lessons, the self-model) into facts with no value, so Memory Studio no longer lists them as "null", and a fact with no value reads "No value".**
+
+- **A lesson learned from "never do X" reads as you said it, not "Never: never do X".**
+
+- **The Incognito and Temporary chat notices say what happens: the chat stays out of your history and search, and PersonalClaw still keeps its transcript.**
+
+- **The import step says why an item starts unticked: a skill the security scan warned about is named as that, not as something the other tool does not use.**
+
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**
@@ -672,6 +688,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
 - **The libraries PersonalClaw's model features load report nothing and write nothing outside your PersonalClaw home: onnxruntime starts no telemetry and leaves no device identifier, the Hugging Face library keeps no list of AI tools in your shared Hugging Face folder and sends no usage pings, and the code map's grammars download into the home.**
 - **An MCP server's command, arguments and URL show every credential in them masked on the Tools page's edit form and in Settings → Providers, as the Allow question does, and a save keeps or replaces a masked value.**
+
+- **Widgets and react artifacts load nothing from a third party: their Tailwind CSS is compiled by the dashboard and React is written into their own document from the installed packages, so they render offline too, and neither the dashboard nor a deployed artifact allows a CDN to run code or styles. Widgets are told to draw their charts in SVG or on a canvas.**
 
 - **A sync writes nothing outside the stores it syncs: a path another machine names outside them is refused, nothing of that change is taken in, and the sync report names it.**
 

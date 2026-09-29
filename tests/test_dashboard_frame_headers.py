@@ -223,6 +223,24 @@ class TestOneStandardForBothSurfaces:
         dashboard = _parse_csp(dashboard_csp())
         assert artifact["frame-ancestors"] == dashboard["frame-ancestors"] == ["'self'"]
 
+    def test_neither_surface_loads_code_styles_or_fonts_from_another_origin(self) -> None:
+        """Local-first: what either surface runs, styles and sets in type with is served by this
+        gateway or held in the page — never fetched from a third party. A widget's Tailwind CSS
+        and a react artifact's React ride inside the widget's own document, so no CDN is owed an
+        allowance. A host source or a bare scheme (``https:``) in these directives is exactly a
+        third-party load, and every widget frame inherits the dashboard's policy."""
+        from personalclaw.artifacts.deploy import ARTIFACT_SERVE_CSP
+        from personalclaw.dashboard.server import dashboard_csp
+
+        local = {"'self'", "'none'", "'unsafe-inline'", "'unsafe-eval'", "data:", "blob:"}
+        for surface, policy in (("dashboard", dashboard_csp()), ("artifact", ARTIFACT_SERVE_CSP)):
+            directives = _parse_csp(policy)
+            # A policy missing the directive would fall back to default-src, checked too.
+            assert "script-src" in directives and "style-src" in directives, surface
+            for name in ("default-src", "script-src", "style-src", "font-src"):
+                remote = sorted(set(directives.get(name, [])) - local)
+                assert remote == [], f"the {surface} {name} names another origin: {remote}"
+
     def test_the_csp_parser_is_not_vacuous(self) -> None:
         """Detection direction: a parser that returned ``{}`` would make every
         ``directives[...]`` above raise rather than pass, but a parser that silently

@@ -1484,7 +1484,14 @@ class HistoryConsolidator:
             # Structured memory extraction (when the record store is available)
             has_vector = self._svc.has_vector
             if has_vector:
-                current_semantic = self._svc.get_all_semantic()
+                from personalclaw.vector_memory import is_fact_key
+
+                # The facts, and only the facts: this list is what the model is asked to keep
+                # current, and a row another writer owns (a procedural prior, the self-model's
+                # evidence, a lesson, a slot) is not its to rewrite.
+                current_semantic = [
+                    e for e in self._svc.get_all_semantic() if is_fact_key(str(e.get("key") or ""))
+                ]
                 semantic_json = (
                     json.dumps(
                         [

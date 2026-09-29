@@ -180,8 +180,9 @@ class ImportItem:
     note: str = ""
     #: Whether the step starts with this item ticked. False for an item the other tool itself
     #: does not use as it stands — a project's own ``.mcp.json`` server nobody approved there, an
-    #: ``AGENTS.md`` Codex reads an override of instead — so bringing it over is a choice the user
-    #: makes, not one the step makes for them. The item's ``note`` says why.
+    #: ``AGENTS.md`` Codex reads an override of instead — and for a skill whose ``scan`` warned, so
+    #: bringing it over is a choice the user makes, not one the step makes for them. The item's
+    #: ``note`` says why.
     preselect: bool = True
     #: How many credential/exfiltration-URL redactions were applied to ``text``.
     #: A count, never the matched value.

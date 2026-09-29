@@ -49,9 +49,11 @@ github.com — FETCHED only when the user creates a watched knowledge source fro
 pypi.org — FETCHED only when the user creates a watched knowledge source from a PyPI project URL: the shipped `pypi-releases` recipe resolves it to `pypi.org/rss/project/<name>/releases.xml`, polled only once the user has created the source. Also an EXAMPLE url inside `triggers/web_poll`'s docstring, showing what a user's watch expression looks like.
 www.reddit.com — FETCHED only when the user creates a watched knowledge source from a subreddit URL: the shipped `reddit-subreddit` recipe resolves it to `www.reddit.com/r/<name>/.rss`, polled only once the user has created the source.
 # ── Browser-side, from an iframe the user's own content created ────────────────
-cdn.jsdelivr.net — a CSP `script-src` entry and a `<script>` tag inside the artifact/widget iframe: Babel standalone, for transforming a react widget the agent produced. Loaded by the USER'S BROWSER, not by the gateway, and only when a react widget renders.
-cdnjs.cloudflare.com — same iframe: the pinned React and ReactDOM UMD bundles.
-cdn.tailwindcss.com — same iframe: Tailwind's browser build, for an artifact that uses utility classes.
+# None. A widget or react artifact's frame fetches nothing: its Tailwind CSS is compiled by the
+# dashboard and its React inlined from the installed packages, both inside the frame's own
+# document (web/src/ui/widget/widgetStyles.ts, reactFrameRuntime.ts), and no directive of the
+# dashboard's or the artifact server's policy that loads code, a stylesheet or a font names
+# another origin (tests/test_dashboard_frame_headers.py).
 # ── Never fetched: namespace identifiers, DTDs and schema ids ─────────────────
 www.w3.org — XML namespace identifiers, never retrieved: the SVG namespace on inline `<svg xmlns=…>` markup (the token page `dashboard/token_auth.py` serves, among others), and the Atom namespace `knowledge_providers/feed_source.py` uses to NAME the elements it parses (`{http://www.w3.org/2005/Atom}entry`). That module does fetch — the feed the user configured — but never this namespace: an XML namespace is an identifier, not a URL to retrieve.
 schemas.openxmlformats.org — the WordprocessingML namespace, used to build ElementTree tag names when parsing a .docx locally.

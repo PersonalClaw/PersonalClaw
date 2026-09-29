@@ -829,6 +829,28 @@ describe("a skill's security scan is shown before anything is imported", () => {
     expect(within(list).getByText(/Ticking it imports it anyway: you accept these warnings/)).toBeTruthy()
   })
 
+  it('the intro gives a warned skill its own reason: its scan warned, not that the other tool does not use it', async () => {
+    withSkills()
+    await mounted()
+    const intro = screen.getByText(/^We found Claude Code on this machine\./)
+    expect(intro.textContent).toContain('Everything is ticked, except 1 skill the security scan warned about;')
+    expect(intro.textContent, 'Claude Code uses this skill; only its scan keeps it unticked').not.toContain('does not use')
+  })
+
+  it('the intro names each reason once when both leave an item unticked', async () => {
+    onboardingImportScan.mockResolvedValue(scan([
+      ...ITEMS(), warning(),
+      item('m9', 'mcp_servers', 'project:/home/ada/src/demo:demo-tools', {
+        title: 'demo-tools', origin: 'Project · ~/src/demo/.mcp.json', preselected: false,
+        note: 'It came with the project, and it was never approved in Claude Code.',
+      }),
+    ]))
+    await mounted()
+    expect(screen.getByText(
+      /Everything is ticked, except 1 item the other tool does not use and 1 skill the security scan warned about;/,
+    )).toBeTruthy()
+  })
+
   it("the group's box never ticks it: the warning is accepted on its own row or not at all", async () => {
     withSkills()
     await mounted()

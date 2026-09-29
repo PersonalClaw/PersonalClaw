@@ -139,8 +139,8 @@ export interface EmbedProps {
  *  only types an agent can emit as a `<widget kind=…>` block declare it. */
 export interface EmbedCapability {
   render: LazyExoticComponent<ComponentType<EmbedProps>> | ComponentType<EmbedProps>
-  /** A streaming embed renders its partial body; a non-streaming one (react/Babel)
-   *  holds until the closing tag arrives. */
+  /** A streaming embed renders its partial body; a non-streaming one (react, whose JSX
+   *  must compile whole) holds until the closing tag arrives. */
   streaming?: boolean
 }
 

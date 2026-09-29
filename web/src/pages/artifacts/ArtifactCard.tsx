@@ -1,9 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { fvs } from '../../design/fontWeight'
 import { api, type Artifact } from '../../lib/api'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
 import { buildSrcdoc, buildReactSrcdoc, readThemeVars } from '../../ui/widget/widgetSrcdoc'
+import { useWidgetCss } from '../../ui/widget/widgetStyles'
+import { useReactPreview } from '../../ui/widget/reactPreview'
 import { resolveContentType, isSandboxed } from '../../ui/content/contentTypes'
 import { TileButton } from '../../ui/TileButton'
 import { useMode } from '../../app/theme'
@@ -106,16 +108,25 @@ function KindTile({ icon: Icon, tone }: { icon: LucideIcon; tone: string }) {
   )
 }
 
-/** The live iframe preview — srcdoc per kind, sandboxed + inert + scaled. */
-function LivePreview({ art, content, mode }: { art: Artifact; content: string; mode: 'dark' | 'light' }) {
+/** The live iframe preview — srcdoc per kind, sandboxed + inert + scaled. A react artifact's
+ *  document waits for its component to be compiled (`reactPreview`): *pending* shows until then,
+ *  and a component that does not compile says so instead of drawing a frame. */
+function LivePreview({ art, content, mode, pending }: { art: Artifact; content: string; mode: 'dark' | 'light'; pending: ReactNode }) {
+  const isReact = art.kind === 'react'
+  // widget/html/infographic/document/svg all render through the standard themed
+  // srcdoc (document/svg get readable theme colors; scripts stay sandboxed).
+  const html = art.kind === 'svg' ? `<div style="display:grid;place-items:center;height:100vh">${content}</div>` : content
+  const css = useWidgetCss(html)
+  const react = useReactPreview(isReact ? content : null)
   const srcdoc = useMemo(() => {
     const themeVars = readThemeVars()
-    if (art.kind === 'react') return buildReactSrcdoc({ jsx: content, themeVars, mode })
-    // widget/html/infographic/document/svg all render through the standard themed
-    // srcdoc (document/svg get readable theme colors; scripts stay sandboxed).
-    const html = art.kind === 'svg' ? `<div style="display:grid;place-items:center;height:100vh">${content}</div>` : content
-    return buildSrcdoc({ html, themeVars, mode })
-  }, [art.kind, content, mode])
+    if (!isReact) return buildSrcdoc({ html, css, themeVars, mode })
+    return react && 'code' in react
+      ? buildReactSrcdoc({ code: react.code, runtime: react.runtime, css, themeVars, mode })
+      : null
+  }, [isReact, html, css, react, mode])
+  if (react && 'error' in react) return <Placeholder tone="var(--color-danger)" label="Does not compile" />
+  if (srcdoc === null) return <>{pending}</>
   return (
     <div className="pointer-events-none h-full w-full overflow-hidden" aria-hidden>
       <iframe
@@ -205,7 +216,7 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
     }
     if (content === null) return <Placeholder tone={km.tone} label={km.label} />
     if (isExcerpt) return <ExcerptPreview content={content} />
-    if (live) return <LivePreview art={art} content={content} mode={mode} />
+    if (live) return <LivePreview art={art} content={content} mode={mode} pending={<Placeholder tone={km.tone} label={km.label} />} />
     return <Placeholder tone={km.tone} label={km.label} />
   })()
 

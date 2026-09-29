@@ -8,6 +8,7 @@ No spawn recursion: subagents cannot spawn other subagents.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
@@ -240,6 +241,30 @@ def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> s
         elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
         parts.append(f"elapsed: {int(elapsed)}s")
     return " | ".join(parts)
+
+
+def _spawn_refusal(decision: ToolDecision) -> str:
+    """Why a spawn that asked its owner never started, in the words its failure is read in: a
+    workflow step's cause, the loop's Inbox note, the background-agents list. "spawn rejected" said
+    it of every ending, and so read as the owner refusing work that nobody had answered."""
+    if decision.outcome == "expired":
+        minutes = round(approval_grants.approval_window_secs() / 60)
+        return (
+            f"spawn not approved in time: nobody answered within {minutes} minutes "
+            "(Settings → Agent defaults → Approval wait), so it never started"
+        )
+    if decision.outcome == "cancelled":
+        return "spawn not approved: its approval ended before anyone answered, so it never started"
+    if decision.decided_by == "approval_failed":
+        return "spawn not approved: asking for the approval failed, so it never started"
+    return "spawn declined, so it never started"
+
+
+def _waiting_note(tool: str) -> str:
+    """The clause a time-limit stop adds when the agent was waiting for its owner to answer a
+    call: the limit ended the wait, and saying only that it "timed out" read as the agent failing
+    at its work."""
+    return f" while waiting for you to answer {_redact(tool)[:80]}" if tool else ""
 
 
 def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:
@@ -593,6 +618,13 @@ class SubagentManager:
         # The grant that last waived an ask in each running agent's runtime (`_policy_source`),
         # so the audit row of a call its runtime approved without asking names who decided.
         self._waived_by: dict[str, str] = {}
+        # When each RUNNING agent's run began (`time.monotonic`), the moment its time limit counts
+        # from. A spawn still queued for a slot, or still waiting for its owner to approve its
+        # start, has no entry: it is not running, and what it waits on bounds the wait.
+        self._run_started: dict[str, float] = {}
+        # The call each running agent is waiting for its owner to answer, while it waits — so a
+        # time limit that ends the wait says that is what it ended.
+        self._asking_owner: dict[str, str] = {}
 
     # ── Limits, as they read now ─────────────────────────────────────────
 
@@ -779,14 +811,20 @@ class SubagentManager:
         Defense-in-depth: catches cases where ``asyncio.wait_for`` in
         ``_run()`` fails to fire (event-loop saturation, orphaned tasks,
         or ``reset()`` hanging in the finally block).
+
+        So it measures what that deadline measures: the time since the agent's RUN began
+        (``_run_started``). It used to measure from the spawn REQUEST, so it also stopped a spawn
+        still waiting for its owner to approve its start, or for a slot, and a loop's step asking
+        at the start of a two-hour approval wait was stopped at thirty minutes as a failure.
         """
         while True:
             await asyncio.sleep(_REAPER_INTERVAL)
-            now = time.time()
+            now = time.monotonic()
             for agent_id, info in list(self._agents.items()):
-                if info.done:
+                started = self._run_started.get(agent_id)
+                if info.done or started is None:
                     continue
-                elapsed = now - info.started
+                elapsed = now - started
                 if elapsed <= self._default_timeout:
                     continue
                 logger.warning(
@@ -830,6 +868,8 @@ class SubagentManager:
         task = self._tasks.pop(agent_id, None)
         if task and not task.done():
             task.cancel()
+        self._run_started.pop(agent_id, None)
+        asking = self._asking_owner.pop(agent_id, "")
 
         if not info.done:
             info.done = True
@@ -839,7 +879,7 @@ class SubagentManager:
             context = _timeout_context(info, include_elapsed=False)
             info.error = reason or (
                 f"Reaped after {int(elapsed)}s "
-                f"(exceeded {self._default_timeout}s deadline) [{context}]"
+                f"(exceeded {self._default_timeout}s deadline){_waiting_note(asking)} [{context}]"
             )
             self._dec_running(info)
             Stats().inc_subagent_failed()
@@ -1666,7 +1706,7 @@ class SubagentManager:
 
         if not decision:
             info.done = True
-            info.error = "spawn rejected"
+            info.error = _spawn_refusal(decision)
             self._dec_running(info)
             self._drain_queue()
             self._tasks.pop(info.id, None)
@@ -1749,16 +1789,37 @@ class SubagentManager:
     def count(self) -> int:
         return len(self.running)
 
+    @contextlib.contextmanager
+    def _waiting_for_owner(self, info: SubagentInfo, tool: str) -> Iterator[None]:
+        """Note, while it lasts, that the agent is waiting for its owner to answer *tool*.
+
+        The wait still counts against the agent's time limit — Settings says an approval a
+        running agent asks for ends with that work's time limit — so what this changes is what a
+        stop in the middle of it says: that it was waiting for you, not that it failed.
+
+        Cleared only when the answer comes, deliberately NOT in a ``finally``: a stop cancels the
+        wait before ``_run`` words the stop, and ``_run`` (or the reaper) clears it after.
+        """
+        self._asking_owner[info.id] = tool or "a call"
+        yield
+        self._asking_owner.pop(info.id, None)
+
     async def _run(self, info: SubagentInfo) -> None:
         """Execute a subagent task in its own session."""
         session_key = f"subagent:{info.id}"
-        # The time limit as Settings reads it when this agent starts (the reaper re-reads it).
+        # The time limit as Settings reads it when this agent starts (the reaper re-reads it). It
+        # counts from HERE, the start of the run, which the reaper reads too (`_run_started`): a
+        # wait for a slot or for its owner to approve the start is not the run.
         timeout = self._default_timeout
+        self._run_started[info.id] = time.monotonic()
         try:
             await asyncio.wait_for(self._run_inner(info, session_key), timeout=timeout)
         except asyncio.TimeoutError:
             if not info.reaped:
-                info.error = f"Timed out after {timeout // 60} minutes [{_timeout_context(info)}]"
+                waiting = _waiting_note(self._asking_owner.get(info.id, ""))
+                info.error = (
+                    f"Timed out after {timeout // 60} minutes{waiting} [{_timeout_context(info)}]"
+                )
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "timeout")
@@ -1779,6 +1840,8 @@ class SubagentManager:
             logger.exception("Subagent %s failed", info.id)
         finally:
             self._waived_by.pop(info.id, None)
+            self._run_started.pop(info.id, None)
+            self._asking_owner.pop(info.id, None)
             if not info.reaped:
                 # Fire WS event immediately so Activity Viewer updates
                 # before the slow reset + on_done path.
@@ -2272,16 +2335,20 @@ class SubagentManager:
                     continue
                 if self._on_tool_approval_factory:
                     approve_cb = self._on_tool_approval_factory(info)
-                    decision = decision_of(await approve_cb(event))
+                    with self._waiting_for_owner(info, event.title or ""):
+                        decision = decision_of(await approve_cb(event))
                 elif self._on_tool_approval:
                     # The callback lists the call under an id that names THIS subagent; the
                     # client is still answered on the agent's own raw id (`event` below).
-                    decision = decision_of(
-                        await self._on_tool_approval(
-                            replace(event, request_id=tool_approval_id(info.id, event.request_id)),
-                            info.parent_session_key,
+                    with self._waiting_for_owner(info, event.title or ""):
+                        decision = decision_of(
+                            await self._on_tool_approval(
+                                replace(
+                                    event, request_id=tool_approval_id(info.id, event.request_id)
+                                ),
+                                info.parent_session_key,
+                            )
                         )
-                    )
                 else:
                     # No callback, no auto policy — deny by default
                     await self._reject_and_log(

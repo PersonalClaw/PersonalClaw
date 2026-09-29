@@ -272,6 +272,19 @@ class TestGather:
         assert [o.key for o in cands[0].overlaps] == ["pref.editor"]
         assert cands[0].overlaps[0].why == "keyword"
 
+    def test_a_row_another_writer_owns_is_never_an_overlap(self, store):
+        """Formation adjudicates FACTS about the user and the world. A procedural prior, a
+        self-model row, a lesson or a slot has a writer of its own, and offering one as an
+        overlap let Decide UPDATE or SUPERSEDE it with a fact's value."""
+        store.set_semantic(
+            "user.procedural.746c1c5814f5", "bash on 'bash' → success", 0.85, "procedural"
+        )
+        store.set_semantic("pref.shell", "bash on macOS", 0.9, "seed")
+        cands = mf.gather(store, [_cand(0, "pref.shell_habit", "procedural bash success")])
+        keys = [o.key for o in cands[0].overlaps]
+        assert "pref.shell" in keys, "gather found nothing at all — the premise is broken"
+        assert "user.procedural.746c1c5814f5" not in keys, keys
+
     def test_gather_is_deterministic(self, store):
         for i in range(6):
             store.set_semantic(f"pref.k{i}", "prefers the vim editor daily", 0.9, "seed")
@@ -285,6 +298,36 @@ class TestGather:
             for _ in range(4)
         ]
         assert len(set(map(tuple, runs))) == 1
+
+
+class TestExtractCandidates:
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "user.procedural.746c1c5814f5",
+            "user.selfmodel.pending.d9025905cff68f93",
+            "user.persona.default.a1b2",
+            "user.commitment.c3d4",
+            "user.approval.archive",
+            "lesson.e5f6",
+            "slot.persona",
+        ],
+    )
+    def test_a_key_another_writer_owns_is_not_a_candidate(self, key):
+        items = [
+            {"key": key, "value": "x", "confidence": 0.9},
+            {"key": "user.favorite_language", "value": "Python", "confidence": 0.9},
+        ]
+        cands = mf.candidates_from_extract(items, holder_attribution=False, limit=20)
+        assert [(c.index, c.key) for c in cands] == [(0, "user.favorite_language")]
+
+    def test_a_null_value_is_not_a_fact_and_a_deletion_still_is(self):
+        items = [
+            {"key": "user.pet.name", "value": None, "confidence": 0.9},
+            {"key": "user.pet.kind", "delete": True, "confidence": 0.9},
+        ]
+        cands = mf.candidates_from_extract(items, holder_attribution=False, limit=20)
+        assert [(c.key, c.delete) for c in cands] == [("user.pet.kind", True)]
 
 
 # ── Clause B: holder attribution ──────────────────────────────────────────────
@@ -727,6 +770,56 @@ class TestConsolidationSeam:
         await consolidator._consolidate_locked("k", include_history=False)
         assert len(calls) == 1
         assert store.get_semantic("pref.brand_new") is not None
+
+    @pytest.mark.asyncio
+    async def test_consolidation_leaves_the_rows_other_writers_own_alone(self, store, tmp_path):
+        """The Memory page listed a procedural prior and a self-model row as "null": the Extract
+        prompt showed the model every semantic row, and formation wrote the model's
+        ``"value": null`` straight back over them. Both rows come from their REAL writers."""
+        from personalclaw.learning import self_model_observer
+        from personalclaw.memory_service import MemoryService
+
+        svc = MemoryService.over_vector_store(store)
+        prior = svc.record_procedural(tool="bash", task_shape="bash", outcome="success")
+        self_model_observer.observe_turn(
+            svc,
+            session_key="dashboard:chat-7",
+            route="direct",
+            tools=("bash",),
+            succeeded=True,
+            correction=False,
+        )
+        pending = next(
+            r["key"]
+            for r in store.get_all_semantic()
+            if r["key"].startswith("user.selfmodel.pending.")
+        )
+        assert prior
+        kept = {key: store.get_semantic(key)["value_json"] for key in (prior, pending)}
+        store.set_semantic("pref.editor", "vim", 0.9, "seed")
+        consolidator = self._consolidator(store, tmp_path)
+        calls: list[str] = []
+
+        async def fake_llm(prompt: str, _chat_key: str):
+            calls.append(prompt)
+            if len(calls) > 1:
+                return None  # Decide gives no verdicts: every surviving candidate is an ADD
+            return {
+                "semantic": [
+                    {"key": prior, "value": None, "confidence": 0.9},
+                    {"key": pending, "value": None, "confidence": 1.0},
+                    {"key": "pref.editor", "value": "emacs", "confidence": 0.9},
+                ]
+            }
+
+        consolidator._call_llm = fake_llm  # type: ignore[assignment]
+        await consolidator._consolidate_locked("k", include_history=False)
+
+        extract = calls[0]
+        assert "pref.editor" in extract, "the Extract prompt lists no facts — premise broken"
+        assert prior not in extract and pending not in extract
+        assert {key: store.get_semantic(key)["value_json"] for key in (prior, pending)} == kept
+        assert json.loads(store.get_semantic("pref.editor")["value_json"]) == "emacs"
 
     @pytest.mark.asyncio
     async def test_a_failed_decide_still_writes_the_memories(self, store, tmp_path):

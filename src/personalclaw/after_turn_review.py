@@ -291,8 +291,12 @@ def capture_preference_facet(service, user_message: str) -> str | None:
         return None
     try:
         if cls == "veto":
-            # Vetoes live in ONE place — the lesson store (+ contradiction judge).
-            service.write_lesson(f"Never: {text}", category="preference", source="facet_veto")
+            # Vetoes live in ONE place — the lesson store (+ contradiction judge). The clause
+            # already begins with its own trigger ("never …", "don't ever …", "always avoid …"),
+            # so it IS the rule, in the user's words: a "Never: " in front of it read "Never:
+            # never quote …" and "Never: always avoid …".
+            rule = text[:1].upper() + text[1:]
+            service.write_lesson(rule, category="preference", source="facet_veto")
             return text
         upsert_facet(vs, cls, text, cue=cue)
         return text

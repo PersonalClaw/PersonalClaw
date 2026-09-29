@@ -239,6 +239,11 @@ def dashboard_csp() -> str:
     ``sandbox="allow-scripts"`` (no parent DOM access) + a widget-level CSP meta
     (``connect-src 'none'``).
 
+    No directive that loads code, a stylesheet or a font names another origin: the dashboard
+    runs locally and fetches nothing from a third party. A widget's Tailwind CSS and a react
+    artifact's React ride inside the widget's own document (``web/src/ui/widget/widgetStyles.ts``,
+    ``reactFrameRuntime.ts``), so no CDN is owed an allowance.
+
     A function rather than a constant because ``_ws_csp_sources()`` depends on
     ``dashboard.public_url``, which is config the operator can change without a restart.
     """
@@ -249,9 +254,8 @@ def dashboard_csp() -> str:
         # (react / @personalclaw/app-sdk / …) to same-origin-derived blob modules
         # that re-export the host's singletons. Blobs are origin-scoped; apps are
         # still gated by the permission system + SkillScanner at install.
-        "script-src 'self' 'unsafe-inline' blob: "
-        "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
-        "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' blob:; "
+        "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob: https:; "
         # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
         # without font-src the default-src 'self' fallback blocks it.

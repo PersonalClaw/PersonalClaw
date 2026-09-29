@@ -31,6 +31,7 @@ import { notify } from '../../app/appSdk'
 import { reportingWrite } from '../../app/reportingWrite'
 import { ConsentDeclined } from '../../lib/securityConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { ApprovalDecision } from '../../app/ApprovalDecision'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -209,6 +210,12 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
             <div className="text-on-surface-var text-[0.9375rem] leading-relaxed"><Markdown>{open.body}</Markdown></div>
             {asksAboutSender(open) && (
               <SenderAnswer n={open} answering={answering} onAnswer={(action) => answerSender(open, action)} />
+            )}
+            {/* The note a pending approval's Inbox row raises carries the approval's registry id,
+                so it is answered HERE, where it says a run is waiting — it offered Mark read and
+                Delete, neither of which answers anything. Answering it is reading it. */}
+            {open.approval && (
+              <ApprovalDecision approvalId={open.approval} onDecided={() => { if (!open.acked) void ack(open) }} />
             )}
             <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
               {/* The note's own deep link (R18 `statusUrl`) — a trigger fire opens that trigger's

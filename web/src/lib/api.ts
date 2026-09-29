@@ -1622,6 +1622,10 @@ export interface NotificationItem {
    *  platform-owned, so a note never arrives answered. */
   event?: string; provider?: string; sender_id?: string; sender_name?: string; actions?: string[]
   trust_answer?: 'allowed' | 'denied'
+  /** Set on the note a pending approval's Inbox row raises (the row's `refs`, which every
+   *  attention item's notification carries): the approval's REGISTRY id, what `resolveApproval`
+   *  takes. `inbox_item` is that row's id. */
+  approval?: string; inbox_item?: string
 }
 // Schedule job — the schedule-kind projection of a Trigger (from /api/triggers).
 // Three orthogonal axes: schedule KIND (every/cron/at), the action (provider +
@@ -5609,9 +5613,9 @@ export type OnboardingImportItemState = 'new' | 'existing' | 'conflict' | 'rejec
  *  scanner. `detail` says why a non-`new` item will not be written, in words true both
  *  before and after an import. `origin` is where in the tool it was found ("Local scope ·
  *  /Users/you/api", "Project · ~/src/app"), `note` what the import leaves out of it or changes,
- *  and `preselected` false for an item the other tool itself does not use as it stands — a
- *  project's MCP server nobody approved, an AGENTS.md Codex reads an override of instead — so the
- *  step starts with it unticked. */
+ *  and `preselected` false for an item the step starts unticked: one the other tool itself does
+ *  not use as it stands — a project's MCP server nobody approved, an AGENTS.md Codex reads an
+ *  override of instead — or a skill whose security scan warned (its `scan`). */
 export interface OnboardingImportItem {
   fingerprint: string; source: string; category: string; key: string; title: string
   origin: string; note: string; preselected: boolean

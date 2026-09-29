@@ -565,7 +565,7 @@ export const Markdown = memo(function Markdown({ children, className, inline, on
         // registry entry, not an edit here.
         const embed = embedFor(seg.kind)
         if (!embed) return null
-        // A non-streaming embed (react/Babel) has no partial-render mode — hold it
+        // A non-streaming embed (react: its JSX compiles whole) has no partial-render mode — hold it
         // until the closing tag arrives; a streaming one paints its partial body.
         if (!embed.streaming && !seg.complete) return null
         const widgetIndex = wi++

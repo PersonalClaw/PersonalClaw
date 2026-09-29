@@ -68,9 +68,9 @@ linking nowhere.
 There is no "are you sure?", on purpose. Branch only ever creates — it cannot overwrite
 anything in the chat you are in. Rewind, which replaces, does ask.
 
-**Temporary** and **incognito** chats do not offer it: there is no retained transcript to
-copy. There is also a ceiling on how many chats can exist at once, and at the ceiling
-branching refuses with that reason rather than failing quietly.
+**Temporary** and **incognito** chats do not offer it. There is also a ceiling on how many
+chats can exist at once, and at the ceiling branching refuses with that reason rather than
+failing quietly.
 
 ## 3. Plan it first — nothing runs until you approve
 
@@ -174,8 +174,8 @@ Each suggestion costs one small background model call per reply, using your fast
 model, and it never blocks the answer. Turn it off in **Settings → Chat → Follow-up
 suggestions**; with it off, nothing is generated at all rather than generated and hidden.
 
-They are skipped in **temporary** and **incognito** chats, which exist not to leave traces,
-and they stay silent if you have no model bound.
+They are skipped in **temporary** and **incognito** chats, and they stay silent if you have no
+model bound.
 
 ## 8. How streaming text appears
 
