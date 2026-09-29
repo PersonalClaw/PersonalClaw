@@ -20,17 +20,20 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
 
 
 def config_dir() -> Path:
-    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+    """The active home, re-resolved per call and never made here: every path of the app platform
+    is worked out from this, the reads that list the apps included, and each writer makes the
+    folder it writes into (the home first, ``atomic_write.ensure_home_for``). See
+    :func:`personalclaw.config.loader.resolve_config_dir`.
 
     DEFINED here rather than imported: this module can be imported lazily, and an
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
-    return config_loader.config_dir()
+    return config_loader.resolve_config_dir()
 
 
 logger = logging.getLogger(__name__)
@@ -174,6 +177,7 @@ def app_data_dir(name: str) -> Path:
     mkdir-pollutes apps/ (once accumulated 16k empty dirs → list_apps stat-storm).
     """
     d = app_dir(_validate_app_name(name)) / "data"
+    ensure_home_for(d)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

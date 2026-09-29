@@ -794,8 +794,9 @@ def test_a_workflow_edit_keeps_a_value_the_run_showed_masked():
 def stored_secrets(monkeypatch):
     """Two credentials in the test home's Settings → Secrets store (`.env`), none in the
     environment: the store is the only place `bash` may fill a reference from."""
-    from personalclaw.config.loader import env_path
+    from personalclaw.config.loader import config_dir, env_path
 
+    config_dir()  # the home this writes into: finding where the file is makes nothing
     path = env_path()
     path.write_text(f"DEPLOY_PASS={PASSWORD}\nGITHUB_TOKEN={TOKEN}\n")
     path.chmod(0o600)

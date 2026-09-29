@@ -195,10 +195,11 @@ def test_refuses_when_home_is_explicitly_the_real_home(
     """Pointing the home AT the real home is refused too, and without mkdir'ing it."""
     import personalclaw.config.loader as loader
 
-    def _poisoned() -> Path:  # pragma: no cover - must never be called
+    def _poisoned(_home: Path) -> Path:  # pragma: no cover - must never be called
         raise AssertionError("the gate must not call config_dir(): it mkdir's the home")
 
-    monkeypatch.setattr(loader, "config_dir", _poisoned)
+    # What makes the home, poisoned: `config_dir` itself is the suite's way of naming a home.
+    monkeypatch.setattr(loader, "_ensure_dir", _poisoned)
     monkeypatch.setenv(SCRIPT_ENV_VAR, str(_write_script(tmp_path, _text_script())))
     monkeypatch.setenv(HOME_ENV_VAR, str(Path.home() / loader.CONFIG_DIR_NAME))
     with pytest.raises(ScriptedProviderRefused):

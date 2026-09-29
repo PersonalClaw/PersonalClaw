@@ -504,7 +504,6 @@ def _dotenv_save_credentials(values: Mapping[str, str]) -> None:
     (:func:`_encode_dotenv_value`).
     """
     ep = _loader.env_path()
-    ep.parent.mkdir(parents=True, exist_ok=True)
     remaining = dict(values)
     lines: list[str] = []
     if ep.exists():

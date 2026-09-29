@@ -600,7 +600,7 @@ def test_notify_pushes_only_when_the_rule_targets_push(
 
 
 def test_notify_never_forwards_the_title_or_body_to_the_sender(
-    home: Path, sent: list[dict[str, object]]
+    home: Path, sent: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The leak test, at the call site — asserted on the WIRE, not on the guard.
 
@@ -617,16 +617,20 @@ def test_notify_never_forwards_the_title_or_body_to_the_sender(
             {"rules": {"cron/result": {"mode": "immediate", "targets": ["dashboard", "push"]}}}
         )
     )
+    # `_push_target` hands off to a delivery thread. Caught here and driven below, in the test:
+    # a thread left running outlived the test's home, and read the signing key from the real one.
+    handed: list[tuple[str, str]] = []
+    monkeypatch.setattr(push, "deliver_async", lambda kind, item: handed.append((kind, item)))
 
     secret = "SUPERSECRET-payroll.csv"
     state = _state()
     state._push_target(
         "cron", {"kind": "cron", "title": secret, "body": secret, "item_id": "run-9"}
     )
-    # `_push_target` hands off to a daemon thread; drive `deliver` directly for determinism,
-    # having just proven the dict it would have passed carries only ids.
-    push.deliver("cron", "run-9")
+    assert handed == [("cron", "run-9")], "the chokepoint hands the sender the ids and no more"
+    push.deliver(*handed[0])
 
+    assert len(sent) == 1, "vacuity floor: the ping went out"
     for call in sent:
         body = call["body"]
         assert isinstance(body, bytes)

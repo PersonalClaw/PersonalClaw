@@ -76,6 +76,7 @@ def _write_config(agent_profile: dict | None, *, voice: str = "") -> None:
             profile["voice"] = voice
         data["agents"] = {"PersonalClaw": profile}
         data["default_agent"] = "PersonalClaw"
+    config_loader.config_dir()  # the home this writes into: finding where the file is makes nothing
     config_loader.config_path().write_text(json.dumps(data), encoding="utf-8")
 
 

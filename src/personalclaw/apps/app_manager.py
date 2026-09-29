@@ -63,7 +63,7 @@ from personalclaw.apps.manager import (
     apps_dir,
 )
 from personalclaw.apps.manifest import AppManifest
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
 from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
@@ -248,6 +248,7 @@ def _audit(
 
 def _quarantine_dir() -> Path:
     d = apps_dir() / _QUARANTINE_DIRNAME
+    ensure_home_for(d)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -15,18 +15,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
 from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
 
 
 def config_dir() -> Path:
-    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+    """The active home, re-resolved per call and never made here: each path in it is worked out
+    from this, and :meth:`MemoryStore.init` makes the folders it writes into (the home first,
+    ``atomic_write.ensure_home_for``). See :func:`personalclaw.config.loader.resolve_config_dir`.
 
     DEFINED here rather than imported: this module can be imported lazily, and an
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
-    return config_loader.config_dir()
+    return config_loader.resolve_config_dir()
 
 
 if TYPE_CHECKING:
@@ -98,6 +100,7 @@ class MemoryStore:
 
     def init(self) -> None:
         """Create directory structure and default files."""
+        ensure_home_for(self._memory_dir)
         self._memory_dir.mkdir(parents=True, exist_ok=True)
         self._history_dir.mkdir(parents=True, exist_ok=True)
         if not self._preferences_file.exists():
@@ -177,6 +180,7 @@ class MemoryStore:
 
     def append_history(self, entry: str) -> None:
         """Append a timestamped entry to today's daily history file."""
+        ensure_home_for(self._history_dir)
         self._history_dir.mkdir(parents=True, exist_ok=True)
         path = self._today_history_file()
         timestamp = datetime.now().astimezone().strftime("%H:%M %Z")

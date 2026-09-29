@@ -402,10 +402,12 @@ def _setup_workspace_dir() -> str | None:
     typed = answer.lower() not in ("", "y", "yes")
     chosen = Path(answer).expanduser() if typed else current
     try:
+        from personalclaw.atomic_write import atomic_write, ensure_home_for
+
+        ensure_home_for(chosen)
         chosen.mkdir(parents=True, exist_ok=True)
         if typed:
-            _workspace_dir_file().parent.mkdir(parents=True, exist_ok=True)
-            _workspace_dir_file().write_text(str(chosen) + "\n", encoding="utf-8")
+            atomic_write(_workspace_dir_file(), str(chosen) + "\n")
     except OSError as exc:
         reason = _failed(f"cannot use {chosen} as the workspace: {exc}")
         if typed:

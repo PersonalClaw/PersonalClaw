@@ -63,6 +63,7 @@ from pathlib import Path
 from personalclaw._app_python_child import PATH_ENV
 from personalclaw.apps import manager as _manager
 from personalclaw.apps.manager import APP_MANIFEST_FILENAME, INSTALLED_META_FILENAME
+from personalclaw.atomic_write import ensure_home_for
 from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
@@ -427,6 +428,7 @@ def _locked() -> Iterator[None]:
     with _thread_lock:
         if _lock_depth == 0:
             here = root()
+            ensure_home_for(here)
             here.mkdir(parents=True, exist_ok=True)
             handle = open(here / _LOCK_FILENAME, "w")  # noqa: SIM115 — held across the yield
             fcntl.flock(handle, fcntl.LOCK_EX)

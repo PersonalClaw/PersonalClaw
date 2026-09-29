@@ -72,12 +72,14 @@ from personalclaw.config.credentials import OWNED_KEY_PREFIX
 
 
 def config_dir() -> Path:
-    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+    """The active home, re-resolved per call and never made here: a delivery reads the devices
+    and the relay tokens from it, and their writers make the home as they write
+    (``atomic_write``). See :func:`personalclaw.config.loader.resolve_config_dir`.
 
     DEFINED here rather than imported: this module can be imported lazily, and an
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
-    return config_loader.config_dir()
+    return config_loader.resolve_config_dir()
 
 
 logger = logging.getLogger(__name__)
@@ -372,7 +374,6 @@ def load_subscriptions() -> dict[str, dict[str, Any]]:
 
 def _save_subscriptions(rows: dict[str, dict[str, Any]]) -> None:
     path = subscriptions_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(rows, indent=2, sort_keys=True) + "\n")
     try:
         os.chmod(path, FILE_MODE)
@@ -458,7 +459,6 @@ def load_relay_tokens() -> dict[str, dict[str, Any]]:
 def _save_relay_tokens(rows: dict[str, dict[str, Any]]) -> None:
     """Owner-only, like the subscriptions: a relay token is a capability to wake the device."""
     path = relay_tokens_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(rows, indent=1) + "\n")
     try:
         os.chmod(path, FILE_MODE)

@@ -322,6 +322,128 @@ def test_asking_where_memory_is_makes_no_home(tmp_path: Path) -> None:
     assert left == [], f"asking where memory is left this in an empty HOME: {left}"
 
 
+#: One READ per path helper, each as the code that uses the helper makes it. The keychain is off,
+#: as in the suite: one keychain serves every home on the machine.
+_READS = {
+    "the settings (config_path)": (
+        "from personalclaw.config.loader import AppConfig\nAppConfig.load()"
+    ),
+    "a credential (env_path)": (
+        "from personalclaw.config.credentials import get_credential\n"
+        "assert get_credential('EXAMPLE_TOKEN') == ''"
+    ),
+    "the workspace's paths (workspace_dir, default_workspace_root)": (
+        "from personalclaw.config import loader\n"
+        "from personalclaw.memory import memory_dir, workspace_dir\n"
+        "loader.default_workspace_root(), loader._workspace_dir_file(), workspace_dir()\n"
+        "memory_dir()"
+    ),
+    "a memory store's paths (MemoryStore)": (
+        "from personalclaw.memory import MemoryStore\nMemoryStore()"
+    ),
+    "the installed apps (apps_dir)": (
+        "from personalclaw.apps.manager import apps_dir, list_apps\n"
+        "apps_dir()\n"
+        "assert list_apps() == []"
+    ),
+    "the apps' packages (app_python.root)": (
+        "from personalclaw.apps import app_python\n"
+        "app_python.root()\n"
+        "assert app_python.broken_apps() == [] and app_python.collect() == []"
+    ),
+    "a push delivery (its devices and signing key)": (
+        "from personalclaw import push\n"
+        "assert push.deliver('cron', 'run-9') == 0 and push.vapid_keys() is None"
+    ),
+}
+
+
+@pytest.mark.parametrize("what", list(_READS))
+def test_a_read_makes_no_home(tmp_path: Path, what: str) -> None:
+    """Reading something from the home asks where it is, and the answer is a path: asking made
+    the home. A credential read by a background thread after its test had undone the home's
+    isolation (a push delivery reading its signing key) made the real one. Each helper now says
+    where, and only the code that writes makes what it writes into."""
+    code = (
+        "from personalclaw.config.credentials import keychain_off\n"
+        f"keychain_off()\n{_READS[what]}\nprint('read')"
+    )
+    proc, left = _as_a_user((tmp_path / "scratch").resolve(), ["-c", code])
+    assert "read" in proc.stdout, "vacuity floor: the read ran"
+    assert left == [], f"reading {what} left this in an empty HOME: {left}"
+
+
+#: One WRITE per writer those helpers used to make the home for, and what it writes there. A file
+#: written through the shared writer is 0600 (``atomic_write``); a lock file is not one.
+_WRITES = {
+    "a credential": (
+        "from personalclaw.config.credentials import save_credential\n"
+        "save_credential('EXAMPLE_TOKEN', 'example')",
+        ".env",
+    ),
+    "the settings": (
+        "from personalclaw.config.loader import AppConfig\nAppConfig().save()",
+        "config.json",
+    ),
+    "the workspace": (
+        "from personalclaw.config.loader import workspace_root\nworkspace_root()",
+        "workspace",
+    ),
+    "a memory store": (
+        "from personalclaw.memory import MemoryStore\nMemoryStore().init()",
+        "workspace/memory/preferences.md",
+    ),
+    "a day's history": (
+        "from personalclaw.memory import MemoryStore\nMemoryStore().append_history('example')",
+        "workspace/memory/history",
+    ),
+    "an app's data": (
+        "from personalclaw.apps.manager import app_data_dir\napp_data_dir('example')",
+        "apps/example/data",
+    ),
+    "an app being staged": (
+        "from personalclaw.apps.app_manager import _quarantine_dir\n_quarantine_dir()",
+        "apps/.quarantine",
+    ),
+    "the apps' packages": (
+        "from personalclaw.apps import app_python\nwith app_python._locked():\n    pass",
+        "app-python",
+    ),
+    "the apps' dependency ledger": (
+        "from personalclaw.apps import dependency_ledger\n"
+        "with dependency_ledger._locked():\n    pass",
+        "apps",
+    ),
+}
+
+
+@pytest.mark.parametrize("what", list(_WRITES))
+def test_the_first_write_makes_the_home_private(tmp_path: Path, what: str) -> None:
+    """The home is worked out without making it, so the first WRITE makes it, before the folder it
+    writes into: 0700, like ``~/.ssh``. A folder made in a home that is not there yet makes the
+    home as its parent, at the umask's mode, 0755 under the common 022, and the home is private
+    because the credential store and every setting are in it."""
+    code, written = _WRITES[what]
+    probe = (
+        "import os, stat\n"
+        "os.umask(0o022)\n"
+        "from personalclaw.config.credentials import keychain_off\n"
+        f"keychain_off()\n{code}\n"
+        "from personalclaw.config.loader import resolve_config_dir\n"
+        "home = resolve_config_dir()\n"
+        f"target = home / {written!r}\n"
+        "print('home', oct(stat.S_IMODE(home.stat().st_mode)))\n"
+        "print('file' if target.is_file() else 'folder' if target.is_dir() else 'missing',\n"
+        "      oct(stat.S_IMODE(target.stat().st_mode)) if target.exists() else '')\n"
+    )
+    proc, left = _as_a_user((tmp_path / "scratch").resolve(), ["-c", probe])
+    home_line, target_line = proc.stdout.strip().splitlines()[-2:]
+    assert not target_line.startswith("missing"), f"vacuity floor: {what} wrote {written}"
+    assert home_line == "home 0o700", f"writing {what} made the home at {home_line}: {left}"
+    if target_line.startswith("file"):
+        assert target_line == "file 0o600", f"{written} in the home: {target_line}"
+
+
 def test_the_offline_reference_renders_without_touching_a_home(tmp_path: Path) -> None:
     """``python -m personalclaw.manifest_reference`` generates checked-in markdown. It has no
     business with any home — not the owner's, and not a scratch one either."""

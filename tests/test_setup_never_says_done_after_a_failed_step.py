@@ -185,6 +185,7 @@ def test_a_typed_workspace_that_fails_says_where_the_workspace_stays(monkeypatch
 
 def test_an_unreadable_config_names_both_steps_it_stops(capsys):
     """The default agent and the timezone both need `config.json`; neither writes over it."""
+    config_loader.config_dir()  # the home this writes into: finding where the file is makes nothing
     config_file = config_loader.config_path()
     config_file.write_text("not json {{{", encoding="utf-8")
 

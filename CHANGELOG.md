@@ -163,7 +163,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A trigger that cannot be created yet says why beside Create trigger, naming a required setting by its label.**
 - **A Run workflow trigger's panel shows the workflow it starts and the inputs it starts it with.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
-- **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
+- **`personalclaw --version` and `--help`, building the web app, and reading a setting, a credential, your apps or memory no longer create a PersonalClaw home; the first thing written into it creates it, readable only by you.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**
 
 - **An automation that starts an agent starts it on the Allow you gave the automation, without asking again; its run's history says how the agent's run went instead of "launched", and a start you decline reads "declined", with no note calling it a failure (SDK: `ActionResult.work_id` and `SubagentInfo.declined`, additions no app has to change for).**

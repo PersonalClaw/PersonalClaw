@@ -303,7 +303,9 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
     made it where no in-process guard can see: the namespace sandbox's launcher, whose owner-only
     fence names the home it holds, created an empty real ``~/.personalclaw`` from four tests of
     ``test_sandbox_argv.py``. A call that names its own environment asks about another process's
-    home (a gateway run elsewhere), and is answered by the rule as it asked.
+    home (a gateway run elsewhere), and is answered by the rule as it asked. A test that patches
+    ``config.loader.config_dir`` to name its own home moves the first resolver as well: the path
+    helpers ask where the home is without making it, and they answer inside that test's home.
     """
     import personalclaw.config.loader as config_loader
 
@@ -335,7 +337,15 @@ def _isolate_real_home_writers(tmp_path_factory, monkeypatch):
         return home
 
     def guarded_resolve_config_dir(env=None) -> Path:
-        if env is not None or _caller_chose_a_home():
+        if env is not None:
+            return original_resolve_config_dir(env)
+        if config_loader.config_dir is not guarded_config_dir:
+            # The test named its home by patching `config_dir`, and that is where the home is
+            # too: every path in the home (`config_path`, `env_path`, `apps_dir`) is worked out
+            # from this resolver, which creates nothing, and each one follows that choice. Ahead
+            # of the environment, so a test that also sets one still has ONE home.
+            return config_loader.config_dir()
+        if _caller_chose_a_home():
             return original_resolve_config_dir(env)
         return tmp_home()
 

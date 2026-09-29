@@ -121,13 +121,15 @@ DASHBOARD_PORT: int = int(os.environ.get("PERSONALCLAW_PORT", _DEFAULT_PORT))
 
 
 def _workspace_dir_file() -> Path:
-    """Return the path to the saved workspace_dir file, respecting PERSONALCLAW_HOME."""
-    return config_dir() / "workspace_dir"
+    """Return the path to the saved workspace_dir file, respecting PERSONALCLAW_HOME. A path in
+    the home, worked out without making the home: ``personalclaw setup`` writes it."""
+    return resolve_config_dir() / "workspace_dir"
 
 
 def default_workspace_root() -> Path:
-    """Where the workspace is when the owner has not chosen a folder: inside the home."""
-    return config_dir() / "workspace"
+    """Where the workspace is when the owner has not chosen a folder: inside the home. Worked out
+    without making anything; :func:`workspace_root` makes it."""
+    return resolve_config_dir() / "workspace"
 
 
 def workspace_override() -> Path | None:
@@ -159,6 +161,9 @@ def workspace_root() -> Path:
         except OSError:
             pass
     root = default_workspace_root()
+    # The home first, 0700 as `config_dir()` makes it: made as a parent of the workspace, it
+    # would have the default mode.
+    config_dir()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -321,7 +326,9 @@ def config_dir() -> Path:
 
 
 def config_path() -> Path:
-    return config_dir() / "config.json"
+    """``<home>/config.json``, worked out without making the home: every read of the settings asks,
+    and ``config.transactions`` makes the home when it writes the file."""
+    return resolve_config_dir() / "config.json"
 
 
 _MEMORY_ROOT_DIR_NAME = "workspace"
@@ -390,7 +397,9 @@ def default_workspace_dir() -> str:
 
 
 def env_path() -> Path:
-    return config_dir() / ".env"
+    """``<home>/.env``, the credential store, worked out without making the home: every credential
+    read asks, and the store's writer (``atomic_write``) makes the home when it writes the file."""
+    return resolve_config_dir() / ".env"
 
 
 def resolve_agent_config_path() -> Path:

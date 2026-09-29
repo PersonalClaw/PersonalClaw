@@ -1162,7 +1162,7 @@ def mention_state(home, tmp_path, monkeypatch):
     on a kind that interrupts anyway. The names are written to the real `config.json`, not stubbed:
     which config field is read IS the defect, so the lookup has to run.
     """
-    from personalclaw.config.loader import config_path
+    from personalclaw.config.loader import config_dir, config_path
     from tests.chat_test_helpers import _make_state
 
     _write_rules(
@@ -1175,6 +1175,7 @@ def mention_state(home, tmp_path, monkeypatch):
 
     def names(user: str, assistant: str) -> None:
         doc = {"dashboard": {"user_name": user}, "agent": {"bot_name": assistant}}
+        config_dir()  # the home this writes into: finding where the file is makes nothing
         config_path().write_text(json.dumps(doc), encoding="utf-8")
 
     def deliver(body: str) -> dict:

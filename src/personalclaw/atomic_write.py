@@ -128,14 +128,31 @@ PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
 
 
+def ensure_home_for(path: Path | str) -> None:
+    """Make the PersonalClaw home, 0700, when ``path`` is inside it: the writer's half of a path.
+
+    Every path in the home is worked out without making anything (``config.loader``), so the first
+    write into a home that is not there yet makes it. A folder made inside it with
+    ``mkdir(parents=True)`` would make the home as one of its parents, at the default mode; this
+    makes it first, 0700 like ``~/.ssh``, as ``config_dir()`` does. Called by a writer just before
+    it makes its folder, never by a reader.
+    """
+    if is_in_home(path):
+        from personalclaw.config import loader  # lazy: loader imports this module
+
+        loader.config_dir()
+
+
 def ensure_private_dir(directory: Path | str) -> None:
     """Create ``directory`` at 0700 if absent, and tighten it to 0700 if it is looser.
 
-    Tightening is best-effort: a directory this process may not chmod (a volume root owned by
-    another uid) is logged and left, because refusing the write would lose the user's data over
-    a mode the files inside are protected from anyway (they are written 0600).
+    Inside the home, the home is made first (:func:`ensure_home_for`). Tightening is best-effort:
+    a directory this process may not chmod (a volume root owned by another uid) is logged and left,
+    because refusing the write would lose the user's data over a mode the files inside are
+    protected from anyway (they are written 0600).
     """
     d = Path(directory)
+    ensure_home_for(d)
     d.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
     try:
         if d.stat().st_mode & 0o077:

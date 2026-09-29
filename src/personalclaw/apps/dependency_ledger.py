@@ -27,7 +27,7 @@ from typing import Any, Iterator
 
 from personalclaw.apps.manager import apps_dir
 from personalclaw.apps.manifest import AppManifest
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, ensure_home_for
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ def _ledger_path() -> Path:
 @contextmanager
 def _locked() -> Iterator[None]:
     """Cross-process advisory lock around a read-modify-write of the ledger."""
+    ensure_home_for(apps_dir())
     apps_dir().mkdir(parents=True, exist_ok=True)
     lock = apps_dir() / _LOCK_FILENAME
     fd = lock.open("w")

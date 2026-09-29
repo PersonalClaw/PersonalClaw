@@ -982,11 +982,13 @@ def _native_session_cwd(cwd: str | None) -> str:
         return default
     import tempfile
 
+    from personalclaw.atomic_write import ensure_home_for
     from personalclaw.config.loader import default_workspace_root
 
     # Inside the home's own workspace, where the durability inventory claims it and the home's
     # removal takes it: a folder in the system temp folder outlived every session made there.
     parent = default_workspace_root() / _NO_WORKSPACE_SCRATCH
+    ensure_home_for(parent)
     parent.mkdir(parents=True, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="no-workspace-", dir=parent)
     logger.warning(
