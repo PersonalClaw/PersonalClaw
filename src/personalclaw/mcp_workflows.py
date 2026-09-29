@@ -106,11 +106,17 @@ def _edit_schema(run_id: dict[str, Any], *, previews: bool) -> dict[str, Any]:
         },
     }
     if not previews:
-        properties["expect_version"] = {"type": "integer"}
-        properties["confirm_cascade"] = {
-            "type": "boolean",
-            "description": "Accept re-running completed nodes.",
-        }
+        # What applying adds to previewing, declared as every other tool's schema is: the version
+        # it expects, and the consent to re-run, which only `safety_flags.confirm_granted` reads.
+        properties.update(
+            {
+                "expect_version": {"type": "integer"},
+                "confirm_cascade": {
+                    "type": "boolean",
+                    "description": "Accept re-running completed nodes.",
+                },
+            }
+        )
     return {"type": "object", "properties": properties, "required": ["run_id", "ops"]}
 
 
