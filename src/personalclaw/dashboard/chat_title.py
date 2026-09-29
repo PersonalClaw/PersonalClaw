@@ -7,6 +7,7 @@ from aiohttp import web
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
+from personalclaw.llm_helpers import failure_clause, is_model_call_failure
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, chore_usage
@@ -265,8 +266,15 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
             _apply_title(state, session, title)
             if want_tags:
                 _apply_auto_tags(state, session, _parse_tags_line(text))
-    except Exception:
-        logger.warning("Auto-title failed for session %s", session.key, exc_info=True)
+    except Exception as exc:
+        # The chat keeps its first line as the title either way. A model that did not answer
+        # is said in one line — its traceback holds only the HTTP client's frames — and a
+        # defect keeps its traceback.
+        if is_model_call_failure(exc):
+            logger.warning("Auto-title failed for session %s: %s", session.key, failure_clause(exc))
+            logger.debug("Auto-title failure for session %s", session.key, exc_info=exc)
+        else:
+            logger.warning("Auto-title failed for session %s", session.key, exc_info=True)
 
 
 async def api_chat_session_generate_title(request: web.Request) -> web.Response:

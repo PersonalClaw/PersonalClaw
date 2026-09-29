@@ -238,7 +238,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Pause before re-checking a long-running job",
-                "args": {"seconds": 30, "reason": "let the build finish"},
+                "args": {"seconds": 60, "reason": "let the build finish"},
             },
         ],
     },
@@ -692,7 +692,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
         "examples": [
             {
                 "summary": "Persist a durable preference",
-                "args": {"rule": "Prefer concise commit messages", "category": "style"},
+                "args": {"rule": "Prefer concise commit messages", "category": "preference"},
             },
         ],
     },

@@ -31,8 +31,14 @@ from personalclaw.context_gauge import (  # noqa: F401
 # failure mode is non-retryable), and the chat surface shows its sentence verbatim — the same
 # sentence core's own budget check composes for the same situation. ``FailureMode`` comes with it
 # because the refusal's ``mode`` field is one: an app that catches the refusal and reads why is
-# naming that enum.
-from personalclaw.guardrails.failure import FailureMode, PromptExceedsWindow  # noqa: F401
+# naming that enum. ``FirstTokenTimeout`` is its sibling for a request that timed out before the
+# first byte of the answer: core composes the sentence (it names the instance's own timeout
+# setting), and the native loop does not resend the identical request.
+from personalclaw.guardrails.failure import (  # noqa: F401
+    FailureMode,
+    FirstTokenTimeout,
+    PromptExceedsWindow,
+)
 from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import (  # noqa: F401
     EVENT_COMPLETE,
@@ -89,6 +95,8 @@ from personalclaw.llm.registry import (  # noqa: F401
     require_model,
 )
 from personalclaw.llm.stream_tags import (  # noqa: F401
+    CHANNEL_CLOSE,
+    CHANNEL_OPEN,
     KIND_OUTSIDE,
     Segment,
     StreamingTagSplitter,
@@ -172,6 +180,10 @@ __all__ = [
     # segments to read `KIND_OUTSIDE` off them, which is the reason `KIND_OUTSIDE` is here.
     "StreamingTagSplitter",
     "Segment",
+    # The reasoning-channel markers the splitter recognizes: a provider whose server splits one
+    # reasoning channel across two fields has to see whether the first one left it open.
+    "CHANNEL_OPEN",
+    "CHANNEL_CLOSE",
     "model_context_window",
     "declared_context_window",
     "per_call_temperature",
@@ -179,6 +191,7 @@ __all__ = [
     "ContextGauge",
     "prompt_text_chars",
     "PromptExceedsWindow",
+    "FirstTokenTimeout",
     "FailureMode",
     "OpenAIProvider",
     "AnthropicProvider",

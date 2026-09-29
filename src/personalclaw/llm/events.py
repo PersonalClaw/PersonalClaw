@@ -24,6 +24,9 @@ EVENT_TOOL_CALL = "tool_call"
 EVENT_TOOL_CALL_UPDATE = "tool_call_update"
 EVENT_TOOL_RESULT = "tool_result"
 EVENT_PERMISSION_REQUEST = "permission_request"
+#: The turn's terminal event. On a CANCELLED stop that the runtime made itself (its loop breaker
+#: gave up on the turn), ``text`` is the sentence saying why, for the surface to show; it is
+#: empty for every other ending.
 EVENT_COMPLETE = "complete"
 EVENT_COMPACTION_STATUS = "compaction_status"
 #: The ``text`` of a COMPACTION_STATUS a loop sends when it compacted its own history on its own,

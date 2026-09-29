@@ -889,6 +889,31 @@ def failed_endpoint(exc: BaseException) -> str:
     return f" at {host}:{port}" if port else f" at {host}"
 
 
+def is_model_call_failure(exc: BaseException) -> bool:
+    """Whether *exc* is a model call failing, rather than a fault in the code around it.
+
+    A failure the guard classified (a :class:`GuardError`), a provider's refusal or a broken
+    transport to it (``httpx.HTTPError``, a timeout, a dropped connection), or a provider that
+    cannot be resolved — directly or as the cause of a wrapper. These are the conditions a log
+    reports as one line with their sentence: the traceback of a model that did not answer shows
+    only the HTTP client's frames. Anything else is a defect, and keeps its traceback.
+    """
+    import httpx
+
+    from personalclaw.guardrails.failure import GuardError
+    from personalclaw.llm.registry import ProviderResolutionError
+
+    kinds = (GuardError, ProviderResolutionError, httpx.HTTPError, TimeoutError, ConnectionError)
+    seen: BaseException | None = exc
+    for _ in range(5):
+        if seen is None:
+            return False
+        if isinstance(seen, kinds):
+            return True
+        seen = seen.__cause__
+    return False
+
+
 def _describe_unexplained_failure(exc: object) -> str:
     """The sentence for a failure whose ``str()`` is empty — never an empty string.
 
@@ -904,6 +929,23 @@ def _describe_unexplained_failure(exc: object) -> str:
             "The turn failed without reporting an error. Try again; if it keeps failing, "
             "check the gateway log."
         )
+    transport = _transport_failure_sentence(exc)
+    if transport is not None:
+        return transport
+    return (
+        f"The turn failed with {type(exc).__name__}, and the error carried no message. "
+        "Try again; if it keeps failing, check the gateway log."
+    )
+
+
+def _transport_failure_sentence(exc: object) -> str | None:
+    """The sentence for a model call whose connection failed or timed out, or ``None``.
+
+    Decided by the failure's TYPE, or its cause's, never by its words: a timeout is a timeout
+    whether its message is empty (every httpx timeout) or says so ("Request timed out." from a
+    provider SDK that wraps the httpx one), and read by its words a timeout that said so was
+    "an error PersonalClaw doesn't recognize".
+    """
     import httpx
 
     seen: BaseException | None = exc if isinstance(exc, BaseException) else None
@@ -934,10 +976,7 @@ def _describe_unexplained_failure(exc: object) -> str:
                 "complete. Check that it is still running and reachable, then try again."
             )
         seen = seen.__cause__
-    return (
-        f"The turn failed with {type(exc).__name__}, and the error carried no message. "
-        "Try again; if it keeps failing, check the gateway log."
-    )
+    return None
 
 
 #: The most of a failure's own words the sentence for an unrecognized failure carries.
@@ -965,7 +1004,7 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
     Never returns an empty string: an exception with no message is described from its
     class instead (:func:`_describe_unexplained_failure`).
 
-    Three classes are answered BEFORE the matcher, because the matcher would get them wrong:
+    These classes are answered BEFORE the matcher, because the matcher would get them wrong:
 
     * ``PromptExceedsWindow`` is already the user-facing sentence (model, limit, fix). Its
       figures are this turn's own — "1,429 tokens" contains ``429``, which the substring map
@@ -983,6 +1022,11 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       own sentence for why a model cannot serve this account, naming the fix only it knows
       (Bedrock's model access, a data-retention policy). The map would replace either with a
       generic line.
+    * ``FirstTokenTimeout`` names the instance's own timeout setting and where it is, which the
+      generic "did not answer in time" for an untyped timeout cannot.
+    * A connection that failed or timed out, known by its type or its cause's
+      (:func:`_transport_failure_sentence`): a provider SDK's "Request timed out." has words the
+      matcher knows nothing in, and read by them it was a failure PersonalClaw doesn't recognize.
 
     A status code in the map matches only as a number of its own: ``401`` inside an account id
     or an ARN is not an HTTP 401, and read as one it named the API key for a permission error.
@@ -1010,6 +1054,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     """:func:`humanize_provider_error`'s sentence for a failure it recognizes, or ``None`` for
     one that carries a message it recognizes nothing in."""
     from personalclaw.guardrails.failure import (
+        FirstTokenTimeout,
         NoModelAnswered,
         PromptExceedsWindow,
         request_exceeds_window_sentence,
@@ -1019,7 +1064,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
 
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence(room=bool(room_member))
-    if isinstance(exc, NoModelAnswered):
+    if isinstance(exc, (NoModelAnswered, FirstTokenTimeout)):
         return exc.sentence(room_member=room_member)
     if isinstance(exc, ProviderResolutionError) and str(exc).strip():
         return str(exc).strip()
@@ -1048,6 +1093,9 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     raw = str(exc or "").strip()
     if not raw:
         return _describe_unexplained_failure(exc)
+    transport = _transport_failure_sentence(exc)
+    if transport is not None:
+        return transport
     low = raw.lower()
     # (needle, friendly) — order matters; first match wins. The two surface-bound remedies are
     # resolved first, so the table below stays one row per failure class.

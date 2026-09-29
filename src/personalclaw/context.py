@@ -191,6 +191,31 @@ def _make_contradiction_judge():
 #: constant match. Any literal added here must survive that table for the same reason.
 USER_REQUEST_MARKER = "[CURRENT USER REQUEST -- respond to this]"
 
+
+def user_request(content: str) -> str:
+    """The user's own request, read back out of an assembled prompt.
+
+    An assembled turn is one string: identity, memory, session context, the skills list and
+    history, then the request after :data:`USER_REQUEST_MARKER`, then (on the dashboard) the
+    ``[WIDGETS]`` block. A reader that needs what the USER asked, rather than everything the
+    model is told, recovers it here: the text after the marker, up to the next bracketed block.
+    The bundled zero-config model reads only this, because a very small model handed the whole
+    blob continues the instructions instead of following them; the native loop ranks its tool
+    catalog against it, because ranked against the whole prompt every tool that the prompt's own
+    boilerplate mentions looks relevant to every turn.
+
+    Defined here, beside the marker and the assembly that writes it, so the one place that
+    decides where the request ends is the place that decides where it starts. A message with no
+    marker (a direct call, a channel turn, a subagent's task) is returned untouched.
+    """
+    marker = content.find(USER_REQUEST_MARKER)
+    if marker < 0:
+        return content
+    request = content[marker + len(USER_REQUEST_MARKER) :].lstrip("\n")
+    cut = request.find("\n\n[")
+    return (request[:cut] if cut >= 0 else request).strip()
+
+
 _MAX_CONTEXT_CHARS = 165_000  # ~55k tokens
 
 # ACP agent slices strings at fixed byte offsets (e.g. 4096).

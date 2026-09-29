@@ -107,7 +107,11 @@ chat, channel thread, loop worker, webhook, subagent).
 1. **Prompt-mention expansion** — a leading `@name key=value` expands a saved
    prompt via `_expand_prompt_mention` (user prompts live at
    `~/.personalclaw/prompts/`, snippets at `prompt_snippets/`; the composer's
-   @-menu suggests prompts only at message start).
+   @-menu suggests prompts only at message start). The rest of the message fills
+   the prompt's own inputs, the way the tool it was imported from passes them:
+   the whole text fills `{{arguments}}` (unless given as `arguments=…`), and its
+   words fill `{{arg1}}` to `{{arg9}}` in order. Text a prompt has no input for
+   follows the rendered prompt.
 2. **Context assembly** — `context.py` (`ContextBuilder`) builds the system
    context: the runtime values `{{bot_name}}` and `{{user_name}}` (live-resolved
    from `agent.bot_name` and `dashboard.user_name`, Settings → Account), memory

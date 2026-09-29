@@ -6404,6 +6404,8 @@
   }
  },
  "personalclaw.sdk.model.CACHE_HINT_KEY": {"kind": "value", "type": "str", "value": "'_cache_hint'"},
+ "personalclaw.sdk.model.CHANNEL_CLOSE": {"kind": "value", "type": "str", "value": "'<channel|>'"},
+ "personalclaw.sdk.model.CHANNEL_OPEN": {"kind": "value", "type": "str", "value": "'<|channel>'"},
  "personalclaw.sdk.model.CancelOutcome": {"kind": "type alias", "value": "Literal['acked', 'timeout', 'no_turn', 'error']"},
  "personalclaw.sdk.model.Capability": {
   "bases": ["str", "Enum"],
@@ -6462,6 +6464,30 @@
   "bases": ["str", "Enum"],
   "kind": "enum",
   "members": {"BUDGET_EXCEEDED": "'budget_exceeded'", "CIRCUIT_OPEN": "'circuit_open'", "CONSTRAINT_VIOLATION": "'constraint_violation'", "INJECTION_BLOCKED": "'injection_blocked'", "NONE": "'none'", "PROMPT_TOO_LARGE": "'prompt_too_large'", "PROVIDER_ERROR": "'provider_error'", "SCHEMA_VIOLATION": "'schema_violation'", "SECRET_LEAK": "'secret_leak'", "TIMEOUT": "'timeout'", "TOKEN_OVERFLOW": "'token_overflow'"}
+ },
+ "personalclaw.sdk.model.FirstTokenTimeout": {
+  "bases": ["GuardError"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "keyword_only", "name": "model"},
+    {"annotation": "str", "kind": "keyword_only", "name": "provider"},
+    {"annotation": "str", "kind": "keyword_only", "name": "endpoint"},
+    {"annotation": "float", "kind": "keyword_only", "name": "waited_secs"},
+    {"annotation": "str", "kind": "keyword_only", "name": "setting"},
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "instance"}
+   ],
+   "returns": "None"
+  },
+  "kind": "class",
+  "members": {
+   "sentence": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "room_member"}
+    ],
+    "returns": "str"
+   }
+  }
  },
  "personalclaw.sdk.model.KIND_OUTSIDE": {"kind": "value", "type": "str", "value": "'text'"},
  "personalclaw.sdk.model.LLMEvent": {"kind": "alias", "of": "personalclaw.sdk.channel.LLMEvent"},
@@ -6923,7 +6949,9 @@
   "bases": ["object"],
   "init": {
    "params": [
-    {"annotation": "dict[str, str]", "kind": "positional_or_keyword", "name": "tags"}
+    {"annotation": "dict[str, str]", "kind": "positional_or_keyword", "name": "tags"},
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel"},
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "inside"}
    ],
    "returns": "None"
   },
@@ -6970,7 +6998,9 @@
  },
  "personalclaw.sdk.model.make_think_splitter": {
   "kind": "function",
-  "params": [],
+  "params": [
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "inside"}
+  ],
   "returns": "StreamingTagSplitter"
  },
  "personalclaw.sdk.model.model_context_window": {
@@ -7552,6 +7582,13 @@
   }
  },
  "personalclaw.sdk.prompt.USER_REQUEST_MARKER": {"kind": "value", "type": "str", "value": "'[CURRENT USER REQUEST -- respond to this]'"},
+ "personalclaw.sdk.prompt.user_request": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "content"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.provider_helpers.BrandedCatalog": {
   "bases": ["ModelCatalog"],
   "init": {

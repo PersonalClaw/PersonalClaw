@@ -45,6 +45,8 @@ if TYPE_CHECKING:
 # re-exported so the app's tests and any sibling module import them from here rather than
 # reaching around the SDK facade. F401 is therefore blanket for this block, not per-name.
 from personalclaw.sdk.model import (  # noqa: F401
+    CHANNEL_CLOSE,
+    CHANNEL_OPEN,
     EVENT_COMPLETE,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
@@ -55,6 +57,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     ConnectionResult,
     ContextGauge,
     Credential,
+    FirstTokenTimeout,
     LLMEvent,
     ModelDiscoveryError,
     ModelInfo,
@@ -86,10 +89,22 @@ _DEFAULT_ENDPOINT = "http://localhost:11434"
 # convention used by ``providers/openai.py`` and ``providers/anthropic.py``.
 _MAX_HISTORY = 50
 
-# Default request timeout (seconds). Streaming bodies are read on the
-# pooled connection so the timeout applies to connect/write/pool, not to
-# the total streaming duration.
-_DEFAULT_TIMEOUT = 60.0
+# Default Request Timeout (seconds): how long a request waits for Ollama to start answering, and
+# then between the parts of a streamed answer. It is not a cap on the whole answer. The first
+# wait is the long one: nothing arrives until the model is loaded and has read the whole prompt,
+# and a local model reading a long conversation can take minutes — measured, a 12B model needed
+# about 125 s for the first token of a first chat turn, so the old 120 s failed the turn. The
+# manifest's ``timeout_secs`` default is this same number (every instance created from the form
+# stores it), which a test pins.
+_DEFAULT_TIMEOUT = 600.0
+
+# How long to wait for the connection itself. Kept short and apart from the Request Timeout, so an
+# address nothing answers at is reported in seconds however generous the wait for an answer is.
+_CONNECT_TIMEOUT = 10.0
+
+# The Request Timeout's label on the instance form (the manifest's ``timeout_secs`` x-meta label):
+# the setting a first-token timeout tells the user to raise.
+_TIMEOUT_SETTING = "Request Timeout"
 
 
 def _timeout_or_default(raw: object) -> float:
@@ -383,6 +398,73 @@ def _accumulate_ollama_tool_call(acc: dict[int, dict[str, Any]], idx: int, tc: d
             bucket["arguments"] = args
 
 
+class _Reasoning:
+    """One streamed answer, split into what the model says and what it reasons.
+
+    Ollama streams a thinking model's reasoning in ``message.thinking``, apart from
+    ``message.content``, and it is read as thinking rather than dropped. Both fields go
+    through the platform's reasoning splitter, because the model's own markers can ride in
+    either: measured on Gemma 4 on a turn after a tool result, Ollama left the raw channel
+    opener in ``thinking`` and let the rest of the reasoning, the channel's closing token and
+    then the answer through in ``content``. ``thinking`` is reasoning from its first character,
+    and only what follows a closing marker in it is the answer.
+
+    So while ``thinking`` has opened a channel it has not closed, ``content`` is held: up to
+    the channel's closing token it is reasoning, and after it the answer. A channel that never
+    closes gives back what was held as the answer at the end of the stream — shown late, never
+    hidden as reasoning.
+    """
+
+    def __init__(self) -> None:
+        self._thinking = make_think_splitter(inside=True)
+        self._content = make_think_splitter()
+        self._thought = ""  # the raw reasoning field so far, markers and all
+        self._held: str | None = None  # content held while the channel may still be open
+        self._channel_closed = False  # content closed the channel the reasoning field opened
+
+    def _channel_left_open(self) -> bool:
+        return self._thought.rfind(CHANNEL_OPEN) > self._thought.rfind(CHANNEL_CLOSE)
+
+    def feed(self, message: dict) -> list[LLMEvent]:
+        """The events one streamed ``message`` object resolves into, reasoning first."""
+        out: list[LLMEvent] = []
+        thought = message.get("thinking") or ""
+        if thought:
+            self._thought += thought
+            out += _events(self._thinking.feed(thought))
+        text = message.get("content") or ""
+        if text:
+            if self._held is not None or (not self._channel_closed and self._channel_left_open()):
+                self._held = (self._held or "") + text
+                if CHANNEL_CLOSE in self._held:
+                    # The reasoning ends here: what came before the token was the channel's,
+                    # and from here on the content is the answer.
+                    self._content = make_think_splitter(inside=True)
+                    out += _events(self._content.feed(self._held))
+                    self._held = None
+                    self._channel_closed = True
+            else:
+                out += _events(self._content.feed(text))
+        return out
+
+    def flush(self) -> list[LLMEvent]:
+        out = _events(self._thinking.flush())
+        if self._held is not None:
+            out += _events(self._content.feed(self._held))
+            self._held = None
+        return out + _events(self._content.flush())
+
+
+def _events(segments: list) -> list[LLMEvent]:
+    return [
+        LLMEvent(
+            kind=EVENT_TEXT_CHUNK if seg.kind == KIND_OUTSIDE else EVENT_THINKING_CHUNK,
+            text=seg.text,
+        )
+        for seg in segments
+    ]
+
+
 class OllamaProvider(ModelProvider):
     """ModelProvider backed by a local Ollama HTTP server.
 
@@ -407,6 +489,7 @@ class OllamaProvider(ModelProvider):
         endpoint: str = _DEFAULT_ENDPOINT,
         timeout: float = _DEFAULT_TIMEOUT,
         extra_options: dict[str, object] | None = None,
+        instance: str = "",
     ) -> None:
         # Lazy import per R6.5 / Property 11. Do NOT lift to module top.
         import httpx  # noqa: WPS433
@@ -421,6 +504,9 @@ class OllamaProvider(ModelProvider):
         self._model = model
         self._endpoint = endpoint.rstrip("/")
         self._timeout = timeout
+        # The instance this provider was built for — the name a timeout's fix is found under in
+        # Settings → Providers, since each instance keeps its own Request Timeout.
+        self._instance = instance
         self._extra_options: dict[str, object] = dict(extra_options or {})
         # The embedding binding (a build kwarg) or the instance's own Embedding Model option.
         # Never the chat model: that is a model nobody chose to embed with, and the option's own
@@ -438,7 +524,10 @@ class OllamaProvider(ModelProvider):
         self.context_window: int | None = declared_context_window(
             self._extra_options.pop("context_window", None)
         )
-        self._client: Any = httpx.AsyncClient(base_url=self._endpoint, timeout=timeout)
+        self._client: Any = httpx.AsyncClient(
+            base_url=self._endpoint,
+            timeout=httpx.Timeout(timeout, connect=min(timeout, _CONNECT_TIMEOUT)),
+        )
         self._history: list[dict[str, Any]] = []
         # ``None`` until the first token report, NOT 0.0 — see the llm/base contract and
         # :meth:`_context_pct`. 0.0 is a FABRICATED measurement and it silently disabled
@@ -593,53 +682,52 @@ class OllamaProvider(ModelProvider):
             body[_FORMAT_FIELD] = self._output_format
 
         assistant_text = ""
-        # Self-gating inline <think> splitter (see openai.py stream()).
-        splitter = make_think_splitter()
+        reasoning = _Reasoning()
         input_tokens = 0
         output_tokens = 0
 
-        async with self._client.stream("POST", "/api/chat", json=body) as response:
-            if response.status_code >= 400:
-                err_text = (await response.aread()).decode(errors="replace")
-                logger.error(
-                    "Ollama %d: %s (model=%r, msg_count=%d)",
-                    response.status_code,
-                    err_text[:200],
-                    self._model,
-                    len(self._history),
-                )
-                _raise_refused(response, err_text)
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
-                    continue
+        answered = False
+        try:
+            async with self._client.stream("POST", "/api/chat", json=body) as response:
+                if response.status_code >= 400:
+                    err_text = (await response.aread()).decode(errors="replace")
+                    logger.error(
+                        "Ollama %d: %s (model=%r, msg_count=%d)",
+                        response.status_code,
+                        err_text[:200],
+                        self._model,
+                        len(self._history),
+                    )
+                    _raise_refused(response, err_text)
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    answered = True
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
+                        continue
 
-                msg = chunk.get("message") or {}
-                text_delta = msg.get("content") or ""
-                if text_delta:
-                    for seg in splitter.feed(text_delta):
-                        if seg.kind == KIND_OUTSIDE:
-                            assistant_text += seg.text
-                            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=seg.text)
-                        else:
-                            yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=seg.text)
+                    for ev in reasoning.feed(chunk.get("message") or {}):
+                        if ev.kind == EVENT_TEXT_CHUNK:
+                            assistant_text += ev.text
+                        yield ev
 
-                if chunk.get("done"):
-                    input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
-                    output_tokens = int(chunk.get("eval_count", 0) or 0)
-                    break
+                    if chunk.get("done"):
+                        input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
+                        output_tokens = int(chunk.get("eval_count", 0) or 0)
+                        break
+        except self._httpx_module.ReadTimeout as exc:
+            if answered:
+                raise
+            raise self._slow_start(model) from exc
 
-        for seg in splitter.flush():
-            if seg.kind == KIND_OUTSIDE:
-                assistant_text += seg.text
-                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=seg.text)
-            else:
-                yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=seg.text)
+        for ev in reasoning.flush():
+            if ev.kind == EVENT_TEXT_CHUNK:
+                assistant_text += ev.text
+            yield ev
 
         if assistant_text:
             self._history.append({"role": "assistant", "content": assistant_text})
@@ -705,69 +793,63 @@ class OllamaProvider(ModelProvider):
         # or deliver a complete list in the final message. Either way we emit
         # one EVENT_TOOL_CALL per call after the stream ends.
         tool_calls: dict[int, dict[str, Any]] = {}
-        # Self-gating inline <think> splitter (see openai.py stream()).
-        splitter = make_think_splitter()
+        reasoning = _Reasoning()
 
-        async with self._client.stream("POST", "/api/chat", json=body) as response:
-            if response.status_code >= 400:
-                err_body = await response.aread()
-                err_text = err_body.decode(errors="replace")
-                # A model that can't use tools rejects the tools request. Retry
-                # once without tools so the turn still completes, and remember
-                # it so later turns don't pay the failed round-trip again.
-                if send_tools and _is_tools_unsupported_error(response.status_code, err_text):
-                    logger.info(
-                        "Ollama model %r does not support tools; retrying tool-less",
-                        model or self._model,
-                    )
-                    self._tools_unsupported = True
-                    async for ev in self.complete(messages, tools=None, model=model):
-                        yield ev
-                    return
-                logger.error(
-                    "Ollama %d: %s (model=%r, msg_count=%d)",
-                    response.status_code,
-                    err_text[:200],
-                    model or self._model,
-                    len(messages),
-                )
-                _raise_refused(response, err_text)
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
-                    continue
-
-                msg = chunk.get("message") or {}
-                text_delta = msg.get("content") or ""
-                if text_delta:
-                    for seg in splitter.feed(text_delta):
-                        yield LLMEvent(
-                            kind=(
-                                EVENT_TEXT_CHUNK
-                                if seg.kind == KIND_OUTSIDE
-                                else EVENT_THINKING_CHUNK
-                            ),
-                            text=seg.text,
+        answered = False
+        try:
+            async with self._client.stream("POST", "/api/chat", json=body) as response:
+                if response.status_code >= 400:
+                    err_body = await response.aread()
+                    err_text = err_body.decode(errors="replace")
+                    # A model that can't use tools rejects the tools request. Retry
+                    # once without tools so the turn still completes, and remember
+                    # it so later turns don't pay the failed round-trip again.
+                    if send_tools and _is_tools_unsupported_error(response.status_code, err_text):
+                        logger.info(
+                            "Ollama model %r does not support tools; retrying tool-less",
+                            model or self._model,
                         )
+                        self._tools_unsupported = True
+                        async for ev in self.complete(messages, tools=None, model=model):
+                            yield ev
+                        return
+                    logger.error(
+                        "Ollama %d: %s (model=%r, msg_count=%d)",
+                        response.status_code,
+                        err_text[:200],
+                        model or self._model,
+                        len(messages),
+                    )
+                    _raise_refused(response, err_text)
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    answered = True
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
+                        continue
 
-                for idx, tc in enumerate(msg.get("tool_calls") or []):
-                    _accumulate_ollama_tool_call(tool_calls, idx, tc)
+                    msg = chunk.get("message") or {}
+                    for ev in reasoning.feed(msg):
+                        yield ev
 
-                if chunk.get("done"):
-                    input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
-                    output_tokens = int(chunk.get("eval_count", 0) or 0)
-                    break
+                    for idx, tc in enumerate(msg.get("tool_calls") or []):
+                        _accumulate_ollama_tool_call(tool_calls, idx, tc)
 
-        for seg in splitter.flush():
-            yield LLMEvent(
-                kind=EVENT_TEXT_CHUNK if seg.kind == KIND_OUTSIDE else EVENT_THINKING_CHUNK,
-                text=seg.text,
-            )
+                    if chunk.get("done"):
+                        input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
+                        output_tokens = int(chunk.get("eval_count", 0) or 0)
+                        break
+        except self._httpx_module.ReadTimeout as exc:
+            if answered:
+                raise
+            raise self._slow_start(model or self._model) from exc
+
+        for ev in reasoning.flush():
+            yield ev
 
         for idx in sorted(tool_calls):
             bucket = tool_calls[idx]
@@ -791,6 +873,22 @@ class OllamaProvider(ModelProvider):
             output_tokens=output_tokens,
             context_usage_pct=self._last_context_pct,
             cost_usd=0.0,
+        )
+
+    def _slow_start(self, model: str) -> FirstTokenTimeout:
+        """The failure for a request whose answer did not start within the Request Timeout.
+
+        Raised only before the first byte of the answer: nothing arrives until the model has
+        read the whole prompt, which is the wait this setting has to cover. A stall after the
+        answer started is a different failure and keeps httpx's own error.
+        """
+        return FirstTokenTimeout(
+            model=model,
+            provider="Ollama",
+            endpoint=self._endpoint,
+            waited_secs=self._timeout,
+            setting=_TIMEOUT_SETTING,
+            instance=self._instance,
         )
 
     # ── Embeddings ────────────────────────────────────────────────────
@@ -1081,6 +1179,7 @@ def _factory(
         endpoint=endpoint,
         timeout=timeout,
         extra_options=options,
+        instance=entry.name,
     )
 
 
@@ -1109,6 +1208,7 @@ def create_provider(config: dict | None = None) -> "OllamaProvider":
         endpoint=endpoint,
         timeout=timeout,
         extra_options=extra,
+        instance=str(cfg.get("name") or ""),
     )
 
 

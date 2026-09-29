@@ -48,6 +48,14 @@ def normalize_variable_type(raw: Any) -> VariableType:
 PromptKind = Literal["system", "user"]
 ALLOWED_PROMPT_KINDS: tuple[PromptKind, ...] = ("system", "user")
 
+#: The variable that receives the text typed after a prompt's name when the prompt is run by
+#: name (``@standup ~/src/app`` in chat): what an agent CLI's command gets as ``$ARGUMENTS``, and
+#: the name both importers give it. A prompt that declares it takes that text there.
+ARGUMENTS_VARIABLE = "arguments"
+
+#: ``arg1``…``arg9``: the same text's words, in order — a command's ``$1``…``$9``.
+POSITIONAL_VARIABLES: tuple[str, ...] = tuple(f"arg{n}" for n in range(1, 10))
+
 # A prompt's storage origin. ``bundled`` records are shipped + read-only in the UI
 # (editing duplicates to ``user``); ``marketplace`` are installed, also read-only.
 PromptSource = Literal["user", "bundled", "marketplace"]

@@ -154,6 +154,20 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A settings list whose schema describes its entries is edited as a list in Apps › Configure and Settings › Providers, chips for texts and a row per entry for records, instead of typed as JSON (`slack-channel` describes its lists).**
 
+- **A local model that takes minutes to read a long conversation is given the time: an Ollama instance waits up to 600 seconds for its first word (10 for the server to answer at all), and a model that still has not started is stopped once, not retried, with a sentence naming the setting to raise (`personalclaw.sdk.model.FirstTokenTimeout`, used by `ollama-models`).**
+
+- **A turn sends the tool schemas its request needs, and no more than an eighth of a small window: tools are chosen by what you asked rather than by the prompt's own wording, and every other tool is still listed by name (`personalclaw.sdk.prompt.user_request`, used by `bundled-chat`).**
+
+- **Text typed after an @prompt fills the prompt's arguments: `@standup ~/src/app` renders it for that path, and single words fill `{{arg1}}` to `{{arg9}}`.**
+
+- **A tool loop that keeps getting the same answers is stopped: a read that returned the same result three times in a turn is refused, and a turn with more than eight repeats ends with a sentence in the chat saying why, a CLI agent's turn too.**
+
+- **A model's reasoning markers no longer show in its reply, and a local model's thinking shows as thinking, not as its answer (`StreamingTagSplitter(channel=…, inside=…)`, `make_think_splitter(inside=…)`, `CHANNEL_OPEN` and `CHANNEL_CLOSE`, used by `ollama-models`).**
+
+- **`memory_remember` takes the `scope` and `workspace` the system prompt teaches and saves a lesson's `negative`, and every worked example in the tool reference is one its tool accepts.**
+
+- **A model that did not answer is logged as one warning naming the model and the cause, not a traceback, for a chat turn and for an auto-title.**
+
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**

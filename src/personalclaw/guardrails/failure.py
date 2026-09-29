@@ -302,6 +302,99 @@ class PromptExceedsWindow(GuardError):
         )
 
 
+def _host_and_port(endpoint: str) -> str:
+    """``host:port`` of an endpoint URL — never its path or query, where a key could ride."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(endpoint)
+        host, port = parts.hostname or "", parts.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{port}" if host and port else host
+
+
+def first_token_timeout_sentence(
+    *,
+    model: str,
+    provider: str,
+    endpoint: str,
+    waited_secs: float,
+    setting: str,
+    instance: str = "",
+    room_member: str = "",
+) -> str:
+    """THE sentence for "the model did not start answering within its request timeout".
+
+    Names what timed out and after how long, why a model can need that long, and the two fixes:
+    the setting on the instance (the provider's own label for it, and where the form keeps it),
+    or a faster model. The instance is named because a user can have several of one provider's
+    instances, each with its own timeout. ``room_member`` is the Agent Rooms reading, where a
+    member's model is its agent's, chosen on the Agents page.
+    """
+    where = _host_and_port(endpoint)
+    who = f"{model} on {provider}" if model else provider
+    if where:
+        who += f" at {where}"
+    on = f"the “{instance}” instance" if instance else f"this {provider} instance"
+    faster = (
+        f"give the {room_member} agent a faster model on the Agents page"
+        if room_member
+        else "pick a faster model in the composer's model selector"
+    )
+    return (
+        f"{who} did not start answering within {int(round(waited_secs))} seconds, so the "
+        "request was stopped. A model can take minutes to read a long conversation before it "
+        f"answers: raise {setting} on {on} in Settings → Providers (under Advanced), or {faster}."
+    )
+
+
+class FirstTokenTimeout(GuardError):
+    """A model did not start answering within its provider's request timeout.
+
+    Raised by a model app (through ``personalclaw.sdk.model``) when a request timed out before
+    the first byte of the answer arrived — a model that is still reading a long prompt, which on
+    a local machine can take minutes. Typed for two reasons that both come from the measured
+    failure: the chat must show :func:`first_token_timeout_sentence`, which names the setting
+    that is the fix, rather than a generic "did not answer in time"; and the native loop must not
+    resend the identical request, which starts again from the first token and takes as long
+    again. ``TIMEOUT`` keeps it a failure the next model of a turn's chain may answer in its place.
+    """
+
+    mode = FailureMode.TIMEOUT
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        provider: str,
+        endpoint: str,
+        waited_secs: float,
+        setting: str,
+        instance: str = "",
+    ) -> None:
+        self.model = model
+        self.provider = provider
+        self.endpoint = endpoint
+        self.waited_secs = waited_secs
+        self.setting = setting
+        self.instance = instance
+        super().__init__(self.sentence())
+
+    def sentence(self, *, room_member: str = "") -> str:
+        return first_token_timeout_sentence(
+            model=self.model,
+            provider=self.provider,
+            endpoint=self.endpoint,
+            waited_secs=self.waited_secs,
+            setting=self.setting,
+            instance=self.instance,
+            room_member=room_member,
+        )
+
+
 def failed_before_replying(failures: list[tuple[str, str]]) -> str:
     """``"it failed before it replied (why), and so did <ref> (why)"`` for the models a turn tried.
 

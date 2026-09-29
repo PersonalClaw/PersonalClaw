@@ -93,6 +93,7 @@ from personalclaw.onboarding_import.sources.common import (
     unreadable_conversations,
     unreadable_file,
 )
+from personalclaw.prompt_providers.base import ARGUMENTS_VARIABLE, POSITIONAL_VARIABLES
 
 NAME = "claude_code"
 DISPLAY_NAME = "Claude Code"
@@ -694,22 +695,25 @@ def command_prompt(body: str, *, argument_hint: str) -> tuple[str, list[dict[str
     """A command's body as a PersonalClaw prompt: ``(content, variables)``.
 
     ``$ARGUMENTS`` becomes the ``{{arguments}}`` variable and ``$1``…``$9`` become ``{{arg1}}``…,
-    each declared, so the prompt asks for them where Claude Code took them from the command line.
+    each declared. Those are the names a prompt run by name fills from the text typed after it
+    (``prompt_providers.base.ARGUMENTS_VARIABLE``), so ``@name <text>`` gives the prompt its
+    arguments where Claude Code took them from the command line.
     """
     variables: list[dict[str, Any]] = []
     content = body
     if _ARGUMENTS_RE.search(content):
-        content = _ARGUMENTS_RE.sub("{{arguments}}", content)
+        content = _ARGUMENTS_RE.sub(f"{{{{{ARGUMENTS_VARIABLE}}}}}", content)
         variables.append(
             {
-                "name": "arguments",
+                "name": ARGUMENTS_VARIABLE,
                 "type": "textarea",
                 "description": argument_hint or "What the command was given after its name.",
             }
         )
     for digit in sorted({m.group(1) for m in _POSITIONAL_RE.finditer(content)}):
-        content = re.sub(rf"\${digit}(?![0-9])", f"{{{{arg{digit}}}}}", content)
-        variables.append({"name": f"arg{digit}", "type": "text", "description": ""})
+        name = POSITIONAL_VARIABLES[int(digit) - 1]
+        content = re.sub(rf"\${digit}(?![0-9])", f"{{{{{name}}}}}", content)
+        variables.append({"name": name, "type": "text", "description": ""})
     return content, variables
 
 

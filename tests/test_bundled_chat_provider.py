@@ -62,6 +62,7 @@ from personalclaw.sdk.local_model import (
     DOWNLOAD_TRUNCATED,
     DOWNLOAD_UNREACHABLE,
 )
+from personalclaw.sdk.prompt import USER_REQUEST_MARKER
 
 APP_NAME = "bundled-chat"
 _BUNDLE = NATIVE_DIR / APP_NAME
@@ -593,13 +594,13 @@ def test_the_users_request_is_recovered_from_an_assembled_prompt(rail) -> None:
         "[Previous chat history for this tab]\nUser: hello\n[End of history]\n\n"
         "[AGENT SYSTEM PROMPT]\nYou are PersonalClaw, a helpful personal AI agent...\n"
         "[END AGENT SYSTEM PROMPT]\n\n[SESSION CONTEXT]\nlots of memory\n\n"
-        + rail.USER_REQUEST_MARKER
+        + USER_REQUEST_MARKER
         + "\nWhat is the capital of France?\n\n[WIDGETS] You can render rich HTML inline..."
     )
     assert rail.user_request(assembled) == "What is the capital of France?"
 
 
-def test_the_marker_is_the_one_core_actually_delivers(rail) -> None:
+def test_the_marker_is_the_one_core_actually_delivers() -> None:
     """🔴 The em-dash trap, pinned.
 
     Core transliterates the assembled prompt through ``_MULTIBYTE_TABLE`` on the way out, so a
@@ -610,8 +611,8 @@ def test_the_marker_is_the_one_core_actually_delivers(rail) -> None:
     """
     from personalclaw.context import _MULTIBYTE_TABLE
 
-    assert rail.USER_REQUEST_MARKER.translate(_MULTIBYTE_TABLE) == rail.USER_REQUEST_MARKER
-    assert "\u2014" not in rail.USER_REQUEST_MARKER
+    assert USER_REQUEST_MARKER.translate(_MULTIBYTE_TABLE) == USER_REQUEST_MARKER
+    assert "\u2014" not in USER_REQUEST_MARKER
 
 
 def test_a_message_with_no_marker_is_left_exactly_alone(rail) -> None:

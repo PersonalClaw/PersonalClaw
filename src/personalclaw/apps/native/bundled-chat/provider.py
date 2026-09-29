@@ -104,7 +104,7 @@ from personalclaw.sdk.model import (
     output_cap,
     per_call_temperature,
 )
-from personalclaw.sdk.prompt import USER_REQUEST_MARKER
+from personalclaw.sdk.prompt import user_request
 from personalclaw.sdk.settings import ProviderSettings
 from personalclaw.sdk.util import config_dir, single_flight
 
@@ -1276,36 +1276,6 @@ def reset_loaded_model() -> None:
 # ── the provider ──────────────────────────────────────────────────────────────────────────
 
 
-def user_request(content: str) -> str:
-    """The user's actual request, recovered from an assembled prompt.
-
-    **Why a provider does this at all.** Core assembles every turn into ONE string — identity,
-    memory, session context, the skills list, history, then the request — and hands it to the
-    provider as the user message. Measured on the shipped weight over a real
-    ``POST /api/chat``: that string was 11,000 characters, and the model answered *"You are
-    currently running in AGENT mode -- full execution. Use whatever tools the user needs…"*. It
-    CONTINUED the instructions rather than following them, which is the documented behaviour of
-    a 135M model handed a long instruction block — and to a user it reads as the product being
-    broken, not as the model being small. Every capable model takes the whole blob; this one
-    cannot, so it reads the request back out.
-
-    The boundary is core's own :data:`USER_REQUEST_MARKER`, imported rather than spelled out
-    here: a hard-coded copy would silently stop matching the day core reworded it, and silently
-    is the bad part. After the marker, the request runs until the next bracketed block (the
-    dashboard's ``[WIDGETS]`` instructions), because those are addressed to a model that can
-    render widgets and this one cannot.
-
-    A message with no marker — a direct ``complete()`` call, a channel turn, a test — is
-    returned untouched.
-    """
-    marker = content.find(USER_REQUEST_MARKER)
-    if marker < 0:
-        return content
-    request = content[marker + len(USER_REQUEST_MARKER) :].lstrip("\n")
-    cut = request.find("\n\n[")
-    return (request[:cut] if cut >= 0 else request).strip()
-
-
 def _chatml(
     model: LlamaCpuModel,
     messages: Sequence[dict],
@@ -1316,9 +1286,12 @@ def _chatml(
 
     Truncation drops the OLDEST turns and never the system message or the final user turn:
     a prompt trimmed from the wrong end reads as the model ignoring what was just asked. Each
-    user turn is reduced to its request by :func:`user_request` first, so a multi-turn
+    user turn is reduced to its request by core's :func:`user_request` first, so a multi-turn
     conversation still reaches the model as a conversation rather than as N copies of the
-    assembled context.
+    assembled context. Measured on the shipped weight over a real ``POST /api/chat``: handed the
+    whole 11,000-character assembled turn, the model answered *"You are currently running in
+    AGENT mode -- full execution…"* — a 135M model CONTINUES a long instruction block rather
+    than following it, which reads to a user as the product being broken.
 
     🔴 **The result never exceeds *budget* — a newest turn that cannot fit is REFUSED.** It
     used to be kept whole whatever its size, and that one rule is how an ordinary paste became

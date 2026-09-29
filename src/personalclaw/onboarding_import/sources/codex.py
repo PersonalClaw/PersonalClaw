@@ -98,6 +98,7 @@ from personalclaw.onboarding_import.sources.common import (
     unreadable_conversations,
     unreadable_file,
 )
+from personalclaw.prompt_providers.base import ARGUMENTS_VARIABLE, POSITIONAL_VARIABLES
 
 NAME = "codex"
 DISPLAY_NAME = "Codex"
@@ -557,8 +558,9 @@ def prompt_template(body: str, *, argument_hint: str) -> tuple[str, list[dict[st
 
     Codex's rule, kept: a prompt with any named placeholder (``$ISSUE``) takes named values, each
     a ``{{issue}}`` variable here, all required; one with none takes positional values —
-    ``$1``…``$9`` become ``{{arg1}}``… and ``$ARGUMENTS`` all of them, as ``{{arguments}}``. A
-    ``$$`` stays as Codex left it.
+    ``$1``…``$9`` become ``{{arg1}}``… and ``$ARGUMENTS`` all of them, as ``{{arguments}}``, the
+    names a prompt run by name fills from the text typed after it
+    (``prompt_providers.base.ARGUMENTS_VARIABLE``). A ``$$`` stays as Codex left it.
     """
     names = [m.group(1) for m in _NAMED_PLACEHOLDER_RE.finditer(body) if m.group(1) != _ARGUMENTS]
     if names:
@@ -589,11 +591,11 @@ def _positional_template(body: str, argument_hint: str) -> tuple[str, list[dict[
             out.append("$$")
             i = j + 2
         elif after and after in "123456789":
-            out.append(f"{{{{arg{after}}}}}")
+            out.append(f"{{{{{POSITIONAL_VARIABLES[int(after) - 1]}}}}}")
             digits.add(after)
             i = j + 2
         elif body.startswith(_ARGUMENTS, j + 1):
-            out.append("{{arguments}}")
+            out.append(f"{{{{{ARGUMENTS_VARIABLE}}}}}")
             everything = True
             i = j + 1 + len(_ARGUMENTS)
         else:
@@ -604,12 +606,15 @@ def _positional_template(body: str, argument_hint: str) -> tuple[str, list[dict[
     if everything:
         variables.append(
             {
-                "name": "arguments",
+                "name": ARGUMENTS_VARIABLE,
                 "type": "textarea",
                 "description": argument_hint or "What the prompt was given after its name.",
             }
         )
-    variables.extend({"name": f"arg{d}", "type": "text", "description": ""} for d in sorted(digits))
+    variables.extend(
+        {"name": POSITIONAL_VARIABLES[int(d) - 1], "type": "text", "description": ""}
+        for d in sorted(digits)
+    )
     return "".join(out), variables
 
 

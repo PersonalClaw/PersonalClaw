@@ -78,7 +78,7 @@ from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
     blocked_message,
-    circuit_message,
+    only_reads,
     params_key,
     result_digest,
     structural_note,
@@ -115,7 +115,11 @@ from personalclaw.llm.events import (
     unasked_outcome,
     unasked_reason,
 )
-from personalclaw.llm_helpers import PromptBusyExhaustedError, humanize_provider_error
+from personalclaw.llm_helpers import (
+    PromptBusyExhaustedError,
+    humanize_provider_error,
+    is_model_call_failure,
+)
 from personalclaw.security import (
     is_sensitive_path,
     mask_child_output,
@@ -1100,22 +1104,40 @@ def _flush_segment(
         )
 
 
-def _parse_inline_kwargs(text: str) -> tuple[str, dict[str, str]]:
+def _log_turn_failure(session_key: str, exc: BaseException) -> None:
+    """Log a chat turn that ended in an error, once, in the form that helps.
+
+    A model call that failed (:func:`is_model_call_failure`: a model that did not start
+    answering in time, a provider that refused or could not be reached, a chain no model of
+    which answered) is logged as the sentence the chat shows for it; its traceback holds only
+    the HTTP client's frames, so it is kept at DEBUG. Any other failure is a defect and keeps its
+    traceback, because there the stack is the only account of what went wrong.
+    """
+    if is_model_call_failure(exc):
+        logger.warning(
+            "Chat turn in session %s failed: %s", session_key, humanize_provider_error(exc)
+        )
+        logger.debug("Chat turn failure in session %s", session_key, exc_info=exc)
+        return
+    logger.error("Dashboard chat error in session %s", session_key, exc_info=exc)
+
+
+def _parse_inline_kwargs(text: str) -> tuple[str, list[str], dict[str, str]]:
     """Pull ``key=value`` pairs from the trailing user_text of an @prompt mention.
 
-    Returns ``(remaining_text, kwargs)``. Quoting is supported via simple
-    paired double-quotes so values may contain spaces. Anything that
-    doesn't match ``key=...`` is left in remaining_text verbatim so the
-    user can still pass freeform context after the variable bindings.
+    Returns ``(remaining_text, remaining_words, kwargs)``. Quoting is supported via simple
+    paired double-quotes so values may contain spaces. Anything that doesn't match
+    ``key=...`` is left in remaining_text (and, word by word, in remaining_words) so the
+    user can still pass freeform text after the variable bindings.
     """
     import shlex
 
     if not text:
-        return "", {}
+        return "", [], {}
     try:
         tokens = shlex.split(text, posix=True)
     except ValueError:
-        return text, {}
+        return text, text.split(), {}
     kwargs: dict[str, str] = {}
     leftovers: list[str] = []
     for tok in tokens:
@@ -1124,7 +1146,34 @@ def _parse_inline_kwargs(text: str) -> tuple[str, dict[str, str]]:
             kwargs[k] = v
         else:
             leftovers.append(tok)
-    return " ".join(leftovers).strip(), kwargs
+    return " ".join(leftovers).strip(), leftovers, kwargs
+
+
+def _bind_trailing_text(
+    declared: set[str], text: str, words: list[str], values: dict[str, str]
+) -> str:
+    """Give the text typed after a prompt's name to the prompt's own slots for it.
+
+    A prompt that declares :data:`ARGUMENTS_VARIABLE` takes the whole text there, and one that
+    declares ``arg1``…``arg9`` takes its words in order — what a command run by name gets as
+    ``$ARGUMENTS`` and ``$1``…``$9``, and the names the importers give those. A value named
+    inline (``arguments=…``) wins. Returns what no slot took, which still reaches the model as
+    context: nothing typed is dropped, and nothing a slot took is said twice.
+    """
+    from personalclaw.prompt_providers.base import ARGUMENTS_VARIABLE, POSITIONAL_VARIABLES
+
+    left = text
+    if text and ARGUMENTS_VARIABLE in declared and ARGUMENTS_VARIABLE not in values:
+        values[ARGUMENTS_VARIABLE] = text
+        left = ""
+    taken = 0
+    for position, name in enumerate(POSITIONAL_VARIABLES[: len(words)]):
+        if name in declared and name not in values:
+            values[name] = words[position]
+            taken = position + 1
+    if left and taken:
+        left = " ".join(words[taken:])
+    return left
 
 
 def _expand_prompt_mention(
@@ -1137,9 +1186,10 @@ def _expand_prompt_mention(
     Prompts are resolved through the registered PromptProvider: it renders
     ``{{var}}`` placeholders against declared typed variables, with values
     supplied inline as ``key=value`` tokens (or shell-quoted
-    ``key="value with spaces"``). Required variables that are missing produce
-    a block with a helpful system message — the user can re-issue with the
-    missing bindings.
+    ``key="value with spaces"``). The rest of the text fills the prompt's own slots for it
+    when it declares them (:func:`_bind_trailing_text`) and is otherwise passed along as
+    context. Required variables that are missing produce a block with a helpful system
+    message — the user can re-issue with the missing bindings.
 
     Returns ``(expanded_message, "ok")`` on success,
     ``(original_message, "blocked")`` on render failure,
@@ -1153,7 +1203,7 @@ def _expand_prompt_mention(
     parts = body.split(None, 1)
     mention = parts[0] if parts else body
     raw_tail = parts[1].strip() if len(parts) > 1 else ""
-    user_text, inline_vars = _parse_inline_kwargs(raw_tail)
+    user_text, user_words, inline_vars = _parse_inline_kwargs(raw_tail)
 
     bare = mention.split("/", 1)[-1] if "/" in mention else mention
 
@@ -1171,6 +1221,9 @@ def _expand_prompt_mention(
     tpl = provider.get_prompt(bare) if provider is not None else None
     if tpl is None:
         return message, "not_found"
+    user_text = _bind_trailing_text(
+        {v.name for v in tpl.variables}, user_text, user_words, inline_vars
+    )
     # Compose-aware: resolve {{> snippet}} includes through the same provider so a
     # @-mentioned prompt can pull in shared snippets just like the authoring/render UI.
     _resolver = (lambda n: provider.get_snippet(n)) if provider is not None else None
@@ -2319,6 +2372,9 @@ async def run_chat(
     # first frame alone would bucket every call to one tool together and make the
     # params-awareness a lie.
     _acp_tool_keys: dict[str, str] = {}
+    # tool_call_id -> whether the call only reads (`loop_breaker.only_reads`), kept and refined
+    # beside its key: a read answering the same again and again is what the repeat circuit counts.
+    _acp_tool_reads: dict[str, bool] = {}
     # The circuit trips once per turn: the counter stays over threshold afterwards.
     _acp_breaker_aborted = False
     needs_session_reset = False
@@ -2539,6 +2595,9 @@ async def run_chat(
     # the provider's stop reason from the terminal complete event, and whether the task itself was
     # cancelled, which a force stop can do before the provider reports any stop reason.
     _stop_reason = ""
+    # The runtime's own sentence for a turn IT stopped (the loop breaker's), from the terminal
+    # complete event; shown as the turn's error row after the stream ends.
+    _runtime_stop_note = ""
     _turn_cancelled = False
     # How a conversation an app started approves (`app_conversation_posture`); None for yours.
     # Read again by the approval gate below, which must not let YOLO into an app's conversation.
@@ -3497,6 +3556,9 @@ async def run_chat(
                     _acp_tool_keys[event.tool_call_id] = params_key(
                         event.title, tool_input_to_str(event.tool_input)
                     )
+                    _acp_tool_reads[event.tool_call_id] = only_reads(
+                        event.title, event.tool_kind, event.tool_input
+                    )
                 state.broadcast_ws(
                     "tool_call",
                     {
@@ -3644,6 +3706,9 @@ async def run_chat(
                         _name = _prior.split(":", 1)[0] if _prior else event.title
                         _acp_tool_keys[event.tool_call_id] = params_key(
                             _name, tool_input_to_str(event.tool_input)
+                        )
+                        _acp_tool_reads[event.tool_call_id] = only_reads(
+                            _name, event.tool_kind, event.tool_input
                         )
                     # §2.5 gap 7. A file edit the frame DECLARED (ACP diff content
                     # block) becomes a chip from the declaration alone — no name set, no
@@ -3847,73 +3912,75 @@ async def run_chat(
                     # unconditionally for the same reason.
                     _acp_failed = _tool_ok is False
                     _streak = _acp_breaker.record(_bkey, _acp_failed)
+                    _notice = ""
                     if _acp_failed:
-                        _notice = ""
                         if _streak >= BLOCK_THRESHOLD:
                             _notice = blocked_message(_bname, _streak)
                         elif _streak >= WARN_THRESHOLD:
                             _notice = warn_note(_bname, _streak).strip()
                         if _notice:
                             logger.warning("acp loop breaker (%s): %s", _acp_cli, _notice)
-                            session.append("tool", _notice, "msg msg-tool")
-                            state.broadcast_ws(
-                                "activity_event",
-                                {"session": session.key, "kind": "status", "text": _notice},
-                            )
-                        if _acp_breaker.circuit_tripped() and not _acp_breaker_aborted:
-                            # Once only. The counter stays tripped for the rest of the
-                            # stream, so without this guard every subsequent result
-                            # would re-announce the abort and re-cancel.
-                            _acp_breaker_aborted = True
-                            _abort_msg = circuit_message(_acp_breaker.total_failures)
-                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _abort_msg)
-                            session.append("error", _abort_msg, "msg msg-err")
-                            state.broadcast_ws(
-                                "activity_event",
-                                {"session": session.key, "kind": "status", "text": _abort_msg},
-                            )
-                            try:
-                                sel().log_tool_invocation(
-                                    session_key=session_key,
-                                    agent=_agent_label(session),
-                                    source="dashboard",
-                                    tool_name=_bname,
-                                    tool_kind=event.tool_kind,
-                                    outcome="failed",
-                                    request_id=event.tool_call_id,
-                                    metadata={
-                                        "reason": "loop_breaker_circuit",
-                                        "provider": _acp_cli,
-                                        "total_failures": _acp_breaker.total_failures,
-                                        "aborted_turn": True,
-                                    },
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "SEL audit failed for ACP breaker trip", exc_info=True
-                                )
-                            # Cancel the CLI's turn rather than breaking out of the
-                            # stream: the stream then ends with a cancelled stop
-                            # reason and every post-loop finalizer (telemetry, turn
-                            # close, persistence) runs exactly as it does for a
-                            # user-pressed Stop. Breaking here would abandon the
-                            # generator mid-turn and skip all of it.
-                            await _abort_acp_turn(client, "breaker trip")
                     else:
-                        # Structural (no-progress / ping-pong) detection over
-                        # SUCCESSFUL calls — nothing failed, so the failure path is
-                        # blind to it. Warn-only, same as native.
+                        # Structural (no-progress / ping-pong) detection over SUCCESSFUL
+                        # calls — nothing failed, so the failure path is blind to it. The CLI
+                        # already ran the call, so a repeated read is counted here rather
+                        # than refused; the circuit below is what stops the turn.
                         _loop_reason = _acp_breaker.record_structural(
-                            f"{_bkey}\x1f{result_digest(_out)}"
+                            f"{_bkey}\x1f{result_digest(_out)}",
+                            reads=_acp_tool_reads.pop(event.tool_call_id, False),
                         )
                         if _loop_reason:
-                            _sn = structural_note(_loop_reason).strip()
-                            logger.info("acp loop breaker (%s): %s", _acp_cli, _sn)
-                            session.append("tool", _sn, "msg msg-tool")
-                            state.broadcast_ws(
-                                "activity_event",
-                                {"session": session.key, "kind": "status", "text": _sn},
+                            _notice = structural_note(_loop_reason).strip()
+                            logger.info("acp loop breaker (%s): %s", _acp_cli, _notice)
+                    if _notice:
+                        session.append("tool", _notice, "msg msg-tool")
+                        state.broadcast_ws(
+                            "activity_event",
+                            {"session": session.key, "kind": "status", "text": _notice},
+                        )
+                    _abort_msg = _acp_breaker.stop_sentence()
+                    if _abort_msg and not _acp_breaker_aborted:
+                        # Once only. The counter stays tripped for the rest of the
+                        # stream, so without this guard every subsequent result
+                        # would re-announce the abort and re-cancel.
+                        _acp_breaker_aborted = True
+                        logger.warning("acp loop breaker (%s): %s", _acp_cli, _abort_msg)
+                        session.append("error", _abort_msg, "msg msg-err")
+                        state.broadcast_ws(
+                            "activity_event",
+                            {"session": session.key, "kind": "status", "text": _abort_msg},
+                        )
+                        session._last_turn_errored = True
+                        try:
+                            sel().log_tool_invocation(
+                                session_key=session_key,
+                                agent=_agent_label(session),
+                                source="dashboard",
+                                tool_name=_bname,
+                                tool_kind=event.tool_kind,
+                                outcome="failed",
+                                request_id=event.tool_call_id,
+                                metadata={
+                                    "reason": (
+                                        "loop_breaker_circuit"
+                                        if _acp_breaker.circuit_tripped()
+                                        else "loop_breaker_repeats"
+                                    ),
+                                    "provider": _acp_cli,
+                                    "total_failures": _acp_breaker.total_failures,
+                                    "total_repeats": _acp_breaker.total_repeats,
+                                    "aborted_turn": True,
+                                },
                             )
+                        except Exception:
+                            logger.warning("SEL audit failed for ACP breaker trip", exc_info=True)
+                        # Cancel the CLI's turn rather than breaking out of the
+                        # stream: the stream then ends with a cancelled stop
+                        # reason and every post-loop finalizer (telemetry, turn
+                        # close, persistence) runs exactly as it does for a
+                        # user-pressed Stop. Breaking here would abandon the
+                        # generator mid-turn and skip all of it.
+                        await _abort_acp_turn(client, "breaker trip")
                 try:
                     _redacted_out, _ = redact_credentials(_out[:2000])
                     _redacted_out, _ = redact_exfiltration_urls(_redacted_out)
@@ -4857,6 +4924,8 @@ async def run_chat(
                     _turn_model = _record_model or ""
                     _turn_provider = _record_provider
                 _stop_reason = event.stop_reason
+                if is_cancelled_stop(_stop_reason) and event.text:
+                    _runtime_stop_note = event.text
                 _turn_event_count = event.event_count
                 _turn_tool_call_count = event.tool_call_count
                 if (
@@ -4871,6 +4940,21 @@ async def run_chat(
                         session.key,
                     )
                 break
+
+        # The runtime ended the turn itself and said why (the loop breaker's sentence): shown
+        # where the turn stopped, after the answer streamed so far, which stays. Without it a
+        # breaker stop read as a turn that simply ended. It is an ERRORED turn, like every turn
+        # refused its work: a loop reading the flag must not advance on an answer never given.
+        if _runtime_stop_note:
+            if assistant_text:
+                _flush_segment(state, session, assistant_text, broadcast=False)
+                assistant_text = ""
+            session.append("error", _runtime_stop_note, "msg msg-err")
+            state.broadcast_ws(
+                "chat_message",
+                {"session": session.key, "role": "error", "content": _runtime_stop_note},
+            )
+            session._last_turn_errored = True
 
         # Agent process died mid-turn: re-queue message for automatic retry
         # (mirrors AcpProcessDied handling). Eager reconnect in the provider
@@ -5262,7 +5346,7 @@ async def run_chat(
             # failure the human observed.
             await _fire(HOOK_EVENT_ERROR, _err_text)
     except Exception as exc:
-        logger.exception("Dashboard chat error in session %s", session.key)
+        _log_turn_failure(session.key, exc)
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))

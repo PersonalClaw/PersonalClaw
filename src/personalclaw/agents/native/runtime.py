@@ -52,17 +52,16 @@ from personalclaw.cancellation import (
 from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
 from personalclaw.guardrails.failure import (
     FailureMode,
+    FirstTokenTimeout,
     GuardError,
     NoModelAnswered,
     correction_note,
     is_retryable,
 )
 from personalclaw.guardrails.loop_breaker import (
-    BLOCK_THRESHOLD,
     WARN_THRESHOLD,
     LoopBreaker,
-    blocked_message,
-    circuit_message,
+    only_reads,
     params_key,
     result_digest,
     structural_note,
@@ -240,6 +239,9 @@ class _PreparedCall:
     #: with this text instead of invoked — naming the real defect (a truncated response, or
     #: malformed JSON) rather than letting the tool report a missing argument (issue 1773).
     arg_error: str = ""
+    #: Whether the call only reads (``loop_breaker.only_reads``): the one kind of call the loop
+    #: breaker counts and refuses for repeating the same answer.
+    reads: bool = False
 
 
 # Graduated failure/loop thresholds + the standard notices live in the
@@ -365,6 +367,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # dispatches. Exact match always stays the primary path (see _resolve_name).
         self._tool_sanitized_index: dict[str, str] = {}
         self._tool_retriever: Any = None  # built in start() (per-turn tool retrieval)
+        # The characters of full tool schemas this turn's window affords (`_tool_schema_budget`),
+        # or None for no bound. Set at the start of every turn.
+        self._schema_budget: int | None = None
         self._tool_search_def: Any = None  # synthetic escape-hatch def (built in start())
         self._tool_schema_def: Any = None  # synthetic schema-expander def (built in start())
         self._reset_tools_def: Any = None  # synthetic group meta-tool (built in start())
@@ -426,6 +431,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._last_context_pct: float | None = None
         # Per-run consecutive-failure breaker (reset each stream() turn).
         self._breaker = LoopBreaker()
+        # Why the breaker ended this turn, when it did — carried on the turn's terminal event
+        # (``text``) so the surface can say it. "" for every other ending.
+        self._stop_note = ""
         # Compaction save fractions (anti-thrashing across the session).
         self._compaction_saves: list[float] = []
         # Queue-steering (#37): a callback the loop drains at each model boundary
@@ -939,6 +947,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         context-built turn-0 prompt the chat runner already assembled)."""
         self._cancel.begin_turn()
         self._breaker.reset()
+        self._stop_note = ""
         self._steers_injected = 0
         # Cleared, not carried: the dispatcher reads `undelivered_steers()` at the END of
         # the previous turn and requeues what it finds, so replaying it here would deliver
@@ -951,6 +960,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._messages.append({"role": "user", "content": message})
         self._turn_message = self._messages[-1]
 
+        self._schema_budget = await self._tool_schema_budget()
         tools_kwarg, turn_note = self._prepare_turn_tools(message)
         if turn_note:
             # SYSTEM role: this is runtime metadata, not something the user said.
@@ -1006,6 +1016,8 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     yield AgentEvent(
                         kind=EVENT_COMPLETE,
                         stop_reason=self._stop_reason_for_cancel(),
+                        # The breaker's sentence when it is what stopped the turn.
+                        text=self._stop_note,
                         # Attribute what was ALREADY SPENT before the stop. These three
                         # were omitted here, so a stop between ReAct cycles silently threw
                         # away every token the earlier cycles burned — and a stop that
@@ -1064,7 +1076,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 #   - a failure after a tool call arrived (the model did work),
                 #   - a second failure in the same turn,
                 #   - every NON_RETRYABLE mode (open breaker, budget ceiling,
-                #     injection/secret-leak — retrying defeats each guard).
+                #     injection/secret-leak — retrying defeats each guard),
+                #   - a model that did not start answering within its timeout
+                #     (FirstTokenTimeout: the same request is as slow the second time).
                 # max_tokens truncation is a SUCCESSFUL stream carrying a
                 # stop_reason, so it never enters this path — the deliberate cost
                 # decision on #2287 (only #2286's attribution note applies there).
@@ -1173,6 +1187,11 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                             # unchanged history: the only retry an overflow gets is the
                             # compacting one above, and only when it reclaimed something.
                             and not overflow
+                            # Nor does a model that did not START answering in time: the
+                            # identical request is read again from its first token and takes
+                            # as long again, so a resend only doubles the wait for the same
+                            # failure. The next model of the chain may still answer (below).
+                            and not isinstance(exc, FirstTokenTimeout)
                         )
                         self._audit_inference_attempt(
                             fmode,
@@ -1295,6 +1314,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     yield AgentEvent(
                         kind=EVENT_COMPLETE,
                         stop_reason=self._final_stop_reason(usage),
+                        text=self._stop_note if self._cancelled else "",
                         input_tokens=agg_in,
                         output_tokens=agg_out,
                         cache_read_tokens=agg_cache_read,
@@ -1362,6 +1382,23 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             self._turn_message = None
             self._cancel.end_turn()
 
+    async def _tool_schema_budget(self) -> int | None:
+        """The characters of full tool schemas this turn's window affords, or ``None``.
+
+        The window is ``context_headroom.resolve_window``'s, the one answer the chat's assembly
+        and its budget check are bounded by, asked of this loop because this loop serves the
+        turn (a subagent's or a loop's turn has no chat runner to ask). It never raises, and an
+        unknown window leaves the count as the only bound (``schema_budget_chars``).
+        """
+        if not self._tool_retriever:
+            return None
+        from personalclaw.agents.native.tool_retrieval import schema_budget_chars
+        from personalclaw.context_headroom import resolve_window
+
+        window = await resolve_window(serving=self)
+        # Read defensively: a window question must never be what costs a turn.
+        return schema_budget_chars(getattr(window, "budget_tokens", None))
+
     def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
         """Decide this turn's ``tools`` kwarg + any runtime note to inject.
 
@@ -1371,13 +1408,17 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
           already (assembly-time); each contributes ONE stub line instead.
         * **RETRIEVAL** (TR2) — within the active set, surface the relevant
           projection this turn and defer the long tail's parameter schemas to a
-          name+description catalog.
+          name+description catalog. Ranked against what the user asked
+          (``context.user_request``) rather than the whole assembled prompt, and bounded by
+          the turn's window (``_schema_budget``).
 
         Both fail open and neither touches ``_tool_index``, so every tool stays
         callable regardless of what this returns. When no grouping is in effect
         and retrieval doesn't reduce, the result is exactly ``_tool_schema`` — the
         byte-identical no-groups path.
         """
+        from personalclaw.context import user_request
+
         grouped = self._active_groups is not None
         pool = self._active_defs if grouped else self._tool_defs
         stub_lines = self._group_stub_lines()
@@ -1391,7 +1432,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # this turn. No-op until the pool exceeds K; fails open to the full pool.
         restrict = {getattr(d, "name", "") for d in pool} if grouped else None
         selected_defs = (
-            self._tool_retriever.select(message, restrict=restrict)
+            self._tool_retriever.select(
+                user_request(message), restrict=restrict, budget_chars=self._schema_budget
+            )
             if self._tool_retriever
             else pool
         )
@@ -1524,6 +1567,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             reservations=reservations,
             bkey=params_key(tool_name, args),
             arg_error=arg_error,
+            reads=not arg_error and only_reads(tool_name, "", args, self._declared(tool_name)),
         )
 
     async def _execute_tool_batch(self, tool_calls: list[AgentEvent]) -> AsyncIterator[AgentEvent]:
@@ -1615,7 +1659,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             stopped = self._unrunnable_result(prep, poisoned)
             if stopped is not None:
                 results[i] = stopped
-            elif self._breaker.count(prep.bkey) >= BLOCK_THRESHOLD:
+            elif self._breaker.refusal(prep.tool_name, prep.bkey, reads=prep.reads):
                 # Left for _run_tool's own refusal path — the breaker is a reason NOT to
                 # invoke, so prefetching it would be the one thing it exists to prevent.
                 results[i] = None
@@ -1743,14 +1787,16 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         if not card_emitted:
             yield prep.card
 
-        # Consecutive-failure breaker: refuse a call that has already failed the
-        # same way ≥ BLOCK_THRESHOLD times this run, before wasting another invoke.
-        # Pre-execution refusal is the NATIVE half of the breaker: this runtime owns
-        # dispatch. The ACP host consumes the same counter but can only steer/abort
-        # between protocol frames (the stated boundary).
+        # The breaker's refusals, before wasting another invoke: a call that has already
+        # failed the same way ≥ BLOCK_THRESHOLD times this run, or a read that keeps giving
+        # the same answer with nothing changed. Pre-execution refusal is the NATIVE half of
+        # the breaker: this runtime owns dispatch. The ACP host consumes the same counter but
+        # can only steer/abort between protocol frames (the stated boundary).
         _bkey = prep.bkey
-        if prefetched is None and self._breaker.count(_bkey) >= BLOCK_THRESHOLD:
-            blocked_str = blocked_message(tool_name, self._breaker.count(_bkey))
+        blocked_str = (
+            self._breaker.refuse(tool_name, _bkey, reads=prep.reads) if prefetched is None else ""
+        )
+        if blocked_str:
             yield AgentEvent(
                 kind=EVENT_TOOL_RESULT,
                 tool_call_id=call.tool_call_id,
@@ -1759,6 +1805,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 tool_meta={**_FAILED, TOOL_META_REFUSED_BY: "loop_breaker"},
             )
             self._messages.append(self._tool_result_msg(call, blocked_str))
+            self._stop_if_breaker_says()
             return
 
         if prefetched is None:
@@ -1848,13 +1895,13 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         if failed and streak >= WARN_THRESHOLD:
             result_str += warn_note(tool_name, streak)
         elif not failed:
-            # Structural loop detection (E3.1): a *successful* call going nowhere —
-            # the same (tool, params, result) repeated, or A↔B ping-pong — never
-            # trips the failure path (nothing failed). Warn-only: inject an
-            # observation so the model breaks the loop itself; the failure breaker
-            # still hard-blocks genuine error storms.
+            # Structural loop detection (E3.1): a *successful* call going nowhere — the same
+            # answer to the same call again and again, or an A↔B ping-pong — never trips the
+            # failure path (nothing failed). The note tells the model what it looks like from
+            # outside; a read repeated past it is refused before it runs, and a turn that keeps
+            # repeating is stopped (`_stop_if_breaker_says`).
             sig = f"{_bkey}\x1f{result_digest(result_str)}"
-            loop_reason = self._breaker.record_structural(sig)
+            loop_reason = self._breaker.record_structural(sig, reads=prep.reads)
             if loop_reason:
                 logger.info("native: structural loop detected (%s) — %s", tool_name, loop_reason)
                 result_str += structural_note(loop_reason)
@@ -1867,14 +1914,25 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             tool_meta=meta or {},
         )
         self._messages.append(self._tool_result_msg(call, result_str))
+        self._stop_if_breaker_says()
 
-        # Run-wide circuit breaker: a turn drowning in failures (across all tools)
-        # is pathological — abort it rather than burn the whole budget.
-        if self._breaker.circuit_tripped():
-            logger.warning("native: %s", circuit_message(self._breaker.total_failures))
-            # INTERNAL, not user: the turn ends "cancelled", not "stopped_by_user" —
-            # nobody pressed anything, we gave up.
-            self._cancel.request(reason=CANCEL_INTERNAL)
+    def _stop_if_breaker_says(self) -> None:
+        """End the turn when the breaker's run-wide rungs say so, once, keeping the sentence.
+
+        A turn drowning in failures, or one that keeps getting the answers it already has
+        (across all tools), is pathological — aborted rather than allowed to burn the whole
+        budget. The sentence rides the turn's terminal event (``_stop_note``), so the surface
+        showing the turn can say why it stopped; a log line alone left the chat reading as a
+        turn that simply ended.
+        """
+        why = self._breaker.stop_sentence()
+        if not why or self._stop_note:
+            return
+        logger.warning("native: %s", why)
+        self._stop_note = why
+        # INTERNAL, not user: the turn ends "cancelled", not "stopped_by_user" —
+        # nobody pressed anything, we gave up.
+        self._cancel.request(reason=CANCEL_INTERNAL)
 
     async def _guard_and_invoke(self, call: AgentEvent, tool_name: str, args: dict, *, meta: dict):
         """Deny-list + PreToolUse hook; return a result string, or the

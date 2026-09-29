@@ -1174,7 +1174,7 @@ Pause execution for a specified duration while preserving full session context. 
 ```json
 {
   "reason": "let the build finish",
-  "seconds": 30
+  "seconds": 60
 }
 ```
 
@@ -1487,7 +1487,7 @@ Save a learned correction or preference that persists across all future sessions
 
 ```json
 {
-  "category": "style",
+  "category": "preference",
   "rule": "Prefer concise commit messages"
 }
 ```

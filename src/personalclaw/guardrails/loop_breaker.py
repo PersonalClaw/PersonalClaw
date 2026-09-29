@@ -20,10 +20,19 @@ so the thresholds and the *wording* of every notice are defined once:
   failures in one run abort it — the one rung an operator can retune, through
   ``guardrails.loop_breaker.circuit_threshold`` (default :data:`CIRCUIT_THRESHOLD`).
 * **structural path** — :meth:`LoopBreaker.record_structural` catches
-  stuck-but-*successful* repetition (the same ``(tool, params, result_digest)``
-  triple N× in a row, or an A↔B ping-pong) that the failure path cannot see
-  because nothing failed. Warn-only, deliberately: looping is higher-variance
-  than failure counting.
+  stuck-but-*successful* repetition that the failure path cannot see because nothing
+  failed: the same call answering exactly what it answered last time. Any call repeating
+  back to back is warned at :data:`STRUCT_REPEAT`. A READ (:func:`only_reads`) is followed
+  wherever else in the turn its calls fell: warned at :data:`STRUCT_REPEAT`, refused before
+  it runs again past :data:`REPEAT_BLOCK_THRESHOLD`, and a turn with more than
+  :data:`REPEAT_CIRCUIT_THRESHOLD` such repeats is stopped. Only reads
+  are refused and counted: a read answered the same a fourth time cannot tell the model
+  anything, however the answer came about, while a call that acts — re-running the tests
+  after an edit — is re-checking, and its unchanged answer is news. Measured: a local model
+  ran 65 shell calls in one turn, the same few reads answered identically over and over but
+  almost never twice in a row, and the old rule — N identical calls IN A ROW, warn-only —
+  said nothing for 1.2M tokens. A rotation of two or three distinct calls (an A↔B
+  ping-pong) is still reported, warn-only.
 
 **The honest boundary between the two consumers.** The native runtime owns
 dispatch, so it can enforce the BLOCK rung *before* the tool runs. The ACP host
@@ -39,7 +48,12 @@ import json
 import re
 from collections import deque
 
-from personalclaw.task_modes import SHELL_TOOL_NAMES
+from personalclaw.task_modes import (
+    SHELL_TOOL_NAMES,
+    is_read_only_bash,
+    reads_only,
+    shell_command,
+)
 
 # ── Thresholds (graduated verdicts over one run) ─────────────────────────────
 #: ≥ this many identical failures → warn the model, still allow the call.
@@ -115,6 +129,50 @@ _POLL_COMMAND_HINTS = (
 #: that reading was looping. A read cannot make progress by itself, so its repetition is not
 #: evidence of a loop — the tools that act are where a loop shows.
 READ_ONLY_TOOLS = frozenset({"read", "fs_read", "glob", "grep", "code", "view", "cat"})
+
+#: A READ that has answered the same this many times in a row is refused before it runs again:
+#: a fourth identical answer to a call that only reads tells the model nothing the first three
+#: did not. The count the no-progress warning fires at, so the warning's "calling it this way
+#: again will be refused" is what happens next.
+REPEAT_BLOCK_THRESHOLD = STRUCT_REPEAT
+#: More repeats than this in one run stops it: reads answered as they were last time, and reads
+#: refused for being one (see :meth:`LoopBreaker.record_structural`). Measured, the loop this
+#: exists for reached it after about half of its 65 calls; a working turn asks something new.
+REPEAT_CIRCUIT_THRESHOLD = 8
+
+#: Tools whose whole job is to let time pass: after one, a read may rightly answer anew.
+WAIT_TOOLS = frozenset({"wait", "wait_for"})
+
+
+def only_reads(title: str, tool_kind: str, tool_input: object, declared: object = "") -> bool:
+    """Whether a call only reads — the one kind the loop breaker refuses for repeating.
+
+    A call established as a read (:func:`personalclaw.task_modes.reads_only`: a tool declaring it
+    only reads, or a shell command screened read-only), or a shell pipeline whose FIRST command
+    is such a read: ``ls -R | grep -E "a|b" | sort -u`` only reads, though the screen — built to
+    let a call through unasked, where a wrong "yes" is the costly error — passes no pipe it
+    cannot prove. Here a wrong "yes" costs one refused re-run of a command that already answered
+    three times, so the first command is enough.
+    """
+    if reads_only(title, tool_kind, tool_input, declared):
+        return True
+    first = shell_command(title, tool_kind, tool_input, declared).split("|", 1)[0]
+    return bool(first.strip()) and is_read_only_bash(first)
+
+
+def _is_wait(sig: str) -> bool:
+    """Whether this call let time pass: a wait tool, or a shell command that sleeps first."""
+    tool = _tool_of(sig)
+    if tool in WAIT_TOOLS:
+        return True
+    if tool not in SHELL_TOOLS:
+        return False
+    try:
+        args = json.loads(sig.split("\x1f", 1)[0].split(":", 1)[1])
+    except (IndexError, TypeError, ValueError):
+        return False
+    command = args.get("command", "") if isinstance(args, dict) else ""
+    return isinstance(command, str) and command.strip().startswith("sleep")
 
 
 def _tool_of(sig: str) -> str:
@@ -327,6 +385,30 @@ def circuit_message(total_failures: int) -> str:
     )
 
 
+def repeat_blocked_message(tool_name: str, count: int) -> str:
+    """The answer a repeated READ gets instead of running (see :data:`REPEAT_BLOCK_THRESHOLD`)."""
+    return (
+        f"Error: tool `{tool_name}` was not run — this exact call only reads, and it returned "
+        f"the same result the last {count} times it ran this turn, so running it again cannot "
+        "tell you anything new. Use the result you have, try something different, or stop "
+        "and tell the user what is blocking you."
+    )
+
+
+def repeat_circuit_message(total_repeats: int) -> str:
+    """The REPEAT circuit: the run is stopped because it keeps getting the answers it already has.
+
+    Worded as :func:`circuit_message`'s sibling — one breaker, one vocabulary — and ends with
+    the step that helps: a model that keeps searching usually lacks something it was never told.
+    """
+    return (
+        f"Run aborted by the loop breaker: {total_repeats} tool calls in this turn repeated "
+        "an earlier call and got the same result back. The run was going in circles instead "
+        "of making progress, so it was stopped rather than allowed to burn the rest of its "
+        "budget. Give it what it was looking for, such as a path or a name, and ask again."
+    )
+
+
 def configured_circuit_threshold() -> int:
     """``guardrails.loop_breaker.circuit_threshold``, or :data:`CIRCUIT_THRESHOLD`.
 
@@ -351,11 +433,12 @@ class LoopBreaker:
     * **failure path** — :meth:`record` counts consecutive *failures* per
       ``(tool, params)`` key; :meth:`count` drives the BLOCK/WARN rungs and
       :attr:`total_failures` the run-wide circuit breaker. A success clears the key.
-    * **structural path** — :meth:`record_structural` tracks recent
-      ``(tool, params, result_digest)`` triples to catch stuck-but-*successful*
-      repetition: the same triple N× in a row (no-progress), or an A↔B↔A↔B
-      alternation (ping-pong). Returns a reason string on detection, else "".
-      Warn-only: the consumer injects an observation; it does not block.
+    * **structural path** — :meth:`record_structural` tracks, per ``(tool, params)``
+      key, how many times in a row it has answered the same (wherever in the run the
+      calls fell), and recent signatures for an A↔B↔A↔B alternation (ping-pong). Returns
+      a reason string on detection, else "". :meth:`refusal` answers a read repeated past
+      :data:`REPEAT_BLOCK_THRESHOLD`, and :attr:`total_repeats` drives the repeat circuit
+      (:meth:`stop_sentence`).
     """
 
     def __init__(self, *, circuit_threshold: int | None = None) -> None:
@@ -366,6 +449,12 @@ class LoopBreaker:
         # Reasons already reported this run, so we warn once per distinct loop and
         # don't re-inject the same observation every subsequent identical call.
         self._struct_reported: set[str] = set()
+        # The repeat path. Per (tool, params) key: the digest of its last result and how many
+        # times in a row it came back that way.
+        self._same: dict[str, tuple[str, int]] = {}
+        #: Repeats this run — reads answered as they were last time, and reads refused for being
+        #: one. Survives a compaction, as ``total_failures`` does.
+        self.total_repeats = 0
         # An explicit ceiling PINS this breaker's circuit rung and survives `reset()`;
         # None means "ask the config". Kept apart from the resolved value below because
         # reset() re-resolves the config one but must not discard the caller's.
@@ -379,6 +468,8 @@ class LoopBreaker:
         self.total_failures = 0
         self._recent.clear()
         self._struct_reported.clear()
+        self._same.clear()
+        self.total_repeats = 0
         # Re-arm the config read so a ceiling edited mid-session binds on the next run
         # instead of on the next restart. A pinned ceiling is left alone.
         self._circuit_resolved = self._circuit_pin
@@ -386,9 +477,12 @@ class LoopBreaker:
     def reset_structural(self) -> None:
         """Re-arm structural detection (after a compaction) without touching the
         failure counts — a loop that resumes identically post-compaction should be
-        caught fresh (post-compaction guard)."""
+        caught fresh (post-compaction guard). The repeat streaks go too: the earlier
+        answers are no longer in the model's context, so asking again is not a repeat.
+        :attr:`total_repeats` stays, like the failure total."""
         self._recent.clear()
         self._struct_reported.clear()
+        self._same.clear()
 
     def record(self, key: str, failed: bool) -> int:
         if failed:
@@ -397,6 +491,46 @@ class LoopBreaker:
         else:
             self._counts.pop(key, None)  # a success clears this key's streak
         return self._counts.get(key, 0)
+
+    def repeat_count(self, key: str) -> int:
+        """How many times in a row this call has answered the same. A status poll is never
+        counted (waiting repeats by nature), nor a read-only file tool (never recorded)."""
+        last = self._same.get(key)
+        if last is None or _is_poll_signature(key):
+            return 0
+        return last[1]
+
+    def refusal(self, tool_name: str, key: str, *, reads: bool) -> str:
+        """The text a call gets INSTEAD of running, or ``""`` to run it. Pure.
+
+        A call that failed the same way :data:`BLOCK_THRESHOLD` times, or a READ (``reads``:
+        :func:`only_reads`) that answered the same :data:`REPEAT_BLOCK_THRESHOLD` times in a
+        row. Only a read is refused for repeating: a call that acts may rightly be re-run to
+        check what it did, and its unchanged answer is news.
+        """
+        failures = self._counts.get(key, 0)
+        if failures >= BLOCK_THRESHOLD:
+            return blocked_message(tool_name, failures)
+        same = self.repeat_count(key)
+        if reads and same >= REPEAT_BLOCK_THRESHOLD:
+            return repeat_blocked_message(tool_name, same)
+        return ""
+
+    def refuse(self, tool_name: str, key: str, *, reads: bool) -> str:
+        """:meth:`refusal`, at the one place a call is answered with it: a refused repeat counts
+        toward the repeat circuit, as the call it stands for would have."""
+        text = self.refusal(tool_name, key, reads=reads)
+        if text and self._counts.get(key, 0) < BLOCK_THRESHOLD:
+            self.total_repeats += 1
+        return text
+
+    def stop_sentence(self) -> str:
+        """Why this run must stop now, or ``""`` to go on: too many failures or repeats."""
+        if self.circuit_tripped():
+            return circuit_message(self.total_failures)
+        if self.total_repeats > REPEAT_CIRCUIT_THRESHOLD:
+            return repeat_circuit_message(self.total_repeats)
+        return ""
 
     def count(self, key: str) -> int:
         return self._counts.get(key, 0)
@@ -422,41 +556,65 @@ class LoopBreaker:
             return False
         return self.total_failures > self.circuit_threshold
 
-    def record_structural(self, sig: str) -> str:
-        """Record a ``(tool, params, result_digest)`` signature; return a reason
-        string when a structural loop is newly detected this run, else ``""``.
+    def record_structural(self, sig: str, *, reads: bool = False) -> str:
+        """Record a successful call's ``(tool, params, result_digest)`` signature; return a
+        reason string when a structural loop is newly detected this run, else ``""``.
 
-        Detects (a) no-progress: the same signature :data:`STRUCT_REPEAT` times in a
-        row — longer for a status poll, and never for a read-only tool; (b) a cycle: a
-        rotation of 2 OR 3 distinct calls (:data:`STRUCT_CYCLE_PERIODS`) repeating
-        :data:`STRUCT_PINGPONG_CYCLES` times. Period 3 matters because read → edit → test,
-        repeat is the most common real loop and the old ``cycles * 2`` span could not see it.
-        Warn-only either way, which is a deliberate ruling: the failure breaker hard-blocks
-        error storms, this path only tells a working agent what it looks like from outside.
-        Each distinct loop is reported once
-        (dedup via ``_struct_reported``) so the warning fires on the turn the loop
-        becomes evident, not every call.
+        ``reads`` says the call only reads (:func:`only_reads`); only a read's repeats are
+        counted toward the circuit, and only a read is refused for repeating.
+
+        Detects (a) no-progress: the same call answering the same :data:`STRUCT_REPEAT`
+        times — longer for a status poll, and never for a read-only tool. A READ is warned on
+        its own run of identical answers wherever in the turn they fell, since that run is what
+        gets it refused next; any other call only when the same signature repeats back to back.
+        (b) a cycle: a rotation of 2 OR 3 distinct calls (:data:`STRUCT_CYCLE_PERIODS`)
+        repeating :data:`STRUCT_PINGPONG_CYCLES` times. Period 3 matters because read → edit →
+        test, repeat is the most common real loop and the old ``cycles * 2`` span could not see
+        it. Each distinct loop is reported once (dedup via ``_struct_reported``) so the warning
+        fires on the turn the loop becomes evident, not every call. Both only warn: what STOPS
+        a repeating turn is a read refused past :data:`REPEAT_BLOCK_THRESHOLD`
+        (:meth:`refusal`) and the repeat circuit it counts toward (:attr:`total_repeats`,
+        :meth:`stop_sentence`).
         """
         self._recent.append(sig)
         recent = list(self._recent)
 
-        # (a) no-progress: identical signature repeated at the tail. A read-only tool is
-        # exempt (a re-read is how an edit is confirmed) and a poll gets a longer rope — see
-        # READ_ONLY_TOOLS / STRUCT_POLL_REPEAT for why each is a decision rather than a
-        # tolerance dial.
+        # The repeat path. Time passing clears it: whatever a read answered before, after a
+        # wait it may rightly answer anew. A read-only file tool is exempt (a re-read is how an
+        # edit is confirmed), and a status poll repeats by nature, so it is never counted.
+        if _is_wait(sig):
+            self._same.clear()
+        key, _, digest = sig.partition("\x1f")
+        streak = 0
         if _tool_of(sig) not in READ_ONLY_TOOLS:
+            last = self._same.get(key)
+            streak = last[1] + 1 if last is not None and last[0] == digest else 1
+            self._same[key] = (digest, streak)
+            if reads and streak > 1 and not _is_poll_signature(sig):
+                self.total_repeats += 1
+
+        # (a) no-progress. A poll gets a longer rope — see READ_ONLY_TOOLS / STRUCT_POLL_REPEAT
+        # for why each exemption is a decision rather than a tolerance dial.
+        if streak:
             threshold = _repeat_threshold(sig)
-            tail = recent[-threshold:]
-            if len(tail) == threshold and len(set(tail)) == 1:
-                reason = f"no-progress:{sig}"
-                if reason not in self._struct_reported:
-                    self._struct_reported.add(reason)
-                    waiting = " (and it looks like a status poll — if you are waiting, say so)"
-                    return (
-                        f"the same tool call produced the same result "
-                        f"{threshold} times in a row"
-                        f"{waiting if _is_poll_signature(sig) else ''}"
-                    )
+            if reads:
+                seen, where = streak >= threshold, "in this turn"
+            else:
+                tail = recent[-threshold:]
+                seen, where = len(tail) == threshold and len(set(tail)) == 1, "in a row"
+            reason = f"no-progress:{sig}"
+            if seen and reason not in self._struct_reported:
+                self._struct_reported.add(reason)
+                if _is_poll_signature(sig):
+                    after = " (and it looks like a status poll — if you are waiting, say so)"
+                elif reads:
+                    after = "; calling it this way again will be refused"
+                else:
+                    after = ""
+                return (
+                    f"the same tool call produced the same result {threshold} times "
+                    f"{where}{after}"
+                )
 
         # (b) cycle: a rotation of `period` distinct calls repeating `STRUCT_PINGPONG_CYCLES`
         # times. Periods are tried SHORTEST first so an A↔B loop is still reported as A↔B

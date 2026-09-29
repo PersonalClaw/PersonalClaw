@@ -10,37 +10,68 @@ cache, never-raise) — does for tools what surfacing does for skills.
 
 **Fails OPEN, the inverse of the egress layer:** a hidden tool is a capability
 regression, not a safety risk, so every uncertainty (no embed model, error, low
-scores, prior use) resolves toward *including* the tool, and the default K is set
-**above** today's tool count so it's a literal no-op until external-MCP catalogs
-grow the set. Selection ≠ dispatch: this only changes the *schema the model sees*;
-the runtime ``_tool_index`` callable map is untouched — every tool stays callable.
+scores, prior use) resolves toward *including* the tool. Selection ≠ dispatch: this only
+changes the *schema the model sees*; the runtime ``_tool_index`` callable map is untouched —
+every tool stays callable, and every tool whose schema is deferred is still listed by name
+and description in the turn's catalog.
+
+**Two bounds, and whichever binds first wins:** :data:`DEFAULT_K` caps how many full schemas
+ride a turn, and the turn's window caps how much of it they may take
+(:data:`SCHEMA_WINDOW_FRACTION`, :func:`schema_budget_chars`). The count alone was calibrated
+for a catalog of about thirty tools, where it was a no-op; at about 120 it let 48 schemas —
+43,000 characters, more than the whole rest of the prompt — ride every turn of a local model
+serving a 32,768-token window, which then took two minutes to read the prompt before its first
+word.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
 
+from personalclaw.task_modes import SHELL_TOOL_NAMES
+from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+
 logger = logging.getLogger(__name__)
 
-# Default cap on surfaced tools. Set comfortably above the ~30 builtins so the
-# union almost always returns everything → behavioral no-op until MCP catalogs
-# push the total well past this. Tunable; the reduction only bites at large K.
+#: The most tools whose full schemas ride one turn; every other tool is listed in the catalog.
 DEFAULT_K = 48
+
+#: The most of a model's window the full tool schemas may take on one turn — the bound the memory
+#: sections of the same prompt are held to (``context._MEMORY_WINDOW_FRACTION``). Inert on the
+#: windows :data:`DEFAULT_K` was sized on: at 128k tokens it affords 64,000 characters, over the
+#: 43,000 that 48 of this catalog's schemas measure. It binds on a local model's 32,768-token
+#: window, where it affords 16,384. The core tools ride whatever this says (see ``_CORE_NAMES``).
+SCHEMA_WINDOW_FRACTION = 0.125
+
+
+def schema_budget_chars(window_tokens: int | None) -> int | None:
+    """How many characters of full tool schemas a turn served with ``window_tokens`` affords.
+
+    ``None`` when the window is not known, which leaves the count as the only bound: a guessed
+    window would hide schemas on a guess.
+    """
+    if not window_tokens or window_tokens <= 0:
+        return None
+    return int(window_tokens * SCHEMA_WINDOW_FRACTION * NOMINAL_CHARS_PER_TOKEN)
+
 
 # Cosine gate for a semantic tool match (short name+description text → 0.55, the
 # same calibration skills surfacing uses for short descriptions).
 DEFAULT_SEMANTIC_THRESHOLD = 0.55
 _KEYWORD_GATE = 0.5  # word-overlap fraction to count a keyword hit
 
-# Structural hints: a regex over the turn → tool-name substrings to force-include.
+# Structural hints: a regex over the user's request → tool-name substrings to force-include.
 # Cheap detectors for the obvious "this turn clearly needs X".
 _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"https?://|www\.|\.com\b|\.org\b", ("web", "fetch", "url", "search", "browse")),
+    # "Remind me", "every day": the tools that schedule are the one-off and the recurring task
+    # (`set_onetime_task`, `set_recurring_task`) — no tool is named for scheduling itself.
     (
         r"\bschedul|\bremind|\bcron\b|every (day|week|hour)|daily|weekly",
-        ("schedule", "cron", "trigger"),
+        ("schedule", "cron", "trigger", "onetime", "recurring"),
     ),
     (
         r"/|\.py\b|\.ts\b|\.md\b|\bfile\b|\bdirectory\b|\bfolder\b",
@@ -48,12 +79,14 @@ _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     # shell/exec → bash (the single env interface). Covers "run the command", a
     # CLI verb, AND git/test/lint language — those are bash commands now, not their
-    # own tools, so all of it should surface bash.
+    # own tools, so all of it should surface bash. Matched by the shell tools' own names
+    # (`task_modes.SHELL_TOOL_NAMES`) and shell words, never by a bare "run": that named every
+    # `*_run*` tool — project runs, automation runs, subagent and workflow runs — none a shell.
     (
         r"\bshell\b|\bbash\b|\bcommand\b|\bterminal\b|\bexecute\b|\brun\b|\$\s"
         r"|\b(npm|pip|make|cargo|go|node|python|pytest|ls|cat|echo|chmod|mkdir|curl)\b"
         r"|\bgit\b|commit|diff|branch|stage|\btest|\bpytest|\bspec\b|assert|lint|build",
-        ("bash", "shell", "exec", "run", "command", "terminal"),
+        ("shell", "exec", "command", "terminal", *sorted(SHELL_TOOL_NAMES)),
     ),
     (r"\bremember|\brecall|\bmemor|\blesson", ("memory", "recall", "lesson")),
     (r"\btask\b|\btodo\b|\bbacklog", ("task",)),
@@ -77,14 +110,28 @@ def _active_embedder():
         return None, ""
 
 
+def _schema_chars(d) -> int:
+    """About how many characters ``d``'s full schema adds to a request: the function object
+    ``tools.tool_definitions_to_openai_schema`` writes for it."""
+    fn = {
+        "name": getattr(d, "name", ""),
+        "description": getattr(d, "description", "") or "",
+        "parameters": getattr(d, "parameters", None) or {"type": "object", "properties": {}},
+    }
+    try:
+        return len(json.dumps({"type": "function", "function": fn}, default=str))
+    except (TypeError, ValueError):
+        return len(str(fn))
+
+
 class ToolRetriever:
     """Per-turn tool selector over a fixed catalog (built once at startup).
 
     Embeds each tool's ``name + description`` via the shared embedder, cached
     in-process keyed by ``(name, fingerprint, model)`` so a stable catalog embeds
     once and a changed MCP catalog re-embeds only the changed tools. ``select``
-    returns the union (core ∪ top-K ∪ structural ∪ sticky), capped at K. Always
-    fail-open: any error or no-embed-model returns the FULL catalog.
+    returns the union (core ∪ sticky ∪ structural ∪ top-K), within the turn's schema budget
+    when it has one. Always fail-open: any error or no-embed-model returns the FULL catalog.
     """
 
     def __init__(
@@ -104,6 +151,7 @@ class ToolRetriever:
         self._embed_cache: dict[str, list[float] | None] = {}  # name → vec (None = tried, failed)
         self._embed_model = ""
         self._last_surfaced = len(self._defs)  # tools surfaced last select() (for hidden_count)
+        self._chars = {n: _schema_chars(d) for n, d in self._by_name.items()}
 
     # ── sticky set (tools the agent has actually called this session) ──
     def mark_used(self, tool_name: str) -> None:
@@ -134,19 +182,33 @@ class ToolRetriever:
             except Exception:
                 self._embed_cache[name] = None
 
-    def select(self, query: str, *, restrict: set[str] | None = None) -> list:
+    def select(
+        self,
+        query: str,
+        *,
+        restrict: set[str] | None = None,
+        budget_chars: int | None = None,
+    ) -> list:
         """Return the tool defs to surface this turn (a subset of the catalog).
+
+        ``query`` is what the user asked (``context.user_request``), not the assembled prompt:
+        ranked against the whole prompt, every hint its own boilerplate trips (a path, "run",
+        "task", "remember") fired on every turn whatever was asked.
 
         ``restrict`` limits selection to those tool names — the tool-GROUP seam
         (CONTEXT-ECONOMY §5.3): retrieval selects *within* the active groups, so
         the K budget is spent on tools whose schemas can actually ride this turn,
         while :meth:`search` still ranks the FULL catalog across inactive groups.
 
-        Fail-open: if the union would be ≥ the whole (restricted) catalog — the
-        common case until catalogs grow — or anything goes wrong, return it all.
+        ``budget_chars`` (:func:`schema_budget_chars`) bounds the characters the surfaced
+        schemas may add. The core tools always ride; then the tools this session already
+        called, then the structurally hinted ones, then the best-scoring, each while it fits.
+
+        Fail-open: if the union would be the whole (restricted) catalog, or anything goes
+        wrong, return it all.
         """
         try:
-            return self._select(query, restrict=restrict)
+            return self._select(query, restrict=restrict, budget_chars=budget_chars)
         except Exception:
             logger.debug("tool retrieval failed — surfacing full catalog", exc_info=True)
             return self._pool(restrict)
@@ -157,32 +219,22 @@ class ToolRetriever:
             return list(self._defs)
         return [d for d in self._defs if getattr(d, "name", "") in restrict]
 
-    def _select(self, query: str, *, restrict: set[str] | None = None) -> list:
-        pool = self._pool(restrict)
-        pool_names = {getattr(d, "name", "") for d in pool}
-        total = len(pool)
-        if total <= self._k:
-            return pool  # no-op: everything fits
-
-        q = (query or "").strip()
-        selected: set[str] = set(self._core) | set(self._sticky) | self._structural(q)
-        selected &= pool_names  # never surface a tool outside the candidate pool
-
-        query_words = set(re.findall(r"\w+", q.lower()))
-        scored: list[tuple[float, str]] = []
+    def _scores(self, query: str, names: set[str]) -> dict[str, float]:
+        """Each of ``names`` that passes a gate, and its ``max(semantic, keyword)`` score."""
+        query_words = set(re.findall(r"\w+", query.lower()))
         embed_fn, model = _active_embedder()
         query_vec = None
-        if embed_fn is not None and q:
+        if embed_fn is not None and query:
             try:
-                query_vec = embed_fn(q)
+                query_vec = embed_fn(query)
             except Exception:
                 query_vec = None
             if query_vec is not None:
                 self._ensure_embeddings(embed_fn, model)
 
-        for name, d in self._by_name.items():
-            if name in selected or name not in pool_names:
-                continue
+        scores: dict[str, float] = {}
+        for name in names:
+            d = self._by_name[name]
             desc_words = set(
                 re.findall(r"\w+", f"{name} {getattr(d, 'description', '') or ''}".lower())
             )
@@ -194,12 +246,56 @@ class ToolRetriever:
                     sem = _cosine(query_vec, vec)
             score = max(kw if kw >= _KEYWORD_GATE else 0.0, sem if sem >= self._threshold else 0.0)
             if score > 0:
-                scored.append((score, name))
+                scores[name] = score
+        return scores
 
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        room = max(0, self._k - len(selected))
-        for _score, name in scored[:room]:
+    def _select(
+        self,
+        query: str,
+        *,
+        restrict: set[str] | None = None,
+        budget_chars: int | None = None,
+    ) -> list:
+        pool = self._pool(restrict)
+        pool_names = {getattr(d, "name", "") for d in pool}
+        total = len(pool)
+        within_budget = budget_chars is None or (
+            sum(self._chars.get(n, 0) for n in pool_names) <= budget_chars
+        )
+        if total <= self._k and within_budget:
+            return pool  # no-op: everything fits
+
+        q = (query or "").strip()
+        # never surface a tool outside the candidate pool
+        core = self._core & pool_names
+        sticky = (self._sticky & pool_names) - core
+        structural = (self._structural(q) & pool_names) - core - sticky
+        scores = self._scores(q, pool_names - core)
+
+        def ranked(names) -> list[str]:
+            return sorted(names, key=lambda n: (-scores.get(n, 0.0), n))
+
+        selected: set[str] = set(core)
+        used = sum(self._chars.get(n, 0) for n in core)
+
+        def admit(name: str) -> bool:
+            nonlocal used
+            size = self._chars.get(name, 0)
+            if budget_chars is not None and used + size > budget_chars:
+                return False
             selected.add(name)
+            used += size
+            return True
+
+        for name in ranked(sticky) + ranked(structural):
+            admit(name)
+        room = max(0, self._k - len(selected))
+        tried = core | sticky | structural
+        for name in ranked(n for n in scores if n not in tried):
+            if room <= 0:
+                break
+            if admit(name):
+                room -= 1
 
         # If selection didn't actually reduce (rare), just return the pool (fail-open).
         if len(selected) >= total:

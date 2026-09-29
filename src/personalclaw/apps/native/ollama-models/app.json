@@ -48,10 +48,10 @@
         },
         "timeout_secs": {
           "type": "integer",
-          "default": 120,
+          "default": 600,
           "x-meta": {
             "label": "Request Timeout",
-            "help": "Maximum seconds to wait for a response from Ollama.",
+            "help": "Seconds to wait for the model to start answering, and then between the parts of its answer. Reading a long conversation can take a model minutes before its first word, so keep this generous.",
             "tags": [
               "advanced"
             ]

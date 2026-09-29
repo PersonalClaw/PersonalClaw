@@ -14,6 +14,7 @@ from typing import Any
 
 from personalclaw.mcp_core import _delete, _get, _post
 from personalclaw.tool_providers.base import tool_failure
+from personalclaw.validation import ALLOWED_LESSON_CATEGORIES, ALLOWED_LESSON_SCOPES
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -33,7 +34,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     "rule": {"type": "string", "description": "The lesson to remember"},
                     "category": {
                         "type": "string",
-                        "enum": ["tool", "preference", "knowledge"],
+                        "enum": sorted(ALLOWED_LESSON_CATEGORIES),
                         "description": "Category: tool, preference, or knowledge",
                     },
                     "negative": {
@@ -42,7 +43,7 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "scope": {
                         "type": "string",
-                        "enum": ["global", "workspace"],
+                        "enum": sorted(ALLOWED_LESSON_SCOPES),
                         "description": "Where to save: 'global' (default, all workspaces) or 'workspace' (active workspace only)",  # noqa: E501
                     },
                     "workspace": {
@@ -170,6 +171,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return tool_failure("rule is required")
         scope = args.get("scope", "global")
         payload: dict[str, str] = {"rule": rule, "category": category, "scope": scope}
+        # The endpoint stores what not to do beside the rule; the tool asks for it, so it
+        # has to arrive there.
+        if args.get("negative"):
+            payload["negative"] = args["negative"]
         if scope == "workspace":
             ws = args.get("workspace", "")
             if not ws:
