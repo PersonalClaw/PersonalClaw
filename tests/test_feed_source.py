@@ -81,6 +81,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 
@@ -695,7 +698,7 @@ async def test_a_full_sources_item_still_runs_the_model_stages(store, monkeypatc
 
     async def _record_insights(*a, **kw):
         ran.append("insights")
-        return True
+        return None  # insights landed
 
     async def _record_stage(name):
         ran.append(name)

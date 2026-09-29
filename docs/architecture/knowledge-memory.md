@@ -69,9 +69,25 @@ one case the label exists for. A push never fails the local write.
   over the whole extracted-content bundle (they operate on the item bundle,
   not a single node's input).
 - **`knowledge/insights.py`** produces `{summary, key_points, topics,
-  action_items}`; entity and intent extraction follow; the AI title is
-  **opt-in for user files** — a user-supplied filename survives enrichment
-  until `file_metadata.original_filename` no longer matches.
+  action_items}`; entity and intent extraction follow. The AI title replaces
+  only a placeholder no person set — an upload's file name, a note's opening
+  words. A title a person set (typed at creation, kept in the create form, the
+  file's own name included, or edited later) is recorded as hers
+  (`items.title_source = 'user'`) and never replaced; the suggestion stays on
+  the item as `ai_title`.
+- **Feed and page entries are stored as their words.** A watched feed's or
+  page's entry HTML is converted to markdown text on the way in
+  (`connectors/base.py::readable_text`), and no raw HTML survives outside code:
+  a tag the entry only showed as text comes out of the conversion as a real
+  tag, so it is written back as text (`without_raw_html`).
+- **One reader at a time, hers first.** `knowledge/ingest_queue.py` runs items
+  one at a time (the terminal stages share one sqlite connection) in two lanes:
+  what a person adds or asks for (`enqueue`) is read before background work —
+  a watched source's items, a whole-library regenerate, the vault and artifact
+  mirrors (`enqueue_background`). Nothing preempts the item being read, so her
+  wait is at most that one item. `standing()` says where an item is — how many
+  are ahead, which lane, and the median of recent items' times once three have
+  finished — and the item and list reads carry it as `queue`.
 - **Readers** (`knowledge/readers.py`) cover the 12 create formats;
   `knowledge/connectors/web_url.py` fetches bookmark/URL content through the
   egress chokepoint (`net_fetch` with `egress_policy_for(CONNECTOR)` — see
@@ -115,6 +131,28 @@ re-embedded passages go to the ANN index and the bound external store first and 
 their rows last (`KnowledgeStore._write_reembedded_chunks`), so what a stop cuts off
 still reads stale and the next pass writes it again.
 
+### Watched sources
+
+`knowledge/source_engine.py` polls each source's provider on its interval and
+persists what it offers through the source's novelty gate (`source_seen`),
+advancing the cursor only after every item is durable.
+
+- **Poll floors.** A source that fetches is never polled faster than
+  `sources.network_floor_secs`; only core's own folder observer
+  (`DirSourceProvider`, matched by exact type, so an app's subclass stays under
+  the floor) is held to `LOCAL_FLOOR_SECS` instead. `effective_interval` is the
+  one computation, and the sources list shows it as `poll_every_secs`.
+- **The per-poll cap** (`sources.max_items_per_poll`) counts what a poll
+  indexed, not the first N sightings offered, and a poll the cap cut short whose
+  sightings are all first sightings keeps its cursor, so the next poll takes the
+  next ones. A provider whose cursor must move asks for the cap (`max_items`, one
+  of `ENGINE_POLL_KWARGS`) and stops at it.
+- **A watched folder's first scan** reads in what is already there, newest
+  first, up to `FIRST_SCAN_MAX_FILES` files or `FIRST_SCAN_MAX_BYTES`; the rest
+  are recorded as seen and come in when they change. It stops at the cap and
+  counts what is still to come, and the sources list shows the scan
+  (`first_scan`: found, left out, waiting).
+
 ### Search
 
 `knowledge/retrieval.py` — `HybridRetriever`: FTS5 keyword + graph traversal +
@@ -155,7 +193,10 @@ item vector).
   its `embedding` column, its stored text — never from a stage's self-report,
   since the self-reports are what were untrustworthy.
 - `pipeline/runner.py` persists the status plus the reason at
-  `file_metadata.unsearchable_reason`; a re-ingest that lands clears both.
+  `file_metadata.unsearchable_reason`; a re-ingest that lands clears both, and
+  so does a vector landing any other way — the re-index or a backfill
+  (`KnowledgeStore.retire_embedding_verdicts`, from `replace_chunks` and
+  `reembed_all`), so an embedded item stops saying it has no embeddings.
 - Two surfaces READ that one recorded fact rather than re-deriving it, so they
   cannot drift: the `knowledge.searchability` Doctor probe (one row per
   affected item) and `knowledge_search` (the typed reason instead of a bare

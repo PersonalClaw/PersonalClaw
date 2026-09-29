@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, Pencil, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
+import { BookOpen, Clock, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, Pencil, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -23,6 +23,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { resolveType, relTime, fmtBytes, typeLabel, isArtifactItem, failedEnrichment, regenerateQueuedSentence } from './knowledgeMeta'
 import { readingTimeLabel } from './readingTime'
+import { queueLabel, queueSentence } from './queueStanding'
 import { listKnowledge, knowledgeStats, getKnowledge } from './knowledgeStore'
 import { KnowledgeDetail, OutcomeFieldValue } from './KnowledgeDetail'
 import { KnowledgeGraph } from './KnowledgeGraph'
@@ -872,8 +873,13 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                                 </span>
                               )}
                               <span data-type="title-m" className={`truncate ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
+                              {/* Waiting and being read are different claims: a row behind a
+                                  folder's backlog is not enriching, it is 40 items from it. */}
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
-                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis"><Loader2 size={10} className="animate-spin" /> Enriching</span>
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis"
+                                  title={queueSentence(it.queue) || undefined}>
+                                  {queueLabel(it).startsWith('Queued') ? <Clock size={10} aria-hidden /> : <Loader2 size={10} className="animate-spin" aria-hidden />} {queueLabel(it)}
+                                </span>
                               )}
                               {it.processing_status === 'failed' && (
                                 <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>

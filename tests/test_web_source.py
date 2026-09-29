@@ -130,6 +130,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 
@@ -429,9 +432,11 @@ async def test_a_wordpress_title_is_decoded_not_left_html_escaped(store):
 
     assert preview.detector == DETECTOR_WORDPRESS_API
     assert preview.items[0].title == "Don\u2019t stop early: case-folding at speed"
-    # The excerpt keeps its escaping: decoding it would turn shown code back into live markup
-    # before `sanitize_html` ever saw it.
-    assert "&lt;script&gt;" in preview.items[0].content
+    # The excerpt's shown tag stays shown: the body is stored as its words, and a tag the post
+    # only SHOWED is written as text, never turned back into live markup.
+    content = preview.items[0].content
+    assert "<script" not in content and "<p>" not in content
+    assert "&lt;script> tag, shown as code." in content
 
 
 @pytest.mark.asyncio
@@ -648,22 +653,41 @@ _HTML_EXTRACTION = {
 async def test_sanitize_html_is_on_by_default_for_the_html_extractor(store):
     """Isolated from the chain test on purpose: there, ``html_to_markdown`` also removes the
     script, so that test would still pass with the default turned off. Here the extracted
-    value stays HTML, so the default is the only thing standing between a page's script and
-    the stored item."""
-    on = await WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_SCRIPTY_PAGE))).preview(
-        {"url": PAGE_URL, "extraction": _HTML_EXTRACTION}
-    )
-    assert len(on.items) == 1
-    assert "Body copy." in on.items[0].content
-    assert "alert(1)" not in on.items[0].content
-    assert "onerror" not in on.items[0].content
+    value stays HTML, so the default is what stands between a page's script and the field.
 
-    off = await WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_SCRIPTY_PAGE))).preview(
-        {"url": PAGE_URL, "extraction": _HTML_EXTRACTION, "sanitize_html": False}
-    )
+    Asserted on the EXTRACTED field, where the sanitizer acts: the item's stored body is then
+    converted to its words by the source hygiene (``readable_text``), which drops a script on
+    its own, so the stored item alone could no longer tell the two layers apart."""
+    from personalclaw.knowledge_providers.html_dom import parse_html
+    from personalclaw.knowledge_providers.web_source import extract_declared
+
+    def _field(sanitize_default):
+        (row,) = extract_declared(
+            parse_html(_SCRIPTY_PAGE),
+            _HTML_EXTRACTION,
+            page_url=PAGE_URL,
+            sanitize_default=sanitize_default,
+        )
+        return row["content"]
+
+    on = _field(True)
+    assert "Body copy." in on
+    assert "alert(1)" not in on
+    assert "onerror" not in on
+
     # The vacuity counterpart: opting out is a VISIBLE decision, and it proves the sanitizer
     # is what removed the script above rather than the extractor never having seen it.
-    assert "alert(1)" in off.items[0].content
+    assert "alert(1)" in _field(False)
+
+    # And the item a poll keeps holds no markup either way.
+    for extra in ({}, {"sanitize_html": False}):
+        preview = await WebSourceProvider(store, fetch_fn=_Fetcher(_Resp(_SCRIPTY_PAGE))).preview(
+            {"url": PAGE_URL, "extraction": _HTML_EXTRACTION, **extra}
+        )
+        (item,) = preview.items
+        assert "Body copy." in item.content
+        assert "<script" not in item.content and "alert(1)" not in item.content
+        assert "onerror" not in item.content
 
 
 #: What stands in for a field whose markup the sanitizer failed on.

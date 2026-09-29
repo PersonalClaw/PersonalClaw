@@ -13,8 +13,10 @@ own signature declares (:meth:`SourceEngine._poll_kwargs`).
 Crash-safety is the whole design. Per new item the engine calls the source-aware
 :meth:`~personalclaw.knowledge.store.KnowledgeStore.create_typed_item`, which folds the
 ``source_seen`` novelty-gate INSERT into the item's own transaction, then enqueues it on
-the ONE ingestion path (``ingest_queue.enqueue``). Only after every item is committed does
-it advance the cursor (:meth:`~personalclaw.knowledge.store.KnowledgeStore.record_poll`).
+the ONE ingestion path, in its background lane (``ingest_queue.enqueue_background``, so a
+source's items never hold up what the person adds herself). Only after every item is
+committed does it advance the cursor
+(:meth:`~personalclaw.knowledge.store.KnowledgeStore.record_poll`).
 So a crash between item-persist and cursor-persist re-yields the same items on the next
 poll, and the UNIQUE ``(source_id, guid)`` gate drops them — at-least-once poll, exactly-
 once persist. :meth:`recover_pending` on startup re-enqueues any item whose ingestion did
@@ -39,6 +41,43 @@ logger = logging.getLogger(__name__)
 #: source added or re-enabled out of band (an MCP tool in another process editing the
 #: store) must be picked up within one poll rather than waiting out a multi-hour interval.
 POLL_CEILING_SECS = 30.0
+
+#: The fastest a folder on this machine is polled. The network floor
+#: (``sources.network_floor_secs``) exists to spare someone else's server; a folder poll
+#: costs only a stat of its files here, so it keeps the interval chosen for it down to this.
+LOCAL_FLOOR_SECS = 60
+
+
+def polls_the_network(provider: Any) -> bool:
+    """Whether a poll by ``provider`` may reach another machine, for the rate floor.
+
+    Only core's own folder observer is known not to, and it is recognised by its exact
+    type. Every other provider, an app's included, fetches or can, and the engine cannot
+    see where its fetches go, so it stays under the network floor. A subclass stays under
+    it too: an app extending the folder observer can override its poll. This fails closed:
+    the one way out of the floor is being the class that never opens a socket.
+    """
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    return type(provider) is not DirSourceProvider
+
+
+def effective_interval(source: dict, cfg: Any, provider: Any) -> float:
+    """How often ``source`` is really polled: its own interval (or the configured default
+    when unset), clamped up to the network floor for a source that fetches and to
+    :data:`LOCAL_FLOOR_SECS` for a folder on this machine. The sources page states this
+    number, so a row never says one interval while the engine keeps another."""
+    want = int(source.get("poll_interval_secs") or 0) or int(cfg.poll_interval_default_secs)
+    floor = int(cfg.network_floor_secs) if polls_the_network(provider) else LOCAL_FLOOR_SECS
+    return float(max(want, floor))
+
+
+def _first_sighting(item: Any) -> bool:
+    """Whether a poll's sighting is of an item new to its source (``created``), the one
+    kind the novelty gate makes safe to be offered twice."""
+    from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+    return (getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED) == CHANGE_CREATED
 
 
 def _default_providers() -> list[Any]:
@@ -244,11 +283,11 @@ class SourceEngine:
     # ── scheduling ─────────────────────────────────────────────────────────────────
 
     def _interval_for(self, source: dict, cfg: Any) -> float:
-        """A source's effective poll interval: its own value (or the config default when
-        unset), clamped UP to the network floor. The floor is the R1-class rate discipline
-        web_poll enforces — a too-frequent poll is abusive to someone else's server."""
-        want = int(source.get("poll_interval_secs") or 0) or int(cfg.poll_interval_default_secs)
-        return float(max(want, int(cfg.network_floor_secs)))
+        """A source's effective poll interval (:func:`effective_interval`). The network
+        floor is the R1-class rate discipline web_poll enforces — a too-frequent poll is
+        abusive to someone else's server — and a folder on this machine is nobody's server,
+        so a watched folder set to every 5 minutes is polled every 5 minutes."""
+        return effective_interval(source, cfg, self._provider_for(source["provider"]))
 
     def _next_poll_at(self, source: dict, cfg: Any) -> str:
         """When this source is due again, as an ISO timestamp — a DISPLAY rollup only.
@@ -276,7 +315,7 @@ class SourceEngine:
 
     # ── one poll ───────────────────────────────────────────────────────────────────
 
-    def _poll_kwargs(self, provider: Any, sid: str) -> dict[str, Any]:
+    def _poll_kwargs(self, provider: Any, sid: str, cfg: Any) -> dict[str, Any]:
         """The engine-supplied extras THIS provider's ``poll`` declares (§1.1, AECO-2).
 
         ONE negotiation for the whole of
@@ -293,6 +332,10 @@ class SourceEngine:
         ``KeyError`` instead of a keyword the ABC documents and no provider can ever be
         handed. Suppliers are lazy: a provider that wants neither pays for neither, and
         ``spec`` in particular costs a store read.
+
+        ``max_items`` is the cap :meth:`poll_source` applies to what the poll returns, from
+        the same ``cfg``, so a provider that asks for it is handed the number the engine
+        will actually keep.
         """
         import inspect
 
@@ -302,6 +345,7 @@ class SourceEngine:
         suppliers: dict[str, Callable[[], Any]] = {
             "spec": lambda: self._source_spec(sid),
             "policy": self.egress_policy,
+            "max_items": lambda: int(cfg.max_items_per_poll),
         }
         return {name: suppliers[name]() for name in ENGINE_POLL_KWARGS if name in params}
 
@@ -360,7 +404,7 @@ class SourceEngine:
             return 0
         cursor = self._store.get_source_cursor(sid)
         try:
-            result = await provider.poll(sid, cursor, **self._poll_kwargs(provider, sid))
+            result = await provider.poll(sid, cursor, **self._poll_kwargs(provider, sid, cfg))
         except Exception as exc:  # noqa: BLE001 — a provider that raises must not kill the loop
             logger.warning("source %s poll raised", sid, exc_info=True)
             self._store.record_poll(
@@ -396,18 +440,37 @@ class SourceEngine:
                 budget_spent=int(getattr(result, "requests_used", 0) or 0),
             )
             return 0
+        # The cap is on what this poll INDEXES, not on the first N sightings offered. A feed
+        # re-offers its whole document every poll, newest first, and a cap on positions kept
+        # re-reading the same N already-seen entries while every entry past them was never
+        # read at all. A seen sighting costs the novelty gate and nothing else, so it does not
+        # count.
         max_items = int(cfg.max_items_per_poll)
         new_count = 0
-        for item in result.items[:max_items]:
+        cut_short = False
+        for item in result.items:
+            if new_count >= max_items:
+                cut_short = True
+                break
             try:
                 new_count += self._persist(source, item)
             except Exception:  # noqa: BLE001 — one bad item must not abandon the rest
                 logger.warning("source %s item %r persist failed", sid, item.guid, exc_info=True)
+        # What the cap left out is not lost with the provider's new cursor. A poll cut short
+        # whose sightings are all first sightings keeps the cursor it was handed, so the next
+        # poll is offered the same list again: the gate refuses what this one took and the
+        # cap takes the next ones. That holds only for first sightings — re-offering an edit
+        # would apply it again every poll, and a list of more edits than the cap would never
+        # be got past — so a poll carrying any other change moves on as it always did. A
+        # provider whose cursor must move asks for the cap (``max_items``) and stops there.
+        next_cursor = result.cursor or cursor
+        if cut_short and all(_first_sighting(i) for i in result.items):
+            next_cursor = cursor
         # Cursor advanced LAST, in its own txn: every item above is already durable, so a
         # crash here re-yields them next poll and the UNIQUE gate drops them.
         self._store.record_poll(
             sid,
-            cursor=result.cursor or cursor,
+            cursor=next_cursor,
             new_count=new_count,
             health_status=HEALTH_OK,
             next_poll_at=next_at,
@@ -613,8 +676,10 @@ class SourceEngine:
         return 0
 
     def _enqueue(self, item_id: str) -> None:
+        # The background lane: a watched source's items are read when nothing the person
+        # added herself is waiting, so a folder's first scan never holds her own upload.
         try:
-            self._queue.enqueue(item_id)
+            self._queue.enqueue_background(item_id)
         except Exception:  # noqa: BLE001 — a queue hiccup must not lose the written item
             logger.debug("source item enqueue failed for %s", item_id, exc_info=True)
 

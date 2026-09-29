@@ -99,7 +99,9 @@ def _app(store, enqueued=None):
     app["state"] = SimpleNamespace(
         knowledge_store=store,
         knowledge_provider=lambda: provider,
-        knowledge_ingest_queue=lambda: SimpleNamespace(enqueue=sink.append),
+        knowledge_ingest_queue=lambda: SimpleNamespace(
+            enqueue=sink.append, enqueue_background=sink.append
+        ),
     )
     return app
 
@@ -399,11 +401,16 @@ class TestHandlers:
     def _regen(self, store, body):
         from personalclaw.dashboard.handlers import knowledge as H
 
+        # `enq` is the BACKGROUND lane: a whole-library pass must not sit ahead of what she
+        # adds meanwhile, so an item it queues in her own lane is not counted here.
         enq: list[str] = []
+        yours: list[str] = []
         app = web.Application()
         app["state"] = SimpleNamespace(
             knowledge_store=store,
-            knowledge_ingest_queue=lambda: SimpleNamespace(enqueue=enq.append),
+            knowledge_ingest_queue=lambda: SimpleNamespace(
+                enqueue=yours.append, enqueue_background=enq.append
+            ),
         )
         req = make_mocked_request("POST", "/", app=app)
 

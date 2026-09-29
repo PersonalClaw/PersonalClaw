@@ -596,7 +596,7 @@ async def _knowledge_heuristic_drain(state: Optional[object] = None) -> int:
         # same `touch=False` the regenerate route uses; a bumped stamp would re-stale
         # every synthesis that cites this item).
         store.update_item(item_id, processing_status="queued", touch=False)
-        queue.enqueue(item_id)
+        queue.enqueue_background(item_id)
         moved += 1
     return moved
 

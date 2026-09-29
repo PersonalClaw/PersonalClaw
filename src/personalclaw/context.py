@@ -908,7 +908,10 @@ async def compress_thread_history(
     """
     from personalclaw.agents.defaults import LITE_AGENT_NAME
     from personalclaw.history import MODEL_VIEW_ROLES, model_window  # circular import
-    from personalclaw.llm_helpers import stream_and_collect  # circular import
+    from personalclaw.llm_helpers import (  # circular import
+        say_background_substitution,
+        stream_and_collect,
+    )
     from personalclaw.session import BACKGROUND_KEY, chore_usage  # circular import
     from personalclaw.usage_ledger import recorder
 
@@ -966,8 +969,12 @@ async def compress_thread_history(
         acquired = True
         # One usage row for the compression, under the chat it was made for: a background chore
         # on the Background model, so Settings → Usage counts it and the chat's total holds it.
+        # A first model that fails or is too slow falls back down the chain, said in the log.
         result = await stream_and_collect(
-            client, prompt, on_complete=recorder(client, chore_usage(session_key))
+            client,
+            prompt,
+            on_complete=recorder(client, chore_usage(session_key)),
+            on_substitution=say_background_substitution("Thread history compression"),
         )
         if not result:
             return None
@@ -998,8 +1005,16 @@ async def compress_thread_history(
             )
         )
         return final.translate(_MULTIBYTE_TABLE)
-    except Exception:
-        logger.warning("Thread history compression failed", exc_info=True)
+    except Exception as exc:
+        from personalclaw.llm_helpers import failure_clause, is_model_call_failure
+
+        # A model that did not answer is said in one line, with what happened; a defect keeps
+        # its traceback.
+        if is_model_call_failure(exc):
+            logger.warning("Thread history compression failed: %s", failure_clause(exc))
+            logger.debug("Thread history compression failure", exc_info=exc)
+        else:
+            logger.warning("Thread history compression failed", exc_info=True)
         return None
     finally:
         if acquired:

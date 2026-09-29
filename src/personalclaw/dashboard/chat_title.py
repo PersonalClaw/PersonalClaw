@@ -7,7 +7,12 @@ from aiohttp import web
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
-from personalclaw.llm_helpers import failure_clause, is_model_call_failure
+from personalclaw.llm.events import EVENT_MODEL_SUBSTITUTION
+from personalclaw.llm_helpers import (
+    failure_clause,
+    is_model_call_failure,
+    say_background_substitution,
+)
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
 from personalclaw.session import BACKGROUND_KEY, chore_usage
@@ -51,17 +56,28 @@ async def _stream_background_prompt(
     """Stream *prompt* through the shared background session and collect the text.
 
     The call writes its usage row for *usage* (``session.chore_usage``): whose spend it is.
+
+    A first model of the background chain that fails or does not answer in time before it
+    says anything falls back to the next one, and the substitute is said in the log
+    (:func:`~personalclaw.llm_helpers.say_background_substitution`): a chore that never
+    announced a fallback kept a slow first model's failure however many were bound behind it.
     """
     client, _is_new, _resumed = await state.sessions.get_or_create(BACKGROUND_KEY)
     record = recorder(client, usage)
+    say = say_background_substitution("Background chat chore")
     text = ""
     try:
         # Clear accumulated history so prior utility prompts don't confuse the model
         if hasattr(client, "_history"):
             client._history.clear()
+        announce_failover = getattr(client, "announce_failover", None)
+        if callable(announce_failover):
+            announce_failover()
         async for event in client.stream(prompt):
             if event.kind == EVENT_TEXT_CHUNK:
                 text += event.text
+            elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                say(event.text)
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 await client.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:

@@ -18,7 +18,7 @@ same four primitives every watched feed and watched directory uses:
   slug — which is what makes "replace this artifact's mirror, touch nothing else" a
   single-row lookup (:meth:`~personalclaw.knowledge.store.KnowledgeStore.find_source_item`)
   instead of a scan plus a heuristic;
-* the ONE ingestion path, ``ingest_queue.enqueue`` — never a hand-written FTS row. An
+* the ONE ingestion path, the ingest queue's background lane — never a hand-written FTS row. An
   ``items`` row inserted without its ``items_fts`` row is invisible to search while looking
   perfectly present in the table, so the writer is always
   :meth:`~personalclaw.knowledge.store.KnowledgeStore.create_typed_item` /

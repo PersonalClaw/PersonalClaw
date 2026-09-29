@@ -228,7 +228,7 @@ async def ingest_item(
             # "skipped" (never "done"), so the detail UI distinguishes a no-AI source from
             # an item whose enrichment silently produced nothing.
             insights_phase = entities_phase = intents_phase = "skipped"
-            insights_ok = True  # nothing failed; a raw item is not under-enriched
+            insights_failure = None  # nothing failed; a raw item is not under-enriched
             # Derived from the model-backed set, not re-listed: a fourth model-backed stage
             # added later must announce its skip here without anyone remembering to edit a
             # second copy of the same list. Filtered through TERMINAL_STAGES for a stable
@@ -238,8 +238,8 @@ async def ingest_item(
                     _emit("node", node=stage, phase="skipped")
         else:
             _emit("node", node="insights", phase="running")
-            insights_ok = await _run_insights(store, item_id, consolidated, insights_pool)
-            insights_phase = "done" if insights_ok else "failed"
+            insights_failure = await _run_insights(store, item_id, consolidated, insights_pool)
+            insights_phase = "done" if insights_failure is None else "failed"
             _emit("node", node="insights", phase=insights_phase)
 
             # Contradictions are flagged AT INGEST. Runs here, right
@@ -247,7 +247,7 @@ async def ingest_item(
             # produces and the pass has nothing to compare before it exists. Deliberately NOT a
             # new terminal stage: it emits no node and cannot fail the ingest (it is an
             # annotation), so `TERMINAL_STAGES` and the phase map stay exactly as they are.
-            if insights_ok:
+            if insights_failure is None:
                 _run_conflict_pass(store, item_id)
 
             # Entity/relation extraction over the consolidated text → the entity graph
@@ -331,10 +331,10 @@ async def ingest_item(
     # when the graph already went 'partial' from benign optional-node skips: lead with
     # the insights reason (the benign "Skipped (…)" prefix is what the UI suppresses, so
     # never let it mask a real failure) and append the skip context if present.
-    if not insights_ok:
+    if insights_failure is not None:
         if status == "done":
             status = "partial"
-        insights_msg = "insights: model unavailable (insights not refreshed — try regenerating)"
+        insights_msg = insights_failure
         if not proc_error:
             proc_error = insights_msg
         elif not proc_error.startswith(insights_msg):
@@ -928,22 +928,38 @@ def _run_conflict_pass(store, item_id: str) -> None:
         logger.debug("conflict pass failed for %s", item_id, exc_info=True)
 
 
-async def _run_insights(store, item_id: str, content: str, pool) -> bool:
-    """Extract + persist insights for the item. Returns False when the model call
-    errored (e.g. cold/unavailable pool) so the caller can mark the item ``partial``
-    instead of silently leaving it ``done`` with stale/empty insights. Returns True on
-    success or when there's legitimately nothing to do (no content / empty result)."""
+#: What an item says when no model could run its insights. The degraded-mode drain
+#: (``resilience/degraded.py``) re-runs the items carrying "model unavailable" once a model
+#: comes back, so these words are also that queue's marker.
+INSIGHTS_UNAVAILABLE = "insights: model unavailable (insights not refreshed — try regenerating)"
+
+
+async def _run_insights(store, item_id: str, content: str, pool) -> str | None:
+    """Extract + persist insights for the item. Returns ``None`` on success or when there's
+    legitimately nothing to do (no content / empty result), else the sentence the item
+    records, so the caller marks it ``partial`` instead of silently leaving it ``done`` with
+    stale/empty insights.
+
+    The sentence says what happened. Models that were there and did not answer in time are
+    not "unavailable" — an item that said so while three models were bound sent its reader
+    looking for a model that was never missing — so a timeout names how long each was given
+    and which were tried, and every other failure keeps :data:`INSIGHTS_UNAVAILABLE`."""
     if not content.strip():
-        return True
+        return None
+    from personalclaw.knowledge.llm_pool import WorkerTimeout
+
     try:
         from personalclaw.knowledge.insights import InsightsExtractor
 
         insights = await InsightsExtractor(pool=pool).extract(content, raise_on_error=True)
+    except WorkerTimeout as exc:
+        logger.warning("insights for %s not refreshed: %s", item_id, exc)
+        return f"insights: {exc} (insights not refreshed — try regenerating)"
     except Exception:
         logger.debug("insights extraction failed for %s", item_id, exc_info=True)
-        return False
+        return INSIGHTS_UNAVAILABLE
     if not insights:
-        return True
+        return None
     item = store.get_item(item_id)
     # `title` is an item field, not an insight category — pull it out of the bundle.
     ai_title = str(insights.pop("title", "") or "").strip()
@@ -987,15 +1003,20 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
         # like a blank title so the AI title (a real headline) replaces it — for any
         # text type, not just fleeting notes.
         titled_by_content = bool(cur_title) and cur_title == content[:60].strip()
-        # File items promote only while still filename-titled: the create form lets the
-        # user type a real title for an upload, and that must survive enrichment. The
-        # seeded filename is recorded as file_metadata.original_filename at store time;
-        # legacy items without it keep the old always-promote behavior.
+        # File items promote only while still filename-titled. The seeded filename is
+        # recorded as file_metadata.original_filename at store time; legacy items without
+        # it keep the old always-promote behavior.
         orig_fn = str(
             ((item or {}).get("file_metadata") or {}).get("original_filename") or ""
         ).strip()
         titled_by_filename = cur_title == orig_fn if orig_fn else True
-        if (is_file_type and titled_by_filename) or not cur_title or titled_by_content:
+        # A title a person set is never replaced, whatever it equals: the create form fills
+        # an upload's title with its file name, so a name she KEPT equals the placeholder,
+        # and a note's typed title can equal its first line. The suggestion stays in
+        # ai_title, which the item page offers.
+        set_by_person = (item or {}).get("title_source") == "user"
+        placeholder = (is_file_type and titled_by_filename) or not cur_title or titled_by_content
+        if placeholder and not set_by_person:
             fields["title"] = ai_title
     # AI tags come from the extracted topics. Set them when the item has none (first
     # enrichment) OR when every tag it currently carries was written by a previous
@@ -1017,7 +1038,7 @@ async def _run_insights(store, item_id: str, content: str, pool) -> bool:
         fields["tag_source"] = "ai"
     store.update_item(item_id, touch=False, **fields)
     store.db.commit()
-    return True
+    return None
 
 
 def _intents_path(store):

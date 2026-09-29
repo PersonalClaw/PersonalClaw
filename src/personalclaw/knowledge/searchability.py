@@ -114,6 +114,12 @@ REASONS: tuple[str, ...] = (
 #: ``unsearchable``, because the very next re-index makes it retrievable again.
 INGEST_REASONS: tuple[str, ...] = (NO_EXTRACTABLE_TEXT, NO_EMBEDDING_PROVIDER, NOT_INDEXED)
 
+#: The ingest reasons an embedding write makes false: the item had no vector and no chunk.
+#: A re-index or a chunk backfill that gives the item vectors retires them
+#: (:func:`settled_after_embedding`); :data:`NO_EXTRACTABLE_TEXT` is not one of them, since
+#: embedding a scan's descriptor does not give it the words on its page.
+EMBEDDING_REASONS: tuple[str, ...] = (NO_EMBEDDING_PROVIDER, NOT_INDEXED)
+
 #: What the user can do about each reason. Written without pronouns on purpose: the same
 #: sentence follows a claim about ONE item (the item's status line) and about many (the
 #: ``knowledge_search`` note), and "re-ingest it" after "3 items …" is the kind of seam a
@@ -241,6 +247,24 @@ def reason_detail(reason: str) -> str:
     if remedy is None:
         return f"This item is not fully searchable ({reason or 'unknown reason'})."
     return f"{_reach_sentence(reason, 'This item', 1)}. {remedy}"
+
+
+def settled_after_embedding(status: str, error: str | None, reason: str) -> tuple[str, str | None]:
+    """The status and error an item recorded for an embedding *reason* has once an embedding
+    write has given it vectors.
+
+    The ingest runner leads the item's error with the reason's sentence and follows it with
+    whatever else it had to say, and files ``done``/``partial`` as :data:`UNSEARCHABLE`. So the
+    sentence is taken out wherever it sits, and an ``unsearchable`` item gets the status the
+    runner would have written without the verdict: ``done`` when nothing is left to say,
+    ``partial`` when something is (a skipped optional step, insights that did not run).
+    ``failed`` and ``unreachable`` were never overridden, and keep their status.
+    """
+    detail = reason_detail(reason)
+    rest = " ".join(str(error or "").replace(detail, " ").split())
+    if status != UNSEARCHABLE:
+        return status, rest or None
+    return ("partial", rest) if rest else ("done", None)
 
 
 def verdict_for_ingest(

@@ -409,13 +409,14 @@ class TestProviderWorkerSurfacesFailure:
         from personalclaw import llm_helpers
         from personalclaw.knowledge.llm_pool import ProviderWorker, WorkerError
 
-        async def _hang(prompt, use_case=""):
-            await asyncio.sleep(10)
+        async def _hang(prompt, use_case="", attempt_timeout=None):
+            # `one_shot_completion` bounds each model's attempt by `attempt_timeout`.
+            await asyncio.wait_for(asyncio.sleep(10), attempt_timeout)
             return "never"
 
         monkeypatch.setattr(llm_helpers, "one_shot_completion", _hang)
 
-        with pytest.raises(WorkerError, match="timed out"):
+        with pytest.raises(WorkerError, match="did not answer within"):
             await ProviderWorker().send_message("p", timeout=0.01)
 
     @pytest.mark.asyncio
@@ -423,7 +424,7 @@ class TestProviderWorkerSurfacesFailure:
         from personalclaw import llm_helpers
         from personalclaw.knowledge.llm_pool import ProviderWorker, WorkerError
 
-        async def _boom(prompt, use_case=""):
+        async def _boom(prompt, use_case="", **_kw):
             raise RuntimeError("no model bound")
 
         monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
@@ -439,7 +440,7 @@ class TestProviderWorkerSurfacesFailure:
         from personalclaw import llm_helpers
         from personalclaw.knowledge.llm_pool import ProviderWorker
 
-        async def _empty(prompt, use_case=""):
+        async def _empty(prompt, use_case="", **_kw):
             return ""
 
         monkeypatch.setattr(llm_helpers, "one_shot_completion", _empty)
@@ -456,7 +457,7 @@ class TestProviderWorkerSurfacesFailure:
 
         calls = {"n": 0}
 
-        async def _every_other(prompt, use_case=""):
+        async def _every_other(prompt, use_case="", **_kw):
             calls["n"] += 1
             if calls["n"] % 2 == 0:
                 raise RuntimeError("boom")

@@ -203,7 +203,7 @@ describe('an intent edit from a stale editor', () => {
 const SOURCE: WatchedSource = {
   id: 'src-1', name: 'Product changelog', provider: 'watched-page', kind: 'web_page',
   spec: { url: 'https://example.com/changelog' }, budget: { max_requests: 4 }, revision: 's1',
-  enrichment: 'full', poll_interval_secs: 3600, item_type: 'bookmark', enabled: true,
+  enrichment: 'full', poll_interval_secs: 3600, poll_every_secs: 3600, item_type: 'bookmark', enabled: true,
   health_status: 'needs_render', last_error_summary: '', last_escalations: [], last_new_count: 0,
   last_poll_at: new Date().toISOString(), enrolled: true,
   remediation: { kind: 'render_tier', guidance: 'This page builds its content with JavaScript.', detail: '', action: 'allow_render' },

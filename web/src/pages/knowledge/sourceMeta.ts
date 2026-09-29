@@ -1,4 +1,5 @@
 import { Globe, Rss, FolderOpen, Puzzle, type LucideIcon } from 'lucide-react'
+import type { SourceKind, WatchedSource } from '../../lib/api'
 
 // ── Watched-source display vocabulary ───────────────────────────────────────────────
 //
@@ -81,6 +82,44 @@ export function fmtInterval(secs: number): string {
   if (secs < 3600) return `${Math.round(secs / 60)} min`
   const hours = secs / 3600
   return `${hours % 1 === 0 ? hours : hours.toFixed(1)} hr`
+}
+
+/** Why a row's cadence is not the one chosen for it, for its title; '' when it is. The row
+ *  states `poll_every_secs`, how often the engine really checks it: a source that fetches
+ *  over the network is held to the floor in settings whatever it asked for, and a row that
+ *  said "every 5 min" while the engine checked every 15 was stating the request. */
+export function cadenceNote(source: Pick<WatchedSource, 'poll_interval_secs' | 'poll_every_secs'>): string {
+  const chosen = source.poll_interval_secs
+  if (!chosen || chosen >= source.poll_every_secs) return ''
+  return `Set to every ${fmtInterval(chosen)}, but a source that fetches over the network is checked `
+    + `at most every ${fmtInterval(source.poll_every_secs)} (Settings → Watched sources).`
+}
+
+/** A watched folder's first scan while it still has something to say: files still waiting to
+ *  be read in (a check reads a capped number), or older files the scan's bound left for later.
+ *  '' when it has neither, and for every source that is not a folder. */
+export function firstScanLine(scan: WatchedSource['first_scan']): string {
+  if (!scan) return ''
+  const parts: string[] = []
+  if (scan.waiting > 0) {
+    parts.push(`${scan.waiting} more ${scan.waiting === 1 ? 'file is' : 'files are'} waiting to be read in.`)
+  }
+  if (scan.left_out > 0) {
+    const taken = scan.found - scan.left_out
+    parts.push(`The first scan took the newest ${taken} of ${scan.found} files; `
+      + `the ${scan.left_out} older ${scan.left_out === 1 ? 'one comes in when it changes' : 'ones come in when they change'}.`)
+  }
+  return parts.join(' ')
+}
+
+/** What a folder's first check does, stated from the provider's own bound (the kind catalog
+ *  ships it), so the create form cannot promise a number the scan does not apply. */
+export function firstScanPromise(kind: Pick<SourceKind, 'first_scan_max_files' | 'first_scan_max_bytes'>): string {
+  const files = kind.first_scan_max_files
+  const bytes = kind.first_scan_max_bytes
+  if (!files || !bytes) return ''
+  return `Its first check reads in what is already there, newest first — up to ${files.toLocaleString('en-US')} files `
+    + `or ${Math.round(bytes / (1024 * 1024))} MB. Older files come in when they change.`
 }
 
 /** The poll cadences the create form offers. Deliberately coarse: the engine clamps

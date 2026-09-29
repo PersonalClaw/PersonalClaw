@@ -195,17 +195,40 @@ async def stream_and_collect_json(
     approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.AUTO_APPROVE,
     hooks: "HookManager | None" = None,
     on_complete: Callable[[LLMEvent], None] | None = None,
+    on_substitution: Callable[[str], None] | None = None,
 ) -> dict | None:
     """Stream a message and parse the response as JSON.
 
-    Combines ``stream_and_collect`` with ``parse_llm_json``; ``on_complete`` is passed through,
-    so the call's usage row is written the way ``stream_and_collect`` writes it.
+    Combines ``stream_and_collect`` with ``parse_llm_json``; ``on_complete`` and
+    ``on_substitution`` are passed through, so the call's usage row is written and a fallback
+    model is allowed and said exactly as ``stream_and_collect`` does them.
     Returns parsed dict or None on failure.
     """
     text = await stream_and_collect(
-        provider, message, approval_policy=approval_policy, hooks=hooks, on_complete=on_complete
+        provider,
+        message,
+        approval_policy=approval_policy,
+        hooks=hooks,
+        on_complete=on_complete,
+        on_substitution=on_substitution,
     )
     return parse_llm_json(text)
+
+
+def say_background_substitution(chore: str) -> Callable[[str], None]:
+    """The ``on_substitution`` for a background chore on the background session.
+
+    Passing one is what lets the session's model fall back down its chain when it fails
+    before replying (``NativeAgentRuntime.announce_failover``); a chore that passes none
+    keeps a slow first model's failure as its own, whatever else is bound. A chore has no
+    live line to show the substitute on, so it is said in the log, in the one wording every
+    substitution uses: "Ran on <model> instead of <model>: <why>."
+    """
+
+    def _say(sentence: str) -> None:
+        logger.warning("%s: %s", chore, sentence)
+
+    return _say
 
 
 async def _resolve_permission(
@@ -455,6 +478,40 @@ def _enforces_json_schema_natively(model_ref: str) -> bool:
 # later model, while nothing of the turn has been shown, and said on the turn.
 
 
+class ChainExhausted(RuntimeError):
+    """Every model of a use case's chain failed for one call (:func:`run_over_use_case_chain`).
+
+    A ``RuntimeError``, so every caller that already catches one keeps working, with the
+    message it always had. ``failures`` is what each entry did, in order — ``(ref,
+    exception)`` — so a caller can say what happened ("each timed out") instead of reading one
+    last error as the whole story.
+    """
+
+    def __init__(self, message: str, failures: list[tuple[str, BaseException]]) -> None:
+        super().__init__(message)
+        self.failures = list(failures)
+
+
+def is_timeout_failure(exc: BaseException) -> bool:
+    """Whether *exc* is a model that did not answer in time, rather than one that failed or
+    was not there: a timeout of the call, the guard's, a first-token one, or the HTTP
+    client's — directly or as the cause of a wrapper."""
+    import httpx
+
+    from personalclaw.guardrails.failure import FailureMode
+
+    seen: BaseException | None = exc
+    for _ in range(5):
+        if seen is None:
+            return False
+        if isinstance(seen, (TimeoutError, httpx.TimeoutException)):
+            return True
+        if getattr(seen, "mode", None) == FailureMode.TIMEOUT:
+            return True
+        seen = seen.__cause__
+    return False
+
+
 def use_case_chain(use_case: str) -> list[str]:
     """The ordered resolution chain for ``use_case``, or ``[]`` when unreadable.
 
@@ -514,8 +571,9 @@ async def run_over_use_case_chain(
     problem, and walking a whole chain of models for it would spend N calls on the same
     bad prompt. It is re-raised unchanged.
 
-    An exhausted chain raises ONE ``RuntimeError`` naming the axis, the chain length and
-    the last error — one clear error, not N stack traces.
+    An exhausted chain raises ONE :class:`ChainExhausted` (a ``RuntimeError``) naming the
+    axis, the chain length and the last error — one clear error, not N stack traces — and
+    carrying what each entry did.
 
     An entry that serves after the head failed serves IN ITS PLACE, and the provider carries
     that (``provider_bridge.stamp_substitution``), so the call the guard records says "ran on
@@ -534,6 +592,7 @@ async def run_over_use_case_chain(
     )
 
     last_exc: Exception | None = None
+    failures: list[tuple[str, BaseException]] = []
     head_failure: tuple[str, str] | None = None  # (why, fix) of the head that did not serve
     for i, ref in enumerate(chain):
         try:
@@ -541,6 +600,7 @@ async def run_over_use_case_chain(
             provider = resolve_metered_model(use_case, model_override=ref, **kw)
         except Exception as exc:  # noqa: BLE001 — an unbuildable entry advances
             last_exc = exc
+            failures.append((ref, exc))
             if i == 0:
                 head_failure = substitution_reason(exc)
             continue
@@ -561,6 +621,7 @@ async def run_over_use_case_chain(
             raise
         except Exception as exc:  # noqa: BLE001 — a failed call advances
             last_exc = exc
+            failures.append((ref, exc))
             if i == 0:
                 head_failure = substitution_reason(exc)
             if i + 1 < len(chain):
@@ -572,10 +633,11 @@ async def run_over_use_case_chain(
                     ref,
                     type(exc).__name__,
                 )
-    raise RuntimeError(
+    raise ChainExhausted(
         f"every model in the {use_case!r} fallback chain failed "
         f"({len(chain)} entr{'y' if len(chain) == 1 else 'ies'}); "
-        f"last error: {last_exc}"
+        f"last error: {last_exc}",
+        failures,
     ) from last_exc
 
 
@@ -587,6 +649,7 @@ async def one_shot_completion(
     model: str = "",
     temperature: float | None = None,
     usage: "Attribution | None" = None,
+    attempt_timeout: float | None = None,
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
@@ -670,6 +733,14 @@ async def one_shot_completion(
     as unattended background spend (:data:`~personalclaw.usage_ledger.UNATTENDED`), which every
     call here is: an interactive turn never comes through this function. A call used to write no
     row unless its caller asked, and each of those calls was spend Settings → Usage could not show.
+
+    ``attempt_timeout`` bounds each MODEL's attempt, not the call: a model that has not answered
+    within it counts as failed and the chain moves to its next entry, exactly as it does for one
+    that errored. A caller that wrapped the whole call in one timeout instead cut the chain off
+    while its second model was still answering, so a slow first model was the end of the call
+    however the chain went on — which is how a busy local model left library items reading
+    "model unavailable" while two more models were bound behind it. ``None`` leaves each attempt
+    to the model-call guard's own limit.
     """
     from personalclaw.providers.provider_bridge import metered, resolve_metered_model
     from personalclaw.providers.use_cases import VALID_USE_CASES
@@ -767,13 +838,20 @@ async def one_shot_completion(
             except Exception:
                 pass
 
+    async def _attempt(provider) -> str:
+        """One model's attempt, bounded by ``attempt_timeout`` when there is one. Its
+        ``TimeoutError`` is a failed call like any other, so the chain walk moves on."""
+        if attempt_timeout is None:
+            return await _run(provider)
+        return await asyncio.wait_for(_run(provider), float(attempt_timeout))
+
     # A pinned model bypasses the active-selection chain entirely — a pin is not a
     # chain. The caller has already decided WHICH model must run (a
     # cross-model judge validated against the worker's family), so walking the
     # use-case fallback chain would defeat the pin: a fallback entry could be the
     # very family the isolation control excluded. Resolve the one model and run it.
     if model:
-        return await _run(
+        return await _attempt(
             resolve_metered_model(resolved_uc, model_override=model, **(await _entry_kw(model)))
         )
 
@@ -790,7 +868,7 @@ async def one_shot_completion(
         return await run_over_use_case_chain(
             resolved_uc,
             _chain,
-            _run,
+            _attempt,
             entry_kwargs=_entry_kw,
             no_advance=(OutputContractError,),
             label="one_shot chain",
@@ -865,7 +943,7 @@ async def one_shot_completion(
             built, use_case=resolved_uc, provider_name=fallback.name, model=fallback_model
         )
 
-    return await _run(provider)
+    return await _attempt(provider)
 
 
 def failed_endpoint(exc: BaseException) -> str:

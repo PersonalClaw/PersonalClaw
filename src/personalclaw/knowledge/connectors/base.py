@@ -107,6 +107,61 @@ def html_to_text(html: str) -> str:
     return text.strip()
 
 
+#: Markup's tell: an element tag or a character reference. Text with neither is not HTML and
+#: is not handed to an HTML parser, which would fold its line breaks into one paragraph.
+_MARKUP_RE = re.compile(
+    r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>"  # an element tag
+    r"|&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]{1,31});"  # a character reference
+)
+
+#: A "<" that would open markup where inline HTML is rendered: before a tag name, a closing
+#: tag, a comment/declaration or a processing instruction. An autolink is a link, not markup.
+_TAG_OPEN_RE = re.compile(r"<(?!(?:https?://|mailto:))(?=[A-Za-z/!?])")
+
+#: Fenced blocks and code spans, where a "<" is already text. A backslash-escaped backtick
+#: opens nothing, so it never shields what follows it.
+_CODE_RE = re.compile(r"(```.*?```|~~~.*?~~~|(?<!\\)`[^`\n]*`)", re.S)
+
+
+def without_raw_html(markdown: str) -> str:
+    """*markdown* with no raw HTML left in it: every markup-opening "<" outside code is written
+    as ``&lt;``, which markdown shows as the character it is.
+
+    For untrusted text that becomes a knowledge item's body. The item page renders a body as
+    markdown with inline HTML passed through, and html2text turns an entity-encoded tag that a
+    page only SHOWED (``&lt;iframe …&gt;``) back into the characters of a real one. So a
+    converter's output is not safe markdown by itself, and this is the step that makes it so.
+    Code is left alone: inside a code span or a fenced block a tag is already text.
+    """
+    parts = _CODE_RE.split(markdown or "")
+    for i in range(0, len(parts), 2):  # even parts are outside code
+        parts[i] = _TAG_OPEN_RE.sub("&lt;", parts[i])
+    return "".join(parts)
+
+
+def readable_text(value: str) -> str:
+    """An untrusted body (a feed entry, a page's excerpt) as the markdown text a reader sees.
+
+    Markup goes through :func:`html_to_text`, the one html→text conversion (the one a preview
+    snippet uses too); text with no markup is kept as written. Either way no raw HTML is left
+    (:func:`without_raw_html`).
+    """
+    text = value or ""
+    if _MARKUP_RE.search(text):
+        text = html_to_text(text).strip()
+    return without_raw_html(text)
+
+
+def plain_line(value: str) -> str:
+    """An untrusted one-line field (a title) as plain text: tags dropped, character
+    references decoded, whitespace collapsed. A title is shown as text everywhere, so a
+    feed's ``Don&#8217;t`` or ``<b>new</b>`` would otherwise be read out as written."""
+    text = value or ""
+    if _MARKUP_RE.search(text):
+        text = _html.unescape(re.sub(r"<[^>]*>", "", text))
+    return " ".join(text.split())
+
+
 class BaseConnector(ABC):
     """Base class for remote source connectors."""
 

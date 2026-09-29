@@ -64,6 +64,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 
@@ -418,11 +421,39 @@ def test_the_engine_negotiates_exactly_the_declared_extras(store):
     """
     engine, _queue = _engine(store, _PlainProvider())
     sid = store.create_source(name="a", provider="plain-app", kind="app", spec={"k": "v"})
+    cfg = _cfg()
 
-    assert engine._poll_kwargs(_PlainProvider(), sid) == {}
-    assert set(engine._poll_kwargs(_PolicyOnlyProvider(), sid)) == {"policy"}
-    assert set(ENGINE_POLL_KWARGS) == {"spec", "policy"}
-    assert set(engine._poll_kwargs(_SpecAwareProvider(), sid)) == set(ENGINE_POLL_KWARGS)
+    assert engine._poll_kwargs(_PlainProvider(), sid, cfg) == {}
+    assert set(engine._poll_kwargs(_PolicyOnlyProvider(), sid, cfg)) == {"policy"}
+    assert set(engine._poll_kwargs(_SpecAwareProvider(), sid, cfg)) == {"spec", "policy"}
+    assert set(ENGINE_POLL_KWARGS) == {"spec", "policy", "max_items"}
+    assert set(engine._poll_kwargs(_EveryExtraProvider(), sid, cfg)) == set(ENGINE_POLL_KWARGS)
+
+
+class _EveryExtraProvider(_PlainProvider):
+    """Declares every extra the contract offers."""
+
+    @property
+    def name(self) -> str:
+        return "every-extra-app"
+
+    async def poll(self, source_id, cursor="", *, spec=None, policy=None, max_items=None):
+        self.calls.append({"source_id": source_id, "max_items": max_items})
+        return SourcePollResult(cursor=cursor)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_asks_is_handed_the_cap_the_engine_keeps(store):
+    """The engine indexes at most ``max_items_per_poll`` sightings of one poll, so a
+    provider whose cursor moves past what it returned needs the number to stop at it — and
+    it must be the number the engine applies, from the same config, not a copy of it."""
+    provider = _EveryExtraProvider()
+    engine, _queue = _engine(store, provider)
+    sid = store.create_source(name="a", provider="every-extra-app", kind="app")
+
+    await engine.poll_source(store.get_source(sid), _cfg(max_items_per_poll=7))
+
+    assert provider.calls == [{"source_id": sid, "max_items": 7}]
 
 
 def test_the_engine_has_exactly_one_poll_call_site():

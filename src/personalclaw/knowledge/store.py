@@ -962,6 +962,12 @@ class KnowledgeStore:
         ("is_archived", "INTEGER DEFAULT 0"),
         ("insights", "TEXT DEFAULT '{}'"),
         ("ai_title", "TEXT"),
+        # Who set `title`: 'user' once a person has typed or kept one (the create form, an
+        # edit, taking the suggested title). Enrichment never replaces a title a person set;
+        # NULL is a placeholder the item was created with (a file name, a content prefix).
+        # Recorded rather than inferred from the value: a kept file name EQUALS the file
+        # name, so "still titled by its file name" could not tell hers from the placeholder.
+        ("title_source", "TEXT"),
         ("provider", "TEXT DEFAULT 'native'"),
         # Ingestion node-graph lifecycle (#30): queued|processing|done|failed|partial.
         ("processing_status", "TEXT DEFAULT ''"),
@@ -2758,7 +2764,65 @@ class KnowledgeStore:
         # for good, because a sweep is once-per-item.
         self.clear_similarity_sweep(item_id)
         self.db.commit()
+        if any(r[4] for r in rows):
+            # Passages with vectors: an item that said it had no embeddings no longer can.
+            self.retire_embedding_verdicts([item_id])
         return len(rows)
+
+    def retire_embedding_verdicts(self, item_ids: Sequence[str]) -> int:
+        """Clear the no-embeddings verdict of every item in *item_ids* that now holds a vector.
+
+        The ingest runner records ``no_embedding_provider``/``not_indexed`` from what landed
+        (``searchability.verdict_for_ingest``), and only a re-ingest re-derived it. The
+        re-index and the chunk backfill give an existing item its vectors without re-ingesting
+        it, so an item embedded that way went on saying "no embedding model is bound" to a
+        user who had bound one. Its two writers call this after they write (``reembed_all``
+        for the item vector, :meth:`replace_chunks` for the passages). Re-checked here against
+        the rows, never taken from the caller: only a vector that is actually stored retires
+        the verdict. The status and sentence it leaves are
+        ``searchability.settled_after_embedding``'s, and the embed step reads ``done``.
+        Returns how many items it settled.
+        """
+        from .searchability import EMBEDDING_REASONS, settled_after_embedding
+
+        settled = 0
+        for item_id in item_ids:
+            row = self.db.execute(
+                "SELECT processing_status, processing_error, file_metadata, "
+                "COALESCE(LENGTH(embedding), 0) AS vector_bytes, "
+                "(SELECT COUNT(*) FROM chunks c WHERE c.item_id = items.id "
+                "AND c.embedding IS NOT NULL) AS vector_chunks FROM items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if row is None or not (row["vector_bytes"] or row["vector_chunks"]):
+                continue
+            try:
+                meta = json.loads(row["file_metadata"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(meta, dict):
+                continue
+            reason = str(meta.get("unsearchable_reason") or "")
+            if reason not in EMBEDDING_REASONS:
+                continue
+            status, error = settled_after_embedding(
+                str(row["processing_status"] or ""), row["processing_error"], reason
+            )
+            meta.pop("unsearchable_reason", None)
+            phases = meta.get("node_phases")
+            if isinstance(phases, dict) and "embed" in phases:
+                phases["embed"] = "done"
+            self.update_item(
+                item_id,
+                processing_status=status,
+                processing_error=error,
+                file_metadata=meta,
+                touch=False,
+            )
+            settled += 1
+        if settled:
+            self.db.commit()
+        return settled
 
     def get_chunks(self, item_id: str, *, with_embedding: bool = False) -> list[dict]:
         """An item's chunks in order. The raw embedding BLOB is an internal detail, so it
@@ -3118,6 +3182,7 @@ class KnowledgeStore:
         "is_archived",
         "insights",
         "ai_title",
+        "title_source",
         "provider",
         # ingestion node-graph lifecycle (#30)
         "processing_status",
@@ -4222,6 +4287,7 @@ class KnowledgeStore:
         rows = self.db.execute(sql, params).fetchall()
         total = len(rows)
         done = reembedded = failed = 0
+        embedded_ids: list[str] = []
         from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
         from personalclaw.knowledge.embedder import compose_item_text, floats_to_bytes
         from personalclaw.knowledge.pipeline.runner import active_batch_embed_fn
@@ -4268,12 +4334,15 @@ class KnowledgeStore:
                         (floats_to_bytes(vec), *stamp, r["id"]),
                     )
                     reembedded += 1
+                    embedded_ids.append(r["id"])
                 else:
                     failed += 1
                 done += 1
                 if on_progress is not None:
                     on_progress(done, total)
         self.db.commit()
+        # An item this gave its first vector no longer "has no embeddings".
+        self.retire_embedding_verdicts(embedded_ids)
         return {"reembedded": reembedded, "failed": failed, "total": total}
 
     # -- Chunk-vector fingerprinting ---------------------------------------------

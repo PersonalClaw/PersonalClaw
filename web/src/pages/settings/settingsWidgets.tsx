@@ -939,7 +939,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {s && <><StatusPill query={query} label={on ? 'Polling' : 'Parked'} tone={on ? 'ok' : 'muted'} />
             <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {on
-                ? `Every ${fmtInterval(Number(s.poll_interval_default_secs) || 0)} by default, never faster than ${fmtInterval(Number(s.network_floor_secs) || 0)}`
+                ? `Every ${fmtInterval(Number(s.poll_interval_default_secs) || 0)} by default; network sources never faster than ${fmtInterval(Number(s.network_floor_secs) || 0)}`
                 : 'Sources you add are not fetched until you turn it back on'}
             </div></>}
         </BentoCard>

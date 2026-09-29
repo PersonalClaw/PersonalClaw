@@ -29,10 +29,24 @@ different files edited in one window produce exactly three — one each, never o
 intermediate signature. A vanished file has no mtime, so a delete's window is timed from
 when it was first observed missing (the one piece of state the cursor carries for it).
 
-**The first pass seeds and emits nothing.** Enrolling a directory of 4000 existing notes
-must not ingest 4000 items — that is the startup storm ``WatchState.seeded`` exists to
-prevent for `file` triggers, and the same rule holds here: pass one records the baseline,
-and only changes AFTER it are library events.
+**The first scan brings in what is already there, within a stated bound.** A person who
+adds a folder of notes to her library expects its notes in the library; a first pass that
+only recorded a baseline left a healthy-looking folder that brought nothing in, with no
+word about why. So the first scan takes the files already in the folder, the most recently
+changed first, up to :data:`FIRST_SCAN_MAX_FILES` files and :data:`FIRST_SCAN_MAX_BYTES` of
+them in all. What it leaves out (a folder of 4000 notes) goes into the baseline and comes
+in when it next changes, and the cursor records how many that was, so the sources page can
+say it rather than let a partial import pass for a complete one
+(:meth:`DirSourceProvider.first_scan_status`). This is a knowledge library, not a `file`
+trigger: a trigger must not fire for every file that already exists (its
+``WatchState.seeded`` rule), while a library that shows none of them is the defect.
+
+**Nothing a poll observes is lost to the engine's per-poll cap.** The engine indexes at
+most ``max_items`` sightings of one poll, and this provider's baseline is what it has
+emitted, so emitting more than the engine takes would move the baseline past files that
+never reached the library. The poll therefore stops at the cap; a change it did not emit stays
+uncommitted, exactly like one still settling, and is emitted by the next poll. A first scan
+bigger than one poll arrives over several, and the cursor says how many are still to come.
 
 **Save-time validation runs at POLL time too** (:meth:`validate_spec`). The spec is data in
 a SQLite row that an MCP tool, an app, or a hand-edit can change after the fact, so a guard
@@ -107,33 +121,51 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 #: item instead of being dropped by the engine's novelty gate. Bounded like the seen-set.
 MAX_TOMBSTONES = 1000
 
+#: The most files a folder's first scan brings in, the most recently changed first. Past it
+#: the rest of the folder is baselined and comes in when it changes. Sized for a notes
+#: folder: every file becomes a library item that is enriched in the background, and a
+#: whole-home or whole-drive folder must not queue tens of thousands of them.
+FIRST_SCAN_MAX_FILES = 1000
+
+#: The most bytes of files a first scan brings in, all of them together (each counted at
+#: most :data:`MAX_FILE_BYTES`, what is read of it). The file bound is what a notes folder
+#: meets; this one is what a folder of large text exports or logs meets first.
+FIRST_SCAN_MAX_BYTES = 100 * 1024 * 1024
+
 
 @dataclass
 class _DirCursor:
     """The source's persisted observation state (§3.2 cursor, opaque to the engine).
 
     ``sigs`` is the committed baseline — the last signature actually re-indexed for each
-    relative path. A file whose change is still settling is deliberately NOT written into
-    it, which is what makes the change re-observable next pass without a timer. ``gone``
-    times the debounce window for deletions (``rel -> first_missing_at``), the one change
-    kind with no mtime of its own, and ``tombstones`` remembers the deletions already
-    REPORTED so a restored file revives its archived item (see :meth:`remember_deleted`).
-    ``seeded`` records that the baseline pass has happened, so a restart never re-ingests
-    the whole directory.
+    relative path. A file whose change is still settling, or that a poll left for the next
+    one at the engine's cap, is deliberately NOT written into it, which is what makes the
+    change re-observable next pass without a timer. ``gone`` times the debounce window for
+    deletions (``rel -> first_missing_at``), the one change kind with no mtime of its own,
+    and ``tombstones`` remembers the deletions already REPORTED so a restored file revives
+    its archived item (see :meth:`remember_deleted`).
+
+    ``first_scan`` records that the first scan has happened and what it found:
+    ``{"found": files in the folder then, "left_out": files past its bound}``. ``None``
+    means it has not — a new source, a cursor that could not be read, or one written before
+    the first scan brought files in, whose baseline listed every file while none of them
+    reached the library. ``waiting`` is how many settled changes the last poll left for the
+    next one at the engine's per-poll cap.
     """
 
-    seeded: bool = False
+    first_scan: dict[str, int] | None = None
     sigs: dict[str, list] = field(default_factory=dict)
     gone: dict[str, float] = field(default_factory=dict)
     tombstones: dict[str, float] = field(default_factory=dict)
+    waiting: int = 0
 
     @classmethod
     def parse(cls, raw: str) -> _DirCursor:
-        """Revive a cursor; a missing or corrupt one degrades to unseeded.
+        """Revive a cursor; a missing or corrupt one degrades to not yet scanned.
 
-        Unseeded is the SAFE degradation: the next poll re-records the baseline and emits
-        nothing, so a truncated cursor costs one skipped change rather than re-ingesting
-        (and re-embedding) every file in the directory.
+        Not yet scanned re-runs the first scan, and that is safe: every file it brings in
+        whose guid this source already has an item for is refused by the engine's novelty
+        gate, so a lost cursor costs a re-read of the folder, never a duplicate item.
         """
         try:
             data = json.loads(raw) if raw else {}
@@ -141,8 +173,17 @@ class _DirCursor:
             return cls()
         if not isinstance(data, dict):
             return cls()
+        out = cls()
+        scan = data.get("first_scan")
+        if isinstance(scan, dict):
+            try:
+                out.first_scan = {
+                    "found": int(scan.get("found") or 0),
+                    "left_out": int(scan.get("left_out") or 0),
+                }
+            except (TypeError, ValueError):
+                out.first_scan = None
         sigs = data.get("sigs")
-        out = cls(seeded=bool(data.get("seeded")))
         if isinstance(sigs, dict):
             out.sigs = {str(k): list(v) for k, v in sigs.items() if isinstance(v, (list, tuple))}
         for attr in ("gone", "tombstones"):
@@ -155,15 +196,20 @@ class _DirCursor:
                     target[str(k)] = float(v)
                 except (TypeError, ValueError):
                     continue
+        try:
+            out.waiting = max(0, int(data.get("waiting") or 0))
+        except (TypeError, ValueError):
+            out.waiting = 0
         return out
 
     def dump(self) -> str:
         return json.dumps(
             {
-                "seeded": self.seeded,
+                "first_scan": self.first_scan,
                 "sigs": self.sigs,
                 "gone": self.gone,
                 "tombstones": self.tombstones,
+                "waiting": self.waiting,
             },
             sort_keys=True,
         )
@@ -349,6 +395,45 @@ class DirSourceProvider(KnowledgeSourceProvider):
             return None
         return raw.decode("utf-8", errors="replace")
 
+    @staticmethod
+    def _first_scan(sigs: dict[str, list], prior: _DirCursor) -> _DirCursor:
+        """The state the first scan starts from: which files it brings in, and which not.
+
+        The files it brings in are simply left OUT of the baseline, so the ordinary diff
+        below sees them as created — with the same debounce, the same per-poll cap and the
+        same emit path as a file added later, and no second way in. The files past the
+        bound go INTO the baseline: they are in the folder, not in the library, and come in
+        when they change. The order is newest first and the cut is a prefix of it, so what
+        was left out is always "the files changed longest ago", which is a sentence the
+        page can say. ``prior``'s tombstones are kept, so a file deleted and restored
+        across the first scan still revives its archived item.
+        """
+        newest_first = sorted(sigs, key=lambda rel: (-float(sigs[rel][0]), rel))
+        taken = spent = 0
+        for rel in newest_first:
+            size = min(int(sigs[rel][1]), MAX_FILE_BYTES)
+            if taken >= FIRST_SCAN_MAX_FILES or spent + size > FIRST_SCAN_MAX_BYTES:
+                break
+            taken += 1
+            spent += size
+        left_out = {rel: sigs[rel] for rel in newest_first[taken:]}
+        return _DirCursor(
+            first_scan={"found": len(sigs), "left_out": len(left_out)},
+            sigs=left_out,
+            tombstones=dict(prior.tombstones),
+        )
+
+    @staticmethod
+    def first_scan_status(cursor: str) -> dict[str, int] | None:
+        """What a folder's first scan did, for the sources page: ``found`` (files in the
+        folder then), ``left_out`` (files past the bound, which come in when they change)
+        and ``waiting`` (files still to come at the engine's per-poll cap). ``None`` before
+        the first scan has run."""
+        state = _DirCursor.parse(cursor)
+        if state.first_scan is None:
+            return None
+        return {**state.first_scan, "waiting": state.waiting}
+
     def diff(self, sigs: dict[str, list], baseline: dict[str, list]) -> dict[str, str]:
         """``{relative_path: change}`` for everything that differs from the baseline."""
         out: dict[str, str] = {}
@@ -362,8 +447,14 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 out[rel] = CHANGE_DELETED
         return out
 
-    async def poll(self, source_id: str, cursor: str = "") -> SourcePollResult:
+    async def poll(
+        self, source_id: str, cursor: str = "", *, max_items: int | None = None
+    ) -> SourcePollResult:
         """One observation pass: scan, diff, debounce, emit the settled changes.
+
+        ``max_items`` is the engine's per-poll cap (``ENGINE_POLL_KWARGS``). At most that
+        many sightings are emitted; the rest stay uncommitted and come next poll, so none
+        is lost to the cap. ``None`` (a direct call) emits every settled change.
 
         Never raises to the engine (§1.1) — a bad spec or an unwalkable tree is reported
         as a soft error so the source degrades rather than killing the loop.
@@ -383,17 +474,16 @@ class DirSourceProvider(KnowledgeSourceProvider):
             return SourcePollResult(error=f"scan failed: {exc}"[:200])
 
         state = _DirCursor.parse(cursor)
-        if not state.seeded:
-            # SEED ONLY (no startup ingestion storm): record the baseline, emit nothing.
-            return SourcePollResult(items=[], cursor=_DirCursor(True, sigs, {}).dump())
+        if state.first_scan is None:
+            state = self._first_scan(sigs, state)
 
         now = float(self._now_fn())
         window = float(spec.get("debounce_secs") or DEFAULT_DEBOUNCE_SECS)
         changes = self.diff(sigs, state.sigs)
         gone: dict[str, float] = {}
-        items: list[SourceItem] = []
+        settled: list[tuple[str, str]] = []
 
-        for rel, change in sorted(changes.items()):
+        for rel, change in changes.items():
             if change == CHANGE_CREATED and rel in state.tombstones:
                 # This path was reported deleted before: its item still exists (archived),
                 # and its guid is already in the engine's seen-set, so a create would be
@@ -417,6 +507,30 @@ class DirSourceProvider(KnowledgeSourceProvider):
                     # Baseline deliberately NOT advanced — the change is re-observed next
                     # pass, and the intermediate signature never becomes an index event.
                     continue
+            settled.append((rel, change))
+
+        # Deletions first (an archive, never enqueued, and what keeps a moved file from
+        # showing twice), then files newest first, so a first scan that spans several
+        # polls brings in the notes she touched last before the ones she has not opened in
+        # years. Ties by path, so the order is stable.
+        settled.sort(
+            key=lambda pair: (
+                (0, 0.0, pair[0])
+                if pair[1] == CHANGE_DELETED
+                else (1, -float(sigs[pair[0]][0]), pair[0])
+            )
+        )
+        limit = len(settled) if max_items is None else max(1, int(max_items))
+        items: list[SourceItem] = []
+        waiting = 0
+        for rel, change in settled:
+            if len(items) >= limit:
+                # Left for the next poll at the engine's cap: NOT committed, so it is seen
+                # again next pass, already settled. A deletion keeps its window's start.
+                waiting += 1
+                if change == CHANGE_DELETED:
+                    gone[rel] = state.gone.get(rel, now)
+                continue
             emitted = self._emit(spec, rel, change, now)
             if emitted is None:
                 # Unreadable at emit time: skip the file but ADVANCE its baseline so the
@@ -432,6 +546,7 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 state.tombstones.pop(rel, None)
 
         state.gone = gone
+        state.waiting = waiting
         result = SourcePollResult(items=items, cursor=state.dump())
         if read_errors:
             # Surfaced as a soft error ONLY when nothing else happened, so a partially

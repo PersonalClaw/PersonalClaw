@@ -85,9 +85,14 @@ class _FakeQueue:
     def __init__(self, store):
         self._store = store
         self.enqueued: list[str] = []
+        self.background: list[str] = []
 
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
+
+    def enqueue_background(self, item_id: str) -> None:
+        self.background.append(item_id)
+        self.enqueue(item_id)
 
     def recover_pending(self) -> int:
         rows = self._store.db.execute(
@@ -210,6 +215,77 @@ async def test_engine_polls_fixture_writes_and_enqueues(store):
 
 
 @pytest.mark.asyncio
+async def test_a_sources_items_wait_in_the_background_lane(store):
+    """A watched source's items are background work: read when nothing the person added
+    herself is waiting, so a folder's first scan cannot hold her own upload for hours."""
+    sid = store.create_source(name="s", provider="watched-fixture", kind="feed")
+    provider = FixtureSourceProvider(
+        [([SourceItem(guid="g1", title="One"), SourceItem(guid="g2", title="Two")], "cursor-1")]
+    )
+    eng, queue = _engine(store, provider)
+
+    assert await eng.poll_source(store.get_source(sid), _cfg()) == 2
+
+    assert len(queue.background) == 2
+    assert queue.background == queue.enqueued
+
+
+@pytest.mark.asyncio
+async def test_the_per_poll_cap_counts_what_was_indexed_not_the_first_n_offered(store):
+    """A feed offers its whole document every poll, newest first. The cap kept the first N
+    positions of it, so once those N had been seen, an entry past them was never read; the
+    cap now counts what the poll indexed, and a seen entry does not use it up."""
+    sid = store.create_source(name="s", provider="watched-fixture", kind="feed")
+    first = [SourceItem(guid=f"old-{i}", title=f"Old {i}") for i in range(3)]
+    later = [SourceItem(guid=f"new-{i}", title=f"New {i}") for i in range(2)]
+    provider = FixtureSourceProvider([(first + later, "cursor-1"), (first + later, "cursor-2")])
+    eng, queue = _engine(store, provider)
+
+    assert await eng.poll_source(store.get_source(sid), _cfg(max_items_per_poll=3)) == 3
+    assert await eng.poll_source(store.get_source(sid), _cfg(max_items_per_poll=3)) == 2
+
+    titles = {
+        r["title"] for r in store.db.execute("SELECT title FROM items WHERE source_id = ?", (sid,))
+    }
+    assert titles == {"Old 0", "Old 1", "Old 2", "New 0", "New 1"}
+    assert len(queue.enqueued) == 5
+
+
+@pytest.mark.asyncio
+async def test_what_the_cap_leaves_out_of_a_poll_comes_in_on_the_next(store):
+    """A provider whose cursor moves past what it returned — a repo's first poll lists its
+    whole tree, a feed answers "not modified" once its validators are kept — never offered
+    again what the cap cut, so it was lost. A poll the cap cut short keeps its cursor, and
+    the next poll takes the next ones."""
+    sid = store.create_source(name="s", provider="watched-fixture", kind="feed")
+    tree = [SourceItem(guid=f"f-{i}", title=f"File {i}") for i in range(5)]
+    provider = FixtureSourceProvider([(tree, "head"), (tree, "head")])
+    eng, _queue = _engine(store, provider)
+
+    assert await eng.poll_source(store.get_source(sid), _cfg(max_items_per_poll=3)) == 3
+    assert store.get_source_cursor(sid) == "", "held, so the list is offered again"
+    assert await eng.poll_source(store.get_source(sid), _cfg(max_items_per_poll=3)) == 2
+    assert store.get_source_cursor(sid) == "head"
+    assert provider.polls == ["", ""]
+
+
+@pytest.mark.asyncio
+async def test_a_poll_cut_short_that_carries_edits_still_moves_on(store):
+    """An edit offered again is applied again, so a held cursor could never get past a list
+    of more edits than the cap: such a poll moves its cursor as it always did."""
+    from personalclaw.knowledge_providers.base import CHANGE_MODIFIED
+
+    sid = store.create_source(name="s", provider="watched-fixture", kind="feed")
+    edits = [SourceItem(guid=f"e-{i}", title=f"Edit {i}", change=CHANGE_MODIFIED) for i in range(4)]
+    provider = FixtureSourceProvider([(edits, "cursor-1")])
+    eng, _queue = _engine(store, provider)
+
+    await eng.poll_source(store.get_source(sid), _cfg(max_items_per_poll=2))
+
+    assert store.get_source_cursor(sid) == "cursor-1"
+
+
+@pytest.mark.asyncio
 async def test_engine_replays_persisted_cursor_next_poll(store):
     sid = store.create_source(name="s", provider="watched-fixture", kind="feed")
     provider = FixtureSourceProvider(
@@ -249,6 +325,78 @@ async def test_tick_only_polls_due_sources_and_returns_capped_sleep(store):
     sleep_for = await eng.tick()
     assert len(queue.enqueued) == 1
     assert 0.0 <= sleep_for <= POLL_CEILING_SECS
+
+
+def _next_poll_gap(store, sid, now):
+    from datetime import datetime
+
+    return datetime.fromisoformat(store.get_source(sid)["next_poll_at"]).timestamp() - now
+
+
+@pytest.mark.asyncio
+async def test_a_watched_folder_is_polled_on_its_own_interval_not_the_network_floor(
+    store, tmp_path
+):
+    """A folder set to every 5 minutes was polled every 15 and still said 5: the network
+    floor — there to spare someone else's server — was applied to a folder on this machine.
+    Measured on the next poll the engine schedules, which is what the sources page shows."""
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    sid = store.create_source(
+        name="notes",
+        provider="watched-dir",
+        kind="dir",
+        spec={"path": str(notes)},
+        poll_interval_secs=300,
+    )
+    eng = SourceEngine(
+        store,
+        _FakeQueue(store),
+        providers_lister=lambda: [DirSourceProvider(store, now_fn=lambda: 1_000_000.0)],
+        config_loader=lambda: _cfg(network_floor_secs=900),
+        now_fn=lambda: 1_000_000.0,
+    )
+
+    await eng.poll_source(store.get_source(sid), _cfg(network_floor_secs=900))
+
+    assert _next_poll_gap(store, sid, 1_000_000.0) == 300
+
+
+@pytest.mark.asyncio
+async def test_a_source_that_fetches_is_still_held_to_the_network_floor(store):
+    sid = store.create_source(
+        name="s", provider="watched-fixture", kind="feed", poll_interval_secs=300
+    )
+    eng, _queue = _engine(store, FixtureSourceProvider([]), network_floor_secs=900)
+
+    await eng.poll_source(store.get_source(sid), _cfg(network_floor_secs=900))
+
+    assert _next_poll_gap(store, sid, 1_000_000.0) == 900
+
+
+def test_only_cores_own_folder_observer_leaves_the_network_floor(store):
+    """Fail closed: a subclass of the folder observer (an app extending it can override its
+    poll to fetch) and every other provider stay under the network floor."""
+    from personalclaw.knowledge.source_engine import (
+        LOCAL_FLOOR_SECS,
+        effective_interval,
+        polls_the_network,
+    )
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    class _Extended(DirSourceProvider):
+        pass
+
+    cfg = _cfg(network_floor_secs=900)
+    assert polls_the_network(DirSourceProvider(store)) is False
+    assert polls_the_network(_Extended(store)) is True
+    assert polls_the_network(FixtureSourceProvider([])) is True
+    assert polls_the_network(None) is True
+    folder = {"poll_interval_secs": 1}
+    assert effective_interval(folder, cfg, DirSourceProvider(store)) == LOCAL_FLOOR_SECS
+    assert effective_interval(folder, cfg, _Extended(store)) == 900
 
 
 @pytest.mark.asyncio

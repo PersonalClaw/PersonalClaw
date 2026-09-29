@@ -972,7 +972,9 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     knowledge = enqueue = None
     try:
         knowledge = state.knowledge_store
-        enqueue = state.knowledge_ingest_queue().enqueue
+        # A vault sync can bring in a whole folder of notes: background work, read after
+        # anything she adds herself meanwhile.
+        enqueue = state.knowledge_ingest_queue().enqueue_background
     except Exception:
         logger.debug("vault sync: knowledge ingest unavailable", exc_info=True)
     summary = await asyncio.to_thread(

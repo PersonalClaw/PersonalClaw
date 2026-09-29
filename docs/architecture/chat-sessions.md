@@ -187,10 +187,17 @@ chat, channel thread, loop worker, webhook, subagent).
    calls that wrote no row (a chat's title, a judge). `audit_ids` is an SDK
    addition to `LLMEvent`, defaulted and last, which no app has to set. The next
    turn starts on X again. When every model fails, the error names each one and why (`NoModelAnswered`, in a
-   room's words on a room). Only a caller that shows the line asks for this
-   (`NativeAgentRuntime.announce_failover`: the chat runner, and a room through
-   `stream_and_collect(on_substitution=…)`): a loop or a background stream keeps
-   the failure rather than another model's reply presented as the chosen one's.
+   room's words on a room). Only a caller that says so asks for this
+   (`NativeAgentRuntime.announce_failover`: the chat runner, a room through
+   `stream_and_collect(on_substitution=…)`, and the background chores that write the
+   substitute to the log — history consolidation, thread compression and the chat
+   title, through `llm_helpers.say_background_substitution`): a loop keeps the
+   failure rather than another model's reply presented as the chosen one's. A
+   one-shot call walks its chain the same way with a time budget per model
+   (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
+   slow first model hands over instead of spending the whole wait, and a chain that
+   only timed out is reported as a timeout (`llm_helpers.ChainExhausted`), not as
+   no model being available.
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
    the finished turn is saved by rewriting the session JSONL from the buffer.
    Every exit from a turn, an error included, first settles the answer

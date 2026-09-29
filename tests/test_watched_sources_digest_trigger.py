@@ -113,6 +113,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         pass
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 

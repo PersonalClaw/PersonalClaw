@@ -15,6 +15,7 @@ import { GistEditor } from './GistEditor'
 import { createKnowledge, updateKnowledge, uploadKnowledgeFile } from './knowledgeStore'
 import { AudioRecorder } from './AudioRecorder'
 import { notify } from '../../app/appSdk'
+import { labelNoun, withArticle } from '../../lib/article'
 
 /** Dedicated create PAGE (matches the create-page pattern used across the app):
  *  step 1 = a type-grid picker (all 12 knowledge formats); step 2 = a per-type
@@ -53,6 +54,8 @@ export function KnowledgeCreatePage({ onBack, onCreated }: { onBack: () => void;
 function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType; onBack: () => void; onClose: () => void; onCreated: () => void }) {
   const tm = typeMeta(type)
   const kind = createKind(type)
+  // The type as a noun in this page's sentences: "New PDF", "Add audio", "Choose an image file".
+  const noun = labelNoun(tm.label)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [url, setUrl] = useState('')
@@ -104,13 +107,15 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         const res = await uploadKnowledgeFile(file, (p) => setUploadPct(p.pct))
         setUploadPct(-1)
         // The ingest endpoint only takes bytes — apply the form's title/tags to the
-        // created item. A user-typed title (≠ the seeded filename) also blocks the
-        // pipeline's AI-title promotion (it only replaces filename-seeded titles);
-        // same for tags vs AI topics. Skip on dedup: the hit is someone else's item.
+        // created item. Whatever the title field holds when she presses Add is HER title,
+        // the file's own name included: the field was filled with it and she kept it, and
+        // enrichment never replaces a title a person set (its suggestion stays on the item as
+        // the AI title). An emptied field sends none, so the item is named from what's in it.
+        // Same for tags vs AI topics. Skip on dedup: the hit is someone else's item.
         // Tags as names ADDED: the pipeline may already have tagged the new item by the time this
         // lands, and adding keeps what it wrote instead of replacing it with the form's list.
         const custom: KnowledgeItemEdit = {}
-        if (title.trim() && title.trim() !== file.name) custom.title = title.trim()
+        if (title.trim()) custom.title = title.trim()
         if (tags.length) custom.add_tags = tags
         if (res.item_id && !(res as { deduped?: boolean }).deduped && Object.keys(custom).length) {
           // 🔴 This is the ONLY carrier for the title and tags the user typed — ingest takes bytes
@@ -144,7 +149,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
 
   return (
     <div className="flex h-full flex-col" onKeyDown={onKeyDown}>
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={onBack} /><PageTitle className="inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {tm.label.toLowerCase()}</PageTitle></div>} />
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to types" size={40} onClick={onBack} /><PageTitle className="inline-flex items-center gap-s"><tm.icon size={18} style={{ color: tm.tone }} /> New {noun}</PageTitle></div>} />
       {/* Full-height authoring shell mirroring the detail page's edit layout: inline title
           at top, a per-type middle that fills the height (Monaco for gist, textarea for
           text, drop-zone for files, URL field for bookmarks), and inline tags.
@@ -166,7 +171,9 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
               use it as the primary title at the top. */}
           {titleEditable && (
             <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus={kind !== 'bookmark'}
-              placeholder={kind === 'bookmark' ? 'Title (optional — defaults to the page title)' : `${tm.label} title`}
+              placeholder={kind === 'bookmark' ? 'Title (optional — defaults to the page title)'
+                : kind === 'file' ? 'Title (optional — left empty, it is named from what is in it)'
+                  : `${tm.label} title`}
               aria-label={`${tm.label} title`}
               className="shrink-0 w-full bg-transparent text-on-surface outline-none border-b border-outline-variant/40 pb-1.5 text-[1.0625rem] focus:border-primary placeholder:text-on-surface-low" data-type="title-l" />
           )}
@@ -242,7 +249,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                     }} onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pickFile(f) }}
                     className={`min-h-0 flex-1 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${dragOver ? 'border-primary bg-primary/5' : file ? 'border-primary/40' : 'border-outline-variant/60 hover:border-primary/50'}`}>
                     <input ref={fileRef} type="file" className="sr-only"
-                      aria-label={`Choose a ${tm.label.toLowerCase()} file`}
+                      aria-label={`Choose ${withArticle(`${noun} file`)}`}
                       accept={ACCEPTED_MIMES[type] || undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); e.target.value = '' }} />
                     {file ? (
                       <div className="flex items-center gap-m px-m">
@@ -251,7 +258,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                         <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} />
                       </div>
                     ) : (
-                      <><Upload size={22} className="text-on-surface-low" /><span data-type="body-s" className="text-on-surface-low">Drop a {tm.label.toLowerCase()} file, or choose one</span></>
+                      <><Upload size={22} className="text-on-surface-low" /><span data-type="body-s" className="text-on-surface-low">Drop {withArticle(`${noun} file`)}, or choose one</span></>
                     )}
                   </div>
                 </>
@@ -280,7 +287,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
               disabledReason={busy ? undefined
                 : kind === 'bookmark' ? 'Enter a URL starting with http:// or https://'
                   : kind === 'file' ? (!file ? 'Choose a file first' : 'That file is over the size limit')
-                    : 'Add a title or some content'}><Check size={16} /> {busy ? 'Saving…' : `Add ${tm.label.toLowerCase()}`}</Button>
+                    : 'Add a title or some content'}><Check size={16} /> {busy ? 'Saving…' : `Add ${noun}`}</Button>
           </div>
         </div>
       </div>

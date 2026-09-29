@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
+
 - **An app's test suite can load model libraries the way PersonalClaw does, reporting nothing and writing nothing outside its home: `personalclaw.sdk.testing.library_env()`, used by the apps repository's test harness.**
 
 - **Settings → Usage → Model prices sets the price a model's calls are counted at, and lists each model you use with its price and where that comes from.**
@@ -139,6 +141,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A pairing code says the time it stops working, with one full stop, on a channel's Owner and on Sender trust.**
 
 - **The quiet-hours window's two times and the speaking-speed slider have names a screen reader reads.**
+- **A folder you watch brings in the notes already in it, newest first up to 1,000 files or 100 MB: the add form says so, the folder's row says what is still to come and what the bound left for later, and later checks bring in only what changed.**
+
+- **A folder you watch is checked as often as you set it, down to once a minute, and every source's row states how often it is really checked.**
+
+- **What you add to the library yourself is read before a watched source's backlog, and a queued item says how many items are ahead of it and how long recent ones took.**
+
+- **A feed or page with more new entries than one check takes brings the rest in on the next checks instead of never.**
+
+- **Library enrichment, history consolidation and thread compression move to the next model in their chain when one is too slow, and a slow model is reported as timing out, not as no model being available.**
+
+- **A feed's or page's entries are stored as their words, not their HTML, so they preview and read as text.**
+
+- **An item that has been embedded no longer says no embedding model is bound.**
+
+- **A title you give an upload, the file's own name included, is kept after enrichment; the suggested title stays on the item.**
+
+- **Labels that name a type read as English: "Choose an audio file", "New PDF", "an 8-cycle budget".**
 
 - **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
 

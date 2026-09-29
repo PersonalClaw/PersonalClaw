@@ -49,6 +49,7 @@ import { runInTerminalWhenReady } from '../terminal/terminalBridge'
 import type { TermTab } from '../terminal/TerminalPage'
 import { TypingReveal } from './TypingReveal'
 import { DiffReveal } from './DiffReveal'
+import { withArticle } from '../../lib/article'
 import { codeDeleteBody } from './codeMeta'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
@@ -1042,7 +1043,7 @@ export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProjec
           )}
           {cyclesText && (
             <span className="inline-flex shrink-0 items-center gap-1"
-              title={cap > 0 ? `${cycles} of a ${cap}-cycle budget run` : `${cycles} cycles run (uncapped)`}>
+              title={cap > 0 ? `${cycles} of ${withArticle(`${cap}-cycle`)} budget run` : `${cycles} cycles run (uncapped)`}>
               <Repeat size={11} className="shrink-0 opacity-70" />
               <span className="font-mono">{cyclesText}</span>
             </span>

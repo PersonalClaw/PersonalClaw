@@ -4889,7 +4889,7 @@
    "source_name": {"kind": "property", "returns": "str", "settable": false}
   }
  },
- "personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS": {"kind": "value", "type": "tuple", "value": "('spec', 'policy')"},
+ "personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS": {"kind": "value", "type": "tuple", "value": "('spec', 'policy', 'max_items')"},
  "personalclaw.sdk.knowledge.KnowledgeItem": {
   "bases": ["object"],
   "init": {

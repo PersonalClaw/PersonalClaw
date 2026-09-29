@@ -110,7 +110,9 @@ def _app(store: KnowledgeStore, enqueued: list | None = None) -> web.Application
     sink = enqueued if enqueued is not None else []
     app["state"] = SimpleNamespace(
         knowledge_store=store,
-        knowledge_ingest_queue=lambda: SimpleNamespace(enqueue=sink.append),
+        knowledge_ingest_queue=lambda: SimpleNamespace(
+            enqueue=sink.append, enqueue_background=sink.append
+        ),
     )
     return app
 

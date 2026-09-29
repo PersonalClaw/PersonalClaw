@@ -235,7 +235,7 @@ class KnowledgeProvider(ABC):
 #: Named here, on the contract owner, rather than left implicit in the engine: ``policy``
 #: was an undeclared extension only the engine's own branch knew about, so an app author
 #: reading the ABC could not discover it. This is the declared list.
-ENGINE_POLL_KWARGS = ("spec", "policy")
+ENGINE_POLL_KWARGS = ("spec", "policy", "max_items")
 
 
 class KnowledgeSourceProvider(KnowledgeProvider):
@@ -272,11 +272,11 @@ class KnowledgeSourceProvider(KnowledgeProvider):
         """Pull items newer than ``cursor`` for ``source_id`` (never raises to the
         engine — report a soft failure via ``SourcePollResult.error`` instead).
 
-        Two OPTIONAL keyword-only extras are available, both listed in
-        :data:`ENGINE_POLL_KWARGS`; name either one on your own ``poll`` and the engine
+        Three OPTIONAL keyword-only extras are available, all listed in
+        :data:`ENGINE_POLL_KWARGS`; name any of them on your own ``poll`` and the engine
         passes it. They are not declared here because declaring them would force every
         existing override to restate them (a narrower override is a typing error), and a
-        provider that needs neither must stay a two-argument method:
+        provider that needs none must stay a two-argument method:
 
         ``spec``
             ``dict`` — this source's persisted spec, re-read at poll time and handed over as
@@ -288,6 +288,13 @@ class KnowledgeSourceProvider(KnowledgeProvider):
         ``policy``
             the engine-owned egress posture a fetching provider must run its
             ``sdk.net`` calls under, so no provider chooses its own network stance.
+        ``max_items``
+            ``int`` — the most sightings the engine indexes from this poll. When a poll
+            offers more, the engine keeps the cursor it handed over only if every sighting
+            was a first sighting (so the next poll offers them again); otherwise the
+            returned cursor stands. A provider whose cursor moves past what it returned (a
+            folder's baseline, a repository's last commit) and that reports edits or
+            deletions should return at most this many and leave the rest for its next poll.
         """
         ...
 

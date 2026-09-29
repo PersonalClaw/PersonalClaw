@@ -20,7 +20,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
-import { HEALTH_NEEDS_RENDER, INTERVAL_CHOICES, fmtInterval, formIcon } from './sourceMeta'
+import { HEALTH_NEEDS_RENDER, INTERVAL_CHOICES, firstScanPromise, fmtInterval, formIcon } from './sourceMeta'
 
 /** The create flow: pick a kind → describe it → (web only) preview and tune → save.
  *
@@ -197,7 +197,7 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
 function kindBlurb(k: SourceKind): string {
   if (k.form === 'web_page') return 'A changelog, blog index or newsroom — read without JavaScript, with no model involved.'
   if (k.form === 'feed') return 'RSS, Atom, JSON Feed or a CSV export, including Hacker News and GitHub presets.'
-  if (k.form === 'dir') return 'A folder on this machine — new and edited files are indexed, deletions are archived.'
+  if (k.form === 'dir') return 'A folder on this machine — what is in it is read in, then new and edited files; deletions are archived.'
   return `Provided by ${k.display_name}.`
 }
 
@@ -387,6 +387,10 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
               <Field label="File patterns" hint={`Comma-separated globs. Up to ${kind.max_files ?? 0} files are tracked per folder.`}>
                 <TextInput value={spec.include} onChange={(v) => set('include', v)} placeholder="*.md, *.txt" mono />
               </Field>
+              {/* What adding the folder does to what is ALREADY in it, with the bound stated:
+                  a person adding a folder expects its contents, and one far bigger than the
+                  bound should know which part comes in now. */}
+              {firstScanPromise(kind) && <p data-type="caption" className="text-on-surface-low">{firstScanPromise(kind)}</p>}
             </>
           )}
 

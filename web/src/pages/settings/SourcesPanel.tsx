@@ -97,9 +97,9 @@ export function SourcesPanel() {
           <ToggleRow label="Watched sources" cfg={cfg} field="enabled" patch={patch}
             hint="Enable the poll engine. Off parks the loop; sources you add are not fetched until you turn it back on." />
           <NumberRow label="Default poll interval (seconds)" cfg={cfg} field="poll_interval_default_secs" min={300} max={604800} patch={patch}
-            hint="How often a source is polled when it does not set its own interval. Clamped up to the network floor." />
+            hint="How often a source is polled when it does not set its own interval. Clamped up to the network floor for a source that fetches; a folder on this machine can be polled as often as once a minute." />
           <NumberRow label="Network poll floor (seconds)" cfg={cfg} field="network_floor_secs" min={300} max={604800} patch={patch}
-            hint="The fastest any network source is polled regardless of its own setting — the rate floor that keeps a poll from being abusive to the target server." />
+            hint="The fastest any network source is polled regardless of its own setting — the rate floor that keeps a poll from being abusive to the target server. A folder on this machine is not held to it." />
         </RowGroup>
       </Section>
 

@@ -2334,7 +2334,12 @@ class HistoryConsolidator:
             logger.warning("LLM consolidation skipped — no session manager")
             return None
 
-        from personalclaw.llm_helpers import stream_and_collect_json
+        from personalclaw.llm_helpers import (
+            failure_clause,
+            is_model_call_failure,
+            say_background_substitution,
+            stream_and_collect_json,
+        )
         from personalclaw.session import chore_usage
         from personalclaw.usage_ledger import recorder
 
@@ -2352,11 +2357,22 @@ class HistoryConsolidator:
                 session_key, agent="personalclaw-lite"
             )
             acquired = True
+            # A slow or failing first model of the background chain falls back to the next
+            # one rather than ending the consolidation, and the substitute is said.
             return await stream_and_collect_json(
-                client, prompt, on_complete=recorder(client, chore_usage(chat_key))
+                client,
+                prompt,
+                on_complete=recorder(client, chore_usage(chat_key)),
+                on_substitution=say_background_substitution("History consolidation"),
             )
-        except Exception:
-            logger.warning("LLM consolidation call failed", exc_info=True)
+        except Exception as exc:
+            # A model that did not answer is said in one line, with what happened; its
+            # traceback holds only the HTTP client's frames. A defect keeps its traceback.
+            if is_model_call_failure(exc):
+                logger.warning("LLM consolidation call failed: %s", failure_clause(exc))
+                logger.debug("LLM consolidation failure", exc_info=exc)
+            else:
+                logger.warning("LLM consolidation call failed", exc_info=True)
             return None
         finally:
             if acquired:

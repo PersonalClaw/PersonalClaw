@@ -2616,9 +2616,10 @@ async def start_dashboard(
     try:
         from personalclaw.knowledge import artifact_ingest
 
+        # The mirror follows artifacts on its own, so its items wait in the background lane.
         state._artifact_indexer = artifact_ingest.start(
             state.knowledge_store,
-            enqueue=state.knowledge_ingest_queue().enqueue,
+            enqueue=state.knowledge_ingest_queue().enqueue_background,
         )
     except Exception:
         logger.warning("Artifact knowledge mirror failed to start", exc_info=True)

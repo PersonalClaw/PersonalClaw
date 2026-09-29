@@ -392,11 +392,14 @@ class FeedSourceProvider(KnowledgeSourceProvider):
         name, so emitting one would re-ingest it on every poll forever — the storm the
         novelty gate exists to prevent, arriving as an identity bug rather than a feed one.
         """
+        from personalclaw.knowledge.connectors.base import plain_line, readable_text
         from personalclaw.knowledge.source_identity import compose_guid
 
         url = (row.get("url") or "").strip()
         title = (row.get("title") or "").strip()
         published = (row.get("published_at") or "").strip()
+        # Identity from the title AS THE FEED WROTE IT, so decoding the display title below
+        # cannot change the guid of an item already in the library.
         guid = compose_guid(
             guid=row.get("guid") or "", url=url, title=title, published_at=published
         )
@@ -405,10 +408,13 @@ class FeedSourceProvider(KnowledgeSourceProvider):
         template = str(spec.get("permalink_template") or "")
         if not url and template and "{guid}" in template:
             url = template.replace("{guid}", guid)
+        # An entry's body is often HTML (an Atom `type="html"` content, an RSS description, a
+        # JSON Feed `content_html`), and the library shows and renders an item's body as
+        # markdown text — so it is stored as its words, with no markup left in it.
         return SourceItem(
             guid=guid,
-            title=title or url or guid,
-            content=_clip(row.get("content") or ""),
+            title=plain_line(title) or url or guid,
+            content=_clip(readable_text(row.get("content") or "")),
             url=url,
             published_at=published,
             metadata={"feed_kind": str(spec.get("kind") or "")},

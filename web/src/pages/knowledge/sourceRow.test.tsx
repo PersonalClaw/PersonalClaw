@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { SourceRow } from './SourcesPage'
-import { HEALTH_META, HEALTH_NEEDS_RENDER, healthMeta } from './sourceMeta'
+import { HEALTH_META, HEALTH_NEEDS_RENDER, firstScanPromise, healthMeta } from './sourceMeta'
 import type { WatchedSource } from '../../lib/api'
 
 // ── The Sources row's two promises ────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ function source(over: Partial<WatchedSource> = {}): WatchedSource {
   return {
     id: 'src-1', name: 'Product changelog', provider: 'watched-page', kind: 'web_page',
     spec: { url: 'https://example.com/changelog' }, budget: {}, revision: 'r-src-1',
-    enrichment: 'full', poll_interval_secs: 3600, item_type: 'bookmark', enabled: true,
+    enrichment: 'full', poll_interval_secs: 3600, poll_every_secs: 3600, item_type: 'bookmark', enabled: true,
     health_status: 'ok', last_error_summary: '', last_escalations: [], last_new_count: 2,
     last_poll_at: new Date().toISOString(), enrolled: true,
     remediation: { kind: '', guidance: '', detail: '', action: '' },
@@ -169,6 +169,55 @@ describe('the row states the facts a user needs before the first poll', () => {
     renderRow()
 
     expect(screen.getByRole('switch', { name: 'Pause Product changelog' })).toBeTruthy()
+  })
+})
+
+describe('the row states how often the engine really checks it', () => {
+  // Measured: a source set to every 5 minutes said "every 5 min" while the engine, holding it to
+  // the network floor, checked it every 15. The row now states the engine's cadence.
+  it('states the cadence the engine keeps, and why it is not the one chosen', () => {
+    renderRow({ poll_interval_secs: 300, poll_every_secs: 900 })
+
+    const cadence = screen.getByText('every 15 min')
+    expect(cadence.getAttribute('title')).toMatch(/Set to every 5 min, .* at most every 15 min/)
+    expect(screen.queryByText(/every 5 min/)).toBeNull()
+  })
+
+  it('adds no explanation when the chosen cadence is the one kept', () => {
+    renderRow({ poll_interval_secs: 300, poll_every_secs: 300 })
+
+    expect(screen.getByText('every 5 min').getAttribute('title')).toBeNull()
+  })
+})
+
+describe("a watched folder's first scan is stated on its row", () => {
+  const FOLDER = { 'watched-dir': { display_name: 'Watched Folder', form: 'dir' } }
+  const folder = (first_scan: WatchedSource['first_scan']) => render(
+    <SourceRow source={source({ provider: 'watched-dir', kind: 'dir', first_scan })} kinds={FOLDER} onChanged={() => {}} />,
+  )
+
+  it('says how many files are still waiting to be read in', () => {
+    folder({ found: 120, left_out: 0, waiting: 70 })
+
+    expect(screen.getByText('70 more files are waiting to be read in.')).toBeTruthy()
+  })
+
+  it("says which files the scan's bound left for later", () => {
+    folder({ found: 1500, left_out: 500, waiting: 0 })
+
+    expect(screen.getByText('The first scan took the newest 1000 of 1500 files; the 500 older ones come in when they change.')).toBeTruthy()
+  })
+
+  it('says nothing once the scan is complete', () => {
+    folder({ found: 12, left_out: 0, waiting: 0 })
+
+    expect(screen.queryByText(/waiting to be read in|first scan/)).toBeNull()
+  })
+
+  it('the create form states the bound the scan applies', () => {
+    expect(firstScanPromise({ first_scan_max_files: 1000, first_scan_max_bytes: 100 * 1024 * 1024 }))
+      .toBe('Its first check reads in what is already there, newest first — up to 1,000 files or 100 MB. Older files come in when they change.')
+    expect(firstScanPromise({}), 'no bound shipped, no promise made').toBe('')
   })
 })
 

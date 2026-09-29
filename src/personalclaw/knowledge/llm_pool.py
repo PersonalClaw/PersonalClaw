@@ -56,6 +56,20 @@ class WorkerError(RuntimeError):
     """
 
 
+class WorkerTimeout(WorkerError):
+    """No model answered within the time each was given — the models were there and slow,
+    which an item must not report as "model unavailable". Its message says how long each
+    was given and which were tried."""
+
+
+def _fmt_secs(secs: float) -> str:
+    secs = float(secs)
+    if secs >= 60 and secs % 60 == 0:
+        minutes = int(secs // 60)
+        return f"{minutes} min"
+    return f"{secs:.0f} s"
+
+
 class Worker(ABC):
     """Abstract base for a long-lived LLM worker."""
 
@@ -92,17 +106,36 @@ class ProviderWorker(Worker):
         logger.info("ProviderWorker: ready")
 
     async def send_message(self, prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str:
-        from personalclaw.llm_helpers import one_shot_completion
+        """``timeout`` is what EACH model of the background chain is given, not the whole
+        call: a model that has not answered by then is passed over for the next one
+        (``one_shot_completion(attempt_timeout=…)``). One timeout around the whole call cut
+        the chain off during its second model's answer, so a slow first model ended every
+        call however many were bound behind it."""
+        from personalclaw.llm_helpers import (
+            ChainExhausted,
+            is_timeout_failure,
+            one_shot_completion,
+        )
 
         try:
-            return await asyncio.wait_for(
-                one_shot_completion(prompt, use_case="ingestion"),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError as exc:
-            logger.warning("ProviderWorker: timeout after %.0fs", timeout)
-            raise WorkerError(f"model timed out after {timeout:.0f}s") from exc
+            return await one_shot_completion(prompt, use_case="ingestion", attempt_timeout=timeout)
+        except ChainExhausted as exc:
+            if exc.failures and all(is_timeout_failure(e) for _, e in exc.failures):
+                tried = ", ".join(ref for ref, _ in exc.failures)
+                logger.warning(
+                    "ProviderWorker: no model answered within %.0fs each (%s)", timeout, tried
+                )
+                raise WorkerTimeout(
+                    f"no model answered within {_fmt_secs(timeout)} (tried {tried})"
+                ) from exc
+            logger.warning("ProviderWorker: request failed: %s", exc)
+            raise WorkerError(f"model request failed: {exc}") from exc
         except Exception as exc:
+            if is_timeout_failure(exc):
+                logger.warning("ProviderWorker: timeout after %.0fs", timeout)
+                raise WorkerTimeout(
+                    f"the model did not answer within {_fmt_secs(timeout)}"
+                ) from exc
             logger.warning("ProviderWorker: request failed: %s", exc)
             raise WorkerError(f"model request failed: {exc}") from exc
 

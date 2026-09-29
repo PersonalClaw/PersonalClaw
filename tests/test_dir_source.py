@@ -74,6 +74,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 
@@ -137,34 +140,160 @@ def test_change_vocabulary_is_closed_and_default_is_created():
     assert SourceItem(guid="g", title="t").change == CHANGE_CREATED
 
 
-# ── seeding: the first pass must not storm ──────────────────────────────────────
+# ── the first scan: what is already in the folder comes in, within a bound ─────────
 
 
 @pytest.mark.asyncio
-async def test_first_pass_seeds_only_no_ingestion_storm(store, watched):
+async def test_first_scan_brings_in_the_files_already_there(store, watched):
+    """Adding a folder brings in what is in it. The first pass used to record a baseline
+    and emit nothing, so seven folders of notes arrived as seven healthy sources with no
+    notes in the library, and nothing said why."""
     clock = _Clock()
     for i in range(5):
-        _write(watched / f"n{i}.md", f"note {i}", mtime=clock.t)
-    sid, _prov, engine, queue = _setup(store, watched, clock)
+        _write(watched / f"n{i}.md", f"note {i}", mtime=clock.t - 3600)
+    sid, prov, engine, queue = _setup(store, watched, clock)
 
-    assert await _poll(engine, store, sid) == 0
-    assert queue.enqueued == []
-    assert _items(store, sid) == []
-    cursor = json.loads(store.get_source_cursor(sid))
-    assert cursor["seeded"] is True
-    # The baseline knows every existing file, so only LATER changes are library events.
-    assert set(cursor["sigs"]) == {f"n{i}.md" for i in range(5)}
+    assert await _poll(engine, store, sid) == 5
+    assert {r["guid"] for r in _items(store, sid)} == {f"n{i}.md" for i in range(5)}
+    assert len(queue.enqueued) == 5
+    assert prov.first_scan_status(store.get_source_cursor(sid)) == {
+        "found": 5,
+        "left_out": 0,
+        "waiting": 0,
+    }
 
 
 @pytest.mark.asyncio
-async def test_seeded_cursor_survives_and_second_pass_is_quiet(store, watched):
+async def test_after_the_first_scan_later_polls_are_incremental(store, watched):
     clock = _Clock()
-    _write(watched / "a.md", "a", mtime=clock.t)
+    _write(watched / "a.md", "a", mtime=clock.t - 3600)
     sid, _prov, engine, queue = _setup(store, watched, clock)
-    await _poll(engine, store, sid)
+    assert await _poll(engine, store, sid) == 1
+
     clock.advance(3600)
-    assert await _poll(engine, store, sid) == 0
-    assert queue.enqueued == []
+    assert await _poll(engine, store, sid) == 0, "a quiet folder brings in nothing new"
+    assert len(queue.enqueued) == 1
+
+    _write(watched / "b.md", "b", mtime=clock.t)
+    clock.advance(11)
+    assert await _poll(engine, store, sid) == 1, "a file added later comes in on its own"
+    assert {r["guid"] for r in _items(store, sid)} == {"a.md", "b.md"}
+
+
+@pytest.mark.asyncio
+async def test_first_scan_holds_a_file_still_being_written_then_brings_it_in(store, watched):
+    """The debounce applies to the first scan too: a note saved a moment ago is read once it
+    is quiet, never half-written."""
+    clock = _Clock()
+    _write(watched / "old.md", "settled", mtime=clock.t - 3600)
+    _write(watched / "fresh.md", "being written", mtime=clock.t)
+    sid, _prov, engine, _queue = _setup(store, watched, clock)
+
+    assert await _poll(engine, store, sid) == 1
+    assert {r["guid"] for r in _items(store, sid)} == {"old.md"}
+
+    clock.advance(11)
+    assert await _poll(engine, store, sid) == 1
+    assert {r["guid"] for r in _items(store, sid)} == {"old.md", "fresh.md"}
+
+
+@pytest.mark.asyncio
+async def test_first_scan_stops_at_its_file_bound_newest_first(store, watched, monkeypatch):
+    """The first scan takes the most recently changed files up to its bound and records how
+    many it left out, so the page can say so; a file it left out comes in once it changes."""
+    import personalclaw.knowledge_providers.dir_source as dir_mod
+
+    monkeypatch.setattr(dir_mod, "FIRST_SCAN_MAX_FILES", 3)
+    clock = _Clock()
+    for i in range(5):  # n4.md is the newest, n0.md the oldest
+        _write(watched / f"n{i}.md", f"note {i}", mtime=clock.t - 1000 + i)
+    sid, prov, engine, _queue = _setup(store, watched, clock)
+
+    assert await _poll(engine, store, sid) == 3
+    assert {r["guid"] for r in _items(store, sid)} == {"n2.md", "n3.md", "n4.md"}
+    assert prov.first_scan_status(store.get_source_cursor(sid)) == {
+        "found": 5,
+        "left_out": 2,
+        "waiting": 0,
+    }
+
+    clock.advance(1)
+    _write(watched / "n0.md", "note 0, edited", mtime=clock.t)
+    clock.advance(11)
+    assert await _poll(engine, store, sid) == 1
+    assert "n0.md" in {r["guid"] for r in _items(store, sid)}
+
+
+@pytest.mark.asyncio
+async def test_first_scan_stops_at_its_byte_bound(store, watched, monkeypatch):
+    import personalclaw.knowledge_providers.dir_source as dir_mod
+
+    monkeypatch.setattr(dir_mod, "FIRST_SCAN_MAX_BYTES", 250)
+    clock = _Clock()
+    for i in range(4):  # 100 bytes each; n3.md newest
+        _write(watched / f"n{i}.md", str(i) * 100, mtime=clock.t - 1000 + i)
+    sid, prov, engine, _queue = _setup(store, watched, clock)
+
+    assert await _poll(engine, store, sid) == 2
+    assert {r["guid"] for r in _items(store, sid)} == {"n2.md", "n3.md"}
+    assert prov.first_scan_status(store.get_source_cursor(sid))["left_out"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_first_scan_bigger_than_one_poll_arrives_over_several_and_loses_nothing(
+    store, watched
+):
+    """The engine indexes at most ``max_items_per_poll`` sightings of one poll, so a folder
+    handing it more used to lose every file past the cap: its baseline had already moved on.
+    The folder now stops at the cap and says how many are still to come."""
+    clock = _Clock()
+    for i in range(7):
+        _write(watched / f"n{i}.md", f"note {i}", mtime=clock.t - 3600 + i)
+    sid, prov, engine, queue = _setup(store, watched, clock)
+    capped = _cfg(max_items_per_poll=3)
+
+    counts, waiting = [], []
+    for _ in range(4):
+        counts.append(await engine.poll_source(store.get_source(sid), capped))
+        waiting.append(prov.first_scan_status(store.get_source_cursor(sid))["waiting"])
+        clock.advance(300)
+
+    assert counts == [3, 3, 1, 0]
+    assert waiting == [4, 1, 0, 0]
+    assert len(_items(store, sid)) == 7
+    assert len(queue.enqueued) == 7
+
+
+@pytest.mark.asyncio
+async def test_a_folder_watched_before_the_first_scan_existed_gets_its_files(store, watched):
+    """A folder added while the first pass only recorded a baseline has its files brought in
+    on its next poll. An item that already exists (its file was edited since) is not doubled:
+    the source's novelty gate refuses a second row for a guid it has seen."""
+    clock = _Clock()
+    for name in ("a.md", "b.md", "c.md"):
+        _write(watched / name, name, mtime=clock.t - 3600)
+    sid, _prov, engine, queue = _setup(store, watched, clock)
+    edited = store.create_typed_item(
+        item_type="note",
+        title="b.md",
+        content="b.md",
+        provider="watched-dir",
+        source_id=sid,
+        guid="b.md",
+    )
+    sigs = {name: [clock.t - 3600, len(name)] for name in ("a.md", "b.md", "c.md")}
+    store.record_poll(
+        sid,
+        cursor=json.dumps({"seeded": True, "sigs": sigs, "gone": {}, "tombstones": {}}),
+        new_count=0,
+        health_status="ok",
+    )
+
+    assert await _poll(engine, store, sid) == 2
+    rows = _items(store, sid)
+    assert sorted(r["guid"] for r in rows) == ["a.md", "b.md", "c.md"]
+    assert [r["id"] for r in rows if r["guid"] == "b.md"] == [edited]
+    assert len(queue.enqueued) == 2
 
 
 # ── exactly-once: three files in one window → three re-indexes ──────────────────
@@ -173,10 +302,11 @@ async def test_seeded_cursor_survives_and_second_pass_is_quiet(store, watched):
 @pytest.mark.asyncio
 async def test_three_files_in_one_window_reindex_exactly_once_each(store, watched):
     clock = _Clock()
-    _write(watched / "a.md", "a v1", mtime=clock.t)
-    _write(watched / "b.md", "b v1", mtime=clock.t)
+    _write(watched / "a.md", "a v1", mtime=clock.t - 3600)
+    _write(watched / "b.md", "b v1", mtime=clock.t - 3600)
     sid, _prov, engine, queue = _setup(store, watched, clock)
-    await _poll(engine, store, sid)  # seed
+    assert await _poll(engine, store, sid) == 2  # the first scan brings both in
+    before = len(queue.enqueued)
 
     # Three files touched inside the window: two edits + one creation.
     clock.advance(1)
@@ -186,32 +316,33 @@ async def test_three_files_in_one_window_reindex_exactly_once_each(store, watche
 
     # Inside the window nothing is indexed yet — a half-written file must not be ingested.
     assert await _poll(engine, store, sid) == 0
-    assert queue.enqueued == []
+    assert len(queue.enqueued) == before
 
     # Poll again mid-window: still nothing, and crucially no double-count later.
     clock.advance(2)
     assert await _poll(engine, store, sid) == 0
-    assert queue.enqueued == []
+    assert len(queue.enqueued) == before
 
     # Window elapses → each of the three is re-indexed EXACTLY once: 3, not 4, not 2.
     clock.advance(10)
     assert await _poll(engine, store, sid) == 3
-    assert len(queue.enqueued) == 3
-    assert len(set(queue.enqueued)) == 3
+    reindexed = queue.enqueued[before:]
+    assert len(reindexed) == 3
+    assert len(set(reindexed)) == 3
     assert {r["guid"] for r in _items(store, sid)} == {"a.md", "b.md", "c.md"}
 
     # And the settled files do not re-fire on the next quiet poll.
     clock.advance(100)
     assert await _poll(engine, store, sid) == 0
-    assert len(queue.enqueued) == 3
+    assert len(queue.enqueued) == before + 3
 
 
 @pytest.mark.asyncio
 async def test_repeated_edits_to_one_file_collapse_to_one_reindex(store, watched):
     clock = _Clock()
-    _write(watched / "a.md", "v1", mtime=clock.t)
+    _write(watched / "a.md", "v1", mtime=clock.t - 3600)
     sid, _prov, engine, queue = _setup(store, watched, clock)
-    await _poll(engine, store, sid)  # seed
+    assert await _poll(engine, store, sid) == 1  # the first scan brings it in
 
     # Three saves of the SAME file, each observed by its own poll, all inside the window:
     # every one restarts the quiet timer, so none of them emits.
@@ -222,7 +353,7 @@ async def test_repeated_edits_to_one_file_collapse_to_one_reindex(store, watched
 
     clock.advance(10)
     assert await _poll(engine, store, sid) == 1
-    assert len(queue.enqueued) == 1
+    assert len(queue.enqueued) == 2, "one for the first scan, ONE for the three edits"
     rows = _items(store, sid)
     assert len(rows) == 1
     # The content indexed is the LAST state, not an intermediate one.
@@ -235,42 +366,52 @@ async def test_repeated_edits_to_one_file_collapse_to_one_reindex(store, watched
 @pytest.mark.asyncio
 async def test_create_makes_new_item_then_modify_reenqueues_the_same_item(store, watched):
     clock = _Clock()
-    _write(watched / "keep.md", "keep", mtime=clock.t)
+    _write(watched / "keep.md", "keep", mtime=clock.t - 3600)
     sid, _prov, engine, queue = _setup(store, watched, clock)
-    await _poll(engine, store, sid)  # seed
+    assert await _poll(engine, store, sid) == 1  # the first scan brings keep.md in
+    before = len(queue.enqueued)
+
+    def _new_rows():
+        return [r for r in _items(store, sid) if r["guid"] == "new.md"]
 
     # create → a NEW item
     clock.advance(1)
     _write(watched / "new.md", "first", mtime=clock.t)
     clock.advance(11)
     assert await _poll(engine, store, sid) == 1
-    rows = _items(store, sid)
+    rows = _new_rows()
     assert len(rows) == 1
     first_id = rows[0]["id"]
     assert rows[0]["item_type"] == "note"
-    assert queue.enqueued == [first_id]
+    assert queue.enqueued[before:] == [first_id]
 
     # modify → the EXISTING item, re-enqueued, no second row
     clock.advance(1)
     _write(watched / "new.md", "second", mtime=clock.t)
     clock.advance(11)
     assert await _poll(engine, store, sid) == 1
-    rows = _items(store, sid)
+    rows = _new_rows()
     assert len(rows) == 1, "a modify must not mint a duplicate row"
     assert rows[0]["id"] == first_id
     assert rows[0]["content"] == "second"
     assert rows[0]["processing_status"] == "queued", "re-index means back on the ingest path"
-    assert queue.enqueued == [first_id, first_id]
+    assert queue.enqueued[before:] == [first_id, first_id]
 
 
 @pytest.mark.asyncio
-async def test_modify_of_a_seeded_file_creates_its_item_once(store, watched):
-    """A file that only ever SEEDED has no item; its first edit must create one (and only
-    one), rather than being dropped because the guid looked already-seen."""
+async def test_modify_of_a_file_the_first_scan_left_out_creates_its_item_once(
+    store, watched, monkeypatch
+):
+    """A file past the first scan's bound is in the baseline and has no item; its first
+    edit must create one (and only one), rather than being dropped because the guid looked
+    already-seen."""
+    import personalclaw.knowledge_providers.dir_source as dir_mod
+
+    monkeypatch.setattr(dir_mod, "FIRST_SCAN_MAX_FILES", 0)
     clock = _Clock()
-    _write(watched / "old.md", "v1", mtime=clock.t)
+    _write(watched / "old.md", "v1", mtime=clock.t - 3600)
     sid, _prov, engine, queue = _setup(store, watched, clock)
-    await _poll(engine, store, sid)
+    assert await _poll(engine, store, sid) == 0
 
     clock.advance(1)
     _write(watched / "old.md", "v2", mtime=clock.t)

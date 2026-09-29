@@ -7,12 +7,14 @@ import { investigate } from '../../lib/investigate'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { ChipInput, FieldError } from '../../ui/forms'
-import type { KnowledgeAnnotation, KnowledgeItem, KnowledgeItemEdit, IntentOutcome, IntentOutcomeField, KnowledgeStaleness } from '../../lib/api'
+import type { KnowledgeAnnotation, KnowledgeItem, KnowledgeItemEdit, IntentOutcome, IntentOutcomeField, KnowledgeQueueStanding, KnowledgeStaleness } from '../../lib/api'
 import { rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { ReadingView } from './ReadingView'
 import { readingTimeLabel } from './readingTime'
+import { queueSentence } from './queueStanding'
+import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { resolveType, insightRows, fmtBytes, relTime, GIST_LANGUAGES } from './knowledgeMeta'
 import { getKnowledge, updateKnowledge, deleteKnowledge } from './knowledgeStore'
 import { GistEditor } from './GistEditor'
@@ -152,6 +154,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   // Live node-graph ingestion phase (#30): node_type → phase (running/done/skipped/failed).
   const [nodePhases, setNodePhases] = useState<Record<string, string>>({})
   const [procStatus, setProcStatus] = useState<string>(item.processing_status ?? '')
+  // Where it stands in the ingest queue while it waits or is read (`KnowledgeQueueStanding`).
+  const [standing, setStanding] = useState<KnowledgeQueueStanding | null>(item.queue ?? null)
   // The ingestion node-graph SHAPE for this item's type → rendered as a mini-DAG.
   const [ingestGraph, setIngestGraph] = useState<import('../../lib/api').KnowledgeIngestGraph | null>(null)
   // Full-screen overlay: {title, node} of the preview/content being inspected large.
@@ -165,8 +169,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
 
   useEffect(() => {
     let alive = true
-    setEditing(false); setItemIntents([]); setNodePhases({}); setIngestGraph(null)
-    getKnowledge(item.id).then((d) => { if (alive && d) { setFull(d); setProcStatus(d.processing_status ?? ''); seedFrom(d) } }).catch(() => setFull(item))
+    setEditing(false); setItemIntents([]); setNodePhases({}); setIngestGraph(null); setStanding(item.queue ?? null)
+    getKnowledge(item.id).then((d) => { if (alive && d) { setFull(d); setProcStatus(d.processing_status ?? ''); setStanding(d.queue ?? null); seedFrom(d) } }).catch(() => setFull(item))
     api.knowledgeItemIntents(item.id).then((r) => { if (alive) setItemIntents(r.outcomes || []) }).catch(() => {})
     api.knowledgeItemGraph(item.id).then((g) => { if (alive) setIngestGraph(g) }).catch(() => {})
     return () => { alive = false }
@@ -198,6 +202,20 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
     es.onerror = () => es.close()
     return () => es.close()
   }, [item.id, procStatus])
+
+  // Its place in line moves as the items ahead finish, and nothing streams that — the stream
+  // above starts with its own reading — so it is re-read while the item waits or is read. A
+  // read that finds it finished settles the page as the stream's end would have, so a stream
+  // that dropped cannot leave it saying "Queued" over a finished item.
+  useVisiblePoll(() => {
+    getKnowledge(item.id).then((d) => {
+      if (!d) return
+      setStanding(d.queue ?? null)
+      if (d.processing_status !== 'queued' && d.processing_status !== 'processing') {
+        setFull(d); setProcStatus(d.processing_status ?? ''); onChanged()
+      }
+    }).catch(() => {})
+  }, procStatus === 'queued' || procStatus === 'processing' ? 10_000 : null, { immediate: false })
 
   const insights = insightRows(full.insights)
   const [genning, setGenning] = useState(false)
@@ -642,7 +660,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             viewport — so even alone on a wrapped line it still could not fit, and its own
             wrapping never got a chance to engage. `ml-auto` still right-aligns it. */}
         <div className="ml-auto min-w-0">
-          <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={generateInsights} retrying={genning} />
+          <ProcessingStrip status={procStatus} nodePhases={nodePhases} error={full.processing_error} graph={ingestGraph} onRetry={generateInsights} retrying={genning} standing={standing} />
         </div>
       </div>
 
@@ -851,8 +869,11 @@ function dagLevels(graph: import('../../lib/api').KnowledgeIngestGraph): Map<str
 /** Node-graph ingestion transparency: a status line + a mini-DAG of the pipeline,
  *  each node showing its step status (pending = outline, running = spinner, done =
  *  green check, skipped = dash, failed = ✕). Hidden when nothing notable to report. */
-function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }: { status: string; nodePhases: Record<string, string>; error?: string; graph?: import('../../lib/api').KnowledgeIngestGraph | null; onRetry?: () => void; retrying?: boolean }) {
+function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying, standing }: { status: string; nodePhases: Record<string, string>; error?: string; graph?: import('../../lib/api').KnowledgeIngestGraph | null; onRetry?: () => void; retrying?: boolean; standing?: KnowledgeQueueStanding | null }) {
   const active = status === 'queued' || status === 'processing'
+  // Where it stands, in words: how many are ahead and the recent pace (`queueStanding`).
+  const waitLine = active ? queueSentence(standing) : ''
+  const waitCaption = waitLine ? <span data-type="caption" className="basis-full text-on-surface-low">{waitLine}</span> : null
   // unreachable = the URL couldn't be fetched (retryable) — distinct from a hard failure.
   const unreachable = status === 'unreachable'
   // Done + clean + no graph → nothing to show (don't clutter a finished item).
@@ -880,9 +901,10 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
     }
     if (active) {
       return (
-        <div data-type="body-s" className="flex items-center gap-1.5 py-1" style={{ color: 'var(--color-primary)' }}>
+        <div data-type="body-s" className="flex flex-wrap items-center gap-1.5 py-1" style={{ color: 'var(--color-primary)' }}>
           <Loader2 size={13} className="animate-spin" />
           <span>{status === 'queued' ? 'Queued…' : 'Processing…'}</span>
+          {waitCaption}
         </div>
       )
     }
@@ -901,6 +923,7 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
     <div data-type="body-s" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
       <MiniDag graph={graph!} phases={resolveNodePhases(graph!, nodePhases, status, error)} status={status} />
       {retryBtn}
+      {waitCaption}
       {error && <span data-type="caption" className="basis-full" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
     </div>
   )

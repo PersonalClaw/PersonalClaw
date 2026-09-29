@@ -1137,7 +1137,8 @@ class SourcesConfig:
         metadata=_meta(
             "Default poll interval (seconds)",
             "How often a source is polled when it does not set its own interval. Clamped "
-            "up to the network floor below.",
+            "up to the network floor below for a source that fetches; a folder on this "
+            "machine can be polled as often as once a minute.",
         ),
     )
     network_floor_secs: int = field(

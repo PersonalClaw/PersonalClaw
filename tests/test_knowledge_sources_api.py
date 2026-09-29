@@ -133,6 +133,9 @@ class _NullQueue:
     def enqueue(self, item_id: str) -> None:
         pass
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
     def recover_pending(self) -> int:
         return 0
 
@@ -277,6 +280,59 @@ def test_a_real_dir_saves_with_the_kinds_own_default_item_type(store, registered
     assert resp.status == 201
     assert body["source"]["item_type"] == "note"
     assert body["source"]["kind"] == "dir"
+
+
+def test_a_row_states_the_interval_the_engine_really_polls_at(store, registered, tmp_path):
+    """A folder saved at 'Every 5 min' is polled every 5 minutes and says so; a feed saved
+    below the network floor says the floor, not the interval it asked for."""
+    watched = tmp_path / "notes"
+    watched.mkdir()
+    _create(
+        store,
+        name="Notes",
+        provider="watched-dir",
+        spec={"path": str(watched)},
+        poll_interval_secs=300,
+    )
+    _create(
+        store,
+        name="Feed",
+        provider="watched-feed",
+        spec={"kind": "rss", "url": "https://feeds.example.com/a.xml"},
+        poll_interval_secs=300,
+    )
+
+    _resp, body = _get_sources(store)
+    by_name = {s["name"]: s for s in body["sources"]}
+    assert by_name["Notes"]["poll_every_secs"] == 300
+    assert by_name["Feed"]["poll_interval_secs"] == 300
+    assert by_name["Feed"]["poll_every_secs"] == 900  # the default network floor
+
+
+def test_a_folder_row_carries_its_first_scan_and_the_kind_states_the_bound(
+    store, registered, tmp_path
+):
+    from personalclaw.knowledge_providers import dir_source
+
+    watched = tmp_path / "notes"
+    watched.mkdir()
+    (watched / "a.md").write_text("a", encoding="utf-8")
+    _resp, created = _create(
+        store, name="Notes", provider="watched-dir", spec={"path": str(watched)}
+    )
+    sid = created["source"]["id"]
+
+    _resp, before = _get_sources(store)
+    assert [s["first_scan"] for s in before["sources"]] == [None]
+
+    result = _run(registered.dir.poll(sid, ""))
+    store.record_poll(sid, cursor=result.cursor, new_count=len(result.items))
+    _resp, after = _get_sources(store)
+    assert after["sources"][0]["first_scan"] == {"found": 1, "left_out": 0, "waiting": 0}
+
+    kind = next(k for k in after["kinds"] if k["provider"] == "watched-dir")
+    assert kind["first_scan_max_files"] == dir_source.FIRST_SCAN_MAX_FILES
+    assert kind["first_scan_max_bytes"] == dir_source.FIRST_SCAN_MAX_BYTES
 
 
 # ── create: `item_type` is the third enum on the body, not a free string ─────────────

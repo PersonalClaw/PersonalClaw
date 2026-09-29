@@ -686,7 +686,7 @@ def test_runner_marks_partial_when_insights_model_unavailable(store, monkeypatch
     import personalclaw.knowledge.pipeline.runner as runner_mod
 
     async def _insights_unavailable(*a, **k):
-        return False  # model errored but was caught — graceful no-op
+        return runner_mod.INSIGHTS_UNAVAILABLE  # model errored but was caught
 
     monkeypatch.setattr(runner_mod, "_run_insights", _insights_unavailable)
 
@@ -698,7 +698,7 @@ def test_runner_marks_partial_when_insights_model_unavailable(store, monkeypatch
 
 
 def test_a_failing_model_really_does_downgrade_the_item_to_partial(store, monkeypatch):
-    """The test above monkeypatches `_run_insights` to return False, so it proved the
+    """The test above monkeypatches `_run_insights` to report a failure, so it proved the
     CONSEQUENCE while the trigger was unreachable (#759): `ProviderWorker.send_message`
     swallowed every timeout and provider error to `""`, `""` parses to "no insights",
     and `extract(raise_on_error=True)` therefore never raised. So `_run_insights` always
@@ -716,7 +716,7 @@ def test_a_failing_model_really_does_downgrade_the_item_to_partial(store, monkey
     from personalclaw import llm_helpers
     from personalclaw.knowledge.llm_pool import LLMPool, ProviderWorker
 
-    async def _boom(prompt, use_case=""):
+    async def _boom(prompt, use_case="", **_kw):
         raise RuntimeError("no model bound")
 
     monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
@@ -764,7 +764,7 @@ def test_runner_insights_failure_not_masked_by_optional_skips(store, tmp_path, m
     import personalclaw.knowledge.pipeline.runner as runner_mod
 
     async def _insights_unavailable(*a, **k):
-        return False
+        return runner_mod.INSIGHTS_UNAVAILABLE
 
     monkeypatch.setattr(runner_mod, "_run_insights", _insights_unavailable)
 

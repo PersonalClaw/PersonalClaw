@@ -8,6 +8,7 @@ import { TextLink } from '../../ui/TextLink'
 import { confirmDestructive } from '../../ui/dialog'
 import { FormSkeleton, InlineLoadError, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { labelNoun, withArticle } from '../../lib/article'
 
 // The editable packs.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (config/loader.py PacksConfig). One fingerprint toggle, PATCHed as a single allowlisted
@@ -222,7 +223,7 @@ export function ProposalCard({ proposal, busy, onInstall, onReject }: {
           </div>
           {top && (
             <div data-type="caption" className="mt-0.5 text-on-surface-low">
-              Looks like a {top.label.toLowerCase()} — {top.matched_globs.length} of {top.declared_globs.length} file patterns
+              Looks like {withArticle(labelNoun(top.label))} — {top.matched_globs.length} of {top.declared_globs.length} file patterns
               {top.declared_signals.length > 0 && <> and {top.matched_signals.length} of {top.declared_signals.length} content signals</>}
               {' '}matched, against a declared ceiling of {Math.round(top.declared_confidence * 100)}%.
             </div>

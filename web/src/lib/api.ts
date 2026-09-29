@@ -3766,6 +3766,18 @@ export type KnowledgeType =
 // ever WROTE one, so the field was omitted here and the chip could not explain why an item linked
 // to an entity it never names canonically.
 export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string; aliases?: string[] }
+/** Where a queued or enriching item stands in the ingest queue (`KnowledgeIngestQueue.standing`).
+ *  Items are read one at a time, a person's own before background work (watched sources, whole-
+ *  library passes), so `lane` says which line it is in and `ahead` how many will be read before
+ *  it — not counting the one being read now, which `running_since` describes. `typical_secs` is
+ *  the median of recent items' times, `null` until enough have finished: a measurement of the
+ *  past, never a promise about this item. */
+export type KnowledgeQueueStanding =
+  | { state: 'running'; since: number; typical_secs: number | null }
+  | {
+    state: 'waiting'; lane: 'yours' | 'background'; ahead: number
+    running_since: number | null; typical_secs: number | null
+  }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
   id: string; title?: string; content?: string; summary?: string
@@ -3794,6 +3806,9 @@ export interface KnowledgeItem {
   insights?: Record<string, unknown> | null; ai_summary?: string; ai_title?: string
   // node-graph ingestion lifecycle (#30): queued|processing|done|partial|failed
   processing_status?: string; processing_error?: string
+  /** Where a queued or processing item stands in the ingest queue; `null` when it is neither,
+   *  or when no running queue holds it (then all that is known is that it is queued). */
+  queue?: KnowledgeQueueStanding | null
   // set by the list endpoint when content is a truncated preview (full body via GET /items/{id})
   content_truncated?: boolean
   // whether the item has an embedding vector (the raw vector itself is never sent — export-only)
@@ -3934,6 +3949,14 @@ export interface WatchedSource {
   /** 'full' | 'raw' — 'raw' is the structural no-AI promise, and what the chip reads. */
   enrichment: string
   poll_interval_secs: number; item_type: string; enabled: boolean
+  /** How often the engine REALLY polls it: `poll_interval_secs` is what was chosen, and the
+   *  engine keeps a floor under it (a network source is never polled faster than its floor,
+   *  whatever it asks). The row states this one. */
+  poll_every_secs: number
+  /** A watched folder's first scan, once it has run: `found` files were there, `left_out`
+   *  were past the scan's bound (they come in when they change), and `waiting` are taken but
+   *  not yet read in (a poll reads a capped number). `null` for every other kind. */
+  first_scan?: { found: number; left_out: number; waiting: number } | null
   created_at?: string; updated_at?: string
   last_poll_at?: string | null; next_poll_at?: string | null
   last_new_count?: number
@@ -3966,6 +3989,10 @@ export interface SourceKind {
   presets?: string[]
   default_include?: string[]
   max_files?: number
+  /** A folder's first scan takes the newest files up to these bounds; older ones come in when
+   *  they change. Stated by the create form as the provider applies them. */
+  first_scan_max_files?: number
+  first_scan_max_bytes?: number
   guidance?: Record<string, string>
 }
 export interface SourcesResponse {

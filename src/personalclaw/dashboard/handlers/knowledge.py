@@ -9,7 +9,7 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aiohttp import web
@@ -187,6 +187,8 @@ async def list_items(request: web.Request) -> web.Response:
         total = len(filtered)
         offset = (page - 1) * limit
         items = filtered[offset : offset + limit]
+        for it in items:
+            it["queue"] = _queue_standing(request, it)
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
     else:
         where, params = ["1=1"], []  # type: list[str], list[object]
@@ -239,6 +241,9 @@ async def list_items(request: web.Request) -> web.Response:
             [*params, limit, offset],
         ).fetchall()
         items = [_list_item(store, r) for r in rows]
+        # Where a queued row stands, so the list can say "3 ahead" rather than a bare spinner.
+        for it in items:
+            it["queue"] = _queue_standing(request, it)
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
 
 
@@ -298,6 +303,8 @@ async def create_item(request: web.Request) -> web.Response:
             status=400,
         )
     title = string_field(body, "title")
+    # A title the person typed is hers, whatever it says; the placeholders below are not.
+    title_given = bool(title)
     content = string_field(body, "content", strip=False)
     url = string_field(body, "url")
     if item_type == "bookmark":
@@ -351,6 +358,7 @@ async def create_item(request: web.Request) -> web.Response:
         url=url,
         summary=str(body.get("summary") or ""),
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
+        extra={"title_source": "user"} if title_given else None,
     )
     _sel_log("item.create", item_id=item_id, type=item_type)
     item = store.get_item(item_id)
@@ -443,7 +451,9 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
     n = 0
     for r in rows:
         store.update_item(r["id"], processing_status="queued", touch=False)
-        queue.enqueue(r["id"])
+        # A whole-library pass is background work: something she adds or edits meanwhile
+        # is read first, not after every item this selected.
+        queue.enqueue_background(r["id"])
         n += 1
     store.db.commit()
     _sel_log("knowledge.regenerate_intelligence", scope=scope, queued=n)
@@ -699,8 +709,31 @@ async def get_item(request: web.Request) -> web.Response:
             "content_revision": _content_revision(item),
             "entities": entities,
             "relations": relations,
+            "queue": _queue_standing(request, item),
         }
     )
+
+
+def _queue_standing(request: web.Request, item: dict) -> dict | None:
+    """Where a waiting or running item stands in the ingest queue, for the page to say how
+    long it will be (``KnowledgeIngestQueue.standing``); ``None`` for an item that is not.
+
+    Reads the queue the gateway already started, never the accessor that would construct and
+    start one: asking how long a wait is must not create a worker. An item marked queued
+    that no live queue holds (enriched outside it, or a process that has not started its
+    queue) has no standing, and the page says only that it is queued.
+    """
+    if str(item.get("processing_status") or "") not in ("queued", "processing"):
+        return None
+    queue = getattr(request.app["state"], "_knowledge_ingest_queue", None)
+    standing = getattr(queue, "standing", None)
+    if not callable(standing):
+        return None
+    try:
+        return standing(str(item.get("id") or ""))
+    except Exception:  # noqa: BLE001 — a standing read must never fail the item read
+        logger.debug("ingest queue standing read failed", exc_info=True)
+        return None
 
 
 async def update_item(request: web.Request) -> web.Response:
@@ -807,6 +840,10 @@ async def update_item(request: web.Request) -> web.Response:
             fields[b] = 1 if fields[b] else 0
     if not fields and not tag_edits:
         return web.json_response({"error": "no valid fields"}, status=400)
+    # A title set here is a person's — typed, kept in the create form, or the suggestion she
+    # took — so enrichment never replaces it again.
+    if "title" in fields:
+        fields["title_source"] = "user"
     # 🔴 THE CHECK AND THE WRITE READ THE ITEM AS STORED NOW — after the body arrived, with no
     # await before the write — so a rewrite that landed while the page was open is compared
     # against, not written over.
@@ -3305,6 +3342,10 @@ def _kind_descriptor(provider) -> dict:
             "default_item_type": "note",
             "default_include": list(dir_source.DEFAULT_INCLUDE),
             "max_files": dir_source.MAX_FILES_PER_SOURCE,
+            # The first scan's bound, so the create form states the numbers the provider
+            # applies rather than a copy of them that could drift.
+            "first_scan_max_files": dir_source.FIRST_SCAN_MAX_FILES,
+            "first_scan_max_bytes": dir_source.FIRST_SCAN_MAX_BYTES,
         }
     return {"kind": "external", "form": "spec", "default_item_type": "bookmark"}
 
@@ -3403,12 +3444,31 @@ def _source_settings(source: dict) -> dict:
     return {"spec": source.get("spec") or {}, "budget": source.get("budget") or {}}
 
 
-def _serialize_source(source: dict, enrolled: set[str]) -> dict:
-    """A source row for the client: the stored row plus the four things it cannot derive.
+def _serialize_source(
+    source: dict,
+    store,
+    providers: dict[str, Any] | None = None,
+    sources_cfg: Any = None,
+) -> dict:
+    """A source row for the client: the stored row plus the things it cannot derive.
+
+    ``providers`` (the registered poll-capable providers by name, :func:`_source_providers`)
+    and ``sources_cfg`` (``AppConfig.sources``) are read once per response by a caller
+    serializing many rows; either is read here when omitted.
 
     ``enrolled`` answers "will anything actually poll this?" BEFORE the first poll — the
     engine records the not-enrolled case as a health error, but only once it has run, and a
     row that has never been polled would otherwise read as healthy.
+
+    ``poll_every_secs`` is how often the engine really polls it
+    (``source_engine.effective_interval``): the stored ``poll_interval_secs`` is what was
+    CHOSEN, and a row that states the choice while the engine keeps a floor under it says
+    one interval and runs another.
+
+    ``first_scan`` is a watched folder's first scan (``found`` / ``left_out`` /
+    ``waiting``, :meth:`DirSourceProvider.first_scan_status`), so the page can say that
+    files are still coming in, or that the scan's bound left the older ones out; ``None``
+    for every other kind and before the first scan.
 
     ``event_driven`` is the honest answer for a source nothing polls BY DESIGN (PEP-7's
     ``artifact://`` mirror, which is fed by an in-process change listener). Without it that
@@ -3421,12 +3481,26 @@ def _serialize_source(source: dict, enrolled: set[str]) -> dict:
     ``revision`` is of :func:`_source_settings` — what a spec/budget PATCH names in ``If-Match``
     (`personalclaw/stale_write.py`).
     """
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.knowledge.source_engine import effective_interval
+    from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+    if providers is None:
+        providers = {p.name: p for p in _source_providers()}
+    if sources_cfg is None:
+        sources_cfg = AppConfig.load().sources
+    provider = providers.get(str(source.get("provider") or ""))
+    first_scan = None
+    if isinstance(provider, DirSourceProvider) and source.get("id"):
+        first_scan = DirSourceProvider.first_scan_status(store.get_source_cursor(source["id"]))
     return {
         **source,
         "revision": revision_of(_source_settings(source)),
-        "enrolled": source.get("provider") in enrolled,
+        "enrolled": provider is not None,
         "event_driven": source.get("provider") == ARTIFACT_SOURCE_PROVIDER,
         "remediation": _remediation(source),
+        "poll_every_secs": int(effective_interval(source, sources_cfg, provider)),
+        "first_scan": first_scan,
     }
 
 
@@ -3436,13 +3510,18 @@ async def list_watched_sources(request: web.Request) -> web.Response:
     One route because the list page and the create page are one surface, and a second round
     trip to learn which kinds exist would just make the create form flash.
     """
+    from personalclaw.config.loader import AppConfig
     from personalclaw.knowledge_providers.base import ENRICHMENT_RAW, SOURCE_HEALTH
 
     kinds = _source_kinds()
-    enrolled = {k["provider"] for k in kinds}
+    providers = {p.name: p for p in _source_providers()}
+    sources_cfg = AppConfig.load().sources
+    store = _store(request)
     return web.json_response(
         {
-            "sources": [_serialize_source(s, enrolled) for s in _store(request).list_sources()],
+            "sources": [
+                _serialize_source(s, store, providers, sources_cfg) for s in store.list_sources()
+            ],
             "kinds": kinds,
             # The closed vocabularies, shipped rather than retyped in TypeScript. The UI
             # needs a per-status label and tone, and a hardcoded list there would silently
@@ -3539,10 +3618,7 @@ async def create_watched_source(request: web.Request) -> web.Response:
     )
     _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
     created = store.get_source(sid)
-    return web.json_response(
-        {"source": _serialize_source(created or {}, {p.name for p in _source_providers()})},
-        status=201,
-    )
+    return web.json_response({"source": _serialize_source(created or {}, store)}, status=201)
 
 
 async def update_watched_source(request: web.Request) -> web.Response:
@@ -3633,9 +3709,7 @@ async def update_watched_source(request: web.Request) -> web.Response:
     if updated is None:
         return web.json_response({"error": "not found"}, status=404)
     _sel_log("sources.update", source_id=source_id, fields=sorted(fields))
-    return web.json_response(
-        {"source": _serialize_source(updated, {p.name for p in _source_providers()})}
-    )
+    return web.json_response({"source": _serialize_source(updated, store)})
 
 
 #: Preview item snippets are UNTRUSTED scraped bytes. They are clipped hard and rendered as

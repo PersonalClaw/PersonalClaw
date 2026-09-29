@@ -77,6 +77,9 @@ class _FakeQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
 
 def _indexer(store, artifacts, queue, *, enabled: bool = True) -> ArtifactIndexer:
     class _Cfg:
@@ -474,7 +477,7 @@ def test_the_source_row_reports_itself_as_event_driven(store):
 
     ensure_source(store)
     row = [s for s in store.list_sources() if s["provider"] == ARTIFACT_SOURCE_PROVIDER][0]
-    shaped = _serialize_source(row, enrolled=set())
+    shaped = _serialize_source(row, store, providers={})
     assert shaped["event_driven"] is True
     assert shaped["enrolled"] is False
 

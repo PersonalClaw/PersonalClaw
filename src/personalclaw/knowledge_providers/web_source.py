@@ -923,6 +923,7 @@ def apply_hygiene(rows: list[dict], *, page_url: str, spec: dict) -> list[Source
     * an item with no derivable guid is dropped, following ``feed_source``: the seen-set can
       only gate what it can name, so an un-keyable item would re-ingest on every poll.
     """
+    from personalclaw.knowledge.connectors.base import readable_text
     from personalclaw.knowledge.source_identity import compose_guid
 
     keep_offsite = (
@@ -944,7 +945,10 @@ def apply_hygiene(rows: list[dict], *, page_url: str, spec: dict) -> list[Source
         title = (row.get("title") or "").strip()
         if title and _word_count(title) < min_words:
             title = ""
-        content = (row.get("content") or "")[:MAX_ITEM_CHARS].strip()
+        # The item's body is stored as its words: a detector's field can be markup (a
+        # WordPress excerpt is the post's rendered HTML; a declared `html` field is the
+        # sanitized markup), and the library shows and renders a body as markdown text.
+        content = readable_text((row.get("content") or "")[:MAX_ITEM_CHARS]).strip()
         if not title and not content:
             continue
         published = (row.get("published_at") or "").strip()
@@ -1647,9 +1651,10 @@ def _rendered_title(value: Any) -> str:
     preview, in the item row and in the library.
 
     Scoped to the TITLE deliberately. ``content`` is markup, where the same escaping is
-    meaningful (an escaped ``&lt;script&gt;`` in a post's body is *shown code*), and both of
-    its readers already convert through the html→text seam. Unescaping it here would decode
-    that back into live markup before ``sanitize_html`` ever sees it.
+    meaningful (an escaped ``&lt;script&gt;`` in a post's body is *shown code*), and
+    :func:`apply_hygiene` converts it to text through the html→text seam
+    (``connectors.base.readable_text``), which keeps shown code shown. Unescaping it here
+    would decode that back into live markup before anything converts it.
     """
     return unescape(_rendered(value))
 

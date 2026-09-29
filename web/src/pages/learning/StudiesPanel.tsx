@@ -6,6 +6,7 @@ import { useQuery } from '../../lib/data'
 import { api, isSwitchedOff, type SwitchedOffView, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import { studyDetailKey } from './proposalCache'
+import { withArticle } from '../../lib/article'
 
 /** Pre-registered template A/B studies.
  *
@@ -235,7 +236,7 @@ function Tally({ verdict }: { verdict: NonNullable<StudyView['verdict']> }) {
       {verdict.wins} win · {verdict.losses} loss · {verdict.ties} tie · {verdict.no_signal} no
       signal, over {verdict.decided_cases} decided case
       {verdict.decided_cases === 1 ? '' : 's'} at k={verdict.k}. Position-swap agreement{' '}
-      {fmtRate(verdict.agreement)} against a {fmtRate(verdict.agreement_floor)} floor.
+      {fmtRate(verdict.agreement)} against {withArticle(`${fmtRate(verdict.agreement_floor)} floor`)}.
       {verdict.low_power && ' Low power: too few decided cases to be more than suggestive.'}
     </p>
   )

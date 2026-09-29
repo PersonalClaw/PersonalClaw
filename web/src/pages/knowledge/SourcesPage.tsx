@@ -16,8 +16,9 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { notify } from '../../app/appSdk'
 import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
-import { RAW_ENRICHMENT, TONE_CLASS, eventDrivenMetaLine, fmtInterval, formIcon, healthMeta } from './sourceMeta'
+import { RAW_ENRICHMENT, TONE_CLASS, cadenceNote, eventDrivenMetaLine, firstScanLine, fmtInterval, formIcon, healthMeta } from './sourceMeta'
 import { HELD_CHANGE_REASON, sameDocument } from '../../lib/staleWrite'
+import { withArticle } from '../../lib/article'
 
 /** The kinds catalog keyed by provider, so a row can name its own kind and pick its icon
  *  from the same `form` discriminator the create page switches on. */
@@ -157,6 +158,8 @@ export function SourceRow({ source, index, kinds, onChanged }: {
   const Icon = formIcon(kind?.form ?? '')
   const health = healthMeta(source.health_status)
   const [busy, setBusy] = useState(false)
+  const cadence = cadenceNote(source)
+  const scanLine = firstScanLine(source.first_scan)
 
   async function setEnabled(on: boolean) {
     setBusy(true)
@@ -201,7 +204,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
               <Chip label="Live" icon={Zap} title="Indexed as artifacts change — this source is not polled." />
             ) : !source.enrolled && (
               <Chip label="No provider" tone="danger" icon={AlertTriangle}
-                title={`Nothing is registered to poll a ${source.provider} source, so this row will never collect anything.`} />
+                title={`Nothing is registered to poll ${withArticle(`${source.provider} source`)}, so this row will never collect anything.`} />
             )}
           </div>
           {/* Wraps rather than truncating: at 390px this line is longer than the row, and the
@@ -216,7 +219,8 @@ export function SourceRow({ source, index, kinds, onChanged }: {
           ) : (
           <p data-type="caption" className="mt-1 text-on-surface-low">
             {kind?.display_name ?? source.provider}
-            {' · every '}{fmtInterval(source.poll_interval_secs)}
+            {/* How often it is REALLY checked, which a floor can make slower than asked. */}
+            {' · '}<span title={cadence || undefined}>every {fmtInterval(source.poll_every_secs)}</span>
             {' · '}{source.last_poll_at ? `polled ${relPast(source.last_poll_at)}` : 'never polled'}
             {source.last_poll_at ? ` · ${source.last_new_count ?? 0} new last time` : ''}
             {/* The health rollup describes the LAST poll and does not move when you fix a
@@ -225,6 +229,8 @@ export function SourceRow({ source, index, kinds, onChanged }: {
             {source.enabled && source.next_poll_at ? ` · next ${relFuture(source.next_poll_at)}` : ''}
           </p>
           )}
+          {/* A folder's first scan, while it has files still to read in or left for later. */}
+          {scanLine && <p data-type="caption" className="mt-xs text-on-surface-low">{scanLine}</p>}
           {!!source.last_escalations?.length && (
             // The expensive tier, made visible. WS-3 records escalations on success too,
             // because an escalation nobody can see is indistinguishable from a cheap poll.

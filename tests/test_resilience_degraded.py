@@ -512,6 +512,9 @@ class _RecordingQueue:
     def enqueue(self, item_id: str) -> None:
         self.enqueued.append(item_id)
 
+    def enqueue_background(self, item_id: str) -> None:
+        self.enqueue(item_id)
+
 
 def _knowledge_store(tmp_path, monkeypatch):
     import personalclaw.knowledge as K
