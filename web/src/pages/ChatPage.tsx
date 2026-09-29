@@ -459,14 +459,14 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
             </div>
           ) : (
             <div key={i} className="mr-2 min-w-0 text-[0.8125rem]">
-              <Markdown className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
+              <Markdown widgets className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
             </div>
           )
         ))}
         {/* the streaming reply, growing live */}
         {streamText && (
           <div className="mr-2 min-w-0 text-[0.8125rem]">
-            <Markdown className="[&_p]:text-[0.8125rem]">{streamText}</Markdown>
+            <Markdown widgets streaming className="[&_p]:text-[0.8125rem]">{streamText}</Markdown>
           </div>
         )}
         {busy && !streamText && (
@@ -4506,7 +4506,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     if (seg.kind === 'text') {
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
       const body = parseSwitchToAgent(parseOptions(seg.text).body).body
-      return body ? <Markdown key={i} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown> : null
+      return body ? <Markdown key={i} widgets onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown> : null
     }
     return null
   }

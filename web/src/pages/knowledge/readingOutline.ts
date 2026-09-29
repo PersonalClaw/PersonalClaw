@@ -55,8 +55,8 @@
  *    a paragraph is genuinely ambiguous with a thematic break in real-world markdown, and a
  *    phantom heading is worse than a missing one; and a setext heading has no `#` to point
  *    `offset` at, so its key would mean something different from every other entry's.
- *  ✗ Headings nested in a blockquote (`> ## x`) or a list item, and raw HTML `<h2>` (which
- *    `ui/Markdown` passes through via rehype-raw).
+ *  ✗ Headings nested in a blockquote (`> ## x`) or a list item. (A raw HTML `<h2>` is no
+ *    heading on either side: `ui/Markdown` shows embedded HTML as text.)
  *
  *  ⚠️ THE CONSEQUENCE FOR ORDER MATCHING. Those last two DO render as heading elements, so on
  *  a body that uses them the article has MORE headings than this returns and the nth-entry ⇄

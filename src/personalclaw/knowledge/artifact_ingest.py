@@ -24,8 +24,9 @@ same four primitives every watched feed and watched directory uses:
   :meth:`~personalclaw.knowledge.store.KnowledgeStore.create_typed_item` /
   :meth:`~personalclaw.knowledge.store.KnowledgeStore.update_item`;
 * the shared reader conversion (:func:`~personalclaw.knowledge.readers.html_to_prose`) via
-  a kind→extension map, so an ``html`` artifact reduces to the same prose an uploaded
-  ``.html`` file does.
+  a kind→extension map, so an ``html`` artifact — and a ``document``, whose body is editorial
+  HTML — reduces to the same markdown text an uploaded ``.html`` file does. The library renders
+  a body as markdown only, so a mirror of markup would read as its tags.
 
 **Three decisions worth naming.**
 
@@ -45,13 +46,16 @@ same four primitives every watched feed and watched directory uses:
    ``file_metadata['artifact_sha']`` over exactly the title + text it indexed. Re-running
    the whole backfill, or a metadata PATCH that changed nothing observable, therefore
    writes nothing and enqueues nothing. A timestamp comparison would have re-embedded the
-   library on every restart.
+   library on every restart. The same gate makes :meth:`ArtifactIndexer.remirror_markup`
+   (a start re-mirrors the html/document rows that still hold raw HTML) a no-op once done.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import re
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -88,8 +92,24 @@ INDEXABLE_KINDS: dict[str, str] = {
     "text": ".txt",
     "json": ".json",
     "csv": ".csv",
-    "document": ".md",
+    # Editorial HTML — unless it was saved with a markdown body (see `_reads_as`).
+    "document": ".html",
 }
+
+#: An HTML block or structural tag: what makes a ``document`` body the editorial HTML the kind
+#: is meant to hold. The Artifacts page's document renderer makes the same block-tag test
+#: (``web/src/ui/content/renderers.tsx``) before it shows a body as markdown, so a document
+#: saved with a markdown body is mirrored as the markdown it is, and HTML is never run over it
+#: (an HTML parser would fold its lines into one paragraph).
+_HTML_STRUCTURE = re.compile(
+    r"<(?:h[1-6]|p|div|section|article|main|header|footer|nav|aside|ul|ol|li|table|thead|tbody"
+    r"|tr|td|th|blockquote|pre|figure)\b[^>]*>",
+    re.IGNORECASE,
+)
+
+#: The kinds whose mirror is the reader's conversion of HTML — the rows
+#: :meth:`ArtifactIndexer.remirror_markup` looks at.
+_CONVERTED_KINDS = frozenset({"html", "document"})
 
 #: Ceiling on one mirrored body, in characters. A generated document can be enormous, and
 #: the mirror is a search surface rather than a second copy of record — the artifact itself
@@ -103,6 +123,15 @@ def indexable_kind(kind: str) -> bool:
     return (kind or "").strip().lower() in INDEXABLE_KINDS
 
 
+def _reads_as(kind: str, body: str) -> str:
+    """The extension whose reader fits this artifact's body: its kind's, except a ``document``
+    with no HTML structure in it, which is markdown."""
+    k = (kind or "").strip().lower()
+    if k == "document" and not _HTML_STRUCTURE.search(body):
+        return ".md"
+    return INDEXABLE_KINDS[k]
+
+
 def extract(kind: str, content: str) -> tuple[str, dict]:
     """An artifact body → the text to index, plus its format metadata.
 
@@ -113,8 +142,8 @@ def extract(kind: str, content: str) -> tuple[str, dict]:
     """
     from personalclaw.knowledge.readers import html_to_prose
 
-    ext = INDEXABLE_KINDS[(kind or "").strip().lower()]
     body = content or ""
+    ext = _reads_as(kind, body)
     if ext == ".html":
         text = html_to_prose(body)
     else:
@@ -386,6 +415,48 @@ class ArtifactIndexer:
                 logger.warning("artifact %s could not be indexed", art.slug, exc_info=True)
         return indexed
 
+    def remirror_markup(self) -> int:
+        """Re-mirror the html and document artifacts whose stored text still holds raw HTML;
+        return how many were re-indexed.
+
+        :meth:`backfill` runs once, at the first enable, so a mirror written before a body's
+        HTML was converted on the way in would keep its markup for good — a ``document``
+        artifact was mirrored verbatim. Keyed on the stored TEXT, not on a flag: a converted
+        row holds no raw HTML outside code, so the next start finds nothing to do; and a
+        document kept as markdown (a ``<kbd>`` in it, say) re-extracts to the hash it already
+        carries, so :meth:`index` leaves it alone.
+        """
+        from personalclaw.knowledge.connectors.base import without_raw_html
+
+        if not self.enabled():
+            return 0
+        source = find_source(self._store)
+        if source is None:
+            return 0
+        # A read, so plain SQL; every WRITE still goes through `index` → `update_item`.
+        rows = self._store.db.execute(
+            "SELECT guid, content, file_metadata FROM items "
+            "WHERE source_id = ? AND item_type = ? AND content LIKE '%<%'",
+            (str(source["id"]), ARTIFACT_ITEM_TYPE),
+        ).fetchall()
+        redone = 0
+        for row in rows:
+            try:
+                meta = json.loads(row["file_metadata"] or "{}")
+            except (TypeError, ValueError):
+                meta = {}
+            if (meta.get("artifact_kind") or "").strip().lower() not in _CONVERTED_KINDS:
+                continue
+            content = row["content"] or ""
+            if without_raw_html(content) == content:
+                continue
+            try:
+                if self.index(str(row["guid"])) == self.INDEXED:
+                    redone += 1
+            except Exception:  # noqa: BLE001 — one bad artifact must not abandon the rest
+                logger.warning("artifact %s could not be re-mirrored", row["guid"], exc_info=True)
+        return redone
+
     def _enqueue_item(self, item_id: str) -> None:
         if self._enqueue is None:
             return
@@ -396,7 +467,8 @@ class ArtifactIndexer:
 
 
 def start(store: Any, *, enqueue: Callable[[str], None] | None = None) -> ArtifactIndexer:
-    """Wire the mirror into a running gateway: subscribe, ensure the row, backfill once.
+    """Wire the mirror into a running gateway: subscribe, ensure the row, backfill once — and,
+    on every later start, re-mirror what is still stored as markup (``remirror_markup``).
 
     The subscription is UNCONDITIONAL and the switch is read per event, because
     ``knowledge.auto_ingest_artifacts`` is a live-editable field: subscribing only when it
@@ -416,4 +488,8 @@ def start(store: Any, *, enqueue: Callable[[str], None] | None = None) -> Artifa
     if created:
         count = indexer.backfill()
         logger.info("Artifact knowledge mirror: backfilled %d artifact(s)", count)
+    else:
+        redone = indexer.remirror_markup()
+        if redone:
+            logger.info("Artifact knowledge mirror: re-mirrored %d artifact(s) as text", redone)
     return indexer

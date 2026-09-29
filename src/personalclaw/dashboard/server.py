@@ -229,24 +229,41 @@ SECURITY_HEADERS: dict[str, str] = {
 }
 
 
-def dashboard_csp() -> str:
+def dashboard_csp(port: int | None = None) -> str:
     """The dashboard's Content-Security-Policy.
 
-    Defense-in-depth layer. Primary XSS protection is rehypeSanitize (strips
-    script/iframe/form/foreignObject at HAST level before rendering). CSP must allow
-    ``'unsafe-inline'`` because widget iframes (blob: sandbox) inherit the parent CSP per
-    W3C spec — inline scripts in widgets need it. Widget isolation is enforced by
-    ``sandbox="allow-scripts"`` (no parent DOM access) + a widget-level CSP meta
-    (``connect-src 'none'``).
+    Defense-in-depth layer. The primary control against markup injection is the web app's
+    one renderer for text it did not write (``web/src/ui/Markdown.tsx``): embedded HTML is
+    shown as text, bar attribute-free formatting tags, links open only for http/https/mailto,
+    and no other path in the app turns a string into live markup
+    (``tests/test_rendering_registry_parity.py``). This policy is what still holds if that
+    ever slips.
+
+    ``script-src`` must allow ``'unsafe-inline'``: widget iframes (blob: documents) inherit
+    this policy, and a widget's own scripts and handlers are inline; the sign-in and pairing
+    pages carry inline scripts too. Widget isolation is enforced by
+    ``sandbox="allow-scripts"`` (an opaque origin: no parent DOM, cookies or storage) + a
+    widget-level CSP meta (``connect-src 'none'``).
 
     No directive that loads code, a stylesheet or a font names another origin: the dashboard
     runs locally and fetches nothing from a third party. A widget's Tailwind CSS and a react
     artifact's React ride inside the widget's own document (``web/src/ui/widget/widgetStyles.ts``,
-    ``reactFrameRuntime.ts``), so no CDN is owed an allowance.
+    ``reactFrameRuntime.ts``), so no CDN is owed an allowance. ``img-src https:`` is the one
+    remote allowance, for the images in a rendered body.
+
+    ``connect-src`` names the loopback WebSocket at *port* — the port this page was served
+    on, the only one the app ever opens a socket to (``location.host``) — rather than every
+    local port, which would let the page reach any other local service's socket. With no port
+    known, ``'self'`` alone carries the app's own socket.
+
+    ``form-action 'self'``: the app submits no form anywhere, and the directive does not fall
+    back to ``default-src``, so without it a form in the page could post to any origin.
 
     A function rather than a constant because ``_ws_csp_sources()`` depends on
-    ``dashboard.public_url``, which is config the operator can change without a restart.
+    ``dashboard.public_url``, which is config the operator can change without a restart, and
+    the port is the served request's.
     """
+    loopback_ws = f" ws://localhost:{port} ws://127.0.0.1:{port}" if port else ""
     return (
         "default-src 'self'; "
         # blob: in script-src enables dynamic ESM module loading for contributed
@@ -266,7 +283,7 @@ def dashboard_csp() -> str:
         # live connection (the worst failure shape: it looks fine and does nothing).
         # `_ws_csp_sources()` returns "" for a normal local install, leaving the
         # policy byte-identical to before.
-        f"connect-src 'self' ws://localhost:* ws://127.0.0.1:*{_ws_csp_sources()}; "
+        f"connect-src 'self'{loopback_ws}{_ws_csp_sources()}; "
         # What this page may FRAME (its artifact pane + blob: widget iframes).
         "frame-src 'self' blob:; "
         # Who may frame THIS page — the opposite question, and the one #2735 found
@@ -278,8 +295,18 @@ def dashboard_csp() -> str:
         # already names the public host and no allowlist is owed.
         "frame-ancestors 'self'; "
         "worker-src 'self' blob:; "
+        "form-action 'self'; "
         "object-src 'none'; base-uri 'self'"
     )
+
+
+def _served_port(request: web.Request) -> int | None:
+    """The port *request* reached this server on, read off the listening socket — never off
+    the ``Host`` header, which the client writes."""
+    sock = request.transport.get_extra_info("sockname") if request.transport else None
+    if isinstance(sock, tuple) and len(sock) >= 2 and isinstance(sock[1], int) and sock[1] > 0:
+        return sock[1]
+    return None
 
 
 @web.middleware  # type: ignore[misc]
@@ -294,6 +321,8 @@ async def _security_headers_middleware(
     header is a ``setdefault``: a handler that chose a STRICTER value keeps it, so a
     hardening change here can never downgrade a response that was already tighter.
     """
+    # Read before the handler runs: a finished response may already have lost its transport.
+    port = _served_port(request)
     resp = await handler(request)  # type: ignore[operator]
     if hasattr(resp, "headers"):
         if request.path.startswith(_IMMUTABLE_ASSET_PREFIX):
@@ -308,7 +337,7 @@ async def _security_headers_middleware(
             )
             resp.headers.setdefault("Pragma", "no-cache")
             resp.headers.setdefault("Expires", "0")
-        resp.headers.setdefault("Content-Security-Policy", dashboard_csp())
+        resp.headers.setdefault("Content-Security-Policy", dashboard_csp(port))
         for name, value in SECURITY_HEADERS.items():
             resp.headers.setdefault(name, value)
     return resp  # type: ignore[return-value]
@@ -2623,6 +2652,22 @@ async def start_dashboard(
         )
     except Exception:
         logger.warning("Artifact knowledge mirror failed to start", exc_info=True)
+
+    # Entries a watched feed or page stored before they were converted on the way in are
+    # still their markup; convert them once, a batch at a time, without holding up the start.
+    # Keyed on what each body still holds, so every later start finds nothing to do.
+    async def _convert_stored_markup() -> None:
+        from personalclaw.knowledge import stored_markup
+
+        try:
+            converted = await stored_markup.convert_in_batches(state.knowledge_store)
+        except Exception:
+            logger.warning("Converting watched items stored as markup failed", exc_info=True)
+            return
+        if converted:
+            logger.info("Knowledge: converted %d watched item(s) stored as markup", converted)
+
+    state._stored_markup_task = asyncio.create_task(_convert_stored_markup())  # prevent GC
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()

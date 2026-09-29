@@ -381,17 +381,25 @@ def html_to_prose(html: str) -> str:
     Chrome (nav/header/footer/aside/script/…) is dropped BEFORE conversion — the same
     primitive as the bookmark scrape — and the regex path is the degradation when
     ``html2text`` is not installed, not a second policy.
+
+    The prose becomes a library item's body, which the library renders as markdown, and
+    html2text turns a tag the file only SHOWED (``&lt;form …&gt;``) back into a real one. So it
+    finishes the way every html→text conversion into the library does
+    (:func:`~personalclaw.knowledge.connectors.base.without_raw_html`): no raw HTML is left
+    outside code. A ``<pre>`` is written as a fenced block so that step knows it for code
+    (html2text's default indented block is not recognised, and its tags would be escaped).
     """
-    from personalclaw.knowledge.connectors.base import strip_html_chrome
+    from personalclaw.knowledge.connectors.base import strip_html_chrome, without_raw_html
 
     html = strip_html_chrome(html or "")
     if _html2text_mod is not None:
         h = _html2text_mod.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
-        return h.handle(html)
+        h.backquote_code_style = True
+        return without_raw_html(h.handle(html))
     text = re.sub(r"<[^>]+>", " ", html)
-    return re.sub(r"\s+", " ", text).strip()
+    return without_raw_html(re.sub(r"\s+", " ", text).strip())
 
 
 # ── Structural PDF read ───────────────────────────────────────────────────────

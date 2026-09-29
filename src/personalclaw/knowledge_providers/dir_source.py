@@ -88,6 +88,9 @@ DEFAULT_DEBOUNCE_SECS = 5.0
 #: actually index; a watched directory is a notes/docs folder, not a binary drop.
 DEFAULT_INCLUDE = ("*.md", "*.markdown", "*.txt", "*.rst", "*.org")
 
+#: Files read as HTML and stored as their words (see ``DirSourceProvider._read``).
+HTML_SUFFIXES = frozenset({".html", ".htm"})
+
 #: Never walked, whatever the globs say: VCS/dependency/build noise a user never means to
 #: index, and the churn that would dominate every diff.
 SKIP_DIRS = frozenset(
@@ -384,7 +387,10 @@ class DirSourceProvider(KnowledgeSourceProvider):
     def _read(self, spec: dict, rel: str) -> str | None:
         """File text, or None when it cannot be read (fail-open per file). Read only at
         EMIT time — never while a change is still settling — so a half-written file is
-        not what gets indexed."""
+        not what gets indexed.
+
+        An HTML file (a folder the spec widens to ``*.html``) is stored as its words, through
+        the same conversion an uploaded ``.html`` takes; every other file is text already."""
         root = self._resolved_path(spec)
         if not root:
             return None
@@ -393,7 +399,12 @@ class DirSourceProvider(KnowledgeSourceProvider):
                 raw = fh.read(MAX_FILE_BYTES)
         except OSError:
             return None
-        return raw.decode("utf-8", errors="replace")
+        text = raw.decode("utf-8", errors="replace")
+        if Path(rel).suffix.lower() in HTML_SUFFIXES:
+            from personalclaw.knowledge.readers import html_to_prose
+
+            return html_to_prose(text)
+        return text
 
     @staticmethod
     def _first_scan(sigs: dict[str, list], prior: _DirCursor) -> _DirCursor:

@@ -645,6 +645,46 @@ payloads; memory recall applies the same data-not-instructions framing to
 recalled episodes (`dashboard/handlers/memory.py`; see
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard)).
 
+## Stored and remote text on the page
+
+Everything the dashboard shows that it did not write — a model's reply, a
+tool's result, a knowledge item's body, an inbox message, an app's or a tool's
+description, release notes — renders through ONE component,
+`web/src/ui/Markdown.tsx`, on the dashboard's own origin. It renders Markdown
+only:
+
+- **Embedded HTML is shown as text.** Before anything parses it as HTML, each
+  embedded fragment is either a run of attribute-free formatting tags (`<kbd>`,
+  `<br>`, `<sub>`, `<details>` …, the `EMBEDDED_FORMATTING` list) or it becomes
+  a text node. A form, a frame, a style block or an image tag in a body is words
+  on the page, and a tag carrying any attribute is too.
+- **A link opens only for http, https and mailto**, read with the browser's own
+  URL parser; a relative link (a path on this gateway, an in-app route) is not
+  a link.
+- **An image loads only over https or from the artifact library's own route.**
+- **A `<widget>` block runs in its sandboxed frame only in the agent's own chat
+  reply** (the `widgets` prop). Anywhere else it is embedded HTML like any other.
+
+`tests/test_rendering_registry_parity.py` censuses every other way the web app
+turns a string into live markup — `dangerouslySetInnerHTML`, `innerHTML`, a
+parsed document, a frame's `srcdoc` or an HTML blob — by file and count, with
+why each is safe (highlight.js output; an `svg`/`document` artifact after the
+fail-closed sanitizer in `ui/content/sanitize.ts`; the sandboxed widget and
+artifact frames), and fails on a new one. The project's own copy — labels,
+hints, errors — is JSX text and never passes through the renderer.
+
+The page's Content-Security-Policy (`dashboard/server.py::dashboard_csp`) is
+the layer behind that: `default-src 'self'`, no code, style or font from
+another origin, `img-src` adding `data:`, `blob:` and `https:` (the images in a
+rendered body), `frame-src 'self' blob:`, `frame-ancestors 'self'`,
+`object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, and a
+`connect-src` of `'self'` plus the loopback WebSocket at the port the page was
+served on (and the public host when `dashboard.public_url` is set).
+`script-src` keeps `'unsafe-inline'` because widget frames — blob: documents —
+inherit the page's policy and run inline scripts and handlers, and the sign-in
+and pairing pages carry inline scripts; dropping it needs widgets served as
+documents with a policy of their own.
+
 ## Supply chain (`supply_chain.py`)
 
 `SkillScanner` gates both app installs and skill installs through

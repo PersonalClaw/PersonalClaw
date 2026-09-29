@@ -20,12 +20,25 @@ import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
 import { copyText } from '../app/clipboard'
 
-/** Full markdown renderer: react-markdown + remark-gfm (tables, task lists,
- *  strikethrough) + remark-math + rehype-katex (LaTeX) + rehype-raw (inline
- *  HTML) + highlight.js (code), with ```mermaid diagrams, ```diff highlighting,
- *  and `<widget>` blocks rendered as sandboxed theme-aware iframes (the agent
- *  visualization contract — see widget/). Component overrides are NE-tokenized.
- *  Source is trusted (our own backend); widget HTML is sandboxed regardless. */
+/** The one renderer for markdown this app did not write: a model's reply, a tool's result, a
+ *  knowledge item's body (a feed entry, a scraped page, an uploaded file, a mirrored
+ *  artifact), an inbox message, an app's or a tool's description, release notes. None of it is
+ *  ours, and all of it renders on the dashboard's own origin, so it renders as MARKDOWN ONLY:
+ *
+ *   · embedded HTML is shown as the text it is, except the attribute-free formatting tags in
+ *     `EMBEDDED_FORMATTING` (`<kbd>`, `<br>`, `<sub>` …), which carry no URL, handler or
+ *     style. A form, a frame, a style block or an image tag in a body is words on the page;
+ *   · a link opens only for http, https and mailto (`webHref`);
+ *   · an image loads only from https or the artifact library's own route (`imageSrc`) —
+ *     what the page's Content-Security-Policy loads;
+ *   · a `<widget>` block runs in its sandboxed frame only where the caller opts in
+ *     (`widgets`): the agent's own chat replies, the one place the model is given that
+ *     contract. Anywhere else a widget tag is embedded HTML like any other.
+ *
+ *  react-markdown + remark-gfm (tables, task lists, strikethrough) + remark-math +
+ *  rehype-katex (LaTeX) + highlight.js (code), with ```mermaid diagrams and ```diff
+ *  highlighting. Component overrides are NE-tokenized. The project's own copy — a label, a
+ *  hint, an error sentence — is JSX text and never comes through here. */
 
 // shell-ish languages where "Run in terminal" makes sense.
 const SHELL_LANGS = new Set(['shell', 'bash', 'sh', 'zsh', 'console', 'shellsession', 'fish'])
@@ -86,7 +99,7 @@ function artifactSlugFromSrc(src: string): string {
   return m ? decodeURIComponent(m[1]) : ''
 }
 
-/** An inline image embedded in chat (a generated kind:image artifact referenced
+/** An image from the artifact library (a generated kind:image artifact referenced
  *  as `![alt](/api/artifacts/<slug>/raw?version=N)`). If the bytes load, shows the
  *  image. If they 404 (the artifact was deleted but the transcript still references
  *  it), degrades to a clean placeholder showing the original prompt (the alt text)
@@ -192,23 +205,66 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   )
 }
 
-/** Allow only safe link schemes. Markdown here is rendered in the APP's own origin
- *  (not a sandboxed iframe), and rehype-raw passes inline HTML through unsanitized —
- *  so a `javascript:`/`data:`/`vbscript:` href in worker-authored content (LLM output,
- *  potentially echoing a malicious file the worker read in a brownfield repo) would
- *  execute on click with the app's cookies/storage. Permit http(s), mailto, tel,
- *  relative, and #anchors; neutralize everything else to a non-navigable link. */
-function safeHref(href: unknown): string | undefined {
-  if (typeof href !== 'string') return undefined
-  const h = href.trim()
-  if (!h) return undefined
-  // Relative paths, anchors, and protocol-relative URLs are safe.
-  if (/^(\/|\.|#|mailto:|tel:)/i.test(h)) return h
-  if (/^https?:\/\//i.test(h)) return h
-  // A scheme-less host-ish link (example.com/x) — let it through as-is (the browser
-  // treats it relative; harmless). Anything with an explicit dangerous scheme is dropped.
-  if (/^[a-z][a-z0-9+.-]*:/i.test(h)) return undefined  // some other explicit scheme → block
-  return h
+/** The schemes a link in rendered text may open. */
+const WEB_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+/** A link's destination if it is a web or email address, else undefined.
+ *
+ *  Parsed with the browser's own URL parser rather than matched as text, so this reads the
+ *  scheme exactly where navigation will: the parser drops every tab and newline and trims
+ *  control characters first, which is how `java<TAB>script:` is the script scheme to the page
+ *  while a regex sees no scheme at all. A relative reference (a path on this gateway, a `#/`
+ *  route, `//host`, a bare `host/path`) is refused too: it resolves against the dashboard's
+ *  own origin, and nothing in a stored body gets to choose where inside this app a click
+ *  lands. The returned value is the parser's serialisation — what the browser will follow. */
+function webHref(href: string): string | undefined {
+  let url: URL
+  try { url = new URL(href.trim()) } catch { return undefined }
+  return WEB_LINK_PROTOCOLS.has(url.protocol) ? url.href : undefined
+}
+
+/** A generated image in the artifact library: `/api/artifacts/<slug>/raw`, optionally with a
+ *  `?version=N`. The one path on this gateway rendered text may load. */
+const ARTIFACT_IMAGE = /^\/api\/artifacts\/[^/?#\s]+\/raw(?:\?[^#\s]*)?$/
+
+/** An image's source if the page may load it, else undefined: an artifact image, or an https
+ *  address. That is the page's own `img-src` minus what text never needs, so a body cannot
+ *  make the dashboard fetch another path of its own API, and a plain-http image — which the
+ *  policy refuses anyway — is not painted as a broken frame with a console error beside it. */
+function imageSrc(src: string): string | undefined {
+  const s = src.trim()
+  if (ARTIFACT_IMAGE.test(s)) return s
+  let url: URL
+  try { url = new URL(s) } catch { return undefined }
+  return url.protocol === 'https:' ? url.href : undefined
+}
+
+/** react-markdown's URL hook, and the whole URL policy: every `href`/`src` in the rendered tree
+ *  passes through here before any component sees it. A value it refuses becomes '', which the
+ *  `a` and `img` overrides render as their words. */
+function markdownUrl(url: string, key: string, node: { tagName: string }): string {
+  if (key === 'href' && node.tagName === 'a') return webHref(url) ?? ''
+  if (key === 'src' && node.tagName === 'img') return imageSrc(url) ?? ''
+  return ''
+}
+
+/** An image in rendered text, once `markdownUrl` has passed its source. */
+function MarkdownImage({ src, alt, chatSessionKey }: { src?: unknown; alt?: unknown; chatSessionKey?: string }) {
+  const text = typeof alt === 'string' ? alt : ''
+  if (typeof src !== 'string' || !src) return <span className="text-on-surface-low italic">{text || 'image'}</span>
+  if (ARTIFACT_IMAGE.test(src)) return <InlineArtifactImage src={src} alt={text} chatSessionKey={chatSessionKey} />
+  return <WebImage src={src} alt={text} />
+}
+
+/** An https image. One that does not load says nothing about why — it may be gone, blocked or
+ *  offline — so it falls back to its alt text, the same words a refused source shows. */
+function WebImage({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <span className="text-on-surface-low italic">{alt || 'image'}</span>
+  return (
+    <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
+      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain" />
+  )
 }
 
 /** Heuristic: does an inline-code string look like a clickable file path? */
@@ -276,24 +332,15 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
   th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
   a({ href, children }: any) {
-    const safe = safeHref(href)
-    // A dangerous/blocked href renders as styled-but-inert text (no navigation), so the
-    // link text is still readable but can't execute a javascript:/data: payload.
-    if (!safe) return <span className="text-primary underline decoration-primary/40 underline-offset-2" title="Link removed (unsafe URL)">{children}</span>
-    return <a href={safe} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary">{children}</a>
+    // `markdownUrl` has already emptied any href that is not a web or email address. Such a
+    // link keeps its words, styled as the link it was written as, and goes nowhere.
+    if (!href) return <span className="text-primary underline decoration-primary/40 underline-offset-2" title="Not opened: only web and email links open from here">{children}</span>
+    return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary">{children}</a>
   },
-  img({ src, alt }: any) {
-    // Render an inline image (e.g. a generated kind:image artifact referenced as
-    // ![](/api/artifacts/<slug>/raw)) — safe-src gated (same allowlist as links,
-    // plus data:image), styled to the surface, lazy + capped so it can't blow out
-    // the message column. A blocked src degrades to its alt text; a 404 (deleted
-    // artifact still referenced by the transcript) degrades to a placeholder via
-    // InlineArtifactImage. (componentsWith() overrides this to thread onRegenerate.)
-    const safe = typeof src === 'string' && (/^(\/|https?:\/\/)/.test(src.trim()) || /^data:image\//i.test(src.trim()))
-      ? src.trim() : undefined
-    if (!safe) return <span className="text-on-surface-low italic">{alt || 'image'}</span>
-    return <InlineArtifactImage src={safe} alt={alt || ''} />
-  },
+  // Lazy and capped so an image cannot blow out the column; a refused source shows its alt
+  // text, a deleted artifact its Regenerate placeholder. (componentsWith() threads the chat
+  // session through for that placeholder.)
+  img({ src, alt }: any) { return <MarkdownImage src={src} alt={alt} /> },
   blockquote({ children }: any) { return <blockquote className="my-2 border-l border-outline-variant pl-m italic text-on-surface-var">{children}</blockquote> },
   hr() { return <hr className="my-4 border-outline-variant/40" /> },
   h1({ children }: any) { return <h1 className="mt-4 mb-2 text-on-surface" data-type="headline-s">{children}</h1> },
@@ -308,8 +355,50 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
   em({ children }: any) { return <em className="italic">{children}</em> },
 }
 
+/** The embedded HTML that may still format a body: tags that carry nothing but their name.
+ *  Written with ANY attribute — a class, a style, a handler, an `open` — a tag is not one of
+ *  these, and is shown as text like the rest. */
+const EMBEDDED_FORMATTING = [
+  'b', 'strong', 'i', 'em', 'u', 's', 'del', 'ins', 'mark', 'small', 'sub', 'sup', 'kbd', 'code',
+  'br', 'details', 'summary',
+] as const
+
+const FORMATTING_TAG = new RegExp(`</?(?:${EMBEDDED_FORMATTING.join('|')})\\s*/?>`, 'gi')
+const HTML_COMMENT = /<!--[\s\S]*?-->/g
+
+/** The one hast node shape this pass reads. `mdast-util-to-hast` hands embedded HTML through
+ *  as a `raw` node holding its source text, one per tag inline and one per HTML block. */
+type HastLike = { type: string; value?: string; children?: HastLike[] }
+
+/** Embedded HTML becomes text, before anything parses it as HTML.
+ *
+ *  Runs ahead of `rehype-raw`, and decides per `raw` node: a comment is dropped (a comment is
+ *  not content); a node made of nothing but `EMBEDDED_FORMATTING` tags and text with no `<`
+ *  in it is left for `rehype-raw` to turn into those elements; ANY other `<` makes the whole
+ *  node a text node, which is what the page then shows. So the HTML parser only ever sees
+ *  attribute-free formatting tags, and no reading of the rest — by this pass or by the
+ *  parser — can differ from the other's: the rest never reaches the parser at all. */
+function embeddedHtmlAsText() {
+  const walk = (node: HastLike): void => {
+    const kids = node.children
+    if (!kids) return
+    for (let i = kids.length - 1; i >= 0; i--) {
+      const kid = kids[i]
+      if (kid.type !== 'raw') { walk(kid); continue }
+      const html = kid.value ?? ''
+      const uncommented = html.replace(HTML_COMMENT, '')
+      if (!uncommented.trim()) kids.splice(i, 1)
+      else if (uncommented.replace(FORMATTING_TAG, '').includes('<')) kids[i] = { type: 'text', value: html }
+      else kid.value = uncommented
+    }
+  }
+  return walk
+}
+
 const REMARK: PluggableList = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]
-const REHYPE: PluggableList = [[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
+const REHYPE: PluggableList = [embeddedHtmlAsText, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
+/** Inline sinks take the same HTML policy, and no LaTeX (see `inline` mode below). */
+const REHYPE_INLINE: PluggableList = [embeddedHtmlAsText, rehypeRaw]
 
 /** ── `inline` mode: the SAME renderer, for a sink that cannot hold a block ──────────────
  *
@@ -328,14 +417,12 @@ const REHYPE: PluggableList = [[rehypeRaw, { passThrough: ['math', 'inlineMath']
  *   · the Tools row is a `<button>`, so a rendered `<a>` there is `nested-interactive`
  *     (axe, serious) — links render as styled TEXT here, never anchors.
  *
- *  🪤 NOT A SECOND RENDERER. Same `Markdown` entry point, same remark pipeline, same
- *  component vocabulary — block containers are unwrapped and flattened to running text, so
- *  a heading or a table in a two-line description degrades to its words instead of
- *  reflowing the grid. Two deliberate differences:
- *   · no `rehype-raw` / `rehype-katex`. The block renderer's doc says "source is trusted
- *     (our own backend)"; THESE sinks carry third-party manifest prose — `app.json`
- *     descriptions, MCP tool and parameter descriptions — so raw HTML is not passed
- *     through and LaTeX is not parsed.
+ *  🪤 NOT A SECOND RENDERER. Same `Markdown` entry point, same remark pipeline, same HTML and
+ *  URL policy, same component vocabulary — block containers are unwrapped and flattened to
+ *  running text, so a heading or a table in a two-line description degrades to its words
+ *  instead of reflowing the grid. Two deliberate differences:
+ *   · no `rehype-katex`: these sinks carry manifest prose — `app.json` descriptions, MCP tool
+ *     and parameter descriptions — where a `$` is a price, not LaTeX.
  *   · no colour of its own. Each sink owns its ink (`text-on-surface-low`,
  *     `text-on-surface-var`, caption), so inline mode inherits rather than forcing
  *     `text-on-surface` the way the block wrapper does. That is what keeps these six
@@ -343,7 +430,7 @@ const REHYPE: PluggableList = [[rehypeRaw, { passThrough: ['math', 'inlineMath']
  */
 const INLINE_UNWRAP = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br', 'img', 'pre',
-  'ul', 'ol', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  'ul', 'ol', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary',
 ]
 
 const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
@@ -453,12 +540,7 @@ function componentsWith(
   // placeholder can offer "Regenerate" (re-runs at the same slug, server recovers
   // the prompt from this session's tool history).
   if (chatSessionKey) {
-    base.img = ({ src, alt }: any) => {
-      const safe = typeof src === 'string' && (/^(\/|https?:\/\/)/.test(src.trim()) || /^data:image\//i.test(src.trim()))
-        ? src.trim() : undefined
-      if (!safe) return <span className="text-on-surface-low italic">{alt || 'image'}</span>
-      return <InlineArtifactImage src={safe} alt={alt || ''} chatSessionKey={chatSessionKey} />
-    }
+    base.img = ({ src, alt }: any) => <MarkdownImage src={src} alt={alt} chatSessionKey={chatSessionKey} />
   }
   // Combined text transform: linkify file paths (when enabled) THEN resolve
   // `[Memory N]` citation chips (when a manifest is present). Order is safe —
@@ -513,15 +595,19 @@ function stringifyChildren(v: unknown): string {
 function MarkdownText({ children, onFileClick, chatSessionKey, citations }: {
   children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]
 }) {
-  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
+  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={componentsWith(onFileClick, chatSessionKey, citations)}>{children}</ReactMarkdown>
 }
 
-export const Markdown = memo(function Markdown({ children, className, inline, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
+export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
   /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
    *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
    *  click target. See `INLINE_UNWRAP` above for what it costs and why. */
   inline?: boolean
+  /** Run `<widget>` blocks in their sandboxed frames. For the agent's own chat replies only —
+   *  the dashboard chat is where the model is given the widget contract. Without it a widget
+   *  tag is embedded HTML like any other, and is shown as text. */
+  widgets?: boolean
   /** Chat session key — enables "Regenerate" on a deleted inline image's placeholder
    *  (re-runs at the same slug; server recovers the prompt from this session). */
   chatSessionKey?: string
@@ -543,13 +629,14 @@ export const Markdown = memo(function Markdown({ children, className, inline, on
   if (inline) {
     return (
       <span className={className}>
-        <ReactMarkdown remarkPlugins={REMARK} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>{text}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE_INLINE} urlTransform={markdownUrl} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>{text}</ReactMarkdown>
       </span>
     )
   }
-  // Split out `<widget>` blocks; render each as a sandboxed iframe, prose as MD.
-  const segments = parseWidgetBlocks(text, streaming)
-  if (segments.length === 1 && segments[0].type === 'md') {
+  // Split out `<widget>` blocks where the caller runs them; render each as a sandboxed
+  // iframe, prose as MD.
+  const segments = widgets ? parseWidgetBlocks(text, streaming) : null
+  if (!segments || (segments.length === 1 && segments[0].type === 'md')) {
     return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations}>{text}</MarkdownText></div>
   }
   let wi = 0

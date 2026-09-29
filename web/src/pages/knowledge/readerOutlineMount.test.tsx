@@ -20,11 +20,12 @@ import type { KnowledgeItem } from '../../lib/api'
 //     explicitly rather than pretending to scroll a real document.
 //
 // 🪤 THE DEGRADE IS THE REASON THE MAPPING NEEDS A TEST AT ALL. `parseOutline` skips setext
-// headings, headings inside a blockquote or list item, and raw HTML `<h2>` — all of which DO
-// render as heading elements. On such a body the article has MORE heading nodes than entries
-// and every index after the extra one slips by one, so a mapping that trusted the index would
-// scroll the reader confidently into the wrong section. The `RAW_HTML_HEADING` fixture below
-// is that real case (rehype-raw passes the tag through `ui/Markdown`), not a contrived one.
+// headings and headings inside a blockquote or list item — all of which DO render as heading
+// elements. On such a body the article has MORE heading nodes than entries and every index
+// after the extra one slips by one, so a mapping that trusted the index would scroll the
+// reader confidently into the wrong section. The `QUOTED_HEADING` fixture below is that real
+// case (a saved page that quotes a section heading), not a contrived one. A raw HTML `<h2>` no
+// longer is one: `ui/Markdown` shows embedded HTML as text, so it renders no heading at all.
 
 const SECTIONED = [
   '# Widgets, considered',
@@ -42,9 +43,9 @@ const SECTIONED = [
 
 /** The same body with one heading the parser refuses and the renderer emits — the off-by-one
  *  the degrade exists for. */
-const RAW_HTML_HEADING = SECTIONED.replace(
+const QUOTED_HEADING = SECTIONED.replace(
   '## How widgets are sold',
-  '<h2>How widgets are sold</h2>',
+  '> ## How widgets are sold',
 )
 
 function item(content: string): KnowledgeItem {
@@ -187,14 +188,14 @@ describe('selecting a row scrolls the article to that section', () => {
 
 describe('a heading-count mismatch degrades to a no-op', () => {
   it('does not scroll to the wrong section when the renderer emitted an extra heading', () => {
-    renderReader(RAW_HTML_HEADING)
-    const entries = parseOutline(RAW_HTML_HEADING)
+    renderReader(QUOTED_HEADING)
+    const entries = parseOutline(QUOTED_HEADING)
     const hs = headings()
     // The premise of the test, measured rather than asserted in prose: the parser saw one
     // fewer heading than the renderer produced. If this ever stops being true the test below
     // would be proving nothing, so it fails here instead.
-    expect(entries.length, 'parseOutline skips the raw <h2>').toBe(2)
-    expect(hs.length, 'the renderer emits it (rehype-raw)').toBe(3)
+    expect(entries.length, 'parseOutline skips the quoted heading').toBe(2)
+    expect(hs.length, 'the renderer emits it inside the quote').toBe(3)
 
     const spies = hs.map((h) => {
       const fn = vi.fn()
@@ -214,7 +215,7 @@ describe('a heading-count mismatch degrades to a no-op', () => {
   })
 
   it('marks no active row on a mismatched document', async () => {
-    renderReader(RAW_HTML_HEADING)
+    renderReader(QUOTED_HEADING)
     // Geometry that WOULD select a row on a matching document (the earlier case proves it).
     stubGeometry([-200, 50, 600])
     await scrollTick()

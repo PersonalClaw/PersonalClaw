@@ -1072,6 +1072,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # AND one more: it owns the subscription in `artifacts.changes`, so dropping the
         # reference would leave the listener registered against a collected indexer.
         self._artifact_indexer: object | None = None
+        # The one-time conversion of watched items stored as markup; held to prevent GC.
+        self._stored_markup_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}

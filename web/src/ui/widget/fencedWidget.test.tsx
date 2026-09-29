@@ -13,7 +13,7 @@
  *  program, so this file asserts the boundary at the parser and at ALL THREE of its
  *  consumers, because a boundary that holds on one of three surfaces is not one:
  *
- *  * chat — `Markdown` → `parseWidgetBlocks`
+ *  * chat — `Markdown widgets` (a chat reply) → `parseWidgetBlocks`
  *  * a workflow gate's prompt — `WorkflowAsk` → `findGenUiBlock`
  *  * a dashboard tile's body — `PinnedTiles` → `findGenUiBlock`
  *
@@ -209,15 +209,15 @@ describe('findGenUiBlock / widgetlessText inherit the rule', () => {
   })
 })
 
-describe('consumer 1 — chat (Markdown)', () => {
+describe('consumer 1 — chat (Markdown with `widgets`, as a chat reply renders)', () => {
   it('CONTROL: an unfenced widget still mounts its sandboxed iframe', async () => {
-    const { container } = render(<Markdown>{`Here:\n\n${TAG}`}</Markdown>)
+    const { container } = render(<Markdown widgets>{`Here:\n\n${TAG}`}</Markdown>)
     await act(async () => {})
     expect(container.querySelector('iframe')).not.toBeNull()
   })
 
   it('a fenced widget mounts NO iframe and shows its text as code', async () => {
-    const { container } = render(<Markdown>{`Like this:\n\n\`\`\`html\n${TAG}\n\`\`\``}</Markdown>)
+    const { container } = render(<Markdown widgets>{`Like this:\n\n\`\`\`html\n${TAG}\n\`\`\``}</Markdown>)
     await act(async () => {})
     expect(container.querySelector('iframe')).toBeNull()
     const pre = container.querySelector('pre')
@@ -227,10 +227,19 @@ describe('consumer 1 — chat (Markdown)', () => {
 
   it('both at once: one iframe, and the fence keeps its content', async () => {
     const raw = `\`\`\`html\n${TAG}\n\`\`\`\n\n${TAG}`
-    const { container } = render(<Markdown>{raw}</Markdown>)
+    const { container } = render(<Markdown widgets>{raw}</Markdown>)
     await act(async () => {})
     expect(container.querySelectorAll('iframe')).toHaveLength(1)
     expect(container.querySelector('pre')?.textContent).toContain('Stamp</widget>')
+  })
+
+  it('stored text (no `widgets`) runs no widget: the tag is shown as the text it is', async () => {
+    // The pair of the CONTROL above: the same unfenced tag, rendered where a knowledge body,
+    // a tool result or an inbox message is, mounts nothing.
+    const { container } = render(<Markdown>{`Here:\n\n${TAG}`}</Markdown>)
+    await act(async () => {})
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.textContent).toContain(TAG)
   })
 })
 

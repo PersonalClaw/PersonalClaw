@@ -96,11 +96,16 @@ def html_to_text(html: str) -> str:
     real content, not boilerplate. Uses ``html2text`` when available (full markdown,
     unwrapped lines); falls back to a minimal tag-strip otherwise. Shared by every
     connector that ingests HTML.
+
+    A ``<pre>`` comes out as a FENCED block, not html2text's default indented one: a fence is
+    what :func:`without_raw_html` recognises as code, so a tag inside it stays the code it is
+    instead of being escaped into a literal ``&lt;`` on the page.
     """
     html = strip_html_chrome(html)
     if _html2text is not None:
         h = _html2text.HTML2Text()
         h.body_width = 0
+        h.backquote_code_style = True
         return h.handle(html)
     text = re.sub(r"<br\s*/?>", "\n", html)
     text = re.sub(r"<[^>]+>", "", text)

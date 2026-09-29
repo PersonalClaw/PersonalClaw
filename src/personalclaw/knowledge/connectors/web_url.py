@@ -8,7 +8,11 @@ try:
 except ImportError:
     _httpx = None  # type: ignore[assignment]
 
-from personalclaw.knowledge.connectors.base import BaseConnector, extract_html_metadata
+from personalclaw.knowledge.connectors.base import (
+    BaseConnector,
+    extract_html_metadata,
+    without_raw_html,
+)
 from personalclaw.web.extract import extract_main_content, meta_refresh_target
 
 logger = logging.getLogger(__name__)
@@ -121,7 +125,10 @@ class WebUrlConnector(BaseConnector):
                 # Shared extractor (web/extract.py): boilerplate-free main content via
                 # trafilatura → markdown, sanitized first. extract_html_metadata still
                 # reads the <head> for the bookmark link-card title/description.
-                text = extract_main_content(raw, url=final_url).text
+                # The markdown becomes a library item's body, and the extractor turns a tag the
+                # page only SHOWED (`&lt;iframe…&gt;`) back into a real one — so what is kept
+                # is the page's words, with no raw HTML left outside code.
+                text = without_raw_html(extract_main_content(raw, url=final_url).text)
                 page_meta = extract_html_metadata(raw)
             else:
                 text = raw

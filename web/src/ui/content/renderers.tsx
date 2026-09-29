@@ -36,7 +36,8 @@ function looksLikeMarkdown(content: string): boolean {
   // Only block-level tags gate here: genuine editorial HTML always has block structure,
   // while INLINE tags (<a>, <br>, <strong>, <em>, <img>, <hr>) legitimately appear inside
   // markdown prose — gating on them would leave a mostly-markdown doc with one stray link
-  // rendering as literal source. (Markdown's own renderer sanitizes any inline HTML safely.)
+  // rendering as literal source. (Markdown shows embedded HTML as text, bar attribute-free
+  // formatting tags, so a stray inline tag is safe there either way.)
   if (/<(h[1-6]|p|div|section|article|main|header|footer|nav|aside|ul|ol|li|table|thead|tbody|tr|td|th|blockquote|pre|figure)\b[^>]*>/i.test(s)) {
     return false
   }

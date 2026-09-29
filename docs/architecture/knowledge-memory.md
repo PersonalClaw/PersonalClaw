@@ -94,11 +94,29 @@ one case the label exists for. A push never fails the local write.
   file's own name included, or edited later) is recorded as hers
   (`items.title_source = 'user'`) and never replaced; the suggestion stays on
   the item as `ai_title`.
-- **Feed and page entries are stored as their words.** A watched feed's or
-  page's entry HTML is converted to markdown text on the way in
-  (`connectors/base.py::readable_text`), and no raw HTML survives outside code:
-  a tag the entry only showed as text comes out of the conversion as a real
-  tag, so it is written back as text (`without_raw_html`).
+- **What comes in as HTML is stored as its words.** The library renders a body
+  as markdown only (the web app's one renderer shows embedded HTML as text — see
+  [security.md](security.md#stored-and-remote-text-on-the-page)), so every way
+  HTML comes in converts it to markdown text, and no raw HTML survives outside
+  code: a tag the source only showed as text comes out of html2text or
+  trafilatura as a real tag, so it is written back as text
+  (`connectors/base.py::without_raw_html`). A `<pre>` comes out as a fenced
+  block, which that step knows for code.
+  - a watched feed's or page's entry — `connectors/base.py::readable_text`;
+  - a bookmark's scrape — `connectors/web_url.py`;
+  - an uploaded `.html` file, a watched folder's `.html` file and an `html`
+    artifact's mirror — `readers.py::html_to_prose`;
+  - a `document` artifact's mirror — its editorial HTML through the same reader,
+    unless the body has no HTML block structure, in which case it is the markdown
+    it was saved as (`artifact_ingest.py::_reads_as`).
+- **What was stored as markup before is converted once.** A watched feed's or
+  page's item that still holds raw HTML outside code is converted at gateway
+  start, a batch at a time (`knowledge/stored_markup.py`): its pool copy follows,
+  and its chunks and vector are invalidated for the maintenance host to rebuild,
+  with no model call. A `document`/`html` artifact mirror that still holds raw
+  HTML is re-mirrored at start (`ArtifactIndexer.remirror_markup`). Both key on
+  the stored text, so a converted body never matches again. A body a person wrote
+  is never rewritten: any HTML in her note is shown as text.
 - **One reader at a time, hers first.** `knowledge/ingest_queue.py` runs items
   one at a time (the terminal stages share one sqlite connection) in two lanes:
   what a person adds or asks for (`enqueue`) is read before background work —

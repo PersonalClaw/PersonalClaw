@@ -743,6 +743,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **What the dashboard shows from models, tools, feeds, pages, files, apps and other people is Markdown only: HTML in it reads as text (plain formatting tags such as `<kbd>` and `<br>` aside), only web and email links open, images load only over https or from the artifact library, and a `<widget>` runs only in a chat reply.**
+- **A saved page, an uploaded or watched-folder HTML file and a mirrored document artifact are stored as their words, and feed and page items and document artifacts stored as markup before are converted once.**
+- **The dashboard's page policy lets no form post to another site and no WebSocket reach another port on this machine.**
 - **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
 - **The libraries PersonalClaw's model features load report nothing and write nothing outside your PersonalClaw home: onnxruntime starts no telemetry and leaves no device identifier, the Hugging Face library keeps no list of AI tools in your shared Hugging Face folder and sends no usage pings, and the code map's grammars download into the home.**
 - **An MCP server's command, arguments and URL show every credential in them masked on the Tools page's edit form and in Settings → Providers, as the Allow question does, and a save keeps or replaces a masked value.**
