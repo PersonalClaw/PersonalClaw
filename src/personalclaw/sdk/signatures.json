@@ -8362,6 +8362,17 @@
   },
   "kind": "dataclass"
  },
+ "personalclaw.sdk.sync.KeysRefused": {
+  "bases": ["Exception"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "message"},
+    {"annotation": "dict[str, str]", "kind": "positional_or_keyword", "name": "refused"}
+   ],
+   "returns": "None"
+  },
+  "kind": "class"
+ },
  "personalclaw.sdk.sync.PASSPHRASE_CREDENTIAL": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_SYNC_PASSPHRASE'"},
  "personalclaw.sdk.sync.PushResult": {
   "bases": ["object"],
@@ -8446,6 +8457,15 @@
    }
   }
  },
+ "personalclaw.sdk.sync.is_path_in_store": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Path", "kind": "positional_or_keyword", "name": "root"},
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "rel"},
+   {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "follow_last"}
+  ],
+  "returns": "bool"
+ },
  "personalclaw.sdk.sync.is_routing_key": {
   "kind": "function",
   "params": [
@@ -8453,7 +8473,52 @@
   ],
   "returns": "bool"
  },
+ "personalclaw.sdk.sync.is_safe_relative_path": {
+  "kind": "function",
+  "params": [
+   {"annotation": "object", "kind": "positional_or_keyword", "name": "rel"}
+  ],
+  "returns": "bool"
+ },
  "personalclaw.sdk.sync.sync_egress_policy": {"kind": "alias", "of": "personalclaw.sdk.net.sync_egress_policy"},
+ "personalclaw.sdk.testing.GitGuard": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "keyword_only", "name": "real_home"},
+    {"annotation": "Iterable[str]", "default": "()", "kind": "keyword_only", "name": "own"}
+   ],
+   "returns": "None"
+  },
+  "kind": "class",
+  "members": {
+   "install": {
+    "kind": "method",
+    "params": [],
+    "returns": "None"
+   },
+   "refusal": {
+    "kind": "method",
+    "params": [
+     {"annotation": "object", "kind": "positional_or_keyword", "name": "args"},
+     {"annotation": "Mapping[str, str]", "kind": "positional_or_keyword", "name": "env"},
+     {"annotation": "object", "default": "None", "kind": "positional_or_keyword", "name": "executable"},
+     {"annotation": "os.PathLike[str] | str | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"}
+    ],
+    "returns": "str"
+   },
+   "take": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
+   },
+   "undo": {
+    "kind": "method",
+    "params": [],
+    "returns": "None"
+   }
+  }
+ },
  "personalclaw.sdk.testing.PortGuard": {
   "bases": ["object"],
   "init": {
@@ -8515,6 +8580,21 @@
    {"annotation": "float", "default": "60.0", "kind": "keyword_only", "name": "timeout"}
   ],
   "returns": "int"
+ },
+ "personalclaw.sdk.testing.neutral_git_env": {
+  "kind": "function",
+  "params": [
+   {"annotation": "os.PathLike[str] | str", "kind": "positional_or_keyword", "name": "global_config"}
+  ],
+  "returns": "dict[str, str]"
+ },
+ "personalclaw.sdk.testing.refuse_git_helpers": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "keyword_only", "name": "real_home"},
+   {"annotation": "Iterable[str]", "default": "()", "kind": "keyword_only", "name": "own"}
+  ],
+  "returns": "GitGuard"
  },
  "personalclaw.sdk.testing.refuse_ports": {
   "kind": "function",

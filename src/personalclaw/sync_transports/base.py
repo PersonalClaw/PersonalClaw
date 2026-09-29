@@ -7,10 +7,35 @@ retried push of an object already present must be a no-op, never a duplicate or 
 overwrite. A transport owns credentials and byte movement ONLY; the merge, the
 machine-seq registry contents, and the outbox all live above it in
 :mod:`personalclaw.durability.sync`.
+
+A transport whose remote is a folder on this machine — a synced folder, a clone — reads and
+writes nothing outside it. Whoever else writes that folder can put anything in it, a link to any
+file of this machine's included, and a key followed through one reads that file as another
+machine's object, or writes an object over it. So a key that names a path outside the folder, or
+that leads out of it through a link, is refused with :class:`KeysRefused`, and nothing is read or
+written through it (``personalclaw.sdk.sync.is_path_in_store`` is the rule).
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+
+
+class KeysRefused(Exception):
+    """A transport would not read or write these keys, and the call it refused them in did nothing.
+
+    Each names a path outside the transport's remote, or one that leads out of it through a
+    link. ``refused`` is each key with why, as the sync report says it; the message says what
+    was refused and what to do about it. The sync cycle refuses a peer's change a key of it is
+    refused in, whole, and a registry, salt or push that is refused fails the cycle; either way
+    the report names the keys.
+
+    Not an ``OSError``: a transport says a failed read or write of its remote as a retryable
+    failure, and a refusal is neither a failure nor retryable.
+    """
+
+    def __init__(self, message: str, refused: dict[str, str]) -> None:
+        super().__init__(message)
+        self.refused = dict(refused)
 
 
 @dataclass
@@ -73,24 +98,28 @@ class SyncTransportProvider(ABC):
     @abstractmethod
     def push(self, objects: list[SyncObject]) -> PushResult:
         """Write objects to the remote. Insert-only and idempotent on ``key``: an object
-        whose key already exists is skipped, not overwritten, so a retry is free."""
+        whose key already exists is skipped, not overwritten, so a retry is free. A key it
+        won't write is raised (:class:`KeysRefused`), and none of the objects is left written."""
 
     @abstractmethod
     def list_remote(self, prefix: str = "") -> list[RemoteRef]:
-        """Every remote object under ``prefix`` (empty = all), cheaply — refs, not bytes."""
+        """Every remote object under ``prefix`` (empty = all), cheaply — refs, not bytes. A
+        link it won't follow under ``prefix``, or on the way to it, is raised
+        (:class:`KeysRefused`), never listed as an object."""
 
     @abstractmethod
     def pull(self, refs: list[RemoteRef]) -> list[SyncObject]:
         """Fetch the bytes for the given refs. A ref the remote no longer has is dropped
         from the result rather than raising — the caller reconciles against what it asked
-        for."""
+        for. A key it won't read is raised (:class:`KeysRefused`), and none is returned."""
 
     @abstractmethod
     def cas_registry(self, expected_sha: str | None, data: bytes) -> bool:
         """Compare-and-swap the shared ``registry.json``. Writes ``data`` only if the
         remote registry's current sha equals ``expected_sha`` (``None`` = expect absent).
         Returns True on success, False on a lost race — the caller re-pulls and retries.
-        A transport without atomic CAS (dir-sync) degrades to rename-based locking."""
+        A transport without atomic CAS (dir-sync) degrades to rename-based locking. A
+        registry it won't read or write (:class:`KeysRefused`) is raised."""
 
     @abstractmethod
     def test(self) -> ConnectionResult:

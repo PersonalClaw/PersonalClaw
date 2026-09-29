@@ -60,12 +60,16 @@ def _git_version() -> tuple[int, ...]:
 
 @pytest.fixture
 def scratch(tmp_path, monkeypatch):
-    """A scratch HOME with an empty git configuration. The plants append to ``tmp_path/ran``."""
+    """A scratch HOME with an empty git configuration, whose ``.gitconfig`` and XDG file are the
+    global configuration here: the owner's, as these tests plant it. git reads them only when
+    ``GIT_CONFIG_GLOBAL`` names no file, so the suite's own is taken out for the test. The plants
+    append to ``tmp_path/ran``."""
     home = tmp_path / "home"
     home.mkdir()
     (home / ".gitconfig").write_text("", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
     return tmp_path
 
 

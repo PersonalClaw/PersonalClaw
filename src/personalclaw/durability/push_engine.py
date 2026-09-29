@@ -29,7 +29,7 @@ from personalclaw.durability.outbox import (
     Outbox,
 )
 from personalclaw.durability.registry import REGISTRY_KEY, Registry, shard_prefix
-from personalclaw.sync_transports.base import SyncObject, SyncTransportProvider
+from personalclaw.sync_transports.base import KeysRefused, SyncObject, SyncTransportProvider
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,13 @@ def publish_export(
     # Durable obligation FIRST — if we crash mid-push, the outbox still owes this push.
     entry = outbox.enqueue(transport.name, seq, prefix=prefix, local_dir=str(export_dir), now=now)
 
-    push = transport.push(objects)
+    try:
+        push = transport.push(objects)
+    except KeysRefused as refusal:
+        # Nothing of the push was written, and a retry would be refused again: the outbox stops
+        # chasing it, and the cycle says what was refused.
+        outbox.record_outcome(entry.id, OUTCOME_PERMANENT, now=now, detail=str(refusal))
+        raise
     report.pushed = push.pushed
     report.push_outcome = push.outcome
     outbox.record_outcome(entry.id, push.outcome, now=now, detail=push.detail)

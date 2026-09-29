@@ -15,7 +15,8 @@ the wiring and the read-the-registry step. It is clock-free (``now`` is passed i
 own scheduling — the ``stale_after_secs`` staleness window and the "is sync enabled / which
 transport" resolution live in the service layer (6c-ii-j) that calls this. A transport error at
 any step is caught and reported in the :class:`SyncCycleReport`, never raised, so one bad cycle
-never kills the durability service loop.
+never kills the durability service loop. A key the transport refused (``KeysRefused``) is named in
+the report's ``refused`` too, whichever step it stopped.
 """
 
 from __future__ import annotations
@@ -36,9 +37,14 @@ from personalclaw.durability.pull_engine import PullReport, pull_from_peers
 from personalclaw.durability.push_engine import PushReport, publish_export
 from personalclaw.durability.registry import REGISTRY_KEY, Registry
 from personalclaw.durability.shards import export_shards, left_out_sentence, refused_sentence
-from personalclaw.sync_transports.base import RemoteRef, SyncTransportProvider
+from personalclaw.sync_transports.base import KeysRefused, RemoteRef, SyncTransportProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _refused_by(exc: Exception) -> dict[str, str]:
+    """The keys the transport refused, with why, when *exc* is its refusal."""
+    return exc.refused if isinstance(exc, KeysRefused) else {}
 
 
 @dataclass
@@ -61,7 +67,9 @@ class SyncCycleReport:
     #: (``shards.Read``): said in the report, never dropped in silence.
     left_out: dict[str, str] = field(default_factory=dict)
     #: The paths another machine named outside what a sync may write, with why
-    #: (``pull_engine.PullReport.refused``): none was written, and the report says so.
+    #: (``pull_engine.PullReport.refused``): none was written, and the report says so. With them,
+    #: a key the transport refused (``KeysRefused``) where it stopped the cycle: its registry,
+    #: its salt, or this machine's push, which the cycle's error says.
     refused: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -162,6 +170,7 @@ def run_sync_cycle(
         logger.warning("sync cycle: reading the encryption salt failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"pull: {exc}"
+        report.refused.update(_refused_by(exc))
         return report
 
     # ── PULL + MERGE ────────────────────────────────────────────────────────
@@ -188,6 +197,7 @@ def run_sync_cycle(
         logger.warning("sync cycle: pull failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"pull: {exc}"
+        report.refused.update(_refused_by(exc))
         return report
 
     # ── EXPORT (with DB copies) + PUSH ────────────────────────────────────────
@@ -212,5 +222,6 @@ def run_sync_cycle(
         logger.warning("sync cycle: push failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"push: {exc}"
+        report.refused.update(_refused_by(exc))
         return report
     return report

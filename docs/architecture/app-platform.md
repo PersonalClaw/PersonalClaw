@@ -380,6 +380,12 @@ backend has no access to the gateway's SecurityEventLog).
   protocol-thin branded model apps, and `testing.keychain_off` for an app's
   test harness, which keeps the test process out of the machine's OS keychain
   (one keychain serves every home, so a scratch `PERSONALCLAW_HOME` does not).
+  `testing.neutral_git_env` and `testing.refuse_git_helpers` keep a suite's git
+  off the machine's credential helpers, a Mac's keychain one among them: every
+  test's git reads no system configuration and a global file of its own, and a
+  git that could still sign in with a helper of the machine's is refused before
+  it starts, failing the test that started it (core's suite and the apps
+  repository's both install it).
   `testing.launch_acp_entry` launches an ACP entry's command with the environment
   a spawn from that entry gets, so an ACP app's tests check what its CLI is
   handed with a stub in the CLI's place, never the CLI itself.

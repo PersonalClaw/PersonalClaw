@@ -48,6 +48,16 @@ env_guard = importlib.import_module("env_guard")
 # tests/local_model_port_guard.py, which installs it as it is imported.
 local_model_port_guard = importlib.import_module("local_model_port_guard")
 
+# ── The machine's git configuration, and its credential helpers, stay out ─────────
+# From here on every test's git runs with no system configuration, a global git file of the test's
+# own (`_a_git_configuration_of_its_own`) and an empty `credential.helper` on its command line, and
+# a git that could still sign in with a helper of the machine's own (a Mac's `osxkeychain`: the
+# owner's real keychain) is refused before it starts, and the test that started it fails by name
+# (`_no_test_signs_git_in_with_the_machines_helper`). A core whose git would still name one stops
+# the run here. Mechanism and what it cannot see: tests/git_helper_guard.py, which installs it as
+# it is imported. Proof: tests/test_no_test_git_reaches_the_machines_credential_helper.py.
+git_helper_guard = importlib.import_module("git_helper_guard")
+
 # ── Imported-checkout provenance rail (#2634) ──────────────────────────
 # An editable install points at a mutable working tree. In a git worktree, that can make
 # pytest import ``personalclaw`` from the shared checkout while collecting tests from this
@@ -99,6 +109,7 @@ def pytest_configure(config):
 
 def pytest_unconfigure(config):
     _LET_THE_KEYCHAIN_BACK_IN()
+    git_helper_guard.close()
 
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
@@ -159,6 +170,25 @@ def _no_test_reaches_a_real_local_model():
     refused = local_model_port_guard.GUARD.take()
     if refused:
         pytest.fail(local_model_port_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_signs_git_in_with_the_machines_helper():
+    """Fail the test that started a git that could sign in with a credential helper of the
+    machine's own. The git itself was refused before it started: tests/git_helper_guard.py."""
+    yield
+    refused = git_helper_guard.GUARD.take()
+    if refused:
+        pytest.fail(git_helper_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _a_git_configuration_of_its_own(monkeypatch):
+    """This test's own global git file, in place of the developer's ``~/.gitconfig``: git makes it
+    on the first write, so a test that never writes one leaves nothing behind. A fixture that needs
+    a global setting of its own (an ssh stand-in) writes it to the file ``GIT_CONFIG_GLOBAL``
+    names, or points ``GIT_CONFIG_GLOBAL`` at its own."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", git_helper_guard.own_global_config())
 
 
 @pytest.fixture
@@ -393,8 +423,8 @@ def git_over_ssh(tmp_path_factory, monkeypatch):
     PersonalClaw's git refuses a remote at a local path (``net.git.git_argv``), so a test that
     fetches from a repository it made reaches it the way an owner reaches a server: over ssh, with
     an ssh command of the owner's own (``core.sshCommand``). Here that command is a stand-in that
-    runs, on this machine, the git command a server would run. It is set in a scratch ``HOME``,
-    which the test's own git and PersonalClaw's both read."""
+    runs, on this machine, the git command a server would run. It is set in a scratch global git
+    file (``GIT_CONFIG_GLOBAL``), which the test's own git and PersonalClaw's both read."""
     home = tmp_path_factory.mktemp("home-with-an-ssh-stand-in")
     stand_in = home / "ssh-stand-in"
     stand_in.write_text(
@@ -407,6 +437,7 @@ def git_over_ssh(tmp_path_factory, monkeypatch):
     )
     stand_in.chmod(0o755)
     (home / ".gitconfig").write_text(f"[core]\n\tsshCommand = {stand_in}\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     return lambda repo: f"ssh://example.invalid{Path(repo).resolve()}"

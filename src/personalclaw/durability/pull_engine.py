@@ -31,7 +31,9 @@ an object's key, a path its manifest declares (``shards.OutsideTheExport``), the
 rows stands for (``reconcile.outside_their_store``), and its machine id, which names its folder of
 the remote. A seq that names one is ``payload-bad`` whole — nothing of it is written — and the
 paths are in ``refused``, with why, for the sync report. A pulled key used to be joined onto the
-scratch folder as it came, so ``../`` in one wrote anywhere this machine's user may.
+scratch folder as it came, so ``../`` in one wrote anywhere this machine's user may. A seq whose
+key the transport itself won't list or read (``KeysRefused``: a link in its folder that leads out,
+say) is refused the same way, with the transport's why.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT,
 from personalclaw.durability.registry import Registry, shard_prefix
 from personalclaw.durability.shards import ImportResult, OutsideTheExport, import_shards
 from personalclaw.record_ids import is_path_in_store, is_safe_record_id
-from personalclaw.sync_transports.base import SyncTransportProvider
+from personalclaw.sync_transports.base import KeysRefused, SyncTransportProvider
 
 logger = logging.getLogger(__name__)
 
@@ -190,14 +192,19 @@ def _pull_one_seq(
 ) -> SeqOutcome:
     prefix = shard_prefix(peer_id, seq)
     out = SeqOutcome(peer_id=peer_id, seq=seq)
-    refs = transport.list_remote(prefix)
+    try:
+        refs = transport.list_remote(prefix)
+        objs = transport.pull(refs) if refs else []
+    except KeysRefused as refusal:
+        # A key of this seq the transport won't list or read: nothing of it came in, and it is
+        # refused whole, as one outside the export it came in is.
+        return _refuse(out, refusal.refused)
     if not refs:
         # The registry says this seq exists but its objects aren't listable yet — a partial
         # push. Hold: prerequisite-absent, retried next cycle when the push completes.
         out.verdict = PREREQ_ABSENT
         out.detail = "no objects under prefix (partial push?)"
         return out
-    objs = transport.pull(refs)
     if codec is not None:
         objs, refused = codec.decrypt_after_pull(objs)
         if refused.keys:

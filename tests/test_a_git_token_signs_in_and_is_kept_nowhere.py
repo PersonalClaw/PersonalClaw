@@ -42,12 +42,15 @@ _PROXIES = ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy
 
 @pytest.fixture
 def scratch(tmp_path, monkeypatch):
-    """A scratch HOME with an empty git configuration, and no proxy between git and 127.0.0.1."""
+    """A scratch HOME with an empty git configuration, and no proxy between git and 127.0.0.1. Its
+    ``.gitconfig`` is the global configuration here, the owner's as these tests plant it: git
+    reads it only when ``GIT_CONFIG_GLOBAL`` names no file, so the suite's own is taken out."""
     home = tmp_path / "home"
     home.mkdir()
     (home / ".gitconfig").write_text("", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
     for name in _PROXIES:
         monkeypatch.delenv(name, raising=False)
     return tmp_path

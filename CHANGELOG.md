@@ -35,6 +35,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An app's test suite can refuse its tests a real local model server: `personalclaw.sdk.testing.refuse_ports()`.**
 
+- **An app's test suite can keep its tests' git off the machine's credential helpers, as core's own suite now does: `personalclaw.sdk.testing.neutral_git_env` and `refuse_git_helpers`, used by the apps repository's test harness.**
+
+- **A sync transport can refuse a key that leads out of its folder, and the sync report names it: `personalclaw.sdk.sync.KeysRefused`, with `is_path_in_store` and `is_safe_relative_path`, the rule the sync holds another machine's paths to, used by `dir-sync` and `git-sync`.**
+
 - **The sign-in key can be replaced, from Settings → Security or `personalclaw auth rotate-key`: every device is signed out and told why.**
 
 - **Settings → Security sets the sign-in lockout: how many wrong attempts, and how long it lasts.**

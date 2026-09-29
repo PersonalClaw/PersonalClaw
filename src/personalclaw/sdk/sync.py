@@ -16,6 +16,11 @@ the small part of the **encryption codec** a transport legitimately needs:
   a bucket-level ACL) asks core rather than hard-coding a string.
 * :data:`PASSPHRASE_CREDENTIAL` — the credential NAME the sync passphrase lives under, so a
   transport's setup UI can point a user at the right place without ever holding the value.
+* :func:`is_path_in_store` / :func:`is_safe_relative_path` / :class:`KeysRefused` — the ONE rule
+  for which key names a path inside a transport's folder (a plain path of plain names, and inside
+  the folder once every link on the way is followed), and how a transport refuses one that
+  doesn't: the same rule the sync cycle holds a peer's paths to, so a transport whose remote is a
+  folder on this machine never reads or writes a file of this machine's through a key.
 
 Deliberately NOT exported: the key-derivation and encrypt/decrypt primitives. Encryption is
 applied by the sync cycle at the transport boundary, *above* every transport — a transport
@@ -33,8 +38,10 @@ from personalclaw.net.policy import (  # noqa: F401
     SyncEndpointRefused,
     sync_egress_policy,
 )
+from personalclaw.record_ids import is_path_in_store, is_safe_relative_path  # noqa: F401
 from personalclaw.sync_transports.base import (  # noqa: F401
     ConnectionResult,
+    KeysRefused,
     PushResult,
     RemoteRef,
     SyncObject,
@@ -47,6 +54,9 @@ __all__ = [
     "RemoteRef",
     "PushResult",
     "ConnectionResult",
+    "KeysRefused",
+    "is_path_in_store",
+    "is_safe_relative_path",
     "SYNC",
     "sync_egress_policy",
     "SyncEndpointRefused",
