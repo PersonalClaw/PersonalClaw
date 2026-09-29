@@ -194,6 +194,12 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
         # it belongs to the one dispatch the answer started, so a later retry of the same step
         # cannot claim an answer nobody gave it.
         answer=ctl._park_answers.pop(item.path, None),
+        # Her Allow of this attempt's start, when a restart or a pause cut the attempt off: the
+        # stage starts on it if it asks the same thing (`engine.dispatch_stage`).
+        approved_start=(
+            ctl._instance(item.path).approved_request,
+            ctl._instance(item.path).approved_at,
+        ),
     )
     if total and total > 0:
         try:

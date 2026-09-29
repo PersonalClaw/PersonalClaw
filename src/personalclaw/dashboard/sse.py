@@ -34,7 +34,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, TypeVar
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -54,6 +55,35 @@ _QUEUE_MAXSIZE = 100
 # (``: keepalive``) keeps the connection and any intermediary proxy from idling
 # the stream out.
 _KEEPALIVE_SECS = 15
+
+_T = TypeVar("_T")
+
+
+class GatewayStopping(Exception):
+    """The gateway began to stop while a stream waited for its next event."""
+
+
+async def next_unless_stopping(aw: Awaitable[_T], timeout: float) -> _T:
+    """What ``aw`` gives within ``timeout`` seconds, as ``asyncio.wait_for`` would, except that the
+    gateway starting to stop ends the wait at once, raising :class:`GatewayStopping`.
+
+    A stream checked for the stop only between waits, and its wait lasts until the keepalive is due:
+    every page open on one (a run's events, a loop's) held a restart for up to that long, past the
+    stop's own time limit.
+    """
+    task = asyncio.ensure_future(aw)
+    stop = asyncio.ensure_future(shutdown_event.wait())
+    try:
+        await asyncio.wait({task, stop}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stop.cancel()
+        if not task.done():
+            task.cancel()
+    if task.done() and not task.cancelled():
+        return task.result()
+    if shutdown_event.is_set():
+        raise GatewayStopping
+    raise asyncio.TimeoutError
 
 
 class _Event:
@@ -242,7 +272,7 @@ async def stream_response(
                     max(0.05, next_periodic - asyncio.get_running_loop().time()),
                 )
             try:
-                frame = await asyncio.wait_for(q.get(), timeout=timeout)
+                frame = await next_unless_stopping(q.get(), timeout)
                 if not await _write(frame.name, frame.data):
                     return resp
             except asyncio.TimeoutError:
@@ -251,7 +281,12 @@ async def stream_response(
                         await resp.write(b": keepalive\n\n")
                     except (ConnectionResetError, ClientConnectionResetError):
                         return resp
-    except (ConnectionResetError, ClientConnectionResetError, asyncio.CancelledError):
+    except (
+        ConnectionResetError,
+        ClientConnectionResetError,
+        asyncio.CancelledError,
+        GatewayStopping,
+    ):
         pass
     finally:
         hub.unsubscribe(q)

@@ -58,7 +58,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     const t = window.setInterval(() => { setNow(Date.now()); refresh() }, 10000)
     return () => clearInterval(t)
   }, [refresh])
-  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) refresh() })
+  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) refresh() }, refresh)
 
   // The undo affordance on an `auto_with_undo` notice. The button
   // is rendered from the persisted reversal RECORD, not from the `reversal_id` sitting on the

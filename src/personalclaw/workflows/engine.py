@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import time
@@ -618,6 +619,40 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
     return leaf_env(dict(os.environ), lineage)
 
 
+def stage_request_key(
+    *,
+    run_id: str,
+    instance_path: str,
+    parent_session_key: str,
+    prompt: str,
+    agent: str,
+    model: str,
+    max_turns: int,
+    cwd: str,
+    approval_mode: str,
+    capability: str,
+) -> str:
+    """What a stage's start asks its owner to allow, as one digest: the run and the instance it
+    belongs to, and everything the spawn is given that she was asked about — the prompt as it
+    resolved, the agent, the model, its turns, its folder, its approval mode and whether it may
+    write. An Allow is kept against it (`NodeInstance.approved_request`), so a resumed start whose
+    prompt or agent differs is a different request, and is asked. The environment it runs with is
+    left out: it is the gateway's process, not the step, and a restart changes it."""
+    parts = [
+        run_id,
+        instance_path,
+        parent_session_key,
+        prompt,
+        agent,
+        model,
+        int(max_turns),
+        cwd,
+        approval_mode,
+        capability,
+    ]
+    return hashlib.sha256(json.dumps(parts).encode("utf-8")).hexdigest()
+
+
 @_commits_effects
 async def dispatch_stage(
     node: Node,
@@ -633,12 +668,21 @@ async def dispatch_stage(
     #: The run carries the user's explicit UNATTENDED grant (`supervisor_policy.unattended_grant`).
     #: Threaded from the controller, which is the only layer holding the run's overlay.
     unattended: bool = False,
+    #: The start the owner allowed for this instance's current attempt, as the controller kept it
+    #: (`NodeInstance.approved_request`, `approved_at`), or ("", 0.0).
+    approved_start: tuple[str, float] = ("", 0.0),
 ) -> NodeResult:
     """One subagent execution, with tools and a session.
 
     Spawns are `silent=True` and run-scoped: completions belong in the run journal, not
     injected into whatever chat session happened to start the run. Without `silent`, a
     background workflow would interrupt an unrelated conversation with stage results.
+
+    **A start the owner already allowed is not asked again.** The spawn carries what it asks
+    (`stage_request_key`), and the controller keeps her Allow of it with the instance. When a
+    restart or a pause cut that attempt off and the resumed dispatch asks exactly the same thing,
+    her answer is handed back (`approved_at`), and the spawn starts on it within the time limit a
+    subagent is given, under the operator ceiling like every grant. A different request asks.
 
     Depth is enforced in CODE here (`MAX_WF_DEPTH`), which is new: the existing contract
     is a sentence in a system prompt, and a prompt is not an enforcement mechanism.
@@ -728,41 +772,61 @@ async def dispatch_stage(
                 resolved_prompt=prompt,
             )
 
+    # The run OWNS this session: `workflow:<run_id>:<node_id>`. Passed as the parent key so the
+    # spawn's own audit + session plumbing attributes it to the run rather than to whatever chat
+    # happened to start it.
+    parent_session_key = ownership.owned_key(run_id, node.id or "node")
+    agent = str(cfg.get("agent", "") or "")
+    # Per-leaf model pin (WORK-CONTAINERS amendment (a)). Homogeneous by DEFAULT: an absent `model`
+    # sends `None`, which is what makes `spawn` resolve the `orchestration` chain and inherit the
+    # parent's binding. Only a declared pin overrides it, because the one measured heterogeneity
+    # win in the fan-out literature is by MODEL, and passing `""` here would look like a pin to
+    # nothing rather than like no pin.
+    model = str(cfg.get("model", "") or "") or None
+    max_turns = int(cfg.get("max_turns", 0) or 0)
+    approval_mode = str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None)
+    # ONE capability decision (`stage_capability`): it drives BOTH the leaf-env read-only flag
+    # (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP tools) AND the
+    # subagent capability class (the `_run_inner` approval loop, the worker's NATIVE tools). A
+    # research node passed as research here has its native Write/Bash denied too — the gap the
+    # MCP-only seam left open.
+    capability = stage_capability(cfg)
+    request_key = stage_request_key(
+        run_id=run_id,
+        instance_path=instance_path,
+        parent_session_key=parent_session_key,
+        prompt=prompt,
+        agent=agent,
+        model=model or "",
+        max_turns=max_turns,
+        cwd=cwd,
+        approval_mode=approval_mode or "",
+        capability=capability,
+    )
+    approved_request, approved_at = approved_start
     try:
         info = subagents.spawn(
             task=prompt,
-            # The run OWNS this session: `workflow:<run_id>:<node_id>`. Passed as the parent
-            # key so the spawn's own audit + session plumbing attributes it to the run rather than
-            # to whatever chat happened to start it.
-            parent_session_key=ownership.owned_key(run_id, node.id or "node"),
+            parent_session_key=parent_session_key,
             # Scope the run-level concurrency lane, breaker and budget to the RUN
             # (`workflow:<run_id>`), so every node of one run shares one fan-out lane and
             # a wide run cannot starve other runs.
             parent_run=(f"{ownership.OWNED_PREFIX}{run_id}" if run_id else ""),
-            agent=str(cfg.get("agent", "") or ""),
-            # Per-leaf model pin (WORK-CONTAINERS amendment (a)). Homogeneous by DEFAULT:
-            # an absent `model` sends `None`, which is what makes `spawn` resolve the
-            # `orchestration` chain and inherit the parent's binding. Only a declared pin overrides
-            # it, because the one measured heterogeneity win in the fan-out literature is by MODEL,
-            # and passing `""` here would look like a pin to nothing rather than like no pin.
-            model=str(cfg.get("model", "") or "") or None,
-            max_turns=int(cfg.get("max_turns", 0) or 0),
+            agent=agent,
+            model=model,
+            max_turns=max_turns,
             cwd=cwd,
             silent=True,
-            approval_mode=(
-                str(cfg.get("approval_mode", "") or "") or ("auto" if unattended else None)
-            ),
-            # ONE capability decision (`stage_capability`): it drives BOTH the leaf-env
-            # read-only flag (`leaf_spawn_env` → the handler seam `leaf_tool_denial`, in-process MCP
-            # tools) AND the subagent capability class (the `_run_inner` approval loop, the worker's
-            # NATIVE tools). A research node passed as research here has its native Write/Bash
-            # denied too — the gap the MCP-only seam left open.
-            capability_class=stage_capability(cfg),
+            approval_mode=approval_mode,
+            capability_class=capability,
             # The leaf's lineage + capability posture, secret-filtered (WF2WOR-5 C2). This is the
             # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
             # and the read-only flag would never be set, and the handler seam would be a gate on a
             # value nobody writes — the exact inert-control shape this clause exists to close.
             extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
+            request_key=request_key,
+            # Her earlier Allow, only when it was for exactly this request.
+            approved_at=approved_at if approved_request == request_key else 0.0,
         )
     except BaseException:
         # A spawn that RAISED produced no `NodeResult`, so the holder below never reaches the
@@ -2239,8 +2303,6 @@ def parse_json_loose(text: Any) -> Any:
     the spawn, so `stage_settlement._settled_stage_output` is where a subagent's text becomes an
     output and it has to apply the same parse an `infer` node gets here (#3524).
     """
-    import json
-
     if isinstance(text, (dict, list)):
         return text
     if not isinstance(text, str):
@@ -2351,6 +2413,8 @@ async def dispatch(
     idempotency_key: str = "",
     #: A person's answer to this step's last park, on the dispatch it started. ACTION only.
     answer: Any = None,
+    #: The start the owner allowed for this instance's current attempt. STAGE only.
+    approved_start: tuple[str, float] = ("", 0.0),
 ) -> NodeResult:
     """Route one node to its dispatcher.
 
@@ -2382,6 +2446,7 @@ async def dispatch(
         unattended=unattended,
         idempotency_key=idempotency_key,
         answer=answer,
+        approved_start=approved_start,
     )
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # schema notice may compare (#3545). The judge contract writes every key a judge schema
@@ -2447,6 +2512,7 @@ async def _dispatch_inner(
     unattended: bool = False,
     idempotency_key: str = "",
     answer: Any = None,
+    approved_start: tuple[str, float] = ("", 0.0),
 ) -> NodeResult:
     kind = node.kind
     dispatcher = _LEAF_DISPATCHERS.get(kind)
@@ -2469,6 +2535,7 @@ async def _dispatch_inner(
             instance_path=instance_path,
             cwd=cwd,
             unattended=unattended,
+            approved_start=approved_start,
         )
     if dispatcher is dispatch_branch:
         return await dispatcher(node, ctx)

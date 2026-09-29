@@ -12,6 +12,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
+from personalclaw import shutdown_event
 from personalclaw.auth import lifetimes
 from personalclaw.config.edit_spec import (
     LOOSEN_TITLE,
@@ -1416,6 +1417,9 @@ async def api_session_agent_stream(request: web.Request) -> web.StreamResponse:
     from personalclaw.security import redact_credentials, redact_exfiltration_urls  # noqa: F811
 
     for _ in range(1200):  # 20 min max
+        # Not past the stop: a stream that waits for the server to cancel it holds the stop.
+        if shutdown_event.is_set():
+            break
         try:
             if path.exists():
                 content = path.read_text(encoding="utf-8")

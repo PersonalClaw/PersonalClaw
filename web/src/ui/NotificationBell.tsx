@@ -38,7 +38,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
   // the 15s re-read it was on every page.
   const load = () => api.notifications().then((d) => setItems(d.notifications)).catch(() => {})
   useVisiblePoll(() => { setNow(Date.now()); load() }, 60_000)
-  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() })
+  useChatSocket((m: WsMessage) => { if (m.type.startsWith('notification')) load() }, load)
 
   useEffect(() => {
     if (!open) return

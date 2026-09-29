@@ -120,7 +120,9 @@ describe('a turn error whose message is empty', () => {
     await waitFor(() => expect(h.chatSessionDetail).toHaveBeenCalled())
     pushFrame('chat_message', { session: 'chat-6-x', role: 'error', content: '' })
     const bar = await screen.findByRole('alert')
-    expect(bar.textContent?.trim()).toBe(TURN_ERROR_WITHOUT_REASON)
+    // The sentence, whole, beside the Retry a turn's last notice carries.
+    expect(within(bar).getByText(TURN_ERROR_WITHOUT_REASON)).toBeTruthy()
+    expect(bar.textContent?.replace(/Retry$/, '').trim()).toBe(TURN_ERROR_WITHOUT_REASON)
   })
 
   it('persisted that way (a transcript from before the fix), renders the same sentence on reload', async () => {
@@ -130,7 +132,8 @@ describe('a turn error whose message is empty', () => {
     })
     page()
     const bar = await screen.findByRole('alert')
-    expect(bar.textContent?.trim()).toBe(TURN_ERROR_WITHOUT_REASON)
+    expect(within(bar).getByText(TURN_ERROR_WITHOUT_REASON)).toBeTruthy()
+    expect(bar.textContent?.replace(/Retry$/, '').trim()).toBe(TURN_ERROR_WITHOUT_REASON)
   })
 
   it('with a message, shows the message (the fallback only fills a gap)', async () => {

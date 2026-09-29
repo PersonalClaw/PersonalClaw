@@ -120,7 +120,7 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
       // A refused banner is not an error worth surfacing: the note is already in the feed
       // and the bell has already counted it.
       .catch(() => {})
-  })
+  }, null)  // a banner is an announcement: the bell is the record, and it re-reads on a reconnect
 
   useEffect(() => {
     const bridge = desktopBridge()

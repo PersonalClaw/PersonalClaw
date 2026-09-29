@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { api } from '../lib/api'
 import { useChatSocket } from '../lib/useChatSocket'
 import { playCue } from '../design/soundCues'
 import { approvalToastMessage } from './approvalToast'
@@ -22,12 +23,12 @@ import { approvalRiskOf, readOnlyOf } from '../pages/chat/approvalMeta'
 export function useApprovalToasts(activeSession: string) {
   const activeRef = useRef(activeSession)
   activeRef.current = activeSession
-  // Dedupe: an approval is (re)broadcast on connect/resync; toast each id once.
+  // Dedupe: the queue re-read on a reconnect lists approvals this tab may have nudged already;
+  // toast each id once.
   const seen = useRef<Set<string>>(new Set())
 
-  useChatSocket((m) => {
-    if (m.type !== 'approval') return
-    const d = m.data || {}
+  // One approval, from its frame or from that re-read: both carry the registry's entry.
+  const nudge = (d: Record<string, unknown>) => {
     const session = String(d.session ?? '')
     const id = String(d.id ?? '')
     if (!session || !id) return
@@ -68,9 +69,21 @@ export function useApprovalToasts(activeSession: string) {
       },
     }))
     // The approval-requested cue point. It sits AFTER the
-    // dedupe/active-session guards, so a re-broadcast on reconnect and an approval
+    // dedupe/active-session guards, so an approval the reconnect re-read lists again and one
     // already visible inline are both silent — one nudge per approval, matching the
     // toast. Silent unless the user opted in; every gate lives inside playCue.
     playCue('approval_needed')
-  })
+  }
+
+  useChatSocket(
+    (m) => { if (m.type === 'approval') nudge(m.data || {}) },
+    // A restart drops every socket, and the approvals the resumed work raises go out while the tab
+    // is still reconnecting: nobody heard their frames, so the queue is read again and each one
+    // this tab has not nudged is.
+    () => {
+      api.approvals()
+        .then((all) => { for (const a of all) nudge(a as unknown as Record<string, unknown>) })
+        .catch(() => { /* the queue's own surfaces say it could not be read; a nudge is extra */ })
+    },
+  )
 }

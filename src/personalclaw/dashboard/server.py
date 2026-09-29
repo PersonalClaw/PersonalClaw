@@ -53,6 +53,14 @@ def _single_post_ceiling() -> int:
 
 _DIST_DIR = Path(__file__).resolve().parent.parent / "static" / "dist"
 
+#: How long a request still being answered when the gateway stops is given to finish, before the
+#: server cancels it (and as long again to leave once cancelled). Every event stream ends the moment
+#: the stop begins (`sse`), so what is left is a request waiting on something, most of all a model
+#: call, whose answer would reach nobody: the page that asked loses its connection to this process
+#: either way, and a restart does not wait on it. The server's own default was a minute, past the
+#: stop's whole time limit.
+OPEN_REQUEST_GRACE_SECS = 1.0
+
 
 def _precompute_telemetry(state: "DashboardState") -> None:
     """Pre-compute telemetry data (blocking I/O — call before server starts)."""
@@ -2533,7 +2541,7 @@ async def start_dashboard(
             )
             raise RuntimeError("dashboard_url requires token auth middleware")
 
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(app, shutdown_timeout=OPEN_REQUEST_GRACE_SECS)
     await runner.setup()
     # Bind decision: prefer the explicit PERSONALCLAW_BIND_HOST env var
     # (corp-host / DevSpaces escape hatch); otherwise derive from the

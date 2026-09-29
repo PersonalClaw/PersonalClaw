@@ -120,12 +120,12 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // 🔴 A trigger written anywhere else (a loop's auto-nudge, the chat's automation tools, another
   // tab) reached the status strip's count on its next poll and never reached this page: only
   // schedules re-read, so the strip said "6 triggers" over a list of 5 (day 8). The gateway says
-  // `crons` whenever the trigger store changes, and every source re-reads on it.
+  // `crons` whenever the trigger store changes, and every source re-reads on it, and on the socket
+  // coming back, which lost any `crons` sent while it was down.
+  const loadAll = () => { loadSchedules(); loadHooks(); loadStores(); loadCallbacks(); loadReview() }
   useChatSocket((m: WsMessage) => {
-    if (refreshKinds(m).includes('crons')) {
-      loadSchedules(); loadHooks(); loadStores(); loadCallbacks(); loadReview()
-    }
-  })
+    if (refreshKinds(m).includes('crons')) loadAll()
+  }, loadAll)
 
   // Above the list AND the week grid: the "Missed scheduled runs" notice sends you to this page,
   // whichever view you last left it in.

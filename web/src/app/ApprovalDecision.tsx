@@ -48,10 +48,11 @@ export function ApprovalDecision({ approvalId, onDecided }: {
 
   useEffect(() => { void load() }, [load])
   // An approval can end anywhere — answered in a chat or on Home, run out of time, cancelled with
-  // its work — and the registry says so on these two frames.
+  // its work — and the registry says so on these two frames, or on none this page heard when it
+  // ended while the socket was down.
   useChatSocket((m: WsMessage) => {
     if (m.type === 'approval' || m.type === 'approval_resolved') void load()
-  })
+  }, () => { void load() })
 
   async function decide(p: PendingApproval, action: 'approve' | 'reject') {
     setBusy(action)

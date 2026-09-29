@@ -255,7 +255,7 @@ it:
   variables on purpose — see [What the desktop shell narrows](desktop.md#connecting-to-a-gateway-you-did-not-start).)
 - **The SPA has no base-URL concept at all.** Its API client speaks root-relative `/api` paths
   on the same origin (`web/src/lib/api.ts:1-3`), and the WebSocket is built from
-  `location.host` (`web/src/lib/useChatSocket.ts:32`). There is no variable to re-point. A
+  `location.host` (`connect` in `web/src/lib/useChatSocket.ts`). There is no variable to re-point. A
   bundle served by gateway A can only ever talk to gateway A.
 
 So a registry kept inside the dashboard would be a registry each gateway held a separate copy
@@ -427,11 +427,12 @@ A wrapper inherits reconnect behaviour by loading the served dashboard, and that
 already specified in code:
 
 - The socket reconnects with **capped exponential backoff** — `retry` climbs to a ceiling of 6
-  and the next attempt is scheduled at `250 * 2 ** retry` ms
-  (`web/src/lib/useChatSocket.ts:45-46`).
-- The catch-up callback fires **only after a real connection existed**, guarded by `everOpened`
-  (`web/src/lib/useChatSocket.ts:36`), so a first-load failure is not reported as a dropped
-  connection.
+  and the next attempt is scheduled at `250 * 2 ** retry` ms (the socket's `onclose` in
+  `web/src/lib/useChatSocket.ts`).
+- Every page that keeps state current from the socket's frames re-reads it when the socket comes
+  back: the catch-up callback (`onReconnect`) is a required argument, `null` only for a consumer
+  that keeps nothing a lost frame leaves stale. It fires **only after a real connection existed**,
+  guarded by `sawOpen`, so a first-load failure is not reported as a dropped connection.
 - Degraded UI is whatever the dashboard already renders in that state. It is the same contract
   the rest of the product uses; a companion is not a special case.
 

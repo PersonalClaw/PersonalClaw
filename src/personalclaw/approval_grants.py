@@ -82,6 +82,11 @@ CLI = "cli"
 APP = "app_grant"
 #: A workflow step the owner chose "always allow" for earlier in the run.
 REMEMBERED = "remembered"
+#: The owner allowed this same start of a workflow step before the gateway restarted or the run
+#: was paused, and the step is resuming the attempt that answer was for
+#: (`workflows.models.NodeInstance.approved_request`). It covers that one start, within the step's
+#: time limit; the agent's own calls ask as any agent's do.
+APPROVED_BEFORE_RESUME = "approved_before_resume"
 #: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
 GATE_POLICY = "gate_policy"
 #: An ACP agent's own permission mode that makes its CLI approve its own calls

@@ -436,6 +436,8 @@ the ceiling did not bound.
   without asking anyone: the chat's Trust, YOLO and Trust reads, an agent's "Always allow", a
   spawn's own `approval_mode: "auto"`, the global Auto-approve setting, the hook settings and
   patterns, a listed source, the `--approval` flag, a remembered or policy-approved workflow gate,
+  a workflow step's start its owner allowed before a restart cut the step off (for the same
+  request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`),
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
   unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
   runner's allowlist of read-only tools. Under

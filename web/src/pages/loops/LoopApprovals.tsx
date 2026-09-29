@@ -53,10 +53,11 @@ export function LoopApprovals({ loopId, className = '' }: { loopId: string; clas
 
   useEffect(() => { load() }, [load])
   // Raised and resolved over the one multiplexed socket: an ask answered from the bell, the
-  // Inbox or a phone leaves this page as soon as it is answered.
+  // Inbox or a phone leaves this page as soon as it is answered. And read again when the socket
+  // comes back: a worker's ask raised while it was down reached nobody here.
   useChatSocket((m: WsMessage) => {
     if (m.type === 'approval' || m.type === 'approval_resolved') load()
-  })
+  }, load)
 
   const decide = useCallback((a: PendingApproval, action: Action) => {
     api.approve(a.session, action, a.request_id)

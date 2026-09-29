@@ -13,10 +13,16 @@ export function refreshKinds(m: WsMessage): string[] {
 
 /** Subscribe to the tab's ONE WebSocket to /api/ws. Calls `onMessage` for every envelope;
  *  consumers filter by type + data.session. `onReconnect` fires when the socket reopens AFTER
- *  a drop this caller had seen it open before (not its first connect), so the caller can re-sync
- *  state missed during the outage. `onStatus(connected)` reports link state for a UI indicator:
- *  `true` on every open (at once, if the socket is already open when the caller subscribes),
- *  `false` on a drop after that.
+ *  a drop this caller had seen it open before (not its first connect). `onStatus(connected)`
+ *  reports link state for a UI indicator: `true` on every open (at once, if the socket is already
+ *  open when the caller subscribes), `false` on a drop after that.
+ *
+ *  `onReconnect` is required. Every frame the gateway sent while the socket was down is lost (a
+ *  restart drops every socket, and what the new process does first, such as a resumed run asking
+ *  for an approval, is broadcast while the pages are still reconnecting), so a caller that keeps
+ *  state current from frames (a list, a pending approval, a job's progress) re-reads it here.
+ *  `null` says the caller keeps nothing a lost frame leaves stale: a toast, a live ticker whose
+ *  subject is polled. When the re-read was optional, most callers that needed it left it out.
  *
  *  Every caller shares one connection. Each call used to open its own, so an idle Home held
  *  eight sockets and a chat six, and the gateway serialised and wrote every broadcast frame
@@ -32,7 +38,7 @@ export function refreshKinds(m: WsMessage): string[] {
  *  enforcement, so it cannot ride this one. */
 export function useChatSocket(
   onMessage: (m: WsMessage) => void,
-  onReconnect?: () => void,
+  onReconnect: (() => void) | null,
   onStatus?: (connected: boolean) => void,
 ) {
   const cb = useRef(onMessage)
@@ -47,7 +53,7 @@ export function useChatSocket(
 
 interface Subscriber {
   onMessage: { current: (m: WsMessage) => void }
-  onReconnect: { current: (() => void) | undefined }
+  onReconnect: { current: (() => void) | null }
   onStatus: { current: ((connected: boolean) => void) | undefined }
   /** This subscriber has seen the socket open, so the next open is a REconnect for it. */
   sawOpen: boolean

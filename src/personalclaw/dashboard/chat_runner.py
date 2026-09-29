@@ -121,6 +121,7 @@ from personalclaw.llm_helpers import (
     humanize_provider_error,
     is_model_call_failure,
 )
+from personalclaw.restart_request import RESTARTING, SHUTTING_DOWN
 from personalclaw.security import (
     is_sensitive_path,
     mask_child_output,
@@ -248,20 +249,43 @@ def is_empty_turn(
 TURN_COMPLETE = "complete"
 TURN_STOPPED = "stopped"
 TURN_ERROR = "error"
+#: The gateway restarted or shut down in the middle of the turn (``DashboardState.stopping_for``).
+TURN_INTERRUPTED = "interrupted"
 
 #: Said where a conversation is when its turn stopped before it finished, nobody asked for the
-#: stop, and nothing said why: its runtime was reset under it, the gateway restarted, a queued turn
-#: ran out of time. A stop that says why (the loop breaker's) is that turn's error instead.
+#: stop, and nothing said why: its runtime was reset under it, a queued turn ran out of time. A
+#: stop that says why (the loop breaker's) is that turn's error instead, and a turn the gateway
+#: ended says it did (below).
 TURN_CUT_SHORT_NOTICE = "The reply stopped before it finished. Send your message again to retry."
+#: Said where a conversation is when the gateway ended its turn to restart, or to shut down —
+#: persisted, so the chat still says it after the restart, and on the channel it is linked to.
+TURN_INTERRUPTED_NOTICES = {
+    RESTARTING: (
+        "The gateway restarted before this reply finished. Send your message again to retry."
+    ),
+    SHUTTING_DOWN: (
+        "The gateway shut down before this reply finished. Send your message again to retry."
+    ),
+}
 #: Said on the channel a conversation is linked to when the owner stopped its turn from the
 #: dashboard, where the stop card already says so.
 TURN_STOPPED_FROM_DASHBOARD_NOTICE = "Stopped from the dashboard before the reply finished."
 
 
 def terminal_outcome_for_turn(
-    *, stop_reason: str, cancelled: bool, stop_requested: bool, errored: bool
+    *,
+    stop_reason: str,
+    cancelled: bool,
+    stop_requested: bool,
+    errored: bool,
+    ended_by_gateway: bool,
 ) -> str:
     """How a turn ended, from facts the turn itself established.
+
+    A turn the gateway ended because it was restarting or shutting down, and not because its
+    owner asked, was interrupted: whatever it raised or reported on the way out, the stop was the
+    gateway's (``ended_by_gateway``). It is not said to have stopped, which is how a Stop the
+    owner pressed reads.
 
     A stop that was asked for wins over ``error``. A stop that escalates kills the runtime, and
     what a dying stream raises depends on the runtime; the user asked for the stop and got it. A
@@ -270,6 +294,8 @@ def terminal_outcome_for_turn(
     is not also said to have stopped. The transcript is deliberately not consulted: a retry notice
     is an error row in it, and the retry that follows can still finish the turn.
     """
+    if ended_by_gateway and (cancelled or errored or is_cancelled_stop(stop_reason)):
+        return TURN_INTERRUPTED
     if cancelled or stop_requested:
         return TURN_STOPPED
     if errored:
@@ -292,6 +318,9 @@ def say_how_an_unanswered_turn_ended(
 
     Sent in the background: the end of a turn must neither wait on a channel's network nor be cut
     off by it. A conversation with no linked channel sends nothing.
+
+    A turn the gateway ended to restart or shut down says so in the chat too, in those words, so a
+    question it cut off is never left there unanswered with nothing saying why.
     """
     if outcome == TURN_ERROR:
         # Every path that ends a turn in error adds the error row it is known by first.
@@ -299,6 +328,11 @@ def say_how_an_unanswered_turn_ended(
             (m["content"] for m in reversed(session.messages) if m.get("role") == "error"),
             TURN_CUT_SHORT_NOTICE,
         )
+    elif outcome == TURN_INTERRUPTED:
+        note = TURN_INTERRUPTED_NOTICES.get(
+            state.stopping_for, TURN_INTERRUPTED_NOTICES[SHUTTING_DOWN]
+        )
+        session.append("error", note, "msg msg-err")
     elif outcome == TURN_STOPPED and session._stop_asked:
         note = TURN_STOPPED_FROM_DASHBOARD_NOTICE
     elif outcome == TURN_STOPPED:
@@ -5408,6 +5442,9 @@ async def run_chat(
             cancelled=_turn_cancelled,
             stop_requested=session._stopping,
             errored=session._last_turn_errored,
+            # The gateway is stopping (`DashboardState.end_running_turns`) and the owner did not
+            # stop this turn herself.
+            ended_by_gateway=bool(state.stopping_for) and not session._stop_asked,
         )
         # No exit leaves an answer half-written: one still streaming here — a path that
         # returned or raised without settling it — is settled where it stood, before the
@@ -5522,8 +5559,9 @@ async def run_chat(
                 except Exception:
                     logger.warning("Failed to reset session %s after agent switch", session_key)
             state.sessions.release(session_key)
-        # Process queued messages (FIFO) — keep SSE stream alive
-        if session._queue:
+        # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops: a
+        # turn started now would only be cut off in its turn.
+        if session._queue and not state.stopping_for:
             if session._stopping:
                 session.append(
                     "error",
@@ -5615,27 +5653,30 @@ async def run_chat(
             state.push_sessions_update()
             state.broadcast_ws("chat_done", {"session": session.key, "outcome": _turn_outcome})
             state.push_refresh("history")
-            # Auto-title: fire in background so it doesn't block the response
-            if not session._titled:
-                t = asyncio.create_task(_maybe_auto_title(state, session))
-                state._background_tasks.add(t)
-                t.add_done_callback(state._background_tasks.discard)
-            # Follow-up chips: suggest 2-3 next messages via one cheap
-            # background call. Fire-and-forget — never blocks the turn; the handle is
-            # stored so the next run_chat dispatch cancels a still-pending generation.
-            # "Check this work" offer: deterministic, model-free,
-            # OFFER-only — the skill runs when the user clicks the chip, never here.
-            maybe_offer_check_work(state, session, _turn_tool_call_count)
-            # Chat plan mode: when this chat is inside the planning walkthrough,
-            # the turn's reply IS the step's artifact — hand it to the EXISTING planning
-            # session so its review gate opens on real content. A single sidecar read
-            # and a no-op for every chat that never opened a walkthrough, so a quick
-            # task is untouched. Imported here (not at module scope) because chat_plan
-            # dispatches back into run_chat on approval.
-            from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
+            # The gateway is stopping: a title, follow-ups, an offer and a plan draft are the next
+            # turn's business, and a model call started now is cut off with the rest.
+            if not state.stopping_for:
+                # Auto-title: fire in background so it doesn't block the response
+                if not session._titled:
+                    t = asyncio.create_task(_maybe_auto_title(state, session))
+                    state._background_tasks.add(t)
+                    t.add_done_callback(state._background_tasks.discard)
+                # Follow-up chips: suggest 2-3 next messages via one cheap
+                # background call. Fire-and-forget — never blocks the turn; the handle is
+                # stored so the next run_chat dispatch cancels a still-pending generation.
+                # "Check this work" offer: deterministic, model-free,
+                # OFFER-only — the skill runs when the user clicks the chip, never here.
+                maybe_offer_check_work(state, session, _turn_tool_call_count)
+                # Chat plan mode: when this chat is inside the planning walkthrough,
+                # the turn's reply IS the step's artifact — hand it to the EXISTING planning
+                # session so its review gate opens on real content. A single sidecar read
+                # and a no-op for every chat that never opened a walkthrough, so a quick
+                # task is untouched. Imported here (not at module scope) because chat_plan
+                # dispatches back into run_chat on approval.
+                from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
 
-            maybe_submit_plan_draft(state, session)
-            ft = asyncio.create_task(_maybe_followups(state, session))
-            session._followups_task = ft
-            state._background_tasks.add(ft)
-            ft.add_done_callback(state._background_tasks.discard)
+                maybe_submit_plan_draft(state, session)
+                ft = asyncio.create_task(_maybe_followups(state, session))
+                session._followups_task = ft
+                state._background_tasks.add(ft)
+                ft.add_done_callback(state._background_tasks.discard)

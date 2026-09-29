@@ -207,10 +207,12 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
     })
 
     it('keeps the stats line OUT of the inline step flow, so it renders once', () => {
-      // `isProcess` excludes the three folded kinds. Dropping `'stats'` here would count the
-      // telemetry line as a work step and render it inline as well as in the ledger — the
-      // duplicate the ledger was built to remove.
-      expect(chatPage).toContain("!['context', 'learned', 'stats'].includes(")
+      // `isProcess` excludes the three folded kinds (`LEDGER_ACTIVITY`, which also says which
+      // segment a turn ends on). Dropping `'stats'` there would count the telemetry line as a
+      // work step and render it inline as well as in the ledger — the duplicate the ledger was
+      // built to remove.
+      expect(chatPage).toContain("const LEDGER_ACTIVITY = ['context', 'learned', 'stats']")
+      expect(chatPage).toContain("(s.kind === 'activity' && !inLedger(s))")
     })
 
     it('the component gates the Telemetry row on the prop it was handed', () => {

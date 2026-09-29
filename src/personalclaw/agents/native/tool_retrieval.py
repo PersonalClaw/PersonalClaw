@@ -5,9 +5,13 @@ per-turn relevant projection: a small always-include CORE ∪ top-K by
 ``max(cosine(query, tool_embedding), keyword_overlap)`` ∪ structural hints
 (a URL in the turn → web/fetch tools; "remind me", "every Monday" → the schedule tools and
 ``automation_create``; "when a new file lands in …" → ``automation_create``) ∪ the **sticky
-set** (tools already CALLED this session stay available). Mirrors :mod:`skills.surfacing`
-(shared embedder, fingerprint-keyed cache, never-raise) — does for tools what surfacing does
-for skills.
+set** (tools already CALLED this session stay available). Does for tools what
+:mod:`skills.surfacing` does for skills.
+
+**The tools' vectors come from the process's index** (:mod:`tool_vectors`), never from the turn:
+kept across restarts, filled in the background in batches, and read without a network call. A
+tool whose vector is not there yet ranks by its words. :meth:`ToolRetriever.select` still embeds
+the query (one request), so its caller runs it off the event loop.
 
 **A hint names tools by their words, never by part of a word** (:func:`_names_fragment`). A
 hint is admitted before anything the scores rank, so a loose one takes the room the ranked
@@ -40,6 +44,12 @@ import logging
 import math
 import re
 
+from personalclaw.agents.native.tool_vectors import (
+    bound_embedder,
+    default_path,
+    tool_text,
+    tool_vectors,
+)
 from personalclaw.task_modes import SHELL_TOOL_NAMES
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
@@ -144,16 +154,6 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _active_embedder():
-    """``(embed_fn, model_label)`` or ``(None, "")``. Reuses surfacing's resolver."""
-    try:
-        from personalclaw.skills.surfacing import _active_embedder as resolve
-
-        return resolve()
-    except Exception:
-        return None, ""
-
-
 def _schema_chars(d) -> int:
     """About how many characters ``d``'s full schema adds to a request: the function object
     ``tools.tool_definitions_to_openai_schema`` writes for it."""
@@ -171,11 +171,11 @@ def _schema_chars(d) -> int:
 class ToolRetriever:
     """Per-turn tool selector over a fixed catalog (built once at startup).
 
-    Embeds each tool's ``name + description`` via the shared embedder, cached
-    in-process keyed by ``(name, fingerprint, model)`` so a stable catalog embeds
-    once and a changed MCP catalog re-embeds only the changed tools. ``select``
-    returns the union (core ∪ sticky ∪ structural ∪ top-K), within the turn's schema budget
-    when it has one. Always fail-open: any error or no-embed-model returns the FULL catalog.
+    Ranks each tool's ``name: description`` with the vectors of the process's index
+    (:mod:`tool_vectors`), which holds one per text and model: a stable catalog is embedded once
+    for the whole install, and a changed tool server's catalog only for the tools that changed.
+    ``select`` returns the union (core ∪ sticky ∪ structural ∪ top-K), within the turn's schema
+    budget when it has one. Always fail-open: any error or no-embed-model returns the FULL catalog.
     """
 
     def __init__(
@@ -196,10 +196,25 @@ class ToolRetriever:
         # request names none: "It's ~/Notes/…" answers the question the agent asked about the
         # request before it, and the automation that request plainly needed is still the task.
         self._carried: set[str] = set()
-        self._embed_cache: dict[str, list[float] | None] = {}  # name → vec (None = tried, failed)
-        self._embed_model = ""
         self._last_surfaced = len(self._defs)  # tools surfaced last select() (for hidden_count)
         self._chars = {n: _schema_chars(d) for n, d in self._by_name.items()}
+        # What the index embeds for each tool.
+        self._texts = {
+            n: tool_text(n, getattr(d, "description", "") or "") for n, d in self._by_name.items()
+        }
+
+    def warm(self) -> None:
+        """Have the index embed this catalog's tools in the background, before a turn asks.
+
+        Resolves the bound embedding model, and reads the index's file on its first use, so the
+        caller runs it off the event loop. Never raises: a catalog without vectors ranks by words.
+        """
+        try:
+            embedder = bound_embedder()
+            if embedder is not None:
+                tool_vectors().want(default_path(), embedder, self._texts.values())
+        except Exception:  # noqa: BLE001 — see the docstring
+            logger.debug("tool retrieval: warming the tool vectors failed", exc_info=True)
 
     # ── sticky set (tools the agent has actually called this session) ──
     def mark_used(self, tool_name: str) -> None:
@@ -216,18 +231,33 @@ class ToolRetriever:
                         hinted.add(name)
         return hinted
 
-    def _ensure_embeddings(self, embed_fn, model: str) -> None:
-        if model != self._embed_model:
-            self._embed_cache.clear()  # model switch → re-embed
-            self._embed_model = model
-        for name, d in self._by_name.items():
-            if name in self._embed_cache:
-                continue
-            text = f"{name}: {getattr(d, 'description', '') or ''}".strip()
-            try:
-                self._embed_cache[name] = embed_fn(text)
-            except Exception:
-                self._embed_cache[name] = None
+    def _semantic(self, query: str, names: set[str]) -> dict[str, float]:
+        """Each of ``names`` whose vector the index holds, and its cosine against ``query``.
+
+        Reads the index, and asks it to embed the tools it lacks in the background; embeds only
+        the query, and only when there is a vector to compare it with. Empty when no embedding
+        model is bound, when nothing is embedded yet, or when the query cannot be embedded.
+        """
+        if not query or not names:
+            return {}
+        embedder = bound_embedder()
+        if embedder is None:
+            return {}
+        path = default_path()
+        index = tool_vectors()
+        texts = {n: self._texts[n] for n in names if n in self._texts}
+        known = index.vectors(path, embedder.model, texts.values())
+        if len(known) < len(texts):
+            index.want(path, embedder, (t for t in texts.values() if t not in known))
+        if not known:
+            return {}
+        try:
+            query_vec = embedder.one(query)
+        except Exception:
+            query_vec = None
+        if not query_vec:
+            return {}
+        return {n: _cosine(query_vec, known[t]) for n, t in texts.items() if t in known}
 
     def select(
         self,
@@ -253,6 +283,9 @@ class ToolRetriever:
 
         Fail-open: if the union would be the whole (restricted) catalog, or anything goes
         wrong, return it all.
+
+        Embeds the query when the catalog must be ranked, which is a network call, so the runtime
+        calls this off the event loop.
         """
         try:
             return self._select(query, restrict=restrict, budget_chars=budget_chars)
@@ -269,15 +302,7 @@ class ToolRetriever:
     def _scores(self, query: str, names: set[str]) -> dict[str, float]:
         """Each of ``names`` that passes a gate, and its ``max(semantic, keyword)`` score."""
         query_words = set(re.findall(r"\w+", query.lower()))
-        embed_fn, model = _active_embedder()
-        query_vec = None
-        if embed_fn is not None and query:
-            try:
-                query_vec = embed_fn(query)
-            except Exception:
-                query_vec = None
-            if query_vec is not None:
-                self._ensure_embeddings(embed_fn, model)
+        semantic = self._semantic(query, names)
 
         scores: dict[str, float] = {}
         for name in names:
@@ -286,11 +311,7 @@ class ToolRetriever:
                 re.findall(r"\w+", f"{name} {getattr(d, 'description', '') or ''}".lower())
             )
             kw = (len(query_words & desc_words) / len(query_words)) if query_words else 0.0
-            sem = 0.0
-            if query_vec is not None:
-                vec = self._embed_cache.get(name)
-                if vec:
-                    sem = _cosine(query_vec, vec)
+            sem = semantic.get(name, 0.0)
             score = max(kw if kw >= _KEYWORD_GATE else 0.0, sem if sem >= self._threshold else 0.0)
             if score > 0:
                 scores[name] = score
@@ -369,33 +390,23 @@ class ToolRetriever:
         ``max(semantic cosine, lexical overlap, substring)`` — the SAME semantic
         path :meth:`_select` uses, so discovery finds a tool by capability even
         with no keyword overlap ("resize an image" → an image tool). Lexical is
-        the fail-open floor: no embed model / embed error → still works, just
-        keyword-only. Discovery is generous (no score gate, unlike selection)."""
+        the fail-open floor: no embed model / embed error / no vector yet → still
+        works, just keyword-only. Discovery is generous (no score gate, unlike
+        selection). Embeds the query, so the runtime calls it off the event loop."""
         q = (query or "").strip()
         qwords = set(re.findall(r"\w+", q.lower()))
-        query_vec = None
-        embed_fn, model = _active_embedder()
-        if embed_fn is not None and q:
-            try:
-                query_vec = embed_fn(q)
-            except Exception:
-                query_vec = None
-            if query_vec is not None:
-                try:
-                    self._ensure_embeddings(embed_fn, model)
-                except Exception:
-                    query_vec = None
+        try:
+            semantic = self._semantic(q, set(self._by_name))
+        except Exception:
+            logger.debug("tool search: semantic ranking failed — lexical only", exc_info=True)
+            semantic = {}
         scored: list[tuple[float, str]] = []
         for name, d in self._by_name.items():
             hay = f"{name} {getattr(d, 'description', '') or ''}".lower()
             haywords = set(re.findall(r"\w+", hay))
             kw = (len(qwords & haywords) / len(qwords)) if qwords else 0.0
             substr = 0.5 if q and q.lower() in hay else 0.0
-            sem = 0.0
-            if query_vec is not None:
-                vec = self._embed_cache.get(name)
-                if vec:
-                    sem = _cosine(query_vec, vec)
+            sem = semantic.get(name, 0.0)
             score = max(kw, substr, sem)
             if score > 0 or not q:
                 scored.append((score, name))

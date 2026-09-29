@@ -16,13 +16,20 @@ from pathlib import Path
 import pytest
 
 from personalclaw import cli_run
-from personalclaw.dashboard.chat_runner import TURN_COMPLETE, TURN_ERROR, TURN_STOPPED
+from personalclaw.dashboard.chat_runner import (
+    TURN_COMPLETE,
+    TURN_ERROR,
+    TURN_INTERRUPTED,
+    TURN_INTERRUPTED_NOTICES,
+    TURN_STOPPED,
+)
 from personalclaw.guardrails.policy import (
     HEADLESS,
     INTERACTIVE,
     is_unattended_session,
     profile_for_session,
 )
+from personalclaw.restart_request import RESTARTING
 
 # ── The command a user types actually reaches an executor ────────────────────────
 
@@ -553,6 +560,27 @@ def test_a_stopped_turn_fails_and_says_it_was_stopped(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "stopped before it finished" in err
     assert "turn failed" not in err
+
+
+def test_a_turn_a_restart_cut_off_says_the_gateway_restarted(monkeypatch, capsys):
+    """Neither a Stop nor a failure of the turn's: the CLI says what its error row says."""
+    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+    notice = TURN_INTERRUPTED_NOTICES[RESTARTING]
+
+    async def _cut_off(port, token, collector, prompt, timeout):
+        key = collector.session_key
+        collector.feed(
+            {"type": "chat_message", "data": {"session": key, "role": "error", "content": notice}}
+        )
+        collector.feed({"type": "chat_done", "data": {"session": key, "outcome": TURN_INTERRUPTED}})
+
+    monkeypatch.setattr(cli_run, "_consume", _cut_off)
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    err = capsys.readouterr().err
+    assert f"personalclaw run: {notice}" in err
+    assert "turn failed" not in err and "stopped before it finished" not in err, err
 
 
 def test_a_clean_turn_exits_zero(monkeypatch, capsys):

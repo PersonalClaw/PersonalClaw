@@ -166,7 +166,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
     }
     // chat_status (coarse "Thinking…" lines) is intentionally NOT surfaced — the
     // tool list + sentence ticker convey progress without the noise.
-  })
+  }, null)  // a live feed: nothing replays it, and the plan session itself is polled below
 
   // poll the plan session; auto-start it the first time if none exists yet.
   // onReady is held in a ref (not a dep): the parent passes it as a fresh arrow each

@@ -3146,7 +3146,9 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "_outcome_noted"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "title"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "declined"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "declined"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "request_key"},
+    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "approved_at"}
    ],
    "returns": "None"
   },
@@ -3246,7 +3248,9 @@
      {"annotation": "str", "default": "'none'", "kind": "positional_or_keyword", "name": "sandbox"},
      {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "title"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "title"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "request_key"},
+     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "approved_at"}
     ],
     "returns": "SubagentInfo | None"
    },

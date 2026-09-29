@@ -415,9 +415,9 @@ class _Collector:
         self.tool_calls: list[dict[str, Any]] = []
         self.errors: list[str] = []
         self.done = False
-        # How the turn ended, as its final `chat_done` says: "complete", "stopped" or "error"
-        # (`chat_runner.terminal_outcome_for_turn`). The error rows alone cannot say it: a
-        # retry notice is an error row, and the retry after it can still finish the turn.
+        # How the turn ended, as its final `chat_done` says: "complete", "stopped", "error" or
+        # "interrupted" (`chat_runner.terminal_outcome_for_turn`). The error rows alone cannot say
+        # it: a retry notice is an error row, and the retry after it can still finish the turn.
         self.outcome = ""
 
     def feed(self, envelope: dict) -> None:
@@ -639,6 +639,10 @@ def _run_one(args) -> int:
 
     if collector.outcome == "stopped":
         print("personalclaw run: the turn was stopped before it finished", file=sys.stderr)
+    elif collector.outcome == "interrupted":
+        # Its error row says which: the gateway restarted, or shut down, before the reply finished.
+        for err in collector.errors or ["the gateway stopped before the turn finished"]:
+            print(f"personalclaw run: {err}", file=sys.stderr)
     elif not ok:
         for err in collector.errors or ["the gateway reported no reason"]:
             print(f"personalclaw run: turn failed: {err}", file=sys.stderr)

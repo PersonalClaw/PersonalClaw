@@ -230,6 +230,10 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         inst.completed_at = None
         inst.wake_at = 0.0
         inst.attempt = 0
+        # Her Allow of the start was for the attempt this resets; the re-run asks her again, for
+        # the reason the "always allow" above does not survive a rewind.
+        inst.approved_request = ""
+        inst.approved_at = 0.0
         node = dict(walk(ctl.root)).get(spec_path(path))
         if node is not None and node.id:
             # Drop the cached output so a binding cannot resolve a stale value between

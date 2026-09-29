@@ -20,6 +20,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw import shutdown_event
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
@@ -1202,7 +1203,11 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     resolved_at_start = await asyncio.to_thread(os.path.realpath, path)
 
     try:
-        while not (request.transport is None or request.transport.is_closing()):
+        # Until the page leaves, or the gateway starts to stop: a stream that waits for the server
+        # to cancel it holds the stop.
+        while not (
+            request.transport is None or request.transport.is_closing() or shutdown_event.is_set()
+        ):
             try:
                 stat = await asyncio.to_thread(os.stat, path)
                 mtime = stat.st_mtime

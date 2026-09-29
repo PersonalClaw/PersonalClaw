@@ -86,5 +86,5 @@ export function useNotificationToasts(): void {
         message: toastMessageForNote(note),
       },
     }))
-  })
+  }, null)  // a toast is an announcement: the bell is the record, and it re-reads on a reconnect
 }

@@ -44,10 +44,12 @@ export function RunToolApprovals({ runId }: { runId: string }) {
   // The approvals queue is fanned out over the multiplexed WS, so this needs no poll: `state`
   // broadcasts `approval` on raise and `approval_resolved` when one ends — answered from Home or
   // chat, expired, or cancelled with its run. Listening to the first frame only is how a
-  // cancelled run's page went on offering Approve/Reject for a step that would never run.
+  // cancelled run's page went on offering Approve/Reject for a step that would never run. And it
+  // re-reads when the socket comes back: a restart resumes the run, and the approval its step
+  // raises is broadcast while this page is still reconnecting.
   useChatSocket((m: WsMessage) => {
     if (m.type === 'approval' || m.type === 'approval_resolved') load()
-  })
+  }, load)
 
   // Keyed by `<id>:<action>`, not by id alone, so the in-flight state names WHICH verb is running.
   // That is what lets each button publish `aria-busy` for its OWN operation (`loading`) while the

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 // ── A screen reader heard "Response complete." for turns that did not complete ──────────────
@@ -35,6 +35,7 @@ const h = vi.hoisted(() => {
     detailCalls: [] as { resolve: (d: unknown) => void }[],
     chatSessionDetail: vi.fn(),
     stopChat: vi.fn(),
+    regenerate: vi.fn(),
   }
 })
 
@@ -43,6 +44,7 @@ vi.mock('../../lib/api', () => {
   const base: Record<string, unknown> = {
     chatSessionDetail: h.chatSessionDetail,
     stopChat: h.stopChat,
+    regenerate: h.regenerate,
     sendChat: () => Promise.resolve({ ok: true, session: 'chat-7-x' }),
     chatSessions: () => Promise.resolve([]),
     agents: () => Promise.resolve({ agents: [] }),
@@ -97,7 +99,7 @@ function listen() {
 }
 
 /** Only the turn narration: its start and its end. */
-const TURN = /^(Assistant is responding…|Response (complete|stopped|ended with an error)\.)$/
+const TURN = /^(Assistant is responding…|Response (complete|stopped|interrupted|ended with an error)\.)$/
 const turnSaid = () => spoken.filter((s) => TURN.test(s))
 const lastTurnSaid = () => turnSaid().at(-1)
 
@@ -115,6 +117,7 @@ beforeEach(async () => {
   FakeSocket.last = null
   h.detailCalls.length = 0
   h.stopChat.mockReset().mockResolvedValue({ ok: true, stopped: true })
+  h.regenerate.mockReset().mockResolvedValue({ ok: true })
   h.chatSessionDetail.mockReset().mockImplementation(
     () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
   )
@@ -276,5 +279,47 @@ describe('a tab that missed the terminal frame', () => {
     await act(async () => { await Promise.resolve() })
     expect(primaryAction()).toBe('Send message')
     expect(lastTurnSaid()).toBe('Response stopped.')
+  })
+})
+
+// ── A reply the gateway's restart cut off ────────────────────────────────────────────────────
+//
+// The gateway ends a running turn when it restarts, and the turn says so in the chat before it is
+// saved. The page said "Response stopped." for it, as if she had pressed Stop, and offered no way
+// to ask again except the hover row's Regenerate.
+
+const RESTARTED = 'The gateway restarted before this reply finished. Send your message again to retry.'
+
+describe('a reply the gateway restart cut off', () => {
+  it('is said as interrupted, never as a stop', async () => {
+    await aRunningTurn()
+    pushFrame('chat_message', { role: 'error', content: RESTARTED })
+    pushFrame('chat_done', { outcome: 'interrupted' })
+    await waitFor(() => expect(primaryAction()).toBe('Send message'))
+    await waitFor(() => expect(lastTurnSaid()).toBe('Response interrupted.'))
+    expect(turnSaid()).not.toContain('Response stopped.')
+  })
+
+  it('shows the notice the saved chat ends on, with a Retry that sends the question again', async () => {
+    const user = userEvent.setup()
+    page()
+    await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
+    const earlier = 'The reply stopped before it finished. Send your message again to retry.'
+    await answerDetail(0, {
+      running: false,
+      messages: [
+        { role: 'user', content: 'first question', ts: '2026-09-26T09:59:00Z' },
+        { role: 'error', content: earlier, ts: '2026-09-26T09:59:05Z' },
+        { role: 'user', content: 'hello', ts: '2026-09-26T10:00:00Z' },
+        { role: 'error', content: RESTARTED, ts: '2026-09-26T10:00:03Z' },
+      ],
+    })
+    await waitFor(() => expect(screen.getByText(RESTARTED)).toBeTruthy())
+    // Only the turn the chat ends on is sent again: an earlier one has been answered since.
+    const older = screen.getByText(earlier).closest('[role="alert"]') as HTMLElement
+    expect(within(older).queryByRole('button', { name: 'Retry' })).toBeNull()
+    const alert = screen.getByText(RESTARTED).closest('[role="alert"]') as HTMLElement
+    await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(h.regenerate).toHaveBeenCalledWith('chat-7-x')
   })
 })

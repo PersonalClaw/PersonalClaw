@@ -79,7 +79,7 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   const onWs = useCallback((m: { type: string }) => {
     if (m.type === 'approval' || m.type === 'approval_resolved') refresh()
   }, [refresh])
-  useChatSocket(onWs)
+  useChatSocket(onWs, refresh)
 
   const act = async (ap: PendingApproval, action: 'approve' | 'reject') => {
     setBusy((s) => new Set(s).add(ap.id))

@@ -393,6 +393,11 @@ async def wait_for_unpaused(
     *paused* is read every :data:`PAUSED_CLOCK_TICK_SECS`; a slice it reads paused is not
     counted. Out of time, the work is cancelled (:func:`cancel_and_wait`, bounded) and
     ``asyncio.TimeoutError`` is raised, as ``asyncio.wait_for`` raises it.
+
+    Cancelled itself, it cancels the work and waits for it to end (bounded the same way) before
+    the cancel goes on, as ``asyncio.wait_for`` does: a caller that cancels a turn and then acts
+    on how it ended (the gateway's stop saves the chats after it ends their turns) must find what
+    the turn said as it ended already said.
     """
     task = asyncio.ensure_future(awaitable)
     clock = asyncio.get_running_loop()
@@ -408,7 +413,7 @@ async def wait_for_unpaused(
             if not paused():
                 spent += clock.time() - began
     except asyncio.CancelledError:
-        task.cancel()
+        await cancel_and_wait([task], what=what)
         raise
     await cancel_and_wait([task], what=what)
     raise asyncio.TimeoutError

@@ -13,7 +13,7 @@
  *  A value this page does not know reads as `null`, and `null` announces nothing: silence is not
  *  a false statement, and an invented "complete" is exactly the defect this replaced. */
 
-export type TurnOutcome = 'complete' | 'stopped' | 'error'
+export type TurnOutcome = 'complete' | 'stopped' | 'interrupted' | 'error'
 
 /** What the live region says while a turn runs, before any status line arrives. */
 export const TURN_RESPONDING = 'Assistant is responding…'
@@ -21,6 +21,9 @@ export const TURN_RESPONDING = 'Assistant is responding…'
 const TURN_ENDED: Record<TurnOutcome, string> = {
   complete: 'Response complete.',
   stopped: 'Response stopped.',
+  // The gateway restarted or shut down in the middle of the turn: not a Stop anyone pressed. The
+  // transcript's notice says which, and the region says only what is true of both.
+  interrupted: 'Response interrupted.',
   error: 'Response ended with an error.',
 }
 
@@ -31,7 +34,9 @@ export function turnEndedSentence(outcome: TurnOutcome): string {
 
 /** Read a wire value as an outcome; anything else is `null` (not known). */
 export function turnOutcomeOf(value: unknown): TurnOutcome | null {
-  return value === 'complete' || value === 'stopped' || value === 'error' ? value : null
+  return value === 'complete' || value === 'stopped' || value === 'interrupted' || value === 'error'
+    ? value
+    : null
 }
 
 /** The outcome a `chat_done` frame reports. A superseded turn was stopped by the message that

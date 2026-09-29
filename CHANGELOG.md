@@ -143,6 +143,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A task a workflow run files for one of its steps is the run's: it starts with its step's state, names no author, is not counted as yours or as ready work, and links to its run; the morning triage files none.**
 - **The agent's file tools read a path that starts with `~/` as your home, within the folders they may reach.**
 - **Tasks → Filter & sort → Mine leaves out the tasks that are not yours; choosing it used to leave the list as it was.**
+- **The first message after a restart no longer holds every page up for half a minute while the agent's tools are indexed: the index is kept across restarts, filled in batches, and never on the path that answers requests.**
+- **A reply a restart cuts off says so in the chat, after the restart too, and offers Retry; it no longer reads as a Stop you pressed.**
+- **A workflow step you allowed is not asked again when a restart resumes it, while every other start still asks (SDK: `SubagentInfo.request_key` and `approved_at`, and the same two on `SubagentManager.spawn`, additions `slack-channel` does not have to change for).**
+- **A page open across a restart or a dropped connection reads again what it may have missed, approvals first: a run's page shows the approval its resumed step asked for, the approval nudge still comes, and the Inbox, notifications, lists, artifacts and chat history catch up.**
+- **A restart no longer waits ten seconds on a page left open, or on a model's answer nobody will read, and its log names what a stop could not finish and whether the gateway restarts or exits.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**

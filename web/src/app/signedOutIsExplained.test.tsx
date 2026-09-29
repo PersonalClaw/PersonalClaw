@@ -120,7 +120,7 @@ describe('a signed-out tab stops asking', () => {
 
   it('does not reconnect its live socket once the session is over', async () => {
     function Consumer() {
-      useChatSocket(() => {})
+      useChatSocket(() => {}, null)
       return null
     }
     vi.useFakeTimers()

@@ -415,6 +415,18 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
     return () => { alive = false }
   }, [sessionKey])
 
+  // The socket came back: a reply that ended while it was down sent its chunks and its end to
+  // nobody, and a restart ends every reply. The saved chat says how it ended, so it is read again
+  // in place of the partial reply, and the composer is free unless a reply is still running.
+  const resync = () => {
+    api.chatSessionDetail(sessionKey)
+      .then((d) => {
+        setDetail({ title: d.title, messages: d.messages ?? [] })
+        setStreamText(null)
+        setBusy(!!d.running)
+      })
+      .catch(() => { /* the last read stays: a failed re-read is no news about the chat */ })
+  }
   // Live stream: append chunks to the pending reply; land it on chat_done.
   useChatSocket((m) => {
     const d = m.data || {}
@@ -428,7 +440,7 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
         return null
       })
     }
-  })
+  }, resync)
   // Keep the tail in view as messages stream in.
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }) }, [detail?.messages.length, streamText])
 
@@ -445,8 +457,10 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
   if (!detail) return <ListSkeleton rows={5} />
 
   // Latest turns matter most in a peek; show the TAIL of the transcript, capped
-  // so the panel stays snappy on long chats.
-  const shown = detail.messages.filter((m) => m.role === 'user' || m.role === 'assistant').slice(-12)
+  // so the panel stays snappy on long chats. A turn that ended without its reply says why in an
+  // `error` row (a restart cut it off, the model failed), which is part of the turn: without it
+  // the peek showed her question unanswered, with nothing saying so.
+  const shown = detail.messages.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'error').slice(-12)
   return (
     <div className="flex h-full min-h-0 flex-col gap-m">
       <div className="flex min-h-0 flex-1 flex-col gap-m overflow-y-auto">
@@ -457,6 +471,8 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
             <div key={i} className="ml-6 self-end rounded-lg bg-surface-high px-m py-s">
               <p className="whitespace-pre-wrap break-words text-on-surface text-[0.8125rem] leading-relaxed">{String(m.content || '').slice(0, 800)}</p>
             </div>
+          ) : m.role === 'error' ? (
+            <p key={i} data-type="body-s" className="mr-2 whitespace-pre-wrap break-words text-error">{String(m.content || '').slice(0, 800)}</p>
           ) : (
             <div key={i} className="mr-2 min-w-0 text-[0.8125rem]">
               <Markdown widgets className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
@@ -3749,7 +3765,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} onRetry={isLast && !streaming ? regenerate : undefined} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} cutOff={turn.cutOff} modelSubstitution={turn.modelSubstitution} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -4426,11 +4442,14 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
   )
 }
 
+/** The activity kinds a turn's footer ledger shows instead of its body (`ContextLedger`). */
+const LEDGER_ACTIVITY = ['context', 'learned', 'stats']
+
 /** Render an assistant turn's ordered segments. Legacy `[OPTIONS: …]` markers in
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, onRetry, chatSessionKey, citations, skillsUsed, cutOff, modelSubstitution }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
@@ -4439,6 +4458,9 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   onOpenFile: (path: string) => void
   /** WT-04: the no-model empty-state's CTA — routes to Settings → Models through the hash router. */
   onSetupModel: () => void
+  /** Send the turn's message again, for a turn that ended on its error without an answer — a
+   *  failure, or a restart that cut it off. Given for the last settled turn only. */
+  onRetry?: () => void
   chatSessionKey?: string
   citations?: MemoryCitation[]
   skillsUsed?: SkillUsed[]
@@ -4469,6 +4491,9 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
   }
   const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats)
+  // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
+  const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY.includes((s as ActivitySegment).activityKind || '')
+  const lastShown = [...segments].reverse().find((s) => !inLedger(s))
 
   // Render one segment as its own card/line. Tool/approval/error cards carry their
   // OWN leading icon + status glyph, so there is no separate timeline dot+rail (the
@@ -4495,9 +4520,13 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
       // envelope that reads as a stack dump. Reframe THAT case as a calm setup
       // nudge; every other turn error keeps the plain danger strip.
+      // The notice a turn ENDED on — nothing after it but the footer ledger — is where she reads
+      // that her question went unanswered, so the way to send it again is right there, not only
+      // in the hover row below.
+      const endsTheTurn = seg === lastShown
       return isNoModelSetupError(text)
         ? <NoModelSetupState key={i} detail={text} onSetup={onSetupModel} />
-        : <InlineError key={i} icon multiline className="my-1">{text}</InlineError>
+        : <InlineError key={i} icon multiline className="my-1" onRetry={endsTheTurn ? onRetry : undefined}>{text}</InlineError>
     }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
@@ -4512,7 +4541,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
   }
   const isProcess = (s: Segment) =>
     s.kind === 'tool' || s.kind === 'error' || s.kind === 'approval' ||
-    (s.kind === 'activity' && !['context', 'learned', 'stats'].includes((s as ActivitySegment).activityKind || ''))
+    (s.kind === 'activity' && !inLedger(s))
 
   // Split the turn into the agent's WORK (tool calls, narration, approvals — up to
   // and including the last process step) and its FINAL ANSWER (trailing text after
@@ -4870,6 +4899,12 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
     // Hydrate mid-job state on mount/reload so the button reflects reality.
     api.retagStatus().then((j) => { if (j && j.status === 'running') setRetag(j) }).catch(() => {})
   }, [])
+  // The socket came back: the job's progress and its end went to nobody while it was down (a
+  // restart ends the job), so its state is read again, and the tags it changed meanwhile with it.
+  const resyncRetag = () => {
+    api.retagStatus().then((j) => { setRetag(j ?? null); retagUpdatedRef.current = j?.updated ?? 0 }).catch(() => {})
+    load(); refreshTags()
+  }
   useChatSocket((m: WsMessage) => {
     if (m.type !== 'retag_progress' && m.type !== 'retag_done') return
     const job = m.data as unknown as RetagJob
@@ -4884,7 +4919,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       else if (job.status === 'error') notify(`Re-tagging failed: ${job.error || 'unknown error'}`, 'error')
       else if (job.status === 'cancelled') notify('Re-tagging cancelled', 'info')
     }
-  })
+  }, resyncRetag)
   async function startRetag() {
     if (retagRunning) { await api.cancelRetag().catch(reportActionFailure('cancel the retag run')); return }
     if (!(await confirm({

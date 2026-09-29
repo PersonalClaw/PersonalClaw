@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 from personalclaw.embedding_providers.base import (
     EmbeddingModel,
@@ -140,8 +141,8 @@ def _active_embedding_spec() -> tuple[str, str] | None:
     return split_ref(refs[0])
 
 
-def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
-    """Build a sync embed fn backed by a configured LLM Model provider.
+def _llm_embed_provider(provider_name: str, model_id: str) -> object | None:
+    """The configured LLM Model provider that embeds with ``model_id``, or None.
 
     The provider (e.g. an ollama or openai-compatible endpoint the user
     configured in Settings > Models) performs the embedding through its own
@@ -220,15 +221,22 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
         )
         return None
 
-    embed = getattr(provider, "embed", None)
-    if embed is None:
+    if getattr(provider, "embed", None) is None:
         logger.warning("Provider %r does not support embeddings", provider_name)
+        return None
+    return provider
+
+
+def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[float] | None] | None:
+    """A sync embed fn backed by a configured LLM Model provider (:func:`_llm_embed_provider`)."""
+    provider: Any = _llm_embed_provider(provider_name, model_id)
+    if provider is None:
         return None
 
     def _sync_embed(text: str) -> list[float] | None:
         async def _run() -> list[float] | None:
             await provider.start()
-            vecs = await embed([text])
+            vecs = await provider.embed([text])
             return list(vecs[0]) if vecs else None
 
         try:
@@ -238,6 +246,12 @@ def _llm_embed_fn(provider_name: str, model_id: str) -> Callable[[str], list[flo
             return None
 
     return _sync_embed
+
+
+def _batch_timeout(texts: list[str]) -> float:
+    """How long one batch may take: longer for more texts, because a provider may embed a batch
+    one text after another (Bedrock's ``embed_batch`` loops ``embed()``)."""
+    return max(60.0, 5.0 * len(texts))
 
 
 def get_active_embed_fn() -> Callable[[str], list[float] | None] | None:
@@ -428,11 +442,6 @@ def bound_embedding() -> BoundEmbedding:
 def get_active_embed_many_fn() -> Callable[[list[str]], list[list[float] | None]] | None:
     """A BATCH embedding fn for the active selection, or None when the provider has no batch path.
 
-    `EmbeddingProvider.embed_batch` has been on the ABC since embeddings shipped and had ZERO
-    callers in core — implemented by the `bedrock-models` and `sentence-transformers` app
-    bundles and unreached by the ingest path that would benefit. This is the accessor that
-    reaches it.
-
     Returns None rather than a per-text shim when there is no batch path: `embed_batch.embed_texts`
     already falls back to the single-text fn, and a shim here would make "this provider batches"
     unanswerable — the caller could not tell 32 real batch calls from 32 sequential ones.
@@ -440,41 +449,60 @@ def get_active_embed_many_fn() -> Callable[[list[str]], list[list[float] | None]
     spec = _active_embedding_spec()
     if not spec:
         return None
-    provider_name, model_id = spec
+    return embed_many_fn_for(*spec)
+
+
+def embed_many_fn_for(
+    provider_name: str, model_id: str
+) -> Callable[[list[str]], list[list[float] | None]] | None:
+    """A BATCH embed fn for ``provider_name``'s ``model_id``: one call for a group of texts.
+
+    Every kind of provider has one. The in-process and app-registered ones through
+    `EmbeddingProvider.embed_batch` (declared on the ABC, so a provider that never overrode it
+    inherits a loop over ``embed()`` — still one call per group for the caller). A configured
+    Model provider through its own ``embed(inputs)``, which takes a list: Ollama's ``/api/embed``
+    and an OpenAI-compatible ``/embeddings`` answer a whole group in one request. Before this, that
+    kind had none, so a provider-backed binding embedded every text of a group as its own request.
+
+    Raises what the provider raised, unlike the single-text fn: `embed_batch.embed_texts` retries
+    and splits a failed group on the exception, and a swallowed one would read as success.
+
+    One bridged call per BATCH, through `run_embed_sync` so it works from sync code with or
+    without a running loop (a raw `asyncio.run()` raises inside one — the ingest and chunk-backfill
+    paths run there).
+    """
     if provider_name in _NATIVE_NAMES:
         ensure_registered()
-        provider = _providers.get("native")
+        direct = _providers.get("native")
     else:
         _ensure_scanned()
-        provider = _providers.get(provider_name)
+        direct = _providers.get(provider_name)
+    if direct is not None:
+        batch = getattr(direct, "embed_batch", None)
+        if not callable(batch):
+            return None
+
+        def _direct_many(texts: list[str]) -> list[list[float] | None]:
+            return list(
+                run_embed_sync(lambda: batch(texts, model=model_id), timeout=_batch_timeout(texts))
+                or []
+            )
+
+        return _direct_many
+    if provider_name in _NATIVE_NAMES:
+        return None
+    provider: Any = _llm_embed_provider(provider_name, model_id)
     if provider is None:
         return None
-    batch = getattr(provider, "embed_batch", None)
-    if not callable(batch):
-        return None
-    # `embed_batch` is declared on the ABC, so a provider that never overrode it inherits the
-    # base implementation. That is still a real batch path (the base loops), so it is used —
-    # what matters to the caller is one call per group, not how the provider satisfies it.
 
-    def _embed_many(texts: list[str]) -> list[list[float] | None]:
-        # One bridged call per BATCH is the whole point of batching — never one per text.
-        # A raw `asyncio.run()` here (as opposed to `run_embed_sync`) raises
-        # "asyncio.run() cannot be called from a running event loop" the moment this is
-        # invoked from async code with a loop already running — which is exactly the
-        # ingest/chunk-backfill path (dashboard handlers, knowledge processing), the one
-        # caller this batch accessor exists for. `run_embed_sync` is the same bridge the
-        # single-text path above already uses, so both sites now behave identically with
-        # and without a running loop. Timeout scales with group size — Bedrock's
-        # `embed_batch` is a sequential loop of `embed()` calls under the hood, so a
-        # multi-text group legitimately needs more wall time than the single-text budget.
-        return list(
-            run_embed_sync(
-                lambda: batch(texts, model=model_id), timeout=max(60.0, 5.0 * len(texts))
-            )
-            or []
-        )
+    def _llm_many(texts: list[str]) -> list[list[float] | None]:
+        async def _run() -> list[list[float]]:
+            await provider.start()
+            return await provider.embed(list(texts))
 
-    return _embed_many
+        return [list(v) for v in run_embed_sync(_run, timeout=_batch_timeout(texts)) or []]
+
+    return _llm_many
 
 
 def get_active_embedding_dim() -> int | None:

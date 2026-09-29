@@ -19,6 +19,7 @@ from personalclaw import self_update, shutdown_event
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
+from personalclaw.dashboard.sse import GatewayStopping, next_unless_stopping
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
 from personalclaw.net.git import git_argv, git_env, transport_refusal
@@ -1047,13 +1048,18 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
                 except asyncio.QueueEmpty:
                     break
 
-            # Wait for new entries or keepalive timeout
+            # Wait for new entries or keepalive timeout, or the stop
             try:
-                data = await asyncio.wait_for(log_queue.get(), timeout=30)
+                data = await next_unless_stopping(log_queue.get(), 30)
                 await resp.write(f"data: {data}\n\n".encode())
             except asyncio.TimeoutError:
                 await resp.write(b": keepalive\n\n")
-    except (ConnectionResetError, ClientConnectionResetError, asyncio.CancelledError):
+    except (
+        ConnectionResetError,
+        ClientConnectionResetError,
+        asyncio.CancelledError,
+        GatewayStopping,
+    ):
         pass
     finally:
         root.removeHandler(handler)

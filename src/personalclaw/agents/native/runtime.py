@@ -582,6 +582,10 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         from personalclaw.agents.native.tool_retrieval import ToolRetriever
 
         self._tool_retriever = ToolRetriever(defs)
+        # The catalog's vectors are asked of the process's index now, so they are ready before a
+        # turn ranks with them (a restart finds them saved). Off the loop: resolving the bound
+        # embedding model and reading the index's file are this thread's, not the gateway's.
+        await asyncio.to_thread(self._tool_retriever.warm)
         # Synthetic schema for the tool_search escape hatch — added to the surfaced
         # set only on a reduced turn (handled in _invoke, not a provider).
         from personalclaw.tool_providers.base import ToolDefinition as _TD
@@ -961,7 +965,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._turn_message = self._messages[-1]
 
         self._schema_budget = await self._tool_schema_budget()
-        tools_kwarg, turn_note = self._prepare_turn_tools(message)
+        tools_kwarg, turn_note = await self._prepare_turn_tools(message)
         if turn_note:
             # SYSTEM role: this is runtime metadata, not something the user said.
             # Tagged VOLATILE (PCS-1 / F1): the turn_note carries the per-turn tool
@@ -1399,7 +1403,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # Read defensively: a window question must never be what costs a turn.
         return schema_budget_chars(getattr(window, "budget_tokens", None))
 
-    def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
+    async def _prepare_turn_tools(self, message: str) -> tuple[list[dict] | None, str]:
         """Decide this turn's ``tools`` kwarg + any runtime note to inject.
 
         Two composable reductions, in order:
@@ -1430,10 +1434,15 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # to the ACTIVE groups — retrieval composes with grouping rather than
         # competing, so the K budget is spent only on tools whose schemas can ride
         # this turn. No-op until the pool exceeds K; fails open to the full pool.
+        # On a worker thread: ranking embeds the request, and the gateway's loop serves every
+        # other request while that call is out.
         restrict = {getattr(d, "name", "") for d in pool} if grouped else None
         selected_defs = (
-            self._tool_retriever.select(
-                user_request(message), restrict=restrict, budget_chars=self._schema_budget
+            await asyncio.to_thread(
+                self._tool_retriever.select,
+                user_request(message),
+                restrict=restrict,
+                budget_chars=self._schema_budget,
             )
             if self._tool_retriever
             else pool
@@ -2058,8 +2067,11 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # discover any tool retrieval didn't surface this turn.
         if tool_name == "tool_search" and self._tool_retriever is not None:
             self._tool_retriever.mark_used("tool_search")
-            hits = self._tool_retriever.search(
-                str(args.get("query", "")), int(args.get("limit", 20) or 20)
+            # Off the loop, for the reason the turn's selection is: ranking embeds the query.
+            hits = await asyncio.to_thread(
+                self._tool_retriever.search,
+                str(args.get("query", "")),
+                int(args.get("limit", 20) or 20),
             )
             if not hits:
                 return "No tools matched. Try broader terms; all tools remain callable by name."

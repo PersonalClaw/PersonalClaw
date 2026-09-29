@@ -83,10 +83,11 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
 
   // A run starting, changing status or ending reaches the socket as the gateway's listing hint
   // (`refresh` naming `workflow_runs`, `workflows/watchdog`), so the Runs tab follows it while it
-  // is open. It was read once: a run that finished still read "running" here until a reload.
+  // is open. It was read once: a run that finished still read "running" here until a reload. The
+  // socket coming back re-reads everything: what changed while it was down sent no hint it heard.
   useChatSocket((m: WsMessage) => {
     if (refreshKinds(m).includes('workflow_runs')) invalidateKeys('workflows:runs')
-  })
+  }, load)
 
   const filteredRuns = useMemo(() => {
     const needle = q.trim().toLowerCase()

@@ -24,7 +24,7 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -191,6 +191,15 @@ _AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
 # the tree is idle; 30s is responsive without spinning — the wait is measured in the
 # lifetime of the work it defers to, not this cadence.
 _STAGED_APPLY_POLL_SECS = 30.0
+
+# The whole stop's time limit. A stop still running then is left where it stands: the process
+# exits, or its new image starts, anyway, and the log names what it was still stopping.
+_SHUTDOWN_SECS = 10.0
+
+# How long a stop waits for the chat turns it ends to say so, before it saves the chats. Out of
+# the stop's whole time limit (`_SHUTDOWN_SECS`): a turn cancelled at an await ends at once, and
+# one that does not is left to the rest of the stop.
+_END_TURNS_SECS = 3.0
 
 # Upper bound for a single autonudge-driven goal loop turn. Loop cycles run long
 # (subagent fan-out, 15-20 min), so this is generous — it only fires to free a
@@ -486,6 +495,9 @@ class GatewayOrchestrator:
         self._handler_tasks: "set[asyncio.Task]" = set()  # type: ignore[type-arg]
         self._session_tasks: "dict[str, asyncio.Task]" = {}  # type: ignore[type-arg]
         self._pending_queue: dict[str, list] = {}
+        #: What the stop is stopping at this moment (`_stopping_step`), for the log of a stop that
+        #: runs out of time.
+        self._stopping: set[str] = set()
 
     # ------------------------------------------------------------------
     # GatewayServices contract (see personalclaw.gateway_services) — the
@@ -4906,62 +4918,91 @@ class GatewayOrchestrator:
         except Exception:
             logger.debug("early app process reap failed", exc_info=True)
 
-        # Save all active chat sessions to history before shutdown
+        # End the chat turns still running, THEN save every chat: each turn ends by saying the
+        # gateway restarted (or shut down) before it finished, and only a save after that keeps
+        # it in the transcript the next start reads.
         if self.dashboard_state:
             from personalclaw.dashboard.chat import save_all_sessions_to_history
 
+            await self._stopping_step(
+                "the running chat turns",
+                self.dashboard_state.end_running_turns(timeout=_END_TURNS_SECS),
+            )
             save_all_sessions_to_history(self.dashboard_state)
             self.dashboard_state.file_indexes.stop_all()
 
         # Cancel in-flight handler tasks. Every wait below on a task it cancelled is bounded: a
         # task cancelled while it starts a process may never leave (`cancel_and_wait`), and the
         # stop has to finish anyway.
-        await cancel_and_wait(list(self._handler_tasks), what="in-flight channel messages")
+        await self._stopping_step(
+            "the channel messages in flight",
+            cancel_and_wait(list(self._handler_tasks), what="in-flight channel messages"),
+        )
 
         # Stop services
         if self.loop_watchdog:
-            await self.loop_watchdog.stop()
+            await self._stopping_step("the loop watchdog", self.loop_watchdog.stop())
         if self.workflow_watchdog:
-            await self.workflow_watchdog.stop()
+            await self._stopping_step("the workflow watchdog", self.workflow_watchdog.stop())
         # Detached first, so an event reported during shutdown is spooled for the next boot rather
         # than handed to a loop that is about to stop.
         self._stop_event_triggers()
-        await cancel_and_wait(
-            [
-                self._file_watch_task,
-                self._web_watch_task,
-                self._clock_task,
-                self._reaper_task,
-                self._task_due_task,
-                self._staged_apply_task,
-            ],
-            what="gateway background services",
+        await self._stopping_step(
+            "the background services",
+            cancel_and_wait(
+                [
+                    self._file_watch_task,
+                    self._web_watch_task,
+                    self._clock_task,
+                    self._reaper_task,
+                    self._task_due_task,
+                    self._staged_apply_task,
+                ],
+                what="gateway background services",
+            ),
         )
         if self.heartbeat_svc:
             self.heartbeat_svc.stop()
         from personalclaw import session_search
 
-        await asyncio.to_thread(session_search.INDEXER.stop, wait=True)
+        await self._stopping_step(
+            "the chat search indexer", asyncio.to_thread(session_search.INDEXER.stop, wait=True)
+        )
         if self.inbox_svc:
             self.inbox_svc.stop()
-        # Kill all ACP processes and close connections
-        cleanup_tasks: list = []
+        # Kill all ACP processes and close connections, side by side.
+        last: dict[str, Any] = {}
         if self.subagent_mgr:
-            cleanup_tasks.append(self.subagent_mgr.cancel_all())
+            last["the background agents"] = self.subagent_mgr.cancel_all()
         if self.sessions:
-            cleanup_tasks.append(self.sessions.close_all())
+            last["the agent sessions"] = self.sessions.close_all()
         if self._dashboard_runner:
             # Close WS connections first so handlers exit promptly
             if self.dashboard_state:
-                await self.dashboard_state.close_all_ws()
-            cleanup_tasks.append(self._dashboard_runner.cleanup())
+                await self._stopping_step(
+                    "the dashboard's live connections", self.dashboard_state.close_all_ws()
+                )
+            last["the dashboard server"] = self._dashboard_runner.cleanup()
         # Stop every channel receiver, and start none after this.
         from personalclaw.channel_transports import unbind_inbound
 
-        cleanup_tasks.append(unbind_inbound())
+        last["the channel connections"] = unbind_inbound()
 
-        if cleanup_tasks:
-            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+        await asyncio.gather(*(self._stopping_step(what, aw) for what, aw in last.items()))
+
+    async def _stopping_step(self, what: str, aw: Awaitable[Any]) -> None:
+        """Await one step of the stop, named for the log of a stop that runs out of time in it.
+
+        A step that fails is said, and passed: it must not cost the stop the steps after it (the
+        dashboard server's cleanup is where time travel writes its pending commits).
+        """
+        self._stopping.add(what)
+        try:
+            await aw
+        except Exception as exc:
+            logger.warning("Stopping %s failed: %s", what, exc, exc_info=True)
+        finally:
+            self._stopping.discard(what)
 
     # ------------------------------------------------------------------
     # Auto-update
@@ -5518,10 +5559,25 @@ class GatewayOrchestrator:
         from personalclaw import restart_request
         from personalclaw.session import cleanup_orphaned_sessions
 
-        try:
-            await asyncio.wait_for(self._shutdown(), timeout=10.0)
-        except (asyncio.TimeoutError, Exception):
-            logger.warning("Graceful shutdown timed out — force exiting")
+        stop = asyncio.ensure_future(self._shutdown())
+        await asyncio.wait({stop}, timeout=_SHUTDOWN_SECS)
+        then = "restarting" if restart_request.pending() is not None else "exiting"
+        if not stop.done():
+            still = " and ".join(sorted(self._stopping))
+            logger.warning(
+                "The stop did not finish in %.0f s%s; %s anyway",
+                _SHUTDOWN_SECS,
+                f" (still stopping {still})" if still else "",
+                then,
+            )
+            # Cancelled, and given a moment to unwind; a step that does not is left behind.
+            stop.cancel()
+            await asyncio.wait({stop}, timeout=1.0)
+        elif stop.cancelled() or stop.exception() is not None:
+            error = None if stop.cancelled() else stop.exception()
+            logger.error(
+                "The stop failed (%s); %s anyway", error or "cancelled", then, exc_info=error
+            )
 
         # Kill any ACP agent processes that survived graceful shutdown
         cleanup_orphaned_sessions()

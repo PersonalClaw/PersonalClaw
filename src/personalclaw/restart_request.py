@@ -36,6 +36,10 @@ class RestartRequest:
 
 _pending: RestartRequest | None = None
 
+#: Why the gateway is stopping (:func:`stopping_for`): to start again, or to stay down.
+RESTARTING = "restart"
+SHUTTING_DOWN = "shutdown"
+
 
 def request_restart(*, auth_mode: str = "") -> RestartRequest:
     """Ask the running gateway to stop the way it always stops, then start a fresh gateway.
@@ -70,6 +74,12 @@ def request_stop() -> None:
 def pending() -> RestartRequest | None:
     """The restart the gateway was asked for, or ``None`` when it was asked to stop."""
     return _pending
+
+
+def stopping_for() -> str:
+    """Why the stopping gateway stops: :data:`RESTARTING` while a restart is pending, else
+    :data:`SHUTTING_DOWN`."""
+    return RESTARTING if _pending is not None else SHUTTING_DOWN
 
 
 def start(request: RestartRequest) -> NoReturn:

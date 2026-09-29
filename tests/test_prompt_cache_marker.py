@@ -492,7 +492,11 @@ async def test_switch_off_keeps_the_volatile_tag_on_the_per_turn_note(cache_swit
     await rt.start()
     # Force a per-turn note so the tagging branch is reached regardless of tool surface.
     note = "per-turn tool catalog"
-    rt._prepare_turn_tools = lambda message: (None, note)  # type: ignore[method-assign]
+
+    async def _prepare(message: str) -> tuple[None, str]:
+        return None, note
+
+    rt._prepare_turn_tools = _prepare  # type: ignore[method-assign]
     await _drain(rt)
     notes = [m for m in rt._messages if m.get("role") == "system"]
     assert notes, "the per-turn note never reached the history"

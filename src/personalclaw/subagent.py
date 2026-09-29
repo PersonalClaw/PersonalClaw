@@ -481,6 +481,15 @@ class SubagentInfo:
     # reads how it ended calls that a failure (its trigger's history, the notes). `error` still says
     # what happened, for the readers that show it. Last, for the reason `trigger_id` is.
     declined: bool = False
+    # What its start asks the owner to allow, as its caller keys it (a workflow step's
+    # `engine.stage_request_key`), or "" for a caller that does not. Last, for the reason
+    # `trigger_id` is.
+    request_key: str = ""
+    # When the owner allowed that start: set when she answers Allow, or handed in by a caller
+    # resuming a start she allowed before (`spawn(approved_at=…)`), which then starts without
+    # asking (`SubagentManager._spawn_grant`). 0 while nobody has. Last, for the reason
+    # `trigger_id` is.
+    approved_at: float = 0.0
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -534,6 +543,7 @@ _SPAWN_GRANT_REASONS = {
     approval_grants.PARENT_TRUST: "parent_trusted",
     approval_grants.HOOK_SETTING: "tool_calls_gated",
     approval_grants.YOLO: "yolo",
+    approval_grants.APPROVED_BEFORE_RESUME: "allowed_before_resume",
 }
 
 
@@ -694,7 +704,23 @@ class SubagentManager:
         hooks = self._ctx_builder.hooks if self._ctx_builder else None
         if hooks is not None and hooks.auto_approve_subagent_spawn is True:
             return approval_grants.HOOK_SETTING
+        if self._allowed_before(info):
+            return approval_grants.APPROVED_BEFORE_RESUME
         return ""
+
+    def _allowed_before(self, info: SubagentInfo) -> bool:
+        """Whether the owner allowed this same start before, recently enough to stand for it.
+
+        The caller hands her answer back (``spawn(request_key=…, approved_at=…)``) when it resumes
+        the start it was for: a workflow step whose attempt a restart or a pause cut off. It stands
+        within the time limit a subagent is given: the work she allowed could not have run longer,
+        so an answer older than that was about an occasion that is over, and the start asks again.
+        A time in the future is not an answer anyone gave.
+        """
+        if not info.request_key or info.approved_at <= 0:
+            return False
+        age = time.time() - info.approved_at
+        return 0 <= age <= self._default_timeout
 
     def _standing_grant(self, info: SubagentInfo) -> str:
         """The grant that lets *info*'s agent approve its own tool calls NOW, or ``""``.
@@ -1124,6 +1150,8 @@ class SubagentManager:
         *,
         trigger_id: str = "",
         title: str = "",
+        request_key: str = "",
+        approved_at: float = 0.0,
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1131,7 +1159,8 @@ class SubagentManager:
 
         1. A standing grant (:meth:`_spawn_grant`: YOLO, ``approval_mode="auto"`` from the
            caller, the Allow of the trigger whose action starts it, the parent chat's Trust,
-           ``auto_approve_subagent_spawn``) → immediate
+           ``auto_approve_subagent_spawn``, the owner's Allow of this same start before a
+           restart) → immediate
            execution, but only if the operator ceiling lets that grant stand
            (``approval_grants.stands``). Under ``approval: ask`` none does, and the spawn is
            asked like any other.
@@ -1172,6 +1201,12 @@ class SubagentManager:
             title (str): What the run is called where a person reads it — for a trigger's run,
                 its name or its instruction (``triggers.store.run_title``). Its completion notice
                 is titled with it and leads with what the agent said.
+            request_key (str): What this start asks the owner to allow, as the caller keys it,
+                kept on the info with the time she allows it (``approved_at``), so a caller that
+                resumes the same start after a restart can hand her answer back.
+            approved_at (float): When the owner allowed this same start before — the caller's
+                own record of her answer, handed back to resume it. The start then does not
+                ask again, within the time limit a subagent is given (:meth:`_spawn_grant`).
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1359,6 +1394,8 @@ class SubagentManager:
             extra_env=dict(extra_env or {}),
             trigger_id=trigger_id or "",
             title=redact_credentials(redact_exfiltration_urls(title or "")[0])[0],
+            request_key=request_key or "",
+            approved_at=float(approved_at or 0.0) if request_key else 0.0,
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
 
@@ -1762,6 +1799,10 @@ class SubagentManager:
             outcome="approved" if decision.decided_by == approval_grants.YOU else "auto_approved",
             metadata={"subagent_id": info.id, "decided_by": decision.decided_by},
         )
+        if decision.decided_by == approval_grants.YOU and info.request_key:
+            # Her answer, for the caller to keep with the work it started: resuming this start
+            # after a restart hands it back instead of asking her again.
+            info.approved_at = time.time()
         self._log_spawned(info)
         await self._run(info)
 

@@ -2124,6 +2124,12 @@ IGNORED: tuple[str, ...] = (
     # turned the doctor/health strip coral on every fresh install. A snapshot restoring a stale
     # copy is worse than the empty one the next read refolds.
     "usage_stats.json",
+    # The tool-description vectors tool retrieval ranks with (`agents.native.tool_vectors`). A
+    # cache: every vector is recomputed from the tool catalog the gateway loads, a missing file is
+    # refilled in the background, and a restored one would be another machine's catalog embedded
+    # with what may be another model. It is kept across restarts so a restart embeds nothing that
+    # has not changed.
+    "tool_embeddings.json",
     "fixture.yaml",  # test-fixture marker written by `--seed`
     # The rendered run-prompt (`LOOP_MD_NAME`). Not state: it is re-rendered from the loop's own
     # declared inputs on every run, so a restored copy would only ever be a stale duplicate of

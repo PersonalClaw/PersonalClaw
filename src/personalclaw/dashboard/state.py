@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from personalclaw import record_files, trust_mode
+from personalclaw import record_files, restart_request, trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
@@ -457,10 +457,10 @@ class _ChatSession:
         # is decided on (`DashboardState.session_creating_app`).
         self.created_by_app: str = ""
         self._last_turn_errored: bool = False  # set by run_chat on a crashed turn
-        # How the latest turn that left this session idle ended ("complete" | "stopped" |
-        # "error", `chat_runner.terminal_outcome_for_turn`), or "" while none has since this
-        # process started it. Served as session detail's `last_turn_outcome`, and cleared when a
-        # turn starts, so it only ever describes a turn that is over.
+        # How the latest turn that left this session idle ended ("complete" | "stopped" | "error"
+        # | "interrupted", `chat_runner.terminal_outcome_for_turn`), or "" while none has since
+        # this process started it. Served as session detail's `last_turn_outcome`, and cleared
+        # when a turn starts, so it only ever describes a turn that is over.
         self._last_turn_outcome: str = ""
         # Follow-up chips: the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
@@ -1007,6 +1007,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._kept_tags = record_files.Kept()
         self._kept_tag_boards = record_files.Kept()
         self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # Why the gateway is stopping (`restart_request.stopping_for`), or "" while it serves. Set
+        # by `end_running_turns`; a turn that ends after it says it was interrupted.
+        self.stopping_for = ""
         # YOLO / auto-approve is process-global trust state owned by
         # personalclaw.trust_mode (single source of truth). The state object
         # delegates to it and registers a callback to clear per-session approval
@@ -1323,6 +1326,38 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         except Exception:
             sessions = 0
         return {"running_agents": running_agents, "sessions": sessions}
+
+    async def end_running_turns(self, *, timeout: float) -> int:
+        """End every chat turn still running because the gateway is stopping; how many there were.
+
+        The gateway's last save of the chats comes after this, so what each turn says as it ends
+        is in the transcript the next start reads: the answer as far as it got, and the notice that
+        the gateway restarted (or shut down) before it finished, where the owner reads it and on
+        the channel the chat is linked to (`chat_runner.say_how_an_unanswered_turn_ended`). Ended
+        in any other order, a turn cut off by a restart left its question unanswered with nothing
+        saying why, and the live page said it had stopped, as if the owner had pressed Stop.
+
+        A turn that has not ended within *timeout* is left to the rest of the shutdown.
+        """
+        self.stopping_for = restart_request.stopping_for()
+        tasks = [
+            s.task
+            for s in list(self._sessions.values())
+            if s.task is not None and not s.task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if not tasks:
+            return 0
+        _done, pending = await asyncio.wait(tasks, timeout=timeout)
+        if pending:
+            self._log.warning(
+                "%d of %d chat turn(s) had not ended %.0fs after the gateway began to stop",
+                len(pending),
+                len(tasks),
+                timeout,
+            )
+        return len(tasks)
 
     _FLUSH_INTERVAL = 5  # seconds between dirty-session flushes
 

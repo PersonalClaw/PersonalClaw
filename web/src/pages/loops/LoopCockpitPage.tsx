@@ -437,7 +437,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       }
     }
   }, [id])
-  useChatSocket(onWs)
+  useChatSocket(onWs, null)  // a live ticker: nothing replays it, and the loop has its own feed
 
   // 🔴 GONE OUTRANKS A STALE SNAPSHOT. This screen used to be nested inside `if (!c)`, so it was
   // reachable ONLY for a loop that never loaded — the one case #558 is *not* about. A loop that

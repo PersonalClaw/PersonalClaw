@@ -514,7 +514,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       setActivityBySession((m0) => ({ ...m0, [sess]: [] }))  // that worker's cycle ended
     }
   }, [workerKey])
-  useChatSocket(onWs)
+  useChatSocket(onWs, null)  // a live ticker: nothing replays it, and the project is polled above
 
   // After a queue/unqueue mutation, refetch the project (queued_task_ids) + bump
   // the task rail so the new queued/ready/blocked states render immediately.

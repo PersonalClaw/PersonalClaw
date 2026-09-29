@@ -97,6 +97,7 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
     if manager is None or not hasattr(manager, "get"):
         return
     settled = False
+    remembered = False
     for path in awaiting_out_of_band_work(ctl):
         inst = ctl._instance(path)
         try:
@@ -107,6 +108,8 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             # shape where a safety control becomes an outage.
             logger.debug("run %s: subagent lookup failed for %s", ctl.run.id, path, exc_info=True)
             continue
+        if info is not None and _remember_allowed_start(inst, info):
+            remembered = True
         if info is None or not getattr(info, "done", False):
             # UNKNOWN or still working — no verdict either way. `None` is the post-restart
             # shape (a fresh manager knows no ids): reading it as "finished" would bless
@@ -218,6 +221,9 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             )
             if node is not None:
                 effect_boundary.record_terminal_effect(ctl, node, path, inst, inst.state, output)
+        # The attempt is over, and her Allow was for it: another attempt asks again.
+        inst.approved_request = ""
+        inst.approved_at = 0.0
         # What the stage wrote where the run cannot read it, kept in the run's own folder before
         # anyone is told the step is done — on either outcome: a failed stage's document is still
         # the document as it stands.
@@ -255,14 +261,35 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
             },
         )
         settled = True
-    if settled:
+    if settled or remembered:
         ctl._persist_state()
+    if settled:
         # The RUN ROW too, not just instance state. `service.status()` is a pure store read
         # (`store.get(run_id)`), so a `total_tokens` that lives only in this object is a number
         # no surface can see until `_finish` happens to flush it — and a run the user is
         # watching would report zero for its whole life. `_persist_state` writes instances
         # only, which is why the counter needs its own flush here.
         ctl._save_run()
+
+
+def _remember_allowed_start(inst: Any, info: Any) -> bool:
+    """Keep on *inst* the owner's Allow of its attempt's start; whether that changed it.
+
+    The approval registry forgets her answer with the process. Kept here, in the state a restart
+    reads back, the attempt a restart or a pause cuts off resumes on it, and she is not asked the
+    same thing twice (`engine.dispatch_stage`). A start a standing grant approved carries no
+    answer of hers, so nothing is kept for it, and a resumed start the answer was handed back to
+    carries the same answer, so the time it counts from never moves.
+    """
+    request_key = str(getattr(info, "request_key", "") or "")
+    approved_at = float(getattr(info, "approved_at", 0.0) or 0.0)
+    if not request_key or approved_at <= 0:
+        return False
+    if (inst.approved_request, inst.approved_at) == (request_key, approved_at):
+        return False
+    inst.approved_request = request_key
+    inst.approved_at = approved_at
+    return True
 
 
 def _keep_what_it_wrote(ctl: RunController, inst: Any, info: Any, step: str) -> None:

@@ -1368,6 +1368,19 @@ class NodeInstance:
     #: the moment it is released, so a non-empty value always names a claim that is still held.
     claim_target: str = ""
     claim_holder: str = ""
+    #: The start the owner allowed for this instance's current attempt, for a `stage` node: the
+    #: digest of what it asked (`engine.stage_request_key`) and when she answered. The approval
+    #: registry forgets an answer with the process, so without this a restart that cut the
+    #: attempt off asked her again, with a new approval, on every surface, and the run waited for
+    #: her again. With it, the resumed attempt starts on her answer when it asks the same thing
+    #: (`SubagentManager._spawn_grant`); anything else asks: another request, a new attempt after
+    #: this one settled, a rewind, an answer older than the stage's own time limit.
+    #:
+    #: PERSISTED for the reason `subagent_id` is. Written when the controller sees her Allow
+    #: (`stage_settlement.reconcile_dispatched_stages`), kept across a restart and a pause, and
+    #: cleared when the attempt settles and when a rewind resets the instance.
+    approved_request: str = ""
+    approved_at: float = 0.0
     #: True when THIS instance's terminal output was served from the resume/rewind cache
     #: (WF2-A1) rather than freshly produced. The `step_cached` ledger event is the durable
     #: record; this is the projection a status read can answer from without scanning it, which
@@ -1421,6 +1434,8 @@ class NodeInstance:
             "subagent_id": self.subagent_id,
             "claim_target": self.claim_target,
             "claim_holder": self.claim_holder,
+            "approved_request": self.approved_request,
+            "approved_at": self.approved_at,
             "cached": self.cached,
             "schema_shortfall": self.schema_shortfall,
             "model_substituted": list(self.model_substituted),
@@ -1453,6 +1468,8 @@ class NodeInstance:
             subagent_id=str(d.get("subagent_id", "") or ""),
             claim_target=str(d.get("claim_target", "") or ""),
             claim_holder=str(d.get("claim_holder", "") or ""),
+            approved_request=str(d.get("approved_request", "") or ""),
+            approved_at=float(d.get("approved_at", 0.0) or 0.0),
             cached=bool(d.get("cached", False)),
             schema_shortfall=str(d.get("schema_shortfall", "") or ""),
             model_substituted=[str(s) for s in (d.get("model_substituted") or []) if s],

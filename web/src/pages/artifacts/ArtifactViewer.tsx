@@ -168,11 +168,12 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   //
   // `keepVersion` so a live write never yanks a pinned `?v=N` snapshot out from
   // under whoever is reading it: the rail gains the new version, the pinned body
-  // stays put. `onChanged` keeps the library grid's card in step.
+  // stays put. `onChanged` keeps the library grid's card in step. The socket coming back reads it
+  // again too: a version written while it was down sent its frame to nobody.
+  const reloadLive = () => { reload({ keepVersion: true, quiet: true }).then(() => onChanged()).catch(() => {}) }
   useChatSocket((m: WsMessage) => {
-    if (!isArtifactUpdateFor(m, slug)) return
-    reload({ keepVersion: true, quiet: true }).then(() => onChanged()).catch(() => {})
-  })
+    if (isArtifactUpdateFor(m, slug)) reloadLive()
+  }, reloadLive)
 
   // Pull-on-view (WF2AUT-6 / R10): opening an artifact is the render that drives any `view` trigger
   // bound to it. The surface id is `artifact.<slug>` — stable per artifact, and what an author binds

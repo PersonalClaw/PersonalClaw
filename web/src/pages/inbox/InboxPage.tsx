@@ -80,7 +80,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   useChatSocket((m: WsMessage) => {
     if (m.type === 'inbox_item_updated' || m.type === 'inbox_new_item'
       || m.type === 'approval' || m.type === 'approval_resolved') load()
-  })
+  }, load)
 
   // The local owner's handle, off the status payload this page ALREADY reads.
   //
