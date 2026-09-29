@@ -4353,8 +4353,12 @@ export interface ProjectImportResult {
  *  pin is set and no release in the fetched list carries it; the ONE "no release matches the pin" signal
  *  (`latest: ''` alone also means "offline, nothing cached"). `pin_older` — the pin names a release older
  *  than the one running: a rollback not applied yet, whose container commands are in `instructions`.
- *  All three read through `settings/updateVerdict`. */
-export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: 'git' | 'pip' | 'container' | 'desktop'; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
+ *  All three read through `settings/updateVerdict`. `unattended_apply` — whether `auto: 'staged'` can
+ *  install an update on this kind at all (`self_update.applies_updates_unattended`: a source checkout
+ *  only); `lib/updateRoute` says what every other kind does instead. */
+export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: InstallKind; unattended_apply?: boolean; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string }
+/** How this PersonalClaw was installed (`self_update.detect_install_kind`). */
+export type InstallKind = 'git' | 'pip' | 'container' | 'desktop'
 
 // settings entity payloads
 export interface NotificationSettings {
@@ -5535,10 +5539,21 @@ export interface OnboardingState {
   /** The last MEASURED connection of the instance chat is bound to, or `null` when nothing has
    *  been measured. Read from the gateway's cache — this route never probes the provider. */
   chat_provider_connection?: ChatProviderConnection | null
+  /** How this PersonalClaw was installed, and whether that kind installs an update on its own
+   *  (`self_update.applies_updates_unattended`) — what the done screen's update pointer is about.
+   *  Here, rather than read from `GET /api/update/check`, because that check fetches the release
+   *  list from GitHub, and a first-run sentence must not reach the network. */
+  install_kind?: InstallKind
+  unattended_apply?: boolean
   step?: OnboardingStep
   essentials?: OnboardingEssentials
   first_success?: { knowledge: boolean; trigger: boolean; loop: boolean }
+  /** The name and handle this run continued past step 1 with, until it finishes — what a second
+   *  tab joins the run with. Not identity: the flow writes that only when the run finishes. */
+  name_draft?: OnboardingNameDraft | null
 }
+/** `name_draft` in `onboarding.json` (`_NAME_DRAFT_SCHEMA` in `personalclaw/onboarding.py`). */
+export interface OnboardingNameDraft { name: string; handle: string; handle_touched: boolean }
 /** A partial patch for `POST /api/onboarding/state`. The backend merges at BOTH
  *  levels, so a step sends ONLY what it learned — never a read-modify-write of the
  *  whole document, which would clobber a sibling step's progress. An unknown or
@@ -5547,6 +5562,8 @@ export interface OnboardingStatePatch {
   step?: OnboardingStep
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
+  /** Replaced whole, never merged; `null` clears it. */
+  name_draft?: OnboardingNameDraft | null
 }
 /** `GET /api/onboarding/model-check` — the VERIFIED answer to "can I chat yet".
  *

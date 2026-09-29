@@ -1,10 +1,12 @@
 """Whether a channel is configured is the channel app's own answer, not two credential names.
 
 Core decided "a channel is configured" by looking for ``SLACK_APP_TOKEN`` and ``SLACK_BOT_TOKEN``
-in the credential store, in three places: the gateway's startup line, ``personalclaw setup``'s
-dashboard-URL prompt, and ``personalclaw doctor``'s remote-bind warning. That named one vendor in
-core, and it went blind the moment Slack kept its tokens where it now does — in its own settings,
-under keys it owns (PersonalClawApps #124): a working Slack read as "no channel configured".
+in the credential store, in two places: the gateway's startup line and ``personalclaw setup``'s
+dashboard-URL prompt. That named one vendor in core, and it went blind the moment Slack kept its
+tokens where it now does — in its own settings, under keys it owns (PersonalClawApps #124): a
+working Slack read as "no channel configured". (``personalclaw doctor`` asked it too, for a
+warning that a bind beyond loopback without a channel could mint no token. It could: ``personalclaw
+token`` needs no channel, so doctor no longer asks — ``test_doctor_on_a_bind_beyond_loopback.py``.)
 
 ``channel_transports.configured_channels`` asks each channel transport's own ``health()``:
 ``offline`` means it has nothing to connect with; ``ready`` and ``error`` (half-up) both mean it is
@@ -14,7 +16,6 @@ configured. Every shipped channel app answers that way.
 from __future__ import annotations
 
 import logging
-import urllib.error
 from typing import Any
 from unittest.mock import patch
 
@@ -71,45 +72,6 @@ async def test_a_channel_counts_when_its_own_health_says_it_has_what_it_needs(re
         _Transport(channel_transports.WEBUI_TRANSPORT, "ready"),
     )
     assert sorted(await channel_transports.configured_channels()) == ["Half-Up", "Ready-Chan"]
-
-
-# ── personalclaw doctor: the remote-bind warning ────────────────────────────────────────────────
-
-_NO_CHANNEL = "no channel configured — token generation unavailable"
-
-
-def _doctor_on_a_remote_bind(capsys, creds: dict[str, str]) -> str:
-    from personalclaw.cli_doctor import _doctor
-    from personalclaw.config.loader import AppConfig
-
-    with (
-        patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
-        patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
-        patch("personalclaw.cli_doctor.is_local_bind", return_value=False),
-        patch.object(AppConfig, "load_credentials", lambda self: dict(creds)),
-    ):
-        try:
-            _doctor()
-        except SystemExit:
-            pass
-    return capsys.readouterr().out
-
-
-def test_doctor_sees_a_channel_configured_through_its_settings(registered, capsys):
-    """No SLACK_* credential anywhere, and the Slack transport says it is configured."""
-    registered(_Transport("slack", "error"))
-    out = _doctor_on_a_remote_bind(capsys, {})
-    assert "bind:        0.0.0.0" in out, "the probe did not reach the remote-bind branch"
-    assert _NO_CHANNEL not in out, out
-
-
-def test_doctor_does_not_take_slack_credential_names_for_a_channel(registered, capsys):
-    """The two names alone, with no channel that reports itself configured, are not a channel."""
-    registered(_Transport("slack", "offline"))
-    out = _doctor_on_a_remote_bind(
-        capsys, {"SLACK_APP_TOKEN": "xapp-1", "SLACK_BOT_TOKEN": "xoxb-1"}
-    )
-    assert _NO_CHANNEL in out, out
 
 
 # ── personalclaw setup: the dashboard-URL prompt ────────────────────────────────────────────────

@@ -630,16 +630,6 @@ class RegistryPointer:
 _LISTING_RULE = "A registry listing can only download from a public https:// address."
 _SHOWN_CHARS = 200
 
-#: Where a refused address is, in the Store's words, by guard category.
-_PLACES = {
-    "loopback": "this computer",
-    "unspecified": "this computer",  # 0.0.0.0 and :: reach this machine's own services
-    "private": "a private network",
-    "link_local": "a link-local address",
-}
-#: The categories an owner can vouch for by allow-listing the host (never the metadata service).
-_OWNER_CAN_ALLOW = frozenset({"loopback", "unspecified", "private"})
-
 
 def _shown(text: str) -> str:
     """Third-party text quoted in a sentence, bounded so an index cannot fill a card with it."""
@@ -710,10 +700,12 @@ def listing_repo_refusal(repo: str) -> str:
 def _place(host: str, address: str, category: str) -> str:
     """Where a refused connection would have gone: ``this computer (127.0.0.1)``, or
     ``a private network (nas.example, which resolves to 10.0.0.4)`` for a name."""
+    from personalclaw.net.guard import PLACES
+
     if category == "metadata":
         what = "the cloud-metadata address" if address else "the cloud-metadata service"
     else:
-        what = _PLACES.get(category, "a non-public address")
+        what = PLACES.get(category, "a non-public address")
     host = _shown(host)
     if _is_ip_literal(host) or not address:
         return f"{what} ({host})"
@@ -732,15 +724,14 @@ def listing_address_refusal(decision: Any) -> str:
         )
     if decision.category == "malformed":
         return f"Not installable: {decision.reason}. {_LISTING_RULE}"
+    from personalclaw.net.guard import ALLOWED_HOSTS, OWNER_CAN_ALLOW
+
     sentence = (
         "Not installable: this listing downloads from "
         f"{_place(decision.host, decision.address, decision.category)}. {_LISTING_RULE}"
     )
-    if decision.category in _OWNER_CAN_ALLOW:
-        sentence += (
-            f" If {_shown(decision.host)} is yours, add it to Allowed hosts in Settings → "
-            "Security → Network egress."
-        )
+    if decision.category in OWNER_CAN_ALLOW:
+        sentence += f" If {_shown(decision.host)} is yours, add it to {ALLOWED_HOSTS}."
     return sentence
 
 

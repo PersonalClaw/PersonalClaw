@@ -820,8 +820,13 @@ function ModelSubFlow({ app, phase, chatModel, configured, verifyRun, floor, dow
       </div>
     )
   }
-  if (phase === 'bind') return <BindModel configured={configured} onBound={onBound} />
-  return <ConfigureProvider app={app} onConfigured={onConfigured} />
+  // 🔑 EVERY PHASE LEADS BACK TO THE LIST. The sub-flow replaces the lane's list, so a phase with
+  // no way back is a dead end: measured in the container, a provider whose "Save and test" failed
+  // (no credentials on this machine) left ONLY its form — the local-model block, the scan,
+  // "Configure Ollama" and the catalog gone, and "Pick a different provider" offered in `verify`
+  // alone. The same exit, with the same words, in each.
+  if (phase === 'bind') return <BindModel configured={configured} onBound={onBound} onPickAnother={onPickAnother} />
+  return <ConfigureProvider app={app} onConfigured={onConfigured} onPickAnother={onPickAnother} />
 }
 
 /** The lane's proof. Builds what chat builds (`GET /api/onboarding/model-check`) and reports
@@ -1167,9 +1172,11 @@ function InstalledProviderTypes({ missing, error, onRetry, onConfigure }: {
  *  The instance NAME is the provider type (`ollama`), not the app name (`ollama-models`):
  *  a `provider:model` ref, the test route and every diagnosis speak the entry name, so an
  *  app name here would produce a binding that silently never resolves. */
-function ConfigureProvider({ app, onConfigured }: {
+function ConfigureProvider({ app, onConfigured, onPickAnother }: {
   app: string
   onConfigured: (c: { provider: string; unprobed: string }) => void
+  /** Back to the lane's provider list — see `ModelSubFlow`. */
+  onPickAnother: () => void
 }) {
   const { data: types, error: typesError, refresh } = useQuery(
     'onboarding:provider-types', () => api.modelProviderTypes())
@@ -1189,6 +1196,12 @@ function ConfigureProvider({ app, onConfigured }: {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [seeded, setSeeded] = useState('')
+  // Whether this form is still on screen. "Pick a different provider" stays usable while a save
+  // runs, because a test waits on a remote endpoint for as long as its timeout, and leaving
+  // unmounts this form. The save's answer then belongs to nobody: `onConfigured` would move the
+  // lane to binding and pull a user who went back to the list onto this provider's models.
+  const shown = useRef(true)
+  useEffect(() => { shown.current = true; return () => { shown.current = false } }, [])
 
   const t: ModelProviderType | undefined = types?.find((x) => x.app === app) ?? undefined
   const props = t?.settingsSchema?.properties || {}
@@ -1215,7 +1228,10 @@ function ConfigureProvider({ app, onConfigured }: {
           {app} installed, but its provider type hasn't registered yet. That usually means the
           gateway needs a restart to load it.
         </p>
-        <div><Button variant="secondary" size="sm" onClick={refresh}>Check again</Button></div>
+        <div className="flex flex-wrap items-center gap-s">
+          <Button variant="secondary" size="sm" onClick={refresh}>Check again</Button>
+          <Button variant="ghost" size="sm" onClick={onPickAnother}>Pick a different provider</Button>
+        </div>
       </div>
     )
   }
@@ -1255,7 +1271,9 @@ function ConfigureProvider({ app, onConfigured }: {
         if (!/already exists/i.test(thrownMessage(e))) throw e
         await api.updateModelProvider(t.type, { options })
       }
+      if (!shown.current) return
       const res = await api.testModelProvider(t.type)
+      if (!shown.current) return
       if (!res.ok) { setError(res.message || 'The provider test failed.'); setBusy(false); return }
       // 🪤 `ok: true` is NOT "connected". `POST /api/model-providers/{name}/test` answers
       // `{ok: true, status: 'no_probe'}` when the entry's type registers no catalog — i.e.
@@ -1265,6 +1283,7 @@ function ConfigureProvider({ app, onConfigured }: {
       // build check at the end, and the bind step below says what an empty list can mean.
       onConfigured({ provider: t.type, unprobed: res.status === 'no_probe' ? (res.message || 'No connectivity probe available for this provider type') : '' })
     } catch (e) {
+      if (!shown.current) return
       setError(thrownMessage(e) || 'Could not save the provider.'); setBusy(false)
     }
   }
@@ -1300,8 +1319,9 @@ function ConfigureProvider({ app, onConfigured }: {
         />
       </div>
       {error && <div className="text-danger text-[0.8125rem]" role="alert">{error}</div>}
-      <div>
+      <div className="flex flex-wrap items-center gap-s">
         <Button variant="primary" size="sm" loading={busy} onClick={submit}>Save and test</Button>
+        <Button variant="ghost" size="sm" onClick={onPickAnother}>Pick a different provider</Button>
       </div>
     </div>
   )
@@ -1310,10 +1330,12 @@ function ConfigureProvider({ app, onConfigured }: {
 /** Bind a chat model — the last leg. `active_models.json` holds canonical
  *  `provider:model` refs (what the Models panel writes), NOT the display `name`,
  *  which the discovery fallback builds as `provider/model`. */
-function BindModel({ configured, onBound }: {
+function BindModel({ configured, onBound, onPickAnother }: {
   configured: { provider: string; unprobed: string } | null
   /** A chat ref was written. Carries no label: the verification reads the model back. */
   onBound: () => void
+  /** Back to the lane's provider list — see `ModelSubFlow`. */
+  onPickAnother: () => void
 }) {
   const { data: models, error, refresh } = useQuery('onboarding:chat-models', () => api.chatModels())
   // The chat chain as this step found it, WITH its revision. Binding replaces the whole chain, so
@@ -1333,14 +1355,23 @@ function BindModel({ configured, onBound }: {
   const conflicted = guard.conflict !== null
 
   const loadErr = error ?? chainErr
+  const pickAnother = (
+    <Button variant="ghost" size="sm" onClick={onPickAnother} disabled={!!binding}
+      disabledReason="A model is being bound">Pick a different provider</Button>
+  )
   if ((models === undefined || chain === undefined) && loadErr) {
-    return <LoadError what="chat models" error={loadErr} onRetry={() => { refresh(); rereadChain() }} />
+    return (
+      <div className="flex flex-col gap-s">
+        <LoadError what="chat models" error={loadErr} onRetry={() => { refresh(); rereadChain() }} />
+        <div>{pickAnother}</div>
+      </div>
+    )
   }
   if (models === undefined || chain === undefined) {
     return <Spinner what="chat models" />
   }
   if (models.length === 0) {
-    return <NoModelsDiscovered configured={configured} onRetry={refresh} />
+    return <NoModelsDiscovered configured={configured} onRetry={refresh} pickAnother={pickAnother} />
   }
 
   const bind = async (m: ChatModelOption) => {
@@ -1380,6 +1411,7 @@ function BindModel({ configured, onBound }: {
           </motion.div>
         ))}
       </motion.div>
+      <div>{pickAnother}</div>
     </div>
   )
 }
@@ -1399,9 +1431,11 @@ function BindModel({ configured, onBound }: {
  *
  *  With no `configured` provider (the lane arrived at `bind` straight from readiness) there
  *  is nothing to test by name, so it states both possibilities rather than picking one. */
-function NoModelsDiscovered({ configured, onRetry }: {
+function NoModelsDiscovered({ configured, onRetry, pickAnother }: {
   configured: { provider: string; unprobed: string } | null
   onRetry: () => void
+  /** The way back to the provider list — two of the sentences below tell the user to take it. */
+  pickAnother: React.ReactNode
 }) {
   const provider = configured?.provider || ''
   const [probe, setProbe] = useState<{ ok: boolean; status?: string; message: string } | null>(null)
@@ -1435,7 +1469,10 @@ function NoModelsDiscovered({ configured, onRetry }: {
   return (
     <div className="flex flex-col gap-s">
       <p data-type="body-s" className="text-on-surface-var" role="status">{verdict}</p>
-      <div><Button variant="secondary" size="sm" onClick={onRetry}>Check again</Button></div>
+      <div className="flex flex-wrap items-center gap-s">
+        <Button variant="secondary" size="sm" onClick={onRetry}>Check again</Button>
+        {pickAnother}
+      </div>
     </div>
   )
 }

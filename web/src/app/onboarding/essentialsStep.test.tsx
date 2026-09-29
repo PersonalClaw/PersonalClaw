@@ -1790,3 +1790,66 @@ describe('the provider settings form is typed (#5 of the report)', () => {
     })
   })
 })
+
+// ── a provider that does not work out is not a dead end ─────────────────────────────────
+//
+// Measured in the container: install a cloud provider, "Save and test" with no credentials on the
+// machine → the lane showed ONLY that provider's form. The local-model block, the network scan, "Configure
+// Ollama" and the catalog were gone, and nothing on the form led back to them: the one "Pick a
+// different provider" lived in the verify phase alone. The only way out was stepping back a whole
+// step and returning. Every phase of the lane's sub-flow now offers the way back to the list.
+
+describe('every phase of the model sub-flow leads back to the provider list', () => {
+  it('after a failed Save and test, it brings back the local block, the scan and Configure Ollama', async () => {
+    modelProviderTypes.mockResolvedValue([
+      { type: 'openai', label: 'OpenAI', app: 'openai-models', capabilities: ['chat'], multiInstance: true,
+        settingsSchema: { properties: { api_key: { type: 'string', default: '', 'x-meta': { label: 'OpenAI API Key', sensitive: true } } }, required: ['api_key'] } },
+      OLLAMA_TYPE,
+    ])
+    testModelProvider.mockResolvedValue({ ok: false, message: 'No credentials were found for this provider.' })
+    renderStep()
+    expect(await screen.findByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+    await installCard('openai')
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    expect((await screen.findByRole('alert')).textContent).toContain('No credentials were found')
+    // The lane is the form alone now — which is what made it a dead end.
+    expect(screen.queryByRole('button', { name: /Scan my local network/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Configure Ollama' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick a different provider' }))
+    expect(await screen.findByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+    expect(screen.getByText('Run a local model — no API key')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Configure Ollama' })).toBeTruthy()
+    // …and the provider just installed is still one click away, from "Already installed".
+    expect(screen.getByRole('button', { name: 'Configure OpenAI' })).toBeTruthy()
+    expect(chatModels, 'going back binds nothing').not.toHaveBeenCalled()
+  })
+
+  it('offers the way back while a test runs, and a test that answers after the user left keeps them on the list', async () => {
+    let finish: (v: unknown) => void = () => {}
+    testModelProvider.mockReturnValue(new Promise((r) => { finish = r }))
+    renderStep()
+    await installCard('openai')
+    fireEvent.change(await screen.findByLabelText('OpenAI API Key'), { target: { value: 'fake-key-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save and test/ }))
+    await waitFor(() => expect(testModelProvider).toHaveBeenCalled())
+    // A test waits on a remote endpoint for as long as its timeout; the way back does not wait with it.
+    const back = screen.getByRole('button', { name: 'Pick a different provider' })
+    expect(back.hasAttribute('disabled') || back.getAttribute('aria-disabled') === 'true').toBe(false)
+    fireEvent.click(back)
+    expect(await screen.findByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+    // The answer lands on a form nobody is looking at. It must not move the lane to binding.
+    await act(async () => { finish({ ok: true, status: 'ok' }) })
+    expect(chatModels, 'no model list is fetched for a provider the user left').not.toHaveBeenCalled()
+    expect(screen.queryByText('Pick the model the agent should chat with:')).toBeNull()
+    expect(screen.getByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+  })
+
+  it('the bind step leads back too, when nothing came back to bind', async () => {
+    chatModels.mockResolvedValue([])
+    renderStep({ readiness: { needs_model: true, has_model_provider: true, has_chat_binding: false } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Pick a different provider' }))
+    expect(await screen.findByRole('button', { name: /Scan my local network/ })).toBeTruthy()
+  })
+})

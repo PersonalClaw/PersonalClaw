@@ -4921,10 +4921,13 @@ class GatewayOrchestrator:
         applies at the next safe point — it HOLDS while any session/subagent is in
         flight (:meth:`DashboardState.active_work_snapshot`) and fires only once that drains,
         landing solely on the resolved channel/pin release tag, never on ``main``
-        (the apply is :meth:`_auto_apply_update`, RUM-4). The check itself always
-        runs here; its own egress kill switch is ``updates.check_enabled`` (RUM-3).
+        (the apply is :meth:`_auto_apply_update`, RUM-4). That is a source checkout's alone
+        (:func:`~personalclaw.self_update.applies_updates_unattended`); on every other kind
+        ``staged`` notifies exactly as ``off`` does. The check itself always runs here; its own
+        egress kill switch is ``updates.check_enabled`` (RUM-3).
         """
         try:
+            from personalclaw import self_update
             from personalclaw.dashboard.handlers import _do_update_check, _update_info
 
             await _do_update_check()
@@ -4933,7 +4936,12 @@ class GatewayOrchestrator:
                 from personalclaw.config import AppConfig
 
                 cfg = AppConfig.load()
-                if cfg.updates.auto == "staged":
+                # `staged` applies only where something can: a source checkout. Anywhere else the
+                # apply below returns without a checkout to move, so `staged` there is `off` — and
+                # it must not also swallow the notice `off` gives.
+                if cfg.updates.auto == "staged" and self_update.applies_updates_unattended(
+                    self_update.detect_install_kind()
+                ):
                     logger.info("Auto-update mode 'staged' — applying at the next safe point")
                     await self._staged_auto_apply()
                 elif self.dashboard_state:

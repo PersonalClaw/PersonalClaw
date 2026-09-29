@@ -17,8 +17,9 @@ import { useIdentity, firstNameOf, suggestHandle, DEFAULT_USER_NAME } from './id
 import { readNavDisclosure, setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
-import { api, type OnboardingStatePatch } from '../lib/api'
+import { api, type InstallKind, type OnboardingStatePatch } from '../lib/api'
 import { readableErrText } from '../lib/errText'
+import { howAnUpdateArrives } from '../lib/updateRoute'
 import { chatModelSummary } from './onboarding/chatModelSummary'
 import { checkChatModel } from './onboarding/checkChatModel'
 import { StepRow, type StepState } from './onboarding/StepStack'
@@ -55,11 +56,13 @@ interface StepRecord { outcome: Outcome; summary: string }
  *  empty. Resuming to the right step but silently forgetting the name would be worse, not better —
  *  `finish()` would then commit the fallback name for someone who never declined to give one.
  *
- *  **Why `sessionStorage`.** It is the exact scope of the problem: a refresh keeps it, a new tab
- *  does not. Persisting it any wider would resurrect one person's half-typed name into someone
- *  else's fresh first run, which is the failure `exitTo.ts` warns about for its own module state.
- *  It is NOT a second source of truth for identity — nothing reads it but this flow, and only
- *  `setName` writes identity. */
+ *  **Two scopes, two stores.** What is being TYPED lives in `sessionStorage`, so a refresh keeps
+ *  it; the name the run has CONTINUED PAST step 1 with is also recorded with the run itself
+ *  (`name_draft` in `onboarding.json`, written with the step it moves to), so a second tab, or a
+ *  new one after this one closed, joins the run where it is instead of starting it again on an
+ *  empty step 1 — measured in the container with 66 items already imported. Neither is identity:
+ *  nothing reads them but this flow, only `setName` writes identity, and a finished run holds no
+ *  draft (the server drops it with `step: "done"`), so no stale name reaches a later run. */
 const DRAFT_KEY = 'onboarding-draft'
 
 interface Draft {
@@ -145,6 +148,14 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  the identity read has SUCCEEDED (a failed read gets a retry screen instead), so an empty
    *  stored name here is a home that has none, never one nobody could read. */
   const [draft, setDraft] = useState<Draft>(() => loadDraft(storedName, storedHandle))
+  /** The draft as this tab first loaded it, and as it is now: the mount read compares the two
+   *  before the run's own draft may seed this tab (see there). `navigate` rides a ref for the
+   *  same read, so that effect depends on its retry attempt alone. */
+  const seedRef = useRef(draft)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
   /** A deliberate re-run ("Run setup again"): this install already HAS a name, so it is past
    *  first run. Decided once, at mount — `App` renders the flow only after the identity read has
    *  succeeded, and nothing in the app writes an empty name, so a re-run's name cannot vanish
@@ -317,7 +328,19 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     api.onboarding().then((s) => {
       if (!alive) return
       setReadiness(s)
-      setReached((r) => furthestOf(r, stepFromStored(s.step) ?? 'name'))
+      const mark = stepFromStored(s.step) ?? 'name'
+      setReached((r) => furthestOf(r, mark))
+      // 🔑 A TAB THAT HAS NOT PASSED STEP 1 JOINS THE RUN IT FINDS. The run passed it elsewhere —
+      // another tab, or this browser before its tab closed — so this tab takes that name and goes
+      // to where the run is, instead of asking again on an empty step 1 (and offering to skip as
+      // "Operator"). Only while this tab's own fields are still as it loaded them: a name typed
+      // here before this read landed is the user's, and is never replaced.
+      const theirs = s.name_draft
+      const mine = draftRef.current
+      if (theirs && !mine.passed && mine.name === seedRef.current.name && mine.handle === seedRef.current.handle) {
+        setDraft({ name: theirs.name, handle: theirs.handle, handleTouched: theirs.handle_touched, passed: true })
+        navigateRef.current(pathOf(furthestOf(nextOf('name') as StepId, mark)), { replace: true })
+      }
       // Seed ONLY outcomes the stored state PROVES. A step this home reached but recorded nothing
       // about stays absent, so it renders as not-yet-done and stays reachable — rather than
       // wearing a green check for a screen the user may never have seen. Anything this session
@@ -367,12 +390,11 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
    *  render (React commits the state update before the browser's `hashchange` task runs), and
    *  recording it is what a later reload resumes from. Going BACK writes nothing, so the mark
    *  keeps naming where the run actually got to. */
-  const goTo = useCallback((id: StepId) => {
+  const goTo = useCallback((id: StepId, also?: OnboardingStatePatch) => {
     const mark = furthestOf(reached, id)
-    if (mark !== reached) {
-      setReached(mark)
-      progress({ step: STORED[mark] })
-    }
+    if (mark !== reached) setReached(mark)
+    // ONE write per move: what else the move recorded (`also`) rides with the step it moved to.
+    if (mark !== reached || also) progress({ ...(mark !== reached ? { step: STORED[mark] } : {}), ...also })
     navigate(pathOf(id))
   }, [reached, navigate, progress])
 
@@ -403,8 +425,11 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
     setDraft({ ...draft, passed: true })
     // Forward to the next step, or straight to where an earlier visit got to — whichever is
     // further. The steps that get jumped over are left with NO recorded outcome, so they show as
-    // unfinished and stay one click away rather than being stamped complete.
-    goTo(furthestOf(nextOf('name') as StepId, reached))
+    // unfinished and stay one click away rather than being stamped complete. The name goes with
+    // the run (see `Draft`), so another tab joins it rather than asking again.
+    goTo(furthestOf(nextOf('name') as StepId, reached), {
+      name_draft: { name: n, handle: draft.handle, handle_touched: draft.handleTouched },
+    })
   }
   /** End the flow — completing it, skipping it, or leaving for a destination.
    *
@@ -615,8 +640,11 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                    off this step issues NO write, `GET /api/onboarding` still answers
                    `step: "name"`, and a reload returned an empty field — after the screen had
                    already shown the name back as a completed step. Say WHEN the promise is
-                   kept instead of implying it already was. */
-                subtitle="How the system addresses you, plus the handle your records carry. Saved when you finish setup, so it then follows you across devices."
+                   kept instead of implying it already was. Since continuing records the name
+                   with the run (so another tab joins it — see `Draft`), "Saved when you finish"
+                   is not exact either: it is kept for the setup from here, and it BECOMES the
+                   name the product uses, on every device, at the end. */
+                subtitle="How the system addresses you, plus the handle your records carry. It becomes your name when you finish setup, and then follows you across devices."
                 state={stateOf('name')} doneSummary={savedName ? (savedHandle ? `${savedName} · @${savedHandle}` : savedName) : undefined}
                 onActivate={activate('name')}>
                 {/* An untouched handle field DISPLAYS the suggestion rather than storing it,
@@ -681,6 +709,7 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 subtitle={`You're ready, ${firstNameOf(savedName)}.`}
                 state={stateOf('ready')} onActivate={activate('ready')}>
                 <DoneScreen name={savedName} model={records.essentials} tried={records.try} settled={readiness !== null} readFailed={!!readError} modelCheck={modelSeed}
+                  install={readiness ? { kind: readiness.install_kind, unattended: readiness.unattended_apply === true } : null}
                   showEverything={showEverything} onShowEverything={setShowEverything}
                   onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
               </StepRow>
@@ -691,12 +720,21 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
                 nothing is left to skip. It used to sit under the two doors it explains; the doors
                 moved into the bar, and this stays with the content, where it is read rather than
                 clicked. */}
+            {/* On step 1 the sentence follows what skipping would COMMIT (`finish`): the name this
+                run passed step 1 with, else a re-run's stored name, else the default — and says
+                "nothing is set up" only when nothing is. It used to read "Nothing is set up, and
+                you'll be called Operator" on every first run's step 1, including one that had
+                imported a whole setup, and one whose name the field above still held. */}
             {step !== 'ready' && (
               <p data-type="caption" className="mx-auto mt-l text-center text-on-surface-low" style={{ maxWidth: 380 }}>
                 {step === 'name'
-                  ? rerun
-                    ? 'Skipping keeps your name, your handle and everything already set up exactly as they are.'
-                    : `Nothing is set up, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
+                  ? namePassed
+                    ? 'Skipping keeps the name above and whatever you have finished so far.'
+                    : rerun
+                      ? 'Skipping keeps your name, your handle and everything already set up exactly as they are.'
+                      : reached !== 'name'
+                        ? `Whatever you have finished so far is kept, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
+                        : `Nothing is set up, and you'll be called "${DEFAULT_USER_NAME}" until you pick a name.`
                   : 'Whatever you have finished so far is kept.'}
                 {' '}Pick setup back up any time: Settings &rarr; Account &rarr; Run setup again.
               </p>
@@ -832,14 +870,17 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
  *      set from the first minute rather than a taste you have to live with;
  *   3. **Show every surface** — the starter sidebar is a starting point, not a limit. The
  *      switch states intent; `finish()` performs the single write (see there);
- *   4. **what it does on its own** — auto-update pulls, rebuilds and restarts unattended,
- *      and the Store starts with one seeded community source. Both default on, both
- *      defensible for a tool that keeps itself healthy — but for a local-first product
- *      they must be TOLD at first run, not discovered. The update half hands over the
- *      real Settings → Updates switch; the Store half is a sentence plus the path to
- *      where source removal actually persists (the seed already ran at gateway start,
- *      so a toggle here would read as a live off-switch and retract nothing — exactly
- *      the control shape users mis-trust, per the Store-sources hint).
+ *   4. **what it does on its own** — how a new version reaches THIS install, and the Store's
+ *      one seeded community source. For a local-first product both must be TOLD at first
+ *      run, not discovered. Only a source checkout installs an update by itself (opt-in,
+ *      off by default), so only there does the update half hand over the real Settings →
+ *      Updates switch, titled for its state; a pip or uv install, a container and the
+ *      desktop app are told what they do instead (`lib/updateRoute`) — measured on the
+ *      container image, the switch this used to offer every kind did nothing there. The
+ *      Store half is a sentence plus the path to where source removal actually persists
+ *      (the seed already ran at gateway start, so a toggle here would read as a live
+ *      off-switch and retract nothing — exactly the control shape users mis-trust, per the
+ *      Store-sources hint).
  *
  *  It teaches by handing over controls, which is why the dial and the switch are the SAME
  *  objects Settings owns — a copy here would be a second mechanism to keep in step.
@@ -848,7 +889,7 @@ function PillField({ value, onChange, onEnter, ariaLabel, placeholder, described
  *  rather than replacing it: the recap above already hands over three controls, and a
  *  first-run screen whose only exit is a guided walk is a gate wearing an offer. Both
  *  buttons finish the flow; one of them then walks the app. */
-function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCheck, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
+function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCheck, install, showEverything, onShowEverything, onFinish, onTakeTour, onExitTo }: {
   name: string
   /** What the essentials / try steps RECORDED, or `undefined` when they recorded nothing.
    *
@@ -872,6 +913,10 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
    *  is out, so the line claims nothing yet, and `unknown` when it could not run, so the line
    *  says it could not tell rather than "set up later". */
   modelCheck: 'pending' | 'done' | 'unknown'
+  /** How a new version reaches this install, from the first-run read — `null` while that read is
+   *  out or when it failed, which claims nothing either way. Only `unattended` (a source checkout)
+   *  gets the switch; every other kind is told what it does instead. */
+  install: { kind?: InstallKind; unattended: boolean } | null
   showEverything: boolean
   onShowEverything: (v: boolean) => void
   onFinish: () => void
@@ -906,6 +951,21 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
     }).catch(() => { if (alive) setAutonomy('failed') })
     return () => { alive = false }
   }, [])
+
+  /** What the update pointer says, for THIS install. A source checkout's pointer is titled for its
+   *  switch's state — it used to say "It keeps itself current on its own" over a switch that ships
+   *  off. Every other kind gets `lib/updateRoute`'s sentence, and an unread kind claims nothing. */
+  const unattended = install?.unattended === true
+  const autoOn = autonomy !== null && autonomy !== 'failed' && autonomy.autoUpdate
+  const arrives = howAnUpdateArrives(install?.kind)
+  const updateTitle = unattended
+    ? (autoOn ? 'It keeps itself current on its own' : 'It can keep itself current')
+    : arrives ? 'New versions are yours to install' : 'How it stays current'
+  const updateBody = unattended
+    ? (autoOn
+      ? 'When a new version ships, it installs and restarts at a moment nothing is running. This is the real switch from Settings → Updates.'
+      : 'Turn this on and a new version installs and restarts by itself, at a moment nothing is running. This is the real switch from Settings → Updates.')
+    : arrives || 'Settings → Updates says when a new version ships, and how this install takes it.'
 
   // The real Settings → Updates write, with that panel's exact remedy: flip optimistically,
   // and on a refused write TELL (app toast) rather than fight the control the user just
@@ -963,16 +1023,17 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
             <span className="text-on-surface-var text-[0.8125rem]">Show every surface</span>
           </div>
         </Pointer>
-        <Pointer icon={RefreshCw} title="It keeps itself current on its own"
-          body="When a new version ships, it installs and restarts unattended. This is the real switch from Settings → Updates.">
+        <Pointer icon={RefreshCw} title={updateTitle} body={updateBody}>
           <div className="flex flex-col gap-1.5">
-            {autonomy === 'failed' ? (
-              <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('settings/updates')}>Manage updates in Settings</TextLink>
-            ) : autonomy ? (
+            {/* The switch only where it can act, and only once its state is read: a control
+                showing a guessed value is worse than none. Everywhere else, the way to Settings. */}
+            {unattended && autonomy && autonomy !== 'failed' ? (
               <div className="flex items-center gap-2">
                 <Toggle on={autonomy.autoUpdate} onChange={toggleAutoUpdate} label="Update automatically" />
                 <span className="text-on-surface-var text-[0.8125rem]">Update automatically</span>
               </div>
+            ) : !unattended || autonomy === 'failed' ? (
+              <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('settings/updates')}>Manage updates in Settings</TextLink>
             ) : null}
             {autonomy !== 'failed' && autonomy?.registrySeeded && (
               <p className="text-on-surface-low text-[0.8125rem]">

@@ -566,9 +566,6 @@ class _MediaNotSaved(Exception):
     saying why, which the materializers' callers answer with."""
 
 
-_EGRESS_SETTINGS = "Settings → Security → Network egress"
-
-
 def _fetch_generated(url: str, *, what: str, smaller: str) -> tuple[bytes, str]:
     """The whole file at ``url``, the address a provider's answer gave for the ``what`` it made,
     and the content type it came with.
@@ -581,6 +578,7 @@ def _fetch_generated(url: str, *, what: str, smaller: str) -> tuple[bytes, str]:
     from urllib.parse import urlsplit
 
     from personalclaw.net import EgressBlocked, fetch
+    from personalclaw.net.guard import EGRESS_SETTINGS
     from personalclaw.net.policy import MEDIA, egress_policy_for
     from personalclaw.providers.failure_copy import sentence_with_detail
 
@@ -599,7 +597,7 @@ def _fetch_generated(url: str, *, what: str, smaller: str) -> tuple[bytes, str]:
             sentence = (
                 f"The {what} was made, but PersonalClaw's network settings refused its download "
                 f"from {host}, so it was not saved. Check Allowed hosts and Denied hosts in "
-                f"{_EGRESS_SETTINGS}, then generate the {what} again."
+                f"{EGRESS_SETTINGS}, then generate the {what} again."
             )
         raise _MediaNotSaved(sentence_with_detail(sentence, e)) from e
     except Exception as e:  # noqa: BLE001 — a transport failure is said, with its words

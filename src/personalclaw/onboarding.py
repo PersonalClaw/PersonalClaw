@@ -38,6 +38,14 @@ field it fills agree. C1 also annotated ``name``/``completed`` as "existing" fie
 state — they are not: the name lives in server identity and ``onboarded`` is derived from
 it being non-empty (``web/src/app/identity.tsx``). Storing either here would create a
 second source of truth, so neither is part of this schema.
+
+**The name a run passed its first step with is, as a draft.** ``name_draft`` holds the name and
+handle the run continued past step 1 with, until the run ends. It is not identity: nothing but
+the flow reads it, the flow still writes identity only when the run finishes, and a finished run
+holds none (a ``step: "done"`` write clears it). It exists because every other fact about a run
+in progress lives here while the name lived in one tab's ``sessionStorage`` — so a second tab, or
+the same browser after its tab closed, opened the flow on step 1 with an empty name, telling a
+user who had imported her whole setup that nothing was set up.
 """
 
 from __future__ import annotations
@@ -79,6 +87,13 @@ _FIRST_SUCCESS_KEYS: tuple[str, ...] = ("knowledge", "trigger", "loop")
 
 _FIRST_SUCCESS_SCHEMA: dict[str, type] = {k: bool for k in _FIRST_SUCCESS_KEYS}
 
+#: The draft of the name step (module docstring): exactly these keys, all required.
+_NAME_DRAFT_SCHEMA: dict[str, type] = {"name": str, "handle": str, "handle_touched": bool}
+
+#: Characters kept of a draft's name and handle: the cap the identity write puts on the name it
+#: becomes (``dashboard.user_name``), so the draft never holds more than the name can.
+_NAME_DRAFT_CHARS = 80
+
 
 def default_state() -> dict[str, Any]:
     """A freshly-installed home's onboarding state."""
@@ -86,6 +101,23 @@ def default_state() -> dict[str, Any]:
         "step": STEPS[0],
         "essentials": {"model": None, "search": False, "speech": False, "channel": None},
         "first_success": {k: False for k in _FIRST_SUCCESS_KEYS},
+        "name_draft": None,
+    }
+
+
+def _name_draft(value: Any) -> dict[str, Any] | None:
+    """*value* as a stored name draft, or ``None`` when it is not one. Never raises."""
+    if not isinstance(value, dict) or set(value) != set(_NAME_DRAFT_SCHEMA):
+        return None
+    name, handle, touched = value["name"], value["handle"], value["handle_touched"]
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if not isinstance(handle, str) or not isinstance(touched, bool):
+        return None
+    return {
+        "name": name.strip()[:_NAME_DRAFT_CHARS],
+        "handle": handle.strip()[:_NAME_DRAFT_CHARS],
+        "handle_touched": touched,
     }
 
 
@@ -119,6 +151,10 @@ def _sanitize(raw: Any) -> dict[str, Any]:
         for key in _FIRST_SUCCESS_KEYS:
             if isinstance(fs.get(key), bool):
                 state["first_success"][key] = fs[key]
+
+    # A finished run holds no draft whatever the file says (see `merge_onboarding_state`).
+    if state["step"] != "done":
+        state["name_draft"] = _name_draft(raw.get("name_draft"))
 
     return state
 
@@ -163,16 +199,35 @@ def merge_onboarding_state(patch: Any) -> dict[str, Any]:
     That is what makes several independent onboarding steps able to record their own
     progress without reading and echoing back the whole document.
 
+    ``name_draft`` is replaced whole (``null`` clears it): the name step is one answer, not
+    three fields a step could fill independently.
+
     Raises :class:`ValueError` for a non-object patch, an unknown key at either level,
     an out-of-domain ``step``, or a mistyped value — the caller turns that into a 400.
     """
     if not isinstance(patch, dict):
         raise ValueError("Body must be a JSON object")
 
-    known = {"step", "essentials", "first_success"}
+    known = {"step", "essentials", "first_success", "name_draft"}
     unknown = sorted(set(patch) - known)
     if unknown:
         raise ValueError(f"Unknown field(s): {', '.join(repr(k) for k in unknown)}")
+
+    draft: dict[str, Any] | None = None
+    if "name_draft" in patch and patch["name_draft"] is not None:
+        # Validated before anything is read or written, so a refused draft writes nothing.
+        offered = patch["name_draft"]
+        if not isinstance(offered, dict) or set(offered) != set(_NAME_DRAFT_SCHEMA):
+            raise ValueError(
+                "'name_draft' must be null or an object with exactly: "
+                + ", ".join(_NAME_DRAFT_SCHEMA)
+            )
+        draft = _name_draft(offered)
+        if draft is None:
+            raise ValueError(
+                "'name_draft' needs a non-empty string 'name', a string 'handle' and a boolean "
+                "'handle_touched'"
+            )
 
     state = load_onboarding_state()
 
@@ -191,6 +246,14 @@ def merge_onboarding_state(patch: Any) -> dict[str, Any]:
         state["first_success"].update(
             _validate_nested("first_success", patch["first_success"], _FIRST_SUCCESS_SCHEMA)
         )
+
+    if "name_draft" in patch:
+        state["name_draft"] = draft
+    # A finished run's name is identity now — the flow commits it before it records `done` — so
+    # the draft goes with the run, and "Run setup again" starts from the stored name, never from
+    # a stale draft.
+    if state["step"] == "done":
+        state["name_draft"] = None
 
     from personalclaw.providers.entity_routes import _save_entity_settings
 

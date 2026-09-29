@@ -277,21 +277,20 @@ class NetFetchActionProvider(ActionProvider):
         its ``recovery_hints`` carry the generic advice — both are preserved, and the concrete
         setting is added because the guard cannot know which surface asked.
         """
+        from personalclaw.net.guard import allow_host_step
+
         decision = getattr(blocked, "decision", None)
         host = str(getattr(decision, "host", "") or "")
         reason = str(getattr(decision, "reason", "") or "egress blocked")
         allowed = len(getattr(policy, "allow_hosts", ()) or ())
-        where = "Settings → Security → Allowed Egress Hosts (security.egress.allow_hosts)"
+        step = allow_host_step(host or "the host")
         if allowed:
-            fix = f"add {host or 'the host'} to {where}, or point the action at a listed host"
+            fix = f"{step}, or point the action at a listed host"
         else:
             # The empty-list case is the DEFAULT posture, so it is the one most operators meet
             # first. Saying "no hosts are permitted yet" is the difference between reading this as
             # a bug and reading it as a setting nobody has filled in.
-            fix = (
-                f"no hosts are permitted for automated fetches yet — add {host or 'the host'} to "
-                f"{where}"
-            )
+            fix = f"no hosts are permitted for automated fetches yet — {step}"
         return ActionResult(
             success=False,
             error=f"net-fetch was refused by the egress guard: {reason}",

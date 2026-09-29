@@ -31,6 +31,18 @@ was fixed for, measured on a real non-venv install:
 
 So every test here now names the branch it drives instead of inheriting it from the
 developer's disk.
+
+That `fallback:` row then turned out to say nothing at all. Measured in the published image:
+
+    Runtime
+      python:      ✅ /opt/venv/bin/python (3.13.15)
+      backend:     ✅ 0.2.0
+      fallback:    ⚠️  /opt/venv/bin/python3 (3.13.15)
+
+A warning with no words, about the same venv as the row above. It was whatever `python3` the
+PATH named, there only so the dependency check had an interpreter to run on — and no part of
+PersonalClaw runs its gateway dependencies on that one. An install without a checkout has one
+interpreter, the one running doctor, so that is where the check runs and there is no second row.
 """
 
 from __future__ import annotations
@@ -38,6 +50,7 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import sys
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -51,13 +64,30 @@ _ROW = re.compile(r"^ {2}([a-z][a-z ]*):", re.MULTILINE)
 _FAKE_VENV_PY = Path("/opt/personalclaw/.venv/bin/python3")
 
 
-def _runtime_block(capsys, *, venv_install: bool) -> str:
+def _runtime_block(capsys, *, venv_install: bool, runs: list[list[str]] | None = None) -> str:
     """Run ``_doctor()`` with its probes stubbed and return just the Runtime section.
 
     `venv_install` picks the branch: True renders the `venv python:` row, False the
-    `fallback:` row a pipx or system install gets.
+    block a pipx, uv tool or container install gets. `runs`, when given, collects the argv
+    of every subprocess doctor started.
     """
     from personalclaw.cli_doctor import _doctor
+
+    answer = type(
+        "R",
+        (),
+        {
+            "returncode": 0,
+            "stdout": "Python 3.13.14",
+            "stderr": "",
+            "check_returncode": lambda self: None,
+        },
+    )()
+
+    def run(argv, *a, **kw):  # noqa: ANN001 — subprocess.run's own signature
+        if runs is not None:
+            runs.append([str(part) for part in argv])
+        return answer
 
     with (
         patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
@@ -65,19 +95,7 @@ def _runtime_block(capsys, *, venv_install: bool) -> str:
             "personalclaw.cli_doctor._venv_interpreter",
             return_value=_FAKE_VENV_PY if venv_install else None,
         ),
-        patch(
-            "subprocess.run",
-            return_value=type(
-                "R",
-                (),
-                {
-                    "returncode": 0,
-                    "stdout": "Python 3.13.14",
-                    "stderr": "",
-                    "check_returncode": lambda self: None,
-                },
-            )(),
-        ),
+        patch("subprocess.run", side_effect=run),
         patch("urllib.request.urlopen", side_effect=urllib.error.URLError("no gateway")),
         patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
     ):
@@ -120,24 +138,29 @@ def test_the_version_is_not_prefixed_twice(capsys, venv_install):
     assert "(Python " not in block, block
 
 
-def test_the_non_venv_install_renders_a_bare_version_in_its_fallback_row(capsys):
-    """The branch a pipx or system install takes, which no test used to reach.
+def test_an_install_without_a_checkout_checks_the_interpreter_it_runs_on(capsys):
+    """The branch a pipx, uv tool or container install takes: one interpreter, no second row.
 
-    `python3 --version` is the only source for this row, so the row is the proof the
-    normalisation happens for it too — not just that the doubled prefix is absent.
+    The dependency check is the one this block exists for, and it has to run where the gateway
+    runs — the interpreter running doctor — not on whatever `python3` the PATH names.
     """
-    block = _runtime_block(capsys, venv_install=False)
+    runs: list[list[str]] = []
+    block = _runtime_block(capsys, venv_install=False, runs=runs)
     assert "venv python:" not in block, f"no venv exists on this branch:\n{block}"
-    assert "fallback:    ⚠️  /usr/local/bin/python3 (3.13.14)" in block, block
+    assert "fallback:" not in block, block
+    assert "⚠️" not in block, f"nothing here is wrong, so nothing may warn:\n{block}"
+    assert "deps:        ✅ websockets, aiohttp available" in block, block
+    checks = [argv for argv in runs if "import websockets, aiohttp" in argv]
+    assert checks and all(argv[0] == sys.executable for argv in checks), runs
 
 
-def test_both_runtime_rows_get_their_version_from_the_one_normalising_probe():
+def test_the_venv_row_gets_its_version_from_the_one_normalising_probe():
     """Normalise once, at the point the string is obtained — asserted structurally.
 
     The defect was two call sites formatting the same `--version` stdout two ways, so
     "there is only one way to obtain it" is the property worth pinning: a future row
     that re-inlines `subprocess.run([..., "--version"])` brings the drift straight
-    back, and a string assertion on today's two rows would not notice.
+    back, and a string assertion on today's row would not notice.
     """
     import personalclaw.cli_doctor as cd
 
@@ -152,8 +175,11 @@ def test_both_runtime_rows_get_their_version_from_the_one_normalising_probe():
         and isinstance(n.func, ast.Name)
         and n.func.id == "_probe_python_version"
     ]
-    assert len(probe_calls) == 2, (
-        "_doctor() renders an interpreter version in exactly two places (the venv row "
-        f"and the fallback row); found {len(probe_calls)} call(s) to the helper that "
-        "strips the 'Python ' prefix, so one of them formats the version itself"
+    inline_version = [
+        n for n in ast.walk(doctor) if isinstance(n, ast.Constant) and n.value == "--version"
+    ]
+    assert len(probe_calls) == 1 and not inline_version, (
+        "_doctor() renders an interpreter version in exactly one place (the venv row); "
+        f"found {len(probe_calls)} call(s) to the helper that strips the 'Python ' prefix "
+        f"and {len(inline_version)} inline `--version`, so a row formats the version itself"
     )

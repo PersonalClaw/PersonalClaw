@@ -13,6 +13,7 @@ import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { notify } from '../../app/appSdk'
 import { repoDocUrl } from '../../lib/repoDocs'
+import { howAnUpdateArrives } from '../../lib/updateRoute'
 
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
 export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
@@ -309,7 +310,7 @@ export function UpdatesPanel() {
     && !(verdict === 'pin_older' && rollbackTo === pinnedTo)
   return (
     <div>
-      <PanelHeader title="Updates" hint="Keep the PersonalClaw core current — choose a release line, pin a version, decide whether updates apply on their own, and read what changed. Apps update individually from the Store." />
+      <PanelHeader title="Updates" hint={`Keep the PersonalClaw core current — choose a release line, pin a version, ${info.unattended_apply ? 'decide whether updates apply on their own, ' : ''}and read what changed. Apps update individually from the Store.`} />
 
       <Section title="Version">
         <div className="rounded-lg bg-surface-container px-4 py-3">
@@ -476,7 +477,9 @@ export function UpdatesPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Automatic updates" hint="Whether PersonalClaw looks for new releases, and whether it installs them for you.">
+      <Section title="Automatic updates" hint={info.unattended_apply
+        ? 'Whether PersonalClaw looks for new releases, and whether it installs them for you.'
+        : 'Whether PersonalClaw looks for new releases. Installing one is yours to do on this install.'}>
         <RowGroup>
           <Row label="Check for updates" hint="Ask GitHub whether a newer release exists, on a schedule. Off means ZERO outbound calls from the updater — this is the egress kill switch the README describes.">
             <div className="flex items-center gap-2">
@@ -497,14 +500,21 @@ export function UpdatesPanel() {
               </div>
             </Field>
           )}
-          <Row label="Apply updates" hint="Off only notifies you. Staged applies at the next safe point — it holds while a session or subagent is running, and only ever installs the resolved release, never raw main.">
-            <div className="flex items-center gap-2">
-              <SavedToast show={saved === 'auto'} />
-              <SegPills value={info.auto ?? 'off'} ariaLabel="Apply updates"
-                options={[{ key: 'off', label: 'Off' }, { key: 'staged', label: 'Staged' }]}
-                onChange={(v) => write('auto', v, v === 'staged' ? 'enable staged automatic updates' : 'turn automatic updates off')} />
-            </div>
-          </Row>
+          {/* Only a source checkout installs an update by itself (`unattended_apply`). Anywhere
+              else Staged did nothing — the gateway's apply returns without a checkout to move —
+              so there the row says what an update is instead of offering a choice with no effect. */}
+          {info.unattended_apply ? (
+            <Row label="Apply updates" hint="Off only notifies you. Staged applies at the next safe point — it holds while a session or subagent is running, and only ever installs the resolved release, never raw main.">
+              <div className="flex items-center gap-2">
+                <SavedToast show={saved === 'auto'} />
+                <SegPills value={info.auto ?? 'off'} ariaLabel="Apply updates"
+                  options={[{ key: 'off', label: 'Off' }, { key: 'staged', label: 'Staged' }]}
+                  onChange={(v) => write('auto', v, v === 'staged' ? 'enable staged automatic updates' : 'turn automatic updates off')} />
+              </div>
+            </Row>
+          ) : (
+            <Row label="Apply updates" hint={howAnUpdateArrives(kind) || 'This install does not apply an update on its own.'}>{null}</Row>
+          )}
         </RowGroup>
       </Section>
 

@@ -66,6 +66,7 @@ def test_fresh_home_starts_at_the_first_step(_isolate_home):
         "step": "name",
         "essentials": {"model": None, "search": False, "speech": False, "channel": None},
         "first_success": {"knowledge": False, "trigger": False, "loop": False},
+        "name_draft": None,
     }
 
 
@@ -231,6 +232,78 @@ def test_the_three_older_values_still_load(_isolate_home):
     for step in ("name", "essentials", "first_success", "done"):
         _write_raw(_isolate_home, {"step": step})
         assert ob.load_onboarding_state()["step"] == step
+
+
+# ── 4b. the name a run passed its first step with ────────────────────────────
+#
+# Measured in the container: with the run on its second step (66 items imported), a SECOND TAB
+# opened the flow on step 1 with an empty name and "Nothing is set up, and you'll be called
+# 'Operator' until you pick a name." The name lived in the first tab's `sessionStorage` alone,
+# while everything else about the run lives here. So the name the run passed step 1 with is kept
+# here too, as a draft — not identity, which the run still writes only when it finishes.
+
+_DRAFT = {"name": "Ada Lovelace", "handle": "", "handle_touched": False}
+
+
+def test_the_passed_name_is_kept_for_the_run_and_read_back(_isolate_home):
+    ob.merge_onboarding_state({"step": "import", "name_draft": _DRAFT})
+    assert ob.load_onboarding_state()["name_draft"] == _DRAFT
+    # …and a later step's write leaves it alone (the partial merge).
+    assert ob.merge_onboarding_state({"step": "essentials"})["name_draft"] == _DRAFT
+
+
+def test_a_finished_run_holds_no_draft(_isolate_home):
+    """The name is identity by then, and "Run setup again" must start from that, not from this."""
+    ob.merge_onboarding_state({"step": "import", "name_draft": _DRAFT})
+    assert ob.merge_onboarding_state({"step": "done"})["name_draft"] is None
+    assert ob.load_onboarding_state()["name_draft"] is None
+
+
+def test_a_draft_is_capped_like_the_name_it_becomes(_isolate_home):
+    long = "A" * 200
+    kept = ob.merge_onboarding_state(
+        {"name_draft": {"name": f"  {long}  ", "handle": "h" * 200, "handle_touched": True}}
+    )["name_draft"]
+    assert kept == {"name": "A" * 80, "handle": "h" * 80, "handle_touched": True}
+
+
+def test_a_draft_can_be_cleared(_isolate_home):
+    ob.merge_onboarding_state({"name_draft": _DRAFT})
+    assert ob.merge_onboarding_state({"name_draft": None})["name_draft"] is None
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        {"name": "", "handle": "", "handle_touched": False},
+        {"name": "   ", "handle": "", "handle_touched": False},
+        {"name": 7, "handle": "", "handle_touched": False},
+        {"name": "Ada", "handle": 1, "handle_touched": False},
+        {"name": "Ada", "handle": "", "handle_touched": "no"},
+        {"name": "Ada", "handle": "", "handle_touched": False, "passed": True},
+        {"name": "Ada"},
+        "Ada",
+    ],
+)
+def test_a_malformed_draft_is_refused(_isolate_home, draft):
+    with pytest.raises(ValueError):
+        ob.merge_onboarding_state({"name_draft": draft})
+
+
+@pytest.mark.parametrize(
+    "on_disk",
+    [
+        {"name": "", "handle": "", "handle_touched": False},
+        {"name": 3},
+        "Ada",
+        ["Ada"],
+    ],
+)
+def test_a_draft_that_is_not_one_reads_as_none(_isolate_home, on_disk):
+    _write_raw(_isolate_home, {"step": "import", "name_draft": on_disk})
+    state = ob.load_onboarding_state()
+    assert state["name_draft"] is None
+    assert state["step"] == "import", "a bad draft costs nothing else"
 
 
 # ── 5. the HTTP surface ──────────────────────────────────────────────────────
@@ -579,6 +652,19 @@ async def test_post_round_trips_through_the_get(_isolate_home):
     got = await _json(await hs.api_onboarding(_req({})))
     assert got["step"] == "done"
     assert got["first_success"]["loop"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_second_tab_reads_the_name_the_first_one_passed(_isolate_home):
+    """What the flow in a second tab reads on mount: the run's step AND the name it passed."""
+    body = {
+        "step": "import",
+        "name_draft": {"name": "Ada", "handle": "ada", "handle_touched": True},
+    }
+    assert (await hs.api_onboarding_state(_req(body))).status == 200
+    got = await _json(await hs.api_onboarding(_req({})))
+    assert got["step"] == "import"
+    assert got["name_draft"] == {"name": "Ada", "handle": "ada", "handle_touched": True}
 
 
 @pytest.mark.asyncio

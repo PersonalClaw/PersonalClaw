@@ -296,10 +296,13 @@ personalclaw snapshot
 personalclaw update --to 0.1.3
 ```
 
-**Applying automatically is opt-in** (`updates.auto`). The default `off` only notifies
-you. Set it to `staged` and an available update installs itself at the next safe point —
-it holds while a session or subagent is running, and only ever lands on the release your
-channel/pin resolves to, never on raw `main`.
+**Applying automatically is opt-in, and only a source checkout can** (`updates.auto`). The
+default `off` only notifies you. On a source checkout, set it to `staged` and an available
+update installs itself at the next safe point — it holds while a session or subagent is
+running, and only ever lands on the release your channel/pin resolves to, never on raw
+`main`. An install from pip, uv or pipx never installs an update on its own: press
+**Update** in Settings → Updates (or run `personalclaw update`), and there `staged` notifies
+exactly as `off` does.
 
 **Turning the check off** (`updates.check_enabled`). PersonalClaw asks GitHub for the
 newest release every `updates.check_interval_hours` (default 12, range 1–168). Set

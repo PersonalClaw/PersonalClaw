@@ -96,3 +96,24 @@ describe('UpdatesPanel container commands', () => {
     expect(text).toContain('Roll this container install back by pulling the pinned image and recreating')
   })
 })
+
+describe('UpdatesPanel offers "Apply updates" only where an update can apply itself', () => {
+  // A container never changes itself, and the gateway's staged apply needs a source checkout —
+  // so "Staged applies at the next safe point" was untrue here, and choosing it did nothing.
+  // The control is two pill buttons, "Apply updates: Off" and "Apply updates: Staged".
+  const pills = (root: HTMLElement) => root.querySelectorAll('button[aria-label^="Apply updates:"]')
+
+  it('a container install gets no Off/Staged control, and is told what an update is there', async () => {
+    const { container } = mountWith({ ...BASE, available: false, unattended_apply: false })
+    await waitFor(() => expect(container.textContent).toContain('Apply updates'))
+    expect(pills(container)).toHaveLength(0)
+    expect(container.textContent).toMatch(/updated from the host/)
+    expect(container.textContent).not.toContain('Staged applies at the next safe point')
+  })
+
+  it('a source checkout keeps the control (the control arm)', async () => {
+    const { container } = mountWith({ ...BASE, kind: 'git', available: false, unattended_apply: true })
+    await waitFor(() => expect(pills(container)).toHaveLength(2))
+    expect(container.textContent).toContain('Staged applies at the next safe point')
+  })
+})

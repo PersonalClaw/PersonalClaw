@@ -249,6 +249,52 @@ def tailnet_ip(addresses: Iterable[str] | None = None) -> str:
     return ""
 
 
+#: Where :func:`_routed_address` asks the kernel for a route: the mDNS group, a destination that
+#: exists only on this machine's own link, so the answer is the interface facing the LAN.
+_ROUTE_PROBE = ("224.0.0.251", 5353)
+
+
+def _routed_address() -> str:
+    """The address the kernel would send from to reach the local link, or ``""``.
+
+    A UDP ``connect`` transmits nothing — it only picks a route — so this asks a question and
+    sends no packet. It answers where the hostname does not: a Mac's often resolves to nothing.
+    """
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(_ROUTE_PROBE)
+            return str(probe.getsockname()[0])
+        finally:
+            probe.close()
+    except OSError:
+        return ""
+
+
+def address_beyond_loopback(addresses: Iterable[str] | None = None) -> str:
+    """One of this machine's own IPv4 addresses that is not loopback, or ``""`` when none is found.
+
+    A request sent there from this machine arrives from that address, not from loopback, so it
+    meets the token gate the way a request from another machine does — how ``personalclaw doctor``
+    checks the gate on a bind beyond loopback when ``dashboard.url`` names no host (the
+    one-container ``docker run``, where it is the container's own address), and the address LAN
+    discovery advertises. IPv4, because that bind is ``0.0.0.0``, which an IPv6 address does not
+    reach. Found two ways, the first that answers: :func:`_routed_address`, then what the hostname
+    resolves to (:func:`_local_addresses`). *addresses* replaces both, like :func:`tailnet_ip`'s.
+    """
+    candidates = (
+        list(addresses) if addresses is not None else [_routed_address(), *_local_addresses()]
+    )
+    for addr in candidates:
+        try:
+            ip = ipaddress.ip_address(addr.split("%", 1)[0])
+        except ValueError:
+            continue
+        if ip.version == 4 and not ip.is_loopback and not ip.is_unspecified:
+            return str(ip)
+    return ""
+
+
 def tailscale_cli_present() -> bool:
     """Return ``True`` if the ``tailscale`` CLI is on PATH.
 

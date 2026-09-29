@@ -403,9 +403,10 @@ governs what the app *tells* you:
   `personalclaw snapshot` first: pre-1.0 releases carry no data migrations in either
   direction. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
   affordance — there is nothing for it to install here.)
-- **Apply updates** (`updates.auto`) — `staged` has no effect on this kind: the shell owns
-  the install, and nothing in it can replace a running app bundle. It stays available
-  because the same config file follows your `~/.personalclaw` to other install kinds.
+- **Apply updates** (`updates.auto`) — not offered on this kind: the shell owns the install,
+  and nothing in it can replace a running app bundle, so `staged` notifies exactly as `off`
+  does. The field stays in the config because the same config file follows your
+  `~/.personalclaw` to other install kinds.
 - **Check for updates** (`updates.check_enabled` + `updates.check_interval_hours`) — the
   kill switch works exactly as everywhere else. Off means the app makes **zero** outbound
   calls to GitHub, so the panel simply stops reporting new releases. On, it asks once every

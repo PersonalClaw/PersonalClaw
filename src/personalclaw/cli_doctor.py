@@ -18,8 +18,12 @@ from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_backend_warning, credential_store_state
 from personalclaw.dashboard.origin import (
+    address_beyond_loopback,
     auth_is_off,
     is_local_bind,
+    is_loopback,
+    is_private_network,
+    local_network_bypass_enabled,
     loopback_requires_token,
     machine_hostname,
     parse_dashboard_url,
@@ -542,6 +546,21 @@ def _venv_interpreter() -> Path | None:
     return venv_py if venv_py.is_file() else None
 
 
+def _address_to_check_from(configured_host: str, bind_host: str) -> str:
+    """The address the beyond-loopback token check asks, or ``""`` when there is none to ask.
+
+    It has to be one a request can reach the gateway at WITHOUT arriving from loopback. So:
+    the host ``dashboard.url`` names, unless that is itself loopback; else the one interface
+    the gateway is bound to, when the bind names one; else, for an all-interfaces bind, this
+    machine's own address (:func:`~personalclaw.dashboard.origin.address_beyond_loopback`).
+    """
+    if configured_host and not is_loopback(configured_host):
+        return configured_host
+    if bind_host not in ("0.0.0.0", "::", "") and not is_loopback(bind_host):
+        return bind_host
+    return address_beyond_loopback()
+
+
 def _probe_python_version(python: str | Path) -> str:
     """Run ``<python> --version`` and return the BARE version, e.g. "3.13.14".
 
@@ -693,14 +712,10 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     if _port:
         print(f"  dashboard:   http://{_display_host}:{_port}")
 
-    # Dashboard auth mode. Whether a channel can carry a remote token is each channel app's
-    # own answer (its health, over the transports doctor's provider bootstrap registered),
-    # not a lookup of two Slack credential names.
-    import asyncio
-
-    from personalclaw.channel_transports import configured_channels
-
-    _has_channel = bool(asyncio.run(configured_channels()))
+    # Dashboard auth mode, mirroring the token gate on either kind of bind. No channel enters
+    # into it: `personalclaw token` mints a sign-in link from the running gateway with none,
+    # which is the one-container `docker run`'s documented way in (`docker exec … personalclaw
+    # token`). A channel app's own sign-in command is that app's to describe.
     _bind_host = resolve_bind_host()
     _local = is_local_bind(_bind_host)
     if _local:
@@ -718,11 +733,23 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         else:
             print("  auth:        loopback trusted (no token required)")
     else:
-        print("  bind:        0.0.0.0 (all interfaces)")
-        print("  auth:        ✅ token auth required (via !dashboard)")
-        if not _has_channel:
-            print("  auth:        ⚠️  no channel configured — token generation unavailable")
-            issues.append("dashboard auth: remote bind without a channel")
+        _span = "all interfaces" if _bind_host in ("0.0.0.0", "::") else "this interface"
+        print(f"  bind:        {_bind_host} ({_span})")
+        # The same three answers the loopback branch gives, from the same predicates the
+        # middleware short-circuits on. Auth off is not an issue HERE: the remote row below
+        # counts it, once.
+        if auth_is_off():
+            print("  auth:        ❌ off — every request is served without a token")
+        elif local_network_bypass_enabled():
+            print(
+                "  auth:        ⚠️  no token needed from a private-network address"
+                " (PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1); a token everywhere else"
+            )
+        else:
+            print(
+                "  auth:        🔒 token required on every interface"
+                " (run: personalclaw token, for a signed-in link)"
+            )
 
     # An auth mode the runtime cannot honor must be NAMED here, not just left to
     # the startup log. `from_env` silently returned the `local_token`
@@ -752,8 +779,12 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         _phone_url = f"http://{_tnet}:{_remote_port}" if _remote_port else f"http://{_tnet}"
         print(f"  remote:      ✅ tailnet {_tnet} — open {_phone_url} on your phone")
         print("               (run: personalclaw token, for the signed-in link)")
-    else:
+    elif _local:
         print("  remote:      local-only — see docs/guides/remote-access.md")
+    else:
+        # What reaches a bind beyond loopback — this machine's interfaces, or the port a
+        # container published — is not something doctor can see, so it says what it established.
+        print("  remote:      no tailnet address found — see docs/guides/remote-access.md")
 
     # ── MCP Tools ──
     print("\nMCP Tools")
@@ -836,29 +867,21 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
                 print("  deps:        ❌ missing modules (websockets/aiohttp)")
                 issues.append("python deps")
     else:
-        # Non-venv install: fall back to checking the system python.
-        sys_py = shutil.which("python3")
-        if sys_py:
-            try:
-                print(f"  fallback:    ⚠️  {sys_py} ({_probe_python_version(sys_py)})")
-            except Exception as exc:
-                # The probe shares the venv row's policy now that it shares its
-                # helper: report the failure as a row, never fail the doctor.
-                print(f"  fallback:    ⚠️  {sys_py} (version unavailable: {exc})")
-            try:
-                subprocess.run(
-                    [sys_py, "-c", "import websockets, aiohttp"],
-                    capture_output=True,
-                    timeout=5,
-                ).check_returncode()
-                print("  deps:        ✅ websockets, aiohttp available")
-            except Exception:
-                print("  deps:        ❌ missing modules (websockets/aiohttp)")
-                issues.append("python deps")
-        else:
-            # Same probe as the `fallback:` row above — its other outcome, so it
-            # carries the same label rather than a second "python:".
-            print("  fallback:    ⚠️  python3 not found on PATH")
+        # No checkout beside the sources — pipx, `uv tool`, the container image. Such an install
+        # has ONE interpreter, the one running doctor (the `python:` row), so its dependencies
+        # are checked there. This used to check whatever `python3` the PATH named, under a
+        # `fallback:` row that warned with no words — in the image, about the same venv as the
+        # row above it — and no part of PersonalClaw runs its gateway on that interpreter.
+        try:
+            subprocess.run(
+                [sys.executable, "-c", "import websockets, aiohttp"],
+                capture_output=True,
+                timeout=5,
+            ).check_returncode()
+            print("  deps:        ✅ websockets, aiohttp available")
+        except Exception:
+            print("  deps:        ❌ missing modules (websockets/aiohttp)")
+            issues.append("python deps")
 
     # WSL note: the background service depends on systemd, which WSL2 only runs
     # when /etc/wsl.conf opts in. Detect it here so a Windows user knows whether
@@ -1016,25 +1039,42 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
             print(f"     ssh -L {_port}:localhost:{_port} {mh}")
             print("     Then run: personalclaw token")
 
-    # Verify token auth is enforced on non-loopback (security check)
+    # Verify a request with no token is refused beyond loopback (security check). It is asked of
+    # an address that is not loopback, because a request from loopback is not the one a bind
+    # beyond it exposes: the host `dashboard.url` names, else the one interface the gateway is
+    # bound to, else this machine's own address — the container's, in the one-container
+    # `docker run`, which names no host. With none of those there is nothing to ask from, and
+    # the row says so rather than failing a check it never ran.
     if _port and not _local:
-        if not _host:
-            issues.append("cannot verify dashboard auth (host unknown)")
+        _probe = _address_to_check_from(_host, _bind_host)
+        if not _probe:
+            print(
+                "  auth check:  ⏭  not checked — found no address of this machine beyond loopback"
+            )
         else:
+            _url_host = f"[{_probe}]" if ":" in _probe else _probe
             try:
-                ext_req = urllib.request.Request(f"http://{_host}:{_port}/api/status")
+                ext_req = urllib.request.Request(f"http://{_url_host}:{_port}/api/status")
                 try:
-                    with urllib.request.urlopen(ext_req, timeout=2) as resp:
-                        # 200 without token = auth is NOT enforced
-                        print("  auth check:  ❌ external access allowed without token!")
-                        issues.append("dashboard auth: no token required on external interface")
+                    with urllib.request.urlopen(ext_req, timeout=2):
+                        # 200 without a token: the gate let this address in.
+                        if local_network_bypass_enabled() and is_private_network(_probe):
+                            # What the auth row above already said the bypass does — the
+                            # same legibility-only line the loopback branch prints for it.
+                            print(
+                                f"  auth check:  ⚠️  {_probe} answered a request with no token"
+                                " — the private-network bypass lets it in"
+                            )
+                        else:
+                            print(f"  auth check:  ❌ {_probe} answered a request with no token")
+                            issues.append("dashboard auth: no token required on external interface")
                 except urllib.error.HTTPError as he:
                     if he.code in (401, 403):
-                        print("  auth check:  ✅ token required on external interface")
+                        print(f"  auth check:  ✅ a request with no token is refused at {_probe}")
                     else:
-                        print(f"  auth check:  ⚠️  HTTP {he.code}")
+                        print(f"  auth check:  ⚠️  HTTP {he.code} from {_probe}")
             except Exception:
-                print("  auth check:  ⏭  could not reach external interface")
+                print(f"  auth check:  ⏭  could not reach {_probe}:{_port} to check")
 
     # ── Summary ──
     print()

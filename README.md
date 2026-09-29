@@ -307,7 +307,7 @@ A pin must name a release that actually exists: one that names no published rele
 refused rather than quietly upgrading you (`select_target`, `src/personalclaw/self_update.py`).
 
 Everything is in **Settings → Updates** too: the **channel** (`stable` · `beta` ·
-`nightly` for contributors), a **version pin**, **automatic applies**
+`nightly` for contributors), a **version pin**, **automatic applies** on a source checkout
 (`updates.auto=staged`, opt-in, held while work is in flight), the **check cadence**, and
 one-click **rollback**. The release check is the one outbound call this project makes on
 its own, and it can be switched off — see [Privacy](#privacy). Per-platform details:
@@ -353,7 +353,8 @@ from the updater at all. While the check is on, `updates.check_interval_hours` (
 often it runs. `updates.auto` is a separate, orthogonal control — it gates whether an available
 update is *applied*, not whether the check happens: `off` (the default) only notifies, while
 `staged` applies at the next safe point (held while a session or subagent is running, and only
-ever the resolved release tag, never raw `main`).
+ever the resolved release tag, never raw `main`). Only a source checkout applies on its own; a
+pip or uv install, the container and the desktop app are always notify-only.
 
 **The small default model is a download you start.** It is fetched once, only when you ask for
 it, from a pinned revision on Hugging Face, and checked against a recorded sha256 before it is

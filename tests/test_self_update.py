@@ -473,9 +473,14 @@ async def test_off_is_notify_only_and_never_applies(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_staged_when_idle_reaches_the_apply(monkeypatch) -> None:
+async def test_staged_when_idle_reaches_the_apply(
+    monkeypatch, tmp_path, package_in_checkout
+) -> None:
     # The other branch, so the test above is a gate not a constant: with an IDLE tree
     # (no agents/sessions) "staged" applies inline and does NOT fall back to notify-and-stop.
+    # On a source checkout, the one kind "staged" can apply on; every other kind notifies
+    # (tests/test_updates_say_what_this_install_can_do.py).
+    package_in_checkout(tmp_path)
     state = _StubDashboardState()  # zero agents, zero sessions => idle
     order, applied, stub = await _drive_check_for_updates(
         monkeypatch, auto="staged", dashboard_state=state

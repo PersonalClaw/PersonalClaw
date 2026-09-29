@@ -259,9 +259,14 @@ async def test_a_denied_host_is_refused_before_anything_is_sent(
     assert result.success is False
     assert result.agent_error is not None
     assert result.agent_error.code == "ERR_NET_FETCH_EGRESS_BLOCKED"
-    # A sentence a user can act on: it names the host AND where to permit it.
+    # A sentence a user can act on: it names the host AND the control that permits it — the one
+    # Settings renders, not a config key.
     assert PUBLIC_HOST in result.agent_error.what
-    assert "security.egress.allow_hosts" in result.agent_error.fix
+    assert (
+        f"add {PUBLIC_HOST} to Allowed hosts in Settings → Security → Network egress"
+        in result.agent_error.fix
+    )
+    assert "security.egress" not in result.agent_error.fix
 
 
 @pytest.mark.asyncio

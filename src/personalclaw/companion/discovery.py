@@ -369,33 +369,14 @@ class Decision:
 def _primary_lan_ipv4() -> str:
     """The address other devices on this LAN would see, or ``""``.
 
-    Asks the kernel which source address it would use to reach the mDNS group. A UDP
-    ``connect`` transmits nothing — it only installs a route — so this is a pure question,
-    and it answers the right one: the interface that actually carries multicast, not
-    whatever ``gethostname()`` happens to resolve to.
+    The kernel's own answer for the interface facing the local link — the one that carries
+    multicast, not whatever ``gethostname()`` happens to resolve to — then the hostname's.
+    One implementation, shared with ``personalclaw doctor``'s token check:
+    :func:`~personalclaw.dashboard.origin.address_beyond_loopback`.
     """
-    from personalclaw.dashboard.origin import is_loopback
+    from personalclaw.dashboard.origin import address_beyond_loopback
 
-    addr = ""
-    try:
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            probe.connect((MDNS_GROUP, MDNS_PORT))
-            addr = str(probe.getsockname()[0])
-        finally:
-            probe.close()
-    except OSError:
-        addr = ""
-    if addr and not is_loopback(addr):
-        return addr
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            candidate = str(info[4][0])
-            if not is_loopback(candidate):
-                return candidate
-    except (OSError, socket.gaierror):
-        pass
-    return ""
+    return address_beyond_loopback()
 
 
 def decide(*, enabled: bool, bind_host: str, port: int, instance_name: str) -> Decision:

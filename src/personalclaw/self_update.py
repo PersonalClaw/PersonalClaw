@@ -107,6 +107,20 @@ _APPLY_METHOD: dict[str, str] = {
     "desktop": "desktop_delegate",
 }
 
+
+def applies_updates_unattended(kind: str) -> bool:
+    """Whether ``updates.auto = "staged"`` can install an update on this kind of install.
+
+    Only a source checkout: the gateway moves it to the resolved release and restarts
+    (``GatewayOrchestrator._auto_apply_update``). A pip or uv install is upgraded when the owner
+    applies the update, a container is replaced from the host by pulling its new image, and the
+    desktop app is reinstalled from the release page — nothing inside any of them runs unattended.
+    The gateway, the update check and first-run setup all ask this, so none of them offers or
+    describes an unattended update on a kind that cannot have one.
+    """
+    return kind == "git"
+
+
 #: The repository's real default branch, used only as the last fallback of
 #: :func:`resolve_default_branch` when every probe fails. It must stay in sync
 #: with the repo: a literal naming a branch this project does not have fetches a
@@ -590,6 +604,7 @@ async def build_update_status(current: str) -> dict[str, object]:
         "pin_older": pin_older,
         "commits_behind": commits_behind,
         "apply_method": _APPLY_METHOD.get(kind, "instructions"),
+        "unattended_apply": applies_updates_unattended(kind),
         "instructions": instructions,
         "image_tag": image_tag,
         "release_name": str(release.get("name") or ""),

@@ -817,8 +817,14 @@ async def api_onboarding(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("onboarding: chat-provider connection read failed", exc_info=True)
 
+    # ``install_kind`` / ``unattended_apply`` — how a new version reaches THIS install, which the
+    # done screen's update pointer is about: only a source checkout installs one on its own. Read
+    # here rather than from ``GET /api/update/check``, which fetches the release list from GitHub —
+    # a first-run screen must not reach the network to decide a sentence.
+    from personalclaw import self_update
     from personalclaw.onboarding import load_onboarding_state
 
+    install_kind = self_update.detect_install_kind()
     return web.json_response(
         {
             "needs_model": needs_model,
@@ -828,6 +834,8 @@ async def api_onboarding(request: web.Request) -> web.Response:
             "chat_is_bundled_floor": chat_is_floor,
             "chat_download_offer": chat_offer,
             "chat_provider_connection": chat_connection,
+            "install_kind": install_kind,
+            "unattended_apply": self_update.applies_updates_unattended(install_kind),
             **load_onboarding_state(),
         }
     )
@@ -838,8 +846,9 @@ async def api_onboarding_state(request: web.Request) -> web.Response:
 
     ``POST /api/onboarding/state`` with any subset of
     ``{step, essentials: {model, search, speech, channel}, first_success: {knowledge,
-    trigger, loop}}``. The merge is partial at both levels, so each onboarding step
-    records only what it learned and never clears another step's progress.
+    trigger, loop}, name_draft: {name, handle, handle_touched} | null}``. The merge is partial
+    at both levels, so each onboarding step records only what it learned and never clears
+    another step's progress; ``name_draft`` is replaced whole.
 
     This is deliberately NOT the config PATCH allowlist: onboarding progress is entity
     state (§2.1), so it is written here and stored in ``entity_settings/onboarding.json``.

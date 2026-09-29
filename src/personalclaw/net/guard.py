@@ -33,6 +33,37 @@ def _ip_literals(hosts: tuple[str, ...]) -> frozenset[str]:
     return frozenset(out)
 
 
+#: Where the owner changes what this guard lets through. Every refusal the owner can lift points
+#: here, in these words, so a sentence follows the page if it is renamed — and none sends a user
+#: to a config key (``tests/test_egress_refusals_name_the_control.py`` holds it to the page).
+EGRESS_SETTINGS = "Settings → Security → Network egress"
+#: The control in that section that lifts a refusal for one host.
+ALLOWED_HOSTS = f"Allowed hosts in {EGRESS_SETTINGS}"
+
+#: The refusals an owner can lift for one host by listing it: an address on this machine or on a
+#: private network they vouch for. Never the cloud metadata service or a link-local address, which
+#: stay refused for a listed host too, and never an address that is neither.
+OWNER_CAN_ALLOW = frozenset({"loopback", "unspecified", "private"})
+
+#: Where a refused address is, in the words a sentence about it uses (a
+#: :attr:`GuardDecision.category` → a place).
+PLACES = {
+    "loopback": "this computer",
+    "unspecified": "this computer",  # 0.0.0.0 and :: reach this machine's own services
+    "private": "a private network",
+    "link_local": "a link-local address",
+}
+
+
+def allow_host_step(host: str) -> str:
+    """The one step that lets *host* through a refusal the owner can lift, as a clause.
+
+    The narrow control, deliberately: one host in Allowed hosts. The same section's "Allow all
+    private networks" switch would also lift it, and opens every private address with it.
+    """
+    return f"add {host} to {ALLOWED_HOSTS}"
+
+
 #: Metadata-service endpoints as IPs, matched against RESOLVED addresses. `deny_hosts`
 #: matches the URL's hostname before DNS, so it cannot see an allow-listed NAME that
 #: resolves (or rebinds) to a credential endpoint — this set is the post-resolution
@@ -173,8 +204,9 @@ def _warn_unmatchable(pattern: str) -> None:
     logger.warning(
         "security.egress host %r can never match any host and is being IGNORED. There is "
         "no glob support: write the bare domain, which already covers its subdomains. "
-        "Fix it in Settings -> Security -> Egress, or in config.json.",
+        "Fix it in %s, or in config.json.",
         pattern,
+        EGRESS_SETTINGS,
     )
 
 
@@ -275,8 +307,8 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=None) -> GuardDecision:
             risk_level="destructive",
             recovery_hints=[
                 "This run's safety profile limits egress to an allow-list.",
-                "An operator can add the host via security.egress allow_hosts, or widen the "
-                "egress tier in the governance ceiling.",
+                f"To allow it, {allow_host_step(host)}, or widen the egress tier in the "
+                "governance ceiling.",
             ],
             category="not_listed",
         )
@@ -369,7 +401,11 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=None) -> GuardDecision:
                 risk_level="destructive",
                 recovery_hints=[
                     "Fetch a public URL.",
-                    "An operator can allow-list an internal host via security.egress allow_hosts.",
+                    *(
+                        [f"If {host} is yours, {allow_host_step(host)}."]
+                        if bad[0].category in OWNER_CAN_ALLOW
+                        else []
+                    ),
                 ],
                 category=bad[0].category,
                 address=bad[0].ip,

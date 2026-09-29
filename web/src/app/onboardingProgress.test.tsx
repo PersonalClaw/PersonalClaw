@@ -156,7 +156,8 @@ describe('every step transition persists its resume point', () => {
     // refresh there threw away the name AND two steps of visible progress.
     await enterName()
     expect(await screen.findByRole('button', { name: 'stub-imported' })).toBeTruthy()
-    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'import' }))
+    // With the name draft beside it: the name commit is the move that enters `import`.
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith(expect.objectContaining({ step: 'import' })))
     fireEvent.click(screen.getByRole('button', { name: 'stub-imported' }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'essentials' }))
   })
@@ -216,10 +217,13 @@ describe('every step transition persists its resume point', () => {
     expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
   })
 
-  it('writes only the `step` key — no lane progress the shell did not observe', async () => {
+  it('writes the `step` key, plus the name draft on the name step — no lane progress it did not observe', async () => {
     await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
-    for (const [patch] of saveOnboardingState.mock.calls) expect(Object.keys(patch)).toEqual(['step'])
+    const [first, ...rest] = saveOnboardingState.mock.calls.map(([patch]) => Object.keys(patch).sort())
+    // The name step is the shell's own, so its draft rides with the step the name commit moves to.
+    expect(first).toEqual(['name_draft', 'step'])
+    for (const keys of rest) expect(keys).toEqual(['step'])
   })
 })
 
@@ -244,16 +248,19 @@ describe("the name step does not promise a save it has not made", () => {
     const subtitle = screen.getByText(/How the system addresses you/)
     expect(subtitle.textContent).not.toMatch(/Saved on the server/)
     // ...and it still says WHEN the promise is kept, rather than dropping the fact entirely.
-    expect(subtitle.textContent).toMatch(/Saved when you finish setup/)
+    expect(subtitle.textContent).toMatch(/becomes your name when you finish setup/)
     expect(subtitle.textContent).toMatch(/follows you across devices/)
   })
 
-  it('because advancing off the name step really does write nothing', async () => {
+  it('because advancing off the name step writes it into no identity — only into the run', async () => {
     await enterName()
     // The collapsed row now shows the name back, which is exactly why the copy mattered.
     expect(await screen.findByText('Ada Lovelace · @ada-lovelace')).toBeTruthy()
-    // No identity write yet — the flow is showing a value the server has never seen.
+    // No identity write yet: the name the product uses is still the one it had.
     expect(setName).not.toHaveBeenCalled()
+    // The run keeps it as a draft, so a second tab joins the run instead of asking again.
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith(
+      expect.objectContaining({ name_draft: { name: 'Ada Lovelace', handle: '', handle_touched: false } })))
   })
 
   it('and the promise IS kept, at the end', async () => {
@@ -328,7 +335,9 @@ describe('re-entering the flow resumes at the persisted step', () => {
     })
     await enterName()
     expect(await screen.findByRole('button', { name: 'stub-tried' })).toBeTruthy()
-    expect(saveOnboardingState).not.toHaveBeenCalled()
+    // The name commit records its draft, and that write names no step: the mark stays put.
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledTimes(1))
+    expect(saveOnboardingState.mock.calls[0][0]).not.toHaveProperty('step')
   })
 
   it('the recap names the BUNDLED floor rather than "a configured provider"', async () => {

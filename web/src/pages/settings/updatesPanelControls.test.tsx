@@ -54,6 +54,7 @@ const BASE: UpdateCheck = {
   checked: true,
   auto: 'off',
   kind: 'git',
+  unattended_apply: true,
   current: '0.1.3',
   channel: 'stable',
   pin: '',

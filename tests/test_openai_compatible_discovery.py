@@ -322,12 +322,13 @@ def test_a_blocked_host_says_how_to_allow_list_it(default_egress_posture: None) 
     with pytest.raises(ModelDiscoveryError) as caught:
         _run(openai_compatible_discover_models(_BLOCKED_ENDPOINT, "fake-key-test"))
     msg = str(caught.value)
-    assert "Egress policy blocked" in msg, (
+    assert "network settings refused" in msg, (
         "the default posture must refuse a loopback endpoint BEFORE any socket is dialled; "
         f"got {msg!r} — a transport error here means the guard was bypassed, not that the "
         "host was blocked"
     )
-    assert "allow_private" in msg or "allow_hosts" in msg
+    # The instruction names the control that lifts it, for this one host.
+    assert "to Allowed hosts in Settings → Security → Network egress" in msg, msg
     # A refusal happens pre-flight, so no HTTP status was ever received — the discriminator
     # between "blocked" and "reached something that answered".
     assert caught.value.status is None

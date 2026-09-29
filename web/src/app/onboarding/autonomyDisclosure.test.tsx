@@ -4,11 +4,11 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 
 // ── FB-05: what the product does ON ITS OWN is told at first run, not discovered ──────
 //
-// Two defaults ship on: auto-update (pulls, rebuilds and restarts unattended) and the
-// seeded community Store source. Both are defensible for a tool that keeps itself
-// healthy — but a local-first product that quietly reaches out and restarts itself is
-// exactly the surprise that erodes the trust the product is built on. The done screen
-// discloses both, in the screen's own idiom: the claim comes WITH its real control.
+// Two things it can do unasked: install an update and restart (opt-in, and only a source
+// checkout can), and read the seeded community Store source (on by default). A local-first
+// product that quietly reaches out or restarts itself is exactly the surprise that erodes the
+// trust the product is built on. The done screen discloses both, in the screen's own idiom:
+// the claim comes WITH its real control.
 //
 // The half worth testing, as with the other three pointers, is that the handover is the
 // REAL mechanism and not a lookalike:
@@ -90,7 +90,11 @@ beforeEach(() => {
   localStorage.clear()
   clearOnboardingExit()
   saveOnboardingState.mockResolvedValue({ ok: true, state: {} })
-  onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+  // A source checkout: the one kind that installs an update on its own, so the switch is real.
+  onboarding.mockResolvedValue({
+    needs_model: true, has_model_provider: false, has_chat_binding: false,
+    install_kind: 'git', unattended_apply: true,
+  })
   personalclawConfig.mockResolvedValue({ updates: { auto: 'staged' }, apps: { registry_source_enabled: true } })
   setAutoUpdate.mockResolvedValue({ ok: true })
 })
@@ -160,5 +164,55 @@ describe('the done screen tells what the product does on its own', () => {
     expect(screen.queryByRole('switch', { name: 'Update automatically' })).toBeNull()
     fireEvent.click(link)
     expect(peekOnboardingExit()).toBe('settings/updates')
+  })
+})
+
+// ── The pointer is about THIS install ─────────────────────────────────────────────────────
+//
+// Measured on the container image: the done screen said "It keeps itself current on its own —
+// When a new version ships, it installs and restarts unattended" over an "Update automatically"
+// switch. Nothing inside a container can replace the image it runs from, and the gateway's
+// unattended apply returns at once without a source checkout — so on a container, and on a pip,
+// uv or desktop install too, the switch did nothing. The first-run read says which kind this is
+// and whether it can install an update on its own (`self_update.applies_updates_unattended`).
+
+describe('the update pointer says what this install does', () => {
+  it.each([
+    ['container', /updated from the host/],
+    ['pip', /pressing Update installs it/],
+    ['desktop', /releases page/],
+  ])('a %s install is told how an update reaches it, and is offered no switch', async (kind, how) => {
+    onboarding.mockResolvedValue({
+      needs_model: true, has_model_provider: false, has_chat_binding: false,
+      install_kind: kind, unattended_apply: false,
+    })
+    await reachDoneScreen()
+    expect(await screen.findByText(how)).toBeTruthy()
+    expect(screen.queryByRole('switch', { name: 'Update automatically' })).toBeNull()
+    expect(screen.queryByText(/keeps itself current/)).toBeNull()
+    expect(screen.queryByText(/installs and restarts/)).toBeNull()
+    // Settings → Updates is still one click away, handed to the route guard like every exit.
+    fireEvent.click(screen.getByRole('button', { name: 'Manage updates in Settings' }))
+    expect(peekOnboardingExit()).toBe('settings/updates')
+  })
+
+  it('a source checkout whose switch is off is not told it already keeps itself current', async () => {
+    personalclawConfig.mockResolvedValue({ updates: { auto: 'off' }, apps: { registry_source_enabled: true } })
+    await reachDoneScreen()
+    const sw = await screen.findByRole('switch', { name: 'Update automatically' })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByText('It keeps itself current on its own')).toBeNull()
+    expect(screen.getByText(/Turn this on and a new version installs/)).toBeTruthy()
+    fireEvent.click(sw)
+    expect(await screen.findByText('It keeps itself current on its own')).toBeTruthy()
+  })
+
+  it('an install whose kind could not be read claims neither way, and offers no switch', async () => {
+    // What an unread first-run state leaves: no kind, so no claim about updates at all.
+    onboarding.mockResolvedValue({ needs_model: true, has_model_provider: false, has_chat_binding: false })
+    await reachDoneScreen()
+    await screen.findByRole('button', { name: 'Manage updates in Settings' })
+    expect(screen.queryByRole('switch', { name: 'Update automatically' })).toBeNull()
+    expect(screen.queryByText(/keeps itself current/)).toBeNull()
   })
 })

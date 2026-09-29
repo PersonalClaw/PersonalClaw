@@ -307,9 +307,10 @@ PersonalClaw has seen your version change at least once.
 
 Two orthogonal switches, both in `config.json` inside the volume (or Settings → Updates):
 
-- `updates.auto` — `off` (default) only notifies; `staged` applies at the next safe point.
-  On a container install "apply" means *surface the exact pull/recreate commands*: nothing
-  inside the container can replace the image it is running from.
+- `updates.auto` — has no effect on a container: nothing inside it can replace the image it
+  is running from, so `staged` notifies exactly as `off` (the default) does, and Settings →
+  Updates shows the exact pull/recreate commands when a new version ships. (On a source
+  checkout, `staged` applies at the next safe point.)
 - `updates.check_enabled` — `false` makes the updater issue **zero** outbound calls to
   GitHub: no scheduled release check at all. While it is on,
   `updates.check_interval_hours` (1–168, default 12) sets the cadence. This is the egress

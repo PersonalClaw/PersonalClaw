@@ -122,6 +122,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
+
+- **A second tab opened during first-run setup joins the setup where it is, with the name already entered, instead of starting over at step 1.**
+
+- **A model provider whose Save and test fails in first-run setup is no longer a dead end: every step of it offers Pick a different provider, which brings back the local model, the network scan and the provider list.**
+
+- **Only a source checkout offers to install updates on its own: first-run setup and Settings → Updates tell a pip, uv, container or desktop install how its updates arrive, and Staged no longer hides the update notice there.**
+
+- **A refused model endpoint names the control that allows it, Allowed hosts in Settings → Security → Network egress, instead of config keys, and so do a web fetch's and a net-fetch action's refusals.**
+
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**
