@@ -38,6 +38,16 @@ import pytest
 from personalclaw.dashboard.state import DashboardState
 
 
+@pytest.fixture(autouse=True)
+def _no_writes(monkeypatch):
+    """No note this file delivers is written to disk, and the writer is back after each test.
+
+    `_fresh` used to swap `_persist_notification` with a bare assignment that nothing put back, so
+    every later test in the same process delivered to a no-op: `test_dashboard`'s persistence test
+    read an empty log whenever it ran after this file in one worker."""
+    monkeypatch.setattr("personalclaw.dashboard.state._persist_notification", lambda note: None)
+
+
 @pytest.fixture
 def state(monkeypatch, tmp_path):
     """A state whose delivery is captured rather than broadcast or written to a real home."""
@@ -245,9 +255,8 @@ def test_meta_is_merged_before_the_platform_fields_not_after():
 
 def _fresh():
     """A per-test state. Built here rather than via the fixture so the parametrized cases each get
-    a clean delivery log without the fixture's argument threading."""
-    import personalclaw.dashboard.state as state_mod
-
+    a clean delivery log without the fixture's argument threading. What it delivers is written
+    nowhere (`_no_writes`)."""
     st = DashboardState.__new__(DashboardState)
     st._notification_log = []
     st._sessions = {}
@@ -255,5 +264,4 @@ def _fresh():
     st._broadcast = lambda note: broadcast.append(note)  # type: ignore[method-assign]
     st._push_target = lambda kind, note: None  # type: ignore[method-assign]
     st.captured = {"broadcast": broadcast, "persisted": []}
-    state_mod._persist_notification = lambda note: None  # type: ignore[assignment]
     return st

@@ -778,8 +778,8 @@ def hold_restored(home: Path) -> list[str]:
     it did and resume it.
 
     Reads and writes *home*'s own files, not the active home's: the restore names the home it
-    wrote. A run paused with the intent — by its owner, or by the boot sweep that suspended it —
-    is held already and left as it was. A row whose id names no folder inside ``runs/``
+    wrote. A run paused with the intent — by its owner, or held by an earlier restore — is held
+    already and left as it was. A row whose id names no folder inside ``runs/``
     (``record_ids.is_path_in_store``) is cancelled with the reason instead, since no intent can
     hold it.
     """

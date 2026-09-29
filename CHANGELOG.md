@@ -126,8 +126,6 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**
 
-- **A workflow run a restart suspended waits for Resume, instead of running on unasked at the watchdog's next check.**
-
 - **The Routing tab shows a model nothing prices as unpriced, never free, and such a model no longer knocks a priced one off the frontier or reads as cheaper in a proposal.**
 
 - **An evaluation gate's spend and the Usage page's "Not included" figure say how many calls they could not price, and the gate's dollar bound counts them as calls it could not count.**
