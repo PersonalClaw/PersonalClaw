@@ -143,6 +143,14 @@ _OWNER_AUTH_KEYS = r"^(core\.sshcommand|credential\..*helper)$"
 TOKEN_USERNAME_ENV = "PERSONALCLAW_GIT_USERNAME"
 TOKEN_ENV = "PERSONALCLAW_GIT_TOKEN"
 
+#: The variables that say which configuration files git reads: the global file in place of
+#: ``~/.gitconfig``, the system file, and none of the system files at all (the one a git
+#: distribution bundles included). :func:`git_env` keeps them, so PersonalClaw's git reads the
+#: files the owner's own git reads, and the owner's sign-in (:func:`git_argv`) comes from them.
+#: They say where settings come from, below git's command line, so none can undo one of
+#: :func:`git_argv`'s.
+CONFIG_FILE_ENV = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+
 #: The one credential helper a token sign-in uses, in place of the owner's. Asked to ``get`` a
 #: credential, it answers with the user name (when there is one) and the token from
 #: :data:`TOKEN_USERNAME_ENV` and :data:`TOKEN_ENV`; asked to ``store`` or ``erase`` one, it does
@@ -223,10 +231,12 @@ def git_env(
 
     The child allowlist (``sandbox.build_child_env``), never a copy of the gateway's environment:
     ``PATH``, the home its configuration reads, the proxy and certificate settings
-    (``GIT_SSL_CAINFO`` and ``GIT_SSL_CAPATH`` included). It leaves out an inherited ``GIT_DIR``,
-    ``GIT_WORK_TREE`` or ``GIT_INDEX_FILE``, which would point git at another repository, and
-    every ``GIT_*`` variable that would override a setting of :func:`git_argv`. Git never waits on
-    a password prompt: nobody is at the gateway's terminal to answer it.
+    (``GIT_SSL_CAINFO`` and ``GIT_SSL_CAPATH`` included). The variables that choose git's
+    configuration files are kept (:data:`CONFIG_FILE_ENV`), so it reads the files the owner's own
+    git does. It leaves out an inherited ``GIT_DIR``, ``GIT_WORK_TREE`` or ``GIT_INDEX_FILE``,
+    which would point git at another repository, and every ``GIT_*`` variable that would override
+    a setting of :func:`git_argv`. Git never waits on a password prompt: nobody is at the
+    gateway's terminal to answer it.
 
     git's messages are in English whatever the owner's locale (``LANGUAGE=en``): PersonalClaw reads
     some of them (a refused transport, a rejected push, nothing to commit) and shows them beside its
@@ -246,6 +256,7 @@ def git_env(
     if any(bad in value for value in (username, token) for bad in ("\n", "\r", "\0")):
         raise ValueError("a git user name or token can't hold a line break or a NUL")
     extra = {"GIT_TERMINAL_PROMPT": "0", "LANGUAGE": "en"}
+    extra.update({name: os.environ[name] for name in CONFIG_FILE_ENV if name in os.environ})
     if remote and token:
         extra[TOKEN_ENV] = token
         if username:
@@ -344,9 +355,11 @@ def _owner_auth_settings() -> list[str]:
 
     Read by a git that runs in an empty directory of its own, below which no repository is looked
     for, so every file it reads is the owner's: the system file (and the one a git distribution
-    bundles), the global file, the XDG one and whatever they include. What the read's own command
-    line sets (``git_argv``'s settings) is dropped by its origin. A read that fails gives nothing:
-    the command then signs in with no helper, and says so if the remote needs one.
+    bundles), the global file, the XDG one and whatever they include — or the files the owner's
+    environment names instead, or none of the system ones (:data:`CONFIG_FILE_ENV`), as for the
+    owner's own git. What the read's own command line sets (``git_argv``'s settings) is dropped by
+    its origin. A read that fails gives nothing: the command then signs in with no helper, and
+    says so if the remote needs one.
     """
     try:
         with tempfile.TemporaryDirectory(prefix="pclaw-gitconfig-") as outside:

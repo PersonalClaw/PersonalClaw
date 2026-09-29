@@ -7,7 +7,7 @@ replaced keeps answering from a registry long after its files are gone, and the 
 the new version is refused as a duplicate (a model type's ``register_type`` is strict, and every
 shipped model app swallows that refusal).
 
-Three calls:
+Four calls:
 
 * :func:`claim` — the loader names the directory an app's code runs from, before running any of
   it.
@@ -19,6 +19,9 @@ Three calls:
 * :func:`release` — every entry the app's code registered is taken back (newest first), every
   module loaded from its directory leaves ``sys.modules``, and what Python cannot take back
   in-process is returned as the reasons a restart is needed.
+* :func:`alone` — a block of one app's code runs with no other app's modules in
+  ``sys.modules``, for a process that runs one app's code after another (``personalclaw setup``
+  and ``doctor``).
 
 Deliberately standard-library only: the registries that call :func:`keep` sit below the app
 platform, and must be able to import this without importing it.
@@ -26,6 +29,7 @@ platform, and must be able to import this without importing it.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import importlib
 import importlib.machinery
@@ -35,6 +39,7 @@ import sys
 import threading
 import time
 import types
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -46,6 +51,9 @@ _lock = threading.RLock()
 _roots: dict[str, str] = {}
 #: The app → how to take back each registration its code made, oldest first.
 _undo: dict[str, list[Callable[[], None]]] = {}
+#: The app → the modules its earlier :func:`alone` blocks loaded, set aside by name until its
+#: next block.
+_parked: dict[str, dict[str, Any]] = {}
 
 #: How many times, and how far apart, a thread must be seen running an app's code before it
 #: counts as left running. A thread passing through the app's code for a moment (the event
@@ -122,6 +130,7 @@ def release(app: str) -> Released:
     with _lock:
         undo = _undo.pop(app, [])
         prefixes = tuple(p for p, a in _roots.items() if a == app)
+        _parked.pop(app, None)
     for take_back in reversed(undo):
         try:
             take_back()
@@ -162,6 +171,42 @@ def release(app: str) -> Released:
             "a task its previous version started is still running " f"({', '.join(sorted(tasks))})"
         )
     return out
+
+
+@contextlib.contextmanager
+def alone(app: str) -> Iterator[None]:
+    """Run a block of *app*'s code with no other app's modules in ``sys.modules``.
+
+    An app's modules import each other by top-level name (``from provider import …``), and many
+    apps ship a module of the same name: every provider app has a ``provider.py``. A process that
+    runs one app's code after another — ``personalclaw setup`` and ``doctor`` run each app's step
+    in turn — found the first app's module under that name when the second app imported it, and
+    ran the second app's step with the first app's code. For the block, every module loaded from
+    another app's directory is set aside, and the ones *app*'s own earlier blocks loaded are put
+    back; after it, *app*'s are set aside in turn and the others put back as they were.
+
+    Not for the gateway, where every app's code runs at once and a module set aside would be
+    imported again, as a second copy, by the next app that asks for it.
+    """
+    with _lock:
+        others = tuple(p for p, a in _roots.items() if a != app)
+        mine = _parked.pop(app, {})
+    hidden = {name: m for name, m in list(sys.modules.items()) if _origin(m, others) is not None}
+    for name in hidden:
+        del sys.modules[name]
+    for name, module in mine.items():
+        sys.modules.setdefault(name, module)
+    try:
+        yield
+    finally:
+        with _lock:
+            own = tuple(p for p, a in _roots.items() if a == app)
+            loaded = {n: m for n, m in list(sys.modules.items()) if _origin(m, own) is not None}
+            for name in loaded:
+                del sys.modules[name]
+            _parked[app] = loaded
+        for name, module in hidden.items():
+            sys.modules.setdefault(name, module)
 
 
 def _under(path: str, prefixes: tuple[str, ...]) -> bool:

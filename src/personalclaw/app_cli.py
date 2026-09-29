@@ -20,7 +20,10 @@ The app's module is loaded the way the gateway loads an app's provider module
 module name so two apps that both ship a ``cli_setup.py`` cannot collide in
 ``sys.modules``, with the app's directory on ``sys.path`` while it imports AND while
 the step runs, so a step that imports its own package works here exactly as it does in
-the gateway. Executing an app's declared setup/doctor code at the user's explicit
+the gateway. What the step imports by a plain top-level name is the app's own too: each
+step runs with no other app's modules in ``sys.modules`` (:func:`personalclaw.app_code.alone`),
+so a second app's ``from provider import …`` finds its own ``provider.py``, not the first
+app's. Executing an app's declared setup/doctor code at the user's explicit
 request is within the existing trust model — the app already passed the install-time
 supply-chain scan.
 """
@@ -30,6 +33,7 @@ import sys
 import threading
 from typing import Any, Callable
 
+from personalclaw import app_code
 from personalclaw.apps.manager import app_dir, list_apps
 from personalclaw.apps.native_contract import app_dir_on_path, load_bundle_module
 from personalclaw.sdk.cli import DoctorLine, SetupContext
@@ -121,10 +125,6 @@ def run_app_setup_steps(only_app: str = "") -> list[tuple[str, str]]:
     continues. Returns one ``(app, why)`` per step that did not complete — and one for an
     ``only_app`` that declares no step — so the command can exit non-zero naming each app.
     """
-    from personalclaw.config.credentials import get_credential, save_credential
-    from personalclaw.providers.settings import ProviderSettings
-    from personalclaw.sel import sel
-
     steps = _enabled_apps_with("setup")
     if only_app:
         steps = [(n, r) for (n, r) in steps if n == only_app]
@@ -146,50 +146,62 @@ def run_app_setup_steps(only_app: str = "") -> list[tuple[str, str]]:
 
     failures: list[tuple[str, str]] = []
     for app_name, ref in steps:
-        base = app_dir(app_name)
-        try:
-            fn = _import_app_callable(app_name, ref)
-        except Exception as exc:  # noqa: BLE001 — one bad app must not abort setup
-            why = f"setup step unavailable — {_reason(exc)}"
-            print(f"  ❌ {app_name}: {why}", file=sys.stderr)
-            failures.append((app_name, why))
-            sel().log_api_access(
-                caller="cli:setup",
-                operation=f"app_cli_setup:{app_name}",
-                outcome="error",
-                source="cli",
-                error=_reason(exc),
-            )
-            continue
-        ctx = SetupContext(
-            app_name=app_name,
-            get_credential=get_credential,
-            save_credential=save_credential,
-            settings=ProviderSettings,
-            input=_safe_input,
-            delete_credential=_scoped_delete_credential(app_name),
-        )
-        try:
-            with app_dir_on_path(app_name, base):
-                fn(ctx)
-            sel().log_api_access(
-                caller="cli:setup",
-                operation=f"app_cli_setup:{app_name}",
-                outcome="completed",
-                source="cli",
-            )
-        except Exception as exc:  # noqa: BLE001
-            why = f"setup step failed — {_reason(exc)}"
-            print(f"  ❌ {app_name}: {why}", file=sys.stderr)
-            failures.append((app_name, why))
-            sel().log_api_access(
-                caller="cli:setup",
-                operation=f"app_cli_setup:{app_name}",
-                outcome="error",
-                source="cli",
-                error=_reason(exc),
-            )
+        with app_code.alone(app_name):
+            failure = _run_setup_step(app_name, ref, _safe_input)
+        if failure:
+            failures.append((app_name, failure))
     return failures
+
+
+def _run_setup_step(app_name: str, ref: str, ask: Callable[[str], str]) -> str:
+    """Load and run one app's setup step; ``""`` when it completed, else why it did not."""
+    from personalclaw.config.credentials import get_credential, save_credential
+    from personalclaw.providers.settings import ProviderSettings
+    from personalclaw.sel import sel
+
+    base = app_dir(app_name)
+    try:
+        fn = _import_app_callable(app_name, ref)
+    except Exception as exc:  # noqa: BLE001 — one bad app must not abort setup
+        why = f"setup step unavailable — {_reason(exc)}"
+        print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+        sel().log_api_access(
+            caller="cli:setup",
+            operation=f"app_cli_setup:{app_name}",
+            outcome="error",
+            source="cli",
+            error=_reason(exc),
+        )
+        return why
+    ctx = SetupContext(
+        app_name=app_name,
+        get_credential=get_credential,
+        save_credential=save_credential,
+        settings=ProviderSettings,
+        input=ask,
+        delete_credential=_scoped_delete_credential(app_name),
+    )
+    try:
+        with app_dir_on_path(app_name, base):
+            fn(ctx)
+    except Exception as exc:  # noqa: BLE001
+        why = f"setup step failed — {_reason(exc)}"
+        print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+        sel().log_api_access(
+            caller="cli:setup",
+            operation=f"app_cli_setup:{app_name}",
+            outcome="error",
+            source="cli",
+            error=_reason(exc),
+        )
+        return why
+    sel().log_api_access(
+        caller="cli:setup",
+        operation=f"app_cli_setup:{app_name}",
+        outcome="completed",
+        source="cli",
+    )
+    return ""
 
 
 def _run_probe_with_timeout(fn: Callable[[], Any], timeout: float) -> Any:
@@ -223,9 +235,10 @@ def run_app_doctor_probes() -> list[str]:
     for app_name, ref in _enabled_apps_with("doctor"):
         print(f"\n{app_name}")
         try:
-            fn = _import_app_callable(app_name, ref)
-            with app_dir_on_path(app_name, app_dir(app_name)):
-                lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
+            with app_code.alone(app_name):
+                fn = _import_app_callable(app_name, ref)
+                with app_dir_on_path(app_name, app_dir(app_name)):
+                    lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
         except Exception as exc:  # noqa: BLE001
             print(f"  {_STATUS_GLYPH['fail']} probe error: {_reason(exc)}")
             issues.append(f"{app_name} doctor probe error")

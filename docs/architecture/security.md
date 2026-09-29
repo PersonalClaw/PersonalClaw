@@ -224,7 +224,10 @@ a borrowed repository's refs, a signing or signature-check program, or the hook 
 collection asks about old objects. The `ext`, `file` and `git` transports are refused, so a
 remote at a local path is too. The repository's ssh command and credential helpers are
 replaced: a command that talks to a remote uses the owner's own, from their own git
-configuration files, and any other command uses plain `ssh` and none. A git older than 2.12
+configuration files, and any other command uses plain `ssh` and none. Those files are the ones
+the owner's own git reads: `git_env` keeps `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and
+`GIT_CONFIG_NOSYSTEM` (`net/git.py::CONFIG_FILE_ENV`), which is also how a test suite keeps the
+machine's configuration, and its keychain helper, out of PersonalClaw's git. A git older than 2.12
 ignores some of these settings (`protocol.<name>.allow` arrived in 2.12, `core.hooksPath` in
 2.9), so `git_argv` refuses it before it runs: `GitTooOld`, an `OSError` whose message names
 the version needed, the one found and what to do, and the doctor's git row says the same. What
