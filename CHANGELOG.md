@@ -131,6 +131,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Only a source checkout offers to install updates on its own: first-run setup and Settings → Updates tell a pip, uv, container or desktop install how its updates arrive, and Staged no longer hides the update notice there.**
 
 - **A refused model endpoint names the control that allows it, Allowed hosts in Settings → Security → Network egress, instead of config keys, and so do a web fetch's and a net-fetch action's refusals.**
+- **The instructions you bring over from Claude Code or Codex reach every chat whole, not as 220-character summaries a small model's window cut again, and the notes they were remembering become memories recall finds and the re-index embeds.**
+
+- **The embedding re-index embeds every memory with an Ollama embedding model, where it used to fail on every other one and leave half of them read by keyword.**
 
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 

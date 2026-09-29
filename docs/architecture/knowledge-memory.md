@@ -260,6 +260,34 @@ item vector).
 - **`learn.py`** — lesson capture; `memory_lint.py` — hygiene checks;
   `engagement_signals.py`, `preference_facets.py` — derived preference data.
 
+### Standing instructions (brought over from other agent tools)
+
+- **What they are.** The instruction files the onboarding import brings over — Claude Code's
+  `CLAUDE.md` and `rules/*.md`, a project's own `CLAUDE.md`, Codex's `AGENTS.md` — written
+  whole, redacted, under `workspace/memory/instructions/<tool>/`
+  (`onboarding_import/writers.py`). `standing_instructions.py` carries each one into a new
+  conversation's session context word for word, ahead of history and recall, framed as the
+  user's rules. A project's own file goes only to a conversation whose working directory is that
+  project's folder or below it. Temporary sessions read no memory, so they carry none.
+- **Which files.** Only the ones the owner's import wrote, as its ledger
+  (`onboarding/import_state.json`, outside every folder an agent's file tools reach) records
+  them: a file something else puts in the folder is not followed. The file itself is read each
+  time, so an edit to it is what the next conversation follows. Two files with the same text
+  (one tool's file linked to another's) are carried once.
+- **The budget.** Instructions are the first claim on memory's share of the window
+  (`context._MEMORY_WINDOW_FRACTION`, an eighth), up to 24,000 characters at any window
+  (`standing_instructions.MAX_CHARS`); the memory sections scale into what they leave
+  (`context._memory_caps(reserved_chars=…)`). Files go in whole, the ones that apply everywhere
+  first. A file that does not fit is left out whole, never cut: the block names it with its path
+  so the model can `read_file` it, and the turn's notice tells the person which file, its size and
+  the room there was.
+- **Memories come over as memories.** The notes a tool was remembering (Claude Code's
+  `projects/<cwd>/memory/*.md`, Codex's `memories/*.md`) become episodic memories in `memory.db`
+  holding all of their text, split where the text breaks and numbered when a note is longer than
+  one memory holds (`vector_memory.EPISODIC_TEXT_MAX`). Recall finds them, and they are embedded
+  when written if an embedding model is bound, else by the re-index once one is. The note is kept
+  as a file under `workspace/memory/imported/<tool>/` too.
+
 ### Partitions & project locality
 
 - Memory is partitioned by **working directory**: `config/loader.py`'s

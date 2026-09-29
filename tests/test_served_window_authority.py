@@ -132,17 +132,23 @@ def _spy_assembler_windows(monkeypatch) -> list:
 
     seen: list = []
     real_caps, real_affordable = ctx._memory_caps, ctx._widget_guidance_affordable
+    real_instructions = ctx._instructions_budget
 
-    def caps(window):  # noqa: ANN001, ANN202
+    def caps(window, **kwargs):  # noqa: ANN001, ANN003, ANN202
         seen.append(window)
-        return real_caps(window)
+        return real_caps(window, **kwargs)
 
     def affordable(window):  # noqa: ANN001, ANN202
         seen.append(window)
         return real_affordable(window)
 
+    def instructions(window):  # noqa: ANN001, ANN202
+        seen.append(window)
+        return real_instructions(window)
+
     monkeypatch.setattr(ctx, "_memory_caps", caps)
     monkeypatch.setattr(ctx, "_widget_guidance_affordable", affordable)
+    monkeypatch.setattr(ctx, "_instructions_budget", instructions)
     return seen
 
 

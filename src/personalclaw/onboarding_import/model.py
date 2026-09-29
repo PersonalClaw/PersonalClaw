@@ -41,7 +41,7 @@ class ImportCategory(str, Enum):
     on an unmapped member). A category with no destination is not declared here.
     """
 
-    INSTRUCTIONS = "instructions"  # CLAUDE.md / AGENTS.md / rules → memory store
+    INSTRUCTIONS = "instructions"  # CLAUDE.md / AGENTS.md / rules → standing instructions
     MEMORIES = "memories"  # a tool's own memory notes → memory store
     MCP_SERVERS = "mcp_servers"  # .claude.json / .mcp.json / config.toml → <home>/mcp.json
     SKILLS = "skills"  # skills/<name>/ → skills/imported/<source>/<name>/

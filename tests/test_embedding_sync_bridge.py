@@ -290,6 +290,54 @@ def test_embed_returns_its_vector_inside_a_running_loop():
     assert provider.calls == 1
 
 
+class _LoopBoundProvider(_FakeProvider):
+    """Holds what a real HTTP client's connection pool holds: state made on the loop of its
+    first call, which no other loop can use. ``httpx.AsyncClient`` fails exactly so ("Event
+    loop is closed") once the loop its pooled connection was opened on has been closed."""
+
+    def __init__(self) -> None:
+        super().__init__(vec=[1.0, 2.0])
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+    async def embed(self, text: str, model: str = "") -> list[float] | None:
+        here = asyncio.get_running_loop()
+        if self.loop is None:
+            self.loop = here
+        if self.loop is not here:
+            raise RuntimeError("Event loop is closed")
+        return await super().embed(text, model)
+
+
+def test_a_provider_holding_loop_bound_state_embeds_every_text_from_a_worker_thread():
+    """The embedding re-index and an import writing memories embed from worker threads, where
+    no loop runs. A fresh loop per call stranded a provider's pooled connection on a closed
+    loop: with the Ollama provider every other memory failed to embed, so each re-index
+    embedded half of what was left (5 of 10, then 3 of 5, then 1 of 2)."""
+    provider = _LoopBoundProvider()
+    embed_fn = provider.get_embed_fn()
+    results: list = []
+
+    def _worker() -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # the premise: a worker thread has no loop of its own
+        else:
+            results.append("a loop was running")
+            return
+        for i in range(6):
+            try:
+                results.append(embed_fn(f"memory {i}"))
+            except Exception as exc:  # noqa: BLE001 — recorded, and the assertion names it
+                results.append(repr(exc))
+
+    worker = threading.Thread(target=_worker)
+    worker.start()
+    worker.join(timeout=30)
+    assert results == [[1.0, 2.0]] * 6
+    assert provider.calls == 6
+
+
 def test_direct_embed_site_works_on_both_paths(monkeypatch):
     """registry.get_active_embed_fn's directly-registered-provider branch."""
     provider = _FakeProvider(vec=[7.0, 8.0])

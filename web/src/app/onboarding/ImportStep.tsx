@@ -91,8 +91,8 @@ const CATEGORY_LABEL: Record<string, string> = {
 /** Where each category lands here — the destination in plain words, so ticking a box
  *  is an informed choice rather than a guess at a noun. */
 const CATEGORY_BLURB: Record<string, string> = {
-  instructions: 'Your CLAUDE.md / AGENTS.md, rules and project instructions, saved as memories.',
-  memories: 'Notes the other tool was already remembering for you.',
+  instructions: "Your CLAUDE.md / AGENTS.md and their rules, given whole to each chat as instructions to follow. A project's own go to chats working in that project's folder.",
+  memories: 'Notes the other tool was already remembering for you, added to your memories, where recall finds them.',
   mcp_servers: 'MCP server definitions, added to your MCP config. None runs until you allow it on the Tools page. The values they set go to your credential store.',
   skills: 'Skills, copied in and re-scanned like a Store install.',
   agents: 'Subagents, added to your Agents page.',

@@ -481,6 +481,10 @@ def _scan_instructions(
 
     ``seen_files`` makes one file one item: ``~/.claude/CLAUDE.md`` is also the
     ``.claude/CLAUDE.md`` of the project Claude Code recorded as the home directory itself.
+
+    A project's own file applies where Claude Code applies it, to work in that project: its item
+    carries the project's folder on this machine (``payload["workspace"]``), which is where the
+    import says it applies.
     """
     top = base / _INSTRUCTION_FILE
     if top.is_file():
@@ -522,6 +526,7 @@ def _scan_instructions(
                 origin=f"Project · {project.label}",
                 note=_UNTRUSTED_FOLDER if project.distrusted else "",
                 preselect=not project.distrusted,
+                payload={"workspace": str(project.local)},
                 seen_files=seen_files,
             )
 

@@ -76,8 +76,17 @@ def run_embed_sync(factory: Callable[[], Coroutine[Any, Any, _T]], timeout: floa
     """Run an embedding coroutine from sync code, bounded by ``timeout``.
 
     ``factory`` is a zero-arg callable returning the coroutine (not the coroutine itself)
-    so nothing is ever created that cannot be awaited. With no running loop this is a
-    plain ``asyncio.run``; inside one, the coroutine is handed to the shared bridge loop.
+    so nothing is ever created that cannot be awaited. Every call runs on the shared
+    bridge loop, from a thread with a loop running or without one.
+
+    🔴 Without one it used to be a plain ``asyncio.run`` — a fresh event loop per call —
+    and that is the path a worker thread takes: the embedding re-index, an import writing
+    memories. A provider keeps its HTTP client for its life, and the client's pooled
+    connection belongs to the loop it was opened on, so the next call's new loop found it
+    stranded on a closed one ("Event loop is closed"). Measured with the Ollama provider:
+    every other text failed to embed, and each re-index embedded half of what was left.
+    One loop for every call keeps that state valid, and the deadline is honoured on both
+    paths (``asyncio.run`` took no timeout at all).
 
     Raises ``TimeoutError`` when the deadline passes, having cancelled the task. The
     deadline is real: no per-call executor is joined on the way out.
@@ -85,8 +94,7 @@ def run_embed_sync(factory: Callable[[], Coroutine[Any, Any, _T]], timeout: floa
     try:
         running = asyncio.get_running_loop()
     except RuntimeError:
-        # No loop on this thread — the simple, cheap path, unchanged from before.
-        return asyncio.run(factory())
+        running = None
 
     bridge = sync_bridge_loop()
     if running is bridge:

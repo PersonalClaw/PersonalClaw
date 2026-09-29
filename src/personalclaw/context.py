@@ -503,7 +503,27 @@ def _guarded_recall(label: str, fn, *, timeout_secs: float | None = None):
         return None
 
 
-def _memory_caps(context_window: int | None) -> _MemoryCaps:
+def _memory_share_chars(context_window: int | None) -> int:
+    """How many characters memory may claim of a turn, all of it together: the
+    :data:`_MEMORY_WINDOW_FRACTION` of the window (the calibrated baseline window when it is not
+    known), converted from tokens at the repo's one nominal ratio."""
+    win = context_window or _BASELINE_WINDOW
+    return int(win * _MEMORY_WINDOW_FRACTION * NOMINAL_CHARS_PER_TOKEN)
+
+
+def _instructions_budget(context_window: int | None) -> int:
+    """The room the user's standing instruction files get in a turn (``standing_instructions``).
+
+    They are the FIRST claim on memory's share of the window — the rules the user wrote down come
+    before anything recalled — up to ``standing_instructions.MAX_CHARS`` at any window. What they
+    use is then taken off the share the rest of memory scales into (:func:`_memory_caps`).
+    """
+    from personalclaw.standing_instructions import MAX_CHARS
+
+    return min(MAX_CHARS, _memory_share_chars(context_window))
+
+
+def _memory_caps(context_window: int | None, *, reserved_chars: int = 0) -> _MemoryCaps:
     """Per-section memory caps scaled to the resolved model window (mem-adaptive-budget).
 
     Baseline caps are calibrated for a 200k window; scale linearly by
@@ -525,6 +545,10 @@ def _memory_caps(context_window: int | None) -> _MemoryCaps:
     the flat floor was lying. Sections scale together so the balance the baseline encodes
     survives, and every cap keeps a 1-char floor: a zero cap divides badly and reads as
     "no memory feature" rather than "no room for memory".
+
+    ``reserved_chars`` is what the standing instructions already took of that share
+    (:func:`_instructions_budget`): the sections scale into what they left. With no
+    instructions it is 0, and every cap is exactly what it was.
     """
     win = context_window or _BASELINE_WINDOW
     mult = max(1.0, min(_MAX_BUDGET_MULTIPLE, win / _BASELINE_WINDOW))
@@ -535,9 +559,7 @@ def _memory_caps(context_window: int | None) -> _MemoryCaps:
         + _SEMANTIC_MEMORY_CAP
         + _EPISODIC_MEMORY_CAP
     )
-    # The window is in TOKENS and the caps are in CHARS — converted at the repo's one
-    # nominal ratio so the comparison is between like quantities.
-    affordable_chars = int(win * _MEMORY_WINDOW_FRACTION * NOMINAL_CHARS_PER_TOKEN)
+    affordable_chars = _memory_share_chars(context_window) - max(0, reserved_chars)
     if affordable_chars < baseline_chars * mult:
         mult = affordable_chars / baseline_chars
     return {
@@ -1384,6 +1406,31 @@ class ContextBuilder:
             ws_path = cwd or "(none)"
             parts.append(render_snippet_block("workspace-identity", {"ws_path": ws_path}) + "\n\n")
 
+        # The user's standing instructions: the instruction files they brought over from their
+        # other agent tools (CLAUDE.md, AGENTS.md, their rules), each carried WHOLE, for every
+        # agent — and placed here, ahead of history and recall, so the assembly cap below (which
+        # cuts from the end) is the last thing that could reach them. They are the first claim on
+        # memory's share of the window; the memory sections scale into what they leave
+        # (`_memory_caps`). A file that does not fit is left out whole, named to the model with
+        # its path, and told to the user through `dropped_out`. Temporary sessions read no memory,
+        # and these are memory.
+        _instructions_chars = 0
+        if not blocks_reads:
+            from personalclaw import standing_instructions
+
+            _instructions = _guarded_recall(
+                "standing instructions",
+                lambda: standing_instructions.render(
+                    cwd, budget_chars=_instructions_budget(_window)
+                ),
+            )
+            if _instructions is not None:
+                if _instructions.text:
+                    parts.append(_instructions.text + "\n")
+                    _instructions_chars = len(_instructions.text)
+                if _instructions.left_out and dropped_out is not None:
+                    dropped_out.append(_instructions.notice())
+
         # Thread conversation history — highest priority context.
         # Use pre-computed LLM compression when available; fall back to truncation.
         if session_key and not resumed and (prior_transcript is not None or self.conversation_log):
@@ -1474,8 +1521,8 @@ class ContextBuilder:
             # Adaptive budget (mem-adaptive-budget): scale the per-section caps to the
             # window of the model actually bound to chat (1M for Opus → ~5× recall;
             # 200k baseline at the calibration point; a SMALL window now scales down too —
-            # see `_MEMORY_WINDOW_FRACTION`).
-            _caps = _memory_caps(_window)
+            # see `_MEMORY_WINDOW_FRACTION`), into what the standing instructions left of it.
+            _caps = _memory_caps(_window, reserved_chars=_instructions_chars)
             memory_ctx = _guarded_recall(
                 "recall",
                 lambda: _svc.get_context(**_caps),

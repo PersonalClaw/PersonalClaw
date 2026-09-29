@@ -27,8 +27,12 @@ Destinations
 ============
 
 ===================  ==========================================================
-``instructions``     ``workspace/memory/imported/<source>/<key>.md`` + a memory
-``memories``         record through the filesystem memory provider
+``instructions``     ``workspace/memory/instructions/<source>/<key>.md``, whole:
+                     every conversation carries it (``standing_instructions``),
+                     a project's own file only a conversation in that folder
+``memories``         memories in your memory store (``memory.db``), all of the
+                     note's text, which recall searches and the re-index embeds;
+                     plus the note as a file, ``workspace/memory/imported/…``
 ``mcp_servers``      ``mcp.json`` → ``mcpServers`` (the user-owned override file
                      ``agent.py`` already merges at highest priority)
 ``skills``           ``skills/imported/<source>/<name>/`` via ``install_scanned``
@@ -85,9 +89,9 @@ logger = logging.getLogger(__name__)
 
 _STATE_REL = Path("onboarding") / "import_state.json"
 _IMPORTED_DIRNAME = "imported"
-#: How much of an imported doc goes into the memory record's text. The full document
-#: is written to disk; the record is the searchable one-liner that points at it.
-_SUMMARY_CHARS = 220
+#: How much an imported memory is trusted to matter, beside what conversations teach: the value
+#: memory's own migration gives the notes it brings over from the older markdown files.
+_MEMORY_IMPORTANCE = 0.6
 
 
 # ── the import ledger (provenance only) ──────────────────────────────────────
@@ -116,10 +120,13 @@ def _ours(fingerprint: str) -> bool:
     return fingerprint in _load_state()["items"]
 
 
-def _record(item: ImportItem, destination: str) -> None:
+def _record(item: ImportItem, destination: str, **provenance: str) -> None:
     """Record an ``imported`` outcome. Only imports are recorded: recording a
     conflict would make the next run report ``existing`` for something we never
-    wrote."""
+    wrote.
+
+    ``provenance`` is what a reader of the destination needs to say where the thing came from —
+    value-free words, like the item's own ``title`` and ``origin``. An empty one is left out."""
     state = _load_state()
     state["items"][item.fingerprint] = {
         "source": item.source,
@@ -127,10 +134,24 @@ def _record(item: ImportItem, destination: str) -> None:
         "key": item.key,
         "destination": destination,
         "at": datetime.now(tz=timezone.utc).isoformat(),
+        **{name: value for name, value in provenance.items() if value},
     }
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def imported_items(category: ImportCategory) -> list[dict[str, Any]]:
+    """What this importer wrote of ``category``, as its ledger records each one.
+
+    The ledger answers "ours or theirs", so this is the list of things the owner's import put
+    there — not proof that they are still there, which only the destination can say.
+    """
+    return [
+        dict(entry)
+        for entry in _load_state()["items"].values()
+        if isinstance(entry, dict) and entry.get("category") == category.value
+    ]
 
 
 # ── shared helpers ───────────────────────────────────────────────────────────
@@ -198,31 +219,38 @@ def _rel_to_home(path: Path) -> str:
         return str(path)
 
 
-# ── instructions + memories → the memory store ───────────────────────────────
+# ── instructions → your standing instructions; memories → your memory store ──
+
+
+def _doc_name(item: ImportItem) -> str:
+    name = _slug(item.key)
+    return name if name.lower().endswith(".md") else f"{name}.md"
+
+
+def _instruction_doc_path(item: ImportItem) -> Path:
+    from personalclaw.standing_instructions import instructions_dir
+
+    return instructions_dir() / _slug(item.source) / _doc_name(item)
 
 
 def _memory_doc_path(item: ImportItem) -> Path:
     from personalclaw.memory import memory_dir
 
-    name = _slug(item.key)
-    if not name.lower().endswith(".md"):
-        name = f"{name}.md"
-    return memory_dir() / _IMPORTED_DIRNAME / _slug(item.source) / name
+    return memory_dir() / _IMPORTED_DIRNAME / _slug(item.source) / _doc_name(item)
 
 
-def _memory_doc_text(item: ImportItem) -> str:
+def _doc_text(item: ImportItem) -> str:
     return item.text if item.text.endswith("\n") else item.text + "\n"
 
 
-def _plan_memory(item: ImportItem) -> Plan:
-    doc = _memory_doc_path(item)
+def _plan_document(item: ImportItem, doc: Path) -> Plan:
     dest = _rel_to_home(doc)
     if doc.is_file():
         try:
             current = doc.read_text(encoding="utf-8")
         except OSError:
             current = ""
-        if current == _memory_doc_text(item):
+        if current == _doc_text(item):
             return Plan(ItemState.EXISTING, dest, "already imported, unchanged")
         return Plan(
             ItemState.CONFLICT,
@@ -232,42 +260,150 @@ def _plan_memory(item: ImportItem) -> Plan:
     return Plan(ItemState.NEW, dest)
 
 
-def _write_memory(item: ImportItem, dest: str) -> WriteResult:
-    """Write the redacted doc under the memory dir and add one memory record.
+def _plan_instruction(item: ImportItem) -> Plan:
+    return _plan_document(item, _instruction_doc_path(item))
 
-    The document keeps full fidelity on disk; the record is what makes it a
-    *memory* (searchable through the store's own projection) rather than a loose
-    file. Both are idempotent: an identical doc is a no-op (the planner answers
-    ``existing`` before this runs), and the provider's append dedupes the record line.
+
+def _plan_memory(item: ImportItem) -> Plan:
+    return _plan_document(item, _memory_doc_path(item))
+
+
+def _write_instruction(item: ImportItem, dest: str) -> WriteResult:
+    """Write the redacted instruction file whole, where every conversation reads it.
+
+    The copy is the file itself, byte for byte as the scan redacted it — never a summary of it:
+    ``standing_instructions`` carries it into each conversation whole, within the room the model
+    has. What the reader needs to say where it came from is the ledger's: the tool, the file's name
+    in it, and the folder a project's own file applies to (``workspace``, the project directory on
+    this machine). A file only this importer wrote is followed, so the ledger is also what keeps a
+    file dropped into the folder by something else out of the prompt.
     """
-    from personalclaw.memory import MemoryStore
-    from personalclaw.memory_providers.filesystem import FilesystemMemoryProvider
-    from personalclaw.memory_record import MemoryKind, MemoryRecord
-    from personalclaw.skills.loader import SkillsLoader
-
-    doc = _memory_doc_path(item)
-    text = _memory_doc_text(item)
-
-    store = MemoryStore()
-    store.init()
+    doc = _instruction_doc_path(item)
     doc.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(doc, text)
-
-    # The record is the searchable line, so it says what the note IS: a topic file's
-    # frontmatter is the tool's bookkeeping, and its body is the memory.
-    summary = re.sub(r"\s+", " ", SkillsLoader.strip_frontmatter(item.text)).strip()
-    label = f"{item.title or item.key}, {item.origin}" if item.origin else item.title or item.key
-    FilesystemMemoryProvider(store).put(
-        [
-            MemoryRecord(
-                id=f"import:{item.source}:{item.fingerprint}",
-                kind=MemoryKind.NOTE,
-                text=f"Imported from {item.source} ({label}): {summary[:_SUMMARY_CHARS]}",
-                source=f"onboarding_import:{item.source}",
-                category=item.category.value,
-            )
-        ]
+    atomic_write(doc, _doc_text(item))
+    _record(
+        item,
+        dest,
+        title=item.title,
+        origin=item.origin,
+        workspace=str(item.payload.get("workspace") or ""),
     )
+    return _result(item, WriteOutcome.IMPORTED, dest)
+
+
+def _memory_parts(body: str, room: int) -> list[str]:
+    """``body`` as pieces of at most ``room`` characters, split where the text breaks.
+
+    Paragraphs are kept together while they fit, then lines; only a single line longer than a
+    whole piece is cut, and nothing of the text is dropped.
+    """
+    room = max(room, 1)
+    parts: list[str] = []
+    current = ""
+
+    def add(piece: str, joiner: str) -> None:
+        nonlocal current
+        candidate = f"{current}{joiner}{piece}" if current else piece
+        if len(candidate) <= room:
+            current = candidate
+            return
+        if current:
+            parts.append(current)
+        while len(piece) > room:
+            parts.append(piece[:room])
+            piece = piece[room:]
+        current = piece
+
+    for paragraph in re.split(r"\n\s*\n", body.strip()):
+        if len(paragraph) <= room:
+            add(paragraph, "\n\n")
+            continue
+        for index, line in enumerate(paragraph.splitlines()):
+            add(line, "\n\n" if index == 0 else "\n")
+    if current:
+        parts.append(current)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _memory_store() -> tuple[Any, bool]:
+    """The memory store recall reads, and whether this call opened it (and so closes it).
+
+    In the gateway that is the store it serves recall from: a second copy of it would write
+    memories whose vectors the served index never learns of. Anywhere else, the home's own.
+    """
+    from personalclaw.vector_memory import VectorMemoryStore, recall_store
+
+    store = VectorMemoryStore()
+    served = recall_store(store.db_path)
+    if served is not None:
+        return served, False
+    store.init()
+    return store, True
+
+
+#: How much of a note's title leads each of its memories. Short enough that a part number after it
+#: falls inside the opening the store dedupes memories by (``write_episodic`` refuses a memory whose
+#: first 80 characters match one it holds), so the parts of one long note never read as repeats.
+_MEMORY_TITLE_CHARS = 60
+#: Room kept in each memory for its part number, `` (12 of 12)``.
+_PART_MARK_CHARS = 16
+#: How much of where a note came from (``Project · ~/src/app``) each of its memories repeats.
+_MEMORY_ORIGIN_CHARS = 200
+
+
+def _remember(item: ImportItem) -> None:
+    """Keep an imported memory as memories of your own: all of its text, where recall looks.
+
+    Each memory names what it is and where it came from, so a recalled one says so. A note longer
+    than one memory holds is kept as several, split where its text breaks and numbered. Written
+    with the model bound for embedding when there is one; without one it is read by keyword until
+    the re-index embeds it, like any memory written then.
+    """
+    from personalclaw.onboarding_import.registry import get_source
+    from personalclaw.skills.loader import SkillsLoader
+    from personalclaw.vector_memory import EPISODIC_TEXT_MAX
+
+    title = (item.title or item.key)[:_MEMORY_TITLE_CHARS]
+    where = f" ({item.origin[:_MEMORY_ORIGIN_CHARS]})" if item.origin else ""
+    tail = f" — from {get_source(item.source).display_name}'s memory{where}"
+    body = SkillsLoader.strip_frontmatter(item.text).strip()
+    room = EPISODIC_TEXT_MAX - len(title) - _PART_MARK_CHARS - len(tail) - 1
+    parts = _memory_parts(body, room)
+    store, opened = _memory_store()
+    try:
+        for number, part in enumerate(parts, start=1):
+            mark = f" ({number} of {len(parts)})" if len(parts) > 1 else ""
+            store.write_episodic(
+                f"{title}{mark}{tail}\n{part}",
+                tags=["imported", item.source],
+                importance=_MEMORY_IMPORTANCE,
+                source=f"onboarding_import:{item.source}",
+            )
+    finally:
+        if opened:
+            store.close()
+
+
+def _write_memory(item: ImportItem, dest: str) -> WriteResult:
+    """Add the note to your memories, whole, and keep the redacted file it came from.
+
+    The memories are what recall searches and the re-index embeds. The file is the note as the
+    other tool held it, and the planner's answer to "is it already here". The memories are
+    written first: a store that refuses them rejects the item with nothing written, so importing
+    it again tries again, rather than leaving a file that reads as imported while recall finds
+    nothing. A memory the store already holds in other words is not written twice.
+    """
+    from personalclaw.sqlite_compat import sqlite3
+
+    try:
+        _remember(item)
+    except (sqlite3.Error, OSError) as exc:
+        return _result(
+            item, WriteOutcome.REJECTED, dest, f"your memory store could not take it: {exc}"
+        )
+    doc = _memory_doc_path(item)
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(doc, _doc_text(item))
     _record(item, dest)
     return _result(item, WriteOutcome.IMPORTED, dest)
 
@@ -767,7 +903,7 @@ def _write_denied_command(item: ImportItem, dest: str) -> WriteResult:
 #: A new category without a planner or a writer must fail loudly, not import nothing
 #: quietly. A writer is only ever called with the destination its planner found free.
 _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
-    ImportCategory.INSTRUCTIONS: _plan_memory,
+    ImportCategory.INSTRUCTIONS: _plan_instruction,
     ImportCategory.MEMORIES: _plan_memory,
     ImportCategory.MCP_SERVERS: _plan_mcp_server,
     ImportCategory.SKILLS: _plan_skill,
@@ -777,7 +913,7 @@ _PLANNERS: dict[ImportCategory, Callable[[ImportItem], Plan]] = {
     ImportCategory.DENIED_COMMANDS: _plan_denied_command,
 }
 _WRITERS: dict[ImportCategory, Callable[[ImportItem, str], WriteResult]] = {
-    ImportCategory.INSTRUCTIONS: _write_memory,
+    ImportCategory.INSTRUCTIONS: _write_instruction,
     ImportCategory.MEMORIES: _write_memory,
     ImportCategory.MCP_SERVERS: _write_mcp_server,
     ImportCategory.SKILLS: _write_skill,

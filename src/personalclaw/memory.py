@@ -289,9 +289,19 @@ class MemoryStore:
         """
 
         def _cap(text: str, limit: int) -> str:
-            if len(text) > limit:
-                return text[:limit] + "\n…[truncated]"
-            return text
+            """``text`` within ``limit``, cut after the last whole line that fits.
+
+            A line cut in half reads as a different line — half a preference is another
+            preference — so the cut falls between lines and says how many were left out; the
+            source the block names holds them whole.
+            """
+            if len(text) <= limit:
+                return text
+            kept = text[:limit]
+            kept = kept[: kept.rfind("\n") + 1]
+            left = sum(1 for line in text[len(kept) :].splitlines() if line.strip())
+            more = "1 more line" if left == 1 else f"{left} more lines"
+            return f"{kept}…[{more} not shown: they are in the source named above]"
 
         parts: list[str] = []
         prefs = self.read_preferences()

@@ -304,15 +304,22 @@ def test_import_creates_memories_mcp_entries_and_imported_skills(
     assert report.counts()[WriteOutcome.CONFLICT.value] == 0
     assert report.counts()[WriteOutcome.REJECTED.value] == 0
 
-    # memories: the full document under the memory dir + a record in the store's own
-    # markdown projection.
-    doc = home / "workspace" / "memory" / "imported" / "claude_code" / "CLAUDE.md"
+    # instructions: the whole file, where every conversation reads it; memories: the note as a
+    # file beside the memories it became in the memory store.
+    doc = home / "workspace" / "memory" / "instructions" / "claude_code" / "CLAUDE.md"
     assert doc.is_file()
     assert "Always run the linter" in doc.read_text(encoding="utf-8")
-    prefs = (home / "workspace" / "memory" / "preferences.md").read_text(encoding="utf-8")
-    assert "Imported from claude_code (CLAUDE.md)" in prefs
     imported = home / "workspace" / "memory" / "imported" / "claude_code"
     assert [p.name for p in imported.iterdir() if p.name.endswith("prefs.md")]
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    store = VectorMemoryStore()
+    store.init()
+    try:
+        texts = [r["text"] for r in store.db.execute("SELECT text FROM episodic_memories")]
+    finally:
+        store.close()
+    assert any(t.endswith("\nUser prefers concise answers.") for t in texts), texts
 
     # MCP entries: the user-owned override file the agent config merges, every value it sets a
     # reference to the credential store — as the Tools page's Import writes one.
@@ -414,8 +421,7 @@ def test_a_pick_imports_exactly_the_chosen_items(claude_root: Path, home: Path) 
 
     assert not (home / "skills" / "imported").exists()
     assert AppConfig.load().security.denied_commands == []
-    doc = home / "workspace" / "memory" / "imported" / "claude_code" / "CLAUDE.md"
-    assert not doc.exists()
+    assert not (home / "workspace" / "memory" / "instructions").exists()
     left_out = {item.fingerprint: plan.state for item, plan in report.unselected}
     assert set(left_out) == {i.fingerprint for i in results[0].items} - {memory, weather}
     assert set(left_out.values()) == {ItemState.NEW}
@@ -544,7 +550,7 @@ def test_conflicting_skill_reports_conflict_and_keeps_existing(
 def test_conflicting_instruction_doc_reports_conflict_and_keeps_existing(
     claude_root: Path, home: Path
 ) -> None:
-    doc = home / "workspace" / "memory" / "imported" / "claude_code" / "CLAUDE.md"
+    doc = home / "workspace" / "memory" / "instructions" / "claude_code" / "CLAUDE.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("my own notes\n", encoding="utf-8")
 

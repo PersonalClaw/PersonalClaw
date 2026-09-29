@@ -151,6 +151,7 @@ def text_item(
     origin: str = "",
     note: str = "",
     preselect: bool = True,
+    payload: dict[str, Any] | None = None,
     seen_files: set[Path] | None = None,
 ) -> bool:
     """One file read through floors 1 and 2 into an item. False when nothing was added: the file
@@ -177,6 +178,7 @@ def text_item(
             key=key,
             title=title,
             text=text,
+            payload=dict(payload or {}),
             origin=origin,
             note=note,
             preselect=preselect,

@@ -385,11 +385,20 @@ def test_import_lands_each_kind_where_personalclaw_reads_it(noor: Path) -> None:
     assert project_rules.read_text(encoding="utf-8") == (
         noor / "src" / "feedsmith" / "CLAUDE.md"
     ).read_text(encoding="utf-8")
-    records = (config_dir() / "workspace" / "memory" / "preferences.md").read_text(encoding="utf-8")
-    assert (
-        "Imported from claude_code (#412 cause is double escaping, Project · ~/src/feedsmith)"
-        in records
+    # The instructions are where every conversation reads them; the memory is a memory.
+    assert project_rules.parent == config_dir() / "workspace" / "memory" / "instructions" / (
+        "claude_code"
     )
+    from personalclaw.vector_memory import VectorMemoryStore
+
+    store = VectorMemoryStore()
+    store.init()
+    try:
+        memories = [r["text"] for r in store.db.execute("SELECT text FROM episodic_memories")]
+    finally:
+        store.close()
+    header = "#412 cause is double escaping — from Claude Code's memory (Project · ~/src/feedsmith)"
+    assert any(m.startswith(f"{header}\n") and "html.escape()" in m for m in memories), memories
 
     assert _tree(noor) == before, "importing from Claude Code must not change Claude Code"
 

@@ -170,7 +170,10 @@ _EPISODIC_RELEVANCE_THRESHOLD = 0.55  # min cosine sim for short texts (empirica
 _EPISODIC_LONG_TEXT_CHARS = 300  # texts longer than this get a relaxed threshold
 _EPISODIC_LONG_TEXT_THRESHOLD = 0.42  # relaxed threshold for long entries
 _EPISODIC_TEXT_MIN = 10
-_EPISODIC_TEXT_MAX = 2000
+#: The longest text one episodic memory holds; :meth:`VectorMemoryStore.write_episodic` refuses
+#: a longer one. Public because a writer with a longer note has to split it into memories of this
+#: size itself, or lose the rest.
+EPISODIC_TEXT_MAX = 2000
 _FAISS_SAVE_INTERVAL = 100  # save index every N writes
 #: How many memories a re-embed writes between commits (``VectorMemoryStore.reembed_stale``).
 _REEMBED_COMMIT_EVERY = 50
@@ -2734,12 +2737,12 @@ class VectorMemoryStore(MemoryProvider):
         one plan are three occurrences a repetition detector has to count.
         """
         text = text.strip()
-        if len(text) < _EPISODIC_TEXT_MIN or len(text) > _EPISODIC_TEXT_MAX:
+        if len(text) < _EPISODIC_TEXT_MIN or len(text) > EPISODIC_TEXT_MAX:
             logger.debug(
                 "Episodic rejected: len=%d (min=%d max=%d)",
                 len(text),
                 _EPISODIC_TEXT_MIN,
-                _EPISODIC_TEXT_MAX,
+                EPISODIC_TEXT_MAX,
             )
             return False
 
@@ -3868,7 +3871,7 @@ class VectorMemoryStore(MemoryProvider):
                         continue
                     if len(text) < _EPISODIC_TEXT_MIN:
                         continue
-                    text = text[:_EPISODIC_TEXT_MAX]
+                    text = text[:EPISODIC_TEXT_MAX]
                     if self.write_episodic(
                         text,
                         importance=0.4,
