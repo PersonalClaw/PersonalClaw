@@ -31,7 +31,7 @@ The rule has since changed on purpose. It stopped at the FIRST `@`, so a passwor
 scp-style `user:password@host:path` at all. The credential now runs to the last `@` of the
 authority, or past an authority a password cut short, and an scp-style login is masked too. The
 reference below was rewritten with the rule, from plain loops over the text, so the fast scan in
-`security.py` is still held to byte-identity on every input here.
+`address_logins.py` is still held to byte-identity on every input here.
 
 `TestTheFastScanRestsOnThreeFacts` pins what the fast scan's correctness rests on:
 
@@ -52,13 +52,15 @@ import time
 
 import pytest
 
+from personalclaw import address_logins as A
 from personalclaw import security as S
 
 # ── the reference: the rule, said as plainly as it can be ──
 # Plain loops over the text, no memo and no possessive run, so the fast scan's shortcuts are what
-# is under test. It shares only leaf grammars with `security.py` (what a host is, the tag, the
-# shape-based patterns), never the scanning. The shape-based pass is spelled as it stood before
-# #2717, a fresh leftmost `replace` per match, which the splice tests below hold the fast one to.
+# is under test. It shares only leaf grammars with `address_logins.py` and `security.py` (what a
+# host is, the tag, the shape-based patterns), never the scanning. The shape-based pass is spelled
+# as it stood before #2717, a fresh leftmost `replace` per match, which the splice tests below hold
+# the fast one to.
 
 _SCHEME_CHAR = set(string.ascii_letters + string.digits + "+.-")
 #: What ends an authority, besides whitespace and a `:` that begins another `://`.
@@ -90,7 +92,7 @@ def _reference_url_spans(text: str) -> list[tuple[int, int, str]]:
             continue  # no scheme
         at = text.rfind("@", begin, end)
         host = text[max(at + 1, begin) : end]
-        if (at != -1 or ":" in host) and not S._URL_HOST_RE.fullmatch(host):
+        if (at != -1 or ":" in host) and not A._URL_HOST_RE.fullmatch(host):
             # Cut short inside a password: read on, to whitespace or the quote the URL is in.
             stop = len(text)
             if first and text[first - 1] in "\"'":
@@ -114,7 +116,7 @@ def _reference_redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     out: list[str] = []
     pos = 0
     for start, end, scheme in spans:
-        out.append(text[pos:start] + f"{scheme}://{S._URL_USERINFO_TAG}@")
+        out.append(text[pos:start] + f"{scheme}://{A.URL_USERINFO_TAG}@")
         pos = end
     out.append(text[pos:])
     return "".join(out), [f"Redacted credential in a {scheme} URL" for _s, _e, scheme in spans]
@@ -138,8 +140,8 @@ def _reference_scp_spans(text: str) -> list[tuple[int, int]]:
                 k
                 for k in range(len(run) - 1, 0, -1)
                 if run[k] == "@"
-                and (host := S._SCP_HOST_RE.match(run, k + 1))
-                and S._names_an_scp_host(host.group()[:-1])
+                and (host := A._SCP_HOST_RE.match(run, k + 1))
+                and A._names_an_scp_host(host.group()[:-1])
             ),
             None,
         )
@@ -147,12 +149,12 @@ def _reference_scp_spans(text: str) -> list[tuple[int, int]]:
             continue
         for colon in (c for c in range(at) if run[c] == ":"):
             begin = colon
-            while begin and run[begin - 1] in S._SCP_USER_CHARS:
+            while begin and run[begin - 1] in A._SCP_USER_CHARS:
                 begin -= 1
             if (
                 begin < colon
                 and (run[begin].isalnum() or run[begin] == "_")
-                and (not begin or run[begin - 1] in S._SCP_OPENERS)
+                and (not begin or run[begin - 1] in A._SCP_OPENERS)
                 and not run.startswith("//", colon + 1)
             ):
                 spans.append((base + begin, base + at))
@@ -166,7 +168,7 @@ def _reference_redact_credentials(text: str) -> tuple[str, list[str]]:
     if spans:
         out, pos = [], 0
         for begin, end in spans:
-            out.append(result[pos:begin] + S._URL_USERINFO_TAG)
+            out.append(result[pos:begin] + A.URL_USERINFO_TAG)
             pos = end
         result = "".join(out) + result[pos:]
         warnings += ["Redacted credential in an scp-style address"] * len(spans)
@@ -277,8 +279,8 @@ ADVERSARIAL = [
     "mailto:x://u@h",
     "a.b-c+d://u@h",
     "http://a@b http://a@b http://a@b",
-    f"https://{S._URL_USERINFO_TAG}@host/x",
-    f"repo_url: https://{S._URL_USERINFO_TAG}@github.com/a/b.git",
+    f"https://{A.URL_USERINFO_TAG}@host/x",
+    f"repo_url: https://{A.URL_USERINFO_TAG}@github.com/a/b.git",
     "q://u@h " * 200,
     "s://" + "a" * 100 + "@h",
     # The cut-short reading: its quote, its whitespace, and a run that holds no `@`.
@@ -371,7 +373,7 @@ class TestTheOutputIsByteIdentical:
         """`redact_url_userinfo` is public — a caller that only handles URLs uses it directly, so
         its own return value is part of the contract, not just its contribution downstream."""
         for text in CORPUS:
-            assert S.redact_url_userinfo(text) == _reference_redact_url_userinfo(text), text[:60]
+            assert A.redact_url_userinfo(text) == _reference_redact_url_userinfo(text), text[:60]
 
     def test_exhaustive_over_the_characters_that_decide_a_match(self):
         """Every string up to length 5 over the alphabet the rule actually branches on.
@@ -413,7 +415,7 @@ class TestTheOutputIsByteIdentical:
             "api_key=",
             "bearer ",
             "password:",
-            S._URL_USERINFO_TAG,
+            A.URL_USERINFO_TAG,
             "A" * 45,
             "A" * 44 + "==",
             "@host.example:",
@@ -439,35 +441,35 @@ class TestTheFastScanRestsOnThreeFacts:
     def test_a_colon_is_not_a_scheme_character(self):
         """So the run ending at a `://` can only be the maximal one, and the backward walk is
         allowed to take it without considering any shorter split."""
-        assert ":" not in S._SCHEME_CHARS
+        assert ":" not in A._SCHEME_CHARS
 
     @pytest.mark.parametrize("end", sorted(_AUTHORITY_END) + [" ", "\n", "\t", "://"])
     def test_the_authority_run_stops_at_every_character_that_ends_one(self, end):
         """So the one possessive run is the whole authority, and nothing past it is read as one."""
-        m = S._URL_AUTHORITY_RE.match(f"://a@b{end}c@d")
+        m = A._URL_AUTHORITY_RE.match(f"://a@b{end}c@d")
         assert m is not None and m.group("authority") == "a@b", end
 
     def test_the_authority_run_holds_every_at_sign_in_it(self):
         """So the last `@` of the authority is `rfind`'s answer: `ada:p@ss@host` is one login."""
-        m = S._URL_AUTHORITY_RE.match("://ada:p@ss@host:22/x")
+        m = A._URL_AUTHORITY_RE.match("://ada:p@ss@host:22/x")
         assert m is not None and m.group("authority") == "ada:p@ss@host:22"
 
     def test_the_scheme_class_and_the_pattern_agree(self):
         """`_SCHEME_CHARS` is a `str` for `rstrip` and the reference reads a character class. A
         divergence between them is the one way the backward walk can find the wrong run start."""
         old_class = re.compile(r"[A-Za-z0-9+.\-]")
-        for ch in S._SCHEME_CHARS:
+        for ch in A._SCHEME_CHARS:
             assert old_class.fullmatch(ch), ch
         for code in range(0x20, 0x7F):
             ch = chr(code)
-            assert bool(old_class.fullmatch(ch)) == (ch in S._SCHEME_CHARS), ch
+            assert bool(old_class.fullmatch(ch)) == (ch in A._SCHEME_CHARS), ch
 
     def test_the_tag_is_still_unmatchable_by_construction(self):
         """The tag holds a space straight after its `:`, so an authority read from it is
         `[REDACTED:` with nothing after it, and an scp-style login needs a `name:` in the run
         before the `@`, which the tag's last word does not have."""
-        assert "[REDACTED: " in S._URL_USERINFO_TAG
-        once = f"https://{S._URL_USERINFO_TAG}@host/x and {S._URL_USERINFO_TAG}@host:path"
+        assert "[REDACTED: " in A.URL_USERINFO_TAG
+        once = f"https://{A.URL_USERINFO_TAG}@host/x and {A.URL_USERINFO_TAG}@host:path"
         assert S.redact_credentials(once) == (once, [])
 
 
@@ -492,7 +494,7 @@ class TestTheCostTracksNothingQuadratic:
         """
         token = self._unbroken(8192)
         assert len(token) == 8192
-        assert not set(token) - set(S._SCHEME_CHARS), "the fixture is not one unbroken scheme run"
+        assert not set(token) - set(A._SCHEME_CHARS), "the fixture is not one unbroken scheme run"
 
     def test_a_quarter_megabyte_single_token_is_bounded(self):
         """A coarse floor, not a benchmark. This shape cost 30.475s before; it now costs ~0.025s.
@@ -559,7 +561,7 @@ class TestTheReadingsPastTheAuthorityStayLinear:
     def test_each_shape_reaches_the_reading_it_is_named_for(self):
         """Vacuity floor: a shape that never reached its reading would pass the bound below on a
         tree without that reading at all. Each is masked, or not, exactly as the reading says."""
-        tag = S._URL_USERINFO_TAG
+        tag = A.URL_USERINFO_TAG
         assert S.redact_credentials("a://b:c/" * 3 + "@h")[0] == f"a://{tag}@h"
         # A quoted URL reads only to the next quote, so the first finds no `@` and the second does.
         assert S.redact_credentials('"a://b:c/' * 2 + '@h"')[0] == f'"a://b:c/"a://{tag}@h"'

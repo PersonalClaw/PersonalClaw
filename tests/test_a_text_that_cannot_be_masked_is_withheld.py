@@ -449,7 +449,8 @@ def test_a_record_the_masker_can_mask_is_written_masked(sink_logger, capsys) -> 
 
 # ── the rail: no try that masks a text falls back to it ─────────────────────────────────────
 
-#: `security`'s maskers: what a text goes through before it is shown, sent or stored.
+#: What a text goes through before it is shown, sent or stored: `security`'s maskers and those of
+#: `address_logins`.
 _MASKERS = frozenset(
     {
         "redact",
@@ -458,6 +459,7 @@ _MASKERS = frozenset(
         "redact_for_display",
         "redact_for_model",
         "redact_url_userinfo",
+        "redact_scp_logins",
         "redact_webhook_urls",
         "redact_known_values",
         "redact_field",

@@ -45,10 +45,11 @@ composition.
    redirect landed somewhere unexpected" into an unanswerable question.
 
 **Deliberately value-replacing, never whole-string.** Every function here removes a value and
-leaves its surroundings intact, for the reason `security.redact_url_userinfo` records: taking out
-the secret must not take out the ability to read the line. And every replacement is a literal
-containing characters the thing it replaces cannot contain, so re-running any of these over its own
-output is a no-op — idempotence by construction, not by a guard a later session could delete.
+leaves its surroundings intact, for the reason `address_logins.redact_url_userinfo` records:
+taking out the secret must not take out the ability to read the line. And every replacement is a
+literal containing characters the thing it replaces cannot contain, so re-running any of these over
+its own output is a no-op — idempotence by construction, not by a guard a later session could
+delete.
 """
 
 from __future__ import annotations

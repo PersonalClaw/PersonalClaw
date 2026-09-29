@@ -41,7 +41,8 @@ import logging
 
 import pytest
 
-from personalclaw.security import redact_credentials, redact_url_userinfo
+from personalclaw.address_logins import redact_url_userinfo
+from personalclaw.security import redact_credentials
 
 _TAG = "[REDACTED: url credential]"
 
@@ -149,12 +150,12 @@ class TestIdempotence:
         authority, so what a second pass reads after `://` is `[REDACTED:` with
         nothing after it: a second match is impossible rather than merely prevented.
         Pinned so nobody "simplifies" the tag into something matchable."""
-        from personalclaw.security import _URL_AUTHORITY_RE, _URL_USERINFO_TAG
+        from personalclaw.address_logins import _URL_AUTHORITY_RE, URL_USERINFO_TAG
 
-        assert _URL_USERINFO_TAG.startswith("[REDACTED: ")
-        m = _URL_AUTHORITY_RE.search(f"https://{_URL_USERINFO_TAG}@host/x")
+        assert URL_USERINFO_TAG.startswith("[REDACTED: ")
+        m = _URL_AUTHORITY_RE.search(f"https://{URL_USERINFO_TAG}@host/x")
         assert m is not None and m.group("authority") == "[REDACTED:"
-        assert redact_url_userinfo(f"https://{_URL_USERINFO_TAG}@host/x")[1] == []
+        assert redact_url_userinfo(f"https://{URL_USERINFO_TAG}@host/x")[1] == []
 
     def test_a_composed_line_holding_a_redacted_url_survives(self):
         """The documented hazard's shape, applied to this pass's output: a caller
@@ -387,3 +388,27 @@ class TestEveryMaskerGetsTheRule:
         from personalclaw.security import strip_url_userinfo
 
         assert strip_url_userinfo(proxy) == "http://proxy.example.com:3128"
+
+
+class TestTheScannerHasOneHome:
+    """The reading of an address's login lives in `address_logins`. `security` calls into it and
+    keeps no copy and no second name for any of it, so there is one reading to keep right."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "redact_url_userinfo",
+            "redact_scp_logins",
+            "url_userinfo_spans",
+            "URL_USERINFO_TAG",
+            "_url_userinfo_spans",
+            "_redact_scp_logins",
+            "_URL_USERINFO_TAG",
+            "_URL_AUTHORITY_RE",
+            "_SCP_CANDIDATE_RE",
+        ],
+    )
+    def test_security_holds_none_of_the_scanner(self, name):
+        from personalclaw import security
+
+        assert not hasattr(security, name), f"security.{name} is a second home for the scanner"

@@ -147,8 +147,8 @@ def site_slug(url: str) -> str:
     except ValueError:
         host = ""
     # Drop userinfo before slugging: `https://alice:hunter2@site/` must not put a password in a
-    # directory name, and `security.redact_url_userinfo` records that userinfo is the one credential
-    # shape a name-based rule never sees.
+    # directory name, and `address_logins.redact_url_userinfo` records that userinfo is the one
+    # credential shape a name-based rule never sees.
     if "@" in host:
         host = host.rsplit("@", 1)[-1]
     slug = _SLUG_SAFE.sub("-", host).strip(".-")

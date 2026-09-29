@@ -55,8 +55,8 @@ the exact break the fence exists to prevent.
 userinfo (``https://user:token@host/``) is refused at the boundary: injecting auth into the request
 is explicitly not this provider's job, and accepting the shape would mean carrying a secret through
 a code path whose whole output is destined for a model context. The URL is additionally screened
-once, at that same boundary, through :func:`personalclaw.security.redact_url_userinfo`, and the
-screened value is what every later composition uses — the error sentence, the JSON payload, the
+once, at that same boundary, through :func:`personalclaw.address_logins.redact_url_userinfo`, and
+the screened value is what every later composition uses — the error sentence, the JSON payload, the
 fence's ``source_id``. Screening once and early is the contract: every later composition is built
 from the screened value, so none of them has to be screened again. The shape-based sweep is
 deliberately NOT run over a URL — its base64 pass would rewrite
@@ -124,7 +124,7 @@ def _screen_url(raw: str) -> str:
     the result is still a URL a human recognises. See this module's docstring §5 for why the
     shape-based ``redact_credentials`` sweep is not used here.
     """
-    from personalclaw.security import redact_url_userinfo
+    from personalclaw.address_logins import redact_url_userinfo
 
     screened, _warnings = redact_url_userinfo(raw)
     return screened
