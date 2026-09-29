@@ -838,16 +838,31 @@ Examples:
     push_test.add_argument("--kind", default="approval", help="Payload kind (default: approval)")
     push_test.add_argument("--item-id", default="test", help="Payload item id (default: test)")
 
-    # backup — deterministic shard export + verification (DURABILITY §2)
+    # backup — deterministic shard export + verification (DURABILITY §2). A copy of the records
+    # to review and diff; the backup a restore reads is `personalclaw snapshot`.
     backup_parser = sub.add_parser(
-        "backup", help="Export state as deterministic shards, and verify an export"
+        "backup",
+        help=(
+            "Export your records as deterministic shards to review and diff, and verify an "
+            "export (the backup a restore reads is `personalclaw snapshot`)"
+        ),
     )
     backup_sub = backup_parser.add_subparsers(dest="backup_command")
     backup_export = backup_sub.add_parser(
-        "export", help="Export state to canonical JSONL shards + a SHA manifest"
+        "export",
+        help=(
+            "Export your records to canonical JSONL shards + a SHA manifest: no folder of "
+            "files, and not a backup (see `personalclaw snapshot`)"
+        ),
     )
     backup_export.add_argument(
-        "out_dir", nargs="?", default=None, help="Shard directory (default: <home>/shards)"
+        "out_dir",
+        nargs="?",
+        default=None,
+        help=(
+            "Shard directory (default: <home>/shards): empty, or holding an earlier export, "
+            "of which only what the export wrote is replaced"
+        ),
     )
     backup_export.add_argument(
         "--incremental",

@@ -297,8 +297,8 @@ def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
     generic `rglob`, so an export of a home with one bound workspace carried the whole worktree.
     Enforcing it in BOTH whole-home paths (here and `snapshot._derived_ignore`) is the point: a
     declaration honored in one direction is the asymmetry that made a restore drop what a backup
-    captured. The hourly shard export (`durability.shards._export_blobs`) and a restore or import
-    (`snapshot._left_out_of_restore`) ask this too, so what capture leaves out is never planted.
+    captured. A restore or import (`snapshot._left_out_of_restore`) asks this too, so what capture
+    leaves out is never planted.
 
     Matches the path AND every ANCESTOR of it. `*/worktrees` names a directory, and what an export
     walks is the files inside it — `p-1/worktrees/repo/src/a.py` matches no glob written about the
@@ -1059,8 +1059,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 sp, dp = snap / entry, pc / entry
                 declared = _entry_at(entry)
                 if declared is not None and not declared.merged_in:
-                    # What ran on another machine stays there: its running runs and loops would
-                    # be resumed here (`StateEntry.merged_in`).
+                    # What ran on the archived machine and its own counters stay its own: its
+                    # running runs, loops and agents would be picked up here, its spend counted
+                    # against this machine's caps (`StateEntry.merged_in`).
                     continue
                 if _records_entry(entry) is not None:
                     said = _merge_records(snap, pc, entry)

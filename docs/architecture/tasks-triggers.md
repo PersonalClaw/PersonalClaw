@@ -329,7 +329,13 @@ snapshot and a backup carry them, a sync never does, a pull leaves this
 machine's as they are even from a peer that still sends one, and the review
 closes an old conflict on one only by keeping this machine's. Merged as one row,
 two machines could never agree on a counter, so once both had moved every pull
-was a conflict to review. The same holds for files of a synced folder
+was a conflict to review. A merge restore and an archive import leave the
+counters, the scheduler's state and the due-date notices as they are here too
+(not `merged_in`): a merge took in the days of spend this machine had none for,
+so another machine's dollars counted against its budget caps, and another
+machine's scheduler marks read as backups this one had just taken. A replace
+restore brings them back with the whole home. The same holds for files of a
+synced folder
 (`machine_local_within`): the agent CLI's runtime config
 (`agents/personalclaw.json`), which lists what this machine's owner lets it run
 without asking and the servers it starts, each runner's health as this machine
@@ -338,30 +344,58 @@ opinion fires, and the template nudges' counters and candidates
 (`workflows/template_nudges.json`, `workflows/template_candidates.json`).
 
 **What ran on a machine stays on it too.** A workflow run's records (the run
-ledger `workflows/runs.db` and each run's folder in `workflows/runs`) and a
-loop's (`loop/loops.db` and its folder in `loop`) are `machine_local`, and not
-`merged_in`: a sync never carries them, a pull never takes another
-machine's in (`durability.db_merge` leaves them even from a peer that still
-sends them), and a merge restore or an archive import leaves the archive's out.
-The workflow watchdog adopts every active run it finds and resumes it from its
-journal, and the loop watchdog's first poll re-arms every running loop, so
-another machine's run or loop used to run a second time here, on this
-machine's files. A backup carries them, and a replace restore brings them back
-with the whole home. Named workspaces (`workflows/workspaces`), the working
-folders runs share, stay on each machine by the same rule.
+ledger `workflows/runs.db` and each run's folder in `workflows/runs`), a
+loop's (`loop/loops.db` and its folder in `loop`) and an agent's (its folder in
+`subagents`) are `machine_local`, and not `merged_in`: a sync never carries
+them, a pull never takes another machine's in (`durability.db_merge` leaves
+them even from a peer that still sends them), and a merge restore or an
+archive import leaves the archive's out. The workflow watchdog adopts every
+active run it finds and resumes it from its journal, the loop watchdog's first
+poll re-arms every running loop, and the start stops every agent a folder says
+is running, by its recorded process id, so another machine's run or loop used
+to run a second time here, on this machine's files, and another machine's
+agent could name a process of this one. A backup carries them. Named
+workspaces (`workflows/workspaces`), the working folders runs share, stay on
+each machine by the same rule.
 
-**Every file of a synced folder is carried.** A backup's export and a sync
+**A replace restore holds what was in flight.** A replace restore brings the
+records back with the whole home, and a snapshot is a moment in the past: a run
+or a loop that was working then has gone on since, on the machine it ran on or
+here. So each one it brings back working is held (`snapshot._hold_what_was_in_flight`):
+a workflow run running, waiting on a gate, or queued to start is paused with a
+pause that holds across a restart, and says why; a loop running or planning
+waits for you, asking to be resumed; an agent's folder is closed as restored,
+so its recorded process is never signalled. Resume takes each on from where
+the snapshot left it. This holds whichever machine took the snapshot, since
+this machine's own run went on after its snapshot too.
+
+**Every file of a synced folder is carried.** The hourly export and a sync
 read every file of a folder store, not its JSON files alone
 (`durability.shards.read_entity_dir`): a JSON file as its data, any other file
 as its text or, when it is not text, its bytes. Saved prompts and prompt
-snippets are YAML, and neither reached a backup's export or another machine
-before. A file the export cannot carry (JSON that does not parse, a file over
-36 MiB, one named as another file's row) is named, with why, in the export's
-result and the sync's report, never dropped in silence. The append-only stores
-that are folders of files, one per chat, scheduled job or channel
-(`sessions/`, `cron-history/`, `history/`), are not synced: their rows, read
-as one stream, name no file to go back to, and a pull wrote them into a file
-named for the year beside the store's own.
+snippets are YAML, and neither reached the export or another machine before. A
+file the export cannot carry (JSON that does not parse, a file over 36 MiB, one
+named as another file's row) is named, with why, in the export's result and the
+sync's report, never dropped in silence. The append-only stores that are
+folders of files, one per chat, scheduled job or channel (`sessions/`,
+`cron-history/`, `history/`), are not synced: their rows, read as one stream,
+name no file to go back to, and a pull wrote them into a file named for the
+year beside the store's own.
+
+**The snapshot is the backup; the shards are a copy of the records.** A
+restore reads a snapshot, which holds every store whole: a folder with every
+file at its path, a database through the backup API. The shards — the hourly
+export and what a sync carries — hold the stores whose content is records, and
+each database as rows, and nothing restores a home from them. A folder of files
+(skills, cron scripts, uploads, the workspace, installed apps, hooks) is in
+neither the export nor a sync: each machine keeps its own, and its snapshot
+holds it. The shards used to carry each folder's files as blobs named by their
+content, with no path, so nothing could put one back where it was, and every
+sync cycle uploaded all of them again. Carrying them with their paths would
+carry them into the other machine: app bundles, hook and cron scripts, and
+skills that run what they hold, arriving without this machine's owner's yes.
+Settings → Backups, `personalclaw backup export` and `personalclaw backup
+validate` say which to trust.
 
 **A pull writes only what changed, over what it read.** It writes back only
 the files the merge changed, and replaces a file only while it still holds what

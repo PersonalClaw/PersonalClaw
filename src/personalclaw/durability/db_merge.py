@@ -49,9 +49,8 @@ def make_db_merger(home: Path) -> DbMerger:
     """
 
     def _merge(entry: inv.StateEntry, shard_dir: Path) -> str:
-        # Only sqlite entries carry a mergeable DB copy. A `tree` entry's blobs are named by their
-        # content, not by a path, so a sync leaves the tree here as it is: consumed, and nothing
-        # written.
+        # Only sqlite entries carry a mergeable DB copy, and the shards carry no folder of files
+        # (`inventory.shard_entries`): anything else is consumed, and nothing written.
         if entry.kind != inv.KIND_SQLITE:
             return CONSUMED
         if entry.machine_local:

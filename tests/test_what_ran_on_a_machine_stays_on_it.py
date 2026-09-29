@@ -36,7 +36,14 @@ from personalclaw.durability.shards import export_shards
 from personalclaw.durability.sync_cycle import run_sync_cycle
 from tests.test_durability_sync_cycle import SharedStore
 
-RAN_HERE = ("workflow_runs_db", "workflow_runs", "loops_db", "loop", "workflow_workspaces")
+RAN_HERE = (
+    "workflow_runs_db",
+    "workflow_runs",
+    "loops_db",
+    "loop",
+    "workflow_workspaces",
+    "subagents",
+)
 
 
 def _as(monkeypatch, home: Path) -> Path:
@@ -187,7 +194,7 @@ def test_the_merge_plan_says_what_it_leaves_out(tmp_path, monkeypatch):
     rows = {r["path"]: r for r in merge_plan(tmp_path / "A", tmp_path / "B", None)}
     for path in ("workflows/runs.db", "workflows/runs", "loop/loops.db", "loop"):
         assert rows[path]["action"] == "skip", path
-        assert rows[path]["detail"] == "what ran on a machine stays on it"
+        assert rows[path]["detail"] == "this machine's own: the archive's is left out"
 
 
 def test_an_import_of_another_machines_archive_resumes_nothing(tmp_path, monkeypatch):

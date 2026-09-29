@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from personalclaw.atomic_write import atomic_json_write
 from personalclaw.loop import files
 from personalclaw.loop.loop import (
     ATTENTION_STATUSES,
@@ -432,6 +433,66 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
     if out is None:
         raise KeyError(loop_id)
     return out
+
+
+#: Why a restore holds a loop it brought back working, as the question the loop asks.
+RESTORED_WORKING = (
+    "Restored from a backup while it was working. It may have gone on after the backup was "
+    "taken, on the machine it ran on or here, so it waits for you: resume it to go on from where "
+    "the backup left it."
+)
+
+#: The statuses a watchdog picks a loop up in at start: its first poll re-arms a RUNNING loop's
+#: worker and re-kicks a PLANNING loop's planner (`watchdog._boot_sweep`).
+_PICKED_UP_AT_START = (LoopStatus.RUNNING.value, LoopStatus.PLANNING.value)
+
+
+def hold_restored(home: Path) -> list[str]:
+    """Hold every loop the store in *home* has working, as a restore has just written it: waiting
+    for the owner (``needs_input``), asking :data:`RESTORED_WORKING`. Returns the ids it held.
+
+    🔴 A restore brings back a moment in the past, and the loop watchdog's first poll re-armed
+    every loop it found running and re-kicked every one planning: a loop the archive held working
+    went on here from that moment, repeating what it did after it — and on the machine it ran on
+    too, when the archive came from another one. Held, it waits for a deliberate Resume.
+
+    Reads and writes *home*'s own files, not the active home's: the restore names the home it
+    wrote. The status goes straight onto the row, as the archive left it otherwise: leaving
+    ``running`` through :func:`update_status` would bank the time since the archive was taken as
+    time the loop worked. Its ``status.json``, the gate its worker reads each turn, says the same.
+    """
+    db = Path(home) / "loop" / "loops.db"
+    if not db.is_file():
+        return []
+    conn = sqlite3.connect(str(db), timeout=5.0)
+    try:
+        marks = ", ".join("?" * len(_PICKED_UP_AT_START))
+        try:
+            found = conn.execute(
+                f"SELECT id FROM loops WHERE status IN ({marks})", _PICKED_UP_AT_START
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            # No store the watchdog could read either: nothing in it would be picked up.
+            logger.warning("hold_restored: %s holds no loop store it can read", db)
+            return []
+        ids = [str(row[0]) for row in found]
+        conn.executemany(
+            "UPDATE loops SET status = ? WHERE id = ?",
+            [(LoopStatus.NEEDS_INPUT.value, loop_id) for loop_id in ids],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    now = time.time()
+    for loop_id in ids:
+        if not files.valid_loop_id(loop_id):
+            continue
+        folder = Path(home) / "loop" / loop_id
+        atomic_json_write(
+            folder / "status.json", {"status": LoopStatus.NEEDS_INPUT.value, "ts": now}
+        )
+        atomic_json_write(folder / "questions.json", {"question": RESTORED_WORKING, "ts": now})
+    return ids
 
 
 def _announce() -> None:

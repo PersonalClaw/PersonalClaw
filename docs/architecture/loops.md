@@ -125,8 +125,10 @@ running with no worker (`watchdog._boot_sweep`), so `loop/loops.db` and each loo
 `loop/` are `machine_local` and not `merged_in` (`durability/inventory.py`): no sync carries them,
 and a merge restore or an archive import leaves the archive's out. Another machine's running loop
 used to arrive and be re-armed here, with the workspace and trust its owner gave it there. A backup
-carries them, and a replace restore brings them back with the whole home. A run-backed loop is a
-workflow run, which stays where it ran by the same rule ([workflows.md](workflows.md)).
+carries them, and a replace restore brings them back with the whole home, holding each loop that was
+running or planning (`store.hold_restored`): it waits for you (`needs_input`), asking to be resumed,
+since the snapshot is a moment it has gone on from since. A run-backed loop is a workflow run, which
+stays where it ran and is held by the same rules ([workflows.md](workflows.md)).
 
 ## Stage progression
 

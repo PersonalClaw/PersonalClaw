@@ -581,7 +581,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
     <Section title="Schedule" hint="Backups run in the background so losing work never depends on remembering to run one.">
       <RowGroup>
         <Row label="Automatic backups"
-          hint={<>Take a nightly snapshot and an hourly incremental export in the background. Off means backups only happen when you run them by hand — below, or with <code>personalclaw backup export</code>.</>}>
+          hint={<>Take a nightly snapshot in the background. The snapshot is the backup a restore brings back: it holds everything, your skills, scripts and uploads included. An hourly export of your records runs too, to review and diff; it holds no files, and nothing restores from it. Off means a snapshot is taken only when you run one — below, or with <code>personalclaw snapshot</code>.</>}>
           <div className="flex items-center gap-2">
             <SavedToast show={saved} />
             <Toggle on={autoBackup} onChange={(v) => patch('auto_backup', v)} label="Automatic backups" />
@@ -817,7 +817,7 @@ function SyncSection({ cfg, setCfg, status, transports }: {
       hint="Keep more than one machine in step through storage you own — a git repo, a synced folder, a bucket. There is no PersonalClaw server in the middle.">
       <RowGroup>
         <Row label="Sync this instance"
-          hint="Push this machine's changes and pull the other machines' on the schedule below. Off means nothing leaves this machine.">
+          hint="Push this machine's changes and pull the other machines' on the schedule below. Sync carries your records: folders of files — skills, scripts, uploads — stay on each machine, and a snapshot is what keeps them. Off means nothing leaves this machine.">
           <div className="flex items-center gap-2">
             <SavedToast show={saved} />
             <Toggle on={syncOn} onChange={(v) => patch('sync_enabled', v)} label="Sync this instance" />

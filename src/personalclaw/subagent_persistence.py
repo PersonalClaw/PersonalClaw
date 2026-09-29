@@ -209,6 +209,61 @@ def list_orphans() -> list[dict]:
     return results
 
 
+#: The ``cause`` of a tombstone a restore writes (:func:`settle_restored`).
+RESTORED = "restored"
+
+
+def settle_restored(home: Path) -> list[str]:
+    """Tombstone every agent folder in *home* that has no tombstone, as a restore has just
+    written them. Returns their ids.
+
+    🔴 A restore brings back the folders of the agents that were running when the archive was
+    taken, and the next start settles every folder without a tombstone as an agent the previous
+    gateway left running: it kills a live process under the recorded pid that started before the
+    agent did, and tells the owner the restart stopped it. For another machine's archive, the pid
+    and its start time were recorded there, so the process they name here is one of this
+    machine's own. A restore's own tombstone says where the agent went, and the start leaves the
+    folder alone.
+
+    Reads and writes *home*'s own files, not the active home's: the restore names the home it
+    wrote.
+    """
+    root = Path(home) / "subagents"
+    settled: list[str] = []
+    try:
+        folders = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink())
+    except OSError:
+        return settled
+    now = time.time()
+    for folder in folders:
+        if (folder / "tombstone.json").exists() or not (folder / "state.json").is_file():
+            continue
+        try:
+            state = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        state = state if isinstance(state, dict) else {}
+        tombstone = {
+            "id": folder.name,
+            "task": state.get("task", ""),
+            "agent": state.get("agent", ""),
+            "parent_session": state.get("parent_session", ""),
+            "started": state.get("started"),
+            "died": now,
+            "cause": RESTORED,
+            "recovery_action": "none",
+            "result_available": _check_result_available(folder / "result.txt"),
+            "result_path": str(folder / "result.txt"),
+        }
+        try:
+            _atomic_write(folder / "tombstone.json", tombstone)
+        except OSError:
+            logger.warning("settle_restored: could not tombstone %s", folder.name, exc_info=True)
+            continue
+        settled.append(folder.name)
+    return settled
+
+
 # ── prune ────────────────────────────────────────────────────────────
 
 

@@ -2842,9 +2842,11 @@ class DurabilityConfig:
         default=True,
         metadata=_meta(
             "Automatic backups",
-            "Take a nightly snapshot and an hourly incremental export in the "
-            "background, so losing work never depends on remembering to run a "
-            "backup. Off means backups only happen when you run them by hand.",
+            "Take a nightly snapshot in the background, so losing work never depends on "
+            "remembering to run a backup: the snapshot holds everything, skills, scripts and "
+            "uploads included, and it is what a restore brings back. An hourly export of your "
+            "records runs too, to review and diff; nothing restores from it. Off means a "
+            "snapshot is taken only when you run one.",
         ),
     )
     keep_daily: int = field(

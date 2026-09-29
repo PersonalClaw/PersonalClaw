@@ -72,6 +72,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **The snapshot is the backup: Settings → Backups and `personalclaw backup` say so, and that the hourly export and sync carry your records only, not your skills, scripts or uploads.**
+
+- **The hourly export and each sync no longer copy your skills, uploads, workspace and installed apps as files nothing could restore.**
+
 - **`EmbeddingProvider.embed_batch` answers `None` for a text it did not embed, never an empty vector (`bedrock-models` and `sentence-transformers` implement it).**
 
 - **MCP Tool Servers ships with PersonalClaw: an MCP server you add or import is one every agent can call, with nothing to install from the Store.**
@@ -197,13 +201,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Sync leaves each machine's own counters, model spend, scheduler state and runner health on it: two machines' copies no longer turn every pull into a conflict to review.**
 
-- **Backups and sync carry saved prompts, prompt snippets and every other file in a store's folder, and name any file they cannot carry.**
+- **The hourly export and sync carry saved prompts, prompt snippets and every other file in a store's folder, and name any file they cannot carry.**
 
 - **A sync pull writes only what it changed, and never over a file this machine wrote while it merged.**
 
 - **A workflow run or a loop stays on the machine that ran it: another machine's, synced or merged in, used to run again here.**
 
 - **Sync no longer writes chat sessions, scheduled-run history or channel history into a file named for the year: those folders stay on each machine.**
+
+- **A replace restore holds every workflow run, loop and agent its snapshot had working, until you resume it, instead of running again what each did after the snapshot.**
+
+- **A replace restore keeps this machine's workflow run history in its pre-restore copy, which the snapshot's used to overwrite.**
+
+- **A merge restore and an import leave this machine's spend, tool and savings counters, backup schedule and due-date notices as they are: another machine's spend no longer counts against your budget caps.**
+
+- **`personalclaw backup export` into a folder that holds anything but an earlier export refuses, instead of deleting the folder.**
 
 - **An import in Settings → Import / Export merges; a replace, which rewrites what the running gateway holds open, runs from `personalclaw restore <archive> --mode replace` with the gateway stopped.**
 

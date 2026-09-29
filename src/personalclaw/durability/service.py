@@ -7,13 +7,15 @@ remember to. This project has already lost a memory directory once, and
 So the schedule is boring and automatic:
 
 * a **nightly full snapshot** (the existing tar path) with tiered retention, so a
-  year of history costs ~30 files instead of 365;
-* an **hourly incremental shard export** of only what changed, which bounds the blast
-  radius of any loss to one hour;
+  year of history costs ~30 files instead of 365. The snapshot is THE backup: it holds
+  every store whole, a folder with every file at its path, and it is what a restore reads;
+* an **hourly incremental shard export** of only what changed: a copy of the records
+  to review and diff (``durability.shards``), which is not a backup — nothing restores
+  from it, and it holds no folder of files;
 * a **monthly restore drill** — because a backup nobody has restored is a hope, not a
-  backup. The drill restores into a temp directory, validates the shards, runs
-  `PRAGMA integrity_check` on every SQLite copy, and reports PASS/FAIL. It never
-  touches live state.
+  backup. The drill unpacks the newest snapshot into a temp directory, checks it holds
+  something, runs `PRAGMA integrity_check` on every SQLite copy, and reports PASS/FAIL.
+  It never touches live state.
 
 Everything here is defensive on purpose. A snapshot service that can crash a gateway,
 block a request, or double-run concurrently is worse than no service, so every job is
@@ -212,8 +214,9 @@ def _audit(event: str, resources: str, *, outcome: str = "allowed") -> None:
 def run_incremental_export() -> JobResult:
     """Hourly: export only the shards whose content changed.
 
-    This is the job that bounds a loss to one hour. It re-exports changed stores
-    only, so a quiet hour costs a fingerprint comparison.
+    A copy of the records to review and diff, and not a backup: a restore reads the nightly
+    snapshot (``durability.shards``). It re-exports changed stores only, so a quiet hour costs
+    a fingerprint comparison.
     """
     from personalclaw.concurrency import single_flight
 

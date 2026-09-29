@@ -1,10 +1,21 @@
 """Deterministic shard export — JSONL + SHA manifest (DURABILITY §2).
 
 A tar snapshot is opaque: you cannot diff it, review it, or sync it. Shards are the
-*other* representation of the same state — canonical JSONL, one directory per
-inventory entry, byte-identical for identical input. That determinism is what makes
-the export reviewable (``git diff`` over shards answers "what did the assistant
-learn this week?") and, later, syncable.
+*other* representation of the records — canonical JSONL, one directory per inventory
+entry, byte-identical for identical input. That determinism is what makes the export
+reviewable (``git diff`` over shards answers "what did the assistant learn this week?")
+and syncable.
+
+**The snapshot is the backup; the shards are not one.** A restore reads a snapshot
+(``snapshot.py``): it holds every store whole — a folder with every file at its path, a
+database through the backup API. The shards hold the stores whose content is records (the
+entity folders, the one-file stores, the append-only streams) and each database as rows, and
+nothing restores a home from them. They cannot become a backup without giving up what they are
+for: a database copied whole is not byte-identical run to run (its embedding and byte columns
+are placeholders in the rows), which is why only a sync's export stages one. And a folder of
+files — skills, scripts, uploads, the workspace, installed apps — is not in them at all: it
+used to be copied in as blobs named by their content, with no path, which nothing could put
+back, and which every sync cycle uploaded again.
 
 Three properties are load-bearing, and each is tested:
 
@@ -141,7 +152,6 @@ class ExportResult:
     entries: int = 0
     shards: list[ShardFile] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)  # entry id -> reason
-    blobs: int = 0
     databases: list[DbCopy] = field(default_factory=list)  # sync-only whole-DB copies
     #: A store's files this export could not carry, by home-relative path, with why (:class:`Read`).
     left_out: dict[str, str] = field(default_factory=dict)
@@ -497,36 +507,6 @@ def _write_shard(root: Path, rel: str, rows: list[dict]) -> list[ShardFile]:
     return written
 
 
-def _export_blobs(root: Path, src_dir: Path, *, entry_path: str = "") -> int:
-    """Content-addressed blob dir for binary originals, deduplicated by sha256.
-
-    Given the inventory ``entry_path`` of the tree, what that entry declares ``derived_within``
-    stays out, as it does from a snapshot and an export: an app's ``venv/`` is gigabytes built
-    for this machine, and the hourly export copied every file of it.
-    """
-    from personalclaw.portability import _is_derived_within
-
-    count = 0
-    blob_root = root / "blobs"
-    for path in sorted(src_dir.rglob("*")):
-        if not path.is_file() or path.is_symlink():
-            continue
-        if entry_path and _is_derived_within(entry_path, path.relative_to(src_dir).as_posix()):
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError:
-            continue
-        digest = _sha256(data)
-        dest = blob_root / digest[:2] / digest
-        if dest.exists():  # dedup: identical content is stored once
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(dest, data)
-        count += 1
-    return count
-
-
 def _stage_db_copy(out_dir: Path, entry_id: str, src_copy: Path) -> DbCopy | None:
     """Stage a consistent whole-DB copy under ``db/<entry_id>.db`` for the sync merger.
 
@@ -545,34 +525,6 @@ def _stage_db_copy(out_dir: Path, entry_id: str, src_copy: Path) -> DbCopy | Non
     return DbCopy(path=rel, entry_id=entry_id, bytes=len(data), sha256=_sha256(data))
 
 
-def _export_blob(root: Path, path: Path) -> int:
-    """The one file a file-shaped tree entry names (``prompt.md``), as a content-addressed blob.
-
-    Never the folder it sits in. That folder is the home, and exporting it put every file there
-    into this entry's blobs: the credential store's values, the session-signing key, the other
-    stores' raw databases. Shards are the copy that leaves the machine, and secrets never shard.
-    So the entry's blobs are this file alone, and any other blob an earlier export left there is
-    removed.
-    """
-    if path.is_symlink():
-        return 0
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return 0
-    digest = _sha256(data)
-    blob_root = root / "blobs"
-    if blob_root.is_dir():
-        for stray in [p for p in blob_root.rglob("*") if p.is_file() and p.name != digest]:
-            stray.unlink(missing_ok=True)
-    dest = blob_root / digest[:2] / digest
-    if dest.exists():
-        return 0
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(dest, data)
-    return 1
-
-
 def export_shards(
     home: Path,
     out_dir: Path,
@@ -580,20 +532,21 @@ def export_shards(
     entries: list[str] | None = None,
     for_sync: bool = False,
 ) -> ExportResult:
-    """Export state to deterministic shards under ``out_dir``.
+    """Export the records to deterministic shards under ``out_dir``.
 
     ``entries`` optionally restricts to specific inventory entry ids (the hourly
     incremental path exports only dirty entries). Secrets and derived data are
-    never exported.
+    never exported, and neither is a folder of files (``inventory.shard_entries``): the
+    snapshot is what holds those, and what a restore reads.
 
     ``for_sync`` is a sync's export, for another machine. It leaves out what stays on this one
     (``StateEntry.machine_local`` and ``machine_local_within``) and the append-only stores that are
     folders of files, which a sync does not carry (``inventory.append_only_folder``), and stages a
     consistent whole-DB copy for each ``KIND_SQLITE`` entry under ``db/<entry_id>.db``, because
     the diffable row shards store embedding/byte columns as placeholders and can't rebuild a DB
-    losslessly. A backup leaves it False, so it carries this machine's own stores, and its
-    byte-for-byte determinism (and its tests) are unaffected — DB copies are not byte-identical
-    across runs by nature.
+    losslessly. The hourly export leaves it False, so it carries this machine's own stores, and
+    its byte-for-byte determinism (and its tests) are unaffected — DB copies are not
+    byte-identical across runs by nature.
     """
     result = ExportResult()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -601,7 +554,7 @@ def export_shards(
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
-        for entry in inv.export_entries():  # excludes secret + derived
+        for entry in inv.shard_entries():  # excludes secret, derived and folders of files
             if wanted is not None and entry.id not in wanted:
                 continue
             if for_sync and (entry.machine_local or inv.append_only_folder(entry)):
@@ -655,11 +608,6 @@ def export_shards(
                     result.shards.extend(
                         _write_shard(out_dir, f"{entry.id}/{year}.jsonl", buckets[year])
                     )
-            else:  # KIND_TREE — text-ish trees ride the tar; binaries go to blobs
-                if src.is_dir():
-                    result.blobs += _export_blobs(out_dir / entry.id, src, entry_path=entry.path)
-                else:
-                    result.blobs += _export_blob(out_dir / entry.id, src)
 
     result.shards.sort(key=lambda s: s.path)
     # An INCREMENTAL export rewrote only the changed entries' shards, but the
@@ -669,8 +617,37 @@ def export_shards(
     # every entry this run didn't touch.
     if entries is not None:
         result.shards = _merged_shard_records(out_dir, result.shards, touched=set(entries))
+    _drop_earlier_folder_copies(out_dir)
     _write_manifest(home, out_dir, result)
     return result
+
+
+def _is_an_export(directory: Path) -> bool:
+    """Whether *directory* holds a shard export: a manifest an export wrote."""
+    try:
+        manifest = json.loads((directory / _MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and "schema_version" in manifest and "shards" in manifest
+
+
+def _drop_earlier_folder_copies(out_dir: Path) -> None:
+    """Remove what an export before this one copied of a folder store into *out_dir*: the
+    store's files as blobs named by their content (``<entry>/blobs/``), which nothing could put
+    back at their paths. Only in a folder that holds an export, and only that layout."""
+    if not _is_an_export(out_dir):
+        return
+    for entry in inv.INVENTORY:
+        if entry.kind != inv.KIND_TREE:
+            continue
+        folder = out_dir / entry.id
+        blobs = folder / "blobs"
+        if blobs.is_dir() and not blobs.is_symlink() and not folder.is_symlink():
+            shutil.rmtree(blobs, ignore_errors=True)
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
 
 
 def _merged_shard_records(
@@ -711,7 +688,6 @@ def _write_manifest(home: Path, out_dir: Path, result: ExportResult) -> None:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "machine_id": machine_id(home),
         "entries": result.entries,
-        "blobs": result.blobs,
         "skipped": result.skipped,
         "shards": [
             {"path": s.path, "bytes": s.bytes, "rows": s.rows, "sha256": s.sha256}
@@ -823,18 +799,17 @@ def validate(shard_dir: Path) -> ValidationResult:
 
 
 def export_and_validate(home: Path, out_dir: Path) -> tuple[ExportResult, ValidationResult]:
-    """Export then immediately verify — the restore-drill core (§3)."""
+    """Export then immediately verify. (The restore drill checks a snapshot, not shards.)"""
     exported = export_shards(home, out_dir)
     return exported, validate(out_dir)
 
 
 # ── import (the read side) ───────────────────────────────────────────────────
-# S2k shipped the export half write-only: shards could be produced + validated but
-# nothing read them back. The sync cycle merges shards from a remote into
-# the local state, and a restore reconstructs a home from shards — both need to turn
-# a shard directory back into rows, keyed by the inventory entry that owns them. This
-# is that read side: the exact inverse of `export_shards`' row extraction, so an
-# export→import round-trip returns every non-secret, non-derived row unchanged.
+# The sync cycle merges another machine's shards into this home's stores, so it has to turn a
+# shard directory back into rows, keyed by the inventory entry that owns them. This is that read
+# side: the exact inverse of `export_shards`' row extraction, so an export→import round-trip
+# returns every row the export carried unchanged. A restore does not read shards: it reads a
+# snapshot, which holds what they do not (a folder of files, a database whole).
 
 
 @dataclass
@@ -843,13 +818,12 @@ class ImportResult:
 
     ``rows`` maps an inventory entry id → its rows, reassembled across year buckets,
     sqlite tables, and ``part-NNNN`` splits (so the caller sees one flat list per
-    entry, exactly what `export_shards` was handed). ``blobs`` lists the content-addressed
-    blob paths present under ``blobs/`` (KIND_TREE payloads), relative to the shard dir.
-    ``problems`` carries any non-fatal read issue; a structurally broken export raises.
+    entry, exactly what `export_shards` was handed). There is nothing of a folder store
+    (``KIND_TREE``): the shards do not carry one. ``problems`` carries any non-fatal read
+    issue; a structurally broken export raises.
     """
 
     rows: dict[str, list[dict]] = field(default_factory=dict)
-    blobs: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     machine_id: str = ""
     # entry id -> shard-dir-relative path of its whole-DB copy (sync-only, DAS-6c-ii-g).
@@ -889,16 +863,23 @@ def _rows_of_shard(shard_dir: Path, rel: str) -> list[dict]:
 def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> ImportResult:
     """Read a shard directory back into rows keyed by inventory entry id.
 
-    The inverse of :func:`export_shards`. Runs :func:`validate` first — a shard whose
-    bytes/sha/row-count drifted from the manifest is not trustworthy input for a merge
-    or restore, so a failed validation raises :class:`ValueError` rather than importing
-    silently corrupt data. ``entries`` optionally restricts to specific entry ids (the
-    sync cycle imports only the entries a remote actually changed).
+    The inverse of :func:`export_shards`, which a sync's pull reads another machine's
+    export with. Runs :func:`validate` first — a shard whose bytes/sha/row-count drifted
+    from the manifest is not trustworthy input for a merge, so a failed validation raises
+    :class:`ValueError` rather than importing silently corrupt data. ``entries`` optionally
+    restricts to specific entry ids (the sync cycle imports only the entries a remote
+    actually changed).
 
     Rows for an entry are reassembled across every shape the exporter splits into —
     sqlite tables (``<entry>/<table>.jsonl``), year buckets (``<entry>/2026.jsonl``),
     and deterministic ``part-NNNN`` files — into one flat, order-preserving list, so a
     round-trip yields exactly the rows that were exported.
+
+    What it returns is the records, and a sync's whole-database copies: never a folder store
+    (skills, scripts, uploads, the workspace, installed apps), which the shards do not carry
+    and a restore brings back from a snapshot. It used to list the shards' ``blobs/`` "so a
+    restore can rehydrate the tree"; they were named by their content, with no path, so
+    nothing ever could — and nothing read the list.
     """
     report = validate(shard_dir)
     if not report.ok:
@@ -925,16 +906,6 @@ def import_shards(shard_dir: Path, *, entries: list[str] | None = None) -> Impor
             # validate() already re-parsed every row, so this is unreachable in
             # practice; kept as a non-fatal guard rather than a crash on a race.
             result.problems.append(f"{rel}: unreadable during import ({exc})")
-
-    # KIND_TREE payloads live under blobs/<sha[:2]>/<sha>; enumerate them so a
-    # restore/merge can rehydrate the tree. Content-addressed, so listing is enough.
-    blob_root = shard_dir / "blobs"
-    if blob_root.is_dir():
-        result.blobs = sorted(
-            p.relative_to(shard_dir).as_posix()
-            for p in blob_root.rglob("*")
-            if p.is_file() and not p.is_symlink()
-        )
 
     # Sync-only whole-DB copies (DAS-6c-ii-g): map each entry id to its db/ file so the
     # DB merger can ATTACH the real database (validate() already verified its bytes/sha).
@@ -966,7 +937,7 @@ def dirty_entries(home: Path, state_path: Path) -> list[str]:
 
     current: dict[str, str] = {}
     dirty: list[str] = []
-    for entry in inv.export_entries():
+    for entry in inv.shard_entries():
         src = home / entry.path
         if not src.exists():
             continue
@@ -1061,14 +1032,45 @@ def default_shard_dir(home: Path) -> Path:
 
 
 def clear_shards(out_dir: Path) -> None:
-    """Remove a previous export so a full re-export cannot leave stale shards
-    behind (which would then show up as undeclared files in validation)."""
-    if out_dir.is_dir():
-        shutil.rmtree(out_dir, ignore_errors=True)
-    os.makedirs(out_dir, exist_ok=True)
+    """Remove an earlier export from *out_dir*, so a full re-export cannot leave stale shards
+    behind (which would then show up as undeclared files in validation). What an export wrote
+    goes — its manifest, the folder it keeps for each store, the database copies — and nothing
+    else: a git history the shards are kept in, or a note beside them, stays.
+
+    🔴 This deleted *out_dir* whole, whatever it held, so ``personalclaw backup export ~/Documents``
+    deleted the folder. A folder that holds files and no export is now refused (``ValueError``),
+    with nothing in it touched.
+    """
+    if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
+        raise ValueError(f"{out_dir} is not a folder")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not _is_an_export(out_dir):
+        if any(out_dir.iterdir()):
+            raise ValueError(
+                f"{out_dir} holds files and no shard export; choose an empty folder, or the "
+                "folder of an earlier export"
+            )
+        return
+    ours = {entry.id for entry in inv.INVENTORY} | {"db"}
+    for child in out_dir.iterdir():
+        if child.is_symlink():
+            continue
+        if child.name == _MANIFEST and child.is_file():
+            child.unlink()
+        elif child.name in ours and child.is_dir():
+            shutil.rmtree(child)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
+
+
+#: What every surface of the shard export says it is, and is not.
+NOT_A_BACKUP = (
+    "Shards are a copy of your records to review and diff, and what sync carries between your "
+    "machines. They hold no folder of files, and nothing restores from them. The backup is a "
+    "snapshot, which holds everything, your skills, scripts and uploads included: "
+    "`personalclaw snapshot`, and `personalclaw restore` to bring one back."
+)
 
 
 def backup_cmd(args) -> int:
@@ -1103,18 +1105,23 @@ def backup_cmd(args) -> int:
                     f"{'y' if len(entries) == 1 else 'ies'}"
                 )
             else:
-                clear_shards(out_dir)
+                try:
+                    clear_shards(out_dir)
+                except ValueError as exc:
+                    print(f"❌ {exc}.", file=sys.stderr)
+                    return 1
             result = export_shards(home, out_dir, entries=entries)
         print(
-            f"✅ Exported {result.entries} entr"
-            f"{'y' if result.entries == 1 else 'ies'} → "
+            f"✅ Exported {result.entries} store(s) → "
             f"{len(result.shards)} shard(s), {result.rows:,} row(s)"
-            + (f", {result.blobs:,} blob(s)" if result.blobs else "")
         )
         print(f"📁 {out_dir}")
         for entry_id, reason in sorted(result.skipped.items()):
             print(f"⚠️  skipped {entry_id}: {reason}")
-        return 0
+        for path, why in sorted(result.left_out.items()):
+            print(f"⚠️  could not export {path}: {why}")
+        print(f"ℹ️  {NOT_A_BACKUP}")
+        return 1 if result.left_out else 0
 
     # `validate`: the parser allows no other command.
     shard_dir = Path(args.shard_dir).expanduser() if args.shard_dir else default_shard_dir(home)
@@ -1130,6 +1137,7 @@ def backup_cmd(args) -> int:
             f"✅ Export valid: {report.shards_checked} shard(s), "
             f"{report.rows_checked:,} row(s) verified (bytes + rows + sha256 + parse)."
         )
+        print(f"ℹ️  {NOT_A_BACKUP}")
         return 0
     print(f"❌ Export INVALID — {len(report.problems)} problem(s):")
     for problem in report.problems[:50]:

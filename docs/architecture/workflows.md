@@ -351,7 +351,11 @@ ledger (`workflows/runs.db`) and each run's folder (`workflows/runs/`) are
 them, and a merge restore or an archive import leaves the archive's out.
 Another machine's running run used to arrive and run a second time here, on
 this machine's files. A backup carries them, and a replace restore brings them
-back with the whole home.
+back with the whole home, holding each run that was running, waiting on a gate
+or queued to start (`store.hold_restored`): it is paused, with a pause intent
+the watchdog honours across a restart and the reason as its error, because the
+snapshot is a moment the run has gone on from since. Resume takes it on from
+there.
 
 ## Mid-flight mutation
 

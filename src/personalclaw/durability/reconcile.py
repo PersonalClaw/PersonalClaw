@@ -9,10 +9,10 @@ store", composing the three pure pieces already built:
 
 It is deliberately the ROW path only — the kinds whose merge is a deterministic row
 reconciliation (`json_entity_dir`, `json_file`, `jsonl_append`). A `sqlite` entry is merged
-by the ATTACH-OR-IGNORE path in ``snapshot.py`` and a `tree` entry is rehydrated from the
-content-addressed blob store, so :func:`reconcile_entry` DECLINES those (returns a
-``handled=False`` outcome) rather than raising — the cycle engine (the change above this) reads
-that verdict and routes the entry to its DB/blob path. A row-mergeable entry that raises
+by the ATTACH-OR-IGNORE path in ``snapshot.py``, and a `tree` entry (a folder of files) is not
+in a sync at all (``inventory.shard_entries``), so :func:`reconcile_entry` DECLINES those
+(returns a ``handled=False`` outcome) rather than raising — the cycle engine (the change above
+this) reads that verdict and routes a database to its DB path. A row-mergeable entry that raises
 mid-reconcile is caught and reported as a `payload-bad` verdict so one poison entry can't
 abort the whole pull; the caller advances its cursor past it rather than looping.
 
@@ -382,8 +382,8 @@ def reconcile_entry(
     """Merge ``remote_rows`` into ``entry``'s live store under ``home`` and write the result
     back. Returns a :class:`ReconcileResult` carrying the cursor verdict.
 
-    Declines (``handled=False``) a non-row kind — the cycle routes sqlite via ATTACH-IGNORE
-    and tree via the blob store. Consumes a ``replace_only`` entry and writes nothing: it is
+    Declines (``handled=False``) a non-row kind — the cycle routes sqlite via ATTACH-IGNORE,
+    and a sync carries no tree. Consumes a ``replace_only`` entry and writes nothing: it is
     restored whole or not at all, and never merged (``merge.merge_rows`` refuses one). A row
     kind that throws mid-merge is caught and reported ``payload-bad`` so a single bad entry
     advances the cursor past itself rather than wedging every later seq (§4.1).

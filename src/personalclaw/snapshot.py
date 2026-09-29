@@ -1243,16 +1243,12 @@ def _merge_records(snap: Path, pc: Path, rel: str) -> str | None:
 
 
 def _merge_json_map(src: Path, dst: Path, *, wrapper: str | None = None) -> int:
-    """Union a JSON object keyed by entity, live values winning (S181).
+    """Union a JSON object keyed by entity, live values winning: today the legacy
+    ``autonudge.json``, whose ``loops`` are keyed by loop.
 
-    For the map-shaped entries whose top-level keys ARE the identity: `spend.json` (one key per
-    `%Y-%m-%d`), `tool_usage.json` (per tool), `autonudge.json`'s `loops`, and tokenjuice's rows
-    (keyed `"<month>|<model>|<compressor>"`).
-
-    🔴 Live values win per key rather than being combined. `spend.json` is the counter a budget
-    CEILING is compared against, so adding a snapshot's dollars to today's would move a real-money
-    decision on the basis of spend that already happened on another machine or in another month. A
-    key the live home does not have is pure recovery; a key it has is authoritative.
+    Live values win per key rather than being combined: a key the live home does not have is
+    recovery, and a key it has is authoritative. (A machine's counters are not merged at all:
+    they are its own account, ``StateEntry.merged_in``.)
     """
     if not src.is_file() or not dst.is_file():
         return 0
@@ -1624,11 +1620,19 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     # exactly as it is for the named components.
     # A NAMED store component selects its own subtree too, so `--components projects` returns the
     # projects without also returning every other store (`_store_selected`).
+    restored: list[str] = []
     if _want(components, "everything") or any(
         _store_selected(components, rel) for rel in _extra_restore_paths(snap)
     ):
-        for rel in _extra_restore_paths(snap):
+        # A folder before the stores inside it (`workflows` before `workflows/runs.db`): moving
+        # the folder moves them with it, and copying the snapshot's brings its copies of them
+        # (`_restore_ignore` keeps a store another entry owns), so a store inside one already
+        # restored is done. Handled after it, as the inventory's order had it, the folder's copy
+        # of the store was moved over the pre-restore copy of this home's, which was lost.
+        for rel in sorted(_extra_restore_paths(snap), key=lambda r: r.count("/")):
             if not _store_selected(components, rel):
+                continue
+            if any(rel.startswith(f"{done}/") for done in restored):
                 continue
             src, live = snap / rel, pc / rel
             if live.exists() and not live.is_symlink():
@@ -1639,9 +1643,11 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
             elif src.is_file():
                 live.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(live))
+            restored.append(rel)
             if rel == "apps":
                 kept = _keep_app_engines(backup / rel, live)
         print("  ✅ stores")
+    held = _hold_what_was_in_flight(pc, restored)
 
     kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
     if kept_names:
@@ -1659,6 +1665,12 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
                 "with the app, which the snapshot does not have. It goes when you delete that "
                 "folder."
             )
+    if held["runs_held"] or held["loops_held"]:
+        print(
+            f"  ⏸  Held {len(held['runs_held'])} workflow run(s) and {len(held['loops_held'])} "
+            "loop(s) that were working when the snapshot was taken: each waits for you to "
+            "resume it."
+        )
     try:
         backup.rmdir()
     except OSError:
@@ -1669,6 +1681,38 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
         "engines_set_aside": [
             {"app": _app_display_name(folder), "bytes": size} for folder, size in aside
         ],
+        **held,
+    }
+
+
+def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[str]]:
+    """Hold what the stores a replace restore just wrote had in flight: ``runs_held``,
+    ``loops_held`` and ``agents_settled``, by id.
+
+    A snapshot is a moment in the past. The watchdogs pick up at start every workflow run and
+    loop they find working, and the start settles every agent folder with no tombstone as one
+    the last gateway left running — so work the archive held in flight went on here from that
+    moment, repeating what it did after it, and on the machine it ran on as well when the archive
+    came from another one. And another machine's agent folder names, by its recorded pid, a
+    process of this machine's, which the start killed if it had started before the agent did.
+    Each store holds its own (``workflows.store.hold_restored``,
+    ``loop.store.hold_restored``, ``subagent_persistence.settle_restored``), and nothing starts
+    until someone resumes it. Whichever machine took the archive: this machine's own run went on
+    after the snapshot too.
+    """
+    from personalclaw import subagent_persistence
+    from personalclaw.loop import store as loop_store
+    from personalclaw.workflows import store as run_store
+
+    def restored_store(rel: str) -> bool:
+        return any(rel == done or rel.startswith(f"{done}/") for done in restored)
+
+    return {
+        "runs_held": run_store.hold_restored(pc) if restored_store("workflows/runs.db") else [],
+        "loops_held": loop_store.hold_restored(pc) if restored_store("loop/loops.db") else [],
+        "agents_settled": (
+            subagent_persistence.settle_restored(pc) if restored_store("subagents") else []
+        ),
     }
 
 
@@ -1729,8 +1773,8 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
 
     Each row is `{path, strategy, action, detail}`, where `action` is one of `merge` (both sides
     have it, so rows will be folded), `copy` (only the snapshot has it), `keep-local` (both have
-    it and local wins), or `skip` (the snapshot's copy is not taken in: what ran on one machine
-    stays there, `StateEntry.merged_in`).
+    it and local wins), or `skip` (the snapshot's copy is not taken in: what ran on one machine,
+    and its own counters, stay there, `StateEntry.merged_in`).
     """
     from personalclaw.durability import inventory as inv
 
@@ -1803,7 +1847,7 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
                         "path": path,
                         "strategy": strategy,
                         "action": "skip",
-                        "detail": "what ran on a machine stays on it",
+                        "detail": "this machine's own: the archive's is left out",
                     }
                 )
             continue
@@ -1985,31 +2029,22 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             if s_db.is_file() and d_db.is_file():
                 _merge_sqlite_attach(s_db, d_db, rel)
 
-    # 🔴 The file-shaped `union_by_id`/`lww_by_updated_at` entries that are maps rather than stores
-    # of records, which had no executor. Runs BEFORE the generic store pass so a file the live home
-    # already holds is MERGED rather than left alone; that pass then copies any missing outright.
-    # A store of records (`StateEntry.records` — the inbox, the tags, …) is merged in that pass,
-    # one record at a time (`_merge_records`).
+    # `autonudge.json`, the legacy auto-nudge loops, is a map keyed by loop under `loops`: each
+    # the live home lacks comes in, and the boot's legacy import brings it into the trigger store
+    # switched off (`triggers.legacy_import`). Runs BEFORE the generic store pass so a file the
+    # live home already holds is MERGED rather than left alone; that pass copies one missing
+    # outright. A store of records (`StateEntry.records` — the inbox, the tags, …) is merged in
+    # that pass, one record at a time (`_merge_records`).
     #
-    # Per-file, not generic: the maps are keyed by date, by tool or by a composite, and their
-    # semantics differ too. Read off the owning module's contract, measured against a real home.
+    # 🔴 This also merged `spend.json`, `tool_usage.json` and `tokenjuice_savings.json` — the
+    # keys the live home lacked came in — and the generic pass copied `durability_state.json`
+    # into a home without one. Each is this machine's own account (`StateEntry.merged_in`):
+    # another machine's spend counted against this machine's budget caps, and its scheduler
+    # marks read as backups this machine had just taken. They are left as they are.
     if _want(components, "everything"):
-        for rel, wrapper in (
-            # `spend.json` is date-keyed and `tool_usage.json` tool-keyed; tokenjuice's rows are
-            # keyed "<month>|<model>|<compressor>"; autonudge's live loops sit under `loops`.
-            ("spend.json", None),
-            ("tool_usage.json", None),
-            ("tokenjuice_savings.json", "rows"),
-            ("autonudge.json", "loops"),
-        ):
-            n = _merge_json_map(snap / rel, pc / rel, wrapper=wrapper)
-            if n:
-                print(f"  {rel}: {n} imported")
-        # `durability_state.json` is NOT merged. It holds the scheduler's own last-run marks, and
-        # `_due()` compares them against an interval — driven, a stale snapshot's `last_snapshot`
-        # reads as DUE while the live one does not, so importing it would re-trigger a snapshot
-        # immediately. Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets
-        # its marks back, a live home keeps the ones that describe what actually ran.
+        n = _merge_json_map(snap / "autonudge.json", pc / "autonudge.json", wrapper="loops")
+        if n:
+            print(f"  autonudge.json: {n} imported")
 
     # `_store_selected` so `--components projects` merges the projects alone — the same gate the
     # replace path uses, asked once so the two modes cannot answer it differently.
@@ -2025,8 +2060,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
             dst = pc / rel
             entry = _entry_at(rel)
             if entry is not None and not entry.merged_in:
-                # What ran on another machine stays there: its running runs and loops would be
-                # resumed here (`StateEntry.merged_in`).
+                # What ran on the archived machine and its own counters stay its own: its running
+                # runs, loops and agents would be picked up here, its spend counted against this
+                # machine's caps (`StateEntry.merged_in`).
                 continue
             if entry is not None and entry.kind == inv.KIND_JSON_ENTITY_DIR and src.is_dir():
                 # A folder of files, each taken in by the rule a sync takes another machine's in:

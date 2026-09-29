@@ -752,6 +752,92 @@ def clear_pause(run_id: str) -> None:
     (run_dir(run_id) / "PAUSE").unlink(missing_ok=True)
 
 
+#: Why a restore holds a run it brought back running, and one it brought back queued to start.
+RESTORED_RUNNING = (
+    "Restored from a backup while it was running. It may have gone on after the backup was "
+    "taken, on the machine it ran on or here, so it waits for you: Resume runs the rest of it "
+    "from where the backup left it."
+)
+RESTORED_QUEUED = (
+    "Restored from a backup before it started. It may have started since, on the machine it was "
+    "queued on, so it waits for you: Resume starts it."
+)
+
+#: The characters a run id may hold for a restore to write its pause under it: `new_run_id` mints
+#: 8 hex characters, and an id an archive holds with a separator or a dot in it could name a folder
+#: outside ``runs/``.
+_RUN_ID_CHARS = frozenset("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_")
+
+
+def hold_restored(home: Path) -> list[str]:
+    """Hold every run the ledger in *home* has in flight, or queued to start, as a restore has
+    just written it: paused, with the sticky intent :func:`request_pause` writes, which keeps the
+    watchdog from adopting it until someone presses Resume, and the reason as its error
+    (:data:`RESTORED_RUNNING`, :data:`RESTORED_QUEUED`). Returns the ids it held.
+
+    🔴 A restore brings back a moment in the past. The watchdog adopts every active run it finds
+    and resumes it from its journal, and drains every queued start, so a run the archive held
+    running ran the steps it took after that moment a second time — here, and on the machine it
+    ran on when the archive came from another one. Held, it waits for the owner, who can see what
+    it did and resume it.
+
+    Reads and writes *home*'s own files, not the active home's: the restore names the home it
+    wrote. A run its owner paused, with the intent, is held already and left as it was. A row
+    whose id names no run folder is cancelled with the reason instead, since no intent can hold it.
+    """
+    from personalclaw.workflows.overlap import QUEUED_KEY
+
+    db = Path(home) / "workflows" / "runs.db"
+    if not db.is_file():
+        return []
+    runs = Path(home) / "workflows" / "runs"
+    held: list[str] = []
+    conn = sqlite3.connect(str(db), timeout=5.0)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT id, status, extra FROM runs WHERE status IN (?, ?, ?, ?)",
+                (
+                    RunStatus.RUNNING.value,
+                    RunStatus.PAUSED.value,
+                    RunStatus.NEEDS_INPUT.value,
+                    RunStatus.DRAFT.value,
+                ),
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            # No ledger the watchdog could read either: nothing in it would be picked up.
+            logger.warning("hold_restored: %s holds no run ledger it can read", db)
+            return []
+        for run_id, status, extra in rows:
+            try:
+                queued = bool(json.loads(extra or "{}").get(QUEUED_KEY))
+            except (ValueError, AttributeError):
+                queued = False
+            if status == RunStatus.DRAFT.value and not queued:
+                continue  # a hand-made draft runs only when someone starts it
+            reason = RESTORED_QUEUED if status == RunStatus.DRAFT.value else RESTORED_RUNNING
+            run_id = str(run_id or "")
+            if not run_id or not set(run_id) <= _RUN_ID_CHARS or len(run_id) > 64:
+                conn.execute(
+                    "UPDATE runs SET status = ?, error_message = ? WHERE id = ?",
+                    (RunStatus.CANCELLED.value, reason, run_id),
+                )
+                continue
+            if status == RunStatus.PAUSED.value and (runs / run_id / "PAUSE").is_file():
+                continue  # its owner paused it, and the watchdog leaves it be: it is held already
+            conn.execute(
+                "UPDATE runs SET status = ?, error_message = ? WHERE id = ?",
+                (RunStatus.PAUSED.value, reason, run_id),
+            )
+            held.append(run_id)
+        conn.commit()
+    finally:
+        conn.close()
+    for run_id in held:
+        atomic_write(runs / run_id / "PAUSE", _now())
+    return held
+
+
 #: The edits queued on a run and not yet applied (`mid_flight`): each `{ops, actor}`, in order.
 PENDING_MUTATIONS_FILE = "pending_mutations.json"
 

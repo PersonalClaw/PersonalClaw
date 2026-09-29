@@ -12,13 +12,13 @@ peers' unseen shard sets and merges each into the live store:
         for each entry: reconcile.reconcile_entry(...)  # 6c-i + 6c-ii-c + 6c-ii-d
         cursor.record(peer, seq, aggregate_verdict)     # 6c-ii-b — consumed-only
 
-The **DB path is an injected seam**, not skipped. A `sqlite`/`tree` entry can't be losslessly
+The **DB path is an injected seam**, not skipped. A `sqlite` entry can't be losslessly
 rebuilt from row shards (the exporter stores embedding/blob columns as size placeholders), so
-those go to an optional ``db_merger`` callback. Until it's provided (DAS-6c-ii-f), a seq that
-contains a DB entry is **held** — the cursor is not advanced, so the seq is re-pulled once the
-seam lands, rather than silently skipping unmerged database data (§4.1: advance only on
-consumed rows). That is the honest partial-slice behavior, and it keeps the row-entry
-convergence path (criterion 4) fully working today.
+it goes to an optional ``db_merger`` callback (a `tree` is not in the shards at all). Until
+it's provided (DAS-6c-ii-f), a seq that contains a DB entry is **held** — the cursor is not
+advanced, so the seq is re-pulled once the seam lands, rather than silently skipping unmerged
+database data (§4.1: advance only on consumed rows). That is the honest partial-slice
+behavior, and it keeps the row-entry convergence path (criterion 4) fully working today.
 
 Aggregate verdict for a seq: any held entry (prerequisite-absent, or a DB entry with no
 merger) holds the whole seq; otherwise ``payload-bad`` if any entry was poison (advance past

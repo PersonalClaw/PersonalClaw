@@ -168,9 +168,8 @@ def test_an_export_leaves_every_app_venv_behind(tmp_path, monkeypatch):
 
 def test_the_hourly_export_leaves_every_app_venv_behind(tmp_path, monkeypatch):
     """`durability.auto_backup` (on by default) runs this every hour, and on main it wrote every
-    file of the engine into the shards' blobs."""
-    import hashlib
-
+    file of the engine into the shards' blobs. The shards carry no folder of files now, an app's
+    included: its own data is in the snapshot (the test above), which is what a restore reads."""
     from personalclaw.durability.shards import export_shards
 
     home = _home(tmp_path, monkeypatch, "home")
@@ -179,14 +178,10 @@ def test_the_hourly_export_leaves_every_app_venv_behind(tmp_path, monkeypatch):
 
     export_shards(home, tmp_path / "shards")
 
-    blobs = {p.name for p in (tmp_path / "shards").rglob("*") if p.is_file()}
-
-    def exported(path: Path) -> bool:
-        return hashlib.sha256(path.read_bytes()).hexdigest() in blobs
-
-    engine_files = [p for p in (live / "venv").rglob("*") if p.is_file() and not p.is_symlink()]
-    assert engine_files and [p for p in engine_files if exported(p)] == []
-    assert exported(live / "data" / "notes.txt")
+    carried = [p.read_bytes() for p in (tmp_path / "shards").rglob("*") if p.is_file()]
+    app_files = [p for p in live.rglob("*") if p.is_file() and not p.is_symlink()]
+    assert app_files and [p for p in app_files if p.read_bytes() in carried] == []
+    assert not (tmp_path / "shards" / "apps").exists()
 
 
 # ── restore ──────────────────────────────────────────────────────────────────────────────────

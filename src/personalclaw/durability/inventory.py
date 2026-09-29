@@ -109,9 +109,12 @@ class StateEntry:
     # is rebuilt or measured again here.
     machine_local_within: tuple[str, ...] = field(default_factory=tuple)
     # Whether a merge restore or an import takes an archive's copy in. False for the records of
-    # what ran on one machine, a workflow run or an autonomous loop, which a watchdog picks up and
-    # drives: another home's, taken in, was resumed here, a second time and on this machine's
-    # files. A replace restore still brings them back with the whole home.
+    # what ran on one machine, a workflow run, an autonomous loop or an agent, which the start
+    # picks up and drives: another home's, taken in, was resumed here, a second time and on this
+    # machine's files. And False for the counters that are one machine's account of itself — its
+    # spend, its tool and savings counters, its scheduler marks, the due-date notices it sent —
+    # which a merge added to this machine's. A replace restore still brings them back with the
+    # whole home, holding what was in flight (`snapshot._hold_what_was_in_flight`).
     merged_in: bool = True
     tombstones: bool = False  # deletes need markers to survive a sync merge
     # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
@@ -540,6 +543,14 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_WORK,
         merge=MERGE_UNION_BY_ID,
         help="subagent run records",
+        # Each agent's running state — its task, its process id, its turns — on the machine that
+        # ran it. The start settles every folder with no tombstone as an agent the last gateway
+        # left running, and kills a live process under its recorded pid that started before the
+        # agent did: another machine's folder, merged in, names a process of this machine's that
+        # holds the same pid. A replace restore brings them back settled
+        # (`subagent_persistence.settle_restored`).
+        machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="uploads",
@@ -990,6 +1001,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="per-day model spend (drives the budget caps)",
         machine_local=True,
+        # 🔴 A merge restore took in the days this home had no spend for, and copied the whole
+        # file into a home without one: another machine's dollars counted against this machine's
+        # budget caps. Each machine's spend is its own, in a merge and an import too.
+        merged_in=False,
     ),
     StateEntry(
         # Per-project Trust/Preview decisions keyed by resolved dir. Every record here is a grant
@@ -1155,6 +1170,9 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="the durability scheduler's own last-run state",
         machine_local=True,
+        # Another machine's marks, copied into a home without its own, read as backups this
+        # machine had just taken, so its first snapshot waited out their interval.
+        merged_in=False,
     ),
     StateEntry(
         id="folders",
@@ -1182,6 +1200,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="tool usage counters",
         machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="tokenjuice_savings",
@@ -1191,6 +1210,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_LWW,
         help="context-savings ledger",
         machine_local=True,
+        merged_in=False,
     ),
     StateEntry(
         id="feedback",
@@ -1213,12 +1233,13 @@ INVENTORY: tuple[StateEntry, ...] = (
         kind=KIND_JSON_FILE,
         path="task_due_notices.json",
         domain=DOMAIN_PLATFORM,
-        # One document, synced as one row: a home without it adopts the other side's (and does
-        # not announce again what that side already did), and a copy on both sides keeps the
-        # local one. A lost entry costs one repeated reminder, and entries expire on their own.
+        # Which notices THIS machine sent: each machine announces on its own, so another
+        # machine's record neither syncs nor merges in. A missing entry costs one repeated
+        # reminder, and entries expire on their own.
         merge=MERGE_LWW,
         help="which task due dates have had their notice (tasks/due_notices.py)",
         machine_local=True,
+        merged_in=False,
     ),
     # ── config ──
     StateEntry(
@@ -2301,6 +2322,12 @@ def export_entries() -> tuple[StateEntry, ...]:
     `portability.EXPORT_EXCLUDE`: neither secrets (they must never leave the
     machine) nor derived data (rebuildable)."""
     return tuple(e for e in INVENTORY if not e.secret and not e.derived)
+
+
+def shard_entries() -> tuple[StateEntry, ...]:
+    """Entries the shard export carries (``durability.shards``): an export's, but the folders of
+    files (``KIND_TREE``), which only a snapshot holds whole."""
+    return tuple(e for e in export_entries() if e.kind != KIND_TREE)
 
 
 def secret_paths() -> tuple[str, ...]:

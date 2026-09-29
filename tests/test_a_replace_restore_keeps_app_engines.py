@@ -163,4 +163,5 @@ def test_a_replace_with_no_engine_to_keep_says_nothing_about_engines(tmp_path, m
     snap = tmp_path / "snap"
     _app(snap, "clone-voice", "Clone Voice", engine=[ENGINE])
 
-    assert _do_replace(snap, home, None) == {"engines_kept": [], "engines_set_aside": []}
+    said = _do_replace(snap, home, None)
+    assert (said["engines_kept"], said["engines_set_aside"]) == ([], [])

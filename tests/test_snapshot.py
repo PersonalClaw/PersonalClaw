@@ -2087,12 +2087,8 @@ def test_a_MERGE_recovers_every_file_shaped_store(tmp_path: Path) -> None:
         "hooks.json": ({"hooks": [{"id": "snap-h"}]}, {"hooks": [{"id": "live-h"}]}),
         "inbox.json": ({"items": [{"id": "snap-i"}]}, {"items": [{"id": "live-i"}]}),
         "tags.json": ([{"id": "snap-t"}], [{"id": "live-t"}]),
-        "spend.json": ({"2026-08-01": 1.5}, {"2026-08-05": 2.5}),
-        "tool_usage.json": ({"snapTool": {"count": 3}}, {"liveTool": {"count": 9}}),
-        "tokenjuice_savings.json": (
-            {"schema": 1, "rows": {"2026-07|m|log": {"count": 3}}},
-            {"schema": 1, "rows": {"2026-08|m|log": {"count": 9}}},
-        ),
+        # (A machine's counters are its own and never merge in:
+        # `test_a_merge_restore_keeps_this_machines_counters.py`.)
         "autonudge.json": (
             {"version": 1, "loops": {"snap": {}}},
             {"version": 1, "loops": {"live": {}}},
@@ -2116,9 +2112,6 @@ def test_a_MERGE_recovers_every_file_shaped_store(tmp_path: Path) -> None:
                 "snap-h",
                 "snap-i",
                 "snap-t",
-                "2026-08-01",
-                "snapTool",
-                "2026-07|m|log",
                 '"snap"',
             )
             if t in json.dumps(a)
@@ -2134,8 +2127,9 @@ def test_DURABILITY_STATE_is_deliberately_NOT_merged(tmp_path: Path) -> None:
     reads as **due** while the live home's does not — so importing it would re-trigger a snapshot
     immediately, and a union or min would make the service permanently believe it is overdue.
 
-    Copy-if-missing (the generic pass) is the correct semantic: a wiped home gets its marks back, a
-    live home keeps the ones that describe what actually ran.
+    A home without its own does not take the archive's either (`StateEntry.merged_in`): another
+    machine's marks read as backups this one had just taken, so its first snapshot waited out their
+    interval.
     """
     from personalclaw.snapshot import _do_merge
 
@@ -2153,24 +2147,22 @@ def test_DURABILITY_STATE_is_deliberately_NOT_merged(tmp_path: Path) -> None:
 
 def test_a_snapshots_SPEND_never_moves_the_live_counter(tmp_path: Path) -> None:
     """🔴 REAL MONEY. `spend.json` is the counter a budget CEILING is compared against, keyed one
-    entry per `%Y-%m-%d`. Combining a snapshot's dollars into a day the live home already has would
-    move a spend decision on the basis of money spent on another machine — either pausing a run that
-    had budget left, or the reverse.
-
-    So the map merge is per-key with live winning: a day the live home lacks is pure recovery, a day
-    it has is authoritative.
+    entry per `%Y-%m-%d`. A merge took in the days the live home lacked, so another machine's
+    dollars counted against this machine's caps. Each machine's spend is its own: a merge leaves
+    it exactly as it is, the days it lacks included.
     """
-    from personalclaw.snapshot import _merge_json_map
+    from personalclaw.snapshot import _do_merge
 
-    src, dst = tmp_path / "s.json", tmp_path / "d.json"
-    src.write_text(json.dumps({"2026-08-05": 99.0, "2026-08-01": 1.0}), encoding="utf-8")
-    dst.write_text(json.dumps({"2026-08-05": 2.5}), encoding="utf-8")
+    snap, pc = tmp_path / "snap", tmp_path / "home"
+    snap.mkdir()
+    pc.mkdir()
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "spend.json").write_text(json.dumps({"2026-08-05": 99.0, "2026-08-01": 1.0}))
+    (pc / "spend.json").write_text(json.dumps({"2026-08-05": 2.5}), encoding="utf-8")
 
-    _merge_json_map(src, dst)
+    _do_merge(snap, pc, None)
 
-    got = json.loads(dst.read_text())
-    assert got["2026-08-05"] == 2.5, "the live day must not be overwritten or summed"
-    assert got["2026-08-01"] == 1.0, "a day only the snapshot has is recoverable"
+    assert json.loads((pc / "spend.json").read_text()) == {"2026-08-05": 2.5}
 
 
 def _records_merge(tmp_path: Path, archived: str, here: str) -> tuple[str | None, Path]:

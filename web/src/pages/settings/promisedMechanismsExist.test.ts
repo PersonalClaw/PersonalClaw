@@ -51,6 +51,37 @@ describe('the nightly-snapshot promise', () => {
   })
 })
 
+describe('the backups promise: the snapshot is what a restore reads', () => {
+  // 🔴 The hint offered `personalclaw backup export` as the backup to run by hand, and the export held
+  // no folder of files anyone could put back: skills, scripts and uploads were blobs with no path. The
+  // copy now names the snapshot, and each clause is pinned to the code that makes it true.
+  const ui = () => web('pages/settings/DurabilityPanel.tsx')
+
+  it('names the snapshot as the backup, and the hourly export as a copy of the records', () => {
+    expect(ui()).toContain('The snapshot is the backup a restore brings back')
+    expect(ui()).toContain('it holds no files, and nothing restores from it')
+    expect(ui(), 'the backup to run by hand is the snapshot').toContain('<code>personalclaw snapshot</code>')
+    expect(ui()).not.toContain('<code>personalclaw backup export</code>')
+  })
+
+  it('holds no files: the export walks the entries that are not folders of files', () => {
+    const exporter = pyMethod(py('durability/shards.py'), 'def export_shards')
+    expect(exporter, 'the export walks the shard entries').toMatch(/for entry in inv\.shard_entries\(\):/)
+    expect(pyMethod(py('durability/inventory.py'), 'def shard_entries'), 'and they leave the trees out')
+      .toMatch(/e\.kind != KIND_TREE/)
+  })
+
+  it('nothing restores from it: no restore or import reads shards, only a sync does', () => {
+    expect(py('durability/pull_engine.py'), 'a sync reads them').toMatch(/import_shards\(shard_dir\)/)
+    expect(py('snapshot.py')).not.toMatch(/import_shards/)
+    expect(py('portability.py')).not.toMatch(/import_shards/)
+  })
+
+  it('sync says what it carries', () => {
+    expect(ui()).toContain('folders of files — skills, scripts, uploads — stay on each machine')
+  })
+})
+
 describe('the feedback-thumbs promise', () => {
   const walk = (d: string): string[] =>
     readdirSync(d).flatMap((n) => {
