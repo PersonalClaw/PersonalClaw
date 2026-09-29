@@ -268,8 +268,10 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   turn's LAST assistant message as `meta.turn_telemetry`, *before*
   `save_session_to_history` — that function
   rewrites the transcript file from the buffer, so a later stamp would be in-memory
-  only. It rides the same `meta` seam as `memory_citations` / `skills_used`: no new file
-  and no new channel. Absent = the turn reported nothing; `priced: false` means the
+  only. It rides the same `meta` seam as `memory_citations` (and as `skills_used`, which
+  is on the message that started the turn — the user's, or a loop's nudge, an automation's
+  or a subagent report's row; the message each skill joined): no new file and no new
+  channel. Absent = the turn reported nothing; `priced: false` means the
   model has no price row (never "free"); `context_pct: null` means the provider measured
   nothing (never 0%).
 

@@ -123,8 +123,15 @@ export const appendThinking = (segs: Segment[], chunk: string): Segment[] => {
 export interface MemoryCitation { n: number; id: string | null; preview?: string }
 
 /** One skill whose content actually reached this turn's prompt (LEARNING-VISIBILITY
- *  T2.1). Rides the assistant message's `meta.skills_used` — the same seam
- *  `memory_citations` uses — so the "used N skills" chip needs no second channel.
+ *  T2.1). Rides the `meta.skills_used` of the message that STARTED the turn — the user's, or
+ *  the row a loop's nudge, an automation or a subagent's report started it with; the message
+ *  the skill was attached to (`joinedSkillsOf`) — and arrives live as `activity_event {kind:
+ *  "skills"}` the moment the turn is put together, so the chip needs no channel of its own.
+ *
+ *  🔴 It rode the assistant message's meta, stamped when a reply's TEXT settled. A turn
+ *  that only called tools, or was stopped before it said a word, therefore never showed
+ *  which skill had joined it — measured on a turn that ran twenty minutes of failing calls
+ *  with a family-trip skill wrapped around the user's message, and nothing on screen said so.
  *
  *  `state` is the allocator's load state, typed as the raw wire `string` rather than a
  *  union for the same reason `ApprovalSegment.resolved` is: a session persisted by
@@ -134,15 +141,43 @@ export interface MemoryCitation { n: number; id: string | null; preview?: string
  *  content loaded, so counting it would overstate the turn. */
 export interface SkillUsed { name: string; state: string; loaded_tokens: number }
 
-/** The chip's own words. N counts every entry — `admitted` and `reduced` alike, because
- *  both put content in the prompt (a `reduced` skill loaded a summary, not nothing).
+/** The roles a turn is started with, as the backend's `_TURN_DISPATCH_ROLES` (`chat_persistence`):
+ *  the user's message, and the rows an automation, a subagent's report and a loop's nudge start
+ *  one with. */
+const TURN_DISPATCH_ROLES: ReadonlySet<string> = new Set(['user', 'inject', 'subagent', 'nudge'])
+
+/** The skills that joined the turn `m` started, or `undefined` — absent on a turn no skill joined,
+ *  on a message that started no turn, and on every message persisted before the record moved to
+ *  the turn's own message. The chip then simply does not render, rather than reading "used 0
+ *  skills". The one reader of the record, for the chat and the loop cockpit alike. */
+export function joinedSkillsOf(m: { role: string; meta?: { skills_used?: SkillUsed[] } }): SkillUsed[] | undefined {
+  const s = m.meta?.skills_used
+  return TURN_DISPATCH_ROLES.has(m.role) && Array.isArray(s) && s.length ? s : undefined
+}
+
+/** How many skill names the chip spells out before it counts the rest. */
+const NAMED_SKILLS = 3
+
+/** A skill's name as a person reads it: its key's last part (`imported/claude_code/trip-research`
+ *  → `trip-research`). The whole key is in the hover text. */
+function skillShortName(s: SkillUsed): string {
+  const name = s.name || '(unnamed skill)'
+  return name.split('/').pop() || name
+}
+
+/** The chip's own words — it NAMES the skills. A count alone ("used 1 skill") left the one fact
+ *  a reader needs, WHICH skill joined the turn, behind a hover that a keyboard, a touch screen
+ *  and a screen reader never reach. N counts every entry — `admitted` and `reduced` alike,
+ *  because both put content in the prompt (a `reduced` skill loaded a summary, not nothing).
  *  Returns '' for an empty list so a caller can't render a truthful-looking "used 0
  *  skills" for a turn that loaded none: the backend omits the key entirely in that case,
  *  and the chip must be absent, not zeroed. */
 export function skillsUsedLabel(skills: SkillUsed[]): string {
   const n = skills.length
   if (!n) return ''
-  return `used ${n} skill${n === 1 ? '' : 's'}`
+  const named = skills.slice(0, NAMED_SKILLS).map(skillShortName).join(', ')
+  const more = n > NAMED_SKILLS ? ` +${n - NAMED_SKILLS} more` : ''
+  return `used skill${n === 1 ? '' : 's'} ${named}${more}`
 }
 
 /** Hover text for the chip: the skill names in the ALLOCATOR'S OWN ORDER (the order they
@@ -221,8 +256,8 @@ export interface ChatTurn {
   // against this list into a deep-link to the episode. Absent on turns with no
   // episodic recall (the vast majority) and on user turns.
   citations?: MemoryCitation[]
-  // Skills whose content fed THIS assistant turn — the "used N skills" chip's
-  // input. Rides the same meta seam as `citations`, so it is absent on the turns that
+  // Skills whose content fed THIS assistant turn — the skills chip's input. Read off the
+  // message that started the turn (`joinedSkillsOf`), so it is absent on the turns that
   // loaded no skill (and on every user turn) rather than an empty array.
   skillsUsed?: SkillUsed[]
   // The reply stopped at the model's OUTPUT cap and ends mid-sentence — the assistant
@@ -449,10 +484,17 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   // a collapsed re-injection that produces no turn — because the backend counts it.
   let visible = -1
 
+  // The skills that joined a turn ride the message that started it (`joinedSkillsOf`), and are
+  // shown on the answer that follows it.
+  let joinedSkills: SkillUsed[] | undefined
   const lastAssistant = (): ChatTurn => {
-    const t = turns[turns.length - 1]
-    if (t && t.role === 'assistant') return t
-    const nt = assistantTurn(); turns.push(nt); return nt
+    let t = turns[turns.length - 1]
+    if (!t || t.role !== 'assistant') { t = assistantTurn(); turns.push(t) }
+    // Also onto an answer already open: a turn a loop's nudge, an automation or a subagent's report
+    // started has no bubble of its own, so its answer joins the one before it — and the skills that
+    // joined it show there, as they did live.
+    if (joinedSkills) { t.skillsUsed = joinedSkills; joinedSkills = undefined }
+    return t
   }
 
   for (const m of messages) {
@@ -460,6 +502,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       visible += 1
       const text = m.content.trim()
       if (text === lastUserText && !assistantTextSinceUser) continue  // loop re-injection
+      // The turn before this one got no answer, tool call or error at all — stopped before its
+      // first word — so it has no answer to show its skills on yet: give it the empty one the
+      // live page showed.
+      if (joinedSkills) lastAssistant()
       // re-collapse expanded pastes → markers so chips render on reload.
       const pastes = m.meta?.pastes
       // An optimized turn persisted the OPTIMIZED text as content (the model saw
@@ -480,6 +526,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (Array.isArray(m.rewound) && m.rewound.length) ut.rewound = m.rewound
       const delivery = imageDeliveryOf(m.meta)
       if (delivery) ut.imageDelivery = delivery
+      joinedSkills = joinedSkillsOf(m)
       ut.visibleIndex = visible
       turns.push(ut)
       lastUserText = text; assistantTextSinceUser = false
@@ -496,13 +543,6 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // absent on turns with no episodic recall (almost all of them).
       if (Array.isArray(m.meta?.memory_citations) && m.meta!.memory_citations.length) {
         at.citations = m.meta!.memory_citations
-      }
-      // Skills used ride the same meta as the citations above, so they rehydrate on
-      // the same terms: carried onto the turn when present, left absent otherwise. Tolerant
-      // for the same reason — every message persisted before T2.1 lacks the key, and the
-      // chip must simply not render for those rather than read as "used 0 skills".
-      if (Array.isArray(m.meta?.skills_used) && m.meta!.skills_used.length) {
-        at.skillsUsed = m.meta!.skills_used
       }
       // A reply cut at the model's output cap. The backend stamps it on the turn's LAST
       // assistant message, and consecutive assistant messages merge into this turn with the
@@ -577,9 +617,18 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // it. Not a visible-list slot: the backend counts user/assistant rows only.
       lastAssistant().segments.push({ kind: 'text', text: m.content })
       assistantTextSinceUser = true
+    } else if (TURN_DISPATCH_ROLES.has(m.role)) {
+      // A turn a loop's nudge, an automation or a subagent's report started. The row itself is not
+      // rendered; the skills that joined its turn are. A turn before it that got no answer at all
+      // keeps its own first.
+      if (joinedSkills) lastAssistant()
+      joinedSkills = joinedSkillsOf(m)
     }
     // other roles (queued/system): skip.
   }
+  // A turn read before its answer began, or stopped before it said anything, still shows the
+  // skills that joined it.
+  if (joinedSkills) lastAssistant()
   // A finished session has nothing in flight: the native path persists tool calls
   // without ever flagging done, so any lingering pending card would spin forever.
   // Mark all tools done; if still running, leave only the very last one pending.

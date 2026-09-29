@@ -13,6 +13,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
 - **A diarization app can say why it could not tell the speakers apart: `personalclaw.sdk.diarization.DiarizationError`, used by `diarization-onnx` and `diarization-pyannote`.**
+- **Memory Studio edits a fact where it is shown: Edit changes its value under the same key, and the Audit tab can undo it.**
 
 - **An app's test suite can load model libraries the way PersonalClaw does, reporting nothing and writing nothing outside its home: `personalclaw.sdk.testing.library_env()`, used by the apps repository's test harness.**
 
@@ -172,6 +173,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A recording's text keeps who said what and the corrections the Vocabulary made, and a video's text and description include its narration alongside its slides' text.**
 
 - **The Vocabulary builds itself from your knowledge graph, people first, so transcriptions are biased toward the names in your notes without pressing Rebuild; a word that only sounds like a term is proposed, never rewritten, and a graph term is turned off rather than deleted.**
+
+- **A skill joins a message only when it is clearly the one the message asks for, and every turn names the skills that joined it, a turn that only calls tools or is stopped included.**
+
+- **A request to set up an automation or a reminder carries the automation tool's inputs, a path in a request no longer crowds out the tools it needs, and a refused tool argument names the ones the tool takes.**
+
+- **Reads that reach one store at the same moment — Memory Studio's reload after a save, the knowledge library, the lexicon, the code index — no longer fail or return wrong rows.**
+
+- **A page whose read fails says whether the server answered with an error or did not answer at all.**
 
 - **`personalclaw doctor` passes in the one-container install: signing in needs no channel (`personalclaw token`), the token check asks the container's own address, and the Runtime block shows no warning without words.**
 

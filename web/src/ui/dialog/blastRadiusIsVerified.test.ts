@@ -113,7 +113,7 @@ describe('the knowledge delete states what the backend really takes', () => {
     // migration blocks: a match anywhere passed while the connect-time enforcement was gone, which is
     // the state where nothing cascades during normal use. (Third hole of this exact shape in this one
     // rail — a backend repeats its idioms, so a cross-language pin has to name the block it means.)
-    const connect = store.slice(store.indexOf('self.db = sqlite3.connect('))
+    const connect = store.slice(store.indexOf('self.db = connect_shared('))
     expect(connect.slice(0, 400), 'the connection itself enables foreign keys')
       .toMatch(/PRAGMA foreign_keys=ON/)
   })
@@ -452,7 +452,7 @@ describe('four more bodies, all already true — pinned so they stay that way', 
     expect(ddl.slice(0, ddl.indexOf(');')), 'the self-FK sets null').toMatch(
       /parent_id INTEGER REFERENCES tags\(id\) ON DELETE SET NULL/,
     )
-    const connect = store.slice(store.indexOf('self.db = sqlite3.connect('))
+    const connect = store.slice(store.indexOf('self.db = connect_shared('))
     expect(connect.slice(0, 400), 'and the connection enforces foreign keys').toMatch(/PRAGMA foreign_keys=ON/)
     // And the untag half of the same sentence.
     expect(ui).toMatch(/This removes the tag from \$\{t\.usage_count\} item/)

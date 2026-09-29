@@ -17,6 +17,18 @@ a sync ``(text) -> list[float] | None``):
 3. Rank by score, **tie-break by use_count** (#25 — proven-useful skills win ties),
    cap at ``skills.max_triggered``.
 
+**Meaning alone picks at most one skill, and only a clear one.** A cosine over the floor is
+not a match by itself: measured with a small local embedder against 23 skills, "yes, go
+ahead" scored 0.57, "the second one" 0.61, and a request to file PDFs cleared the floor for
+ten skills at once — while "It's ~/Notes/Garden/Home/kitchen-reno.md." pulled a family-trip
+skill's whole body into the message at 0.552, 0.009 ahead of the next skill. What does
+separate a real match is how far it LEADS the rest: every real one led the runner-up by
+0.92 to 2.63 times the spread of that message's scores across the library, and no false one
+by more than 0.52. So a skill joins on meaning only when it clears the floor AND leads the
+next skill by :data:`SEMANTIC_LEAD` spreads (:func:`_semantic_standout`). The spread is the
+message's own, which is what keeps the rule from depending on one embedder's scale. A
+skill's declared ``triggers`` are the author's words and are unaffected.
+
 Skill-description embeddings are cached **mtime+model-keyed** in a sidecar
 ``<skills_dir>/.skill_embeddings.json`` so we embed each description once and
 re-embed only when the SKILL.md changes (or the active model changes). No SKILL.md
@@ -32,6 +44,8 @@ import json
 import logging
 import math
 import re
+import statistics
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
@@ -41,8 +55,19 @@ from personalclaw.skills.loader import skills_dir
 logger = logging.getLogger(__name__)
 
 # Cosine gate for a semantic match — calibrated against workflows/surfacing's 0.62
-# and vector_memory's short-text 0.55. Skill descriptions are short → 0.55.
+# and vector_memory's short-text 0.55. Skill descriptions are short → 0.55. A floor, not a
+# match: see SEMANTIC_LEAD.
 DEFAULT_SEMANTIC_THRESHOLD = 0.55
+
+#: How far the closest skill must lead the next one to join a turn on meaning alone, in
+#: standard deviations of that message's scores across the library. Measured (module
+#: docstring): real matches led by 0.92 or more, false ones by 0.52 or less.
+SEMANTIC_LEAD = 0.75
+
+#: The fewest skills with a score before a lead means anything: the spread of two or three
+#: numbers is not a measure of what stands out. Below it, meaning picks nothing and the
+#: declared triggers still do.
+MIN_SCORED_FOR_LEAD = 5
 
 # Keyword fallback gate — must match SkillsLoader._MIN_TRIGGER_OVERLAP so the
 # keyword half of the union is byte-identical to the legacy trigger path.
@@ -229,8 +254,10 @@ def surface_skills(
             query_vec = None
     cache = embed_cache or _EmbedCache()
 
-    scored: list[tuple[float, int, str]] = []  # (score, use_count, key)
+    # Pass 1 — score every candidate, because whether meaning picks a skill depends on how
+    # the OTHER skills score for this message (`_semantic_standout`).
     explained: list[dict] = []
+    candidates: list[tuple[dict, float, float | None]] = []  # (skill, kw_score, sem_score)
     for s in skills:
         key = s.get("key", "")
         if s.get("always"):
@@ -278,9 +305,7 @@ def surface_skills(
                 )
             continue  # a negative trigger vetoes the skill outright
 
-        kw_hit = kw_score >= _KEYWORD_GATE
-
-        sem_score = 0.0
+        sem_score: float | None = None
         if query_vec is not None:
             # Embed the description (+ triggers, which carry intent phrases).
             desc = (s.get("description", "") or s.get("name", "")).strip()
@@ -294,8 +319,21 @@ def surface_skills(
             )
             if vec is not None:
                 sem_score = _cosine(query_vec, vec)
-        sem_hit = sem_score >= semantic_threshold
+        candidates.append((s, kw_score, sem_score))
+    cache.flush()
 
+    standout = _semantic_standout(
+        [(c[0].get("key", ""), c[2]) for c in candidates if c[2] is not None],
+        semantic_threshold,
+    )
+
+    # Pass 2 — decide.
+    scored: list[tuple[float, int, str]] = []  # (score, use_count, key)
+    for s, kw_score, sem_value in candidates:
+        key = s.get("key", "")
+        sem_score = sem_value or 0.0
+        kw_hit = kw_score >= _KEYWORD_GATE
+        sem_hit = standout.key == key
         matched = kw_hit or sem_hit
         # A matched producer Feedback-Signal marked persistently-wrong is
         # WITHHELD — the match stands, but the skill does not surface until the user
@@ -313,29 +351,48 @@ def surface_skills(
                 why = (
                     f"keyword {kw_score:.2f} ≥ {_KEYWORD_GATE}"
                     if kw_hit
-                    else f"semantic {sem_score:.2f} ≥ {semantic_threshold}"
+                    else f"semantic {sem_score:.2f} ≥ {semantic_threshold}, and {standout.why}"
                 )
                 reason = f"included ({why})"
             elif query_vec is None:
                 reason = (
                     f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; no embedder for semantic)"
                 )
-            else:
+            elif sem_score < semantic_threshold:
                 reason = (
                     f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}, "
                     f"semantic {sem_score:.2f} < {semantic_threshold})"
                 )
+            elif standout.key:
+                reason = (
+                    f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; semantic "
+                    f"{sem_score:.2f} clears {semantic_threshold}, but meaning picks "
+                    f"{standout.key}, the clear closest)"
+                )
+            else:
+                reason = (
+                    f"excluded (keyword {kw_score:.2f} < {_KEYWORD_GATE}; semantic "
+                    f"{sem_score:.2f} clears {semantic_threshold}, but {standout.why})"
+                )
             explained.append(
-                _explain_row(key, kw_score, sem_score, semantic_threshold, False, included, reason)
+                _explain_row(
+                    key,
+                    kw_score,
+                    sem_score,
+                    semantic_threshold,
+                    False,
+                    included,
+                    reason,
+                    lead=standout.lead if key == standout.closest else None,
+                )
             )
         if not included:
             continue
         # Union score: the better of the two normalized signals.
         score = max(kw_score, sem_score)
         use_count = int(s.get("use_count", 0) or 0)  # #25 tiebreak
-        scored.append((score, use_count, s["key"]))
+        scored.append((score, use_count, key))
 
-    cache.flush()
     if explain:
         # Included first (by score), then excluded — the same ordering the real turn
         # would rank, with excluded candidates surfaced for the "why not?" answer.
@@ -349,6 +406,60 @@ def surface_skills(
     return [key for _score, _uc, key in scored[:max_skills]]
 
 
+@dataclass(frozen=True)
+class _Standout:
+    """What meaning alone says about one message: the skill it picks, if any, and why."""
+
+    #: The skill meaning picks, or ``""`` when it picks none.
+    key: str
+    #: The closest skill, picked or not, and how many spreads it leads the next one by.
+    closest: str
+    lead: float | None
+    #: The clause the Doctor's surfacing simulator prints for it.
+    why: str
+
+
+def _semantic_standout(scores: list[tuple[str, float]], floor: float) -> _Standout:
+    """The one skill this message's meaning singles out, or none.
+
+    The closest skill is picked when it clears ``floor`` AND leads the next one by
+    :data:`SEMANTIC_LEAD` standard deviations of the message's scores across the library.
+    A lead is only measured over :data:`MIN_SCORED_FOR_LEAD` scores or more.
+    """
+    if len(scores) < MIN_SCORED_FOR_LEAD:
+        return _Standout(
+            key="",
+            closest="",
+            lead=None,
+            why=(
+                f"only {len(scores)} skill(s) could be scored, too few to tell a clear match "
+                f"on meaning (needs {MIN_SCORED_FOR_LEAD})"
+            ),
+        )
+    ranked = sorted(scores, key=lambda kv: (-kv[1], kv[0]))
+    (top_key, top), (next_key, runner_up) = ranked[0], ranked[1]
+    spread = statistics.pstdev([v for _k, v in ranked])
+    lead = (top - runner_up) / spread if spread > 0 else 0.0
+    if top >= floor and lead >= SEMANTIC_LEAD:
+        return _Standout(
+            key=top_key,
+            closest=top_key,
+            lead=lead,
+            why=(
+                f"it leads the next skill, {next_key}, by {lead:.2f} spreads "
+                f"(≥ {SEMANTIC_LEAD})"
+            ),
+        )
+    if top < floor:
+        why = f"no skill clears the {floor} floor on meaning (closest: {top_key}, {top:.2f})"
+    else:
+        why = (
+            f"{top_key} is closest and leads {next_key} by only {lead:.2f} spreads "
+            f"(needs {SEMANTIC_LEAD}), so meaning singles out no skill"
+        )
+    return _Standout(key="", closest=top_key, lead=lead, why=why)
+
+
 def _explain_row(
     key: str,
     kw_score: float,
@@ -357,6 +468,8 @@ def _explain_row(
     negated: bool,
     included: bool,
     reason: str,
+    *,
+    lead: float | None = None,
 ) -> dict:
     return {
         "key": key,
@@ -364,6 +477,9 @@ def _explain_row(
         "sem_score": round(sem_score, 3),
         "threshold_kw": _KEYWORD_GATE,
         "threshold_sem": threshold_sem,
+        # The closest skill's lead over the next one, in spreads; None on every other row.
+        "lead": None if lead is None else round(lead, 2),
+        "threshold_lead": SEMANTIC_LEAD,
         "negated": negated,
         "included": included,
         "reason": reason,

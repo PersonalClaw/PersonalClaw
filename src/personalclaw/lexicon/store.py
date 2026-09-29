@@ -12,7 +12,7 @@ its own file). Two tables:
 * ``meta``        — small bookkeeping values, such as the knowledge graph's fingerprint at
   the last sync, which is how the service knows when its graph terms are stale.
 
-Access mirrors KnowledgeStore (WAL, busy_timeout, Row factory, check_same_thread=False).
+Access mirrors KnowledgeStore (WAL, busy_timeout, Row factory, one shared connection).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 
 def lexicon_db_path() -> str:
@@ -61,9 +61,7 @@ class Correction:
 class LexiconStore:
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or lexicon_db_path()
-        self.db = sqlite3.connect(
-            self.db_path, timeout=30, isolation_level=None, check_same_thread=False
-        )
+        self.db = connect_shared(self.db_path, timeout=30, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.row_factory = sqlite3.Row

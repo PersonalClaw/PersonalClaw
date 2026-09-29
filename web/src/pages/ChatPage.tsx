@@ -1385,6 +1385,20 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         // permission/context), and only if this turn has no real tool cards yet.
         const kind = String(d.kind ?? '')
         const text = String(d.text ?? '')
+        // The skills that joined this turn, announced once as the turn is put together. The
+        // turn's chip names them from here — whatever the turn goes on to do, even if it only
+        // calls tools or is stopped before it says a word — so the line itself is not repeated.
+        if (kind === 'skills') {
+          const joined = Array.isArray(d.skills) ? (d.skills as SkillUsed[]) : []
+          if (joined.length) setTurns((prev) => {
+            const list = ensureAssistant(prev)
+            const i = list.length - 1
+            const next = [...list]
+            next[i] = { ...next[i], skillsUsed: joined }
+            return next
+          })
+          break
+        }
         if (kind === 'status' || kind === 'session' || !text) break
         setLatestActivity(text)
         // Which learning path emitted a `learned` event. Absent on every other
@@ -1529,15 +1543,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           if (sk !== sessionRef.current) return
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
-          // `skills_used` rides the SAME persisted meta and is invisible to the WS
-          // stream for the same reason, so it is grafted on the same pass rather than in a
-          // second fetch. It differs from citations in one way that matters: episodic recall
-          // injects once per session, but skills are allocated EVERY turn — so this keeps a
-          // per-ts map and only falls back to the trailing value for the just-streamed turn
-          // that has no ts yet. A `lastSkills` applied to every tsless turn would stamp one
-          // turn's allocation onto another's.
-          const skillsByTs = new Map<string, SkillUsed[]>()
-          let lastSkills: SkillUsed[] | null = null
           // A reply cut at the output cap (`finish_reason: 'length'`) is stamped on the same meta
           // and is just as invisible to the WS stream. It describes ONE turn, so only the
           // snapshot's LAST assistant message may speak for the trailing just-streamed turn.
@@ -1557,13 +1562,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               lastCites = c
               if (m.ts) byTs.set(m.ts, c)
             }
-            const sk2 = m.meta?.skills_used
-            if (Array.isArray(sk2) && sk2.length) {
-              lastSkills = sk2
-              if (m.ts) skillsByTs.set(m.ts, sk2)
-            }
           }
-          if (byTs.size || lastCites || skillsByTs.size || lastSkills || cutByTs.size || lastIsCut || subByTs.size || lastSub) setTurns((prev) => {
+          if (byTs.size || lastCites || cutByTs.size || lastIsCut || subByTs.size || lastSub) setTurns((prev) => {
             const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
             return prev.map((t, i) => {
               if (t.role !== 'assistant') return t
@@ -1572,10 +1572,6 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 if (t.ts && byTs.has(t.ts)) patch.citations = byTs.get(t.ts)
                 // Trailing streamed turn with no ts → attach the session's one manifest.
                 else if (i === lastIdx && !t.ts && lastCites) patch.citations = lastCites
-              }
-              if (!t.skillsUsed) {
-                if (t.ts && skillsByTs.has(t.ts)) patch.skillsUsed = skillsByTs.get(t.ts)
-                else if (i === lastIdx && !t.ts && lastSkills) patch.skillsUsed = lastSkills
               }
               if (!t.cutOff && ((t.ts && cutByTs.has(t.ts)) || (i === lastIdx && !t.ts && lastIsCut))) {
                 patch.cutOff = true
@@ -4667,16 +4663,16 @@ function ModelSubstitutionNote({ text }: { text: string }) {
   )
 }
 
-/** "used N skills" — the per-turn skill-allocation chip.
+/** "used skill trip-research" — the per-turn skill-allocation chip, naming what joined the turn.
  *
- *  Hover carries the skill NAMES in the allocator's own order via `title` — the same
+ *  Hover carries the skills' full keys in the allocator's own order via `title` — the same
  *  affordance the {@link ContextLedger} trigger beside it uses, so the two footer chips
  *  behave alike instead of introducing a second hover mechanism for one line of text.
  *  `title` on a non-interactive element is a HOVER affordance only, not an accessible
- *  name, so the summarized count is also written into the visible label below rather than
- *  living solely in the tooltip.
+ *  name, so the names are also written into the visible label below (`skillsUsedLabel`)
+ *  rather than living solely in the tooltip.
  *
- *  A `reduced` skill is called out two ways rather than one, because the count alone would
+ *  A `reduced` skill is called out two ways rather than one, because a name alone would
  *  present a summary-only load as a full one: the chip appends "· M summarized" so the
  *  distinction survives without hovering, and the hover list marks each such skill by name.
  *  Rendered as a non-interactive element on purpose — there is no per-skill surface to land

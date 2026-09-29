@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.codegraph.parse import language_for, parse_source
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +169,7 @@ class CodeGraphIndex:
     def db(self) -> sqlite3.Connection:
         if self._db is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(
-                str(self._db_path), timeout=30, isolation_level=None, check_same_thread=False
-            )
+            conn = connect_shared(str(self._db_path), timeout=30, isolation_level=None)
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA busy_timeout=10000")

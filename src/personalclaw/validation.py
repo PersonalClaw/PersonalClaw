@@ -306,10 +306,15 @@ def validate_tool_args(args: dict[str, Any], schema: ToolSchema) -> dict[str, An
     cleaned: dict[str, Any] = {}
     known_fields = {s.name for s in schema.fields}
 
-    # Reject unknown fields
+    # Reject unknown fields — naming the ones the tool takes. A model that called a tool from its
+    # catalog line, without the schema, can correct the call from this alone; told only "unknown
+    # field", it guessed another name, or another spelling of the same one, turn after turn.
     for key in args:
         if key not in known_fields:
-            raise ValidationError(key, f"unknown field for tool '{schema.tool_name}'")
+            takes = ", ".join(s.name for s in schema.fields) or "no arguments"
+            raise ValidationError(
+                key, f"unknown field for tool '{schema.tool_name}' — it takes: {takes}"
+            )
 
     for spec in schema.fields:
         # Only process fields that are explicitly in args OR are required

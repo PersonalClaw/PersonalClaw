@@ -1596,8 +1596,9 @@ export interface TagColumn { id: string; name?: string; tag_ids?: string[]; mode
 export interface ChatHistoryMsg {
   role: string; content: string; ts?: string; cls?: string
   // tool/permission messages carry meta {tool_call_id, input, purpose, output?, done?};
-  // an assistant message that used episodic recall carries memory_citations; one
-  // whose turn loaded skills carries skills_used — absent, never
+  // an assistant message that used episodic recall carries memory_citations; the message
+  // that STARTED a turn which loaded skills (the user's, or a loop's nudge, an automation's or a
+  // subagent report's row) carries skills_used — absent, never
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
   // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
   // absent when the reply finished on its own.

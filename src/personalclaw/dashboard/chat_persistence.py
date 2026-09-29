@@ -1016,6 +1016,30 @@ def save_session_to_history(
 _TURN_DISPATCH_ROLES = frozenset({"user", "inject", "subagent", "nudge"})
 
 
+def in_flight_index(session: _ChatSession, in_flight: str, *, nested: bool = False) -> int | None:
+    """Where in *session*'s buffer the turn now being sent was dispatched, or ``None``.
+
+    Every dispatcher appends the turn's own message before starting it (the dashboard its
+    user's bubble, a queue drain its row, a loop its nudge), so that message is the latest
+    entry after the last assistant reply whose text is the message being sent; ``nested`` (a
+    re-entered turn such as ``/prompts get``, whose text is the EXPANSION) takes the latest
+    such entry instead, because that entry is this same user turn. ``None`` when the turn was
+    started with no entry of its own.
+
+    The ONE definition of "this turn's message": the history restore leaves it out, and the
+    record of the skills that joined the turn is written on it.
+    """
+    msgs = session.messages
+    for i in range(len(msgs) - 1, -1, -1):
+        m = msgs[i]
+        role = m.get("role", "")
+        if role == "assistant":
+            return None
+        if role in _TURN_DISPATCH_ROLES and (nested or m.get("content", "") == in_flight):
+            return i
+    return None
+
+
 def prior_turns_transcript(
     session: _ChatSession, in_flight: str, *, nested: bool = False
 ) -> list[dict]:
@@ -1038,24 +1062,15 @@ def prior_turns_transcript(
 
     The buffer is the session's own transcript — seeded only from its own file, and a
     superset of what is on disk while the session is resident — so there is nothing to
-    reconcile and no second path. The in-flight message is the latest entry after the
-    last assistant reply whose text is the message being sent; ``nested`` (a
-    re-entered turn such as ``/prompts get``, whose text is the EXPANSION) cuts at the
-    latest non-assistant entry instead, because that entry is this same user turn.
+    reconcile and no second path. The in-flight message is the one
+    :func:`in_flight_index` finds.
 
     Returns ``[{role, content}]`` of the user/assistant turns only, oldest first — the
     roles the history bootstrap has always restored.
     """
     msgs = session.messages
-    cut = len(msgs)
-    for i in range(len(msgs) - 1, -1, -1):
-        m = msgs[i]
-        role = m.get("role", "")
-        if role == "assistant":
-            break
-        if role in _TURN_DISPATCH_ROLES and (nested or m.get("content", "") == in_flight):
-            cut = i
-            break
+    at = in_flight_index(session, in_flight, nested=nested)
+    cut = len(msgs) if at is None else at
     return [
         {"role": m["role"], "content": m.get("content", "")}
         for m in msgs[:cut]

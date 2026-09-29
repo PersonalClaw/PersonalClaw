@@ -18,7 +18,7 @@ import { readNavDisclosure, setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
 import { notify } from './appSdk'
 import { api, type InstallKind, type OnboardingStatePatch } from '../lib/api'
-import { readableErrText } from '../lib/errText'
+import { failedStatus, readableErrText, serverAnswered } from '../lib/errText'
 import { howAnUpdateArrives } from '../lib/updateRoute'
 import { chatModelSummary } from './onboarding/chatModelSummary'
 import { checkChatModel } from './onboarding/checkChatModel'
@@ -478,7 +478,13 @@ export function Onboarding({ sub, navigate, deferred, onFinished }: {
         // so the message is `errEnvelope`'s placeholder — measured in the browser as "Couldn't
         // finish setup: HTTP 503." `readableErrText` names that closed set; a message the backend
         // actually wrote still reaches the user.
-        if (e instanceof TypeError || !readableErrText(msg)) msg = `${APP_NAME} didn't respond — check it is still running`
+        // Unless the gateway itself answered: a 500 is a crash inside it, and "check it is still
+        // running" would send them to look at a gateway that is up.
+        if (e instanceof TypeError || !readableErrText(msg)) {
+          msg = serverAnswered(e)
+            ? `${APP_NAME} answered with an error (HTTP ${failedStatus(e)})`
+            : `${APP_NAME} didn't respond — check it is still running`
+        }
         // A skip typed no name, so its failure is not "your name" failing to save: it is the check
         // of what is stored, or the fallback write — and either way nothing was written.
         notify(namePassed

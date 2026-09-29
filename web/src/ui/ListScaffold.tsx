@@ -5,7 +5,7 @@ import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
-import { readableErrText } from '../lib/errText'
+import { failedStatus, readableErrText, serverAnswered } from '../lib/errText'
 import { ApiError } from '../lib/api'
 import { PageTitle } from './PageTitle'
 import { Surface } from './Surface'
@@ -80,8 +80,11 @@ export function LoadError({ what, error, onRetry }: {
               directly under a headline that had already named what failed. `readableErrText`
               returns '' for exactly that closed set and passes a backend-authored message through
               untouched, so "name is required" still reaches the user. */}
-          {readableErrText(error)
-            || "The server didn't respond — this is just a load error, and nothing was lost."}
+          {readableErrText(error) || (serverAnswered(error)
+            // A status the server itself answered with (a 500 from a crash in the handler) is an
+            // answer: saying it did not respond sends the reader to check a server that is up.
+            ? `The server answered with an error (HTTP ${failedStatus(error)}) — this is just a load error, and nothing was lost.`
+            : "The server didn't respond — this is just a load error, and nothing was lost.")}
         </p>
       </div>
       {onRetry && (

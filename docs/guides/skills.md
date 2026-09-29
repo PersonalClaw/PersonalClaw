@@ -179,15 +179,35 @@ present" rule stays predictable.
 **Semantic matching runs alongside it.** `get_surfaced_skills` prefers
 `surfacing.surface_skills`, which scores each candidate as
 `max(cosine similarity of the message against the skill's cached description
-embedding, keyword score)` — semantic gate 0.55, keyword gate 0.7 — then ranks
-by score and **breaks ties by `use_count`**. Two practical consequences:
+embedding, keyword score)` — keyword gate 0.7 — then ranks by score and **breaks
+ties by `use_count`**.
+
+**Meaning alone picks at most one skill, and only a clear one.** A cosine over the
+0.55 floor is not a match by itself: with a small local embedding model, "yes, go
+ahead" clears it for three skills. A skill joins a turn on meaning only when it
+clears the floor **and** leads the next-closest skill by at least 0.75 standard
+deviations of that message's scores across your library (`SEMANTIC_LEAD`), and
+only when at least five skills could be scored. A message that names a path and
+nothing else ("It's ~/Notes/Home/kitchen.md.") therefore brings no skill with it,
+however close a skill that mentions a similar path scores. The Doctor's surfacing
+simulator prints each skill's lead. Three practical consequences:
 
 - The embedding is of your `description`, not your body and not your triggers. A
   vague description ("helper for docs") is the single biggest reason a skill fails
   to surface on a paraphrase. Write the description as the sentence a user would
-  say.
+  say, and make it distinct from your other skills': two skills that describe the
+  same job lead each other by nothing, so meaning picks neither.
+- Triggers are your own words and are not subject to the lead. If a skill must
+  surface on a phrase, declare it.
 - No embedding model bound, or any error at all, degrades to the pure keyword
   path. Triggers are the floor, not the optional extra.
+
+**Which skills joined a turn is shown on the turn.** The chat names them ("used
+skill trip-research") under the answer, from the moment the turn starts — a turn
+that only calls tools, or that you stop, shows it too. The record is kept on the
+message that started the turn (`meta.skills_used`) — yours, or the one a loop, an
+automation or a subagent's report started it with — the message each skill was
+attached to. A loop's page shows the skills its latest cycle used the same way.
 
 **Then the budget.** At most `skills.max_triggered` skills surface per turn
 (**default 3**), so on a broad message your skill is competing with two others at

@@ -161,6 +161,33 @@ const OPAQUE_FAILURE = [
   /^HTTP \d{3}$/,
 ]
 
+/** What a proxy or tunnel in front of the server answers when the server itself did not: Bad
+ *  Gateway, Service Unavailable, Gateway Timeout. With no sentence of the server's own in the body,
+ *  "it didn't respond" is the true account of them. */
+const NO_ANSWER_STATUSES = new Set([502, 503, 504])
+
+/** The HTTP status a failed request came back with, or `0` when it came back with none: the fetch
+ *  itself failed, or the rejection never was a response. Read from the error's `status` (every
+ *  `ApiError` carries one) or from the `HTTP <status>` placeholder `errEnvelope` writes for a body it
+ *  will not show. */
+export function failedStatus(error: unknown): number {
+  const status = (error as { status?: unknown } | null)?.status
+  if (typeof status === 'number' && status >= 400) return status
+  const raw = error instanceof Error ? error.message.trim() : ''
+  const m = /^HTTP (\d{3})$/.exec(raw)
+  return m ? Number(m[1]) : 0
+}
+
+/** Whether the server itself answered a failed request, so a surface must not say it didn't respond.
+ *
+ *  🔴 A 500 is an answer. `LoadError` read every rejection it could not show as "The server didn't
+ *  respond", and a read the gateway failed with a 500 — a crash inside the handler — said exactly that
+ *  on Memory Studio, over a server that was up and had just answered. */
+export function serverAnswered(error: unknown): boolean {
+  const status = failedStatus(error)
+  return status > 0 && !NO_ANSWER_STATUSES.has(status)
+}
+
 /** The message from a rejection, or `''` when it says nothing a user can act on.
  *
  *  Callers with their own written fallback do `readableErrText(e) || 'their sentence'`. Returning

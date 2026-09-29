@@ -304,6 +304,8 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // `draftStore` the file/artifact viewers already take from their hosts. A ref, not state: it is
   // written on every keystroke and must never re-render the list.
   const docDrafts = useRef(new Map<string, DocDraft>())
+  // Same reason, for an unsaved edit to a fact's value (keyed by the fact's key).
+  const factDrafts = useRef(new Map<string, string>())
   const [hopDepth, setHopDepth] = useState(1)
   const [addMode, setAddMode] = useState<'fact' | 'lesson' | 'entity' | 'proposals' | null>(null)
   // Which graph the canvas draws. Records is the historical view; Entities is the
@@ -684,7 +686,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           </div>
         ) : selected ? (
           <StudioInspector item={selected} onDelete={removeSelected} onSaved={reloadAll}
-            onSlotChanged={reloadSlots} docDrafts={docDrafts.current} />
+            onSlotChanged={reloadSlots} docDrafts={docDrafts.current} factDrafts={factDrafts.current} />
         ) : (
           <div className="grid flex-1 place-items-center p-6 text-center">
             <div className="text-on-surface-low">
@@ -707,11 +709,13 @@ const ADD_MODE_TITLE: Record<'fact' | 'lesson' | 'entity' | 'proposals', string>
  *  their record, its entity backlinks + evidence tags, and a Delete; an Entity shows its
  *  identity + what links to it (the side drawer); a Slot opens its editor; a Document
  *  opens the reused markdown editor inline. */
-function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts }: {
+function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, factDrafts }: {
   item: StudioItem; onDelete: () => void; onSaved: () => void; onSlotChanged: () => void
   /** Host-owned per-doc draft cache — see `StudioDocEditor`. Owned by `MemoryStudio` because
    *  THIS component is what unmounts the editor when the selection changes. */
   docDrafts: Map<string, DocDraft>
+  /** The same, for an unsaved edit to a fact's value — see `FactValueEditor`. */
+  factDrafts: Map<string, string>
 }) {
   const Icon = STUDIO_KIND_META[item.kind].icon
   // A slot is not "delete"-able from here: it is a register — its LINES are retired
@@ -747,10 +751,8 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts }: 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {item.kind === 'fact' && item.fact && (
           <div data-type="body-s" className="flex flex-col gap-3">
-            <div>
-              <Eyebrow className="mb-1">Value</Eyebrow>
-              <pre data-type="caption" className="whitespace-pre-wrap rounded-lg bg-surface-high px-3 py-2 text-on-surface">{readValue(item.fact.value_json)}</pre>
-            </div>
+            {/* Keyed: a different fact is a different edit, restored from `factDrafts` if it has one. */}
+            <FactValueEditor key={item.fact.key} fact={item.fact} onSaved={onSaved} drafts={factDrafts} />
             <StudioMeta pairs={[
               ['Scope', (item.fact.scope || 'global') + (item.fact.scope_ref ? ` · ${item.fact.scope_ref}` : '')],
               ['Source', item.fact.source || '—'], ['Tier', item.fact.tier || 'semantic'],
@@ -877,6 +879,111 @@ function RecordLinks({ item }: { item: StudioItem }) {
           {l.context && <div className="mt-0.5 text-on-surface-low">{l.context}</div>}
         </div>
       ))}
+    </div>
+  )
+}
+
+/** A stored value as it came off the wire: the JSON it was written as, or the raw text when it is
+ *  not JSON at all. Parsed ONCE — an edit changes the value the fact holds, so it must start from
+ *  that value, not from `readValue`'s display form (which unwraps a JSON string it finds inside). */
+function storedValueOf(raw: string | undefined): unknown {
+  if (raw == null) return ''
+  try { return JSON.parse(raw) } catch { return raw }
+}
+
+/** A fact's value, and the edit that changes it where it is, under the same key.
+ *
+ *  🔴 A FACT COULD NOT BE EDITED. The inspector showed its value read-only, and the only way to
+ *  change one was "+ Fact": typing its key again from memory and its whole value from scratch — and
+ *  a key the add form's prefix check does not know could not be re-added at all. The write was
+ *  always there: `PUT /api/memory/semantic` updates a key that exists and keeps its scope, records
+ *  the value it replaced in the Audit tab (where the change can be undone), and puts back any hidden
+ *  value a `[REDACTED: …]` marker stands for. A saved edit is the owner's own statement, so the fact
+ *  becomes one you entered, at full confidence.
+ *
+ *  A value the fact holds as structured data (an object, a list, a number) is edited as JSON and
+ *  must stay valid JSON, so an edit can never quietly turn a structure into a sentence.
+ *
+ *  The unsaved text lives in the host's `drafts` (keyed by the fact's key) for the reason
+ *  `StudioDocEditor`'s does: the Studio unmounts the inspector on every selection change, and an
+ *  edit that vanished with it would be lost with nothing said.
+ */
+export function FactValueEditor({ fact, onSaved, drafts }: {
+  fact: SemanticEntry
+  onSaved: () => void
+  drafts: Map<string, string>
+}) {
+  const stored = useMemo(() => storedValueOf(fact.value_json), [fact.value_json])
+  const asText = typeof stored === 'string'
+  const initial = asText ? (stored as string) : JSON.stringify(stored, null, 2)
+  const cached = drafts.get(fact.key)
+  const [editing, setEditing] = useState(cached !== undefined)
+  const [draft, setDraft] = useState(cached ?? initial)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  // A fresh read of what is stored (after a save, or a change made elsewhere) is the new baseline;
+  // an edit still in progress is kept.
+  useEffect(() => { if (!drafts.has(fact.key)) setDraft(initial) }, [fact.key, initial, drafts])
+  const dirty = editing && draft !== initial
+  useUnsavedGuard(dirty)
+  const edit = (next: string) => {
+    setDraft(next)
+    if (next === initial) drafts.delete(fact.key)
+    else drafts.set(fact.key, next)
+  }
+  const cancel = () => { drafts.delete(fact.key); setDraft(initial); setErr(''); setEditing(false) }
+  const save = async () => {
+    if (!draft.trim()) { setErr('A fact needs a value. To remove it, delete the fact.'); return }
+    let value: unknown = draft
+    if (!asText) {
+      try { value = JSON.parse(draft) } catch {
+        setErr('This fact holds structured data, so its value has to stay valid JSON.')
+        return
+      }
+    }
+    setBusy(true)
+    setErr('')
+    try {
+      await api.writeSemantic(fact.key, value)
+      drafts.delete(fact.key)
+      setEditing(false)
+      setSaved(true); window.setTimeout(() => setSaved(false), 1800)
+      onSaved()
+    } catch (e) {
+      // The draft stays, so the text survives a refused save; the reason is the server's own.
+      setErr(e instanceof Error ? e.message : 'Save failed')
+    }
+    setBusy(false)
+  }
+  return (
+    <div>
+      <div className="mb-xs flex items-center gap-s">
+        <Eyebrow>Value</Eyebrow>
+        {!editing && (
+          <Button variant="ghost" size="sm" onClick={() => { setDraft(cached ?? initial); setEditing(true) }}
+            ariaLabel={`Edit the value of ${fact.key}`}><FileEdit size={13} /> Edit</Button>
+        )}
+        <SavedToast show={saved} />
+      </div>
+      {editing ? (
+        <div className="flex flex-col gap-s">
+          <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={asText ? 4 : 8} autoFocus
+            spellCheck={asText} aria-label={`Value of ${fact.key}`}
+            data-type="caption" className={`w-full resize-y rounded-lg bg-surface-high px-m py-s text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary ${asText ? '' : 'font-mono'}`} />
+          {!asText && <p data-type="caption" className="text-on-surface-low">Structured data — keep it valid JSON.</p>}
+          <div className="flex items-center gap-s">
+            <Button size="sm" onClick={save} loading={busy} loadingLabel="Saving…" disabled={!dirty || busy}
+              disabledReason={!dirty && !busy ? 'Nothing changed yet' : undefined}><Save size={14} /> Save</Button>
+            {/* Not held while a save is in flight: a save already sent still lands, and what became of
+                it — Saved, or the server's reason — is shown whether or not the editor is still open. */}
+            <Button variant="ghost" size="sm" onClick={cancel}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <pre data-type="caption" className="whitespace-pre-wrap rounded-lg bg-surface-high px-m py-s text-on-surface">{readValue(fact.value_json)}</pre>
+      )}
+      {err && <FieldError className="mt-s">{err}</FieldError>}
     </div>
   )
 }

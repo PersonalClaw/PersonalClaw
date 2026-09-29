@@ -3,10 +3,19 @@
 Stop riding the **entire** tool-schema set on every model turn. Surface only a
 per-turn relevant projection: a small always-include CORE ∪ top-K by
 ``max(cosine(query, tool_embedding), keyword_overlap)`` ∪ structural hints
-(a URL in the turn → web/fetch tools; "schedule"/"remind" → schedule tools; a
-path → file tools) ∪ the **sticky set** (tools already CALLED this session stay
-available). Mirrors :mod:`skills.surfacing` (shared embedder, fingerprint-keyed
-cache, never-raise) — does for tools what surfacing does for skills.
+(a URL in the turn → web/fetch tools; "remind me", "every Monday" → the schedule tools and
+``automation_create``; "when a new file lands in …" → ``automation_create``) ∪ the **sticky
+set** (tools already CALLED this session stay available). Mirrors :mod:`skills.surfacing`
+(shared embedder, fingerprint-keyed cache, never-raise) — does for tools what surfacing does
+for skills.
+
+**A hint names tools by their words, never by part of a word** (:func:`_names_fragment`). A
+hint is admitted before anything the scores rank, so a loose one takes the room the ranked
+tools needed: a path in the request used to force every tool whose name merely CONTAINED
+"read", "file", "dir" or "edit" — twenty-seven of them on one catalog, ``task_ready`` among
+them for "ready" — and on a 32,768-token window they filled the schema budget before the one
+tool the request named ranked first. So hints match whole words, and there is no path hint:
+the file tools a path calls for are the core ones, which ride every turn.
 
 **Fails OPEN, the inverse of the egress layer:** a hidden tool is a capability
 regression, not a safety risk, so every uncertainty (no embed model, error, low
@@ -63,20 +72,37 @@ def schema_budget_chars(window_tokens: int | None) -> int | None:
 DEFAULT_SEMANTIC_THRESHOLD = 0.55
 _KEYWORD_GATE = 0.5  # word-overlap fraction to count a keyword hit
 
-# Structural hints: a regex over the user's request → tool-name substrings to force-include.
-# Cheap detectors for the obvious "this turn clearly needs X".
+#: A cadence or a reminder: "every Monday", "every 15 minutes", "daily", "remind me",
+#: "message me on Telegram".
+_CADENCE = (
+    r"\bschedul|\bremind|\bcron\b|\bdaily\b|\bweekly\b|\bmonthly\b|\bhourly\b"
+    r"|\bevery\s+(other\s+)?(day|week|weekday|weekend|hour|minute|month|morning|evening|night"
+    r"|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|\d+\s*(min|minute|hour|day|week)s?)\b"
+    r"|\b(message|text|ping|notify|remind)\s+me\b"
+)
+
+#: Something that should happen when something else does: "when a new PDF lands in …",
+#: "whenever the build fails", "set that up as an automation".
+_EVENT = (
+    r"\bwhen(ever)?\b[^.?!\n]{0,80}\b(lands?|arrives?|appears?|comes?\s+in|changes?"
+    r"|shows?\s+up|finish(es)?|fails?|completes?"
+    r"|(is|are|gets?)\s+(added|created|modified|updated|saved|uploaded))\b"
+    r"|\bautomat(e|es|ed|ion|ions|ically)\b|\b(each|every)\s+time\b"
+)
+
+# Structural hints: a regex over the user's request → the tools it plainly needs, named by the
+# words of their names (`_names_fragment`) or by a whole name. Cheap detectors for the obvious
+# "this turn clearly needs X".
 _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (r"https?://|www\.|\.com\b|\.org\b", ("web", "fetch", "url", "search", "browse")),
-    # "Remind me", "every day": the tools that schedule are the one-off and the recurring task
-    # (`set_onetime_task`, `set_recurring_task`) — no tool is named for scheduling itself.
-    (
-        r"\bschedul|\bremind|\bcron\b|every (day|week|hour)|daily|weekly",
-        ("schedule", "cron", "trigger", "onetime", "recurring"),
-    ),
-    (
-        r"/|\.py\b|\.ts\b|\.md\b|\bfile\b|\bdirectory\b|\bfolder\b",
-        ("read", "write", "edit", "file", "dir", "glob", "grep"),
-    ),
+    # A URL is fetched or browsed. Not "search": that word names every search tool of every
+    # server (issues, repositories, docs, tasks), none of which reads a URL.
+    (r"https?://|www\.|\.com\b|\.org\b", ("web", "fetch", "url", "browse")),
+    # "Remind me", "every Monday at 15:10": the one-off and the recurring task schedule the agent
+    # itself (`set_onetime_task`, `set_recurring_task`); an automation is what sends the owner
+    # words on a cadence or runs something for them, and it is the one the reminder asks for.
+    (_CADENCE, ("schedule", "cron", "trigger", "onetime", "recurring", "automation_create")),
+    (_EVENT, ("automation_create",)),
     # shell/exec → bash (the single env interface). Covers "run the command", a
     # CLI verb, AND git/test/lint language — those are bash commands now, not their
     # own tools, so all of it should surface bash. Matched by the shell tools' own names
@@ -91,6 +117,24 @@ _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (r"\bremember|\brecall|\bmemor|\blesson", ("memory", "recall", "lesson")),
     (r"\btask\b|\btodo\b|\bbacklog", ("task",)),
 )
+
+
+def _name_words(name: str) -> set[str]:
+    """A tool name's words: split at every character that is not a letter or digit, and where a
+    lower-case letter meets an upper-case one (``openaiDeveloperDocs``)."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    return {w for w in re.split(r"[^a-z0-9]+", spaced.lower()) if w}
+
+
+def _names_fragment(name: str, fragment: str) -> bool:
+    """Whether a hint's ``fragment`` names the tool ``name``: the whole name, the name a server
+    serves it under (``mcp/box/run_script`` for ``run_script``), or one of its words, plural
+    included. Never part of a word — "read" does not name ``task_ready``."""
+    low = name.lower()
+    if fragment in (low, re.split(r"/|__", low)[-1]):
+        return True
+    words = _name_words(name)
+    return fragment in words or f"{fragment}s" in words or f"{fragment}es" in words
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -148,6 +192,10 @@ class ToolRetriever:
         # core = tools that must never be filtered out (control/orientation).
         self._core = {n for n, d in self._by_name.items() if _is_core(n, d)}
         self._sticky: set[str] = set()
+        # The tools the last request's hints named, carried into ONE next turn when that turn's
+        # request names none: "It's ~/Notes/…" answers the question the agent asked about the
+        # request before it, and the automation that request plainly needed is still the task.
+        self._carried: set[str] = set()
         self._embed_cache: dict[str, list[float] | None] = {}  # name → vec (None = tried, failed)
         self._embed_model = ""
         self._last_surfaced = len(self._defs)  # tools surfaced last select() (for hidden_count)
@@ -164,8 +212,7 @@ class ToolRetriever:
         for pattern, frags in _STRUCTURAL_HINTS:
             if re.search(pattern, q):
                 for name in self._by_name:
-                    low = name.lower()
-                    if any(f in low for f in frags):
+                    if any(_names_fragment(name, f) for f in frags):
                         hinted.add(name)
         return hinted
 
@@ -263,13 +310,16 @@ class ToolRetriever:
             sum(self._chars.get(n, 0) for n in pool_names) <= budget_chars
         )
         if total <= self._k and within_budget:
+            self._carried = self._structural((query or "").strip())
             return pool  # no-op: everything fits
 
         q = (query or "").strip()
         # never surface a tool outside the candidate pool
         core = self._core & pool_names
         sticky = (self._sticky & pool_names) - core
-        structural = (self._structural(q) & pool_names) - core - sticky
+        hinted = self._structural(q)
+        carried, self._carried = self._carried, hinted
+        structural = ((hinted or carried) & pool_names) - core - sticky
         scores = self._scores(q, pool_names - core)
 
         def ranked(names) -> list[str]:

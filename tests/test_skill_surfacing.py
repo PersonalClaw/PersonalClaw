@@ -145,11 +145,16 @@ class _StubEmbedder:
 def test_semantic_surfaces_paraphrase_keyword_misses(monkeypatch, tmp_path):
     monkeypatch.setattr(surf, "_active_embedder", lambda: (_StubEmbedder(), "stub:v1"))
     # triggers say "invoice"; query says "charge" — no keyword overlap, but both
-    # embed onto the billing axis → semantic hit.
+    # embed onto the billing axis → semantic hit. The library around it is what lets meaning
+    # tell a clear match: billing is the one skill on the query's axis.
     skills = [
         _skill("billing", "handle invoice questions", "invoice help", path=str(tmp_path / "b.md"))
+    ] + [
+        _skill(f"other-{n}", f"unrelated task {n}", path=str(tmp_path / f"o{n}.md"))
+        for n in range(4)
     ]
-    Path(skills[0]["path"]).write_text("x")
+    for s in skills:
+        Path(s["path"]).write_text("x")
     cache = _EmbedCache(path=tmp_path / ".emb.json")
     out = surface_skills(
         "help me with this charge", skills, max_skills=3, semantic_threshold=0.9, embed_cache=cache

@@ -14,9 +14,8 @@ per-turn telemetry that survives a reload.
   record. Today that telemetry exists only as a live ``activity_event {kind:"stats"}``
   **sentence** (``chat_runner``'s "Turn complete" line), so a reload lost it entirely.
   It now rides the assistant message's ``meta`` — the same seam ``memory_citations``
-  and ``skills_used`` already use, which ``chat_persistence`` writes and both restore
-  paths read back — so no new file, no new channel, and no new persisted shape beyond
-  one additive key.
+  already uses, which ``chat_persistence`` writes and both restore paths read back — so
+  no new file, no new channel, and no new persisted shape beyond one additive key.
 * :data:`TURN_SUMMARY_KEY` / :func:`build_turn_summary` / :func:`summarize_session_turn`
   / :func:`stamp_turn_summary` — the per-turn SUMMARY LABEL. §B.3 asks
   for a label that makes a mark "convey *meaning* rather than the opening words"; an

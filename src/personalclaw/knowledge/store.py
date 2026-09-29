@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Callable
 from uuid import uuid4
 
-from personalclaw.sqlite_compat import FTS5_REMEDY, probe, sqlite3
+from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
 from .embedding_fingerprint import (
     FINGERPRINT_COLUMNS,
@@ -457,13 +457,10 @@ class KnowledgeStore:
         if not probe().fts5:
             raise RuntimeError(FTS5_REMEDY)
         self.db_path = db_path
-        # check_same_thread=False: the process-wide store (get_knowledge_store) is
-        # touched from both the event loop and run_in_executor threads (agent tools).
-        # Access is serialized by the single ingest queue + WAL + busy_timeout, so
-        # cross-thread use is safe; without this it raises ProgrammingError.
-        self.db = sqlite3.connect(
-            db_path, timeout=30, isolation_level=None, check_same_thread=False
-        )
+        # The process-wide store (get_knowledge_store) is used from the event loop, from every
+        # request a page makes, from the agent's tools and from the ingest and poll workers, all
+        # at once — so its one connection takes every call into the driver one at a time.
+        self.db = connect_shared(db_path, timeout=30, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.execute("PRAGMA foreign_keys=ON")

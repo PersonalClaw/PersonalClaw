@@ -4,8 +4,11 @@ run/loop panel's "used N skills" chip and the learned-chip tap-target need.
 Both ride surfaces the frontend already receives, so the change's "zero new WS/SSE
 channels" clause holds by construction rather than by promise:
 
-* **T2.1** ``meta["skills_used"]`` on the finalized assistant message, mirroring the
-  proven ``memory_citations`` seam. Only ADMITTED and REDUCED decisions are in it — a
+* **T2.1** ``meta["skills_used"]`` on the turn's USER message — the message each skill was
+  attached to, which every turn has — plus the same list on an ``activity_event`` of kind
+  ``skills`` the moment the turn is put together. It used to ride the assistant message whose
+  text settled, so a turn that only called tools, or was stopped before it said a word, never
+  showed which skill had joined it. Only ADMITTED and REDUCED decisions are in it — a
   REFUSED skill was NAMED to the agent but none of its content loaded, which is the same
   reading ``SkillAllocation.loaded`` takes for the turn-time use counter. Counting a
   refusal as a use would make the chip claim work the model never saw.
@@ -99,13 +102,18 @@ def turn(tmp_path, monkeypatch):
 
     session = state.get_or_create_session("s-lv2")
 
-    async def _run(metadata: dict) -> object:
+    async def _run(metadata: dict, *, role: str | None = "user", text: str = "hello") -> object:
         monkeypatch.setattr(
             chat_runner,
             "assemble_context",
-            lambda *_a, **_k: AssembledContext(message="hello", metadata=dict(metadata)),
+            lambda *_a, **_k: AssembledContext(message=text, metadata=dict(metadata)),
         )
-        await chat_runner.run_chat(state, session, "hello")
+        # As a dispatcher does: the turn's own message is on the session before its turn runs —
+        # the user's from the chat or a channel, a `nudge` from a loop. `role=None` is the one
+        # dispatcher that appends none: a subagent's report delivered to an idle chat.
+        if role:
+            session.append(role, text, "msg msg-u" if role == "user" else f"msg msg-{role}")
+        await chat_runner.run_chat(state, session, text)
         return session
 
     _run.state = state  # type: ignore[attr-defined]
@@ -113,11 +121,19 @@ def turn(tmp_path, monkeypatch):
     return _run
 
 
-def _last_assistant_meta(session) -> dict:
-    msgs = [m for m in session.messages if m.get("role") == "assistant"]
-    assert msgs, "the turn produced no assistant message — the harness, not the contract, broke"
+def _last_meta(session, role: str) -> dict:
+    msgs = [m for m in session.messages if m.get("role") == role]
+    assert msgs, f"the turn produced no {role} message — the harness, not the contract, broke"
     meta = msgs[-1].get("meta")
     return meta if isinstance(meta, dict) else {}
+
+
+def _skills_events(state) -> list[dict]:
+    return [
+        c.args[1]
+        for c in state.broadcast_ws.call_args_list
+        if c.args and c.args[0] == "activity_event" and c.args[1].get("kind") == "skills"
+    ]
 
 
 # ── T2.1 ──────────────────────────────────────────────────────────────────────────
@@ -135,7 +151,7 @@ async def test_skills_used_carries_admitted_and_reduced_but_never_refused(turn):
             ]
         }
     )
-    used = _last_assistant_meta(turn.session)["skills_used"]
+    used = _last_meta(turn.session, "user")["skills_used"]
     # Allocation order preserved: the hover list reads in the order they were admitted.
     assert [r["name"] for r in used] == ["git-hygiene", "code-review"]
     assert [r["state"] for r in used] == ["admitted", "reduced"]
@@ -145,6 +161,31 @@ async def test_skills_used_carries_admitted_and_reduced_but_never_refused(turn):
     # Exactly the three keys the frontend was briefed on: the allocator's bookkeeping
     # (tier / cap_tokens / body_tokens / reason / forced) is not the chip's business.
     assert all(set(r) == {"name", "state", "loaded_tokens"} for r in used)
+    # One record per turn: the assistant message does not carry a second copy.
+    assert "skills_used" not in _last_meta(turn.session, "assistant")
+
+
+@pytest.mark.asyncio
+async def test_the_turn_says_which_skills_joined_it_as_it_is_put_together(turn):
+    """Live, by name, on the existing activity channel — before the model says anything."""
+    await turn(
+        {
+            "skill_decisions": [
+                _decision("imported/notes/trip-research", SkillLoadState.ADMITTED, 900),
+                _decision("code-review", SkillLoadState.REDUCED, 140),
+            ]
+        }
+    )
+    events = _skills_events(turn.state)
+    assert len(events) == 1, events
+    event = events[0]
+    assert event["session"] == turn.session.key
+    assert [s["name"] for s in event["skills"]] == ["imported/notes/trip-research", "code-review"]
+    assert event["text"] == (
+        "Using skills imported/notes/trip-research, code-review (its summary only)"
+    )
+    order = [c.args[0] for c in turn.state.broadcast_ws.call_args_list]
+    assert order.index("activity_event") < order.index("chat_done"), "said before the turn ended"
 
 
 @pytest.mark.asyncio
@@ -155,7 +196,8 @@ async def test_no_skills_omits_the_key_entirely(turn):
     before deciding not to render a chip.
     """
     await turn({})
-    assert "skills_used" not in _last_assistant_meta(turn.session)
+    assert "skills_used" not in _last_meta(turn.session, "user")
+    assert _skills_events(turn.state) == [], "a turn no skill joined announces none"
 
 
 @pytest.mark.asyncio
@@ -166,12 +208,54 @@ async def test_a_later_turn_does_not_inherit_an_earlier_turns_skills(turn):
     stamped with skills it never loaded — a chip that lies in the most ordinary way.
     """
     await turn({"skill_decisions": [_decision("git-hygiene", SkillLoadState.ADMITTED, 900)]})
-    first = _last_assistant_meta(turn.session)["skills_used"]
+    first = _last_meta(turn.session, "user")["skills_used"]
     assert [r["name"] for r in first] == ["git-hygiene"]
 
     await turn({})  # second turn, no allocation at all
-    assert "skills_used" not in _last_assistant_meta(turn.session)
+    assert "skills_used" not in _last_meta(turn.session, "user")
     assert turn.session._skills_used == []
+
+
+@pytest.mark.asyncio
+async def test_a_turn_a_loop_starts_keeps_its_record_on_its_own_nudge(turn):
+    """Every loop cycle runs on a `nudge`, and an automation's or a subagent's turn on a row of
+    its own: none has a user message, and the latest one belongs to an EARLIER turn.
+
+    Stamped on "the latest user message", a cycle's skills overwrote the record of the turn
+    before it — which then showed skills it never loaded — and the cycle itself kept none, so the
+    loop's page showed nothing.
+    """
+    await turn({"skill_decisions": [_decision("git-hygiene", SkillLoadState.ADMITTED, 900)]})
+    await turn(
+        {"skill_decisions": [_decision("release-notes", SkillLoadState.ADMITTED, 700)]},
+        role="nudge",
+        text="[auto-nudge cycle 2]\nkeep going",
+    )
+    earlier = _last_meta(turn.session, "user")["skills_used"]
+    assert [r["name"] for r in earlier] == ["git-hygiene"], "an earlier turn's record was rewritten"
+    cycle = _last_meta(turn.session, "nudge").get("skills_used") or []
+    assert [r["name"] for r in cycle] == ["release-notes"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_with_no_message_of_its_own_marks_no_other(turn):
+    """A subagent's report delivered to an idle chat starts a turn with no row of its own: its
+    skills are still announced, and no earlier message takes them."""
+    await turn({"skill_decisions": [_decision("git-hygiene", SkillLoadState.ADMITTED, 900)]})
+    await turn(
+        {"skill_decisions": [_decision("release-notes", SkillLoadState.ADMITTED, 700)]},
+        role=None,
+        text="The research subagent finished: three sources, summary attached.",
+    )
+    earlier = _last_meta(turn.session, "user")["skills_used"]
+    assert [r["name"] for r in earlier] == ["git-hygiene"], "an earlier turn's record was rewritten"
+    stamped = [m for m in turn.session.messages if (m.get("meta") or {}).get("skills_used")]
+    assert len(stamped) == 1, "exactly one message carries a record: the first turn's own"
+    announced = _skills_events(turn.state)
+    assert [[s["name"] for s in e["skills"]] for e in announced] == [
+        ["git-hygiene"],
+        ["release-notes"],
+    ]
 
 
 # ── The three learned-chip origins ────────────────────────────────────────────────
@@ -381,23 +465,33 @@ def test_the_loop_detail_view_serves_the_session_key_the_cockpit_reads(monkeypat
 
 
 def test_session_detail_does_not_clobber_skills_used_with_cls_meta():
-    """`_prepare_messages` overwrites `meta` from `cls` — the assistant message must survive.
+    """`_prepare_messages` overwrites `meta` from `cls` — the record's carriers must survive.
 
-    The cockpit (and ChatPage's graft) read `skills_used` back out of this endpoint, so the
-    overwrite branch sitting one line away from the payload is the risk worth pinning.
+    The cockpit and a chat's reload read `skills_used` back out of this endpoint, off the
+    message that started the turn: the user's, or a loop cycle's nudge. So the overwrite branch
+    sitting one line away from the payload is the risk worth pinning, for both.
     """
     from personalclaw.dashboard.chat_utils import _prepare_messages, parse_cls_meta
 
     used = [{"name": "auto/release-flow", "state": "admitted", "loaded_tokens": 900}]
     out = _prepare_messages(
-        [{"role": "assistant", "content": "hi", "cls": "msg msg-a", "meta": {"skills_used": used}}],
+        [
+            {"role": "user", "content": "hi", "cls": "msg msg-u", "meta": {"skills_used": used}},
+            {
+                "role": "nudge",
+                "content": "[auto-nudge cycle 2]\nkeep going",
+                "cls": "msg msg-nudge",
+                "meta": {"skills_used": used},
+            },
+        ],
         False,
     )
-    assert out[0]["meta"]["skills_used"] == used
+    assert [m["meta"]["skills_used"] for m in out] == [used, used]
     # Vacuity: the clobber branch is LIVE, not dead code this test merely misses. A `cls`
-    # holding a JSON dict does replace `meta` wholesale — which is exactly why a plain
-    # assistant message (`cls="msg msg-a"`, not JSON) has to fall through it.
-    assert parse_cls_meta("msg msg-a") is None
+    # holding a JSON dict does replace `meta` wholesale — which is exactly why the carriers
+    # (`cls="msg msg-u"` / `"msg msg-nudge"`, not JSON) have to fall through it.
+    assert parse_cls_meta("msg msg-u") is None
+    assert parse_cls_meta("msg msg-nudge") is None
     clobbered = _prepare_messages(
         [{"role": "assistant", "content": "hi", "cls": '{"tool": "read"}', "meta": {"gone": 1}}],
         False,

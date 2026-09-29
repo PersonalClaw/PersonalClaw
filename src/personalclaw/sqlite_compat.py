@@ -24,8 +24,10 @@ below reports what actually resolved so the doctor can show it.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 try:  # the newer bundled build (FTS5 + JSON1) when the wheel is installed
     import pysqlite3 as sqlite3  # type: ignore[import-not-found]
@@ -36,7 +38,15 @@ except ImportError:  # the platform's stdlib build
 
     _DRIVER = "sqlite3"
 
-__all__ = ["sqlite3", "SqliteCapabilities", "probe", "driver_name", "FTS5_REMEDY"]
+__all__ = [
+    "sqlite3",
+    "SqliteCapabilities",
+    "probe",
+    "driver_name",
+    "FTS5_REMEDY",
+    "SharedConnection",
+    "connect_shared",
+]
 
 # The one actionable remedy every FTS5 guard shows when the active SQLite build has
 # no FTS5 compiled in. Names the concrete fix — the
@@ -97,3 +107,117 @@ def probe() -> SqliteCapabilities:
     except sqlite3.Error:
         pass
     return SqliteCapabilities(driver=_DRIVER, version=version, fts5=fts5, json1=json1)
+
+
+# ── One connection, several threads ─────────────────────────────────────────────────────────
+
+
+class _SharedCursor(sqlite3.Cursor):
+    """A cursor of a :class:`SharedConnection`: every call into the driver holds the connection's
+    lock. Stepping happens on ``execute`` AND on every fetch, so both are held, and so is
+    iteration (``for row in cursor``)."""
+
+    def execute(self, sql: str, parameters: Any = (), /) -> "_SharedCursor":
+        with self.connection._serial:
+            return super().execute(sql, parameters)
+
+    def executemany(self, sql: str, seq_of_parameters: Any, /) -> "_SharedCursor":
+        with self.connection._serial:
+            return super().executemany(sql, seq_of_parameters)
+
+    def executescript(self, sql_script: str, /) -> "_SharedCursor":
+        with self.connection._serial:
+            return super().executescript(sql_script)
+
+    def fetchone(self) -> Any:
+        with self.connection._serial:
+            return super().fetchone()
+
+    def fetchmany(self, size: int | None = None) -> list[Any]:
+        with self.connection._serial:
+            return super().fetchmany(self.arraysize if size is None else size)
+
+    def fetchall(self) -> list[Any]:
+        with self.connection._serial:
+            return super().fetchall()
+
+    def __next__(self) -> Any:
+        with self.connection._serial:
+            return super().__next__()
+
+    def close(self) -> None:
+        with self.connection._serial:
+            super().close()
+
+
+class SharedConnection(sqlite3.Connection):
+    """A connection one store keeps for the life of the process and several threads use.
+
+    The stores hold ONE connection each and are reached from the event loop, from every request a
+    page makes (each in an executor thread), from the agent's tools and from background workers.
+    ``check_same_thread=False`` only switches the driver's ownership check off; the driver is not
+    safe for two threads inside it on one connection at once. Measured on the memory store: a page
+    reload that reads its entities, their graph and its summary side by side answered 500 with
+    ``IndexError: tuple index out of range`` from a row whose columns were not there, a
+    ``COUNT(*)`` that returned no row at all, and ``InterfaceError: bad parameter or other API
+    misuse`` — several hundred times in five seconds of four threads reading.
+
+    So every call into the driver on this connection — a statement, a fetch, a commit, a rollback,
+    a script, a close — takes this connection's lock, one at a time. That is the parallelism
+    SQLite already allowed one connection (its own mutex serializes the calls); what it adds is
+    that the driver's bookkeeping around them can no longer interleave. The lock is reentrant, so a
+    fetch the driver makes inside its own call does not wait on itself.
+
+    Open one with :func:`connect_shared`, or pass ``factory=SharedConnection`` to ``connect``.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._serial = threading.RLock()
+
+    def cursor(self, factory: Any = _SharedCursor) -> Any:
+        return super().cursor(factory)
+
+    # The connection's own shortcuts build a cursor in C, where the override above is not seen, so
+    # each one goes through a cursor of this connection instead.
+    def execute(self, sql: str, parameters: Any = (), /) -> Any:
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(self, sql: str, parameters: Any, /) -> Any:
+        return self.cursor().executemany(sql, parameters)
+
+    def executescript(self, sql_script: str, /) -> Any:
+        return self.cursor().executescript(sql_script)
+
+    def commit(self) -> None:
+        with self._serial:
+            super().commit()
+
+    def rollback(self) -> None:
+        with self._serial:
+            super().rollback()
+
+    def close(self) -> None:
+        with self._serial:
+            super().close()
+
+    def __exit__(self, *exc: Any) -> Any:
+        with self._serial:
+            return super().__exit__(*exc)
+
+    # A build without loadable extensions has neither method, and ``super()`` raises the same
+    # AttributeError the base connection would, which is what the callers already catch.
+    def enable_load_extension(self, enabled: bool, /) -> None:
+        with self._serial:
+            super().enable_load_extension(enabled)
+
+    def load_extension(self, path: str, /, **kwargs: Any) -> None:
+        with self._serial:
+            super().load_extension(path, **kwargs)
+
+
+def connect_shared(database: str, **kwargs: Any) -> SharedConnection:
+    """Open ``database`` as a :class:`SharedConnection`: the way a store opens the connection it
+    keeps and shares between threads (``check_same_thread=False`` is implied)."""
+    kwargs["check_same_thread"] = False
+    return sqlite3.connect(database, factory=SharedConnection, **kwargs)

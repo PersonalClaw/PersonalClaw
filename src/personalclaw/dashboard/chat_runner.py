@@ -26,6 +26,7 @@ from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
+    in_flight_index,
     prior_turns_transcript,
     save_session_to_history,
 )
@@ -1059,18 +1060,6 @@ def _flush_segment(
             meta = {}
         meta["memory_citations"] = session._memory_citations
         last_msg["meta"] = meta
-    # Skills used this turn: stamp the admitted/reduced set onto
-    # the same meta dict so a run or loop panel can render "used N skills" with the names on
-    # hover. Rides the proven `memory_citations` seam — an additive meta key on a message the
-    # frontend already receives — so no new WS/SSE channel is introduced. Omitted entirely
-    # when the turn loaded nothing, so "no skills" is an absent key rather than an empty list
-    # the FE would have to special-case.
-    if session._skills_used:
-        meta = last_msg.get("meta")
-        if not isinstance(meta, dict):
-            meta = {}
-        meta["skills_used"] = session._skills_used
-        last_msg["meta"] = meta
     # If a regenerate is pending, attach the stashed variants to this fresh assistant message.
     attached_variants = False
     if session._pending_variants:
@@ -1399,6 +1388,52 @@ def _mark_image_delivery(session: _ChatSession, delivery: dict[str, str], reason
             else:
                 meta.pop("image_delivery_reason", None)
             return
+
+
+def _skills_joined_line(used: list[dict]) -> str:
+    """The sentence that says which skills joined a turn, as the turn is put together."""
+    names = [
+        f"{u.get('name') or '(unnamed skill)'}"
+        + (" (its summary only)" if u.get("state") == SkillLoadState.REDUCED.value else "")
+        for u in used
+    ]
+    return f"Using skill{'' if len(names) == 1 else 's'} " + ", ".join(names)
+
+
+def _mark_skills_joined(
+    state: DashboardState, session: _ChatSession, in_flight: str, *, nested: bool
+) -> None:
+    """Record on the message that opened this turn which skills joined it, and say so at once.
+
+    On the turn's OWN message — the user's, or the row an automation, a subagent's report or a
+    loop's nudge started it with (:func:`in_flight_index`) — because that is what each skill was
+    attached to, and it is there whatever the turn goes on to do: the record used to ride the
+    assistant message whose TEXT settled, so a turn that only called tools, or was stopped
+    before it said a word, never showed which skill had joined it. Found by that one
+    definition, never by walking back to the latest user message: a turn a loop or an
+    automation started has none of its own, and the latest one belongs to an earlier turn.
+
+    The line goes out as the existing ``activity_event`` (kind ``skills``, with the list), so
+    the chat names the skills while the turn runs and the loop and code cockpits show the line.
+    """
+    used = session._skills_used
+    at = in_flight_index(session, in_flight, nested=nested)
+    if at is not None:
+        m = session.messages[at]
+        meta = m.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+            m["meta"] = meta
+        meta["skills_used"] = used
+    state.broadcast_ws(
+        "activity_event",
+        {
+            "session": session.key,
+            "kind": "skills",
+            "text": _skills_joined_line(used),
+            "skills": used,
+        },
+    )
 
 
 async def _turn_image_input(client: object) -> "ImageInput":
@@ -3239,6 +3274,8 @@ async def run_chat(
             _decisions = _assembled.metadata.get("skill_decisions")
             if isinstance(_decisions, list):
                 session._skills_used = _skills_sent(_decisions, _headroom)
+            if session._skills_used:
+                _mark_skills_joined(state, session, _in_flight_text, nested=_prompt_depth > 0)
             if is_new:
                 ctx_len = _assembled.injected_chars
                 state.broadcast_ws(

@@ -87,6 +87,9 @@ def harness(tmp_path, monkeypatch):
 
         monkeypatch.setattr(chat_runner, "assemble_context", _assemble)
         monkeypatch.setattr(chat_runner, "check_headroom", _check)
+        # As every caller does (the chat handler, a channel, a loop): the user's message is
+        # on the session before its turn runs.
+        session.append("user", "hello", "msg msg-u")
         await chat_runner.run_chat(state, session, "hello")
         return session, seen
 
@@ -147,5 +150,7 @@ async def test_a_skill_the_budget_check_compressed_is_recorded_as_what_was_sent(
         compressed=(Compressed("skill: git-review", 4200, 900, ""),),
     )
     session, _seen = await harness(_client(), {"skill_decisions": decisions}, verdict)
-    used = _last_assistant_meta(session).get("skills_used")
+    # Recorded on the message the skill was attached to: the turn's user message.
+    user = [m for m in session.messages if m.get("role") == "user"][-1]
+    used = (user.get("meta") or {}).get("skills_used")
     assert used == [{"name": "git-review", "state": "reduced", "loaded_tokens": 900}], used

@@ -37,7 +37,7 @@ import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
-import { type SkillUsed, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
+import { type SkillUsed, joinedSkillsOf, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { SURFACE_WIDTHS } from '../../app/appearance'
 import { accentChip } from '../../design/accent'
@@ -387,14 +387,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   }, [confirmStop])
 
   // ── "used N skills" ──────────────────────────────────────────────────────────
-  // The cockpit's live stream carries `chat_status` / `tool_call` / `activity_event` and
-  // nothing else, so the turn's skill allocation is NOT reachable from it — and the change
-  // forbids adding a channel to carry it. It rides the worker's assistant-message `meta`
-  // instead, read through the EXISTING `GET /api/chat/sessions/{key}` (a REST read, not a
-  // new WS/SSE channel). The worker is a real registered session (`get_or_create_session`
-  // in loops/manager), so its key resolves while the gateway holds it; a 404 after a
-  // restart simply leaves the chip off, which is the honest answer for a run whose
-  // transcript is gone.
+  // The turn's skill allocation rides the `meta` of the message that started it — each cycle's
+  // nudge, the message each skill was attached to (`joinedSkillsOf`) — read through the EXISTING
+  // `GET /api/chat/sessions/{key}` (a REST read, not a new WS/SSE channel). The live stream
+  // announces it too, as an `activity_event` line the activity feed below already shows. The
+  // worker is a real registered session (`get_or_create_session` in loops/manager), so its key
+  // resolves while the gateway holds it; a 404 after a restart simply leaves the chip off,
+  // which is the honest answer for a run whose transcript is gone.
   //
   // Re-read on `total_cycles` because a loop allocates skills EVERY cycle: keyed on the
   // session alone, the chip would freeze on cycle 1's allocation for the whole run.
@@ -407,14 +406,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     let alive = true
     api.chatSessionDetail(workerKey).then((d) => {
       if (!alive) return
-      // The LAST assistant message that carried an allocation — i.e. the most recent cycle
-      // that loaded a skill. Deliberately not merged across cycles: the chip answers "what
-      // fed the latest turn", and a union would claim one cycle used skills another did.
+      // The LAST cycle prompt that carried an allocation — i.e. the most recent cycle that
+      // loaded a skill. Deliberately not merged across cycles: the chip answers "what fed
+      // the latest turn", and a union would claim one cycle used skills another did.
       let last: SkillUsed[] = []
       for (const m of d.messages || []) {
-        if (m.role !== 'assistant') continue
-        const s = m.meta?.skills_used
-        if (Array.isArray(s) && s.length) last = s
+        const s = joinedSkillsOf(m)
+        if (s) last = s
       }
       setSkillsUsed(last)
     }).catch(() => { if (alive) setSkillsUsed([]) })

@@ -33,7 +33,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import MemoryProvider
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect_shared, sqlite3
 
 
 def config_dir() -> Path:
@@ -984,7 +984,6 @@ class VectorMemoryStore(MemoryProvider):
         if extra_prefixes:
             self._prefixes.extend(extra_prefixes)
         self._db: sqlite3.Connection | None = None
-        self._db_lock = threading.Lock()
         # FAISS state: one value, swapped whole (see `_Index`). Every change to it — a build, a
         # load, a write adding its vector — and every save holds `_index_lock`; a search takes
         # no lock, it reads `_index` once.
@@ -1015,9 +1014,9 @@ class VectorMemoryStore(MemoryProvider):
     def init(self) -> None:
         """Create DB, apply migrations, set permissions."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(
-            str(self._db_path), check_same_thread=False, isolation_level=None
-        )
+        # Shared by every thread that reaches the store (each page request, the agent's tools, the
+        # background workers), so every call into the driver on it is taken one at a time.
+        self._db = connect_shared(str(self._db_path), isolation_level=None)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=5000")
