@@ -55,10 +55,44 @@ EVENT_FAILED = "automation.run.failed"
 #: would silently fall back to rich blocks for every real channel destination.
 _FLAT_TEXT_PREFIXES = ("channel:",)
 
-#: Max body characters in a delivered notification. A run summary is model output; an unbounded one
-#: pushes the statusUrl off the bottom of a Slack card, which defeats the deep link this session
-#: exists to add.
-BODY_CAP = 600
+#: What a notification's body holds of a result: the record the bell, the notifications page and
+#: the phone read. The bell shows its first line; the page and the phone show it whole. Room for a
+#: result a person reads through (a command's few lines, a morning briefing), short of a log.
+NOTE_BODY_CAP = 1200
+
+#: What a chat channel is sent of a result. More than the notification holds: a chat is where the
+#: owner chose to read results, and a chat message has nothing to open for the rest. Short enough
+#: that, with its title, it is one message on every chat channel that splits long ones.
+CHANNEL_BODY_CAP = 3500
+
+#: The last line of a result cut short, saying where it is whole. A command's output and an agent's
+#: reply are kept on the trigger's history row; a workflow run's summary is on its run's page.
+REST_IN_HISTORY = "The rest is in the trigger's history."
+REST_ON_RUN_PAGE = "The rest is on the run's page."
+
+
+def excerpt(text: str, cap: int, *, rest: str) -> str:
+    """*text* whole when it fits in *cap* characters; else as much as fits, ending where a line
+    ends, and a last line, *rest*, saying where it is whole.
+
+    Cut at a line end because a line is the unit a result is read in: the bell reads a body's first
+    line, and a chat message that stops mid-line reads as a broken one. A first line too long to
+    fit is cut where a word ends, and marked with "…".
+    """
+    text = text or ""
+    if len(text) <= cap:
+        return text
+    room = max(0, cap - len(rest) - 1)
+    kept = text[:room]
+    cut = kept.rfind("\n")
+    if cut > 0:
+        kept = kept[:cut]
+    else:
+        # One line, longer than the room: its words up to the room, and the mark that it goes on.
+        head = kept[: max(0, room - 1)]
+        space = head.rfind(" ")
+        kept = (head[:space] if space > 0 else head).rstrip() + "…"
+    return f"{kept.rstrip()}\n{rest}"
 
 
 def status_url(*, run_id: str = "", trigger_id: str = "") -> str:
@@ -127,7 +161,10 @@ class Delivery:
     event: str
     event_id: str
     title: str
+    #: The result as the notification holds it (:data:`NOTE_BODY_CAP`).
     body: str
+    #: The same result as a chat channel is sent it, with room for more (:data:`CHANNEL_BODY_CAP`).
+    channel_body: str = ""
     status_url: str = ""
     trigger_id: str = ""
     run_id: str = ""
@@ -135,6 +172,9 @@ class Delivery:
     #: The notification kind the gate checks. Defaults per outcome in `build_delivery`.
     kind: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
+    #: Whether this is a failure filed in the Inbox (:func:`files_in_inbox`), as an item whose one
+    #: notification is its view, rather than a notification alone.
+    inbox: bool = False
 
     @property
     def ok(self) -> bool:
@@ -161,7 +201,8 @@ class Delivery:
         return {"kind": self.kind, "title": self.title, "body": self.body, "meta": meta}
 
     def to_text(self) -> str:
-        """The flattened form for a text destination: what a chat channel is sent.
+        """The flattened form for a text destination: what a chat channel is sent — the title, then
+        the result as a chat holds it (:attr:`channel_body`).
 
         A statusUrl is appended as a LINE rather than embedded in prose, so a chat app that
         auto-links bare URLs makes it clickable and a user scanning text finds it at the end. Only
@@ -169,8 +210,8 @@ class Delivery:
         dashboard, so in a chat it's just noise under the result.
         """
         parts = [self.title]
-        if self.body:
-            parts.append(self.body)
+        if self.channel_body:
+            parts.append(self.channel_body)
         if self.status_url and not self.status_url.startswith("#"):
             parts.append(self.status_url)
         return "\n".join(parts)
@@ -181,12 +222,14 @@ class Delivery:
             "event_id": self.event_id,
             "title": self.title,
             "body": self.body,
+            "channel_body": self.channel_body,
             "status_url": self.status_url,
             "trigger_id": self.trigger_id,
             "run_id": self.run_id,
             "destination": self.destination,
             "kind": self.kind,
             "ok": self.ok,
+            "inbox": self.inbox,
             "meta": dict(self.meta),
         }
 
@@ -229,8 +272,11 @@ def build_delivery(
     attempt_key: str = "",
     duration_secs: float = 0.0,
     scheduled: bool = False,
+    inbox: bool = False,
 ) -> Delivery:
     """Assemble one run-completion delivery. Pure.
+
+    *inbox* says the outcome is a failure its trigger files in the Inbox (:func:`files_in_inbox`).
 
     The notification KIND is chosen per outcome, not per emitter: a failure has to be able to
     escalate past a "digest" rule while a success should not, and that is a property of what
@@ -264,7 +310,10 @@ def build_delivery(
         kind = notification_kinds.INFO if ok else notification_kinds.ERROR
     verb = "finished" if ok else "failed"
     title = _redact(f"{name} {verb}")
-    body = _redact(summary or "")[:BODY_CAP]
+    # Masked whole, then sized for each surface: a cut made first could leave half of something the
+    # masker would have recognised whole.
+    result = _redact(summary or "")
+    rest = REST_ON_RUN_PAGE if run_id else REST_IN_HISTORY
     meta: dict[str, Any] = {}
     if duration_secs:
         meta["duration_secs"] = round(float(duration_secs), 3)
@@ -272,13 +321,15 @@ def build_delivery(
         event=event,
         event_id=event_id(trigger_id=trigger_id, run_id=run_id, attempt_key=attempt_key),
         title=title,
-        body=body,
+        body=excerpt(result, NOTE_BODY_CAP, rest=rest),
+        channel_body=excerpt(result, CHANNEL_BODY_CAP, rest=rest),
         status_url=status_url(run_id=run_id, trigger_id=trigger_id),
         trigger_id=trigger_id,
         run_id=run_id,
         destination=destination,
         kind=kind,
         meta=meta,
+        inbox=inbox and not ok,
     )
 
 
@@ -337,6 +388,28 @@ def route_for(trigger: Any, *, ok: bool) -> str:
         return str(getattr(trigger, "delivery", "") or "")
     failure = str(getattr(trigger, "failure_delivery", "") or "")
     return failure or str(getattr(trigger, "delivery", "") or "")
+
+
+#: The route that files a failure in the Inbox: the Triggers page's "If it fails: Inbox", and the
+#: entity's default failure route (`Trigger.failure_delivery`).
+INBOX_ROUTE = "inbox"
+
+
+def files_in_inbox(trigger: Any, *, ok: bool) -> bool:
+    """Whether this outcome of *trigger* is filed in the Inbox: a failure whose own failure route is
+    the Inbox.
+
+    What the Triggers page and the automations guide promise ("If it fails: Inbox"; "a run that
+    FAILS reaches your inbox"), and what a failure is: something waiting on the owner until they
+    deal with it. It was a notification alone, which the Inbox never listed. A result is not filed:
+    the page's words for one are "It still reaches the dashboard", which its notification does, and
+    a result nobody has to act on would only pile up there. A blank failure route ("Same as
+    results") follows the results, so a failure routed that way is a notification too — which is
+    why the result route's `inbox` (the ordinary delivery) does not file anything.
+    """
+    if ok:
+        return False
+    return str(getattr(trigger, "failure_delivery", "") or "").strip() == INBOX_ROUTE
 
 
 #: Volatile patterns stripped before hashing a failure for dedup: ISO timestamps and UUIDs. Without
@@ -451,7 +524,9 @@ CHANNEL_ROUTE_PREFIX = "channel:"
 
 #: The bare destinations a route may name. `""` is a REAL value, not an absent one: `route_for`
 #: treats an empty `failure_delivery` as "inherit `delivery`", which is the third choice a user has.
-ROUTE_VALUES: frozenset[str] = frozenset({"", "inbox", "none"})
+#: `inbox` as a result route is the ordinary delivery, a notification; as a failure route it files
+#: the failure in the Inbox (:func:`files_in_inbox`).
+ROUTE_VALUES: frozenset[str] = frozenset({"", INBOX_ROUTE, "none"})
 
 
 def is_valid_route(destination: Any) -> bool:
@@ -617,6 +692,38 @@ def _start_channel_delivery(state: Any, delivery: Delivery, name: str, target: s
     task.add_done_callback(_IN_FLIGHT.discard)
 
 
+def _file_in_inbox(state: Any, delivery: Delivery) -> bool:
+    """File a failure in the Inbox: one item, and its notification, which is its view
+    (`inbox.emit_attention_item`), so the bell has one entry for it and the owner's rule for the
+    kind still decides how loudly it arrives. Never raises.
+
+    The item carries what the note carries (`statusUrl`, the event and its id) and the trigger it is
+    about, which is where the Inbox row leads. Returns whether it went out: the notification does
+    even when the Inbox could not be written (`emit_attention_item` logs that).
+    """
+    from personalclaw import notification_kinds
+    from personalclaw.inbox import ItemKind, emit_attention_item
+
+    kwargs = delivery.to_notify_kwargs()
+    registered = notification_kinds.kind_for_legacy(delivery.kind)
+    try:
+        emit_attention_item(
+            state,
+            source=registered.source,
+            kind=registered.kind,
+            item_kind=ItemKind.SYSTEM.value,
+            title=delivery.title,
+            body=delivery.body,
+            refs={**kwargs["meta"], "trigger": delivery.trigger_id},
+        )
+    except Exception:  # noqa: BLE001 - the run already completed; a failed filing must not undo it
+        logger.warning(
+            "delivery %s could not be filed in the Inbox", delivery.event_id, exc_info=True
+        )
+        return False
+    return True
+
+
 def is_duplicate(delivery: Delivery, delivered_ids: "set[str] | list[str] | None") -> bool:
     """Whether this delivery has already gone out — the "does not double-ping" half.
 
@@ -643,6 +750,9 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     the note goes through `notify` once the send is done: marked `sent_to_channel`, or ending with
     the sentence saying why it didn't go out. The send runs on the loop, so the fire path does not
     wait on a chat platform; True means it was started.
+
+    A failure filed in the Inbox (`Delivery.inbox`) is an Inbox item whose one notification, sent
+    through `notify` like every other, is its view.
     """
     if state is None:
         return False
@@ -655,6 +765,11 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     if is_duplicate(delivery, delivered_ids if isinstance(delivered_ids, (set, list)) else None):
         logger.debug("delivery %s already sent; not double-pinging", delivery.event_id)
         return False
+    if delivery.inbox:
+        filed = _file_in_inbox(state, delivery)
+        if filed and isinstance(delivered_ids, set):
+            delivered_ids.add(delivery.event_id)
+        return filed
     route = parse_channel_route(delivery.destination)
     if route is not None:
         # Recorded as sent before the send starts, so a retry through the same set cannot send

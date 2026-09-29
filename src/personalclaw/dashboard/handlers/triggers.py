@@ -756,13 +756,21 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
     cannot start, failed at every fire instead (`run_workflow_provider.config_problem`), and so did
     a `send-message` naming a chat channel not set up here, or an id no channel, or more than one,
     takes (`send_message_provider.config_problem`). An edit that sends only the config is checked
-    against the provider the trigger already runs.
+    against the provider the trigger already runs. So is the working folder an agent it starts
+    works in (`invoke-agent`, `run-prompt`): one the owner did not allow failed every fire.
     """
     if not isinstance(action, dict):
         return ""
     stored = stored or {}
     provider = str(action.get("provider") or stored.get("provider") or "")
     config = action.get("config") if "config" in action else stored.get("config")
+    if provider in ("invoke-agent", "run-prompt") and isinstance(config, dict):
+        from personalclaw.action_providers.services import validate_spawn_cwd
+
+        cwd = str(config.get("cwd") or "").strip()
+        refused = validate_spawn_cwd(cwd)
+        if refused:
+            return f"The working folder {cwd} can't be used: {refused}"
     if provider == "run-workflow":
         from personalclaw.action_providers.run_workflow_provider import config_problem
 

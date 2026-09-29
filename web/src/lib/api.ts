@@ -1662,6 +1662,10 @@ export interface ScheduleJob {
   state?: string | null
   run_count?: number
   agent?: string | null; model?: string | null
+  // The folder an agent schedule's agent works in (its action's `cwd`), '' / null for the
+  // workspace. Read back so the edit form sends it again: the form rebuilds the agent action from
+  // its own fields, and a field it did not carry was dropped by every save.
+  cwd?: string | null
   // Where results go on a chat channel: `<name>` (your DMs there) or `<name>:<target>` (a chat on
   // it), the delivery route without its `channel:` prefix. `channel_problem` is the server's
   // sentence when that channel can't take them (not set up here, or an id it refuses), else ''.
@@ -1841,6 +1845,9 @@ export interface TaskItem {
   // present only on a PUT response: the full set of tasks whose status cascaded
   // (the edited task + auto-block/unblock'd dependents) so the client patches all.
   reconciled?: TaskItem[]
+  // The workflow run a task came from (`Task.workflow_binding`), null for a task a person made.
+  // `managed`: the run files it for one of its own steps and keeps its status — nobody's to do.
+  workflow_binding?: { run_id: string; node_id: string; managed?: boolean } | null
 }
 /** A task write that replaces no list — what `api.updateTask` sends. The lists (labels, criteria,
  *  plan, notes, dependencies) are replaced whole by a write, so they go through `api.saveTask`,
@@ -2874,7 +2881,7 @@ function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unkn
   // `invoke-agent`-only (`schedule.py`'s property returns '' for every other provider), so it can
   // only ride the invoke-agent branch below. `tests/test_trigger_wire_field_census.py` holds the
   // two field sets against each other so a future field cannot go missing the same way.
-  const { message, agent, model, approval_mode, script, command, zt_timeout, action, ...rest } = body
+  const { message, agent, model, approval_mode, cwd, script, command, zt_timeout, action, ...rest } = body
   if (action) return { ...rest, action }  // already action-shaped (create page)
   let act: TriggerAction
   if (script) act = { provider: 'run-script', config: { script, timeout: Number(zt_timeout) || 0 } }
@@ -2891,7 +2898,7 @@ function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unkn
   // truthiness: an agent trigger legitimately has an empty prompt, and `'' ?? ''` must still
   // produce an agent action rather than silently skipping the update.
   else if (!('message' in body)) return rest
-  else act = { provider: 'invoke-agent', config: { task_template: message ?? '', agent: agent ?? '', model: model ?? '', approval_mode: approval_mode ?? '' } }
+  else act = { provider: 'invoke-agent', config: { task_template: message ?? '', agent: agent ?? '', model: model ?? '', approval_mode: approval_mode ?? '', cwd: cwd ?? '' } }
   return { ...rest, action: act }
 }
 

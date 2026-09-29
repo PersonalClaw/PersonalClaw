@@ -360,11 +360,18 @@ class Task:
         belongs to the owner — a single-user install must behave exactly as it does today, and
         that is also the honest answer: with no identity there is nobody else for a task to
         belong to.
+
+        A task a workflow run manages for one of its own steps, and nobody is assigned, is
+        nobody's work: its run does it and keeps its status (`workflows.materialize.managed`).
+        Counted as the owner's, a run's step read on Home and in her Tasks as work she had to do.
         """
         owner = (username or "").strip().lower()
+        assignee = (self.assignee or "").strip().lower()
+        binding = self.workflow_binding
+        if not assignee and binding is not None and binding.managed:
+            return False
         if not owner:
             return True
-        assignee = (self.assignee or "").strip().lower()
         if assignee:
             return assignee == owner
         author = (self.author or "").strip().lower()

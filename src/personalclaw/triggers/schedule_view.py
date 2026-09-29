@@ -225,6 +225,10 @@ def to_schedule_row(
         "state": str(getattr(trigger, "state", "") or ""),
         "agent": str(config.get("agent") or "") or None,
         "model": str(config.get("model") or "") or None,
+        # The folder the agent works in, as the owner wrote it. Published so the trigger's panel
+        # shows it and its editor sends it back: the editor rebuilds the agent action from the
+        # fields it has, and a field it lacked was dropped by every save.
+        "cwd": str(config.get("cwd") or "") or None,
         "channel": channel_of(trigger) or None,
         # Why the results can't go to that channel, when they can't: a channel that isn't set up
         # here, or an id it refuses. A route stored before routes named their channel

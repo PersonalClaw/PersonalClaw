@@ -86,8 +86,8 @@ def _fire(home, monkeypatch, result: ActionResult) -> list[tuple[bool, str]]:
     orch = object.__new__(GatewayOrchestrator)
     delivered: list[tuple[bool, str]] = []
 
-    def deliver(trigger: Any, *, ok: bool, error: str = "") -> bool:
-        delivered.append((ok, error))
+    def deliver(trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> bool:
+        delivered.append((ok, error or summary))
         return True
 
     monkeypatch.setattr(orch, "_deliver_fire_outcome", deliver)
@@ -105,7 +105,8 @@ def test_a_fire_that_only_started_its_work_says_nothing_yet(home, monkeypatch, o
 
 
 def test_a_fire_whose_work_is_done_still_says_so(home, monkeypatch):
-    assert _fire(home, monkeypatch, ActionResult(success=True, stdout="sent")) == [(True, "")]
+    """And says what it did: the output its history row shows."""
+    assert _fire(home, monkeypatch, ActionResult(success=True, stdout="sent")) == [(True, "sent")]
 
 
 def test_a_fire_that_could_not_start_its_work_says_why(home, monkeypatch):

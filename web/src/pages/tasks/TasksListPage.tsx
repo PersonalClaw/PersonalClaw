@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags } from 'lucide-react'
+import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
@@ -22,7 +22,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { reportActionFailure } from '../../app/reportingWrite'
-import { statusMeta, signalPriority, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
+import { statusMeta, signalPriority, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount, managingRun } from './taskMeta'
 import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
 import { TaskBoard } from './TaskBoard'
@@ -75,10 +75,12 @@ const searchRequest = (q: string, tag: string, retry: number) => `${q}\n${tag}\n
 /** Whether a task is the owner's work — mirrors `Task.belongs_to` on the backend.
  *  Assignee decides when set; otherwise the author does, because an unassigned task
  *  I wrote is still mine. An unattributed task belongs to nobody in particular, so
- *  it counts as the owner's (that's how every pre-attribution task reads). */
+ *  it counts as the owner's (that's how every pre-attribution task reads) — except one a
+ *  workflow run files for its own step and nobody is assigned, which is the run's to do. */
 const isMine = (t: TaskItem, owner: string) => {
-  if (!owner) return true
   const assignee = (t.assignee ?? '').trim().toLowerCase()
+  if (!assignee && managingRun(t)) return false
+  if (!owner) return true
   if (assignee) return assignee === owner.toLowerCase()
   const author = (t.author ?? '').trim().toLowerCase()
   return !author || author === owner.toLowerCase()
@@ -425,7 +427,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       base = [...base].sort((a, b) => (Number(TERMINAL.has(a.status)) - Number(TERMINAL.has(b.status))) || cmp(a, b))
     }
     return base
-  }, [tasks, ready, filter, q, results, inScope, hasTag, listFilter, sortBy])
+    // `owner` and `assigned` too: without them choosing "Mine" re-rendered the page over the list it
+    // had already filtered, and every task stayed in it.
+  }, [tasks, ready, filter, q, results, inScope, hasTag, listFilter, sortBy, owner, assigned])
 
   // Reset a Repeatable task list (server gates: all tasks must be done). Surfaces
   // the server message on the move-error banner on failure; reloads on success.
@@ -705,7 +709,11 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   // when someone is named — on a single-user install every task is the owner's, and
   // "@you" on every row is noise. Rendered here because both the list row and the
   // card use this line, so one edit covers both views.
-  const who = (t.assignee ?? '').trim() || (t.author ?? '').trim()
+  // A task a workflow run files for its own step says so, and where the run is: it is the run's,
+  // and its status follows the run. Its author is never shown as its creator — the run is — which
+  // also keeps true a row the task store stamped with the owner's name before it knew better.
+  const run = managingRun(t)
+  const who = (t.assignee ?? '').trim() || (run ? '' : (t.author ?? '').trim())
 
   // Two groups, both separated by the flex gap alone. The schedule group used to carry a leading
   // `·` guarded by `(lead.length > 0 || i > 0)`, which tests PRESENCE — "is anything in front of
@@ -729,6 +737,14 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
         title={(t.assignee ?? '').trim() ? `Assigned to ${who}` : `Created by ${who}`}>
         <UserRound size={11} /> {who}
       </span>,
+    )
+  }
+  if (run) {
+    lead.push(
+      <TextLink key="run" href={`#/workflows/runs/${encodeURIComponent(run)}`} onClick={(e) => e.stopPropagation()}
+        icon={Workflow} iconSize={11} title="A workflow run files this for one of its steps and keeps its status">
+        From a workflow run
+      </TextLink>,
     )
   }
   if (t.project) {

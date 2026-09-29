@@ -451,10 +451,32 @@ sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
+**A report says what the run produced.** "X finished" carries the action's
+sentence for a person, else what it printed (`schedule_history.summary_for_result`),
+and "X failed" says why (`schedule_history.failure_for_result`): its error, else
+its exit code and the end of what it wrote to stderr, which is also the history
+row's error. The words are sized for where they land (`delivery.excerpt`): up to
+1,200 characters on the notification, whose first line is the bell's, and 3,500
+in a chat channel. Longer output is cut at a line end, else at a word, and
+closed with where the rest is (the run's page, or the trigger's history, whose
+row keeps the whole trace). Both surfaces used to get the title alone, since the
+fire passed its report no result and a failed command sets no `error`.
+
+**A failure routed to the Inbox is an Inbox item.** "If it fails: Inbox", the
+default `failure_delivery`, files the failure there (`delivery.files_in_inbox`,
+through `inbox.emit_attention_item`): one item saying why, whose notification is
+its view, so the bell shows it once, under the owner's rule for the kind, and it
+waits in the Inbox until it is dealt with. It used to be a notification alone,
+which the Inbox never listed. A result is a notification, as the Triggers page
+says ("It still reaches the dashboard"), and so is a failure whose route is
+"Same as results".
+
 **Work a fire only started reports when it ends.** An action that starts an
 agent task or a workflow run returns `launched` (or `queued` behind a run in
 flight), and one that stopped for you returns `needs_input`; the fire sends no
-report for any of them (`gateway._reports_later`), since nothing has finished.
+report for any of them (`gateway._says_nothing_now`), since nothing has finished.
+An action that had nothing to do (`skip`) sends none at all: its history row
+says why, and "X finished" would say something happened.
 The agent task reports on the trigger's route when it ends
 (`GatewayOrchestrator._report_to_its_trigger`, from the subagent completion):
 "X finished" and the agent's reply, or "X failed" and why, and the plain
@@ -483,6 +505,20 @@ decision on write_file"), and a call nobody answered leaves an Inbox note that
 can run the trigger again. That re-run is Run now, and a trigger with
 `needs_grant` goes through Allow first, the same consent its page asks
 (`docs/architecture/inbox-channels.md`, "How long it waits").
+
+**An Invoke Agent trigger works in the folder it names.** Its **Working folder**
+(`cwd`, in `apps/native/invoke-agent-action/app.json`; the schedule form's field of
+the same name) is the folder its agent starts in, so the agent's file tools reach
+the files there, and only as they reach any session's folder
+(`docs/architecture/security.md`, "Every file tool stays in the workspace"). It
+must be the workspace or a folder in Settings → Agent defaults → Allowed working
+directories (`agent.subagent_cwd_allowed_roots`), the rule a Run prompt action's
+Working Directory already met: the trigger's save refuses any other with why
+(`_action_problem`, through `action_providers.services.validate_spawn_cwd`, for both
+actions), the fire asks again, since the list can change after the save, and the
+spawn asks last (`subagent.validate_cwd`). Empty is the workspace. An Invoke Agent
+agent always worked in the workspace before, so one asked to read a file under a
+folder the owner had allowed could not reach it.
 
 **A Run workflow action names its workflow, and is checked where it is saved.**
 Its form comes from the bundled `apps/native/run-workflow-action/app.json`: a

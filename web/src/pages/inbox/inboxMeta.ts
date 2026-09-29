@@ -1,6 +1,7 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import { approvalDestination } from '../../app/approvalDestination'
+import { notificationLink } from '../notifications/notificationMeta'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
 
@@ -168,7 +169,16 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   // The review item for triggers an upgrade brought over (`legacy_import.announce`) lists them in
   // `refs.triggers`; the Triggers page is where each one is opened, reviewed and switched on.
   if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'triggers'
+  // A trigger's failure filed in the Inbox carries its note's own link (`statusUrl`): the trigger,
+  // or the run it started. Read by the one parser of that link, which takes an in-app route only.
+  const status = statusLink(refs)
+  if (status) return status.path
   return ''
+}
+
+/** The in-app place an item's `refs.statusUrl` names, or null (`notificationLink`). */
+function statusLink(refs: Record<string, unknown>): { label: string; path: string } | null {
+  return notificationLink({ statusUrl: typeof refs.statusUrl === 'string' ? refs.statusUrl : '' })
 }
 
 /** What the deep-link button says. Named after the REFERENT (the loop, the chat), not the
@@ -185,7 +195,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.artifact) return 'Open the report'
   if (refs.room) return 'Go to the room'
   if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'Go to Triggers'
-  return 'Go to source'
+  return statusLink(refs)?.label ?? 'Go to source'
 }
 
 // Direct-message labels ("DM", "@name") render as-is; anything else renders as a

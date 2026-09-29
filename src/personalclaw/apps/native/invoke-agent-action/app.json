@@ -37,6 +37,13 @@
             "help": "Child agent name (e.g. code-reviewer). Empty uses the default agent."
           }
         },
+        "cwd": {
+          "type": "string",
+          "x-meta": {
+            "label": "Working folder",
+            "help": "The folder the agent works in, so its file tools reach the files there, e.g. ~/Documents. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace."
+          }
+        },
         "max_turns": {
           "type": "integer",
           "x-meta": {

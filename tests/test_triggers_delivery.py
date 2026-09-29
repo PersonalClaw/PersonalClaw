@@ -335,9 +335,11 @@ def test_redaction_covers_the_title_too():
 def test_the_body_is_capped():
     """An unbounded run summary pushes the statusUrl off the bottom of a Slack card, defeating
     the deep
-    link this session exists to add."""
+    link this session exists to add. Each surface has its own bound: the notification's, and a
+    chat channel's."""
     delivery = _ok(summary="x" * 5000)
-    assert len(delivery.body) <= D.BODY_CAP
+    assert len(delivery.body) <= D.NOTE_BODY_CAP
+    assert len(delivery.channel_body) <= D.CHANNEL_BODY_CAP
 
 
 # ── it routes through the EXISTING gate, and never breaks the run ──

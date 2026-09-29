@@ -34,6 +34,7 @@ from personalclaw.workflows.bundled_defs import (
     template_names,
 )
 from personalclaw.workflows.macros import expand_spec, has_macros
+from personalclaw.workflows.materialize import OPT_OUT_KEY
 from personalclaw.workflows.models import Node, WorkflowDef, valid_name, walk
 from personalclaw.workflows.validator import (
     _HANDROLLED_FENCE_MARKERS,
@@ -794,7 +795,10 @@ class TestActionArgShape:
                 if node.kind.value != "action":
                     continue
                 cfg = node.config or {}
-                stray = [k for k in cfg if k not in ("provider", "with", "context", "payload")]
+                # The engine's own keys are not arguments: the provider, its arguments, the
+                # context and payload it is handed, and whether the step files a task.
+                engine_keys = ("provider", "with", "context", "payload", OPT_OUT_KEY)
+                stray = [k for k in cfg if k not in engine_keys]
                 assert not stray, f"{name} at {path}: arguments outside `with`: {stray}"
 
 

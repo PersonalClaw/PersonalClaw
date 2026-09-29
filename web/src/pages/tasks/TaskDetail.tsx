@@ -5,7 +5,7 @@ import { InlineError } from '../../ui/InlineError'
 import { readableErrText } from '../../lib/errText'
 import { unavailableWhen } from '../../ui/unavailable'
 import { fvs } from '../../design/fontWeight'
-import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban } from 'lucide-react'
+import { Pencil, Trash2, Check, X, ExternalLink, Lock, CornerDownRight, Send, AlertTriangle, FolderKanban, Workflow } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { FormFooter } from '../../ui/FormFooter'
@@ -15,7 +15,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { api, type TaskItem, type TaskComment, type TaskNote } from '../../lib/api'
-import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount, blockKindMeta } from './taskMeta'
+import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCount, blockKindMeta, managingRun } from './taskMeta'
 import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
 import { accentChip } from '../../design/accent'
@@ -46,9 +46,13 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
   onOpenTask?: (id: string) => void
 }) {
   const readOnly = task.provider === 'project'
+  // A task a workflow run files for one of its own steps: its status is the run's, and the form
+  // saves the status with everything else, so the gateway refuses every save of it
+  // (`materialize.reject_write`). It is not offered an edit that cannot land.
+  const run = managingRun(task)
   // Edit mode is owned by the URL (?edit=1), threaded in fully controlled;
-  // project-provider tasks are read-only and can never enter the edit form.
-  const editing = editingProp && !readOnly
+  // project-provider tasks are read-only and can never enter the edit form, nor can a run's.
+  const editing = editingProp && !readOnly && !run
   const setEditing = onEditingChange
   const [draft, setDraft] = useState<TaskDraft>(() => toDraft(task))
   // 🔴 THE FORM SAVES THE WHOLE TASK — every list replaced — OVER THE COPY ITS DRAFT WAS SEEDED FROM.
@@ -193,9 +197,15 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
   return (
     <div className="flex flex-col gap-l">
       {/* action row */}
-      <div className="flex items-center gap-s">
+      <div className="flex flex-wrap items-center gap-s">
         {readOnly ? (
           <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Lock size={13} /> Managed by project — read-only</span>
+        ) : run ? (
+          <>
+            <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Workflow size={13} /> A workflow run keeps this task's status</span>
+            <TextLink href={`#/workflows/runs/${encodeURIComponent(run)}`} size="sm" className="whitespace-nowrap">Open the run</TextLink>
+            <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
+          </>
         ) : (
           <>
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>

@@ -394,6 +394,7 @@ class NativeTaskProvider(TaskProvider):
             # handles both shapes, including the legacy bare-id form.
             dep_src = fields.get("dependencies", fields.get("depends_on", []))
             task_list_id = _given("task_list_id", "")
+            binding = _given("workflow_binding")
             task = Task(
                 id=task_id,
                 title=_given("title", "Untitled"),
@@ -407,8 +408,11 @@ class NativeTaskProvider(TaskProvider):
                 dependencies=models_coerce("dependencies", dep_src, strict=True),
                 # Attribution: an explicit author wins;
                 # otherwise stamp the owner's handle. Unset handle → "" → today's
-                # behavior (no attribution).
-                author=_given("author", "") or _current_username(),
+                # behavior (no attribution). A task a workflow run files for one of its own steps
+                # (a managed binding) names no person: nobody wrote it, and the owner's handle made
+                # the run's step read, and count, as hers (`Task.belongs_to`).
+                author=_given("author", "")
+                or ("" if binding is not None and binding.managed else _current_username()),
                 # Origin (MULTI-TENANCY-ENTITY TSE2-2): server-owned like `id`/`created_at`, never
                 # caller-set — a locally-minted task's origin IS this home. Empty degrades to "".
                 origin_harness=_current_origin_harness(),
@@ -427,7 +431,7 @@ class NativeTaskProvider(TaskProvider):
                 # Workflow projection. Still enumerated: this list is what a
                 # caller may SET, and the binding once round-tripped through `to_dict`/`from_dict`
                 # and still arrived empty from `create_task` because it was missing here.
-                workflow_binding=_given("workflow_binding"),
+                workflow_binding=binding,
                 blocked_kind=_given("blocked_kind", ""),
                 preview=_given("preview", ""),
                 done_criterion=_given("done_criterion", ""),

@@ -28,27 +28,31 @@ anyone means by it.
 
 | | |
 |---|---|
-| **Checked on** | the **Inbox** (a notification arrives), and the automation's **run history** on the Schedule page (the run is recorded `failure`) |
+| **Checked on** | the **Inbox** (an item for the failure, saying why, which the bell also shows once), and the automation's **run history** on the Schedule page (the run is recorded `failure`) |
 | **The event name** | `automation.run.failed` |
 
 How it is implemented, in the order the fire path runs it:
 
-- `src/personalclaw/gateway.py:1490` — `_deliver_fire_outcome`, called once per fire with the
+- `src/personalclaw/gateway.py:2121` — `_deliver_fire_outcome`, called once per fire with the
   outcome.
-- `src/personalclaw/gateway.py:1556` — that call asks for the destination **per outcome**:
+- `src/personalclaw/gateway.py:2211` — that call asks for the destination **per outcome**:
   `destination=_delivery.route_for(trigger, ok=ok)`. This is the line that makes the guarantee real;
   it used to pass `trigger.delivery` unconditionally, which routed a failure through the silent
   channel.
-- `src/personalclaw/triggers/delivery.py:246` — `route_for`, the decision. Its body
-  (`delivery.py:270`–`273`) is the whole rule: a success returns `delivery`; a failure returns
+- `src/personalclaw/triggers/delivery.py:363` — `route_for`, the decision. Its body
+  (`delivery.py:387`–`390`) is the whole rule: a success returns `delivery`; a failure returns
   `failure_delivery`, falling back to `delivery` only when the failure route is blank. A success
   never inherits the failure route, or a quiet automation would start announcing ordinary runs.
-- `src/personalclaw/triggers/models.py:664` — `failure_delivery: str = "inbox"`. The default is what
+- `src/personalclaw/triggers/delivery.py:398` — `files_in_inbox`: a failure whose route is the Inbox
+  is filed there as an item (`_file_in_inbox`, `delivery.py:695`), and its one notification is the
+  item's view, so the bell shows it once and the Inbox lists it until you deal with it. A result,
+  and a failure that follows the results ("Same as results"), stays a notification.
+- `src/personalclaw/triggers/models.py:884` — `failure_delivery: str = "inbox"`. The default is what
   makes this true without configuring anything.
-- `src/personalclaw/triggers/delivery.py:363` — `is_muted`, the single place that decides what
+- `src/personalclaw/triggers/delivery.py:502` — `is_muted`, the single place that decides what
   silence is. It mutes the literal `"none"` and nothing else, so an inbox-routed failure is not
   muted.
-- `src/personalclaw/triggers/delivery.py:49` — `EVENT_FAILED = "automation.run.failed"`, the event
+- `src/personalclaw/triggers/delivery.py:51` — `EVENT_FAILED = "automation.run.failed"`, the event
   name above.
 
 ### 2. A run that did NOTHING is labelled inert — not green
@@ -160,16 +164,17 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
    `exit 1` is enough). Leave `failure_delivery` alone; the point is that its default already
    protects you.
 
-2. **Fire it and watch the Inbox — guarantee 1.** Press **Run now**. The manual-run path and an
-   autonomous tick fire the same action through the same path, so this is a real test and not a
-   special case.
-   - **Expected:** a notification appears in your **Inbox** even though delivery is `none`, and the
-     run history shows one `failure` row.
+2. **Let it fire and watch the Inbox — guarantee 1.** Set it to run every minute and wait for its
+   next fire. (**Run now** records the same history row, but this guarantee is about what a fire
+   tells you when nobody is watching, so let the schedule fire it.)
+   - **Expected:** an item appears in your **Inbox** even though delivery is `none`, reading
+     "<name> failed" and what the command said (its error output, or its exit code), with one
+     entry in the bell for it; and the run history shows one `failure` row.
    - **The guarantee broken would look like:** a `failure` row in the history and **nothing** in the
-     inbox — a broken automation that told you nothing. That is the defect
-     `gateway.py:1556` exists to prevent.
-   - Confirm the route rather than inferring it: the notification is the
-     `automation.run.failed` event from `src/personalclaw/triggers/delivery.py:49`.
+     inbox — a broken automation that told you nothing. That is the defect the outcome-picks-the-route
+     rule in `GatewayOrchestrator._deliver_fire_outcome` exists to prevent.
+   - Confirm the route rather than inferring it: the item's notification is the
+     `automation.run.failed` event (`EVENT_FAILED` in `src/personalclaw/triggers/delivery.py`).
 
 3. **Now make it decline to fire, and check the colour — guarantee 2.** Edit the same automation and
    set an all-day quiet-hours window on it (`gates.quiet_hours` = `00:00-23:59`). Press **Run now**

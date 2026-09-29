@@ -166,14 +166,19 @@ def _delivery_owning(channel_id: str) -> Any:
     return delivery_for(provider) if provider else None
 
 
-def _reports_later(result: Any) -> bool:
-    """Whether a fire's action only started or parked its work (``launched``, ``queued``,
-    ``needs_input``: `Outcome.DEFERRED`), so its trigger hears how it went when that work ends
-    or is answered, not now."""
+def _says_nothing_now(result: Any) -> bool:
+    """Whether a fire whose action succeeded has nothing to tell its trigger's route yet, or at all.
+
+    An action that only started or parked its work (``launched``, ``queued``, ``needs_input``:
+    `Outcome.DEFERRED`) has its trigger hear how it went when that work ends or is answered, not
+    now. One that had nothing to do (``skip``: `Outcome.SKIPPED_NOOP`) succeeded silently, which is
+    what the outcome means (`ActionResult.outcome`): its history row says why, and a "finished"
+    note about it would say something happened.
+    """
     from personalclaw.triggers.executor import Outcome, classify
 
     outcome, _ = classify(str(getattr(result, "outcome", "") or ""))
-    return outcome == Outcome.DEFERRED.value
+    return outcome in (Outcome.DEFERRED.value, Outcome.SKIPPED_NOOP.value)
 
 
 # How often the earned-autonomy promotion scan runs. Six hours, not the poll
@@ -1672,18 +1677,23 @@ class GatewayOrchestrator:
                     },
                 )
             await self._record_fire_outcome(trigger, result=result)
-            # A failure's own reason, as the raise path below sends its envelope: without it an
-            # action that RETURNED its failure reached the inbox as "<name> failed", nothing more.
             fired_ok = bool(getattr(result, "success", True))
             # An action that only STARTED its work (an agent task, a workflow run) or parked it
             # says nothing yet: "<name> finished" went out the moment the agent started. The work
             # reports on the trigger's route when it ends (`_report_to_its_trigger`), and a
-            # parked one asks in the Inbox.
-            if not (fired_ok and _reports_later(result)):
+            # parked one asks in the Inbox. One that had nothing to do says nothing at all.
+            if not (fired_ok and _says_nothing_now(result)):
+                from personalclaw.schedule_history import failure_for_result, summary_for_result
+
+                # What the action produced, in the words its history row has, or why it failed,
+                # as the raise path below sends its envelope. The note carried neither: a command
+                # that printed its result, or wrote why it failed, reached the bell and its chat
+                # channel as "<name> finished" or "<name> failed", nothing more.
                 self._deliver_fire_outcome(
                     trigger,
                     ok=fired_ok,
-                    error="" if fired_ok else str(getattr(result, "error", "") or ""),
+                    summary=summary_for_result(result) if fired_ok else "",
+                    error="" if fired_ok else failure_for_result(result),
                 )
         except asyncio.CancelledError:
             # 🔴 A STOP OR A RESTART CUT THIS FIRE OFF. It cancels the loop the fire runs in, and a
@@ -2089,7 +2099,7 @@ class GatewayOrchestrator:
 
         For an agent task (`_subagent_done`) and a workflow run (`EngineServices.
         report_to_trigger`): the fire, or the Run now, that started either said nothing, since
-        nothing had happened yet (`_reports_later`). Returns whether a note went out; a trigger
+        nothing had happened yet (`_says_nothing_now`). Returns whether a note went out; a trigger
         whose route is ``none`` sends nothing.
         """
         if not trigger_id:
@@ -2172,7 +2182,9 @@ class GatewayOrchestrator:
                 trigger_id=str(getattr(trigger, "id", "") or ""),
                 trigger_name=str(getattr(trigger, "name", "") or ""),
                 ok=ok,
-                summary=(summary if ok else error)[:_ERROR_SUMMARY_MAX],
+                # Whole: `build_delivery` sizes it for each surface. Cut here, an agent's reply
+                # reached its chat channel as its first 512 characters.
+                summary=summary if ok else error,
                 run_id=run_id,
                 # 🔴 EACH FIRE IS A NEW EVENT (R18 / crit 10). This passed neither `run_id`
                 # nor `attempt_key`, so `event_id` — derived from exactly those three parts —
@@ -2197,6 +2209,9 @@ class GatewayOrchestrator:
                 # automation that BROKE reported through the silent channel. Its own comment names
                 # the contract: "failures reach the inbox even when `delivery` is none".
                 destination=_delivery.route_for(trigger, ok=ok),
+                # A failure whose route is the Inbox is filed there, as the Triggers page's "If it
+                # fails: Inbox" says; it was a notification alone, which the Inbox never listed.
+                inbox=_delivery.files_in_inbox(trigger, ok=ok),
                 # 🔴 A CLOCK TRIGGER IS A SCHEDULED JOB (issue #415), and its outcome belongs on the
                 # `cron/*` rows the matrix has always offered — which nothing had emitted since the
                 # ScheduleService removal, leaving two configurable controls that could not fire.
@@ -2244,6 +2259,7 @@ class GatewayOrchestrator:
             from personalclaw.config.loader import config_dir
             from personalclaw.schedule_history import (
                 ScheduleRun,
+                failure_for_result,
                 status_for_result,
                 summary_for_result,
             )
@@ -2281,8 +2297,7 @@ class GatewayOrchestrator:
             # read `success` or `failure`, and a provider's returned failure left the row with no
             # reason at all.
             ok_exit = exit_type == autopause.ExitType.OK.value
-            reported = str(getattr(result, "error", "") or "") if result is not None else ""
-            run_error = error or ("" if ok_exit else reported or "the action reported failure")
+            run_error = error or ("" if ok_exit else failure_for_result(result))
             output = str(getattr(result, "stdout", "") or "") if result is not None else ""
             # What a person reads on the row: the sentence the action wrote, else what it printed,
             # which stays the trace — a browse run's JSON account.
@@ -2362,13 +2377,11 @@ class GatewayOrchestrator:
                 #
                 # On the raise path `error` is the seam's pre-rendered WHAT/WHY/FIX envelope
                 # (PLATFORM-LEGIBILITY §2), whose WHAT line still carries the concrete
-                # ``TypeName: msg`` — so the evidence is richer, not lost. It falls back to the
-                # result's own error string (a provider returning `success=False` without raising),
-                # then to the lifecycle reason — an empty evidence line would be worse than a
-                # redundant one.
-                detail = error
-                if not detail and result is not None:
-                    detail = str(getattr(result, "error", "") or "")
+                # ``TypeName: msg`` — so the evidence is richer, not lost. It falls back to why the
+                # result says it failed (`failure_for_result`: its error, else what a command wrote
+                # to its error output, else its exit code), then to the lifecycle reason — an empty
+                # evidence line would be worse than a redundant one.
+                detail = error or (failure_for_result(result) if result is not None else "")
                 live.last_error_summary = (detail or decision.reason)[:_ERROR_SUMMARY_MAX]
             # 🔴 The PAUSE itself, which is the whole point: a state the module classifies as
             # needing attention must stop firing. Leaving `enabled` True while labelling the row
@@ -4104,7 +4117,8 @@ class GatewayOrchestrator:
 
             # A trigger's own agent says how it went on the trigger's route now that it has ended,
             # wherever its reply goes: the fire, or the Run now, that started it said nothing
-            # (`_reports_later`). When every member has, the plain subagent note would say it twice.
+            # (`_says_nothing_now`). When every member has, the plain subagent note would say it
+            # twice.
             def _reported(member: "SubagentInfo") -> bool:
                 # Its owner declined its start: it never ran, by their own decision, and they know.
                 # No note says so, least of all one calling it a failure.

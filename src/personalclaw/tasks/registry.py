@@ -466,7 +466,15 @@ async def ready_tasks(
     tasks, _ = await collect_tasks(project=project, task_list_id=task_list_id)
     task_map = {t.id: t for t in tasks}
     ready_ids = set(reconcile.ready_task_ids(task_map))
-    ready = [t for t in tasks if t.id in ready_ids]
+    # A task a workflow run manages for one of its own steps is nobody's to pick up, whoever is
+    # asking: its run starts and ends it, and a write of its status from anyone else is refused
+    # (`engine_owned_refusal`). Counted here, a run's step was "ready" on Home and offered to the
+    # agent's next-task pick.
+    ready = [
+        t
+        for t in tasks
+        if t.id in ready_ids and not (t.workflow_binding is not None and t.workflow_binding.managed)
+    ]
     if mine_only:
         from personalclaw.identity import current_username
 

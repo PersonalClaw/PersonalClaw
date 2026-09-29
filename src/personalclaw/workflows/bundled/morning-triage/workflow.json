@@ -61,6 +61,7 @@
         "id": "triage",
         "label": "Collect, filter, propose and deliver",
         "config": {
+          "materialize_task": false,
           "provider": "triage-digest",
           "with": {
             "window_hours": "{{inputs.window_hours}}",

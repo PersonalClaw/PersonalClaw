@@ -604,7 +604,13 @@ class NativeBuiltinToolProvider(ToolProvider):
 
         First of all, no control character (``file_roots.CONTROL_CHARS``): the Files view refuses
         them in every path and name, and a model that wrote its file name with a trailing newline
-        left a file in the user's tree that no listing showed plainly and nothing cleared."""
+        left a file in the user's tree that no listing showed plainly and nothing cleared.
+
+        A path that starts with ``~`` or ``~/`` names the owner's home, as the owner writes it
+        ("summarise ~/Documents/Calendar/family.ics"), and is held to the same rules as any
+        absolute path. It was read as a folder named ``~`` inside the session's folder, so a
+        file the tools could reach read as missing. ``~name`` is left a plain name: another
+        user's home is nothing the owner means."""
         from personalclaw.file_roots import control_character_in, within
 
         bad = control_character_in(rel)
@@ -615,6 +621,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         allowed = self._roots()
         base = allowed[0]
+        if rel == "~" or rel.startswith("~/"):
+            rel = os.path.expanduser(rel)
         p = (base / rel).resolve() if not Path(rel).is_absolute() else Path(rel).resolve()
         if not any(root == p or root in p.parents for root in allowed):
             raise ValueError(f"path {rel!r} escapes the workspace root")

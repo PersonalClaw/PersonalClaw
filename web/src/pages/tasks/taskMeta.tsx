@@ -1,6 +1,6 @@
 import { Circle, CircleDot, CircleSlash, CheckCircle2, XCircle, CircleDashed, ListChecks } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { ExitCriterion } from '../../lib/api'
+import type { ExitCriterion, TaskItem } from '../../lib/api'
 
 /** Re-export so list/empty states share one task glyph. */
 export const ListChecksLike = ListChecks
@@ -36,6 +36,15 @@ export const statusMeta = (k?: string): StatusMeta => STATUS_MAP[k ?? ''] ?? { k
 // dependency, where a skipped prerequisite must NOT count — a different question from how the list
 // groups it for a reader.
 export const TERMINAL = new Set(['done', 'cancelled', 'skipped'])
+
+/** The workflow run that files `t` for one of its own steps and keeps its status, or '' when a
+ *  person made it (or a run only produced it, which leaves it ordinary work). Such a task is the
+ *  run's, not whoever the task store was writing for: nobody's to do, and none of its status is
+ *  anyone else's to set (`Task.belongs_to`, `materialize.reject_write`). */
+export function managingRun(t: Pick<TaskItem, 'workflow_binding'>): string {
+  const b = t.workflow_binding
+  return b && b.managed !== false && b.run_id ? b.run_id : ''
+}
 
 /** Why a blocked task is blocked, from the backend's `blocked_reason_kind` ("" | "auto" | "manual").
  *

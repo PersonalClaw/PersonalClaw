@@ -50,6 +50,8 @@ export type ScheduleDraft = {
   mode: ScheduleExecMode
   agent: string
   model: string
+  /** The folder an agent run works in (the Invoke Agent action's `cwd`); '' is the workspace. */
+  cwd: string
   script: string
   command: string
   // delivery / context
@@ -87,7 +89,7 @@ export const FAILURE_ROUTES: Array<{ value: string; label: string }> = [
 export function emptyDraft(): ScheduleDraft {
   return {
     name: '', message: '', kind: 'every', intervalValue: 1, intervalUnit: 'h', cron: '0 9 * * *', at: '',
-    mode: 'agent', agent: '', model: '', script: '', command: '',
+    mode: 'agent', agent: '', model: '', cwd: '', script: '', command: '',
     channel: '', silent: false, strict_schedule: false, timezone: '', approval_mode: '', skip_dates: [],
     // Both match the entity's own defaults: `failure_delivery = "inbox"` and an empty
     // `failure_policy` (so dedup is opt-in). A form that defaulted dedup ON would silently coalesce
@@ -104,7 +106,7 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     // Recorded BEFORE the lossy display conversion above is ever sent back (#531).
     everySecsOriginal: j.every_secs ?? undefined,
     cron: j.cron_expr ?? '0 9 * * *', at: '',
-    mode: deriveMode(j), agent: j.agent ?? '', model: j.model ?? '',
+    mode: deriveMode(j), agent: j.agent ?? '', model: j.model ?? '', cwd: j.cwd ?? '',
     script: j.script ?? '', command: j.command ?? '',
     channel: j.channel ?? '', silent: !!j.silent, strict_schedule: !!j.strict_schedule,
     timezone: j.timezone ?? '', approval_mode: j.approval_mode ?? '', skip_dates: j.skip_dates ?? [],
@@ -199,7 +201,9 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // `_scheduleBodyToWire` folds it into the action it builds ONLY on the invoke-agent branch. Sent
   // unconditionally it was silently discarded for every other mode — the destructure dropped it
   // and the top level never carried it (issue 268).
-  if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model; body.approval_mode = d.approval_mode || '' }
+  // The working folder rides with them for the same reason: the invoke-agent action is rebuilt
+  // from these fields, and one it did not carry was dropped by every save.
+  if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model; body.approval_mode = d.approval_mode || ''; body.cwd = d.cwd.trim() }
   else if (d.mode === 'script') body.script = d.script.trim()       // backend-soon
   else if (d.mode === 'command') body.command = d.command.trim()    // backend-soon
   return body
@@ -290,6 +294,11 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesMod
                   {modelErr ? <FieldError className="mt-1">Couldn't load your models — {(modelErr as Error)?.message || 'the server did not respond'}. Leave this on Auto, or reload to try again.</FieldError> : null}
                 </Field>
               </div>
+              {/* The same field, and the same words, as the Invoke Agent action's form on the create
+                  page (`invoke-agent-action/app.json`). */}
+              <Field label="Working folder" hint="The folder the agent works in, so its file tools reach the files there. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace.">
+                <TextInput value={draft.cwd} onChange={(v) => set('cwd', v)} placeholder="~/Documents" name="working-folder" mono />
+              </Field>
             </>
           )}
           {draft.mode === 'script' && (

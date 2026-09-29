@@ -23,9 +23,15 @@ incident, the day's budget) is this action's failure.
     {
         "task_template": "Review the changes in $CONTEXT",  # required
         "agent": "code-reviewer",   # optional child agent name
+        "cwd": "~/Documents",       # optional working folder; the workspace when empty
         "model": "...", "max_turns": 20,  # optional
         "approval_mode": "auto"     # optional opt-in to auto-approve
     }
+
+The working folder is where the agent works, so its file tools reach the files there. It is held to
+the rule every subagent's folder is (`subagent.validate_cwd`): the workspace, or a folder the owner
+listed under Settings → Agent defaults → Allowed working directories. Checked when the trigger is
+saved (`dashboard.handlers.triggers._action_problem`), here before the spawn, and by the spawn.
 """
 
 from __future__ import annotations
@@ -38,7 +44,11 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
-from personalclaw.action_providers.services import get_action_services, spawn_refusal
+from personalclaw.action_providers.services import (
+    get_action_services,
+    spawn_refusal,
+    validate_spawn_cwd,
+)
 from personalclaw.action_providers.template import render_template
 
 logger = logging.getLogger(__name__)
@@ -84,6 +94,12 @@ class InvokeAgentActionProvider(ActionProvider):
             return ActionResult(success=False, error="invoke-agent: subagent manager unavailable")
 
         agent = (action_config.get("agent") or "").strip()
+        # Its working folder, checked now: the spawn refuses a folder outside the allowed ones in
+        # its background task, which would read as launched.
+        cwd = str(action_config.get("cwd") or "").strip()
+        cwd_refused = validate_spawn_cwd(cwd)
+        if cwd_refused:
+            return ActionResult(success=False, error=f"invoke-agent: {cwd_refused}")
         model = (action_config.get("model") or "").strip() or None
         try:
             max_turns = int(action_config.get("max_turns", 0) or 0)
@@ -119,6 +135,7 @@ class InvokeAgentActionProvider(ActionProvider):
                 task=task,
                 parent_session_key=parent_key,
                 agent=agent,
+                cwd=cwd,
                 max_turns=max_turns,
                 model=model,
                 approval_mode=approval_mode,

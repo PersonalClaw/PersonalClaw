@@ -81,6 +81,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Agents → Export to Claude Code writes your agents into Claude Code's agents folder, after you confirm it, and never over a file PersonalClaw did not write.**
 
+- **An Invoke Agent automation can work in a folder you allowed in Settings → Agent defaults, so its agent reads the files there; the automation's save refuses any other folder, as a Run prompt automation's now does too.**
+
 ### Changed
 
 - **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
@@ -136,6 +138,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**
 - **A loop's workers are told where the loop's status file and brief are, and a read repeated with its output thrown away (`2>/dev/null`) counts as a repeat.**
 - **Stopping or restarting the gateway waits a few seconds for the app package repair its start began, so an app it has just repaired stops with the rest instead of starting again after them.**
+- **A scheduled automation's notification and chat message say what it produced, or why it failed, instead of its name alone; an automation that had nothing to do says nothing.**
+- **A failed automation whose failures go to the Inbox is an item in the Inbox, not only a notification.**
+- **A task a workflow run files for one of its steps is the run's: it starts with its step's state, names no author, is not counted as yours or as ready work, and links to its run; the morning triage files none.**
+- **The agent's file tools read a path that starts with `~/` as your home, within the folders they may reach.**
+- **Tasks → Filter & sort → Mine leaves out the tasks that are not yours; choosing it used to leave the list as it was.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**

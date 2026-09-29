@@ -623,8 +623,9 @@ async def _dispatch_store_action(
             _give_back_claim(trigger_id, holder=holder, root=claimed)
     await _record_manual_run(trigger, started=started, result=result, late=late)
     if result is not None and not bool(getattr(result, "success", True)):
-        note = str(getattr(result, "error", "") or "") or "the action reported failure"
-        return False, f"failed: {note}"
+        from personalclaw.schedule_history import failure_for_result
+
+        return False, f"failed: {failure_for_result(result)}"
     from personalclaw.triggers import parks
 
     if parks.parked(result):
@@ -745,6 +746,7 @@ async def _record_manual_run(
         from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
         from personalclaw.schedule_history import (
             ScheduleRun,
+            failure_for_result,
             status_for_result,
             summary_for_result,
         )
@@ -762,7 +764,8 @@ async def _record_manual_run(
             summary = error
         elif result is not None and not bool(getattr(result, "success", True)):
             status = "failure"
-            error = str(getattr(result, "error", "") or "") or "the action reported failure"
+            # The same reading the autonomous recorder takes (`failure_for_result`).
+            error = failure_for_result(result)
             summary = error
         else:
             # What the action reported, the same answer `_record_fire_outcome` records for a fire

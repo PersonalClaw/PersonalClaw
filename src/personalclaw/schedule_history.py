@@ -186,6 +186,35 @@ def summary_for_result(result: Any) -> str:
     return said or str(getattr(result, "stdout", "") or "")
 
 
+#: How much of a failed command's error output its failure keeps: the end, where a command says
+#: what went wrong. The history row keeps the whole output as its trace.
+_FAILURE_OUTPUT_TAIL = 400
+
+
+def failure_for_result(result: Any) -> str:
+    """Why an action that did not succeed failed, for a person: the reason it gave, else the end
+    of what it wrote to its error output and its exit code, else its exit code alone.
+
+    ONE answer for the fire's history row, the trigger's last error and the note that tells the
+    owner, as :func:`summary_for_result` is for a success. A command that exits non-zero reports
+    no reason of its own (`BashActionProvider`), so "the action reported failure" was all any of
+    them said, while the command had written why.
+    """
+    said = str(getattr(result, "error", "") or "").strip() if result is not None else ""
+    if said:
+        return said
+    code = getattr(result, "exit_code", 0) if result is not None else 0
+    written = str(getattr(result, "stderr", "") or "").strip() if result is not None else ""
+    if written:
+        tail = written[-_FAILURE_OUTPUT_TAIL:]
+        if len(written) > _FAILURE_OUTPUT_TAIL and "\n" in tail:
+            tail = tail.split("\n", 1)[1]
+        return f"exited with code {code}: {tail}" if code else tail
+    if code:
+        return f"exited with code {code}"
+    return "the action reported failure"
+
+
 def _redact_stored(text: str | None) -> str:
     """Credential-redact a field on its way INTO the run ledger (criterion 11 — S138).
 

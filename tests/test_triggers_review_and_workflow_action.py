@@ -591,7 +591,7 @@ def _fire_reports(tmp_path, monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(AP, "get_action_provider", lambda name: _Reports())
     orch = object.__new__(GatewayOrchestrator)
 
-    def deliver(trigger: Any, *, ok: bool, error: str = "") -> None:
+    def deliver(trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> None:
         _Reports.delivered.append((ok, error))
 
     monkeypatch.setattr(orch, "_deliver_fire_outcome", deliver)

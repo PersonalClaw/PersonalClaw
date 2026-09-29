@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { FieldError } from '../../ui/forms'
-import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical } from 'lucide-react'
+import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical, Folder } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
@@ -372,10 +372,16 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed whitespace-pre-wrap break-words font-mono">
             {mm.key === 'agent' ? (job.message || '—') : mm.key === 'script' ? job.script : job.command}
           </div>
-          {mm.key === 'agent' && (job.agent || job.model) && (
+          {mm.key === 'agent' && (job.agent || job.model || job.cwd) && (
             <div className="mt-1.5 flex flex-wrap gap-1.5 text-[0.75rem]">
               {job.agent && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{job.agent}</span>}
               {job.model && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{job.model}</span>}
+              {/* Where its agent works: the folder its file tools reach. */}
+              {job.cwd && (
+                <span title="The folder its agent works in" className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center gap-xs text-on-surface-var font-mono">
+                  <Folder size={12} aria-hidden="true" /> {job.cwd}
+                </span>
+              )}
             </div>
           )}
         </Section>

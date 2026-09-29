@@ -244,6 +244,10 @@ def project_task(ctl: RunController, item: Any, inst: Any, result: Any) -> None:
             ctl.run.id, [node_dict], existing_tasks=_projected_tasks(ctl)
         )
         for spec in plan.create:
+            # 🔴 BORN WITH ITS STEP'S STATE. The node has settled (this runs on the success branch
+            # only), and its task was written `open` anyway, with nothing to move it after — so a
+            # step that had finished read on the board, on Home and on the phone as work to do.
+            spec.status = _materialize.project_status(inst.state)
             # Recorded BEFORE the write is scheduled: the dedup set must reflect the intent
             # immediately, or a second settle in the same tick would plan the same task again
             # while the first write is still in flight.

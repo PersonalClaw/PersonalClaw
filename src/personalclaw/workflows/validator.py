@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.workflows.bindings import PIPES, BindingError, node_deps, parse_pipe, refs_in
+from personalclaw.workflows.materialize import OPT_OUT_KEY
 from personalclaw.workflows.models import (
     LLM_KINDS,
     GateKind,
@@ -417,7 +418,7 @@ def _validate_shape(
             # there in the spec. Caught here because the run-time symptom points at the provider
             # rather than at the authoring mistake, and because everything downstream of the
             # failed action then fails on an unresolved binding, burying the cause.
-            extras = [k for k in cfg if k not in ("provider", "context", "payload")]
+            extras = [k for k in cfg if k not in ("provider", "context", "payload", OPT_OUT_KEY)]
             if extras:
                 # Arguments ARE present, just in the wrong place — the run would fail, so this is
                 # an error naming exactly what to move.

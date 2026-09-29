@@ -146,6 +146,21 @@ describe('refTarget', () => {
     expect(refTarget({ refs: { triggers: [] } })).toBe('')
   })
 
+  it("sends a trigger's filed failure where its note leads: the trigger, or the run it started", () => {
+    // `triggers.delivery` files a failure routed to the Inbox with its note's `statusUrl`. Before,
+    // the row had nowhere to go, so a failed automation's Inbox item led back to nothing.
+    const failed = { refs: { statusUrl: '#/triggers?open=clock:feed-digest', trigger: 'clock:feed-digest' } }
+    expect(refTarget(failed)).toBe('triggers?open=clock:feed-digest')
+    expect(refLabel(failed)).toBe('Open trigger')
+    const run = { refs: { statusUrl: '#/workflows/runs/3f2a91c0', trigger: 'clock:research' } }
+    expect(refTarget(run)).toBe('workflows/runs/3f2a91c0')
+    expect(refLabel(run)).toBe('Open run')
+    // An older ref still wins, and only an in-app route is ever followed.
+    expect(refTarget({ refs: { statusUrl: '#/triggers?open=t', session: 's1' } })).toBe('chat/s1')
+    expect(refTarget({ refs: { statusUrl: 'https://example.com/elsewhere' } })).toBe('')
+    expect(refLabel({ refs: { statusUrl: 'https://example.com/elsewhere' } })).toBe('Go to source')
+  })
+
   it('returns empty when there is nowhere to go', () => {
     // The row then renders no deep-link affordance at all, rather than a dead link.
     expect(refTarget({ refs: {} })).toBe('')

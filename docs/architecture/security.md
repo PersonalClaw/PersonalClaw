@@ -343,9 +343,11 @@ The native file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `glob
 roots; the PersonalClaw home reached only through a root inside it (`file_roots.within`); no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
 `governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
-or `*.secret` file, nor any alias of one. A path that fails is refused with the reason. A `glob` or
-`grep` pattern that is absolute, starts at `~` or climbs with `..` is refused as a whole, and
-every match is checked one by one, so a listing, a search or a map leaves out what the tools
+or `*.secret` file, nor any alias of one. A path that fails is refused with the reason. A path that
+starts with `~/` names the owner's home, as the owner writes it, and meets every one of these checks
+as any absolute path does (`~name` stays a plain name). A `glob` or `grep` pattern that is
+absolute, starts at `~` or climbs with `..` is refused as a whole, and every match is checked one
+by one, so a listing, a search or a map leaves out what the tools
 could not open, including a file a link inside the workspace leads to outside it. `code_map`
 indexes the session's workspace, or a folder inside the places its file tools reach, and its
 index skips the same files (`codegraph.CodeGraphIndex`). A walk makes one `file_roots.Admission`
