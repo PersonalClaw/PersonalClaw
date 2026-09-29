@@ -557,7 +557,7 @@ function CredentialStoreEditor() {
 
   const inKeychain = cs.backend === 'keychain'
   return (
-    <Section title="Credential storage" hint="Where this instance keeps provider credentials. The default is ~/.personalclaw/.env at mode 0600; the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Locker) is an opt-in upgrade. A machine with no usable secret service keeps using .env and says so — there is never a third location.">
+    <Section title="Credential storage" hint="Where this instance keeps provider credentials. The default is the .env file in this instance's home folder, at mode 0600; the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Locker) is an opt-in upgrade. A machine with no usable secret service keeps using .env and says so — there is never a third location.">
       <div className="flex flex-col gap-4">
         <div className="flex items-start gap-3 rounded-lg bg-surface-container px-4 py-3">
           <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>

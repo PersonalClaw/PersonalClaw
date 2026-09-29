@@ -74,13 +74,13 @@ _CC_EXPOSE_FILES: list[str] = [
 ]
 
 # CC mode: individual sensitive files that aren't inside the hidden dirs above.
-# These require file-level (not directory-level) sandbox enforcement.
+# These require file-level (not directory-level) sandbox enforcement. The credential store's
+# file joins them from wherever the home is (`_hidden_files`), not from `$HOME`.
 _CC_FILES: list[str] = [
     ".npmrc",
     ".pypirc",
     ".netrc",
     ".git-credentials",
-    ".personalclaw/.env",
 ]
 
 # Sensitive env var prefixes to scrub from the child environment.
@@ -711,6 +711,28 @@ def _ssh_supports_accept_new() -> bool:
     return (major, minor) >= (7, 5)
 
 
+def _hidden_files(home: str, sandbox_level: str, *, realpath_only: bool) -> list[str]:
+    """The single files a ``cc`` or ``strict`` sandbox hides from its child (none at another
+    level): the credential files under the user's *home*, and the credential store's file in each
+    PersonalClaw home the guards cover (``security.credential_store_paths``: the active home, and
+    the default one) — both spellings of it unless *realpath_only*, for a home behind a symlink
+    (``/tmp`` → ``/private/tmp``), since a Seatbelt rule matches the path the child names.
+
+    The store's file is found from the home in use, not from ``$HOME``: spelled
+    ``~/.personalclaw/.env``, the mask hid a file that does not exist on a home anywhere else, such
+    as a container's ``/data``, and left the one in use readable.
+    """
+    if sandbox_level not in ("cc", "strict"):
+        return []
+    from personalclaw.security import credential_store_paths
+
+    hidden = [os.path.join(home, f) for f in _CC_FILES]
+    for store in credential_store_paths():
+        real = os.path.realpath(store)
+        hidden.extend([real] if realpath_only else [os.path.abspath(store), real])
+    return list(dict.fromkeys(hidden))
+
+
 # ── Backend: Linux namespace sandbox ──
 
 
@@ -738,18 +760,18 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
         dirs = _CC_DIRS
     else:
         dirs = _STRICT_DIRS
-    files = _CC_FILES if sandbox_level in ("cc", "strict") else []
     expose_files = _CC_EXPOSE_FILES if sandbox_level == "cc" else []
     env_prefixes = list(_SENSITIVE_ENV_PREFIXES)
     if sandbox_level in ("cc", "strict"):
         # Block agent subprocesses from reading credentials via os.environ
-        # (the file-level bind-mount of ~/.personalclaw/.env hides them on disk;
+        # (the file-level bind-mount of the credential store hides them on disk;
         # config/loader.py seeds them into os.environ for trusted children
         # only — sandboxed agents must not see them either way).
         env_prefixes = env_prefixes + list(_AGENT_DENIED_ENV_KEYS)
     hide_ssh = sandbox_level == "strict"
     dirs_json = json.dumps([os.path.join(home, d) for d in dirs])
-    files_json = json.dumps([os.path.join(home, f) for f in files])
+    # A bind hides the file itself, whatever the path the child names, so one spelling is enough.
+    files_json = json.dumps(_hidden_files(home, sandbox_level, realpath_only=True))
     expose_json = json.dumps([(os.path.join(home, f), f.split("/")[-1]) for f in expose_files])
     env_prefixes_json = json.dumps(env_prefixes)
     ssh_dir = json.dumps(os.path.join(home, ".ssh"))
@@ -1137,7 +1159,6 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
         dirs = [d for d in _CC_DIRS if d != ".aws"]
     else:
         dirs = _STRICT_DIRS
-    files = _CC_FILES if sandbox_level in ("cc", "strict") else []
     expose_files = _CC_EXPOSE_FILES if sandbox_level == "cc" else []
     expose_abs = {os.path.join(home, f) for f in expose_files}
     rules: list[str] = []
@@ -1154,8 +1175,7 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
             rules.append(f'(deny file-read* (require-all (subpath "{escaped}") {exceptions}))')
         else:
             rules.append(f'(deny file-read* (subpath "{escaped}"))')
-    for f in files:
-        target = os.path.join(home, f)
+    for target in _hidden_files(home, sandbox_level, realpath_only=False):
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-read* (literal "{escaped}"))')
 

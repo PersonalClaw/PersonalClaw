@@ -159,6 +159,19 @@ grants, is refused before its message is sent, and the owner is told why.
   flag rather than block.
 - **Tool-name denies** — `BUILTIN_DENY_PATTERNS` (fnmatch over tool names)
   with a documented `_DENY_EXCEPTIONS` escape hatch.
+- **Credential screen** — `is_sensitive_bash_command`, run by the native bash tool
+  (before its deny list), a bash action and the ACP permission hook. It refuses a command
+  that names a file only its owner reads (`SensitivePaths` without the `$HOME`
+  folders: PersonalClaw's credential store and keys in the active home and the
+  default one, `_pclaw_homes`, and another tool's sign-in, `_sign_in_files` and
+  `SIGN_IN_FILE_BASENAMES`), and one that returns a credential folder under
+  `$HOME` (`_SENSITIVE_HOME_DIRS`). For the first, the paths a command names are read
+  by `command_paths.named_paths`, the same reading the owner-only fence uses: the homes
+  written out as a shell or a one-liner spells them, a relative path against the folder
+  it runs in and every folder a `cd` moves to, links, globs and brace lists. The file
+  tools and the dashboard ask `is_sensitive_path`, the same declarations. What no
+  reading of the text can see is
+  [limitations §13](../security/limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files).
 - **Redaction** — sensitive-path and credential redaction, including
   vendor-token detection patterns (e.g. `xox[bpas]-`). These vendor-shaped
   patterns are deliberate keeps: they are secret-*detection* data; renaming
@@ -255,8 +268,9 @@ This is a **credential-hiding sandbox, not a confinement sandbox** — a precise
 that the rest of this section, and any public claim, must respect. The macOS Seatbelt profile
 is allow-by-default (`(version 1)\n(allow default)`) with targeted `deny file-read*` rules over
 credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.docker`, `~/.kube`,
-`.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, `.personalclaw/.env`, plus `~/.ssh` in
-`strict`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
+`.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, and the credential store's `.env` in the home in
+use and the default one, plus `~/.ssh` in `strict`; the single files only in `cc` and `strict`,
+`_hidden_files`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
 cost of credential theft. The one place it confines writes is the home's owner-only paths (below);
 it does not stop an agent from doing anything else.
 

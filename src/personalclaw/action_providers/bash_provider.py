@@ -189,9 +189,10 @@ class BashActionProvider(ActionProvider):
         # another app — instead of the one that happened to be noticed.
         #
         # Refused, not sanitised: there is no safe rewrite of a command that names a credential.
+        # A relative path is read from where the command runs: the gateway's own folder.
         from personalclaw import security
 
-        refusal = security.is_sensitive_bash_command(command)
+        refusal = security.is_sensitive_bash_command(command, cwd=os.getcwd())
         if refusal:
             _sel_refusal(command, refusal, ctx)
             return ActionResult(success=False, error=refusal)

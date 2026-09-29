@@ -62,9 +62,6 @@ class TestCcFilesList:
     def test_has_git_credentials(self):
         assert ".git-credentials" in _CC_FILES
 
-    def test_has_personalclaw_env(self):
-        assert ".personalclaw/.env" in _CC_FILES
-
 
 class TestBuildLauncherScriptCcMode:
     def test_cc_mode_uses_cc_dirs(self):

@@ -17,6 +17,7 @@ from typing import Any, Iterable
 from urllib.parse import parse_qs
 
 from personalclaw import address_logins
+from personalclaw.command_paths import HOME_PATTERNS, named_paths, strip_shell_quotes
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 
 logger = logging.getLogger(__name__)
@@ -74,13 +75,6 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     # The macOS user keychain — the OS credential store, and the one third-party secret
     # location the list missed. It was an accepted PTY working directory (#643).
     "Library/Keychains",
-    ".personalclaw/.env",
-    # The governance ceiling (guardrails/ceiling.py) — the operator's hard bound on every
-    # run. Listed here so every agent-reachable path check (the action denylist, the files
-    # area, the bash read/write hooks) refuses it: a bound the agent can rewrite is not a
-    # bound. This closes the write paths a single-user machine CAN close; the stronger
-    # protection is PERSONALCLAW_CEILING_FILE pointing at a root-owned file outside $HOME.
-    ".personalclaw/governance",
 ]
 
 #: PersonalClaw's OWN auth and audit material, refused by BASENAME wherever it sits.
@@ -117,14 +111,19 @@ OWN_SECRET_BASENAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Secret-bearing entries INSIDE the PersonalClaw home, resolved from ``config_dir()`` at
-#: check time rather than from ``$HOME``.
+#: The credential store's file in a home (``config.loader.env_path()``), where every secret
+#: PersonalClaw keeps is written when no OS keychain holds it.
+CREDENTIAL_STORE_FILE = ".env"
+
+#: Secret-bearing entries INSIDE the PersonalClaw home, resolved at check time for the ACTIVE
+#: home and for the default one (:func:`_pclaw_homes`) rather than spelled from ``$HOME``.
 #:
-#: 🔴 The ``.personalclaw/…`` entries above are home-relative, so with a custom
-#: ``PERSONALCLAW_HOME`` they match nothing. With ``PERSONALCLAW_HOME`` pointed
-#: elsewhere, ``.env`` AND ``governance`` were both allowed — so on every dev home and
-#: every user override, the governance ceiling was agent-writable, which is precisely the
-#: "a bound the agent can rewrite is not a bound" the entry above exists to prevent.
+#: 🔴 Spelled from ``$HOME`` (``~/.personalclaw/.env``), an entry matches nothing once
+#: ``PERSONALCLAW_HOME`` points elsewhere — and every documented container install does
+#: (``/data``). Measured there: the agent's shell read the stored keys out of ``/data/.env``
+#: (``cut -d= -f1`` listed the names, ``awk`` printed a key's first characters) while
+#: ``~/.personalclaw/.env``, a file that did not exist, was refused. The path guard had
+#: learned the active home and the shell's screen had not: two declarations of one thing.
 #:
 #: The home itself is NOT listed: it is a browsable dashboard root holding the knowledge
 #: DB, apps and logs, so refusing it wholesale would break the files area. Only the
@@ -149,7 +148,7 @@ OWN_SECRET_BASENAMES: frozenset[str] = frozenset(
 #: makes the omission structurally impossible rather than merely fixed once).
 HOME_SECRET_FILE_BASENAMES: frozenset[str] = frozenset(
     {
-        ".env",
+        CREDENTIAL_STORE_FILE,
         "session_key",
         "sessions.json",
     }
@@ -166,6 +165,12 @@ HOME_SECRET_FILE_BASENAMES: frozenset[str] = frozenset(
 #: A dir entry rather than three basenames deliberately: ``credentials.json`` and
 #: ``pair_codes.json`` are plausible names in a user's own project, and the fourth auth file
 #: nobody has written yet must be covered too.
+#:
+#: ``governance`` holds the governance ceiling (``guardrails/ceiling.py``), the operator's hard
+#: bound on every run: refused so that every agent-reachable path check (the action denylist,
+#: the files area, the bash screen) refuses it, because a bound the agent can rewrite is not a
+#: bound. This closes the write paths a single-user machine CAN close; the stronger protection
+#: is ``PERSONALCLAW_CEILING_FILE`` pointing at a root-owned file outside the home.
 HOME_SECRET_DIRS: frozenset[str] = frozenset(
     {
         "auth",
@@ -174,20 +179,25 @@ HOME_SECRET_DIRS: frozenset[str] = frozenset(
     }
 )
 
-#: The union, in a stable order. Every consumer that wants "the secret-bearing entries of the
-#: active home" reads this; nothing re-lists its members.
+#: The union, in a stable order. Every consumer that wants "the secret-bearing entries of a
+#: home" reads this; nothing re-lists its members.
 _SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = tuple(
     sorted(HOME_SECRET_FILE_BASENAMES | HOME_SECRET_DIRS)
 )
 
 
-def _pclaw_home_sensitive_paths() -> list[str]:
-    """Absolute paths of the secret-bearing entries in the ACTIVE PersonalClaw home.
+def _pclaw_homes() -> list[str]:
+    """The PersonalClaw homes whose secrets every guard refuses: the ACTIVE one, and the
+    default one when the active home is another folder.
+
+    The default one too, because a home in use elsewhere does not make the owner's own home
+    empty: a dev gateway on ``.dev-home`` runs beside a real ``~/.personalclaw`` holding real
+    keys, and an agent of the first must not read the second's.
 
     Resolved per call because ``PERSONALCLAW_HOME`` is read from the environment and a
-    process can legitimately see it change (tests, a dev gateway). Best-effort: if the
-    home cannot be resolved the caller still has the ``$HOME``-relative tier, so a
-    config hiccup narrows the guard rather than removing it.
+    process can legitimately see it change (tests, a dev gateway). Best-effort: a home that
+    cannot be resolved is left out, so a config hiccup narrows the guard rather than
+    removing it.
 
     🔴 Deliberately NOT ``config.loader.config_dir()``, which calls ``_ensure_dir`` and so
     CREATES the directory. A read-only path predicate that makes a directory is a bug in
@@ -199,13 +209,100 @@ def _pclaw_home_sensitive_paths() -> list[str]:
     so an override the resolver refuses (a system directory) had this guarding a directory
     nothing used while the process ran on the default home.
     """
-    from personalclaw.config.loader import resolve_config_dir
+    from personalclaw.config.loader import default_config_dir, resolve_config_dir
 
-    try:
-        home = resolve_config_dir()
-    except (OSError, ValueError, RuntimeError):
-        return []
-    return [str(home / entry) for entry in _SENSITIVE_PCLAW_HOME_ENTRIES]
+    homes: list[str] = []
+    for resolve in (resolve_config_dir, default_config_dir):
+        try:
+            homes.append(str(resolve()))
+        except (OSError, ValueError, RuntimeError):
+            continue
+    return list(dict.fromkeys(homes))
+
+
+def _pclaw_home_sensitive_paths() -> list[str]:
+    """Absolute paths of the secret-bearing entries in each home :func:`_pclaw_homes` names."""
+    return [
+        os.path.join(home, entry)
+        for home in _pclaw_homes()
+        for entry in _SENSITIVE_PCLAW_HOME_ENTRIES
+    ]
+
+
+def credential_store_paths() -> list[str]:
+    """The credential store's file in each home :func:`_pclaw_homes` names: what the OS sandbox
+    hides from an agent's child process, where it hides a file at all."""
+    return [os.path.join(home, CREDENTIAL_STORE_FILE) for home in _pclaw_homes()]
+
+
+#: Another tool's SIGN-IN file, refused by NAME wherever it sits: ``.credentials.json`` is Claude
+#: Code's login and Codex's MCP sign-ins, ``oauth_creds.json`` Gemini CLI's Google sign-in.
+#: By name because no location can follow them: Claude Code reads its config folder from a
+#: variable set per process (``CLAUDE_CONFIG_DIR``), and PersonalClaw's own Claude Code app gives
+#: its sessions a folder inside the home. The name alone says what the file is, which
+#: ``auth.json`` or ``hosts.yml`` does not: those are refused only where their tool keeps them
+#: (:func:`_sign_in_files`).
+SIGN_IN_FILE_BASENAMES: frozenset[str] = frozenset({".credentials.json", "oauth_creds.json"})
+
+
+def _sign_in_files(home: str) -> list[str]:
+    """Where the agent CLIs and the tools PersonalClaw drives keep the sign-in each reads itself,
+    for a user whose home is *home*.
+
+    Named by tool on purpose, the way ``_SENSITIVE_HOME_DIRS`` names ``~/.aws``: this is
+    secret-detection data (``docs/architecture/provider-boundary.md``), where a location is what
+    says a file is a sign-in. Each folder is found the way its tool finds it, from the variable
+    that moves it; the default folder stays refused beside a moved one, since a login can still
+    sit there. A provider app's declared subscription sign-in is included, so a store an app names
+    is one the agent may not read.
+    """
+    from personalclaw.llm.subscription_credentials import registered_sources
+    from personalclaw.outside_home import huggingface_home
+
+    def moved(name: str) -> str:
+        value = os.environ.get(name, "").strip()
+        return os.path.expanduser(value) if value else ""
+
+    def folders(*candidates: str) -> list[str]:
+        return list(dict.fromkeys(c for c in candidates if c))
+
+    config_home = moved("XDG_CONFIG_HOME")
+    files: list[str] = []
+    # Codex: its login, tokens or an API key. Its MCP sign-ins are `.credentials.json`.
+    for folder in folders(os.path.join(home, ".codex"), moved("CODEX_HOME")):
+        files.append(os.path.join(folder, "auth.json"))
+    # Gemini CLI: the API key it reads from `.env`, and its MCP and agent sign-ins, in `.gemini`
+    # under its own home variable (the user's home when unset) — or `.cache/.gemini` when it runs
+    # in its macOS sandbox. Its Google sign-in is `oauth_creds.json`.
+    for base in folders(home, moved("GEMINI_CLI_HOME")):
+        for folder in (os.path.join(base, ".gemini"), os.path.join(base, ".cache", ".gemini")):
+            for name in (CREDENTIAL_STORE_FILE, "mcp-oauth-tokens.json", "a2a-oauth-tokens.json"):
+                files.append(os.path.join(folder, name))
+    # The GitHub CLI and the GitLab CLI: the token each keeps when no keychain holds it.
+    for folder in folders(
+        os.path.join(home, ".config", "gh"),
+        moved("GH_CONFIG_DIR"),
+        config_home and os.path.join(config_home, "gh"),
+    ):
+        files.append(os.path.join(folder, "hosts.yml"))
+    for folder in folders(
+        os.path.join(home, ".config", "glab-cli"),
+        moved("GLAB_CONFIG_DIR"),
+        config_home and os.path.join(config_home, "glab-cli"),
+        os.path.join(home, "Library", "Application Support", "glab-cli"),
+    ):
+        files.append(os.path.join(folder, "config.yml"))
+    # Hugging Face: the token `huggingface-cli login` saved, and every token it keeps.
+    for folder in folders(os.path.join(home, ".cache", "huggingface"), str(huggingface_home())):
+        files.extend((os.path.join(folder, "token"), os.path.join(folder, "stored_tokens")))
+    files.extend(folders(moved("HF_TOKEN_PATH")))
+    for source in registered_sources():
+        for declared in source.credential_files:
+            path = os.path.expanduser(os.path.expandvars(declared))
+            # A candidate naming an unset variable names no file.
+            if "$" not in path:
+                files.append(path)
+    return files
 
 
 # Regex for bash commands that read sensitive paths, followed by a path containing any
@@ -241,44 +338,14 @@ _READ_CMDS = (
 _SCRIPT_OPEN = r"(?:python|ruby|perl|node|deno|bun|php|osascript)\S*\s"
 
 
-#: How each language spells "the user's home" when it builds the path instead of writing it.
-#: Measured need: `node -e "...readFileSync(process.env.HOME+'/.ssh/id_rsa')"` named no `~`,
-#: no `$HOME` and no literal home path, so the guard saw nothing to match.
-_HOME_EXPRESSIONS = (
-    "$HOME",
-    "~",
-    "process.env.HOME",
-    "os.environ[HOME]",
-    "os.path.expanduser",
-    "Path.home()",
-    "os.homedir()",
-    "ENV[HOME]",
-    "%USERPROFILE%",
-    "$env:USERPROFILE",
-)
-
-
-def strip_shell_quotes(command: str) -> str:
-    """Remove quote characters so a quoted respelling reads as the path it is.
-
-    🔴 Measured against the shipped guard: `cat ~/'.ssh'/id_rsa` and `cat ~/.s''sh/id_rsa`
-    were both ALLOWED, and both are ordinary shell that reads the file — the quotes are
-    invisible to the shell and opaque to a regex. Dropping them first collapses that whole
-    family into the plain spelling.
-
-    It cannot close the CONCATENATION family (`'/.s' + 'sh/id_rsa'`, `$'\x2e'ssh`): no regex
-    over a command string can, because the string that names the file never exists in the
-    text. That is the documented limit of this control and the reason the OS sandbox
-    bind-mounts empty dirs over `~/.aws`, `~/.gnupg` and friends — the guard here is
-    defence in depth, not the fence.
-    """
-    return command.replace("'", "").replace('"', "").replace("\\", "")
-
-
 def _build_sensitive_regex() -> re.Pattern[str]:
-    """Build a compiled regex matching bash reads of sensitive paths."""
+    """Build a compiled regex matching bash reads of the credential folders under ``$HOME``.
+
+    The home is matched as the command spells it: written out, as ``~``, or as a one-liner builds
+    it (``command_paths.HOME_PATTERNS``, the vocabulary the path reading also uses).
+    """
     home = str(Path.home())
-    home_alts = "(?:" + "|".join(re.escape(h) for h in (home, *_HOME_EXPRESSIONS)) + ")"
+    home_alts = "(?:" + "|".join((re.escape(home), "~", *HOME_PATTERNS)) + ")"
     escaped_dirs = [re.escape(d) for d in _SENSITIVE_HOME_DIRS]
     dirs_pattern = "|".join(escaped_dirs)
     # `[+,\s]*` between the home expression and the slash: a built path joins them with a
@@ -290,26 +357,7 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     )
 
 
-def _build_own_secret_regex() -> re.Pattern[str]:
-    """Bash reads of PersonalClaw's own auth/audit files, by basename and at any path.
-
-    A second pattern rather than a new entry in :func:`_build_sensitive_regex`, because that
-    one anchors every alternative on ``$HOME`` — and these files follow
-    ``PERSONALCLAW_HOME``, so a ``$HOME``-anchored alternative would miss every custom home.
-    Measured before the fix: ``wc -c < <home>/sel_hmac.key`` was clean.
-
-    Only :data:`OWN_SECRET_BASENAMES` is used here. Names that are ordinary elsewhere are
-    refused by path instead, so this pattern cannot fire on a file the user owns.
-    """
-    names = "|".join(re.escape(n) for n in sorted(OWN_SECRET_BASENAMES))
-    return re.compile(
-        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*)\S*(?:{names})(?:/|\s|$|['\"),;])",
-        re.IGNORECASE,
-    )
-
-
 _SENSITIVE_RE: re.Pattern[str] | None = None
-_OWN_SECRET_RE: re.Pattern[str] | None = None
 
 
 def _get_sensitive_re() -> re.Pattern[str]:
@@ -317,13 +365,6 @@ def _get_sensitive_re() -> re.Pattern[str]:
     if _SENSITIVE_RE is None:
         _SENSITIVE_RE = _build_sensitive_regex()
     return _SENSITIVE_RE
-
-
-def _get_own_secret_re() -> re.Pattern[str]:
-    global _OWN_SECRET_RE
-    if _OWN_SECRET_RE is None:
-        _OWN_SECRET_RE = _build_own_secret_regex()
-    return _OWN_SECRET_RE
 
 
 def is_sensitive_path(path_str: str) -> bool:
@@ -348,21 +389,40 @@ class SensitivePaths:
 
     Make one per walk and drop it after: a protected location that becomes a link after the
     instance was made is seen by the next one, not by this one.
+
+    *home_credential_dirs* False leaves out the credential folders under ``$HOME``
+    (``_SENSITIVE_HOME_DIRS``) and keeps the files nothing but their owner reads: PersonalClaw's
+    own secrets and another tool's sign-in. The shell's screen asks that narrower question of
+    every path a command names (:func:`is_sensitive_bash_command`), because a command may use
+    ``~/.ssh`` without returning it (``ssh -i ~/.ssh/key``), and none needs to name the others.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, home_credential_dirs: bool = True) -> None:
         home = str(Path.home())
-        protected: set[str] = set()
-        for sensitive_dir in _SENSITIVE_HOME_DIRS:
-            protected |= _protected_forms(os.path.join(home, sensitive_dir))
-        # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
-        # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
-        for entry in _pclaw_home_sensitive_paths():
-            protected |= _protected_forms(entry)
-        self._protected = tuple(protected)
-        self._own = frozenset(n.casefold() for n in OWN_SECRET_BASENAMES)
+        other_paths = _sign_in_files(home)
+        if home_credential_dirs:
+            other_paths += [os.path.join(home, d) for d in _SENSITIVE_HOME_DIRS]
+        # The secret entries of the ACTIVE PersonalClaw home, and of the default one beside it.
+        own_paths = _pclaw_home_sensitive_paths()
+        folders: dict[str, str] = {}
+        self._own = tuple(set().union(*(_protected_forms(p, folders) for p in own_paths)))
+        self._other = tuple(set().union(*(_protected_forms(p, folders) for p in other_paths)))
+        self._own_names = frozenset(n.casefold() for n in OWN_SECRET_BASENAMES)
+        self._sign_in_names = frozenset(n.casefold() for n in SIGN_IN_FILE_BASENAMES)
+        #: The bare name of everything this refuses, for a reader of a command: a word like
+        #: `session_key` names one of these files once a `cd` has moved the shell beside it.
+        self.names = frozenset(
+            {os.path.basename(p) for p in (*own_paths, *other_paths)}
+            | OWN_SECRET_BASENAMES
+            | SIGN_IN_FILE_BASENAMES
+        )
 
     def __call__(self, path_str: str) -> bool:
+        return bool(self.kind(path_str))
+
+    def kind(self, path_str: str) -> str:
+        """What *path_str* is: :data:`OWN_SECRET` for PersonalClaw's own credential store or auth
+        and audit material, :data:`CREDENTIAL` for any other credential, ``""`` for neither."""
         # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
         # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
         # `except` below deliberately continues with the UNRESOLVED string — which then matches
@@ -378,7 +438,7 @@ class SensitivePaths:
         # see and report". A NUL is never part of a legitimate filename — POSIX and Windows both
         # forbid it in a path component — so over-blocking costs nothing real.
         if "\x00" in path_str:
-            return True
+            return CREDENTIAL
         # Expand ~ and $HOME, then compare every form of the request with every form of each
         # protected location (:func:`_path_forms`).
         expanded = os.path.expanduser(os.path.expandvars(path_str))
@@ -388,10 +448,10 @@ class SensitivePaths:
         # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
         # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
         # created as `.ssh` was read back through `.SSH` and returned the file's contents. So
-        # every one of the fourteen entries above, INCLUDING `~/.personalclaw/.env` and the
-        # governance ceiling, was one shifted key away from being readable, across the ~70 call
-        # sites that route through this function. `Path.resolve()` normalises `..`, `.`, `//`,
-        # `~` and `$HOME` (all verified blocked); it does not normalise case.
+        # every one of the entries, INCLUDING the credential store and the governance ceiling,
+        # was one shifted key away from being readable, across the ~70 call sites that route
+        # through this function. `Path.resolve()` normalises `..`, `.`, `//`, `~` and `$HOME`
+        # (all verified blocked); it does not normalise case.
         #
         # Always casefold rather than probing the filesystem per call: a per-path probe is
         # itself a control that fails when the probe fails, and on a case-SENSITIVE filesystem
@@ -399,16 +459,29 @@ class SensitivePaths:
         # credentials would be refused, which is the safe direction for a credential guard and
         # the error a user can see and report.
         #
-        # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
-        # the same reason as everything else here: on macOS/Windows the filesystem is
-        # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
-        if any(os.path.basename(form) in self._own for form in requested):
-            return True
-        return any(
-            form == entry or form.startswith(entry + os.sep)
-            for form in requested
-            for entry in self._protected
-        )
+        # PersonalClaw's own auth/audit material and another tool's sign-in, by basename, wherever
+        # they sit. Casefolded for the same reason as everything else here: on macOS/Windows the
+        # filesystem is case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's
+        # finding).
+        names = {os.path.basename(form) for form in requested}
+        if names & self._own_names or _under(requested, self._own):
+            return OWN_SECRET
+        if names & self._sign_in_names or _under(requested, self._other):
+            return CREDENTIAL
+        return ""
+
+
+#: :meth:`SensitivePaths.kind`'s answer for PersonalClaw's own credential store and its auth and
+#: audit material, and for any other credential.
+OWN_SECRET = "own"
+CREDENTIAL = "credential"
+
+
+def _under(forms: set[str], locations: tuple[str, ...]) -> bool:
+    """Whether any of *forms* is one of *locations* or inside one."""
+    return any(
+        form == entry or form.startswith(entry + os.sep) for form in forms for entry in locations
+    )
 
 
 def _path_forms(path: str) -> set[str]:
@@ -433,7 +506,7 @@ def _path_forms(path: str) -> set[str]:
     return forms
 
 
-def _protected_forms(path: str) -> set[str]:
+def _protected_forms(path: str, folders: dict[str, str]) -> set[str]:
     """Every form a protected location takes: :func:`_path_forms`, plus where each symlink
     directly inside it points (:func:`_linked_entries`).
 
@@ -442,10 +515,22 @@ def _protected_forms(path: str) -> set[str]:
     does). With ``~/.ssh`` a real directory and ``~/.ssh/id_ed25519`` a link into a dotfiles
     folder, such a caller asks about the dotfiles path, which is under no protected location
     unless the link's target is one.
+
+    *folders* holds each folder's real path once it is resolved, for the rest of the set: most
+    protected locations share a folder with others (a home's secret entries, a tool's sign-in
+    files), and resolving the same folder again for each was most of what building the set cost.
+    A location that is itself a link is resolved whole, so its target is still where it points.
     """
-    forms = {os.path.normpath(os.path.abspath(path)).casefold()}
+    written = os.path.normpath(os.path.abspath(path))
+    forms = {written.casefold()}
     try:
-        real = os.path.realpath(path)
+        folder, name = os.path.split(written)
+        if not name or os.path.islink(written):
+            real = os.path.realpath(written)
+        else:
+            if folder not in folders:
+                folders[folder] = os.path.realpath(folder)
+            real = os.path.join(folders[folder], name)
     except (OSError, ValueError):
         return forms
     forms.add(real.casefold())
@@ -646,18 +731,49 @@ def _normalise_for_matching(command: str) -> str:
     return " && ".join(out)
 
 
-def is_sensitive_bash_command(command: str) -> str | None:
-    """Check if a bash command reads sensitive paths.
+#: What the shell's screen says when it refuses, by what the command reached.
+_SHELL_REFUSAL = {
+    OWN_SECRET: "Blocked: command accesses PersonalClaw's own credential or audit key",
+    CREDENTIAL: "Blocked: command accesses sensitive credential path",
+}
 
-    Returns denial reason string, or None if clean.
+
+def is_sensitive_bash_command(
+    command: str, *, cwd: str | os.PathLike[str] | None = None
+) -> str | None:
+    """Why a bash command must not run because of what it would read, or None if clean.
+
+    Two questions, one per kind of secret:
+
+    * Does it RETURN the content of a credential folder under ``$HOME`` (``~/.ssh``, ``~/.aws``
+      and the rest of :data:`_SENSITIVE_HOME_DIRS`) — ``cat``, ``grep``, a copy, a one-liner? A
+      command that only uses one, such as ``ssh -i ~/.ssh/key``, passes: those keys exist to be
+      used by the tools that read them.
+    * Does it NAME a file only its owner reads — PersonalClaw's own credential store and auth and
+      audit material, in the active home and the default one, or another tool's sign-in
+      (:class:`SensitivePaths` without the ``$HOME`` folders)? Refused whatever it does with the
+      file, since nothing an agent runs needs to name one. Every path is read the way the
+      command's shell would find it (:func:`~personalclaw.command_paths.named_paths`): the homes
+      as a shell or a one-liner spells them, a relative path against *cwd* (the folder it runs
+      in; the home's workspace when None) and every folder a ``cd`` moves to, through a link, a
+      glob or a brace list.
+
+    🔴 The second question was asked of ``$HOME`` alone, as spellings of
+    ``~/.personalclaw/…``, so it knew the credential store only where the default home keeps it.
+    On every container install (``PERSONALCLAW_HOME=/data``) ``cut -d= -f1 /data/.env`` listed the
+    stored secrets' names and ``awk`` printed a key, and from the workspace inside the home
+    ``cat ../.env`` read the same file on any install.
+
+    Defence in depth: a command can build a path out of pieces no reading of its text sees.
     """
     normalised = strip_shell_quotes(_normalise_for_matching(command))
     if _get_sensitive_re().search(normalised):
-        return "Blocked: command accesses sensitive credential path"
-    # PersonalClaw's own auth/audit files, which the pattern above cannot express: it
-    # anchors on `$HOME` and these follow `PERSONALCLAW_HOME`.
-    if _get_own_secret_re().search(normalised):
-        return "Blocked: command accesses PersonalClaw's own credential or audit key"
+        return _SHELL_REFUSAL[CREDENTIAL]
+    owned = SensitivePaths(home_credential_dirs=False)
+    for _word, path in named_paths(command, cwd=cwd, names=owned.names):
+        kind = owned.kind(str(path))
+        if kind:
+            return _SHELL_REFUSAL[kind]
     return None
 
 

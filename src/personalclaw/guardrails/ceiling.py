@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
 CEILING_PATH_ENV = "PERSONALCLAW_CEILING_FILE"
 
 #: Directory (under the PersonalClaw home) that holds the ceiling. Also registered in
-#: ``security._SENSITIVE_HOME_DIRS`` so every agent-reachable path check refuses it.
+#: ``security.HOME_SECRET_DIRS`` so every agent-reachable path check refuses it.
 GOVERNANCE_DIRNAME = "governance"
 CEILING_FILENAME = "ceiling.json"
 

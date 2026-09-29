@@ -135,6 +135,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The embedding re-index embeds every memory with an Ollama embedding model, where it used to fail on every other one and leave half of them read by keyword.**
 
+- **Settings → Secrets no longer lists a switch PersonalClaw sets for itself as a credential inherited from the host, and Settings → Security no longer says the credential store is always in `~/.personalclaw`.**
+
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**
@@ -635,6 +637,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The skill search answers every refusal in the shared error shape, and an unusable `limit` is refused instead of failing.**
 
 ### Security
+
+- **The agent's shell refuses PersonalClaw's credential store and keys wherever the home is, a container's included, and the sign-in files of Codex, Claude Code, Gemini CLI, the GitHub and GitLab CLIs and Hugging Face.**
 
 - **A sync writes nothing outside the stores it syncs: a path another machine names outside them is refused, nothing of that change is taken in, and the sync report names it.**
 

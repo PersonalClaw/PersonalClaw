@@ -26,8 +26,9 @@ Three layers answer it, each reading this module:
 * **The tool-call screen** (``hooks.HookManager.on_tool_call``, which every approval path consults
   before a card, an auto-approve or an unattended default) and the native ``bash`` tool refuse a
   call that names one of these paths, and say why. That is defence in depth: a command can
-  always be spelled so no reading of its text finds the path (``security.strip_shell_quotes``
-  documents the same limit for credentials).
+  always be spelled so no reading of its text finds the path (``command_paths.strip_shell_quotes``
+  documents the same limit for credentials). The reading is the one the credential screen uses
+  too (``command_paths.named_paths``), so what one learns to read the other reads.
 * **No file root reaches into the home** except through a root that is itself inside it
   (``file_roots.within``), so the file explorer, file-backed artifacts, apps and the native file
   tools never name them however a workspace is bound.
@@ -41,8 +42,6 @@ owner's surfaces.
 from __future__ import annotations
 
 import os
-import re
-import shlex
 from pathlib import Path
 
 #: The files, by name under the home.
@@ -84,69 +83,27 @@ def is_owner_only(path: Path | str, home: Path | str | None = None) -> bool:
     return False
 
 
-#: Shell punctuation a path token can be glued to (`>x`, `2>>x`, `|tee`, `$(cat x)`, `x;`).
-_GLUE = re.compile(r"^[0-9]*[<>&|;()`$!{}]+|[;&|()`}]+$")
-
-#: A path spelled inside a larger word — a script's string literal (`open('../config.json')`), an
-#: argument glued to an option — which splitting the command on whitespace does not separate.
-_EMBEDDED = re.compile(r"""(?:~|\.{1,2})?/[^\s'"`;|&<>(),]+""")
-
-
-def _tokens(text: str) -> list[str]:
-    try:
-        parts = shlex.split(text, posix=True)
-    except ValueError:  # an unbalanced quote still names what it names
-        parts = text.split()
-    out: list[str] = []
-    for part in parts:
-        # `a=b`, `--out=path` and `cp x:y` hide a path behind a separator.
-        for piece in re.split(r"[=,:]", part):
-            piece = _GLUE.sub("", piece)
-            if piece:
-                out.append(piece)
-    out.extend(match.group(0) for match in _EMBEDDED.finditer(text))
-    return out
-
-
-def named_in(text: str, *, cwd: Path | str | None = None, home: Path | str | None = None) -> str:
+def named_in(
+    text: str,
+    *,
+    cwd: str | os.PathLike[str] | None = None,
+    home: str | os.PathLike[str] | None = None,
+) -> str:
     """The owner-only path *text* — a shell command or a tool call's title — names, or ``""``.
 
-    Every token that looks like a path is resolved the way the shell would find it — ``~`` and
-    ``$HOME`` expanded, a relative one against *cwd* (the workspace when None, where the agent's
-    tools run) — and checked with :func:`is_owner_only`. Defence in depth, never the fence: a
-    command can build the path out of pieces no reading of its text sees, which is what the OS
-    sandbox is for.
+    Every path the command names, read the way its shell would find it
+    (:func:`~personalclaw.command_paths.named_paths`: ``~`` and ``$HOME`` written out, a relative
+    one against *cwd* and every folder a ``cd`` moves to, the workspace when None, where the
+    agent's tools run), is checked with :func:`is_owner_only`. So ``cd .. && echo x > hooks/a.sh``
+    names ``<home>/hooks`` from the workspace. Defence in depth, never the fence: a command can
+    build the path out of pieces no reading of its text sees, which is what the OS sandbox is for.
     """
-    root = Path(home) if home is not None else _home()
-    if cwd is None:
-        try:
-            from personalclaw.memory import workspace_dir
+    from personalclaw.command_paths import named_paths
 
-            base = Path(workspace_dir())
-        except Exception:  # noqa: BLE001 - an unresolved workspace leaves the home as the base
-            base = root
-    else:
-        base = Path(cwd)
-    # The variables are spelled out before the text is split, so `$HOME/x` stays one token.
-    spelled = text
-    for name, value in (("PERSONALCLAW_HOME", str(root)), ("HOME", os.path.expanduser("~"))):
-        spelled = spelled.replace("${" + name + "}", value).replace("$" + name, value)
-    # A `cd` moves where the later commands of a chain resolve a relative path, so
-    # `cd .. && echo x > hooks/a.sh` names `<home>/hooks` from the workspace.
-    for segment in re.split(r"&&|\|\||[;|\n]", spelled):
-        words = segment.split()
-        if words and words[0] == "cd":
-            target = os.path.expanduser(words[1] if len(words) > 1 else "~")
-            base = Path(target) if os.path.isabs(target) else base / target
-            continue
-        for token in _tokens(segment):
-            if not ("/" in token or token.startswith((".", "~")) or token in OWNER_ONLY_FILES):
-                continue
-            candidate = Path(os.path.expanduser(token))
-            if not candidate.is_absolute():
-                candidate = base / candidate
-            if is_owner_only(candidate, root):
-                return token
+    root = Path(home) if home is not None else _home()
+    for word, path in named_paths(text, cwd=cwd, home=root, names=OWNER_ONLY_FILES):
+        if is_owner_only(path, root):
+            return word
     return ""
 
 

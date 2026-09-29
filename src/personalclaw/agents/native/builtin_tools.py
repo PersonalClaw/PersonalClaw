@@ -1518,10 +1518,11 @@ class NativeBuiltinToolProvider(ToolProvider):
         handed.extend(_environment_credentials())
         # App-level guards before any execution, judged on the command that will RUN, so a value a
         # reference fills in cannot carry a sensitive path or a denied pattern past them:
-        # 1. sensitive credential-path access (is_sensitive_bash_command);
+        # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
+        #    read from the folder the command runs in — the workspace, inside the home;
         # 2. the configured execute_bash denied-command regexes (credential
         #    exfiltration — aws s3 cp, echo $AWS_SECRET, IMDS 169.254.169.254, …).
-        sens = security.is_sensitive_bash_command(command)
+        sens = security.is_sensitive_bash_command(command, cwd=self._cwd)
         if sens:
             return ToolResult(
                 success=False,

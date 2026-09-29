@@ -437,8 +437,9 @@ so if onboarding made this your chat model, choose another in **Settings → Mod
 
 A provider's API key, every app setting its manifest declares `x-meta.sensitive`, every value
 in an MCP server's `env` and `headers`, and the webhook token (`hooks.webhook_token`, which
-`POST /api/hooks/agent` checks) are kept in the credential store: the OS keychain, or
-`~/.personalclaw/.env` at mode 0600. The file that configures them holds a `{{secret:…}}`
+`POST /api/hooks/agent` checks) are kept in the credential store: the OS keychain, or the
+`.env` file in the PersonalClaw home (`~/.personalclaw/.env` unless `PERSONALCLAW_HOME` names
+another) at mode 0600. The file that configures them holds a `{{secret:…}}`
 reference, resolved where the value is used (`src/personalclaw/config/secret_refs.py`), and only
 against the credentials of that file's owner: an app cannot name another app's key, a provider's,
 or a Secrets-panel credential in its settings and receive it. An MCP
@@ -615,8 +616,9 @@ presents. It cannot see past that credential to the process holding it.
 
 - **Your sign-in can be minted by any process running as you.** `personalclaw token` prints a link
   that signs in as you. It signs the link with `session_key` in your PersonalClaw home, a file every
-  process under your account can read. The agent's file tools and its shell's command screen refuse
-  that path by name (`security.HOME_SECRET_FILE_BASENAMES`). Nothing stops a shell from running
+  process under your account can read. The agent's file tools and its shell's screen refuse that
+  file in the home in use and in the default one (`security.HOME_SECRET_FILE_BASENAMES`; what the
+  shell's screen cannot see is §13). Nothing stops a shell from running
   `personalclaw token`, which reads the key inside its own process. So could a local program that
   talks to the control bridge, and so could an app's code (§7).
 - **What that credential then answers as is you.** The refusals above stop every path that presents
@@ -700,6 +702,44 @@ secrets reach it. A git host lets that account run git's own commands and nothin
 and the program it names runs when PersonalClaw's git next touches a file it is assigned to. A
 key that signs in to a machine where it has a full shell account can run more than git there.
 
+## 13. The agent's shell is screened, not fenced, from your credential files
+
+Before the agent's shell runs a command, PersonalClaw reads it and refuses it
+(`security.is_sensitive_bash_command`) when it:
+
+- **names a file only its owner reads**, whatever it does with it: PersonalClaw's credential store
+  (`.env`) and its session key, session table, `auth/`, `credentials/` and governance files, in the
+  home in use and in the default `~/.personalclaw`; its security-log key, loopback secret and
+  telemetry salt, wherever they sit; and the sign-in another tool keeps: Codex's, Claude Code's,
+  Gemini CLI's, the GitHub and GitLab CLIs', Hugging Face's, and any a provider app declares, each
+  found where its tool looks for it (a folder `CODEX_HOME`, `GH_CONFIG_DIR` or the tool's other
+  variable moved included). The path is read the way the shell would find it: from the folder the
+  command runs in and from every folder a `cd` in it moves to, through a link, a glob or a brace
+  list, with the homes written as a shell or a one-line script writes them (`$PERSONALCLAW_HOME`,
+  `~`, `process.env.HOME + '/…'`).
+- **returns a credential folder under your home**, named from there: `~/.ssh`, `~/.aws`, `~/.gnupg`
+  and the rest. A command that only uses one, such as `ssh -i ~/.ssh/key`, runs.
+
+The agent's file tools and the dashboard refuse all of these files. The shell's screen is defence in
+depth, not a fence:
+
+- **A command that reads a whole folder holding one reaches it.** `grep -r … ~` or `tar c ~` names
+  your home, not the file in it.
+- **A path built while the command runs is not seen.** A variable the command sets, a command
+  substitution, or strings a script joins as it runs never spell the file in the text.
+- **The OS sandbox hides the credential store at its `cc` and `strict` levels only.** The native
+  agent's shell runs at the standard level, which hides no single file, and where the operating
+  system offers no sandbox none runs. An agent CLI's own sign-in stays readable inside its sandbox,
+  because the CLI reads it to sign in.
+- **An agent CLI's own shell and file tools are screened only when the CLI asks first.** One it
+  runs without asking reads inside the CLI (§1, §11).
+
+**What this means for you:** keep credentials in Settings → Secrets rather than in files an agent
+works on: a command gets one as `{{secret:NAME}}` and the agent never holds it. With **Store
+credentials in the OS keychain** on (Settings → Security → Credential storage), the store keeps
+them in the keychain rather than in `.env`. Treat an agent's shell as able to read what your own
+account can when it sets out to.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -712,7 +752,7 @@ weight's sha256 when it loads, for the gap in #5; per-app OS isolation for every
 code, which today only a backend that names a sandbox tier has, for #7; a session signing key the
 agent's shell cannot read, for #10; masking an agent CLI's requests in the capture proxy its
 model calls can already be pointed at (`inbound/capture_proxy.py`), for #11; running the git of a
-repository an agent can write under that agent's own sandbox, for #12). This page will shrink as
-those land.
+repository an agent can write under that agent's own sandbox, for #12; hiding the credential store
+from the agent's shell at every sandbox level, for #13). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

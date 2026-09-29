@@ -3949,7 +3949,9 @@ async def run_chat(
                         event.title, _extract_bash_command(event.tool_input or "")
                     )
                     if _cmd_probe:
-                        _cmd_verdict = state.context_builder.hooks.on_tool_call(_cmd_probe)
+                        _cmd_verdict = state.context_builder.hooks.on_tool_call(
+                            _cmd_probe, cwd=_file_change_base(session)
+                        )
                         if _cmd_verdict.action == TOOL_DENY:
                             await _refuse_call(event)
                             _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
@@ -3971,7 +3973,9 @@ async def run_chat(
                             )
                             continue
                 if state.context_builder:
-                    tool_result = state.context_builder.hooks.on_tool_call(event.title)
+                    tool_result = state.context_builder.hooks.on_tool_call(
+                        event.title, cwd=_file_change_base(session)
+                    )
                     if tool_result.action == TOOL_DENY:
                         await _refuse_call(event)
                         # Carry the deny reason into the transcript so it's visible

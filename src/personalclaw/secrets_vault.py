@@ -37,7 +37,8 @@ Redaction still runs downstream. It is the backstop; this is the mechanism.
             secret for free. A sidecar index would have needed every one of those re-derived, and
             the one that was missed would be the one that leaked.
 ``host``    a credential-shaped name present in the gateway's OWN environment that the vault does
-            not hold. **The value lives in the host environment, not in the vault**, so the vault
+            not hold and PersonalClaw did not set itself. **The value lives in the host
+            environment, not in the vault**, so the vault
             cannot show it, rotate it, or delete it — which is exactly why it is a first-class row
             type rather than a footnote. Rendering it identically to a vault row would tell the
             user the vault is managing something it has no control over.
@@ -212,15 +213,21 @@ class SecretPresence:
 
 
 def _host_secret_names() -> list[str]:
-    """Credential-shaped names in the gateway's own environment.
+    """Credential-shaped names in the gateway's own environment that came from the host.
 
     ``save_credential`` mirrors every stored secret into ``os.environ``, so this set overlaps the
     vault's by construction; :func:`list_presence` subtracts the vault's names, and what remains
     is genuinely host-supplied.
+
+    Less what PersonalClaw sets in its own environment (``local_models.hub_env``): its value
+    replaces whatever the host set, so it is not the host's, and editing it where the gateway is
+    launched changes nothing. ``HF_HUB_DISABLE_IMPLICIT_TOKEN`` is a switch, credential-shaped by
+    name only, and it was listed here as a credential the gateway had inherited.
     """
+    from personalclaw.local_models.hub_env import HUB_ENV_NAMES
     from personalclaw.workflows.workspace import looks_secret
 
-    return sorted(name for name in os.environ if looks_secret(name))
+    return sorted(name for name in os.environ if looks_secret(name) and name not in HUB_ENV_NAMES)
 
 
 def list_presence(

@@ -90,7 +90,7 @@ ENABLE_PATH_ENV = "PERSONALCLAW_COMPUTER_USE_ENABLE_FILE"
 
 #: The file, inside the operator-owned directory the governance ceiling already owns.
 #: ``GOVERNANCE_DIRNAME`` is imported rather than re-spelled so the directory has ONE
-#: source of truth shared with ``security._SENSITIVE_HOME_DIRS`` — a renamed constant
+#: source of truth shared with ``security.HOME_SECRET_DIRS`` — a renamed constant
 #: that stranded the denylist entry would silently un-protect this file.
 ENABLE_FILENAME = "computer_use.enable.json"
 

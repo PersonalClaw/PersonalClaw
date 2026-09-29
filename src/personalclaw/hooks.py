@@ -8,6 +8,7 @@ import asyncio
 import fnmatch
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Callable
@@ -451,8 +452,15 @@ class HookManager:
 
     # ── Tool hooks ──
 
-    def on_tool_call(self, tool_name: str) -> ToolHookResult:
-        """Check if a tool should be auto-approved, denied, or handled normally."""
+    def on_tool_call(
+        self, tool_name: str, *, cwd: str | os.PathLike[str] | None = None
+    ) -> ToolHookResult:
+        """Check if a tool should be auto-approved, denied, or handled normally.
+
+        *cwd* is the folder the call runs in, when the caller knows it (an agent CLI's session
+        folder): a relative path in a shell command is read from there, and from the home's
+        workspace when it is not given.
+        """
         # Strip display prefixes (e.g. "Running: ls *" → "ls *") so config
         # patterns like "ls" or "rm *" match without the prefix.
         normalized = _normalize_tool_name(tool_name)
@@ -464,7 +472,7 @@ class HookManager:
                 return ToolHookResult.deny(f"Blocked: access to sensitive path: {normalized}")
         elif tool_name.startswith("Running: "):
             # execute_bash — check for reads of sensitive paths
-            reason = is_sensitive_bash_command(normalized)
+            reason = is_sensitive_bash_command(normalized, cwd=cwd)
             if reason:
                 return ToolHookResult.deny(reason)
             # A SYSTEM-SCHEDULER write is offered the substrate instead (§7 crit 12). The
@@ -485,7 +493,7 @@ class HookManager:
             from personalclaw.owner_only import named_in, refusal
             from personalclaw.task_modes import is_read_only_bash
 
-            named = named_in(normalized)
+            named = named_in(normalized, cwd=cwd)
             if named and not (tool_name.startswith("Running: ") and is_read_only_bash(normalized)):
                 return ToolHookResult.deny(refusal(named))
 

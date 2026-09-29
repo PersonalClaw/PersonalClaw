@@ -95,7 +95,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("sandbox_providers/lima.py", "_host_mount"): "the sandbox VM's host mount, a sandbox setting",
     ("loop/validation.py", "workspace_write_target_errors"): "a guard: HOME is no workspace",
     ("agent.py", "_apply_user_agent_hooks"): "a guard: a configured hooks folder must sit in HOME",
-    ("owner_only.py", "named_in"): "a guard: reads ~ and $HOME in a command as its shell would",
+    ("command_paths.py", "named_paths"): "a guard: reads ~ and $HOME in a command as a shell does",
     ("acp/cli_resolve.py", "_node_manager_bin_globs"): "finds an agent CLI the owner installed",
     ("env.py", "augmented_path"): "finds MCP server binaries the owner installed",
     ("transcribe.py", "<module>"): "finds ffmpeg where the owner installed it",

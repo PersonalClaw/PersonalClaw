@@ -302,6 +302,21 @@ class TestScopesAndRefusals:
         after = [r for r in sv.list_presence() if r.name == "EI10_HOST_TOKEN"]
         assert [r.scope for r in after] == ["global"], "a vault row must shadow the host row"
 
+    def test_a_switch_personalclaw_sets_for_itself_is_not_an_inherited_credential(
+        self, vault: Path, monkeypatch
+    ):
+        """Every PersonalClaw process sets the Hugging Face library's switches in its own
+        environment (`keep_the_hub_in_the_home`). `HF_HUB_DISABLE_IMPLICIT_TOKEN` has TOKEN in its
+        name, so Settings → Secrets listed it as a credential inherited from the host, to be edited
+        where the gateway is launched: it was neither, and an edit there changes nothing."""
+        from personalclaw.local_models.hub_env import hub_env
+
+        for name, value in hub_env().items():
+            monkeypatch.setenv(name, value)
+        host = {r.name for r in sv.list_presence() if r.scope == sv.SCOPE_HOST}
+        assert "HF_HUB_DISABLE_IMPLICIT_TOKEN" not in host
+        assert "EI10_HOST_TOKEN" in host, "a credential the host did set is still listed"
+
     def test_inherited_from_host_cannot_contradict_scope(self):
         assert sv.SecretPresence(name="A", scope=sv.SCOPE_HOST).inherited_from_host is True
         assert sv.SecretPresence(name="A", scope=sv.SCOPE_GLOBAL).inherited_from_host is False

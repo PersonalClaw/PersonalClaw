@@ -317,6 +317,28 @@ def test_a_tool_call_naming_one_is_refused_before_any_approval(home, title):
     assert result.action == "deny" and "an agent may not change it" in result.reason
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sh -c 'cd .. && echo x > hooks/y.sh'",
+        "(cd .. && printf x > config.json)",
+        "cp evil.json {home}/agen*/personalclaw.json",
+        "node -e \"require('fs')"
+        ".writeFileSync(process.env.PERSONALCLAW_HOME+'/config.json','{{}}')\"",
+    ],
+)
+def test_the_screen_reads_a_command_the_way_its_shell_would(home, command):
+    """🔴 Red on main: a `cd` the chain split does not see (inside `sh -c`, a subshell), a glob,
+    and a one-liner's spelled-out home all named nothing to this screen. It now reads a command
+    with the credential screen's reading (`command_paths.named_paths`)."""
+    from personalclaw.hooks import HookManager
+
+    (home / "agents").mkdir()
+    result = HookManager().on_tool_call("Running: " + command.format(home=home))
+
+    assert result.action == "deny" and "an agent may not change it" in result.reason
+
+
 def test_a_read_of_one_is_left_to_the_read_rules(home):
     """The floor: reading is not what this guards."""
     from personalclaw.hooks import HookManager

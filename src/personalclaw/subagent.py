@@ -2207,7 +2207,9 @@ class SubagentManager:
                         },
                     )
                     continue
-                tool_result = self._ctx_builder.hooks.on_tool_call(event.title)
+                tool_result = self._ctx_builder.hooks.on_tool_call(
+                    event.title, cwd=info.cwd or None
+                )
                 if tool_result.action == TOOL_DENY:
                     await self._reject_and_log(
                         client,
