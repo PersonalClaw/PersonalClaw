@@ -19,6 +19,7 @@ guard must not be so wide that a WORKING memory stops being injected.
 from __future__ import annotations
 
 import pytest
+from fakes import held_workers
 
 
 @pytest.fixture
@@ -169,7 +170,9 @@ def test_the_SHIPPED_recall_timeout_actually_bounds_the_caller(monkeypatch, tmp_
     so the caller blocked for the whole read regardless. Measured with the `with` form: **3.00s
     for a 0.2s budget** on a 3s read.
 
-    Asserted here against the real function, not a模型 of it, so the knob cannot go inert again.
+    Asserted here against the real function, not a model of it, so the knob cannot go inert again.
+    The late read is held and waited for before the test ends (``held_workers``): let run out on
+    its own, it asked where memory is after this test's home isolation was undone.
     """
     import time
 
@@ -189,7 +192,7 @@ def test_the_SHIPPED_recall_timeout_actually_bounds_the_caller(monkeypatch, tmp_
     )
 
     def slow_recall(*_a, **_kw):
-        time.sleep(5)
+        held.hold()
         return "late"
 
     # The worker's FIRST read, imported inside `_recall` — so the owning module is the seam.
@@ -205,7 +208,9 @@ def test_the_SHIPPED_recall_timeout_actually_bounds_the_caller(monkeypatch, tmp_
         def get_memory_for(self, *_a, **_kw):
             return object()
 
-    started = time.monotonic()
-    ce.active_recall_block(_Builder(), "anything", cwd=str(tmp_path), memory_store=None)
-    elapsed = time.monotonic() - started
+    with held_workers() as held:
+        started = time.monotonic()
+        ce.active_recall_block(_Builder(), "anything", cwd=str(tmp_path), memory_store=None)
+        elapsed = time.monotonic() - started
     assert elapsed < 3, f"the shipped recall timeout did not bound the caller ({elapsed:.2f}s)"
+    assert len(held.pools) == 1, "vacuity floor: the recall ran on a worker it could not stop"

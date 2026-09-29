@@ -15,15 +15,22 @@ event takes the production path — match, the gate walk, the one store dispatch
 
 And to the SECOND OPINION on an attention row: a test raised with no event loop waits for the
 verdict's whole hand-over with ``wait_for_verdicts``, not for the verdict word to appear.
+
+And to a BOUNDED READ: a test that times out a read on a worker holds the worker with
+``held_workers`` and lets it go before the test ends, since nothing can stop it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import threading
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any, Callable
+from unittest import mock
 
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
@@ -330,3 +337,48 @@ def wait_for_verdicts(monkeypatch) -> Callable[[Any, str], Any]:
         return store.items[item_id]
 
     return wait
+
+
+@dataclass
+class HeldWorkers:
+    """The workers a bounded read left running, and the gate they wait at (``held_workers``)."""
+
+    #: Every pool made inside the block, in the order they were made.
+    pools: list[concurrent.futures.ThreadPoolExecutor] = field(default_factory=list)
+    _released: threading.Event = field(default_factory=threading.Event)
+
+    def hold(self, timeout: float = 30.0) -> None:
+        """Keep the calling worker here until the block ends: the stand-in for a slow read."""
+        self._released.wait(timeout)
+
+    def let_go(self) -> None:
+        """Release every held worker and wait until each pool's threads have finished."""
+        self._released.set()
+        for pool in self.pools:
+            pool.shutdown(wait=True)
+
+
+@contextmanager
+def held_workers() -> Iterator[HeldWorkers]:
+    """Hold the workers a bounded read leaves behind, and let them go before the block ends.
+
+    A timeout bounds the CALLER of a read on a worker, not the read: the worker cannot be stopped
+    and finishes later into a result nobody reads. In a test, later is after the test ends and its
+    home isolation is undone, so a worker that went on to resolve the home reached the real one,
+    during some other test. Every ``concurrent.futures.ThreadPoolExecutor`` made inside the block
+    is recorded; a stub for the slow read calls ``held.hold()``; the block's end releases the
+    stubs and joins every recorded pool, so each worker finishes inside the test.
+    """
+    held = HeldWorkers()
+    real = concurrent.futures.ThreadPoolExecutor
+
+    class _Recorded(real):  # type: ignore[misc, valid-type]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            held.pools.append(self)
+
+    with mock.patch.object(concurrent.futures, "ThreadPoolExecutor", _Recorded):
+        try:
+            yield held
+        finally:
+            held.let_go()

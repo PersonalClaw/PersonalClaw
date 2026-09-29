@@ -151,3 +151,56 @@ async def test_a_gateway_s_cleanup_stops_the_watchdogs_its_boot_started(
         await runner.cleanup()
     survivors = {name: [t for t in threads if t.is_alive()] for name, threads in started.items()}
     assert not any(survivors.values()), f"alive after the gateway stopped: {survivors}"
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_s_cleanup_waits_for_the_package_repair_its_boot_started(
+    tmp_path, monkeypatch
+) -> None:
+    """The boot's package repair runs on a thread of its own, and the cleanup went on without it:
+    in the suite it read and made the real home after the test that booted had undone its
+    isolation, and in a gateway it re-enabled the apps it repaired after the cleanup had stopped
+    them. Here the repair is held until a second into the cleanup; the cleanup must wait for it."""
+    from personalclaw.dashboard.server import start_dashboard
+
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
+    inside, release = threading.Event(), threading.Event()
+
+    def held_repair() -> list[str]:
+        inside.set()
+        release.wait(10)
+        return []
+
+    monkeypatch.setattr("personalclaw.apps.app_manager.repair_app_packages", held_repair)
+    before = set(map(id, _alive("app-packages-repair")))
+    runner, _state = await start_dashboard(sessions=MagicMock(count=0), port=0)
+    repairs = [t for t in _alive("app-packages-repair") if id(t) not in before]
+    try:
+        assert repairs and inside.wait(5), "the boot started no package repair"
+        threading.Timer(1.0, release.set).start()
+        await runner.cleanup()
+        assert [t for t in repairs if t.is_alive()] == [], "the repair outlived the cleanup"
+    finally:
+        release.set()
+        for repair in repairs:
+            repair.join(10)
+
+
+def test_the_wait_for_a_package_repair_is_bounded() -> None:
+    """A repair running pip for minutes must not hold a shutdown: the wait gives up at its bound
+    and says so, and a later wait still sees the repair finish."""
+    from personalclaw.providers import loader
+
+    release = threading.Event()
+    repair = threading.Thread(target=release.wait, args=(10,), name="test-package-repair")
+    repair.start()
+    loader._repairs.append(repair)
+    try:
+        began = time.monotonic()
+        assert loader.wait_for_package_repair(timeout=0.05) is False
+        assert time.monotonic() - began < 1.0
+    finally:
+        release.set()
+    assert loader.wait_for_package_repair(timeout=5) is True
+    assert not repair.is_alive() and repair not in loader._repairs

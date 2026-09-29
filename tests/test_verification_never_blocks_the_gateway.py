@@ -99,32 +99,91 @@ async def _settled(store, item_id: str) -> None:
 # ── nothing waits on the model ─────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_raising_a_proposal_on_the_loop_does_not_stall_it(store, model):
-    """The loop-latency measurement: a ticker on the loop, a one-second model, one proposal."""
-    state = MagicMock()
-    ticks: list[float] = []
+class _ProcessTicker:
+    """Ticks on a thread of its own: while it ticks, the process is running, whatever the loop is
+    doing. A loop blocked by the code under test (a sleep, a socket, a lock, a model answering on
+    it) lets this thread run on, so this ticks through the block; a pause of the whole process (a
+    busy machine, a collector pass) stops both tickers at once."""
+
+    def __init__(self) -> None:
+        self.ticks: list[float] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="loop-probe-process-ticker")
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self.ticks.append(time.monotonic())
+            time.sleep(0.01)
+
+    def __enter__(self) -> "_ProcessTicker":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        self._thread.join(5)
+
+
+def _longest_gap(stamps: list[float]) -> float:
+    return max(b - a for a, b in zip(stamps, stamps[1:]))
+
+
+async def _watch_the_loop(state, store, title: str) -> tuple[float, float, float, float]:
+    """Raise one proposal and watch the loop until its verdict lands: how long raising it took,
+    the longest the loop stood still while the process ran, how long the process itself stood
+    still, and how long the watch lasted."""
+    loop_ticks: list[float] = []
 
     async def ticker() -> None:
         while True:
-            ticks.append(time.monotonic())
+            loop_ticks.append(time.monotonic())
             await asyncio.sleep(0.01)
 
-    running = asyncio.create_task(ticker())
-    await asyncio.sleep(0.05)
-    began = time.monotonic()
-    item_id = _propose(state, store)
-    returned = time.monotonic() - began
-    await _settled(store, item_id)
-    await asyncio.sleep(0.05)
-    ended = time.monotonic()
-    running.cancel()
+    with _ProcessTicker() as process:
+        running = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        began = time.monotonic()
+        item_id = _propose(state, store, title=title)
+        returned = time.monotonic() - began
+        await _settled(store, item_id)
+        await asyncio.sleep(0.05)
+        ended = time.monotonic()
+        running.cancel()
+    loop = [began, *(t for t in loop_ticks if began < t < ended), ended]
+    ran = [began, *(t for t in process.ticks if began < t < ended), ended]
 
-    stamps = [began, *(t for t in ticks if t >= began), ended]
-    worst = max(b - a for a, b in zip(stamps, stamps[1:]))
+    def process_paused_in(a: float, b: float) -> float:
+        return _longest_gap([a, *(t for t in ran if a < t < b), b])
+
+    loop_alone = max((b - a) - process_paused_in(a, b) for a, b in zip(loop, loop[1:]))
+    paused = sum(b - a for a, b in zip(ran, ran[1:]) if b - a >= LOOP_BUDGET)
+    return returned, loop_alone, paused, ended - began
+
+
+@pytest.mark.asyncio
+async def test_raising_a_proposal_on_the_loop_does_not_stall_it(store, model):
+    """The loop-latency measurement: a ticker on the loop, a one-second model, one proposal.
+
+    A second ticker, on a thread of its own, tells the loop standing still from the whole process
+    standing still. A CI runner can pause a test process for more than a second, and the pause
+    stopped the loop's ticker too, so the measurement blamed the loop for it. The budget holds the
+    loop to the time it stood still while the process ran. A watch the process spent mostly
+    paused saw nothing of the loop, so it is made again, never taken as a pass."""
+    state = MagicMock()
+    for attempt in range(1, 4):
+        returned, loop_alone, paused, lasted = await _watch_the_loop(
+            state, store, title=f"Add a skill for weekly reports, {attempt}"
+        )
+        if paused < lasted / 2:
+            break
+    else:
+        pytest.fail(f"the process stood still for {paused:.2f}s of every {lasted:.2f}s watch")
+
     assert returned < LOOP_BUDGET, f"raising the proposal took {returned:.2f}s"
-    assert worst < LOOP_BUDGET, f"the loop stood still for {worst:.2f}s while the model answered"
-    assert model.asked == 1
+    assert (
+        loop_alone < LOOP_BUDGET
+    ), f"the loop stood still for {loop_alone:.2f}s while the model answered"
+    assert model.asked == attempt
 
 
 @pytest.mark.asyncio

@@ -131,6 +131,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Stopping or restarting the gateway waits a few seconds for the app package repair its start began, so an app it has just repaired stops with the rest instead of starting again after them.**
 - **Knowledge a workflow saves goes through the same enrichment as anything you add, so semantic search can find it.**
 - **`personalclaw --version` and `--help`, and building the web app, no longer create a PersonalClaw home.**
 - **A chat you leave while it is still loading no longer reads the conversation again, or plays its speech and sounds, seconds after you have left it; and a new chat's first message reads its conversation once.**

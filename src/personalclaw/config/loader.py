@@ -328,13 +328,16 @@ _MEMORY_ROOT_DIR_NAME = "workspace"
 
 
 def memory_root(home: Path | None = None) -> Path:
-    """The folder every memory tree is written under — ``<home>/workspace`` — WITHOUT creating it.
+    """The folder every memory tree is written under — ``<home>/workspace`` — WITHOUT creating it,
+    or the home above it.
 
     *home* is the active home when none is named. Not :func:`workspace_root`, which is where new
     sessions start and which the owner may point anywhere (``PERSONALCLAW_WORKSPACE``, or the
     folder ``personalclaw setup`` saves): memory stays in the home whichever folder that is.
+    Asked where a memory partition is on every recall (``memory_locality``), so it answers where
+    and leaves the making to the store that writes there (``MemoryStore.init``).
     """
-    return (Path(home) if home is not None else config_dir()) / _MEMORY_ROOT_DIR_NAME
+    return (Path(home) if home is not None else resolve_config_dir()) / _MEMORY_ROOT_DIR_NAME
 
 
 def _slug_cwd(cwd: str) -> str:

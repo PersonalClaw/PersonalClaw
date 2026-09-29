@@ -303,6 +303,25 @@ def test_a_write_outside_the_home_makes_no_home(tmp_path: Path) -> None:
     assert left == [], f"writing outside the home left this in an empty HOME: {left}"
 
 
+#: Where a conversation's memory partition is, asked the way every recall asks it.
+_WHERE_MEMORY_IS = r"""
+from personalclaw import memory_locality
+from personalclaw.config.loader import memory_dir_for_cwd
+
+print("a project's partition is its own:", memory_locality.is_local_partition("/srv/example"))
+print("the shared one:", memory_dir_for_cwd(None).name)
+"""
+
+
+def test_asking_where_memory_is_makes_no_home(tmp_path: Path) -> None:
+    """Every recall asks which memory partition a conversation's folder resolves to. The answer is
+    a path, and asking made the home: a recall still running after the turn that timed it out
+    (its worker cannot be stopped) made one wherever the home had since moved."""
+    proc, left = _as_a_user((tmp_path / "scratch").resolve(), ["-c", _WHERE_MEMORY_IS])
+    assert "its own: True" in proc.stdout and "shared one: _default" in proc.stdout, proc.stdout
+    assert left == [], f"asking where memory is left this in an empty HOME: {left}"
+
+
 def test_the_offline_reference_renders_without_touching_a_home(tmp_path: Path) -> None:
     """``python -m personalclaw.manifest_reference`` generates checked-in markdown. It has no
     business with any home — not the owner's, and not a scratch one either."""

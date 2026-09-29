@@ -10,6 +10,7 @@ come before any app can load, and the watchdogs after) and the import of an app'
 import importlib
 import importlib.util
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -270,6 +271,31 @@ def _repair_app_packages_logged(repair: Callable[[], list[str]]) -> None:
         logger.warning("app package repair failed", exc_info=True)
 
 
+#: The package repairs :func:`load_all_extensions` started, until :func:`wait_for_package_repair`
+#: sees them finish. Held because the gateway's cleanup waits for them: a repair it did not hold
+#: went on running after the gateway that started it had stopped, and re-enabled the providers of
+#: the apps it repaired after the cleanup had stopped them.
+_repairs: list[threading.Thread] = []
+_repairs_lock = threading.Lock()
+
+
+def wait_for_package_repair(timeout: float = 5.0) -> bool:
+    """Wait up to *timeout* seconds for the package repairs the boot started to finish.
+
+    The gateway's cleanup half, after the watchdogs stop and before the app processes do, so that
+    whatever a repair started again is stopped with the rest. Bounded, like the watchdogs' stop: a
+    repair running pip for minutes must not hold a shutdown, and one still running when the wait
+    ends is left to finish, as before. Returns whether none is left running.
+    """
+    with _repairs_lock:
+        started = list(_repairs)
+    for repair in started:
+        repair.join(timeout)
+    with _repairs_lock:
+        _repairs[:] = [repair for repair in _repairs if repair.is_alive()]
+        return not _repairs
+
+
 def load_all_extensions() -> None:
     """Gateway startup: every installed app started through the one load, then the watchdogs.
 
@@ -300,16 +326,17 @@ def load_all_extensions() -> None:
     # a changed core dependency, a restored snapshot. Off the boot path: it can run pip for
     # minutes, and the apps it repairs are started again when it finishes.
     try:
-        import threading
-
         from personalclaw.apps.app_manager import repair_app_packages
 
-        threading.Thread(
+        repair = threading.Thread(
             target=_repair_app_packages_logged,
             args=(repair_app_packages,),
             name="app-packages-repair",
             daemon=True,
-        ).start()
+        )
+        repair.start()
+        with _repairs_lock:
+            _repairs.append(repair)
     except Exception:
         logger.debug("app package repair did not start", exc_info=True)
 

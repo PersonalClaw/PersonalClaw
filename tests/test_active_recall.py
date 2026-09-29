@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from fakes import held_workers
 
 import personalclaw.context_engine as ce
 from personalclaw.context import ContextBuilder
@@ -66,24 +67,28 @@ def test_recall_skipped_on_empty_text(builder):
 
 
 def test_circuit_breaker_opens_after_timeouts(builder, monkeypatch):
+    """Each timed-out recall goes on running, as in the gateway, where nothing can stop it. They
+    are held until the breaker has been read and waited for before the test ends: let run out on
+    their own, they finished during a later test, after this one's home isolation was undone."""
     b, vs = builder
     monkeypatch.setattr(ce, "_active_recall_enabled", lambda: (True, 1))  # 1ms → always times out
 
-    def _slow(**kw):
-        import time
+    with held_workers() as held:
 
-        time.sleep(0.5)
-        return "x"
+        def _slow(**kw):
+            held.hold()
+            return "x"
 
-    monkeypatch.setattr(vs, "get_episodic_context", _slow)
-    # Trip the breaker.
-    for _ in range(ce._RECALL_BREAKER_TRIP):
+        monkeypatch.setattr(vs, "get_episodic_context", _slow)
+        # Trip the breaker.
+        for _ in range(ce._RECALL_BREAKER_TRIP):
+            assert ce.active_recall_block(b, "q", cwd=None, memory_store=None) == ""
+        assert ce._recall_consecutive_timeouts >= ce._RECALL_BREAKER_TRIP
+        # Breaker open: now even a fast recall is skipped (no executor spun up).
+        monkeypatch.setattr(ce, "_active_recall_enabled", lambda: (True, 5000))
+        monkeypatch.setattr(vs, "get_episodic_context", lambda **kw: "fast result")
         assert ce.active_recall_block(b, "q", cwd=None, memory_store=None) == ""
-    assert ce._recall_consecutive_timeouts >= ce._RECALL_BREAKER_TRIP
-    # Breaker open: now even a fast recall is skipped (no executor spun up).
-    monkeypatch.setattr(ce, "_active_recall_enabled", lambda: (True, 5000))
-    monkeypatch.setattr(vs, "get_episodic_context", lambda **kw: "fast result")
-    assert ce.active_recall_block(b, "q", cwd=None, memory_store=None) == ""
+    assert len(held.pools) == ce._RECALL_BREAKER_TRIP, "one worker per timed-out recall, none after"
 
 
 def test_assemble_injects_recall_on_interactive_turn(builder, monkeypatch):

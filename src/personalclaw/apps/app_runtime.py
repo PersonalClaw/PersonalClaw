@@ -232,7 +232,9 @@ def stop_processes() -> None:
     spares any process with a live parent. Every Restart used to leave one more backend and one
     more worker per app running, still at the version of that moment, and an app update after it
     stopped only the processes the new image had started. The watchdogs stop first, so no sweep
-    revives a process between its stop and the exec.
+    revives a process between its stop and the exec, and then the boot's package repair is waited
+    for, bounded (``loader.wait_for_package_repair``), so an app it re-enables is stopped with the
+    rest instead of starting after them.
     """
     try:
         from personalclaw.providers.loader import stop_extension_watchdogs
@@ -240,6 +242,13 @@ def stop_processes() -> None:
         stop_extension_watchdogs()
     except Exception:  # noqa: BLE001 — the processes below still have to stop
         logger.debug("app watchdogs did not stop", exc_info=True)
+    try:
+        from personalclaw.providers.loader import wait_for_package_repair
+
+        if not wait_for_package_repair():
+            logger.info("the app package repair is still running; the gateway stops without it")
+    except Exception:  # noqa: BLE001 — the processes below still have to stop
+        logger.debug("the app package repair could not be waited for", exc_info=True)
     from personalclaw.apps.backend_runtime import get_backend_supervisor
     from personalclaw.apps.worker_runtime import get_worker_supervisor
 
