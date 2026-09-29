@@ -1370,6 +1370,28 @@ class _BundleReach:
             "bundle reaches it, and importing it runs nothing (L1-L5)",
         )
 
+    # ── the WARNING band's commentary (see "Commentary in the warning band" below) ──
+
+    def code_matches(self, finding: Finding) -> tuple[str, list["re.Match[str]"]] | None:
+        """The text of a WARNING-band script finding's Python file and every match of its rule
+        there that is NOT commentary, in file order — or ``None`` when that cannot be decided:
+        the rule has no pattern to re-run, the file is not Python, or it did not parse and
+        tokenise."""
+        pattern = _WARNING_RULE_PATTERNS.get(finding.rule)
+        rel = finding.path
+        facts = self._facts.get(rel)
+        text = self._py_texts.get(rel)
+        if pattern is None or not rel.endswith(".py") or facts is None or text is None:
+            return None
+        if not facts.parsed:
+            return None
+        code = [
+            m
+            for m in pattern.finditer(text)
+            if not _within(facts.commentary_spans, [(m.start(), m.end())])
+        ]
+        return text, code
+
     # ── runtime use (see "Runtime use" above) ──
 
     def runtime_use(self, rel: str) -> tuple[RuntimeUse, str]:
@@ -1558,6 +1580,64 @@ def _scope_by_reachability(findings: list[Finding], *, reach: _BundleReach | Non
         out.append(
             replace(finding, severity=severity, reachability=state, reachability_reason=reason)
         )
+    return out
+
+
+# ── Commentary in the warning band ──────────────────────────────────────────
+#
+# A WARNING-band script rule describes what CODE does: "This code reads a file where credentials
+# and keys are kept", "This code downloads from the internet while it runs". Its regex reads the
+# raw text, so a comment or a docstring that merely NAMES the thing — "a link into ~/.aws/
+# credentials is refused", "the README shows the same request made with wget" — was reported as
+# the app doing it, and reached the consent card worded that way. ``reads_sensitive_path`` already
+# skipped a line starting with ``#`` (a text heuristic); docstrings and inline comments still
+# counted, and the other warning rules skipped nothing.
+#
+# THE RULE. In a Python file, a WARNING-band script finding whose every match is commentary is not
+# reported: there is nothing the code does for it to describe. Commentary is L0's evidence (see
+# "Execution reachability" above) — a ``COMMENT`` token or a module/class/function docstring, as
+# the tokeniser and the AST report them, never as a line looks — so ``X = "#"`` followed by code
+# is code, and a bare carriage return ends a line exactly as it does for the interpreter.
+# Default-deny, as there: a file that does not parse or tokenise keeps every finding, a rule with
+# no pattern to re-run (the invisible-character rules, an unscanned file) is untouched, and a match
+# in a string the code holds is NOT commentary. A finding that also matches code keeps its
+# severity and shows the first such match as its evidence.
+#
+# Why no finding rather than one band down, which is what L0 earns a DANGEROUS match: that band is
+# terminal, and the commented-out form of a terminal pattern is still worth a reviewer's eye. A
+# warning rule's commentary is not — it is the same fact as the full-line comment
+# ``reads_sensitive_path`` has always ignored, and the same answer the native destruction rules
+# give commentary (no finding at all). Only Python files have a tokeniser here; a shell script's
+# text is its program (L1), so its warning rules are unchanged.
+
+#: The pattern each WARNING-band script rule reports on, re-run to find its matches outside
+#: commentary. ``reads_sensitive_path`` is the credential-path set the rule is built from.
+_WARNING_RULE_PATTERNS: dict[str, "re.Pattern[str]"] = {
+    "reads_sensitive_path": _SENSITIVE_RE,
+    **dict(_WARNING_SCRIPT),
+}
+
+
+def _scope_warnings_to_code(
+    findings: list[Finding], *, reach: _BundleReach | None
+) -> list[Finding]:
+    """Drop every WARNING-band script finding in a Python file whose matches are all commentary,
+    and point one that also matches code at the code (see "Commentary in the warning band").
+    Nothing is raised, and a finding the analysis cannot decide is kept exactly as it is."""
+    if reach is None:
+        return findings
+    out: list[Finding] = []
+    for finding in findings:
+        if finding.severity is not Verdict.WARNING or finding.surface != "script":
+            out.append(finding)
+            continue
+        decided = reach.code_matches(finding)
+        if decided is None:
+            out.append(finding)
+            continue
+        text, code = decided
+        if code:
+            out.append(replace(finding, evidence=_evidence(text, code[0])))
     return out
 
 
@@ -2201,6 +2281,7 @@ class SkillScanner:
             if findings
             else None
         )
+        findings = _scope_warnings_to_code(findings, reach=reach)
         findings = _scope_by_reachability(findings, reach=reach)
         findings = _annotate_runtime_use(findings, reach=reach)
         verdict = self._aggregate(findings, tier)
@@ -2278,13 +2359,23 @@ class SkillScanner:
                 )
             )
         elif sens_raw is not None and _SENSITIVE_RE.search(code) is not None:
+            # The evidence is a mention the rule counts: the first raw match was often a comment
+            # line above the read that made the rule fire, and the consent card showed the comment.
+            counted = next(
+                (
+                    m
+                    for m in _SENSITIVE_RE.finditer(text)
+                    if not _on_comment_only_line(text, m.start())
+                ),
+                sens_raw,
+            )
             out.append(
                 Finding(
                     "script",
                     Verdict.WARNING,
                     "reads_sensitive_path",
                     rel,
-                    _evidence(text, sens_raw),
+                    _evidence(text, counted),
                 )
             )
         suffix = Path(rel).suffix.lower()

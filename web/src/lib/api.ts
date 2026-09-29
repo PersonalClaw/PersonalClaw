@@ -5180,6 +5180,9 @@ export interface ProviderSchemaProp {
   // the form can state them natively instead of letting a save be the first feedback (#491).
   minLength?: number; maxLength?: number; pattern?: string
   'x-meta'?: { label?: string; help?: string; sensitive?: boolean; placeholder?: string; tags?: string[] }
+  // What a list's entries are, and a record entry's own fields — the form edits a list whose
+  // schema describes its entries as a list rather than as JSON.
+  items?: ProviderSchemaProp; properties?: Record<string, ProviderSchemaProp>; required?: string[]
 }
 export interface ProviderSchema { type?: string; properties?: Record<string, ProviderSchemaProp>; required?: string[] }
 // One configured instance of a multiInstance=true provider (generic store —

@@ -61,14 +61,15 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. **357** hinted publishers render today — **305** DIRECT call sites (Field 152,
- *  settingsUI's Row 87, NumberRow 66) plus **52** that arrive through seven local wrappers which
- *  forward a hint into one of those three (ToggleRow 34, SelectRow 4, TextRow 4, CheckList 3,
- *  StrListField 3, EnumRow 2, SegRow 2). Recounted **2026-09-26** with the depth-tracking scan
- *  `fieldHintCounts.test.ts` runs; the 336/284 reading of 2026-09-19 (Field 133, Row 84, NumberRow 67)
- *  is stale — Field gained 19 hinted call sites since, two of them the workflow editor's. The earlier
- *  289/253 (Field 132, Row 82, NumberRow 39) reading is staler — closing the nine config sections
- *  that were PATCH-editable with no Settings control (#752,
+ *  expected to follow. **376** hinted publishers render today — **322** DIRECT call sites (Field 163,
+ *  settingsUI's Row 92, NumberRow 67) plus **54** that arrive through seven local wrappers which
+ *  forward a hint into one of those three (ToggleRow 34, StrListField 5, SelectRow 4, TextRow 4,
+ *  CheckList 3, EnumRow 2, SegRow 2). Recounted **2026-09-29** with the depth-tracking scan
+ *  `fieldHintCounts.test.ts` runs; the 357/305 reading of 2026-09-26 (Field 152, Row 87, NumberRow 66)
+ *  is stale — three days of feature work added 19 hinted publishers, one of them the settings list
+ *  editor's. The 336/284 reading of 2026-09-19 (Field 133, Row 84, NumberRow 67) is staler, and the
+ *  289/253 (Field 132, Row 82, NumberRow 39) reading before it staler again — closing the nine config
+ *  sections that were PATCH-editable with no Settings control (#752,
  *  #2801) added 46 hinted rows in one change and two new wrappers, `SegRow` and `SelectRow`, which is
  *  NumberRow's +28 by itself. The 271/236 and 196/99/69/28 readings before that are staler still, the
  *  last one's "69" being the number of hinted `Row` CALL SITES rather than of switches, a distinction

@@ -343,6 +343,35 @@ external program on your machine." Rules that describe the same thing in every l
 (`eval_exec`, `curl_network`, `sudo_use`, `pipe_to_shell`, `crontab_write`) keep reading all of
 them. `tests/test_a_scanner_rule_reads_the_language_it_names.py` pins both directions.
 
+## A warning rule does not report commentary
+
+The `WARNING` rules describe what code does ("This code reads a file where credentials and keys
+are kept"), and their regexes read raw text. So a docstring explaining that a read of
+`~/.aws/credentials` is refused reached the install consent as that read, and a first-party
+channel app showed two such findings. `reads_sensitive_path` had skipped a line that starts
+with `#`, and nothing else; the other warning rules skipped nothing.
+
+`supply_chain.py::_scope_warnings_to_code` applies L0 to the band: in a Python file, a
+`WARNING` script finding whose every match lies in a `COMMENT` token or a module, class or
+function docstring is not reported. Those spans come from the tokeniser and the AST, as L0's
+do, never from how a line looks, so `X = "#"` followed by code is code and a bare carriage
+return ends a line as it does for the interpreter. A match in a string the code holds is not
+commentary and still counts, a file that does not parse or tokenise keeps every finding, a rule
+with no pattern to re-run (the invisible-character rules, an unscanned file) is untouched, and
+a finding that also matches code shows that code as its evidence. It drops rather than lowers
+one band, unlike L0 on the terminal band: the commented form of a terminal pattern is worth a
+reviewer's eye, a warning rule's commentary is the same fact as the full-line comment
+`reads_sensitive_path` always ignored, and it is the answer the native rules already give
+commentary. A shell script's text is its program (L1), so its warning rules are unchanged.
+
+What stays: a test fixture that holds an attack string in a literal. Whether a literal is ever
+run as a command is not decidable from the file (`subprocess.run(["curl", url])` runs its
+`"curl"`), so a literal counts until the whole-bundle proof above says otherwise, and the
+consent card groups it by whether the app loads its file. Every rail is in
+`tests/test_the_scanner_does_not_count_commentary_as_behaviour.py`: dropping the pass reds the
+docstring and comment cases, treating a string as commentary reds the literal case, and
+answering for a file that does not parse reds the unparseable case.
+
 ## Residual risks
 
 The corpus pins what holds. These are the gaps it also pins, honestly, so they are

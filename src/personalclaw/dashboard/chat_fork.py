@@ -7,7 +7,6 @@ from aiohttp import web
 from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
-    _sync_dashboard_sessions,
     persisted_history_key,
 )
 from personalclaw.dashboard.state import DashboardState
@@ -171,7 +170,6 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
             f"prompt_len={len(prompt)}"
         ),
     )
-    _sync_dashboard_sessions(state)
     state.push_sessions_update()
     return web.json_response(
         {
@@ -277,7 +275,6 @@ async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"from={session.key},to={new_session.key},messages={len(reconstructed)}",
     )
-    _sync_dashboard_sessions(state)
     state.push_sessions_update()
     return web.json_response(
         {

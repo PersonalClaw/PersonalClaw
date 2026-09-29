@@ -5,6 +5,7 @@ import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api
 // imported rather than reimplemented, so the two schema-driven forms cannot disagree about
 // what a valid array/object entry is (they already disagreed about secrets).
 import { parseJsonField, serializeJsonField } from '../apps/appConfigForm'
+import { listFieldKind, listValueFits, SchemaListField } from '../apps/schemaListField'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
@@ -139,8 +140,13 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
     serializeJsonField(value, prop.type === 'object' ? 'object' : 'array'))
   const [jsonErr, setJsonErr] = useState<string | null>(null)
 
+  // A list whose schema says what its entries are is edited as a list (`SchemaListField`); only a
+  // field that says nothing about its entries is left to the JSON editor below.
+  const asList = prop.type === 'array' && listFieldKind(prop) !== null && listValueFits(prop, value)
   let control: React.ReactNode
-  if (prop.type === 'array' || prop.type === 'object') {
+  if (asList) {
+    control = <SchemaListField label={label} schema={prop} value={value} onChange={onChange} />
+  } else if (prop.type === 'array' || prop.type === 'object') {
     // A structured field needs a JSON editor. It fell through to the text branch below,
     // whose `String(value)` renders an array of objects as the literal
     // "[object Object],[object Object]" — so slack-channel's **Allowed Users** (the very
@@ -221,9 +227,14 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
   // A JSON parse error rides the help line — the same place the Apps dialog puts it — so a
   // half-typed entry explains itself instead of silently refusing to save.
   const hint = jsonErr ? `${meta.help ? meta.help + ' — ' : ''}⚠ ${jsonErr}` : meta.help
+  const captionClass = 'mb-1 block text-on-surface'
   return (
     <div>
-      <label htmlFor={id} data-type="body-s" className="mb-1 block text-on-surface">{label}</label>
+      {/* A list is a group of controls that each carry their own name, so there is no one control
+          for a label to point at; its caption is plain text. */}
+      {asList
+        ? <div data-type="body-s" className={captionClass}>{label}</div>
+        : <label htmlFor={id} data-type="body-s" className={captionClass}>{label}</label>}
       {hint && <div data-type="caption" className="mb-1.5 text-on-surface-low">{hint}</div>}
       {control}
     </div>

@@ -840,11 +840,6 @@ def _maybe_consolidate(state, session) -> None:
         )
 
 
-def _sync_dashboard_sessions(state: "DashboardState") -> None:
-    """Push current session keys to SessionManager so orphaned sessions get reaped."""
-    state.sessions.set_active_dashboard_sessions({_history_key_for(k) for k in state._sessions})
-
-
 def _redact_for_display(text: str) -> str:
     """Apply all redaction passes for dashboard/WS display."""
     text, _ = redact_exfiltration_urls(text)

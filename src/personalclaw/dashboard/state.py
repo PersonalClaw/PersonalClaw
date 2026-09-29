@@ -19,7 +19,7 @@ from personalclaw import record_files, trust_mode
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import DASHBOARD_PORT
-from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 from personalclaw.dashboard.approval_state import DashboardApprovalState
 from personalclaw.dashboard.desktop_registry import DesktopRegistry
 from personalclaw.dashboard.sse import SseRegistry
@@ -226,7 +226,8 @@ class _ChatSession:
         "_resumed_count",
         "_on_message",
         "_has_reader",
-        "_stop_state",
+        "_stop_state_now",
+        "_stop_asked",
         "_stop_event_id",
         "_dirty",
         "_recovery_chat_triggered",
@@ -395,7 +396,8 @@ class _ChatSession:
         # Callback for broadcasting messages via global SSE
         self._on_message: object | None = None  # Callable[[str, dict], None] | None
         self._has_reader: bool = False  # True when HTTP SSE stream is draining
-        self._stop_state: str = "idle"  # 'idle' | 'soft_pending' | 'killing'
+        self._stop_state_now: str = "idle"  # see `_stop_state`
+        self._stop_asked: bool = False  # see `_stop_state`
         self._stop_event_id: str | None = None  # transcript message id for in-flight stop
         self._dirty: bool = False  # True when messages changed since last flush
         self._recovery_chat_triggered: bool = False  # guard against concurrent failure recovery
@@ -513,6 +515,23 @@ class _ChatSession:
     @property
     def _plan_stage_count(self) -> int:
         return len(self._stage_titles)
+
+    @property
+    def _stop_state(self) -> str:
+        """``idle``, ``soft_pending`` or ``killing``: where a stop asked of this chat's turn stands.
+
+        Setting any other state than ``idle`` also records that a stop was asked of the turn
+        (``_stop_asked``, cleared when a turn starts). The state itself is back to ``idle`` as
+        soon as the runtime acknowledges the stop, which can be before the turn has ended, and how
+        a turn ended is read at its end: a stop the owner asked for is not one the turn suffered.
+        """
+        return self._stop_state_now
+
+    @_stop_state.setter
+    def _stop_state(self, value: str) -> None:
+        self._stop_state_now = value
+        if value != "idle":
+            self._stop_asked = True
 
     @property
     def _stopping(self) -> bool:
@@ -1039,6 +1058,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # subagent manager makes for its children. Guarded for a stub SessionManager in a test.
         if hasattr(sessions, "register_turn_stop_hook"):
             sessions.register_turn_stop_hook(self.cancel_turn_approvals)
+        # The session sweep reaps the runtime of a chat that no longer exists, and asks this
+        # object which chats exist each time it runs — whichever path made the chat.
+        if hasattr(sessions, "register_dashboard_sessions"):
+            sessions.register_dashboard_sessions(self.chat_session_keys)
         self._flush_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._upload_sweep_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # Scheduled-backup service; held to prevent GC.
@@ -1987,6 +2010,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     def get_session(self, name: str) -> _ChatSession | None:
         """Look up a session by name without creating it. Returns None if absent."""
         return self._sessions.get(name)
+
+    def chat_session_keys(self) -> frozenset[str]:
+        """The key every chat held here runs its turns under (``dashboard:<name>``), for the
+        session sweep: a ``dashboard:`` runtime whose key is not among them belongs to no chat."""
+        return frozenset(dashboard_history_key(name) for name in list(self._sessions))
 
     def get_linked_session(self, session_key: str) -> "_ChatSession | None":
         """Look up a dashboard session linked to a channel thread. Cleans up stale mappings."""

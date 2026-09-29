@@ -11,7 +11,6 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.chat_utils import (
     _normalize_model,
-    _sync_dashboard_sessions,
     apply_task_mode,
     candidate_history_keys,
     persisted_history_key,
@@ -711,7 +710,6 @@ def restore_recent_sessions(
         _seed_transcript(state, session, key)
         restored += 1
         logger.info("Restored session %s (%s)", session_name, session.title)
-    _sync_dashboard_sessions(state)
     return restored
 
 

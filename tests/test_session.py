@@ -550,7 +550,7 @@ class TestOrphanedDashboardSessions:
         await mgr.get_or_create("dashboard:tab1")
         mgr.release("dashboard:tab1")
         # Mark tab2 as the only active session — tab1 is orphaned
-        mgr.set_active_dashboard_sessions({"dashboard:tab2"})
+        mgr.register_dashboard_sessions(lambda: {"dashboard:tab2"})
         await mgr._expire_idle(9999)  # high timeout so idle doesn't trigger
 
         assert "dashboard:tab1" not in mgr._sessions
@@ -558,13 +558,13 @@ class TestOrphanedDashboardSessions:
 
     @pytest.mark.asyncio
     async def test_expire_idle_skips_uninitialized_sessions(self, cfg):
-        """When _active_dashboard_sessions is None, no orphan reaping occurs."""
+        """While no dashboard has registered its chats, no orphan reaping occurs."""
         import time
 
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:tab1")
         mgr.release("dashboard:tab1")
-        # Don't call set_active_dashboard_sessions — stays None
+        # No register_dashboard_sessions call: which chats exist is not known
         mgr._sessions["dashboard:tab1"].last_used = time.monotonic()
         await mgr._expire_idle(9999)
 
@@ -577,7 +577,7 @@ class TestOrphanedDashboardSessions:
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:tab1")
         mgr.release("dashboard:tab1")
-        mgr.set_active_dashboard_sessions({"dashboard:tab1"})
+        mgr.register_dashboard_sessions(lambda: {"dashboard:tab1"})
         await mgr._expire_idle(9999)
 
         assert "dashboard:tab1" in mgr._sessions
@@ -592,7 +592,7 @@ class TestOrphanedDashboardSessions:
         await mgr.get_or_create("dashboard:loop-abc123")
         mgr.release("dashboard:loop-abc123")
         # Only a chat tab is active; the campaign worker is NOT in the set.
-        mgr.set_active_dashboard_sessions({"dashboard:tab1"})
+        mgr.register_dashboard_sessions(lambda: {"dashboard:tab1"})
         await mgr._expire_idle(9999)  # high timeout → only orphan reaping fires
 
         assert "dashboard:loop-abc123" in mgr._sessions
@@ -637,7 +637,7 @@ class TestSessionExpireCallback:
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:tab1")
         mgr.release("dashboard:tab1")
-        mgr.set_active_dashboard_sessions({"dashboard:tab2"})  # tab1 orphaned
+        mgr.register_dashboard_sessions(lambda: {"dashboard:tab2"})  # tab1 orphaned
         seen = AsyncMock()
         mgr.set_session_expire_callback(seen)
 
@@ -2113,13 +2113,22 @@ class TestIsProviderAliveFallback:
         assert result is None
 
 
-class TestSetActiveDashboardSessions:
-    """Test set_active_dashboard_sessions."""
+class TestRegisterDashboardSessions:
+    """The sweep asks for the chats that exist when it runs, not when they were registered."""
 
-    def test_sets_sessions(self, cfg):
+    @pytest.mark.asyncio
+    async def test_a_chat_made_after_registering_is_known_to_the_sweep(self, cfg):
+        chats: set[str] = set()
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        mgr.set_active_dashboard_sessions({"dashboard:tab1", "dashboard:tab2"})
-        assert mgr._active_dashboard_sessions == {"dashboard:tab1", "dashboard:tab2"}
+        mgr.register_dashboard_sessions(lambda: chats)
+        await mgr.get_or_create("dashboard:tab1")
+        mgr.release("dashboard:tab1")
+        chats.add("dashboard:tab1")
+
+        await mgr._expire_idle(9999)
+
+        assert mgr.has_session("dashboard:tab1")
+        await mgr.close_all()
 
 
 class TestStartPoolNonBlocking:
@@ -2337,7 +2346,7 @@ class TestExpireIdleOrphans:
         await mgr.get_or_create("dashboard:session5")
         mgr.release("dashboard:session5")
         # Set active sessions to NOT include session5
-        mgr.set_active_dashboard_sessions({"dashboard:session0"})
+        mgr.register_dashboard_sessions(lambda: {"dashboard:session0"})
         await mgr._expire_idle(timeout_secs=9999)  # not idle, but orphaned
         assert not mgr.has_session("dashboard:session5")
 
@@ -2346,7 +2355,7 @@ class TestExpireIdleOrphans:
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:session0")
         mgr.release("dashboard:session0")
-        mgr.set_active_dashboard_sessions({"dashboard:session0"})
+        mgr.register_dashboard_sessions(lambda: {"dashboard:session0"})
         await mgr._expire_idle(timeout_secs=9999)
         assert mgr.has_session("dashboard:session0")
         await mgr.close_all()

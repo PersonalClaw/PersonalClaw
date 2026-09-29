@@ -153,7 +153,6 @@ from personalclaw.dashboard.chat_utils import (  # noqa: F401
     _redact_deep,
     _redact_for_display,
     _remove_queued_by_id,
-    _sync_dashboard_sessions,
     _validate_tool_name,
     is_deprecated_model,
 )

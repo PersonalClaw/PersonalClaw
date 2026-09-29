@@ -43,15 +43,13 @@ Four mechanisms clean up processes. They are complementary — not redundant.
    Also prunes dead bare PIDs. *Depends on (1)* — children are only orphaned
    after their sandbox root is killed.
 
-3. ``_expire_idle()`` — **periodic** (every ~5 min).
-   Kills sessions idle for >``timeout_secs`` (default 30 min) via
-   ``reset()`` → ``provider.shutdown()`` → SIGKILL process tree.
+3. ``_expire_idle()`` — **periodic** (every ``timeout_secs / 6``, at least 1 min).
+   Kills sessions idle for >``timeout_secs`` (default 60 min), and ``dashboard:``
+   sessions whose chat no longer exists, via ``provider.shutdown()`` → SIGKILL
+   process tree. Idle counts from the last ``release()``, and a session a turn
+   holds is never reaped: the turn ends by its own bounds. Which chats exist is
+   asked of the dashboard at each sweep (``register_dashboard_sessions``).
    Protected keys: ``_PERSISTENT_KEYS`` (``_bg`` only).
-   **Known limitation**: ``last_used`` is only bumped on ``get_or_create()``,
-   not on every LLM round-trip. A task runner step doing continuous work for
-   >30 min without a new ``get_or_create()`` call could be swept. This is
-   accepted for now to prevent runaway tasks, but may need a heartbeat or
-   persistent-key mechanism if longer steps become common.
 
 """
 
@@ -61,7 +59,7 @@ import os
 import signal
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -472,9 +470,9 @@ class SessionManager:
         self._on_turn_stop: Callable[[str], int] | None = None
         self._pool_started = False
         self._session_map = SessionMap()
-        self._active_dashboard_sessions: set[str] | None = (
-            None  # None = uninitialized; empty set = all tabs closed
-        )
+        # Which chats exist, asked at each sweep (`register_dashboard_sessions`). None until the
+        # dashboard registers: nothing is taken for a closed chat before then.
+        self._dashboard_chats: Callable[[], Collection[str]] | None = None
 
         # ── Warm Pool ──
         self._pool_size: int = min(_MAX_POOL, max(0, cfg.session.pool_size))
@@ -1452,61 +1450,66 @@ class SessionManager:
         async with self._lock:
             session = self._sessions.pop(key, None)
         if session:
-            # Capture PID and child tree before shutdown clears them
-            client = getattr(session.provider, "_client", None)
-            raw_pid = getattr(client, "_pid", None) if client else None
-            # CC provider: PID from long-lived _proc or ephemeral _active_proc
-            if raw_pid is None:
-                _cc_proc = getattr(session.provider, "_proc", None)
-                if _cc_proc is not None and _cc_proc.returncode is None:
-                    raw_pid = _cc_proc.pid
-            if raw_pid is None:
-                _cc_proc = getattr(session.provider, "_active_proc", None)
-                if _cc_proc is not None and _cc_proc.returncode is None:
-                    raw_pid = _cc_proc.pid
-            pid = raw_pid if isinstance(raw_pid, int) else None
-            raw_children = getattr(client, "_child_pids", None) if client else None
-            child_pids: dict[int, int | None] = (
-                dict(raw_children) if isinstance(raw_children, dict) else {}
-            )
-            if pid:
-                # Lazy import to avoid circular dependency with acp.client
-                from personalclaw.acp.client import (
-                    _get_child_pids,
-                    _get_start_time,
-                    _kill_escaped_children,
-                )
+            await self._shut_down_removed(key, session)
 
-                # Snapshot child tree before shutdown.  PIDs may be recycled
-                # between snapshot and kill, but _kill_escaped_children uses
-                # start-time comparison to skip recycled PIDs safely.
-                for p in _get_child_pids(pid):
-                    if p not in child_pids:
-                        child_pids[p] = _get_start_time(p)
-            await session.provider.shutdown()
-            # Verify process is actually dead; force-kill entire tree if not
-            if pid:
+    async def _shut_down_removed(self, key: str, session: "_Session") -> None:
+        """Shut down *session*'s runtime, already taken out of ``_sessions``, and make sure its
+        process tree is gone. The session map is left as it is, for a later resume."""
+        # Capture PID and child tree before shutdown clears them
+        client = getattr(session.provider, "_client", None)
+        raw_pid = getattr(client, "_pid", None) if client else None
+        # CC provider: PID from long-lived _proc or ephemeral _active_proc
+        if raw_pid is None:
+            _cc_proc = getattr(session.provider, "_proc", None)
+            if _cc_proc is not None and _cc_proc.returncode is None:
+                raw_pid = _cc_proc.pid
+        if raw_pid is None:
+            _cc_proc = getattr(session.provider, "_active_proc", None)
+            if _cc_proc is not None and _cc_proc.returncode is None:
+                raw_pid = _cc_proc.pid
+        pid = raw_pid if isinstance(raw_pid, int) else None
+        raw_children = getattr(client, "_child_pids", None) if client else None
+        child_pids: dict[int, int | None] = (
+            dict(raw_children) if isinstance(raw_children, dict) else {}
+        )
+        if pid:
+            # Lazy import to avoid circular dependency with acp.client
+            from personalclaw.acp.client import (
+                _get_child_pids,
+                _get_start_time,
+                _kill_escaped_children,
+            )
+
+            # Snapshot child tree before shutdown.  PIDs may be recycled
+            # between snapshot and kill, but _kill_escaped_children uses
+            # start-time comparison to skip recycled PIDs safely.
+            for p in _get_child_pids(pid):
+                if p not in child_pids:
+                    child_pids[p] = _get_start_time(p)
+        await session.provider.shutdown()
+        # Verify process is actually dead; force-kill entire tree if not
+        if pid:
+            try:
+                os.kill(pid, 0)
+                # Still alive after shutdown — force kill process group
+                logger.warning("Reset %s: PID %d survived shutdown, force-killing", key, pid)
                 try:
-                    os.kill(pid, 0)
-                    # Still alive after shutdown — force kill process group
-                    logger.warning("Reset %s: PID %d survived shutdown, force-killing", key, pid)
-                    try:
-                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                    except (ProcessLookupError, OSError):
-                        os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass  # dead as expected
-                except OSError:
-                    pass
-                # Sweep children in different PGIDs (MCP servers) even when
-                # root is dead — children in separate process groups may
-                # outlive the root.
-                if child_pids:
-                    try:
-                        _kill_escaped_children(child_pids)
-                    except Exception:
-                        logger.exception("Reset %s: child sweep failed", key)
-            logger.debug("Reset session: %s (pid=%s)", key, pid)
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # dead as expected
+            except OSError:
+                pass
+            # Sweep children in different PGIDs (MCP servers) even when
+            # root is dead — children in separate process groups may
+            # outlive the root.
+            if child_pids:
+                try:
+                    _kill_escaped_children(child_pids)
+                except Exception:
+                    logger.exception("Reset %s: child sweep failed", key)
+        logger.debug("Reset session: %s (pid=%s)", key, pid)
 
     def check_context_usage(self, key: str, provider: ModelProvider) -> float | None:
         """Check context usage after a turn, and restart the session at the Settings threshold.
@@ -1774,6 +1777,10 @@ class SessionManager:
     def release(self, key: str, *, cleanup: bool = False) -> None:
         """Release the per-session semaphore acquired by ``get_or_create``.
 
+        The session's idle time starts here, when its turn lets it go: the idle sweep measures
+        from ``last_used``, and a turn that ran for most of the timeout must not leave it reaped
+        a moment after the turn ends.
+
         If *cleanup* is True and the key is a subagent session, schedule
         best-effort deletion of the provider's on-disk session files.
         """
@@ -1786,6 +1793,7 @@ class SessionManager:
                         asyncio.ensure_future(self._safe_cleanup(session.provider, session_id))
                 except Exception:
                     logger.debug("Failed to get session_id for cleanup", exc_info=True)
+            session.last_used = time.monotonic()
             session.semaphore.release()
 
     async def _safe_cleanup(self, provider: ModelProvider, session_id: str) -> None:
@@ -2307,18 +2315,38 @@ class SessionManager:
             except Exception:
                 logger.debug("Orphan PID sweep failed", exc_info=True)
 
-    def set_active_dashboard_sessions(self, session_keys: set[str]) -> None:
-        """Update the set of active dashboard session keys.
+    def register_dashboard_sessions(self, chats: Callable[[], Collection[str]]) -> None:
+        """Register how the sweep learns which chats exist: *chats* answers the ``dashboard:``
+        keys of every chat the dashboard holds now, and the sweep asks it each time it runs.
 
-        Called by the dashboard layer on session create/delete/resume/restore
-        so that ``_expire_idle`` can immediately reap orphaned sessions
-        whose UI tab no longer exists.
+        Asked when needed rather than told after the fact. A list the dashboard pushed from the
+        routes that create and delete a chat was stale for every chat made anywhere else — the
+        channel door, a scheduled prompt, Investigate — and the sweep reaped such a chat's runtime
+        in the middle of its turn.
         """
-        self._active_dashboard_sessions = set(session_keys)
+        self._dashboard_chats = chats
+
+    def _existing_dashboard_chats(self) -> Collection[str] | None:
+        """The ``dashboard:`` keys of the chats that exist now, or None when that is not known:
+        no dashboard registered its chats, or they could not be read. Reaping ends a
+        conversation's runtime, so a sweep that cannot tell which chats exist takes none for
+        closed (fail-closed on the destructive side)."""
+        if self._dashboard_chats is None:
+            return None
+        try:
+            return self._dashboard_chats()
+        except Exception:
+            logger.warning(
+                "Idle sweep: the chat list could not be read; no chat is taken for closed",
+                exc_info=True,
+            )
+            return None
 
     async def _expire_idle(self, timeout_secs: int) -> None:
         now = time.monotonic()
-        expired: list[tuple[str, bool]] = []  # (key, is_orphan)
+        chats = self._existing_dashboard_chats()
+        # (key, the session as the sweep judged it, its last use then, whether its chat is gone)
+        expired: list[tuple[str, _Session, float, bool]] = []
         total_checked = 0
         async with self._lock:
             for key, sess in self._sessions.items():
@@ -2332,27 +2360,21 @@ class SessionManager:
                 if key.startswith(_LOOP_WORKER_PREFIX):
                     continue
                 total_checked += 1
+                # A turn holds this runtime. It is not idle, and it ends by its own bounds (the
+                # runtime's request and approval timeouts, the turn's own), never by the sweep:
+                # reaping it here ended the turn with no answer. A chat deleted mid-turn stops
+                # its turn itself; the sweep takes the runtime once the turn lets it go.
+                if sess.semaphore.locked():
+                    continue
                 idle = now - sess.last_used > timeout_secs
-                orphaned = (
-                    key.startswith("dashboard:")
-                    and self._active_dashboard_sessions is not None
-                    and key not in self._active_dashboard_sessions
-                )
+                orphaned = key.startswith("dashboard:") and chats is not None and key not in chats
                 if idle or orphaned:
-                    expired.append((key, orphaned))
+                    expired.append((key, sess, sess.last_used, orphaned))
         if expired:
             logger.warning("Idle sweep: %d checked, %d expired", total_checked, len(expired))
         elif total_checked:
             logger.debug("Idle sweep: %d checked, 0 expired", total_checked)
-        for key, is_orphan in expired:
-            # NOTE: Small TOCTOU window — session could be re-activated between
-            # orphan check (under lock) and reset() here. Accepted as benign:
-            # worst case is session re-created on next user interaction.
-            if is_orphan:
-                logger.warning("Expiring orphaned dashboard session (session gone): %s", key)
-            else:
-                logger.warning("Expiring idle session: %s", key)
-            Stats().inc_session_cleaned()
+        for key, sess, seen_last_used, is_orphan in expired:
             # Give the ending session one last auto-skill-extraction pass
             # BEFORE reset wipes its transcript. Only for genuinely-idle sessions
             # (an orphaned tab-closed session is the same conversation a still-open
@@ -2363,7 +2385,22 @@ class SessionManager:
                     await self._on_session_expire(key)
                 except Exception:
                     logger.warning("on_session_expire failed for %s", key, exc_info=True)
-            # Use reset() instead of remove() to preserve session_map entry.
-            # The ACP agent session file persists on disk — next get_or_create
-            # can try session/load to restore full conversation history.
-            await self.reset(key)
+            # Judged unused, then taken out only if it still is. A turn that started on it since
+            # (the consolidation above can take a while) bumped its last use under this lock, and
+            # it keeps its runtime. The session map is kept either way, so the next acquire can
+            # resume an ACP agent's conversation from its session file.
+            async with self._lock:
+                if (
+                    self._sessions.get(key) is not sess
+                    or sess.semaphore.locked()
+                    or sess.last_used != seen_last_used
+                ):
+                    logger.info("Idle sweep: %s was taken up again before it was reaped", key)
+                    continue
+                del self._sessions[key]
+            if is_orphan:
+                logger.warning("Expiring orphaned dashboard session (session gone): %s", key)
+            else:
+                logger.warning("Expiring idle session: %s", key)
+            Stats().inc_session_cleaned()
+            await self._shut_down_removed(key, sess)

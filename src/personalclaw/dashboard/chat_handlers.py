@@ -41,7 +41,6 @@ from personalclaw.dashboard.chat_utils import (
     _prepare_messages,
     _redact_for_display,
     _remove_queued_by_id,
-    _sync_dashboard_sessions,
     apply_task_mode,
     full_session_messages,
     persisted_history_key,
@@ -1122,7 +1121,6 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     # out of the box.
     if not session.workspace_dir:
         session.workspace_dir = default_workspace_dir()
-    _sync_dashboard_sessions(state)
     # Natural voice: the list-row `to_dict()` carries only the conversation's
     # own tri-state, so the composer gets the RESOLVED pair here — one config read
     # for the one session actually open, not one per row of the session list.
@@ -1793,7 +1791,6 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     state._restricted_keys.discard(f"dashboard:{name}")
     # Kill the per-tab session to free resources.
     await state.sessions.remove(history_key)
-    _sync_dashboard_sessions(state)
     state.push_sessions_update()
     state.push_refresh("history")
     return web.json_response({"ok": True})
@@ -1904,7 +1901,6 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     if _tasks_to_cancel:
         await asyncio.wait(_tasks_to_cancel, timeout=5.0)
     if archived:
-        _sync_dashboard_sessions(state)
         state.push_sessions_update()
         state.push_refresh("history")
     sel().log_api_access(
@@ -2448,7 +2444,6 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     _seed_transcript(state, session, resolved_key)
     total = session.message_count
     recent = session.messages[-200:] if len(session.messages) > 200 else session.messages
-    _sync_dashboard_sessions(state)
     state.push_sessions_update()
     return web.json_response(
         {

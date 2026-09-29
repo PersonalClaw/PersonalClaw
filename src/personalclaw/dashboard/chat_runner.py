@@ -244,6 +244,13 @@ TURN_COMPLETE = "complete"
 TURN_STOPPED = "stopped"
 TURN_ERROR = "error"
 
+#: Said where a conversation is when its turn stopped before it finished and nobody asked for the
+#: stop: its runtime was reset under it, the gateway restarted, a queued turn ran out of time.
+TURN_CUT_SHORT_NOTICE = "The reply stopped before it finished. Send your message again to retry."
+#: Said on the channel a conversation is linked to when the owner stopped its turn from the
+#: dashboard, where the stop card already says so.
+TURN_STOPPED_FROM_DASHBOARD_NOTICE = "Stopped from the dashboard before the reply finished."
+
 
 def terminal_outcome_for_turn(
     *, stop_reason: str, cancelled: bool, stop_requested: bool, errored: bool
@@ -260,6 +267,38 @@ def terminal_outcome_for_turn(
     if errored:
         return TURN_ERROR
     return TURN_COMPLETE
+
+
+def say_how_an_unanswered_turn_ended(
+    state: DashboardState, session: _ChatSession, session_key: str, outcome: str
+) -> None:
+    """Say why a turn ended without its answer, where the conversation is.
+
+    Its channel thread (``DashboardState.tell_linked_channel``) hears nothing else: an answer is
+    mirrored there only when the turn completes, so a failed or stopped turn left the person on
+    the channel with "Thinking…" and silence. It is told in one line — the error the chat shows, or
+    how the turn stopped. The chat shows an error and the card of a stop the owner pressed already,
+    but a turn cut short with nobody asking left no trace in it, so that one is added there too.
+
+    Sent in the background: the end of a turn must neither wait on a channel's network nor be cut
+    off by it. A conversation with no linked channel sends nothing.
+    """
+    if outcome == TURN_ERROR:
+        # Every path that ends a turn in error adds the error row it is known by first.
+        note = next(
+            (m["content"] for m in reversed(session.messages) if m.get("role") == "error"),
+            TURN_CUT_SHORT_NOTICE,
+        )
+    elif outcome == TURN_STOPPED and session._stop_asked:
+        note = TURN_STOPPED_FROM_DASHBOARD_NOTICE
+    elif outcome == TURN_STOPPED:
+        note = TURN_CUT_SHORT_NOTICE
+        session.append("error", note, "msg msg-err")
+    else:
+        return
+    told = asyncio.ensure_future(state.tell_linked_channel(session_key, note))
+    state._background_tasks.add(told)
+    told.add_done_callback(state._background_tasks.discard)
 
 
 def learning_decision_for_turn(session, user_message: str, tool_calls: int, cfg=None):
@@ -2110,6 +2149,8 @@ async def run_chat(
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
+    # No stop has been asked of this turn yet (`_ChatSession._stop_asked`).
+    session._stop_asked = False
     # This turn has not ended, so no outcome describes it yet. A reader of session detail must
     # never find the previous turn's outcome and take it for this one's.
     session._last_turn_outcome = ""
@@ -5298,6 +5339,8 @@ async def run_chat(
                 await _mirror_delivery.stop_stream(_mirror_chan, _mirror_stream_ts)
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
+        # Below the channel's progress lines, which the stream just finalized.
+        say_how_an_unanswered_turn_ended(state, session, session_key, _turn_outcome)
         if _acquired:
             # The turn is over: the runtime is no longer pulling, so a steer sent
             # from here on must queue rather than buffer. The buffer is emptied

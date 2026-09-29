@@ -146,6 +146,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **MCP Tool Servers names every transport it connects over (a command, Streamable HTTP and SSE), and its card in Settings → Providers can save a Streamable HTTP server.**
 
+- **A message from Telegram, Discord, email or a Slack thread linked to a chat is answered however long its turn runs: the session sweep no longer ends a runtime a turn is using, and it knows every chat that exists however the chat was made (SDK: `SessionManager.register_dashboard_sessions` replaces `set_active_dashboard_sessions`, a change no app has to make).**
+
+- **A turn that ends without an answer says why on the channel its conversation is linked to: the error the chat shows, that it was stopped from the dashboard, or that it stopped before it finished, which the chat now says too.**
+
+- **The install scanner no longer reports a comment or a docstring as something an app does, and a finding's evidence is the code it matched rather than a comment above it.**
+
+- **A settings list whose schema describes its entries is edited as a list in Apps › Configure and Settings › Providers, chips for texts and a row per entry for records, instead of typed as JSON (`slack-channel` describes its lists).**
+
 - **`personalclaw setup` and `personalclaw doctor` run each app's step with that app's own modules: a second app's `from provider import …` no longer runs the first app's `provider.py`.**
 
 - **PersonalClaw's git reads the configuration files your own git reads: the ones `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` name, and none of the system ones with `GIT_CONFIG_NOSYSTEM` set (`personalclaw.sdk.git.git_env`, used by `git-repo`, `git-sync`, `notes` and `spec-builder`).**

@@ -196,10 +196,7 @@ class TestAgentBindingKeepsTheBoundWorkspace:
 
     async def _bind(self, session, cfg):
         state = self._state_for(session)
-        with (
-            patch("personalclaw.dashboard.chat_handlers.AppConfig") as app_cfg,
-            patch("personalclaw.dashboard.chat_handlers._sync_dashboard_sessions", MagicMock()),
-        ):
+        with patch("personalclaw.dashboard.chat_handlers.AppConfig") as app_cfg:
             app_cfg.load.return_value = cfg
             async with TestClient(TestServer(self._app(state))) as client:
                 resp = await client.post(

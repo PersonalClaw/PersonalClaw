@@ -13,6 +13,7 @@ import {
   type SchemaMeta,
 } from '../tools/schema'
 import { usePromptWidgets } from '../prompts/promptWidgets'
+import { listFieldKind, listValueFits, SchemaListField } from './schemaListField'
 
 /** Serialize a structured config value for the JSON editor's text buffer. */
 export function serializeJsonField(value: unknown, expected: 'array' | 'object'): string {
@@ -43,7 +44,8 @@ function helpHint(help?: string) {
   return help ? <Markdown inline>{help}</Markdown> : undefined
 }
 
-/** JSON editor for a structured (array/object) config field. The backend validates
+/** JSON editor for a structured (array/object) config field whose schema does not describe its
+ *  entries — a list that does gets `SchemaListField` instead. The backend validates
  *  the persisted type, so a plain text input (which stringifies an object to the
  *  literal "[object Object]") would both misrender AND be rejected on save. This
  *  keeps a local text buffer, parses on edit, and calls `set` only with valid JSON
@@ -181,6 +183,13 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
                 aria-pressed={!!v} aria-label={label} aria-required={isRequired || undefined}>
                 <span className={`block size-5 rounded-full bg-white transition-transform ${v ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
+            </Field>
+          )
+        }
+        if (p.type === 'array' && listFieldKind(p) && listValueFits(p, v)) {
+          return (
+            <Field key={key} label={label} hint={helpHint(meta.help)}>
+              <SchemaListField label={label} schema={p} value={v} onChange={(nv) => set(key, nv)} />
             </Field>
           )
         }

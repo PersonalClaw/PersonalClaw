@@ -16,7 +16,6 @@ import logging
 from aiohttp import web
 
 from personalclaw.dashboard.chat_persistence import save_session_to_history
-from personalclaw.dashboard.chat_utils import _sync_dashboard_sessions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.sel import sel
 
@@ -80,7 +79,6 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("undo: failed to persist truncated transcript for %s", name, exc_info=True)
 
-    _sync_dashboard_sessions(state)
     state.broadcast_ws("chat_undone", {"session": session.key, "turns": removed})
     sel().log_api_access(
         caller=request_app or "dashboard",

@@ -2616,6 +2616,13 @@
     ],
     "returns": "None"
    },
+   "register_dashboard_sessions": {
+    "kind": "method",
+    "params": [
+     {"annotation": "Callable[[], Collection[str]]", "kind": "positional_or_keyword", "name": "chats"}
+    ],
+    "returns": "None"
+   },
    "register_turn_stop_hook": {
     "kind": "method",
     "params": [
@@ -2647,13 +2654,6 @@
     "kind": "async method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
-    ],
-    "returns": "None"
-   },
-   "set_active_dashboard_sessions": {
-    "kind": "method",
-    "params": [
-     {"annotation": "set[str]", "kind": "positional_or_keyword", "name": "session_keys"}
     ],
     "returns": "None"
    },
