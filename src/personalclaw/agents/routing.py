@@ -7,13 +7,18 @@ the session changes until they click.
 
 Deterministic-first, LLM never in the hot path (the calibrated shape from
 ``workflows/surfacing``):
-  * **stage 1** — per-phrase keyword overlap over ``route_hints`` (gate 0.7,
-    ``skills.loader._MIN_TRIGGER_OVERLAP``); a keyword-only hit additionally requires
-    the matched phrase to carry ≥3 words (short-message spurious-match guard).
+  * **stage 1** — each comma-separated ``route_hints`` entry against the message. A hint of one
+    or two words is a KEYWORD and matches when the message says it, as whole words in that
+    order; a longer hint is an EXAMPLE REQUEST and matches when the message holds most of its
+    words (gate 0.7, ``skills.loader._MIN_TRIGGER_OVERLAP``).
   * **stage 2** — cosine of the message vs a cached ``specialty + route_hints``
     embedding via the one unified embed path; skipped entirely when no embedder is
     bound. A suggestion needs the top score above the confidence gate AND a clear
     margin over the runner-up (≥0.1) so ambiguous fits stay silent.
+
+The message both stages read is what the person TYPED: a block they pasted (a log, an export,
+a document) is material for the answer, not the request, and its words would otherwise swamp
+the embedding and trip a keyword by accident.
 
 Pure functions over the provider-agnostic ``AgentProfile`` metadata + the one
 embedding path — zero per-provider logic. Never raises into the send path.
@@ -35,9 +40,9 @@ _KEYWORD_GATE = 0.7
 DEFAULT_MIN_CONFIDENCE = 0.62
 # A confident suggestion must beat the runner-up by this margin (ambiguous → silent).
 _MARGIN = 0.1
-# A keyword-only match must come from a phrase of at least this many words, so a
-# 2-word message can't spuriously clear the overlap gate (Risks §1).
-_MIN_KEYWORD_PHRASE_WORDS = 3
+# A hint this short is a keyword: an overlap ratio over one or two words is all-or-nothing and
+# order-blind ("on call" would match "call me on Monday"), so it has to be said as a phrase.
+_KEYWORD_MAX_WORDS = 2
 
 
 @dataclass(frozen=True)
@@ -48,8 +53,8 @@ class RouteCandidate:
     method: str  # "keyword" | "embedding"
 
 
-def _words(text: str) -> set[str]:
-    return set(re.findall(r"\w+", text.lower()))
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.lower())
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -59,23 +64,54 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _keyword_score(query: str, route_hints: str) -> tuple[float, int]:
-    """Best per-phrase word-overlap of the query against comma-separated hints.
+def _says(qwords: list[str], phrase: list[str]) -> bool:
+    """Whether the message's words hold *phrase* as consecutive whole words."""
+    n = len(phrase)
+    return any(qwords[i : i + n] == phrase for i in range(len(qwords) - n + 1))
 
-    Returns (best_ratio, words_in_best_phrase) so the caller can enforce the
-    minimum-phrase-length guard on a keyword-only suggestion."""
-    if not route_hints.strip():
-        return 0.0, 0
-    qwords = _words(query)
-    best, best_len = 0.0, 0
+
+def _keyword_score(query: str, route_hints: str) -> float:
+    """The best match of the query against the comma-separated hints, from 0 to 1.
+
+    A keyword (one or two words) scores 1 when the message says it and 0 when it does not. An
+    example request scores the share of its words the message holds, so a paraphrase of it still
+    matches while a message that shares one common word with it does not."""
+    qlist = _words(query)
+    qwords = set(qlist)
+    best = 0.0
     for phrase in route_hints.split(","):
         pwords = _words(phrase)
         if not pwords:
             continue
-        ratio = len(pwords & qwords) / len(pwords)
-        if ratio > best:
-            best, best_len = ratio, len(pwords)
-    return best, best_len
+        if len(pwords) <= _KEYWORD_MAX_WORDS:
+            score = 1.0 if _says(qlist, pwords) else 0.0
+        else:
+            unique = set(pwords)
+            score = len(unique & qwords) / len(unique)
+        best = max(best, score)
+    return best
+
+
+def pasted_blocks(meta: object) -> list[str]:
+    """The blocks a send pasted, as the composer sent them (``meta.pastes[].content``)."""
+    pastes = meta.get("pastes") if isinstance(meta, dict) else None
+    if not isinstance(pastes, list):
+        return []
+    return [
+        p["content"] for p in pastes if isinstance(p, dict) and isinstance(p.get("content"), str)
+    ]
+
+
+def typed_text(message: str, pasted: list[str] | tuple[str, ...] = ()) -> str:
+    """*message* without the blocks that were pasted into it — the words the person typed.
+
+    The composer expands each ``[Paste #N]`` marker to its block before sending, so each block is
+    taken out once, longest first: a block that contains another is removed whole."""
+    for block in sorted((b for b in pasted if b), key=len, reverse=True):
+        at = message.find(block)
+        if at != -1:
+            message = f"{message[:at]} {message[at + len(block):]}"
+    return message
 
 
 def eligible_candidates(cfg) -> list[tuple[str, str, str]]:
@@ -137,11 +173,10 @@ def classify(
     if not message or not candidates:
         return None
     try:
-        # Stage 1: keyword overlap over route_hints.
-        kw_scored: list[tuple[float, int, str, str]] = []
+        # Stage 1: the message against each candidate's route_hints.
+        kw_scored: list[tuple[float, str, str]] = []
         for name, specialty, hints in candidates:
-            ratio, phrase_len = _keyword_score(message, hints)
-            kw_scored.append((ratio, phrase_len, name, specialty))
+            kw_scored.append((_keyword_score(message, hints), name, specialty))
         kw_scored.sort(key=lambda r: r[0], reverse=True)
 
         # Stage 2: embedding cosine over "specialty + hints" (skipped with no embedder).
@@ -165,18 +200,14 @@ def classify(
                     agent=e_top[1], specialty=e_top[2], score=e_top[0], method="embedding"
                 )
 
-        # Keyword-only fallback: needs the overlap gate, a ≥3-word matched phrase,
-        # and a clear margin over the runner-up.
+        # Keyword fallback: needs the gate and a clear margin over the runner-up, so a
+        # keyword two agents share suggests neither.
         if kw_scored:
             k_top = kw_scored[0]
             k_runner = kw_scored[1][0] if len(kw_scored) > 1 else 0.0
-            if (
-                k_top[0] >= _KEYWORD_GATE
-                and k_top[1] >= _MIN_KEYWORD_PHRASE_WORDS
-                and (k_top[0] - k_runner) >= _MARGIN
-            ):
+            if k_top[0] >= _KEYWORD_GATE and (k_top[0] - k_runner) >= _MARGIN:
                 return RouteCandidate(
-                    agent=k_top[2], specialty=k_top[3], score=k_top[0], method="keyword"
+                    agent=k_top[1], specialty=k_top[2], score=k_top[0], method="keyword"
                 )
         return None
     except Exception:
@@ -325,9 +356,14 @@ def _routing_state(state) -> tuple[dict, dict]:
     return state._routing_embed_cache, state._routing_last_turn
 
 
-def suggest_for_send(state, session, message: str) -> RouteCandidate | None:
+def suggest_for_send(
+    state, session, message: str, *, pasted: list[str] | tuple[str, ...] = ()
+) -> RouteCandidate | None:
     """The api_chat hook: gate → classify → SEL log → return a suggestion (the caller
     broadcasts it). Best-effort; never raises into the send path.
+
+    *pasted* is the send's pasted blocks (:func:`pasted_blocks`); the classifier reads the
+    message without them (:func:`typed_text`).
 
     Gates (any fail → None, no event): routing disabled; session not default-agent;
     ``memory_mode != "persistent"``; per-session frequency cap not elapsed; the matched
@@ -365,7 +401,10 @@ def suggest_for_send(state, session, message: str) -> RouteCandidate | None:
         if not candidates:
             return None
         result = classify(
-            message, candidates, min_confidence=rc.min_confidence, embed_cache=_embed_cache
+            typed_text(message, pasted),
+            candidates,
+            min_confidence=rc.min_confidence,
+            embed_cache=_embed_cache,
         )
         if result is None:
             return None

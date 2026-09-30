@@ -120,3 +120,35 @@ class TestRoutingSuggestionBroadcast:
             tmp_path, monkeypatch, agent="some-specialist", memory_mode="persistent"
         )
         assert suggestions == []
+
+    async def test_a_pasted_block_is_not_what_routes_the_send(self, tmp_path, monkeypatch):
+        """The send carries each pasted block in ``meta.pastes``; the hints are matched against
+        the words around them, which is what the person asked."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "personalclaw.providers.entity_routes.config_dir", lambda: tmp_path, raising=False
+        )
+        monkeypatch.setattr(
+            "personalclaw.config.loader.AppConfig.load", staticmethod(lambda: _cfg(_DBA))
+        )
+
+        async def fake_run_chat(st, sl, msg):
+            return
+
+        monkeypatch.setattr("personalclaw.dashboard.chat_handlers.run_chat", fake_run_chat)
+        broadcasts: list[tuple[str, dict]] = []
+        state = _make_state(tmp_path)
+        state.broadcast_ws = lambda kind, payload=None, **k: broadcasts.append((kind, payload))
+        state.get_or_create_session("s1")
+        pasted = f"notes from the runbook:\n{_MSG}\nend of notes"
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post(
+                "/api/chat",
+                json={
+                    "message": f"what is this? {pasted}",
+                    "session": "s1",
+                    "meta": {"pastes": [{"seq": 1, "lines": 3, "content": pasted}]},
+                },
+            )
+            resp.close()
+        assert [p for (kind, p) in broadcasts if kind == "routing_suggestion"] == []

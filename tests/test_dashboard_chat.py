@@ -648,6 +648,30 @@ class TestStreamedAnswerIsOneEntry:
         assert [m["role"] for m in session.messages] == ["user", "assistant", "system"]
         assert session.messages[1]["content"] == "partial answer"
 
+    def test_a_settled_answer_is_not_announced_to_the_socket_again(self):
+        """The socket had the answer chunk by chunk (`chat_chunk`). A `chat_message` frame is how
+        the open page learns of an entry it does NOT have — a notice the gateway adds — so the
+        settled answer must not arrive as one, or the page would show it twice."""
+        session = _ChatSession("s1")
+        announced: list[dict] = []
+        session._on_message = lambda key, msg: announced.append(dict(msg))
+        session._has_reader = False
+        session.append("user", "hello")
+        session.stream_chunk("Hello")
+        session.finish_stream("Hello")
+        session.finish_stream("an answer with no open stream")
+        assert announced == []
+        session.append("assistant", "Conversation compacted: freed 10% of the conversation")
+        assert [(m["role"], m["content"]) for m in announced] == [
+            ("assistant", "Conversation compacted: freed 10% of the conversation")
+        ]
+        # Still written for a reader draining the turn's own stream.
+        assert [m["content"] for m in session.drain() if m["role"] == "assistant"] == [
+            "Hello",
+            "an answer with no open stream",
+            "Conversation compacted: freed 10% of the conversation",
+        ]
+
     def test_a_cleared_buffer_forgets_the_open_stream(self):
         session = _ChatSession("s1")
         session.stream_chunk("stale")

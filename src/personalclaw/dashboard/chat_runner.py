@@ -1148,9 +1148,8 @@ def _flush_segment(
     for w in cred_warnings:
         logger.warning("Credential redacted in chat segment: %s", w)
     # Settled in place — where the text streamed, so a stop card pressed mid-answer stays
-    # after the prose. The settled entry is broadcast so other tabs viewing the session get
-    # the finalized text; the active tab already has it from the streamed chunks, and the
-    # chat_segment event tells it to finalize streaming → assistant.
+    # after the prose. Every tab viewing the session already has the text from the streamed
+    # chunks; the chat_segment event tells them to finalize streaming → assistant.
     last_msg: dict = session.finish_stream(redacted)
     # Episodic memory citations: stamp the turn's `[Memory N]` → record manifest
     # onto the assistant message's meta so the frontend can resolve each cited token to
@@ -3156,6 +3155,7 @@ async def run_chat(
                     metadata={"mention": original.split()[0], "session": session.key},
                 )
 
+        _window = None  # the window an assembled turn resolves below
         if is_slash:
             full_message = message
             sel().log_tool_invocation(
@@ -5252,11 +5252,7 @@ async def run_chat(
                 msg = "Compaction timed out."
             await _say_compaction_notice(state, session, msg)
             # Update context usage after compaction
-            pct = client.context_usage_pct()
-            state.broadcast_ws(
-                "context_usage",
-                {"session": session.key, "pct": None if pct is None else round(pct, 1)},
-            )
+            state.say_context_usage(session, client.context_usage_pct())
 
         # ── A turn that wrote no reply ──────────────────────────────────────
         # A BLANK turn (no text AND no tool calls) that is not a benign no-op
@@ -5441,11 +5437,10 @@ async def run_chat(
                 logger.debug("skill-ladder review scheduling failed", exc_info=True)
         state.sessions.check_context_usage(session_key, client)
         # ``pct`` was read above (once, before the save) — ``None`` when the provider
-        # measured nothing, which the composer ring reads as "no measurement" and shows
-        # no percentage, instead of a fabricated 0%.
-        state.broadcast_ws(
-            "context_usage",
-            {"session": session.key, "pct": None if pct is None else round(pct, 1)},
+        # measured nothing, and the ring then shows no percentage — and goes out with the
+        # window this turn was served with (a slash turn assembled nothing, so it asks now).
+        state.say_context_usage(
+            session, pct, window=_window or await resolve_window(model_label, serving=client)
         )
         if not is_cancelled_stop(_stop_reason):
             state.sessions.record_success(session_key)

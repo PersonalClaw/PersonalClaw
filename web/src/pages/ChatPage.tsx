@@ -174,7 +174,7 @@ const HOLD_LIMIT_MS = 4_000
 const TRANSCRIPT_FRAMES = new Set([
   'chat_chunk', 'chat_status', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
   'tool_result', 'approval', 'approval_resolved', 'chat_segment', 'chat_variant_switch',
-  'chat_done', 'chat_user_message',
+  'chat_done', 'chat_user_message', 'session_clear',
 ])
 
 // The approval-card scope picker's one vocabulary (resolved with the user): a per-
@@ -933,6 +933,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // `undefined` until the backend reports a measurement (it sends `pct: null` when it
   // has none) — an unmeasured context must show no percentage, not 0%.
   const [contextPct, setContextPct] = useState<number | undefined>(undefined)
+  // The window the gateway named with its reading: `null` = none is declared or served,
+  // `undefined` = not said yet. It is what lets the unmeasured dot say WHY (`ModelPill`).
+  const [contextWindow, setContextWindow] = useState<number | null | undefined>(undefined)
+  // A reading that arrived live outranks the one a later snapshot carries, which is older.
+  const contextSaidLive = useRef(false)
+  const takeContextUsage = (u: { pct?: number | null; window?: number | null }) => {
+    setContextPct(typeof u.pct === 'number' ? u.pct : undefined)
+    if ('window' in u) setContextWindow(typeof u.window === 'number' ? u.window : null)
+  }
   const [optimizing, setOptimizing] = useState(false)
   // the draft as it was just before an optimize-prompt rewrite, so the user can
   // revert if they don't like the optimized version (otherwise it's lost).
@@ -1132,6 +1141,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const partial = running ? livePartialOf(messages) : null
     if (partial !== null) textRun.adopt(); else textRun.release()
     coalescer.resume(partial, d.stream_seq ?? 0)
+    // What the ring was last told, so a chat opened after its turn draws the same ring.
+    if (d.context_usage && !contextSaidLive.current) takeContextUsage(d.context_usage)
   }
   // Read session detail with this chat's live frames HELD, adopt the snapshot, then replay every
   // frame since the read was issued on top of it — see snapshotReplay.ts for why that one rule
@@ -1396,6 +1407,22 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             const last = segs[segs.length - 1]
             return last?.kind === 'error' && last.text === text ? segs : [...segs, { kind: 'error', text }]
           })
+        } else if (d.role === 'assistant') {
+          // A line the gateway wrote into the transcript itself — a compaction's outcome, the notice
+          // that it restarted the session at the context threshold, a locally answered command. It
+          // streamed nowhere (a streamed answer's words arrive as `chat_chunk`, never as this), so
+          // this frame is the page's only news of it; dropping it left the line to the next reload.
+          // Joined to the answer as `hydrateTurns` joins consecutive assistant messages, so live and
+          // reloaded read the same. Idempotent like the error above: the transcript's announcement
+          // and the notice's own frame both carry it, and a held frame can replay over a snapshot
+          // that already holds it.
+          const text = String(d.content ?? '')
+          if (!text) break
+          endTextRun()
+          patchLastAssistant((segs) => {
+            const last = segs[segs.length - 1]
+            return last?.kind === 'text' && last.text === text ? segs : [...segs, { kind: 'text', text }]
+          })
         }
         break
       }
@@ -1495,6 +1522,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           sg.kind === 'approval' && sg.id === String(d.request_id ?? '') ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment : sg) })))
         break
       case 'chat_segment': endTextRun(); break
+      // The agent cleared the conversation: the gateway emptied the transcript and says
+      // "Conversation cleared." in it next (a `chat_message`), which is all a reload shows.
+      case 'session_clear': dropTextRun(); setTurns([]); break
       // A regenerated answer landed (fresh reply → new variant) OR the user switched
       // which variant is active (here or in another tab). The backend has already
       // swapped the stored content; reflect it in place: replace the LAST assistant
@@ -1519,8 +1549,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       }
       case 'context_usage':
         // A non-number `pct` (null) is the backend saying "not measured" — clear the
-        // ring rather than leaving a stale or fabricated percentage on screen.
-        setContextPct(typeof d.pct === 'number' ? d.pct : undefined)
+        // ring rather than leaving a stale or fabricated percentage on screen. A frame
+        // without `window` (a restart at the threshold) leaves the window it last named.
+        contextSaidLive.current = true
+        takeContextUsage(d as { pct?: number | null; window?: number | null })
         break
       // A title resolved server-side (auto-titled after the first turn, or renamed
       // from elsewhere). Reflect it live in the header of the open session, so the
@@ -3491,7 +3523,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue contextPct={contextPct}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue contextPct={contextPct} contextWindow={contextWindow}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />

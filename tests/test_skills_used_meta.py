@@ -458,6 +458,8 @@ def test_the_three_origins_are_distinct_and_closed():
 #: assertion was red, is what licensed adding it. ``approval`` LEFT with #3594, which moved a
 #: chat's pending approval onto the one approval registry (``request_approval``), so the chat
 #: runner stopped broadcasting a frame of its own for it. A removal, not a new channel.
+#: ``context_usage`` left the same way: the ring's reading is said through
+#: ``DashboardState.say_context_usage``, which also keeps it for session detail.
 _BASELINE_WS_EVENTS = {
     "activity_event",
     "chat_chunk",
@@ -468,7 +470,6 @@ _BASELINE_WS_EVENTS = {
     "chat_thinking",
     "chat_user_message",
     "chat_variant_switch",
-    "context_usage",
     "heartbeat",
     "question_card",
     "queue_pop",
@@ -479,6 +480,9 @@ _BASELINE_WS_EVENTS = {
     "tool_call",
     "tool_result",
 }
+
+#: What a turn sends: the runner's own frames, and the ring's reading said through the state.
+_TURN_WS_EVENTS = _BASELINE_WS_EVENTS | {"context_usage"}
 
 _WS_NAME_RE = re.compile(r'broadcast_ws\(\s*"([a-z_]+)"')
 
@@ -503,7 +507,7 @@ async def test_a_turn_carrying_skills_used_broadcasts_only_known_events(turn):
     await turn({"skill_decisions": [_decision("git-hygiene", SkillLoadState.ADMITTED, 900)]})
     names = {c.args[0] for c in turn.state.broadcast_ws.call_args_list if c.args}
     assert names, "the turn broadcast nothing — the harness, not the contract, broke"
-    assert names <= _BASELINE_WS_EVENTS, f"new channel(s): {sorted(names - _BASELINE_WS_EVENTS)}"
+    assert names <= _TURN_WS_EVENTS, f"new channel(s): {sorted(names - _TURN_WS_EVENTS)}"
 
 
 # ── The LOOP half's two unguarded seams ───────────────────────────────────────────

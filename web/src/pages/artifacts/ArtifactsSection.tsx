@@ -20,6 +20,7 @@ import { ArtifactGrid } from './ArtifactGrid'
 import { ArtifactViewer } from './ArtifactViewer'
 import { ArtifactIteratePanel, ITERATE_PENDING } from './ArtifactIteratePanel'
 import { DeployedAppsMenu } from './ArtifactDeploy'
+import { ArtifactPinButton } from './ArtifactPin'
 import { PageTitle } from '../../ui/PageTitle'
 
 const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
@@ -225,15 +226,20 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
             : <PageTitle className="shrink-0">Artifacts</PageTitle>}
           {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
         </div>}
-        right={canFile ? (
+        right={slug && active ? (
           <HeaderActions>
-            <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
-              title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'}>
-              <MessagesSquare size={13} /> {iterateOpen ? 'Close iterate' : 'Iterate with agent'}
-            </QuietButton>
-            <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
-              <FolderInput size={13} /> {active.collection || 'Set collection'}
-            </QuietButton>
+            {canFile && <>
+              <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
+                title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'}>
+                <MessagesSquare size={13} /> {iterateOpen ? 'Close iterate' : 'Iterate with agent'}
+              </QuietButton>
+              <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
+                <FolderInput size={13} /> {active.collection || 'Set collection'}
+              </QuietButton>
+            </>}
+            {/* A pin is Home's bookmark, not a write to the artifact, so a read-only record takes
+                one as well. */}
+            <ArtifactPinButton slug={slug} name={active.name} />
           </HeaderActions>
         ) : undefined}
       />

@@ -46,6 +46,7 @@ def config_dir() -> Path:
 
 
 if TYPE_CHECKING:
+    from personalclaw.context_headroom import Window
     from personalclaw.dashboard._types import (  # noqa: F401
         ContextBuilder,
         ConversationLog,
@@ -259,6 +260,7 @@ class _ChatSession:
         "created_by_app",
         "_last_turn_errored",
         "_last_turn_outcome",
+        "context_usage",
         "_followups_task",
         "_pending_variants",
         "_lock",
@@ -464,6 +466,10 @@ class _ChatSession:
         # this process started it. Served as session detail's `last_turn_outcome`, and cleared
         # when a turn starts, so it only ever describes a turn that is over.
         self._last_turn_outcome: str = ""
+        # What the chat's context ring was last told (`DashboardState.say_context_usage`):
+        # ``{"pct", "window"}``, served as session detail's `context_usage` so a page opened
+        # later draws the same ring. None until a turn has said anything.
+        self.context_usage: dict[str, Any] | None = None
         # Follow-up chips: the fire-and-forget background task that
         # suggests next messages after a completed turn; cancelled by the next dispatch.
         self._followups_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -649,17 +655,23 @@ class _ChatSession:
         Settled IN PLACE, so a stop card appended while the answer was still arriving
         stays after the prose. With no open stream (none started, or the buffer was
         rebuilt under it) the answer is appended instead. Returns the settled entry.
+
+        Not announced to the socket (``broadcast=False``): every socket already has these
+        words, as the ``chat_chunk`` frames they streamed in. A ``chat_message`` frame is
+        how an open chat learns of an entry it does NOT have — a notice the gateway adds, such
+        as a compaction's outcome — and the page paints each one it gets, so the settled answer
+        arriving as one would show it twice.
         """
         idx = self._stream_index()
         self._stream = None
         if idx is None:
-            self.append("assistant", content, "msg msg-a")
+            self.append("assistant", content, "msg msg-a", broadcast=False)
             return self.messages[-1]
         entry = self.messages[idx]
         entry["role"] = "assistant"
         entry["content"] = content
         entry["ts"] = datetime.now(timezone.utc).isoformat()
-        self._announce(entry, replay=False, broadcast=True)
+        self._announce(entry, replay=False, broadcast=False)
         return entry
 
     def discard_stream(self) -> None:
@@ -1215,11 +1227,30 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         try:
             # ``None``, not 0.0: a compaction shrank the window but nothing has
             # re-measured it yet, so the honest chip is absent rather than "0%".
-            self.broadcast_ws("context_usage", {"session": session_name, "pct": None})
+            self.say_context_usage(session, None)
         except Exception:
             logging.getLogger(__name__).exception(
                 "Failed to broadcast context_usage for session %s", session_name
             )
+
+    def say_context_usage(
+        self, session: _ChatSession, pct: float | None, *, window: "Window | None" = None
+    ) -> None:
+        """Tell a chat's context ring how full its context is, and keep it for session detail.
+
+        *pct* is the provider's own measurement — the number the session manager compacts on —
+        or ``None`` when it has measured nothing. *window* is the turn's resolved
+        ``context_headroom.Window``; its ``tokens`` go out as the frame's ``window``, ``None``
+        when nothing declared or served one, which is the one state in which the ring sends the
+        user to declare it. Omitted, the window last said stands: a restart at the threshold
+        clears the reading, not the window the model is served with.
+        """
+        usage = dict(session.context_usage or {})
+        usage["pct"] = None if pct is None else round(pct, 1)
+        if window is not None:
+            usage["window"] = window.tokens
+        session.context_usage = usage
+        self.broadcast_ws("context_usage", {"session": session.key, **usage})
 
     async def tell_linked_channel(self, session_key: str, text: str) -> bool:
         """Say *text* on the channel thread a conversation is linked to, where its replies go.

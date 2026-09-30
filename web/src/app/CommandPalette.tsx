@@ -22,6 +22,33 @@ const SOURCE_ICON: Record<ContentSource, LucideIcon> = {
   chats: MessageSquare, memory: Brain, knowledge: BookOpen, tasks: ListChecks,
 }
 
+/** The commands *q* finds, best first; every command when it is blank.
+ *
+ *  Each word of the query has to appear in the command's label, hint or keywords, so a row is
+ *  found by the words it shows in any order they are typed: "Go to Discover" finds the row that
+ *  reads "Discover · Go to". Matching the whole query as ONE substring of those words found
+ *  nothing for that, and Enter then ran whatever the content search listed first. A label that
+ *  starts with the query ranks first, then one that contains it, then one holding any of its
+ *  words, then a match on the other words alone. */
+export function rankCommands(commands: Command[], q: string): Command[] {
+  const n = q.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!n) return commands
+  const words = n.split(' ')
+  return commands
+    .map((c) => {
+      const label = c.label.toLowerCase()
+      const hay = `${label} ${c.hint ?? ''} ${c.keywords ?? ''}`.toLowerCase()
+      const at = label.indexOf(n)
+      const score = at === 0 ? 4 : at > 0 ? 3
+        : !words.every((w) => hay.includes(w)) ? 0
+        : words.some((w) => label.includes(w)) ? 2 : 1
+      return { c, score }
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.c)
+}
+
 /** One row of the listbox: a command, or something found inside the user's content. */
 type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; run: () => void }
 
@@ -51,21 +78,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
 
   const content = useContentSearch(q, open)
 
-  const results = useMemo(() => {
-    const n = q.trim().toLowerCase()
-    if (!n) return commands
-    // simple subsequence/substring score: label match > keyword match
-    return commands
-      .map((c) => {
-        const hay = `${c.label} ${c.hint ?? ''} ${c.keywords ?? ''}`.toLowerCase()
-        const li = c.label.toLowerCase().indexOf(n)
-        const score = li === 0 ? 3 : li > 0 ? 2 : hay.includes(n) ? 1 : 0
-        return { c, score }
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.c)
-  }, [q, commands])
+  const results = useMemo(() => rankCommands(commands, q), [q, commands])
 
   // Commands first, then the content hits grouped by source: ONE list for the cursor, so the arrows
   // and Enter work the same across both halves and `aria-activedescendant` can name any row.

@@ -181,11 +181,11 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }:
       <CheckList label="Tools" hint="Tools this agent may call. None selected = all available tools." options={tools} value={draft.tools} onChange={(v) => set('tools', v)} />
       <CheckList label="Triggers" hint="Lifecycle triggers that fire for this agent (the agent-scoped allow-list)." options={lifecycleTriggers} value={draft.triggers} onChange={(v) => set('triggers', v)} />
 
-      <Field label="Specialty" hint="One line: what this agent is the specialist for. Enables a 'route to this agent?' suggestion in default-agent chats. Leave empty to never suggest it.">
+      <Field label="Specialty" hint="One line: what this agent is the specialist for. With the routing hints below, it lets a default-agent chat suggest 'route to this agent?'. Leave both empty to never suggest it.">
         <TextInput value={draft.specialty} onChange={(v) => set('specialty', v)} placeholder="e.g. Postgres performance + query optimization" />
       </Field>
-      <Field label="Routing hints" hint="Comma-separated example utterances that should route here (e.g. 'optimize this query, why is my db slow, add an index').">
-        <TextArea value={draft.route_hints} onChange={(v) => set('route_hints', v)} rows={compact ? 2 : 3} placeholder="optimize this query, why is my db slow, add an index" />
+      <Field label="Routing hints" hint="Comma-separated keywords or example requests that should route here. A hint of one or two words matches when your message says it; a longer one when your message has most of its words. Pasted text isn't matched.">
+        <TextArea value={draft.route_hints} onChange={(v) => set('route_hints', v)} rows={compact ? 2 : 3} placeholder="postgres, slow query, why is my db slow" />
       </Field>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-l">

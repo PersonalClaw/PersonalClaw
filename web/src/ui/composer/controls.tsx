@@ -156,7 +156,17 @@ function ContextRing({ pct }: { pct: number }) {
   )
 }
 
-export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal }: { data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; openSignal?: number }) {
+/** Why the model pill shows no ring. Only one of the three causes is the user's to fix, so only
+ *  that one (`null`: the gateway said nothing declares or serves a window) names the
+ *  field that fixes it. Otherwise nothing has been measured since this page opened or the session
+ *  restarted, which the next answer puts right. */
+function unmeasuredTitle(windowTokens: number | null | undefined): string {
+  if (windowTokens === null) return 'Context usage unknown — no context window is declared for this model. Set “Served context window” on the provider in Settings → Models.'
+  const against = typeof windowTokens === 'number' ? `, against its ${windowTokens.toLocaleString('en-US')}-token window` : ''
+  return `Context usage not measured yet — it's measured each time the model answers${against}.`
+}
+
+export function ModelPill({ data, agent, value, onSelect, contextPct, contextWindow, openSignal }: { data?: ComposerData; agent?: string; value: string; onSelect: (m: string) => void; contextPct?: number; contextWindow?: number | null; openSignal?: number }) {
   // If the selected agent is an ACP-discovered agent, scope the model list to
   // the models THAT agent provides (not the native global model list).
   const acp = agent
@@ -169,11 +179,11 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
   // zero bug this guard replaced (it used to also require `> 0`, which hid it).
   // The dot SAYS it is unmeasured rather than just being quiet: a ring and a bare dot
   // are one pixel apart, so "unknown" was indistinguishable from "barely any context
-  // used". The backend reaches this state when no window is declared for the bound
-  // model, and the remedy is a user action, so the title names it.
+  // used". And it says WHY (`unmeasuredTitle`), because only one of the reasons is a
+  // user action.
   const dot = contextPct !== undefined
     ? <ContextRing pct={contextPct} />
-    : <span title="Context usage unknown — no context window is declared for this model. Set “Served context window” on the provider in Settings → Models." className="size-1.5 rounded-pill bg-primary" />
+    : <span title={unmeasuredTitle(contextWindow)} className="size-1.5 rounded-pill bg-primary" />
   // The pill shows the friendly model_name, not the raw "Provider:model_id" ref
   // stored as the value (the dropdown rows already display model_name).
   const pillLabel = !value || value === 'Auto'

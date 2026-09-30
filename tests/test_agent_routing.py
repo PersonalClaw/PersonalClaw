@@ -51,19 +51,38 @@ class TestEligibleCandidates:
 
 
 class TestClassify:
-    def test_keyword_hit_needs_3word_phrase_and_margin(self):
+    def test_an_example_request_routes_a_message_that_paraphrases_it(self):
         cands = [
             ("dba", "database expert", "optimize this slow sql query, fix the database index"),
             ("writer", "prose editor", "edit my essay, improve the writing"),
         ]
-        # embed_fn None → keyword-only path. A clear ≥3-word phrase match.
+        # embed_fn None → keyword-only path. Most of a longer hint's words are in the message.
         r = routing.classify("please optimize this slow sql query for me", cands)
         assert r is not None and r.agent == "dba" and r.method == "keyword"
 
-    def test_short_message_does_not_spuriously_route(self, monkeypatch):
-        # A 2-word hint phrase can hit ratio 1.0 but must be rejected (min 3 words).
-        cands = [("dba", "db", "sql"), ("writer", "prose", "essay")]
-        assert routing.classify("sql", cands) is None
+    def test_an_example_request_needs_most_of_its_words(self):
+        cands = [("dba", "database expert", "optimize this slow sql query")]
+        assert routing.classify("optimize my essay", cands) is None
+
+    def test_a_one_word_hint_routes_a_message_that_says_it(self):
+        # The Agents form invites hints like these, and the agent has no specialty line.
+        cands = [("oncall-triage", "", "pager, alert, incident, on call")]
+        r = routing.classify("the pager is going off for the checkout adapter again", cands)
+        assert r is not None and r.agent == "oncall-triage" and r.method == "keyword"
+
+    def test_a_one_word_hint_matches_a_whole_word_only(self):
+        cands = [("dba", "db", "sql")]
+        assert routing.classify("sql", cands) is not None
+        assert routing.classify("migrate the sqlite file", cands) is None
+
+    def test_a_two_word_hint_matches_as_that_phrase_only(self):
+        cands = [("oncall-triage", "", "on call")]
+        assert routing.classify("I'm on call this week, what's burning?", cands) is not None
+        assert routing.classify("call me on Monday", cands) is None
+
+    def test_a_keyword_two_agents_share_stays_silent(self):
+        cands = [("dba", "", "index"), ("librarian", "", "index")]
+        assert routing.classify("rebuild the index", cands) is None
 
     def test_no_candidates_or_empty_message(self):
         assert routing.classify("", [("a", "s", "h")]) is None
@@ -203,6 +222,45 @@ class TestSuggestForSend:
         assert first is not None
         # immediate next turn (turn 2) is inside the cap → no suggestion
         assert routing.suggest_for_send(state, self._session(user_turns=2), msg) is None
+
+    def test_what_was_typed_routes_and_what_was_pasted_does_not(self, monkeypatch):
+        cfg = _cfg({"oncall-triage": _profile("", "pager, alert, incident, on call")})
+        self._patch_cfg(monkeypatch, cfg)
+        pasted = '{"level": "error", "tags": {"alert": "incident"}, "service": "checkout"}'
+        # The hints' words are only in the pasted export: nothing she asked names them.
+        assert (
+            routing.suggest_for_send(
+                SimpleNamespace(),
+                self._session(),
+                f"what does this mean? {pasted}",
+                pasted=[pasted],
+            )
+            is None
+        )
+        r = routing.suggest_for_send(
+            SimpleNamespace(),
+            self._session(),
+            f"the pager is going off again {pasted}",
+            pasted=[pasted],
+        )
+        assert r is not None and r.agent == "oncall-triage"
+
+    def test_the_embedding_compares_the_typed_words(self, monkeypatch):
+        cfg = _cfg({"oncall-triage": _profile("on-call triage", "pager, alert, incident, on call")})
+        self._patch_cfg(monkeypatch, cfg)
+        embedded: list[str] = []
+
+        def fake_embed(text):
+            embedded.append(text)
+            return [1.0, 0.0], "test:model"
+
+        monkeypatch.setattr(routing, "_embed", fake_embed)
+        pasted = "line one of a long export\n" * 40
+        routing.suggest_for_send(
+            SimpleNamespace(), self._session(), f"summarize this {pasted}", pasted=[pasted]
+        )
+        assert embedded and embedded[0].strip() == "summarize this"
+        assert all("long export" not in t for t in embedded)
 
     def test_suppressed_agent_no_suggestion(self, monkeypatch):
         cfg = _cfg({"dba": _profile("database expert", "optimize slow sql query, fix db index")})

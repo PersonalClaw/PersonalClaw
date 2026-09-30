@@ -130,6 +130,11 @@ export interface ComposerProps {
    *  `undefined` means the backend reported NO measurement — the pill then shows a
    *  plain dot rather than a fabricated 0%. A measured `0` renders a 0% ring. */
   contextPct?: number
+  /** The window, in tokens, the bound session's model is served with, as the gateway said with its
+   *  last reading. `null` means the gateway said NO window is declared or served — the one state in
+   *  which the unmeasured dot sends the user to declare it; `undefined` means it has said nothing
+   *  yet. Read only while `contextPct` is `undefined`, to say why there is no ring. */
+  contextWindow?: number | null
   /** Minimum trimmed length before Send enables (default 1). The goal composer
    *  needs ≥20 chars to plan, so the button stays disabled (not a silent no-op)
    *  until the draft is long enough. */

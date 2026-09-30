@@ -332,6 +332,11 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     ws_mode = request.query.get("ws") == "1"
 
     session._has_reader = not ws_mode  # Only block SSE broadcast if HTTP SSE reader
+    # The pasted blocks as the message holds them — read before the redaction below rewrites
+    # the meta copy — so routing can tell what was typed from what was pasted.
+    from personalclaw.agents.routing import pasted_blocks
+
+    _pasted = pasted_blocks(user_meta)
     if user_meta:
         user_meta = _redact_meta(user_meta)
     session.append("user", message, "msg msg-u", ts=client_ts, meta=user_meta)
@@ -383,7 +388,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     try:
         from personalclaw.agents.routing import suggest_for_send
 
-        _suggestion = suggest_for_send(state, session, message)
+        _suggestion = suggest_for_send(state, session, message, pasted=_pasted)
         if _suggestion is not None:
             _routing = {
                 "session": session.key,
@@ -957,6 +962,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # `chat_done` carried — or null when none has. A tab that missed the frame settles
             # from this and says the same thing the frame would have.
             "last_turn_outcome": session._last_turn_outcome or None,
+            # What the context ring was last told (`DashboardState.say_context_usage`), so a page
+            # opened after the turn draws the same ring; null until a turn has said anything.
+            "context_usage": session.context_usage,
             "messages": prepared,
             "queue": [
                 {"id": q["id"], "content": _redact_for_display(q["content"])}

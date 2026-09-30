@@ -7987,6 +7987,9 @@ export const api = {
     /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
      *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
     stream_seq?: number
+    /** What the context ring was last told — the `context_usage` frame's reading and window
+     *  (`null` window = none declared or served) — or null before any turn said anything. */
+    context_usage?: { pct: number | null; window?: number | null } | null
     /** Present only on a conversation an APP started. A turn in it runs under that app's
      *  grant, whoever sends the message — your approval switches never reach it — and
      *  `app_auto_approves` says which way that grant decides: `true` its tool calls run without
