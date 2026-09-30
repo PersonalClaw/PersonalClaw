@@ -108,9 +108,12 @@ def test_it_reports_the_version(provider):
 def test_a_file_backed_artifact_names_its_live_source(provider, tmp_path, monkeypatch):
     """The agent must edit the workspace file, not the snapshot — otherwise the next
     read reverts its work."""
-    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(tmp_path))
-    src = tmp_path / "notes" / "doc.md"
-    src.parent.mkdir()
+    # A folder of its own: `provider` makes `tmp_path` the home, and the home itself is never a
+    # place an artifact may point (`file_roots.within`), even when it is named the workspace.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(workspace))
+    src = workspace / "notes" / "doc.md"
+    src.parent.mkdir(parents=True)
     src.write_text("body")
     provider.create(name="Doc", content="body", kind="document", source_path=str(src))
     ctx = inv._resolve_artifact("doc", _State())

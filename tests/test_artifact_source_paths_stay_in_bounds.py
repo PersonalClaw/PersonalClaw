@@ -254,6 +254,51 @@ async def test_a_file_in_the_workspace_is_a_live_pointer(places, provider):
     assert provider.get(body["slug"]).content == "edited in the editor"
 
 
+@pytest.mark.parametrize(
+    "how", ["the default one", "named in the home", "named outside it", "the one setup saved"]
+)
+def test_a_workspace_file_is_a_source_however_the_workspace_was_chosen(
+    places, provider, monkeypatch, how
+):
+    """The workspace is wherever the owner chose it, the default one included, which is made the
+    first time something asks for it. A file in it is a live pointer in each case."""
+    from personalclaw.config.loader import workspace_root
+
+    home, ws, _outside = places
+    monkeypatch.delenv("PERSONALCLAW_WORKSPACE")
+    chosen = {
+        "the default one": home / "workspace",
+        "named in the home": home / "ws",
+        "named outside it": ws,
+        "the one setup saved": ws.parent / "saved",
+    }[how]
+    if how.startswith("named"):
+        monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(chosen))
+    elif how == "the one setup saved":
+        (home / "workspace_dir").write_text(f"{chosen}\n", encoding="utf-8")
+    assert os.path.realpath(workspace_root()) == os.path.realpath(chosen), "vacuity floor"
+    doc = chosen / "notes" / "doc.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(ORIGINAL)
+    art = provider.create(name="Doc", content=ORIGINAL, kind="markdown", source_path=str(doc))
+    assert art.source_path == os.path.realpath(doc)
+    doc.write_text("edited in the editor")
+    assert provider.get(art.slug).content == "edited in the editor"
+
+
+def test_a_workspace_that_is_the_home_opens_none_of_it(places, provider, monkeypatch):
+    """The home itself is never a place an artifact points, and naming it the workspace does not
+    make it one: ``config.json`` and ``mcp.json`` are plain files there."""
+    home, _ws, _outside = places
+    monkeypatch.setenv("PERSONALCLAW_WORKSPACE", str(home))
+    doc = home / "notes" / "doc.md"
+    doc.parent.mkdir()
+    doc.write_text(ORIGINAL)
+    with pytest.raises(ValueError, match="can't be an artifact's source"):
+        provider.create(name="Doc", content=POSTED, kind="markdown", source_path=str(doc))
+    assert doc.read_text() == ORIGINAL
+
+
 def test_a_loops_own_folder_is_a_place_the_owner_may_point_at(places, provider):
     """An unbound goal loop keeps REPORT.md in its own folder, and its completion graduates that
     file as a live pointer (``loop/watchdog._register_deliverable_artifact``)."""
