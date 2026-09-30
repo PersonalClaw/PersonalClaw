@@ -139,8 +139,11 @@ first step with the switch on, the run's controller withdraws the work in flight
 stage's subagent is stopped ("Stopped: incident mode is on") and the stage goes back in the queue at
 the same epoch, its attempt not counted. It starts nothing more, looking again each tick, until the
 switch is off, when it carries on by itself. A stage the switch meets at dispatch, or one the subagent
-manager refuses for it, waits rather than failing. The status stays `running`; the run's status and
-its loop view carry the sentence (`held`), which the run page and the loop surfaces show.
+manager refuses for it, waits rather than failing. The status stays `running`; the run's status, its
+row in the run list and its loop view carry the sentence (`held`). The run page shows it under a
+**Held** status, as the run list and the chat's run card read Held rather than Running
+(`workflowMeta.runLook`), and Mission Control's Working lane leaves a held run out, as it leaves out a
+held loop.
 
 ### Mode: Attended and Unattended
 

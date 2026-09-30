@@ -377,6 +377,19 @@ describe('the Inbox section — resolve through plan 42\'s own lifecycle', () =>
     expect(screen.queryByText('Inbox clear')).toBeNull()
   })
 
+  it('names a row the platform raised by who raised it, never the notification source it rode', async () => {
+    fakeInbox([
+      item({ id: 'ib-app', sender_name: 'app:demo-proposer', channel_name: 'app:demo-proposer', item_kind: 'proposal',
+        message: 'Rename the invoices folder?', refs: { app: 'demo-proposer', app_display_name: 'Demo Proposer' } }),
+      item({ id: 'ib-loop', sender_name: 'loop', channel_name: 'loop', item_kind: 'needs_input',
+        message: 'Which branch should I push?', refs: { loop: 'abc123', loop_kind: 'general' } }),
+    ])
+    render(<InboxSection />)
+    expect(await screen.findByRole('button', { name: 'Mark the message from Demo Proposer handled' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Mark the message from Loop handled' })).toBeTruthy()
+    expect(screen.queryByText('app:demo-proposer')).toBeNull()
+  })
+
   it('says how much it is NOT showing rather than truncating in silence', async () => {
     inboxOpen.mockImplementation(() => Promise.resolve(
       Array.from({ length: 9 }, (_, i) => item({ id: `ib-${i}`, sender_name: `Sender ${i}` }))))

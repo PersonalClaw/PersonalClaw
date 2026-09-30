@@ -71,6 +71,14 @@ describe('the Working lane', () => {
     expect(lanes.working).toEqual([])
   })
 
+  it('a run incident mode holds is not working, as a held loop is not', () => {
+    const lanes = toLanes([], [], [], [], [
+      mkRun({ id: 'held', held: 'Held: incident mode is on, so this run starts no step and makes no model calls.' }),
+      mkRun({ id: 'run-2' }),
+    ])
+    expect(lanes.working.map((c) => c.key)).toEqual(['run:run-2'])
+  })
+
   it('a malformed run row is skipped, never thrown on', () => {
     const junk = [null, 'x', { id: '' }, mkRun()] as unknown as RunInput[]
     expect(() => toLanes([], [], [], [], junk)).not.toThrow()

@@ -32,6 +32,24 @@ const ev = (over: Record<string, unknown> = {}) => ({
   run_id: 'a1b2c3d4', event_id: `evt-${Math.random()}`, seq: 1, epoch: 0, ...over,
 })
 
+describe('a run incident mode holds', () => {
+  const HELD = 'Held: incident mode is on, so this run starts no step and makes no model calls.'
+
+  it('carries the sentence from its snapshot and from the update a hold publishes', () => {
+    expect(foldSnapshot(snap({ held: HELD })).held).toBe(HELD)
+    expect(foldSnapshot(snap()).held).toBe('')
+    const held = foldEvent(foldSnapshot(snap()), 'workflow_run_update', ev({ status: 'running', held: HELD }))
+    expect(held.held).toBe(HELD)
+    // Carrying on publishes it empty.
+    expect(foldEvent(held, 'workflow_run_update', ev({ status: 'running', held: '', seq: 2 })).held).toBe('')
+  })
+
+  it('is no longer held once it leaves running', () => {
+    const held = foldSnapshot(snap({ held: HELD }))
+    expect(foldEvent(held, 'workflow_run_update', ev({ status: 'cancelled' })).held).toBe('')
+  })
+})
+
 describe('foldSnapshot', () => {
   it('derives progress from terminal node states', () => {
     const vm = foldSnapshot(snap())

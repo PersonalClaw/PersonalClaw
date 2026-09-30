@@ -1404,7 +1404,14 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
         item_kind=ItemKind.PROPOSAL.value,
         title=proposal.title,
         body=proposal.preview,
-        refs={pc.REFS_KEY: proposal.to_dict(), "app": app_name},
+        # The name the app goes by (its manifest's `displayName`), kept on the row as it is raised,
+        # so Home, Mission Control and the phone name the row by the app rather than by its
+        # sender, the notification source `app:<name>`, and a row outlives the app that raised it.
+        refs={
+            pc.REFS_KEY: proposal.to_dict(),
+            "app": app_name,
+            "app_display_name": app_manager.display_name_of(app_name),
+        },
         store=inbox,
         dedup_key=str(body.get("dedup_key") or ""),
         raised_by_app=app_name,

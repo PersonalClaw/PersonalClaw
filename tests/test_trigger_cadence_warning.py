@@ -358,7 +358,7 @@ def test_a_NAME_ONLY_edit_does_not_RE_PHASE_the_schedule(home, state, monkeypatc
     """🔴 The second, always-on half: `cadence_changed` fired on the PRESENCE of a key, and the form
     sends `timezone` on every save — so every cosmetic edit cleared `next_fire_at` and re-armed.
 
-    The clock is DRIVEN, not slept on: `_arm_if_needed` computes the next fire from `time.time()`,
+    The clock is DRIVEN, not slept on: `arm` computes the next fire from `time.time()`,
     so
     a wall-clock test would either be flaky or need a real delay. Advancing a fake clock by an hour
     between the create and the rename makes the re-arm unmissable — if the rename re-arms, the armed

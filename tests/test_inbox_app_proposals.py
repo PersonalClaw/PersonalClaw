@@ -169,10 +169,15 @@ async def _client(tmp_path, monkeypatch, state=None):
             yield client
 
 
-def _install(tmp_path: Path, name: str, *, proposals: list[dict] | None = None):
+def _install(tmp_path: Path, name: str, *, proposals: list[dict] | None = None, display: str = ""):
     d = tmp_path / "src" / name
     d.mkdir(parents=True)
-    mani: dict = {"name": name, "version": "1.0.0", "displayName": name, "description": "x"}
+    mani: dict = {
+        "name": name,
+        "version": "1.0.0",
+        "displayName": display or name,
+        "description": "x",
+    }
     if proposals is not None:
         mani["permissions"] = {"proposals": proposals, "api": ["/api/inbox/proposals"]}
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
@@ -284,6 +289,39 @@ async def test_own_app_callback_is_accepted_and_the_identity_is_stamped(tmp_path
     ]
     assert len(granted) == 1
     assert granted[0]["resources"] == "kind=proposal:draft"
+
+
+@pytest.mark.asyncio
+async def test_the_row_keeps_the_name_the_app_goes_by(tmp_path, monkeypatch):
+    """Home, Mission Control and the phone name an app's row by the app. Its sender is the
+    notification source `app:<name>`, which To triage printed as the row's title."""
+    async with _client(tmp_path, monkeypatch) as client:
+        _install(
+            tmp_path,
+            "demo-proposer",
+            proposals=[{"kind_suffix": "draft", "label": "Draft"}],
+            display="Demo Proposer",
+        )
+        r = await client.post(
+            "/api/inbox/proposals",
+            json={
+                "kind_suffix": "draft",
+                "title": "Rename the invoices folder?",
+                "apply": {"app_callback": {"route": "rename"}},
+            },
+            headers={"X-Test-App": "demo-proposer"},
+        )
+        assert r.status == 201, await r.text()
+        item_id = (await r.json())["id"]
+
+        from personalclaw.inbox import InboxStore
+
+        store = InboxStore()
+        store.load()
+        item = store.items[item_id]
+        assert item.sender_name == "app:demo-proposer"
+        assert item.refs["app"] == "demo-proposer"
+        assert item.refs["app_display_name"] == "Demo Proposer"
 
 
 @pytest.mark.asyncio

@@ -236,3 +236,30 @@ def test_a_spawn_the_switch_refuses_as_it_arrives_is_held_and_not_counted_as_an_
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
 
     asyncio.run(_go())
+
+
+def test_the_run_list_says_a_running_run_is_held_while_the_switch_is_on() -> None:
+    """The run list reads a held run as Held, as its page does: its status stays ``running``, so a
+    list row without the sentence read Running while nothing ran."""
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.workflows import handlers
+    from personalclaw.workflows.incident_hold import INCIDENT_HOLD
+
+    running, _spec = _new_run()
+    running.status = RunStatus.RUNNING
+    store.save(running)
+    done, _spec = _new_run()
+    done.status = RunStatus.COMPLETE
+    store.save(done)
+
+    def _listed() -> dict[str, str]:
+        resp = asyncio.run(
+            handlers.api_runs_list(make_mocked_request("GET", "/api/workflows/runs"))
+        )
+        return {r["id"]: r["held"] for r in json.loads(resp.body.decode())["runs"]}
+
+    incident.activate("rollback in progress")
+    assert _listed() == {running.id: INCIDENT_HOLD, done.id: ""}
+    incident.resume()
+    assert _listed() == {running.id: "", done.id: ""}

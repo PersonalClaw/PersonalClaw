@@ -574,9 +574,8 @@ def _cron(args: argparse.Namespace) -> None:
 
         if spec_update:
             # Carry the quietly-losable spec keys (`timezone`/`skip_dates`/`strict`) rather than
-            # replacing the spec wholesale — the contract §1.3 and S101 both record. The re-arm
-            # happens AFTER the patch lands (see below), because `next_fire_at` is engine state the
-            # patch allowlist deliberately refuses.
+            # replacing the spec wholesale — the contract §1.3 and S101 both record. The next fire
+            # moves with it in `tools.update`, as it does for the Triggers page and the chat.
             current = existing.trigger.spec if isinstance(existing.trigger.spec, dict) else {}
             carried = {
                 k: v for k, v in current.items() if k in ("timezone", "skip_dates", "strict")
@@ -639,21 +638,6 @@ def _cron(args: argparse.Namespace) -> None:
                 source="cli",
                 resources=f"trigger:{args.job_id}: {', '.join(result.data['granted'])}",
             )
-        if result.ok and spec_update:
-            # 🔴 RE-ARM AFTER A CADENCE CHANGE. `--cron "30 7 * * *"` reported
-            # success and the list showed 07:30, but `next_fire_at` still held the OLD 09:00 — so
-            # the job would have fired on the schedule the user had just replaced. `next_fire_at` is
-            # deliberately NOT in `PATCHABLE` (it is engine state, not user input), so the arm is a
-            # separate clear-then-arm — the shape S101 established for the API's PUT.
-            from personalclaw.triggers.arm import arm as _arm
-
-            fresh = store.get(args.job_id)
-            if fresh is not None:
-                fresh.trigger.next_fire_at = ""
-                armed = _arm(fresh.trigger)
-                if armed:
-                    fresh.trigger.next_fire_at = armed
-                store.upsert(fresh.trigger)
         sel().log_api_access(
             caller="cli",
             operation="cron.update",

@@ -1,4 +1,4 @@
-import { CircleCheck, CircleDashed, CircleSlash, Clock, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { CircleCheck, CircleDashed, CircleSlash, Clock, Hand, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
 import type { WorkflowRunStatus } from '../../lib/api'
 
 /** Presentation for one run status. Centralized so the list, the run view and any future
@@ -28,7 +28,15 @@ const RUN_LOOK: Record<WorkflowRunStatus, StatusLook> = {
   declined: { label: 'Declined', icon: CircleSlash, tone: 'text-on-surface-low' },
 }
 
-export function runLook(status: string): StatusLook {
+/** A `running` run incident mode is holding (`held`, the sentence its status carries): it starts no
+ *  step and makes no model call, so it must not read "Running" with a spinner. The loop surfaces'
+ *  word and tone for the same state (`lib/loopStatus`'s `held`). Its status stays `running` on the
+ *  wire — a hold is not a pause, and the run carries on by itself — which is why it is derived. */
+const HELD_LOOK: StatusLook = { label: 'Held', icon: Hand, tone: 'text-warning' }
+
+/** The look for a run's status, or Held for a running run incident mode holds (`held`). */
+export function runLook(status: string, held?: string | null): StatusLook {
+  if (status === 'running' && held) return HELD_LOOK
   return RUN_LOOK[status as WorkflowRunStatus] ?? { label: status || 'Unknown', icon: CircleDashed, tone: 'text-on-surface-low' }
 }
 

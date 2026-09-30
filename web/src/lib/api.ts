@@ -2087,6 +2087,9 @@ export interface WorkflowRunSummary {
   title?: string
   /** The run that spawned this one as a sub-workflow, `''` for a run nothing spawned. */
   parent_run_id?: string
+  /** Why a `running` run is doing nothing while incident mode holds it, as its detail says
+   *  (`WorkflowRunDetailData.held`); empty otherwise. */
+  held?: string
 }
 export interface WorkflowRunDetailData {
   run_id: string; workflow: string; status: WorkflowRunStatus; spec_version: number
@@ -4592,6 +4595,27 @@ export interface DecisionJournalView {
   statuses: string[]; domains: string[]; grades: string[]
 }
 
+/** What `notify()` does with a digest's notice: it pings (`immediate`), lands in the bell without
+ *  a sound or a push (`badge`), waits for the notification digest (`digest`), or reaches nothing —
+ *  your rule says `never`, quiet hours kept a ping from ringing (`suppressed`), or mute or the
+ *  minimum severity dropped it (`dropped`). */
+export type TriageNoticeOutcome = 'immediate' | 'badge' | 'digest' | 'never' | 'suppressed' | 'dropped'
+
+export type TriageDigestNotice =
+  | { known: false }
+  | {
+      known: true
+      mute_all: boolean
+      min_severity: string
+      quiet_hours: { enabled: boolean; start: string; end: string }
+      /** The name Settings › Notifications shows for the rule it read. */
+      rule: string
+      /** For THIS digest (your conditions match its text), inside the quiet-hours window and
+       *  outside it; the same when there is no window. */
+      inside: TriageNoticeOutcome
+      outside: TriageNoticeOutcome
+    }
+
 export interface TriageDigestView {
   state: TriageDigestState
   enabled: boolean
@@ -4615,10 +4639,10 @@ export interface TriageDigestView {
    *  by driving one inside a quiet window: the run said delivered while the notification list did
    *  not grow. Never render this as "delivered". */
   handed_to_notify?: boolean
-  /** The quiet-hours window, so an absent notification can be EXPLAINED rather than read as a
-   *  broken notification system. `known: false` = the settings could not be read, which is not
-   *  the same as "quiet hours are off". */
-  quiet_hours?: { known: boolean; enabled: boolean; start: string; end: string; mute_all: boolean }
+  /** What your own settings make of the digest's notice, so an absent notification can be
+   *  EXPLAINED rather than read as a broken notification system. `known: false` = the settings
+   *  could not be read, which is not the same as "quiet hours are off". */
+  notice?: TriageDigestNotice
   collected?: number
   lanes?: Record<string, number>
   dropped?: number

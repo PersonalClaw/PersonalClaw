@@ -97,7 +97,7 @@ export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 
 /** `GET /api/workflows/runs?status=running` rows — the third in-flight evidence. A run
  *  started from Workflows, by a trigger or by a project is neither a chat session nor a loop, so
  *  neither source above sees it. Optional, like the two before it. */
-export type RunInput = Pick<WorkflowRunSummary, 'id' | 'workflow_name' | 'title' | 'status' | 'started_at' | 'created_at' | 'parent_run_id'>
+export type RunInput = Pick<WorkflowRunSummary, 'id' | 'workflow_name' | 'title' | 'status' | 'started_at' | 'created_at' | 'parent_run_id' | 'held'>
 
 /** `GET /api/skills/proposals` rows — the skills waiting on your yes or no. Optional, like the
  *  in-flight sources: omit them and a proposal still shows, as its Inbox row. */
@@ -365,7 +365,10 @@ export function approvalRaisedBy(
   return session !== '' ? named('Chat', a.session_title) : ''
 }
 
-/** What raised an Inbox card: the work its refs name, else its sender, as before. */
+/** What raised an Inbox card: the work its refs name, the app that raised it by the name it goes by,
+ *  else its sender, as before. Home's To triage, Mission Control's Your turn and the phone's Inbox
+ *  name a row by this, so none of them prints the notification source a platform row rides as its
+ *  sender (`app:<name>`, `loop`). */
 export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' | 'channel_name'>): string {
   const refs = item.refs
   if (refString(refs, 'trigger_park')) {
@@ -381,6 +384,11 @@ export function inboxRaisedBy(item: Pick<AttentionInput, 'refs' | 'sender_name' 
     const from = approvalRaisedBy({ session: refString(refs, 'session') })
     if (from) return from
   }
+  // An app's proposal: the name the app goes by, which the platform keeps on the row when it is
+  // raised (`app_display_name`, the manifest's `displayName`), else the app's own name. Its sender
+  // is the notification source `app:<name>`, which named a delivery rule, not the app.
+  const app = refString(refs, 'app')
+  if (app) return firstLine(refString(refs, 'app_display_name')) || app
   return firstLine(item.sender_name) || firstLine(item.channel_name)
 }
 
@@ -540,7 +548,9 @@ export function toLanes(
   for (const r of Array.isArray(runs) ? runs : []) {
     if (r === null || typeof r !== 'object') continue
     const id = typeof r.id === 'string' ? r.id : ''
-    if (id === '' || r.status !== 'running' || loopRuns.has(id)) continue
+    // A run incident mode holds is not working either, as a held loop is not (its status stays
+    // `running`; `held` says why).
+    if (id === '' || r.status !== 'running' || r.held || loopRuns.has(id)) continue
     if (typeof r.parent_run_id === 'string' && r.parent_run_id !== '') continue
     const started = typeof r.started_at === 'string' && r.started_at !== ''
     out['working'].push({

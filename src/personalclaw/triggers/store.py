@@ -538,10 +538,10 @@ def edit_arrived_from_another_home(here: dict[str, Any], edited: dict[str, Any])
     edited action still runs as it ran here (``grants.narrow``): a yes is given where the owner is
     shown what runs, so a changed command waits for the owner's yes here, and a renamed automation
     or a new cadence keeps it. And a new cadence re-arms the next fire, which was armed for the old
-    one — as the editor's save re-arms it (``arm.cadence_fingerprint``).
+    one — by the rule every edit made here follows (``arm.next_fire_after_edit``).
     """
     from personalclaw.triggers import grants
-    from personalclaw.triggers.arm import arm, cadence_fingerprint
+    from personalclaw.triggers.arm import next_fire_after_edit
 
     before, _ = parse_trigger(here)
     after, _ = parse_trigger(edited)
@@ -549,10 +549,9 @@ def edit_arrived_from_another_home(here: dict[str, Any], edited: dict[str, Any])
     out = dict(edited)
     if after.capabilities != before.capabilities:
         out["capabilities"] = after.capabilities
-    if after.kind != before.kind or cadence_fingerprint(after.spec or {}) != cadence_fingerprint(
-        before.spec or {}
-    ):
-        out["next_fire_at"] = arm(after) if after.enabled and after.kind == "clock" else ""
+    rearmed = next_fire_after_edit(before, after)
+    if rearmed is not None:
+        out["next_fire_at"] = rearmed
     return out
 
 

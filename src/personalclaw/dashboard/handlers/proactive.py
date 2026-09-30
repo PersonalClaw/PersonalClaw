@@ -197,7 +197,9 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
             )
         view["schedule"] = state["schedule"]
         view["schedule_drift"] = state["drift"]
-        view["quiet_hours"] = _quiet_hours()
+        view["notice"] = _digest_notice(
+            title=str(view.get("title", "") or ""), body=str(view.get("body", "") or "")
+        )
         return view
 
     try:
@@ -223,29 +225,60 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
     return web.json_response({**view})
 
 
-def _quiet_hours() -> dict[str, Any]:
-    """The quiet-hours window, so the card can EXPLAIN an absent notification.
+def _digest_notice(*, title: str, body: str) -> dict[str, Any]:
+    """What your own settings make of the digest's notice, so the card can EXPLAIN it.
 
-    Criterion 1 wants a digest that lands in quiet hours deferred rather than dropped, and the
-    deferral is invisible from the run alone: `DashboardState.notify` returns None, so the
-    pipeline's flag says "handed to the gate" and nothing more. Without this the user sees a digest
-    on the page, no notification, and no reason — which reads as a broken notification system.
+    The digest is delivered through `DashboardState.notify` as a notice, and the run's own flag
+    says only "handed to the gate" (`DashboardState.notify` returns None). Without this the user
+    sees a digest on the page, no notification, and no reason — which reads as a broken
+    notification system. It said less than it looked: the card read the quiet-hours window alone
+    and said a digest in it was "held back from your notifications", while your rule for
+    notices put it in the bell as a badge or kept it for the notification digest.
 
-    Three fields, all already user-set. Never the notification list itself.
+    So ``inside`` and ``outside`` are what `notify()` would do with THIS digest's notice (its
+    title and body are what your conditions match) at a moment inside the quiet-hours window and at
+    one outside it: the gate's own answer (`notification_posture`, ``dropped`` for mute or the
+    minimum severity), then the rule layer's (`notification_rules.rule_outcome`): ``immediate``,
+    ``badge``, ``digest``, ``never`` or ``suppressed``. With no window the two are the same. It
+    reads the settings as they are now, so it says what a digest does, not what one did.
+
+    ``known: False`` when the settings cannot be read, which is unknown, not "off". Never the
+    notification list itself.
     """
-    try:
-        from personalclaw.providers.entity_routes import load_notifications_settings
+    from personalclaw import notification_kinds as nk
+    from personalclaw import notification_rules as rules
+    from personalclaw.proactive.rank import DIGEST_NOTIFY_KIND
+    from personalclaw.providers import entity_routes
 
-        settings = load_notifications_settings()
-    except Exception:  # noqa: BLE001 - an unreadable window is unknown, not "off"
+    text = f"{title}\n{body}"
+
+    def becomes(now: Any) -> str:
+        posture = entity_routes.notification_posture(DIGEST_NOTIFY_KIND, now=now)
+        if posture == entity_routes.POSTURE_DROP:
+            return "dropped"
+        return rules.rule_outcome(DIGEST_NOTIFY_KIND, text, posture=posture).mode
+
+    try:
+        settings = entity_routes.load_notifications_settings()
+        moments = entity_routes.quiet_window_moments(settings)
+        outside = becomes(moments[1] if moments else None)
+        inside = becomes(moments[0]) if moments else outside
+    except Exception:  # noqa: BLE001 - an unreadable setting is unknown, not "off"
         logger.debug("proactive: notification settings unreadable", exc_info=True)
-        return {"known": False, "enabled": False, "start": "", "end": "", "mute_all": False}
+        return {"known": False}
     return {
         "known": True,
-        "enabled": bool(settings.get("quiet_hours_enabled")),
-        "start": str(settings.get("quiet_hours_start", "") or ""),
-        "end": str(settings.get("quiet_hours_end", "") or ""),
         "mute_all": bool(settings.get("mute_all")),
+        "min_severity": str(settings.get("min_severity", "") or "info"),
+        "quiet_hours": {
+            "enabled": bool(settings.get("quiet_hours_enabled")),
+            "start": str(settings.get("quiet_hours_start", "") or ""),
+            "end": str(settings.get("quiet_hours_end", "") or ""),
+        },
+        # The rule you set for it on Settings › Notifications, by the name that page shows.
+        "rule": nk.kind_for_legacy(DIGEST_NOTIFY_KIND).label,
+        "inside": inside,
+        "outside": outside,
     }
 
 

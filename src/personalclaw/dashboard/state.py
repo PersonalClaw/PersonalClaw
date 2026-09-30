@@ -1614,7 +1614,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         about a conversation it started, it is the one note an app may read
         (:meth:`notification_reaches`).
         """
-        from personalclaw import identity
         from personalclaw import notification_addressing as addressing
         from personalclaw import notification_kinds
         from personalclaw import notification_rules as rules
@@ -1682,41 +1681,17 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         if kind_label:
             note["kind_label"] = kind_label
 
-        # Resolve the rule. Every failure path here falls through to immediate delivery:
-        # a policy layer that can't read its own config must not be able to silence the
-        # system (the same reason the gate above fails open).
-        raised = False  # a condition turned a quieter rule into a ping
-        try:
-            rule = rules.resolve_rule_for_legacy(kind)
-            # The USER's name (`identity.operator_name`), which is what "mentions you by name"
-            # means — this read `agent.bot_name` once, and escalated on the assistant's name.
-            reason = rule.conditions.matches(f"{title}\n{body}", identity.operator_name())
-            if reason:
-                raised = rule.mode != "immediate"
-                rule = rule.escalated()
-                note["escalated_by"] = reason
-        except Exception:
-            logger.debug("notification rule resolution failed; delivering", exc_info=True)
-            rule = None
-
-        mode = rule.mode if rule is not None else "immediate"
-        # QUIET HOURS decide what a PING becomes; the gate said "not now" and the mode is HOW, so
-        # this is the one place that vocabulary lives. `digest` and `badge` are already quiet and
-        # are delivered as the rule says: the gate used to drop them before the rule was read, so
-        # a loop that finished at 03:00 under a digest rule left no notice anywhere and the
-        # morning digest said "nothing queued". `never` is the user's own instruction, honoured
-        # below. A ping is recorded as a `badge` — "in the list, without interrupting" — when the
-        # kind must be answered (#341, bug B) or the user's own condition raised it (a matched
-        # keyword must not be what loses a note its quiet rule would have kept); any other ping is
-        # suppressed, as quiet hours promise.
-        if mode == "immediate" and posture in (
-            entity_routes.POSTURE_QUIET,
-            entity_routes.POSTURE_HUSH,
-        ):
-            if posture == entity_routes.POSTURE_HUSH and not raised:
-                logger.debug("Notification suppressed by quiet hours: %s %r", kind, title)
-                return
-            mode = "badge"
+        # The rule layer's decision (`notification_rules.rule_outcome`): your rule, raised by your
+        # conditions, and what quiet hours make of a ping. One function, because a surface that
+        # says what becomes of a notice (the triage card) reads the same answer this delivers by.
+        outcome = rules.rule_outcome(kind, f"{title}\n{body}", posture=posture)
+        rule = outcome.rule
+        if outcome.escalated_by:
+            note["escalated_by"] = outcome.escalated_by
+        if outcome.mode == rules.SUPPRESSED:
+            logger.debug("Notification suppressed by quiet hours: %s %r", kind, title)
+            return
+        mode = outcome.mode
         note["mode"] = mode
         if rule is not None:
             note["targets"] = list(rule.targets)

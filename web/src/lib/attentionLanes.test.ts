@@ -433,6 +433,14 @@ describe('who raised a card', () => {
     expect(cards.map((c) => c.subtitle)).toEqual(cards.map(() => undefined))
   })
 
+  it('names an app\'s row by the name the app goes by, never its `app:` notification source', () => {
+    const fromApp = (refs: Record<string, unknown>) =>
+      mkItem({ id: 'p', item_kind: 'proposal', sender_name: 'app:demo-proposer', channel_name: 'app:demo-proposer', refs })
+    expect(inboxRaisedBy(fromApp({ app: 'demo-proposer', app_display_name: 'Demo Proposer' }))).toBe('Demo Proposer')
+    // A row raised before the platform kept the app's name on it names the app, not the source.
+    expect(inboxRaisedBy(fromApp({ app: 'demo-proposer' }))).toBe('demo-proposer')
+  })
+
   it('keeps the sender on a card whose refs name no work', () => {
     const digest = mkItem({ id: 'd', item_kind: 'digest', sender_name: 'learning', channel_name: 'learning', refs: { session: 'dashboard:abc' } })
     expect(inboxRaisedBy(digest)).toBe('learning')

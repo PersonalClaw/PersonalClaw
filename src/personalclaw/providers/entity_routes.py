@@ -349,6 +349,29 @@ def quiet_hours_now(*, now: "object | None" = None, settings: dict | None = None
     )
 
 
+def quiet_window_moments(settings: dict) -> "tuple[object, object] | None":
+    """A moment inside the quiet-hours window and one outside it, today on local time, or None
+    when quiet hours are off or the window never matches (unparsable, or start == end).
+
+    For a surface that says what becomes of a notice inside the window and outside it by asking
+    :func:`notification_posture` at each, rather than restating the window rule: the start is
+    inside (the window is ``[start, end)``) and the end is the first minute outside.
+    """
+    from datetime import datetime
+
+    if not settings.get("quiet_hours_enabled"):
+        return None
+    start = _parse_hhmm(settings.get("quiet_hours_start", ""))
+    end = _parse_hhmm(settings.get("quiet_hours_end", ""))
+    if start is None or end is None or start == end:
+        return None
+    today = datetime.now().replace(second=0, microsecond=0)
+    return (
+        today.replace(hour=start // 60, minute=start % 60),
+        today.replace(hour=end // 60, minute=end % 60),
+    )
+
+
 def notification_posture(kind: str, *, now: "object | None" = None) -> str:
     """THE delivery gate for dashboard notifications (DashboardState.notify()).
 

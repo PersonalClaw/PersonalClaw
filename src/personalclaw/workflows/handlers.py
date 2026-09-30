@@ -46,7 +46,7 @@ from personalclaw.stale_write import (
     revision_of,
     stale_write_refusal,
 )
-from personalclaw.workflows import journal, run_cockpit, service, store
+from personalclaw.workflows import incident_hold, journal, run_cockpit, service, store
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
 
@@ -864,7 +864,12 @@ async def api_runs_list(request: web.Request) -> web.Response:
             total = len(runs)
     return web.json_response(
         {
-            "runs": [_shown(r.to_dict(), _RUN_TEXT) for r in runs],
+            # `held`: why a running run is doing nothing while incident mode holds it, as the run's
+            # own status says (`incident_hold.held_reason`), so the list reads Held, not Running.
+            "runs": [
+                {**_shown(r.to_dict(), _RUN_TEXT), "held": incident_hold.held_reason(r.status)}
+                for r in runs
+            ],
             "total": total,
             "limit": limit,
             "offset": offset,

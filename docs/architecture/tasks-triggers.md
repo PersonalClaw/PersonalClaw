@@ -285,7 +285,7 @@ its switch, what happened to it here, and its grant, which keeps only what the
 edited action still runs as it ran here, so a changed command waits for the
 owner's yes here (`triggers.store.edit_arrived_from_another_home`,
 `hooks.hook_edit_arrived_from_another_home`). A new cadence re-arms the next
-fire, as the editor's save does (`arm.cadence_fingerprint`). "Take the other
+fire, by the rule every edit made here follows (`arm.next_fire_after_edit`). "Take the other
 machine's version" in the conflict review, and its drafted merge, take the
 version in by the same rule (`durability.reconcile.take_in`): the automation stays
 switched on or off as it is here, and what it runs differently asks first. It
@@ -558,6 +558,16 @@ warns only when the action can call a model: providers listed in
 `triggers/models.py`'s `ZERO_TOKEN_PROVIDERS` (bash, notify, the digests, …)
 are exempt, and anything unlisted — app-contributed actions included — keeps
 the warning.
+
+**An edit moves the next fire, wherever it is made.** The clock fires a trigger
+at its stored `next_fire_at`, so one rule (`arm.next_fire_after_edit`) decides
+it after every edit and switch: a change to when it runs (its cadence, zone, skip
+dates, or a one-shot's time) re-arms it from the new schedule, and a trigger
+left on with no next fire is armed; a rename or a cosmetic save keeps its
+instant. `tools.update` and `tools.set_paused` apply it, and the Triggers page,
+the chat's `automation_update` / `automation_resume` and the CLI all go through
+them, so a time changed in chat fires at the new time, as one changed on the
+page does.
 
 ### A one-shot runs, is recorded, and only then leaves the list
 

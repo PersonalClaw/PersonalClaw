@@ -156,6 +156,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app's proposal notification says what it is in the words the app declared, and the rule set for that app's proposals in Settings → Notifications decides how it reaches you; two apps' proposals of one name are two kinds, a paused Agent Room's rule applies too, and the phone's Recent list names each notification.**
 - **Home's recent runs name a run by its trigger after the trigger has left the list: a one-shot that ran, or one that was deleted.**
 - **Settings → Usage's "ran locally at $0" counts the turns that ran on this machine when they ran, whatever prices and instances are configured since.**
+- **A schedule's time changed in chat fires at its new time, not the old one, and an automation the chat switches on is armed to run, as one switched on from the Triggers page is: every edit and switch moves the next fire by one rule.**
+- **The Morning triage card says what your notification rule does with its digest (it notifies you, shows as a badge, waits for the notification digest, or is not announced, inside quiet hours and out), where it said "held back from your notifications" for every digest in quiet hours.**
+- **Investigate on a run of a schedule opens that run: it found nothing for any schedule whose id holds a colon, which is every schedule the Triggers page or the chat makes.**
+- **A workflow run incident mode holds reads Held, not Running, on its page, in the run list and on the chat's run card, and Mission Control no longer lists it as working.**
+- **Home's To triage, Mission Control and the phone name a row an app or a run raised by the app's name or the work it is for, not by its notification source (`app:demo-proposer`, `loop`).**
 - **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
 - **Settings → Usage counts the day the daily cap counts, this machine's local day, in its Today, its 7- and 30-day totals, its chart and the Settings tile, where it counted the UTC day.**
 - **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**

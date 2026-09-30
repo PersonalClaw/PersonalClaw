@@ -80,6 +80,9 @@ export interface WorkflowViewModel {
   live: boolean
   /** True when a human is required — the only state a user can act on. */
   needsInput: boolean
+  /** Why a `running` run is doing nothing while incident mode holds it (`held` on its status and
+   *  on its `workflow_run_update`), `''` otherwise — the card reads Held, not Running. */
+  held: string
   attention: Record<string, unknown> | null
   /** The highest epoch folded so far. An event below this is superseded. */
   epoch: number
@@ -120,6 +123,7 @@ export function foldSnapshot(snap: WorkflowRunDetailData): WorkflowViewModel {
     elapsedSecs: snap.elapsed_secs ?? 0,
     live: !TERMINAL_RUN.has(snap.status),
     needsInput: snap.status === 'needs_input',
+    held: snap.held ?? '',
     attention: snap.attention ?? null,
     epoch: 0,
     seen: new Set<string>(),
@@ -165,6 +169,8 @@ export function foldEvent(
     case 'workflow_run_update':
       if (typeof env.status === 'string') next = applyRunStatus(next, env.status)
       if (typeof env.error === 'string') next.error = env.error
+      // A hold starting or ending publishes the sentence (`incident_hold.hold` / `carry_on`).
+      if (typeof env.held === 'string' && next.status === 'running') next.held = env.held
       break
 
     case 'workflow_node_started':
@@ -257,6 +263,8 @@ function applyRunStatus(vm: WorkflowViewModel, status: string): WorkflowViewMode
     status,
     live: !TERMINAL_RUN.has(status),
     needsInput: status === 'needs_input',
+    // Only a running run is held (`incident_hold.held_reason`).
+    held: status === 'running' ? vm.held : '',
   }
 }
 

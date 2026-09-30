@@ -395,6 +395,16 @@ notice (`tasks/due_notices.py`) reads a `hush` posture as "not now" and leaves t
 unsent and unrecorded, and the first sweep after the window sends it. Mute and
 `min_severity` still mean "not at all" for it.
 
+What the rule layer makes of a note that passed the gate — the rule, raised by the user's
+conditions, and what quiet hours leave of a ping — is one function,
+`notification_rules.rule_outcome`, which `notify()` delivers by. A surface that says what
+becomes of a notice asks it too, never a sentence of its own: the triage digest card reads the
+gate and `rule_outcome` for its own digest at a moment inside the quiet-hours window and one
+outside it (`entity_routes.quiet_window_moments`, `GET /api/proactive/digest`'s `notice`), and
+says that the digest pings, shows as a badge, waits for the notification digest, or is not
+announced. It used to say "held back from your notifications" for every digest in the window,
+which a badge or digest rule made false.
+
 Preferences persist in `entity_settings/notifications.json` with enum/HH:MM
 domain-guarded PUTs.
 
@@ -478,6 +488,13 @@ notes as the app's. A removal is announced before its note leaves the log, becau
 is decided on the note. Notification metadata may carry a `channel_link` —
 built via `ChannelDelivery.build_thread_link`, never by core string-formatting
 a vendor URL.
+
+A row the platform raises carries its notification pair's source as its sender (`app:<name>`,
+`loop`), which names a delivery rule, not who asked. Home's To triage, Mission Control's Your turn
+and the phone's Inbox name a row by who raised it (`attentionLanes.inboxRaisedBy`): the work its
+refs name (a loop, a workflow, a trigger), an app by the name it goes by (`refs.app_display_name`,
+which the proposal door keeps on the row from `app_manager.display_name_of`), and a channel message
+by its sender.
 
 ## Channels: the two core seams
 

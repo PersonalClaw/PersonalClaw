@@ -397,10 +397,17 @@ async def _resolve_task(entity_id: str, state) -> InvestigateContext | None:
 async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | None:
     """One schedule run, addressed ``<job_id>:<run_id>`` (a run is only readable
     through its job's history file, so the id must carry both — same composite
-    shape as ``loop_finding``). A bare job id resolves its most recent run."""
-    job_id, _, run_id = entity_id.partition(":")
-    if not job_id:
-        return None
+    shape as ``loop_finding``). A bare job id resolves its most recent run.
+
+    The run is what follows the LAST colon. A job id holds colons of its own (every store id
+    does: ``clock:pack-the-soccer-bag``, ``system:triage:digest``) and a run id never does
+    (`ScheduleRun.run_id`, and the ``fire-``/``skip-``/``interrupted-`` ids the engine writes), so
+    splitting at the first one read every clock schedule's run as job ``clock`` and Investigate
+    found nothing. A bare store id reads the same way (``clock`` / ``pack-the-soccer-bag``), so
+    when that names no run the whole id is taken as the job."""
+    job_part, _, run_part = entity_id.rpartition(":")
+    addresses = [(job_part, run_part)] if job_part else []
+    addresses.append((entity_id, ""))
     # `ScheduleRunStore` directly + the unified store for the job's metadata. The run half
     # was always this store — `ScheduleService`'s methods were one-line passthroughs — and
     # the metadata half came from a legacy file nothing has written.
@@ -409,15 +416,19 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     from personalclaw.triggers.store import TriggerStore
 
     runs = ScheduleRunStore(config_dir())
-    try:
-        if run_id:
-            run = await runs.get_run(job_id, run_id)
-        else:
-            rows, _total = await runs.list_for_job(job_id, offset=0, limit=1)
-            run = rows[0] if rows else None
-    except Exception:  # noqa: BLE001 — a bad/unsafe job id is an entity miss
-        logger.debug("schedule-run read failed for %s", entity_id, exc_info=True)
-        return None
+    job_id, run = "", None
+    for job_id, run_id in addresses:
+        try:
+            if run_id:
+                run = await runs.get_run(job_id, run_id)
+            else:
+                rows, _total = await runs.list_for_job(job_id, offset=0, limit=1)
+                run = rows[0] if rows else None
+        except Exception:  # noqa: BLE001 — a bad/unsafe job id is an entity miss
+            logger.debug("schedule-run read failed for %s", entity_id, exc_info=True)
+            run = None
+        if run:
+            break
     if not run:
         return None
     _row = TriggerStore(base_dir=config_dir()).get(job_id)

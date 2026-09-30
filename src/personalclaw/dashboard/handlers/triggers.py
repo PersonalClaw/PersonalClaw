@@ -258,7 +258,7 @@ def _project_one(
     }
     if kind in ("interval", "sequence") and interval > 0:
         # 🔴 An UNARMED row must still plot. Measured on the owner's real store: `j-every` is enabled
-        # with an empty `next_fire_at` (a re-enable does not arm until the next boot sweep), so
+        # with an empty `next_fire_at` (a re-enable did not arm it then), so
         # reading only `next_fire_at` gave `first_fire_at=0` and `project_occurrences` returned
         # NOTHING — a live 5-minute automation invisible on the week grid. Falling back to
         # `arm.next_fire` computes the same instant the tick will use, so the forecast is honest
@@ -297,27 +297,6 @@ def _project_one(
             **common,
         )
     return [], False
-
-
-def _arm_if_needed(store: Any, trigger_id: str) -> None:
-    """Arm a clock trigger that has no next fire (S101).
-
-    Called after any write that can make a row newly firable — a create, or a re-enable. Without it
-    the row sits `enabled=True` with an empty `next_fire_at`, and `service.due_ids` only surfaces
-    rows that HAVE one: enabled and inert until the next boot sweep. `arm.needs_arming` selects
-    exactly that population, so a row already carrying a next fire is left alone (re-arming a live
-    schedule mid-flight is how a fire gets skipped or doubled).
-    """
-    from personalclaw.triggers.arm import arm, needs_arming
-
-    row = store.get(trigger_id)
-    if row is None or not needs_arming(row.trigger):
-        return
-    when = arm(row.trigger)
-    if not when:
-        return  # unarmable (invalid cron, elapsed one-shot) — refuse rather than guess a cadence
-    row.trigger.next_fire_at = when
-    store.upsert(row.trigger)
 
 
 def _attribution(trigger: Any, *, owner: str) -> dict[str, Any]:
@@ -1294,7 +1273,6 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
             "dedupe_hash": failure_dedupe,
         }
         store.upsert(trigger)
-        _arm_if_needed(store, raw_id)
         row = store.get(raw_id)
 
     state.push_refresh("crons")
@@ -1604,7 +1582,6 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
     row = store.get(raw)
     if row is not None:
         from personalclaw.triggers import tools as _tools
-        from personalclaw.triggers.arm import cadence_fingerprint
         from personalclaw.triggers.schedule_view import channel_of
 
         before = dict(row.trigger.spec or {})
@@ -1642,20 +1619,10 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
             spec["strict"] = bool(kwargs["strict_schedule"])
         if "skip_dates" in kwargs:
             spec["skip_dates"] = kwargs["skip_dates"]
-        # 🔴 DERIVED FROM THE VALUES, not from which keys the body happened to carry (issue 531).
-        # Four separate `cadence_changed = True` lines used to fire on PRESENCE, and the edit form
-        # sends `timezone` on every save — so a name-only edit cleared `next_fire_at` and re-armed.
-        # Two consecutive renames of one 3600s trigger, changing nothing but the
-        # name, moved its next fire 04:33:08 → 04:34:21, each save re-phasing the interval by the
-        # wall time since the last one. A trigger 59 minutes into an hourly cadence lost the hour.
-        #
-        # Comparing the resulting spec against the one on disk means only a real change re-arms, and
-        # it holds for every field at once instead of four hand-set flags. The EXCLUSION is the
-        # list, not the inclusion: `strict` is the one spec key that does not move the armed instant
-        # (it governs jitter at fire time, matching the old code, which never flagged it), so a NEW
-        # spec key defaults to "re-arm" — the safe direction, since a stale armed fire is a wrong
-        # fire while a redundant re-arm only re-phases a cadence the user just changed anyway.
-        cadence_changed = cadence_fingerprint(spec) != cadence_fingerprint(before)
+        # The next fire follows in `tools.update` (`arm.next_fire_after_edit`), the one rule the
+        # chat's edit goes through too. It compares the spec this builds with the stored one, never
+        # which keys the body carried: the form sends `timezone` on every save, and re-arming on
+        # presence re-phased an hourly trigger by the wall time since the last rename (issue 531).
 
         patch: dict[str, Any] = {"spec": spec}
         if "name" in kwargs:
@@ -1693,13 +1660,6 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         )
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
-        if cadence_changed:
-            # A NEW cadence invalidates the armed fire — keeping the old one would fire on the
-            # previous schedule after the user changed it. Clear, then re-arm from the new spec.
-            updated = store.get(raw).trigger
-            updated.next_fire_at = ""
-            store.upsert(updated)
-            _arm_if_needed(store, raw)
         state.push_refresh("crons")
         return web.json_response({"ok": True, "trigger": _schedule_row_for(state, store.get(raw))})
 
@@ -1884,13 +1844,10 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
             )
             if asked is not None:
                 return asked
+        # Switching on arms it (`tools.set_paused`), as the chat's resume does.
         result = _tools.set_paused(store, trigger_id=raw, paused=not want)
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)
-        # Re-ENABLING must ARM, or the trigger sits enabled and inert until the next boot sweep —
-        # `due_ids` only surfaces rows that carry a `next_fire_at`.
-        if want:
-            _arm_if_needed(store, raw)
         state.push_refresh("crons")
         return web.json_response({"ok": True})
     return web.json_response({"error": "not found"}, status=404)

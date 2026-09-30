@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, CheckCheck, Clock, ExternalLink, Power, RotateCcw, ScrollText, Sparkles } from 'lucide-react'
-import { api, type TriageDigestView, type TriagePending } from '../../lib/api'
+import { api, type TriageDigestNotice, type TriageDigestView, type TriageNoticeOutcome, type TriagePending } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { Surface } from '../../ui/Surface'
 import { Button } from '../../ui/Button'
@@ -259,23 +259,12 @@ export function TriageDigestCard() {
         {view.dropped ? <> · {view.dropped} filtered by your rules</> : null}
       </p>
 
-      {/* Why there may be no notification for a digest that plainly exists. Rendered from the
-          WINDOW, not from a delivery flag: the run cannot know whether the gate held it back (see
-          `handed_to_notify`), so the honest sentence names the setting and not an outcome. */}
-      {view.quiet_hours?.known === false ? (
-        <p data-type="caption" className="mt-s text-warn">
-          Your notification settings could not be read, so whether this digest reached your notifications is unknown.
-        </p>
-      ) : view.quiet_hours?.mute_all ? (
-        <p data-type="caption" className="mt-s text-on-surface-low">
-          All notifications are muted, so this digest is here and in the run journal but was not announced.
-        </p>
-      ) : view.quiet_hours?.enabled ? (
-        <p data-type="caption" className="mt-s text-on-surface-low">
-          Quiet hours {view.quiet_hours.start}–{view.quiet_hours.end}: a digest that lands inside that window is
-          held back from your notifications. It is still here, and in the run journal.
-        </p>
-      ) : null}
+      {/* Why there may be no notification for a digest that plainly exists. Rendered from what your
+          settings make of the digest's notice (`view.notice`, the server asking the same rule
+          layer `notify()` delivers by), not from a delivery flag: the run cannot know what the
+          gate did (see `handed_to_notify`). A fixed "held back" sentence was false for a badge or
+          digest rule, which put the digest in the bell or kept it for the notification digest. */}
+      <NoticeLine notice={view.notice} />
 
       {view.budget_breached && (
         <div className="mt-m">
@@ -367,6 +356,50 @@ export function TriageDigestCard() {
       )}
     </Surface>
   )
+}
+
+/** What a digest's notice becomes inside the quiet-hours window, as the rest of a sentence. */
+const IN_QUIET_HOURS: Record<TriageNoticeOutcome, string> = {
+  immediate: 'notifies you',
+  badge: 'shows as a badge in your notifications, without a sound or a push',
+  digest: 'waits for your notification digest',
+  never: 'is not announced',
+  suppressed: 'does not notify you',
+  dropped: 'is not announced',
+}
+
+const SHOWN_FROM: Record<string, string> = { warning: 'warnings and errors', error: 'errors' }
+
+/** One sentence saying what your settings do with this digest's notice, or nothing when it simply
+ *  notifies you. Muted and unreadable first (they decide everything), then what holds at every
+ *  hour (the minimum severity, a Never rule), then what quiet hours change, then a rule that is
+ *  quiet at every hour (a badge, the notification digest). */
+function NoticeLine({ notice }: { notice?: TriageDigestNotice }) {
+  if (!notice) return null
+  if (!notice.known) {
+    return (
+      <p data-type="caption" className="mt-s text-warn">
+        Your notification settings could not be read, so whether this digest reached your notifications is unknown.
+      </p>
+    )
+  }
+  const { inside, outside, rule, quiet_hours: hours } = notice
+  let sentence: string | null = null
+  if (notice.mute_all) {
+    sentence = 'All notifications are muted, so this digest is here and in the run journal but was not announced.'
+  } else if (outside === 'dropped') {
+    sentence = `Your notifications show only ${SHOWN_FROM[notice.min_severity] || 'some kinds'}, so this digest is here and in the run journal but was not announced.`
+  } else if (outside === 'never') {
+    sentence = `Your “${rule}” notification rule never notifies, so this digest is here and in the run journal but was not announced.`
+  } else if (inside !== outside) {
+    sentence = `Quiet hours ${hours.start}–${hours.end}: a digest that lands inside that window ${IN_QUIET_HOURS[inside]}. It is still here, and in the run journal.`
+  } else if (outside === 'badge') {
+    sentence = `Your “${rule}” notification rule shows this digest as a badge in your notifications, without a sound or a push.`
+  } else if (outside === 'digest') {
+    sentence = `Your “${rule}” notification rule keeps this digest for your notification digest instead of notifying you when it lands.`
+  }
+  if (!sentence) return null
+  return <p data-type="caption" className="mt-s text-on-surface-low">{sentence}</p>
 }
 
 function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; onReply: (text: string) => void }) {

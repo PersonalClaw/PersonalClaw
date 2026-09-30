@@ -968,6 +968,12 @@ def update(
     A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
     `health_status` and got no error would keep believing a stale model of the automation.
 
+    The next fire follows the edit here, for every caller (`arm.next_fire_after_edit`): a changed
+    schedule re-arms, and a trigger left on with no next fire is armed. `next_fire_at` is engine
+    state, not in `PATCHABLE`, so no caller can set it, and none re-arms for itself: the chat's
+    `automation_update` saved a new time and kept the old next fire, so it fired on the schedule it
+    had just left, while the Triggers page's save re-armed.
+
     🔴 AN EDIT GRANTS AT EDIT TIME, OR SAVES THE TRIGGER SWITCHED OFF (`triggers.grants`). A patch
     that re-points the action at something the trigger is not allowed to run needs the owner's yes,
     and so does one that changes what a granted action runs — the grant was for the action as the
@@ -1087,6 +1093,14 @@ def update(
             f"Error: {grants.refusal(trigger, missing, elsewhere=True, switching_on=True)}",
             {"needs_grant": grants.labels(trigger)},
         )
+    # The next fire follows the edit, for every caller: a moved schedule re-arms, and a trigger
+    # left on with no next fire is armed. Read after the grant check, so a trigger it switched off
+    # is left with none.
+    from personalclaw.triggers.arm import next_fire_after_edit
+
+    rearmed = next_fire_after_edit(before, trigger)
+    if rearmed is not None:
+        trigger.next_fire_at = rearmed
     saved = store.upsert(trigger)
     text = f"Updated {saved.id}: {', '.join(sorted(applied))}."
     if note:
@@ -1115,6 +1129,10 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     owner allowing what it runs, and this function is also the chat's `automation_resume`, where
     the one asking is an agent. The Triggers page's toggle asks the owner, grants, and only then
     calls this.
+
+    A resumed clock trigger with no next fire is ARMED here (`arm.next_fire_after_edit`), for the
+    page, the chat and the CLI alike: the clock only fires a trigger that carries one, and the
+    chat's resume used to leave a trigger created switched off on and inert until a restart.
     """
     from personalclaw.triggers import grants
     from personalclaw.triggers.legacy_import import needs_review
@@ -1134,10 +1152,18 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
             )
     saved = store.set_enabled(trigger_id, not paused)
     if saved is not None and not paused:
+        from personalclaw.triggers.arm import next_fire_after_edit
         from personalclaw.triggers.service import budget_spent
 
-        if budget_spent(saved):
+        reset = budget_spent(saved)
+        if reset:
             saved.run_count = 0
+        # Switched on is armed, from whichever surface: a trigger with no next fire is never due.
+        rearmed = next_fire_after_edit(row.trigger, saved)
+        armed = rearmed is not None and rearmed != saved.next_fire_at
+        if armed:
+            saved.next_fire_at = str(rearmed)
+        if reset or armed:
             store.upsert(saved)
     if saved is None:
         # 🔴 `set_enabled` returns None — not a trigger with `enabled` unchanged — when it

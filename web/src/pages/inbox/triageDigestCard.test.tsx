@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TriageDigestCard } from './TriageDigestCard'
-import type { TriageDigestView } from '../../lib/api'
+import type { TriageDigestNotice, TriageDigestView } from '../../lib/api'
 
 // ── The triage digest card ─────────────────────────────────────────────────────────────────
 //
@@ -309,23 +309,68 @@ describe('one-tap yes / no / always emits the reply grammar', () => {
 })
 
 describe('an absent notification is explained, never claimed as delivered', () => {
-  // 🔴 A digest run inside quiet hours reported `delivered: true` while the
-  // notification list did not grow. `DashboardState.notify` returns nothing, so the run cannot
-  // know — the card therefore names the SETTING that held it back and never asserts an outcome.
-  it('names the quiet-hours window that held the digest back', async () => {
-    proactiveDigest.mockResolvedValue(view({
-      handed_to_notify: true,
-      quiet_hours: { known: true, enabled: true, start: '22:00', end: '08:00', mute_all: false },
-    }))
+  // 🔴 A digest run inside quiet hours reported `delivered: true` while the notification list did
+  // not grow. `DashboardState.notify` returns nothing, so the run cannot know. The card reads what
+  // your settings make of the digest's notice (`view.notice`, the server asking the rule layer
+  // `notify()` delivers by) and says that, never an outcome the run could not verify — and never
+  // "held back" for a notice your rule put in the bell or kept for the notification digest.
+  const notice = (over: Partial<Extract<TriageDigestNotice, { known: true }>> = {}): TriageDigestNotice => ({
+    known: true,
+    mute_all: false,
+    min_severity: 'info',
+    quiet_hours: { enabled: true, start: '22:00', end: '08:00' },
+    rule: 'Notice',
+    inside: 'suppressed',
+    outside: 'immediate',
+    ...over,
+  })
+
+  it('says a ping rule does not notify you inside the quiet-hours window', async () => {
+    proactiveDigest.mockResolvedValue(view({ handed_to_notify: true, notice: notice() }))
     render(<TriageDigestCard />)
-    await waitFor(() => expect(screen.getByText(/Quiet hours 22:00–08:00/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/Quiet hours 22:00–08:00: a digest that lands inside that window does not notify you/)).toBeTruthy())
     // Never the word the run could not verify.
     expect(screen.queryByText(/delivered/i)).toBeNull()
   })
 
+  it('says a badge rule shows it in your notifications, not that it was held back', async () => {
+    proactiveDigest.mockResolvedValue(view({ notice: notice({ inside: 'badge', outside: 'badge' }) }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/“Notice” notification rule shows this digest as a badge in your notifications/)).toBeTruthy())
+    expect(screen.queryByText(/held back/)).toBeNull()
+    expect(screen.queryByText(/does not notify you/)).toBeNull()
+  })
+
+  it('says a digest rule keeps it for the notification digest, not that it was held back', async () => {
+    proactiveDigest.mockResolvedValue(view({ notice: notice({ inside: 'digest', outside: 'digest' }) }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/keeps this digest for your notification digest/)).toBeTruthy())
+    expect(screen.queryByText(/held back/)).toBeNull()
+  })
+
+  it('names quiet hours only for what they change: a raised badge rule rings outside, badges inside', async () => {
+    proactiveDigest.mockResolvedValue(view({ notice: notice({ inside: 'badge', outside: 'immediate' }) }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/inside that window shows as a badge in your notifications, without a sound or a push/)).toBeTruthy())
+  })
+
+  it('says a Never rule, which holds at every hour, rather than quiet hours', async () => {
+    proactiveDigest.mockResolvedValue(view({ notice: notice({ inside: 'never', outside: 'never' }) }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/“Notice” notification rule never notifies/)).toBeTruthy())
+    expect(screen.queryByText(/Quiet hours/)).toBeNull()
+  })
+
+  it('says the minimum severity when it drops the digest at every hour', async () => {
+    proactiveDigest.mockResolvedValue(view({ notice: notice({ min_severity: 'warning', inside: 'dropped', outside: 'dropped' }) }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/Your notifications show only warnings and errors/)).toBeTruthy())
+    expect(screen.queryByText(/Quiet hours/)).toBeNull()
+  })
+
   it('says mute-all when everything is muted, which is a different cause', async () => {
     proactiveDigest.mockResolvedValue(view({
-      quiet_hours: { known: true, enabled: false, start: '', end: '', mute_all: true },
+      notice: notice({ mute_all: true, quiet_hours: { enabled: false, start: '', end: '' }, inside: 'dropped', outside: 'dropped' }),
     }))
     render(<TriageDigestCard />)
     await waitFor(() => expect(screen.getByText(/All notifications are muted/)).toBeTruthy())
@@ -333,21 +378,21 @@ describe('an absent notification is explained, never claimed as delivered', () =
   })
 
   it('says UNKNOWN when the settings could not be read, not "quiet hours are off"', async () => {
-    proactiveDigest.mockResolvedValue(view({
-      quiet_hours: { known: false, enabled: false, start: '', end: '', mute_all: false },
-    }))
+    proactiveDigest.mockResolvedValue(view({ notice: { known: false } }))
     render(<TriageDigestCard />)
     await waitFor(() => expect(screen.getByText(/is unknown/)).toBeTruthy())
   })
 
-  it('stays silent when quiet hours are genuinely off — the vacuity pair', async () => {
+  it('stays silent when the digest simply notifies you — the vacuity pair', async () => {
     proactiveDigest.mockResolvedValue(view({
-      quiet_hours: { known: true, enabled: false, start: '22:00', end: '08:00', mute_all: false },
+      notice: notice({ quiet_hours: { enabled: false, start: '22:00', end: '08:00' }, inside: 'immediate', outside: 'immediate' }),
     }))
     render(<TriageDigestCard />)
     await waitFor(() => expect(screen.getByText(/What your machine did/)).toBeTruthy())
     expect(screen.queryByText(/Quiet hours/)).toBeNull()
+    expect(screen.queryByText(/notification rule/)).toBeNull()
     expect(screen.queryByText(/is unknown/)).toBeNull()
+    expect(screen.queryByText(/was not announced/)).toBeNull()
   })
 })
 

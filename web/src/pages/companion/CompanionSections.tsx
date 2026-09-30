@@ -10,7 +10,7 @@ import {
   type TaskStatus, type UnifiedLoopStatus,
 } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
-import { isOpenStatus } from '../../lib/attentionLanes'
+import { inboxRaisedBy, isOpenStatus } from '../../lib/attentionLanes'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
@@ -310,7 +310,9 @@ export function InboxSection() {
         .map((raw) => {
           const i = view(raw.id, raw)
           const working = busy.has(i.id)
-          const who = i.sender_name || i.channel_name || i.channel || 'Unknown sender'
+          // Who raised it (`inboxRaisedBy`, as Home and Mission Control name it): a platform row's
+          // sender is the notification source it rode (`app:<name>`, `loop`), not who asked.
+          const who = inboxRaisedBy(i) || i.channel || 'Unknown sender'
           return (
             <Row key={i.id} title={who} sub={i.message}
               // The triage verdict belongs to a channel message only: a note or a notice was never

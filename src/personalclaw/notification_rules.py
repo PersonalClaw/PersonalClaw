@@ -465,6 +465,69 @@ def resolve_rule_for_legacy(flat_kind: str) -> Rule:
     return resolve_rule(registered.source, registered.kind)
 
 
+#: :func:`rule_outcome`'s mode for a ping quiet hours keep from ringing that nothing records: an
+#: ``immediate`` note under ``hush`` that no condition of the user's raised. ``notify()`` returns.
+SUPPRESSED = "suppressed"
+
+
+@dataclass(frozen=True)
+class RuleOutcome:
+    """How a note that passed the gate is delivered: the mode, the rule it came from (None when
+    the rule could not be read, which delivers ``immediate``) and why a condition raised it."""
+
+    mode: str
+    rule: Rule | None = None
+    escalated_by: str = ""
+
+
+def rule_outcome(kind: str, text: str, *, posture: str) -> RuleOutcome:
+    """What the rule layer makes of a note of *kind* reading *text*, once the gate answered
+    *posture* (any answer but ``drop``, which delivers nothing before a rule is read).
+
+    THE decision ``DashboardState.notify`` delivers by, and the one a surface reads to say what
+    becomes of a notice — the triage card says whether its digest pings, lands in the bell as a
+    badge, waits for the notification digest, or is never sent, and a sentence of its own about
+    quiet hours said "held back" while a badge rule had put the digest in the bell.
+
+    * The user's rule for the kind, fail-open to ``immediate`` when it cannot be read (a policy
+      layer that can't read its own config must not be able to silence the system), with the
+      user's conditions — a keyword, their name (``identity.operator_name``) — raising a quieter
+      mode to ``immediate``.
+    * Quiet hours decide what a PING becomes; the gate said "not now" and the mode is HOW, so this
+      is the one place that vocabulary lives. ``digest`` and ``badge`` are already quiet and are
+      delivered as the rule says: the gate used to drop them before the rule was read, so a loop
+      that finished at 03:00 under a digest rule left no notice anywhere. ``never`` is the user's
+      own instruction. A ping is recorded as a ``badge`` — "in the list, without interrupting" —
+      when the kind must be answered (``quiet``, #341 bug B) or the user's own condition raised it
+      (a matched keyword must not be what loses a note its quiet rule would have kept); any other
+      ping (``hush``) is :data:`SUPPRESSED`, as quiet hours promise.
+    """
+    from personalclaw import identity
+    from personalclaw.providers import entity_routes
+
+    raised = False  # a condition turned a quieter rule into a ping
+    escalated_by = ""
+    rule: Rule | None
+    try:
+        resolved = resolve_rule_for_legacy(kind)
+        reason = resolved.conditions.matches(text, identity.operator_name())
+        if reason:
+            raised = resolved.mode != "immediate"
+            resolved = resolved.escalated()
+            escalated_by = reason
+        rule = resolved
+    except Exception:
+        logger.debug("notification rule resolution failed; delivering", exc_info=True)
+        rule = None
+    mode = rule.mode if rule is not None else "immediate"
+    if mode == "immediate" and posture in (
+        entity_routes.POSTURE_QUIET,
+        entity_routes.POSTURE_HUSH,
+    ):
+        mode = SUPPRESSED if posture == entity_routes.POSTURE_HUSH and not raised else "badge"
+    return RuleOutcome(mode=mode, rule=rule, escalated_by=escalated_by)
+
+
 def digest_settings() -> dict[str, Any]:
     """The digest schedule block, with defaults filled in."""
     raw = load_rules().get("digest")

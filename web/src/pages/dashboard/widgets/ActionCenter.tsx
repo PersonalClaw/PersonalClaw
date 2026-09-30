@@ -4,7 +4,7 @@ import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide
 import { api, type PendingApproval } from '../../../lib/api'
 import { reportingWrite } from '../../../app/reportingWrite'
 import { approvalDestination } from '../../../app/approvalDestination'
-import { mirroredApprovalId, mirroredProposalId, proposalSummary, proposalTitle } from '../../../lib/attentionLanes'
+import { inboxRaisedBy, mirroredApprovalId, mirroredProposalId, proposalSummary, proposalTitle } from '../../../lib/attentionLanes'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
@@ -78,7 +78,10 @@ export function ActionCenter({ navigate }: RouteProps) {
   )
   const allEntries: Entry[] = [
     ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: approvalSubtitle(a), session: a.session })),
-    ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
+    // Named by who raised it (`inboxRaisedBy`), as Mission Control names it: a channel message by
+    // its sender, a row the platform raised by its work or its app — never by the notification
+    // source it rode (`app:demo-proposer`, `loop`), which is what its sender holds.
+    ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: inboxRaisedBy(i) || 'Message', sub: i.message?.slice(0, 90) || '' })),
     // Named and summarised as Mission Control's Your turn names it: one item, one rendering.
     ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: proposalTitle(p), sub: proposalSummary(p) })),
   ].filter((e) => !done.has(e.key))

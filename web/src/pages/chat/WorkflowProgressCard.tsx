@@ -103,7 +103,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     )
   }
 
-  const look = vm ? runLook(vm.status) : null
+  const look = vm ? runLook(vm.status, vm.held) : null
   // The escalation, if the run gave up. Reachable here only because the fold now KEEPS the
   // record through a terminal status (#565) — it used to be nulled on the very event that
   // carries the failure.

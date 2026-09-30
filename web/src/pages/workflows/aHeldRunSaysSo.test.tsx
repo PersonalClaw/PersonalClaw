@@ -54,10 +54,21 @@ describe('a held run on its page', () => {
     expect(screen.getByText(HELD).getAttribute('role')).toBe('status')
   })
 
+  it('its status reads Held, not Running, above the sentence', async () => {
+    workflowRun.mockResolvedValue(run({ held: HELD }))
+    const { container } = mount()
+    await screen.findByText(HELD)
+    const pill = container.querySelector('[data-run-status]')
+    expect(pill?.textContent?.trim()).toBe('Held')
+    // Nothing runs while it is held, so its icon does not spin as a working run's does.
+    expect(pill?.querySelector('.animate-spin')).toBeNull()
+  })
+
   it('a run that is not held says nothing of the kind', async () => {
     workflowRun.mockResolvedValue(run())
-    mount()
+    const { container } = mount()
     await screen.findByRole('button', { name: /^pause/i })
     expect(screen.queryByText(/incident mode/)).toBeNull()
+    expect(container.querySelector('[data-run-status]')?.textContent?.trim()).toBe('Running')
   })
 })

@@ -27,6 +27,15 @@ describe('runLook', () => {
     expect(runLook('complete').spin).toBeUndefined()
   })
 
+  it('a running run incident mode holds reads Held, in the warning tone, and does not spin', () => {
+    // Its status stays `running` through the hold; the sentence it carries is what says so.
+    const held = runLook('running', 'Held: incident mode is on')
+    expect([held.label, held.tone, held.spin]).toEqual(['Held', 'text-warning', undefined])
+    expect(runLook('running', '').label).toBe('Running')
+    // Only a running run is held: the sentence on any other status names a cause it lacks.
+    expect(runLook('complete', 'Held: incident mode is on').label).toBe('Completed')
+  })
+
   it('an unknown status degrades to a readable label, never throws', () => {
     // Tolerant reader: a status added backend-first must not break the list.
     const look = runLook('some_future_status')

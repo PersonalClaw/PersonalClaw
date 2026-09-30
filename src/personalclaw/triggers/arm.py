@@ -314,9 +314,8 @@ def cadence_fingerprint(spec: dict[str, Any]) -> dict[str, Any]:
     """The part of a clock spec that decides WHEN the next fire lands, canonicalized.
 
     Used to answer "did this edit actually change the cadence?" by comparing before against after,
-    rather than by asking which keys the request body happened to carry (issue 531) — by the
-    editor's save, and by a sync taking in an edit made on another machine
-    (`triggers.store.edit_arrived_from_another_home`).
+    rather than by asking which keys the request body happened to carry (issue 531) — by
+    :func:`next_fire_after_edit`, the one rule every edit re-arms by.
 
     🔴 AN ABSENT KEY AND ITS EMPTY VALUE ARE THE SAME STATE, and collapsing them is the whole reason
     this is a function. The edit form posts `timezone: ""` and `skip_dates: []` on every save, so a
@@ -347,6 +346,36 @@ def needs_arming(trigger: Any) -> bool:
         and bool(getattr(trigger, "enabled", False))
         and not str(getattr(trigger, "next_fire_at", "") or "").strip()
     )
+
+
+def next_fire_after_edit(before: Any, after: Any) -> str | None:
+    """The ``next_fire_at`` an edited trigger carries, or None to keep the one it has.
+
+    ONE rule for every writer that edits or switches a trigger — `tools.update` and
+    `tools.set_paused`, which the Triggers page, the chat's `automation_update` /
+    `automation_resume` and the CLI all go through, and a device sync taking in another home's edit
+    (`store.edit_arrived_from_another_home`). The clock fires a trigger at its stored instant
+    (`service.due_ids`), so a writer that decided this for itself was a writer whose edits fired on
+    the old schedule: the page re-armed a changed cadence and the chat did not, so a reminder moved
+    from 09:00 to 07:30 in chat still went off at 09:00.
+
+    * A change to WHEN — the trigger's kind, or the cadence part of its spec
+      (:func:`cadence_fingerprint`, so a cosmetic save moves nothing) — re-arms from the new
+      schedule, cron, interval and one-shot alike. A trigger that is off, or whose new schedule
+      never fires, gets none (``""``): `arm` answers that.
+    * Otherwise a trigger left ON with no next fire (:func:`needs_arming`) — switched on, or on and
+      never armed — is armed, or it sits on and inert until the next boot sweep.
+    * Anything else keeps the instant it has.
+    """
+    before_spec = getattr(before, "spec", None)
+    after_spec = getattr(after, "spec", None)
+    if getattr(after, "kind", "") != getattr(before, "kind", "") or cadence_fingerprint(
+        after_spec if isinstance(after_spec, dict) else {}
+    ) != cadence_fingerprint(before_spec if isinstance(before_spec, dict) else {}):
+        return arm(after)
+    if needs_arming(after):
+        return arm(after)
+    return None
 
 
 # ── Semantic spec validation (#687/#483/#612/#560/#270) ──

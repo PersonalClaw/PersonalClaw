@@ -288,7 +288,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
     await act('Start', () => api.startDraftWorkflowRun(runId))
   }, [act, runId])
 
-  const look = run ? runLook(run.status) : null
+  const look = run ? runLook(run.status, run.held) : null
   const StatusIcon = look?.icon
 
   // Sorted by instance path so the list reads in the spec's own order, and indented to its
