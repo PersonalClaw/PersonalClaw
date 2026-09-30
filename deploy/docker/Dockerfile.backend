@@ -5,7 +5,7 @@
 ARG PYTHON_IMAGE=mirror.gcr.io/library/python:3.13-slim
 FROM ${PYTHON_IMAGE} AS base
 
-# ── Stage 1: install dependencies only (cached until pyproject.toml changes) ─
+# ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
 FROM base AS deps
 
 WORKDIR /build
@@ -15,19 +15,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
     && rm -rf /var/lib/apt/lists/*
 
+# uv reads the lock. It is a build tool here: the runtime stage copies /opt/venv alone, so uv
+# never ships. Pinned, like everything this stage installs, so a newer uv cannot meet the
+# lock on a day nothing in the repository changed.
+ARG UV_VERSION=0.12.19
+RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
+
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --upgrade pip wheel
 
-# Install only third-party dependencies (not the package itself) using a stub
-# package so the dependency layer stays cached across source changes.
-COPY pyproject.toml setup.py ./
-RUN mkdir -p src/personalclaw && \
-    echo '__version__ = "0.1.0"' > src/personalclaw/__init__.py && \
-    /opt/venv/bin/pip install --no-cache-dir \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        ".[slack,eval,httpx,anthropic,openai,embeddings,stt,tts]" && \
-    /opt/venv/bin/pip uninstall -y personalclaw && \
-    rm -rf src/ build/ *.egg-info
+# Third-party dependencies only (not the package itself), so the layer stays cached across
+# source changes, and EXACTLY the versions uv.lock pins, so the image runs what CI tested.
+# This layer used to `pip install ".[extras]"`, which resolves pyproject's ranges to whatever
+# is newest on the day the image is built: that is how the image shipped a PyAV its
+# faster-whisper cannot call, and every audio upload failed to transcribe, while every tested
+# environment had the locked one. `--emit-index-url` carries the lock's indexes, PyTorch's
+# CPU index among them (pyproject's [tool.uv.sources] gives Linux its CPU torch, so the image
+# carries no CUDA runtime), and `--require-hashes --no-deps` installs that list and nothing
+# else. A requirements file cannot tie a package to one index, so the hashes are what hold
+# each file to the one the lock recorded, whichever index offers it.
+COPY pyproject.toml uv.lock ./
+RUN uv export --locked --no-emit-project --emit-index-url \
+        --extra slack --extra eval --extra httpx --extra anthropic --extra openai \
+        --extra embeddings --extra stt --extra tts \
+        -o /build/requirements.txt && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes --no-deps \
+        -r /build/requirements.txt
 
 # ── Stage 1b: build the SPA ──────────────────────────────────────────────────
 # The gateway serves its dashboard from the INSTALLED package's static/dist, and
@@ -85,8 +98,12 @@ RUN rm -rf build/ *.egg-info && \
 # ── Stage 3: test ────────────────────────────────────────────────────────────
 FROM builder AS test
 
-RUN /opt/venv/bin/pip install --no-cache-dir \
-        black isort flake8 mypy pytest pytest-asyncio hypothesis
+# The suite's tools come from the lock too, the dev extra CI's `uv sync --locked --extra dev`
+# installs, the same way as the layer above.
+RUN uv export --locked --no-emit-project --emit-index-url --extra dev \
+        -o /build/requirements-dev.txt && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes --no-deps \
+        -r /build/requirements-dev.txt
 
 COPY tests/ ./tests/
 

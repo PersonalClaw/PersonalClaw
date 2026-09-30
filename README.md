@@ -369,7 +369,8 @@ installed.
 
 The release pipeline practices the install-time gating the product itself preaches:
 builds run in CI from a committed lockfile (`uv.lock`, installed with `uv sync
---locked`); PyPI publishing uses **Trusted Publishing** (OIDC — no long-lived tokens
+--locked`), and the gateway image and the desktop app install the same pinned, hash-checked
+versions; PyPI publishing uses **Trusted Publishing** (OIDC — no long-lived tokens
 stored anywhere) behind a manual owner-approval gate; every release attaches **syft
 SPDX-JSON SBOMs** for the wheel and both architectures of each image, plus
 **build-provenance attestations** for the wheel and images; and Dependabot watches the

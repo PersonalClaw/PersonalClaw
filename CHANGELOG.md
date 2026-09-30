@@ -148,6 +148,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Audio transcribes in the container image again: the image and the desktop app install exactly the dependency versions the tests ran (`uv.lock`) instead of the newest each range allows, and `personalclaw[stt]` keeps PyAV below 19, whose `av.open` faster-whisper cannot call.**
 - **Stop, Pause and an incident hold end a native turn at once: the model request in flight is closed instead of waited for, on Ollama and on every OpenAI- and Anthropic-compatible app (`personalclaw.sdk.model.InFlightRequests`, an SDK addition used by the bundled `ollama-models`).**
 - **A chat sent with no model set up says what is missing and what to do, instead of an error PersonalClaw doesn't recognize (`AgentError.sentence()`, an SDK addition no app has to change for).**
 - **A new chat on a model this machine runs is no longer compacted before its first reply: until usage is reported, its history is sized against the window the runtime says it serves.**

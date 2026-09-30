@@ -233,3 +233,120 @@ def test_a_floor_a_behaviour_needs_holds_in_pyproject_and_in_the_lock() -> None:
                 f"uv.lock records {dist}{recorded or ''} for {where} but pyproject declares "
                 f"{req}: run `uv lock` and commit the result in the same change"
             )
+
+
+#: A distribution whose CEILING a behaviour needs, wherever pyproject declares the dependency
+#: that needs it: that dependent, the newest release known to work, the first one that breaks it,
+#: and why. The dependent does not bound it itself, so pyproject has to.
+_MUST_KEEP_A_CEILING = {
+    "av": (
+        "faster-whisper",
+        "18.1.0",
+        "19.0.0",
+        "PyAV 19 removed `av.open`'s `metadata_errors` keyword, which faster-whisper's "
+        "decode_audio passes on every call (every release from 1.0 through 1.2.1 does), so "
+        "every transcription fails with a TypeError",
+    ),
+}
+
+
+def test_a_ceiling_a_behaviour_needs_sits_beside_what_needs_it_and_in_the_lock() -> None:
+    """``pip install 'personalclaw[stt]'`` resolves what the extra says, and faster-whisper's own
+    ``av>=11`` admits PyAV 19, so the extra carries the ceiling. The lock must record the same
+    specifier, and the version it pins must be one the ceiling admits."""
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    with (_REPO_ROOT / "uv.lock").open("rb") as fh:
+        lock = tomllib.load(fh)["package"]
+    [ours] = [p for p in lock if p["name"] == "personalclaw"]
+    recorded = {
+        (entry["name"], entry.get("marker", "")): entry.get("specifier", "")
+        for entry in ours["metadata"]["requires-dist"]
+    }
+    for dist, (needed_by, works, breaks, reason) in _MUST_KEEP_A_CEILING.items():
+        needing = 0
+        for where, specs in _declarations().items():
+            reqs = [Requirement(spec) for spec in specs]
+            if not any(canonicalize_name(r.name) == needed_by for r in reqs):
+                continue
+            needing += 1
+            mine = [r for r in reqs if canonicalize_name(r.name) == dist]
+            assert mine, f"{where} declares {needed_by} with no {dist} ceiling: {reason}"
+            for req in mine:
+                assert req.specifier.contains(works), f"{where}: {req} refuses {works}"
+                assert not req.specifier.contains(
+                    breaks
+                ), f"{where}: {req} admits {breaks}: {reason}"
+                marker = "" if where == "dependencies" else f"extra == '{where}'"
+                assert recorded.get((dist, marker)) == str(req.specifier), (
+                    f"uv.lock records {dist}{recorded.get((dist, marker)) or ''} for {where} but "
+                    f"pyproject declares {req}: run `uv lock` and commit the result"
+                )
+                pinned = [p["version"] for p in lock if p["name"] == dist]
+                assert pinned and all(
+                    req.specifier.contains(v) for v in pinned
+                ), f"uv.lock pins {dist} {pinned}, outside {req}"
+        assert needing, f"pyproject no longer declares {needed_by}; re-derive the {dist} ceiling"
+
+
+def _faster_whisper_audio() -> Path:
+    """faster-whisper's decoder source, found without importing the package: importing it makes
+    torch resident, which ``tests/native_omp_guard.py`` forbids in a test worker."""
+    import importlib.util
+
+    import pytest
+
+    spec = importlib.util.find_spec("faster_whisper")
+    if spec is None or spec.origin is None:
+        pytest.skip("faster-whisper is not installed here (it is part of `uv sync --extra dev`)")
+    return Path(spec.origin).parent / "audio.py"
+
+
+def test_the_keyword_the_av_ceiling_protects_is_still_passed() -> None:
+    """Vacuity floor: once faster-whisper stops passing the keyword, the ceiling argues for
+    nothing, and it should be widened rather than carried on faith."""
+    source = _faster_whisper_audio().read_text(encoding="utf-8")
+    assert 'metadata_errors="ignore"' in source, (
+        "faster-whisper's decode_audio no longer passes metadata_errors to av.open — re-derive "
+        "whether the stt extra's av ceiling is still needed"
+    )
+
+
+def test_the_locked_pyav_decodes_audio_through_faster_whisper(tmp_path: Path) -> None:
+    """The behaviour itself: faster-whisper's decoder reads a WAV with the PyAV this environment
+    installed from the lock. It runs in a child process, for the reason above."""
+    import math
+    import os
+    import struct
+    import subprocess
+    import sys
+    import wave
+
+    _faster_whisper_audio()
+    recording = tmp_path / "tone.wav"
+    with wave.open(str(recording), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(16000)
+        out.writeframes(
+            b"".join(
+                struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * n / 16000)))
+                for n in range(8000)
+            )
+        )
+    probe = (
+        "import sys\n"
+        "from faster_whisper.audio import decode_audio\n"
+        "print(len(decode_audio(sys.argv[1])))\n"
+    )
+    env = {**os.environ, "HOME": str(tmp_path), "HF_HOME": str(tmp_path / "hf")}
+    done = subprocess.run(
+        [sys.executable, "-c", probe, str(recording)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stdout.strip() == "8000", done.stdout

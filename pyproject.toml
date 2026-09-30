@@ -224,12 +224,18 @@ httpx     = ["httpx>=0.27"]        # Ollama + vLLM providers
 # automatically; this `[slack]` extra remains for pip/uv users who pre-install it (or
 # run headless without the Store). Keep each extra aligned with the app that consumes it.
 slack = ["slack-sdk>=3.27,<4"]
-stt   = ["faster-whisper>=1.0"]    # substrate for apps/faster-whisper (in-process Whisper STT)
+# faster-whisper's own `av>=11` admits PyAV 19, which removed the `metadata_errors` keyword
+# its decode_audio passes to `av.open` on every call (1.0 through 1.2.1, the newest), so
+# every transcription fails. The ceiling is ours to carry; `tests/test_dependency_bounds.py`
+# holds it and asks for it to be re-derived when faster-whisper stops passing the keyword.
+stt   = ["faster-whisper>=1.0", "av<19"]    # substrate for apps/faster-whisper (in-process Whisper STT)
 tts   = ["huggingface-hub>=0.23", "piper-tts>=1.2"]  # substrate for apps/piper-tts: voice downloads (ONNX from rhasspy/piper-voices) + the piper synthesis runtime (provides the `piper` binary)
 eval  = ["jinja2>=3.0"]
 # sentence-transformers 5.6 is the oldest release checked for the local-only model card the
 # sentence-transformers app hands a model it loads, as its app.json declares.
-embeddings = ["sentence-transformers>=5.6", "faiss-cpu>=1.7"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
+# torch is sentence-transformers' own dependency, named here so `[tool.uv.sources]` (below) can
+# give Linux its CPU build: uv routes only a dependency the project names.
+embeddings = ["sentence-transformers>=5.6", "faiss-cpu>=1.7", "torch"]  # substrate for apps/sentence-transformers (local embeddings). numpy is core (native-vector-memory); faiss stays here — excluded from the desktop bundle, degrades to SQLite-only.
 js-render = ["playwright>=1.40"]   # web_fetch render=True path for client-rendered (JS) pages (a headless browser; run `playwright install chromium` after install)
 
 # OS keychain credential backend. Deliberately OPTIONAL and
@@ -472,6 +478,19 @@ personalclaw = [
 ]
 
 # ── Tool configs ──────────────────────────────────────────────────────────────
+# Linux's torch is PyTorch's CPU build, in the lock and so everywhere the lock is installed: the
+# gateway image, and CI. The default Linux wheel on PyPI pulls nineteen CUDA runtime packages
+# (2.2 GB of wheels on x86_64) that a machine with no GPU never uses, and the image has always
+# installed the CPU build. `explicit` keeps every other package off that index. Only uv reads
+# this table; a `pip install 'personalclaw[embeddings]'` still resolves torch from PyPI.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.black]
 line-length = 100
 # Pin the target so formatting is deterministic across runner/local Python versions

@@ -2,8 +2,8 @@
 
 🔴 The client SDK (``mcp``) was an OPTIONAL extra, and three of the four install paths never
 asked for it: the public installer (``uv tool install personalclaw``), a bare ``pip install
-personalclaw``, and the desktop bundle, which ``release.yml`` builds from
-``.[anthropic,openai,slack]``. Only the container image named the extra. On the other three the
+personalclaw``, and the desktop bundle, which ``release.yml`` builds with the ``anthropic``,
+``openai`` and ``slack`` extras. Only the container image named the extra. On the other three the
 agent's MCP registry was empty, so no server's tools reached an agent, while the Tools page probed
 each stdio server with a handshake of its own and drew it "ready". The one error that said why
 advised ``pip install 'personalclaw[mcp]'``, which on a ``uv tool`` install puts the SDK into an
@@ -71,20 +71,27 @@ def _installer_extras() -> set[str]:
     return set().union(*(_extras(b) for b in found))
 
 
+def _extra_flags(command: str) -> set[str]:
+    """The extras a ``uv sync`` / ``uv export`` command names, one ``--extra`` flag each."""
+    return set(re.findall(r"--extra[= ]+([A-Za-z0-9_-]+)", command))
+
+
 def _desktop_extras() -> list[set[str]]:
     """Every venv ``release.yml`` builds a desktop bundle from (macOS and Linux)."""
     text = (_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    found = re.findall(r"uv pip install --python \.venv/bin/python '\.(\[[^\]]*\])'", text)
-    assert len(found) >= 2, f"release.yml: expected the two desktop installs, read {found}"
-    return [_extras(b) for b in found]
+    found = re.findall(r"uv sync --locked [^\n]*", text)
+    assert len(found) >= 2, f"release.yml: expected the two desktop syncs, read {found}"
+    return [_extra_flags(c) for c in found]
 
 
 def _image_extras() -> set[str]:
-    """What the gateway image's dependency layer installs."""
+    """What the gateway image's dependency layer installs: the extras it exports from the lock."""
     text = (_ROOT / "deploy" / "docker" / "Dockerfile.backend").read_text(encoding="utf-8")
-    found = re.findall(r'"\.(\[[^\]]*\])"', text)
-    assert found, "Dockerfile.backend has no `.[…]` install to read"
-    return set().union(*(_extras(b) for b in found))
+    deps = text[text.index(" AS deps\n") :]
+    deps = re.sub(r"\\\n\s*", " ", deps[: deps.find("\nFROM ")])
+    found = re.findall(r"uv export --locked [^\n]*", deps)
+    assert found, "Dockerfile.backend's deps stage has no `uv export --locked` to read"
+    return set().union(*(_extra_flags(c) for c in found))
 
 
 def test_the_mcp_sdk_is_a_core_requirement_with_its_bound():

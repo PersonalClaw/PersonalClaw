@@ -195,3 +195,29 @@ def test_stt_disabled_outright_reports_ffmpeg_as_simply_not_needed(
     )
     assert "not installed (not needed)" in block, block
     assert "until an STT model is bound" not in block, block
+
+
+def test_a_missing_faster_whisper_is_fixed_through_the_extra_that_bounds_its_decoder(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The remedy installs faster-whisper through ``personalclaw[stt]``, the extra that carries
+    the PyAV ceiling. A bare ``pip install faster-whisper`` resolves faster-whisper's own
+    ``av>=11``, which admits the PyAV release its decoder cannot call, so the fix it printed
+    installed a transcriber that fails on every recording."""
+    real = cd.importlib.util.find_spec
+
+    def _find_spec(name: str, *args: object):  # noqa: ANN202 - find_spec's own signature
+        return None if name == "faster_whisper" else real(name, *args)
+
+    monkeypatch.setattr(cd.importlib.util, "find_spec", _find_spec)
+    block, _ = _stt_block(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        stt_enabled=True,
+        stt_model=(_Prov(), "small"),
+        have_ffmpeg=True,
+    )
+    assert "faster_whisper: ❌ missing" in block, block
+    assert "Fix: pip install 'personalclaw[stt]'" in block, block
+    assert "pip install faster-whisper" not in block, block

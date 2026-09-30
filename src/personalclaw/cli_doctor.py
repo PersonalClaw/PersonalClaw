@@ -1116,7 +1116,9 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
             print("  faster_whisper: ✅ installed")
         else:
             print("  faster_whisper: ❌ missing")
-            print("               Fix: pip install faster-whisper")
+            # Through the extra, which bounds the PyAV faster-whisper decodes with: its own
+            # `av>=11` admits a release its decoder cannot call.
+            print("               Fix: pip install 'personalclaw[stt]'")
             issues.append("faster_whisper missing")
 
     # ── App-contributed doctor probes ──

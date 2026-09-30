@@ -483,11 +483,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
       - name: Create .venv for the bundled backend build
         # Same reasoning as desktop-linux: the spec collect_submodules()s
-        # openai/anthropic/slack_sdk, which are extras and must be importable here.
+        # openai/anthropic/slack_sdk, which are extras and must be importable here, and the
+        # venv is synced from uv.lock.
         run: |
           uv python install 3.12
-          uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+          uv sync --locked --no-editable --python 3.12 --extra anthropic --extra openai --extra slack
+          uv pip install --python .venv/bin/python pyinstaller
       - name: Build the dmg (ad-hoc signed, not notarized)
         # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
@@ -574,10 +575,13 @@ jobs:
         # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —
         # absent from core — so they must be importable in the build venv. The heavy
         # [models] extra stays OUT deliberately (the spec excludes torch/faiss anyway).
+        # Synced from uv.lock, so the bundle freezes the versions CI tested: a
+        # `uv pip install '.[…]'` resolves pyproject's ranges on release day instead.
+        # `--no-editable` installs the package itself, as the frozen bundle needs.
         run: |
           uv python install 3.12
-          uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+          uv sync --locked --no-editable --python 3.12 --extra anthropic --extra openai --extra slack
+          uv pip install --python .venv/bin/python pyinstaller
       - name: Build unsigned AppImage + deb
         # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist

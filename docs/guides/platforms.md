@@ -57,7 +57,7 @@ availability — not PersonalClaw — is what varies by arch. Read from the comm
 | Package | x86-64 | arm64 (macOS) | arm64 (Linux) | Note |
 |---|---|---|---|---|
 | `faiss-cpu` | ✅ wheel | ✅ `macosx_14_0_arm64` | ✅ `manylinux_2_28_aarch64` + `musllinux_1_2_aarch64` | musllinux wheel means Alpine works too |
-| `torch` | ✅ wheel | ✅ `macosx_14_0_arm64` | ✅ `manylinux_2_28_aarch64` | CPU build; no CUDA on arm |
+| `torch` | ✅ wheel | ✅ `macosx_14_0_arm64` | ✅ `manylinux_2_28_aarch64` | the lock takes Linux's CPU build from PyTorch's CPU index, so the image carries no CUDA; `pip` takes PyPI's |
 | `sentence-transformers` | ✅ | ✅ | ✅ | `py3-none-any` — pure Python, arch-independent |
 
 **So `[models]` installs from wheels on every arch we claim** — no source build, no
@@ -66,9 +66,9 @@ compiler needed. Verify it yourself without an arm box:
 ```bash
 python3 - <<'PY'
 import re
-blk = re.search(r'\[\[package\]\]\nname = "torch"(.*?)(?=\n\[\[package\]\]|\Z)',
-                open("uv.lock").read(), re.S).group(1)
-print([w for w in re.findall(r'([\w.\-]+\.whl)', blk) if "aarch64" in w or "arm64" in w])
+for blk in re.findall(r'\[\[package\]\]\nname = "torch"(.*?)(?=\n\[\[package\]\]|\Z)',
+                     open("uv.lock").read(), re.S):
+    print([w for w in re.findall(r'([\w.\-%]+\.whl)', blk) if "aarch64" in w or "arm64" in w])
 PY
 ```
 
