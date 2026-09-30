@@ -80,8 +80,9 @@ def patch_session_setup(monkeypatch, tmp_path):
     parser that this module no longer calls.
     """
     monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
-    # Provide a writeable config_dir() with a .local_secret.
-    monkeypatch.setattr(mcp_shared, "config_dir", lambda: tmp_path)
+    # One home, holding the credential its gateway wrote: the session-pid walk and the
+    # credential's one reader (`mcp_core._internal_secret`) both resolve it.
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     (tmp_path / ".local_secret").write_text("test-secret")
     return tmp_path
 

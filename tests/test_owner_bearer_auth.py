@@ -78,8 +78,8 @@ async def _ws_identity(request: web.Request) -> web.WebSocketResponse:
 async def _client(middleware=None) -> TestClient:
     auth = middleware or token_auth.token_auth_middleware(
         port=PORT,
-        internal_paths=frozenset({"/api/internal-probe"}),
-        mixed_internal_paths=frozenset({"/api/mixed-probe"}),
+        internal_routes=frozenset({"GET /api/internal-probe"}),
+        mixed_internal_routes=frozenset({"GET /api/mixed-probe"}),
     )
     app = web.Application(middlewares=[_security_headers_middleware, auth])
     for path in ("/api/probe", "/api/internal-probe", "/api/mixed-probe"):

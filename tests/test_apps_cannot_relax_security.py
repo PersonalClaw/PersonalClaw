@@ -605,7 +605,7 @@ class TestInternalRoutesKeepTheAppIdentity:
 
         token = generate_token("owner", ttl_seconds=600, app=APP)
         app = _echo_identity_app(
-            internal_paths=frozenset({"/api/tools/invoke"}), internal_secret="s3cret"
+            internal_routes=frozenset({"POST /api/tools/invoke"}), internal_secret="s3cret"
         )
         async with TestClient(TestServer(app)) as c:
             resp = await c.post(f"/api/tools/invoke?token={token}", json={})
@@ -619,7 +619,7 @@ class TestInternalRoutesKeepTheAppIdentity:
         owner = generate_token("owner", ttl_seconds=600)
         app_token = generate_token("owner", ttl_seconds=600, app=APP)
         app = _echo_identity_app(
-            mixed_internal_paths=frozenset({"/api/triggers"}), internal_secret="s3cret"
+            mixed_internal_routes=frozenset({"POST /api/triggers"}), internal_secret="s3cret"
         )
         async with TestClient(TestServer(app)) as c:
             resp = await c.post(
@@ -639,7 +639,7 @@ class TestInternalRoutesKeepTheAppIdentity:
 
         owner = generate_token("owner", ttl_seconds=600)
         app = _echo_identity_app(
-            mixed_internal_paths=frozenset({"/api/triggers"}), internal_secret="s3cret"
+            mixed_internal_routes=frozenset({"POST /api/triggers"}), internal_secret="s3cret"
         )
         async with TestClient(TestServer(app)) as c:
             resp = await c.post(
@@ -651,7 +651,7 @@ class TestInternalRoutesKeepTheAppIdentity:
     @pytest.mark.asyncio
     async def test_the_internal_secret_is_still_core(self) -> None:
         app = _echo_identity_app(
-            internal_paths=frozenset({"/api/tools/invoke"}), internal_secret="s3cret"
+            internal_routes=frozenset({"POST /api/tools/invoke"}), internal_secret="s3cret"
         )
         async with TestClient(TestServer(app)) as c:
             resp = await c.post(

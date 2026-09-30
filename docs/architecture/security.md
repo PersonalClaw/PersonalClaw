@@ -126,11 +126,37 @@ permission model holds in every auth mode.
     push, which is the right trade after a compromise and the wrong one on a timer. Each push
     message's own VAPID signature lasts at most 12 hours.
 
+### The internal credential
+
+PersonalClaw's own processes call their gateway over loopback: an agent's tools (in the gateway
+itself, and in the `mcp-core` server an agent CLI runs), a scheduled script's `ctx.notify` and
+`ctx.call_tool`, and `personalclaw auth rotate-key`. They carry the gateway's internal credential,
+`X-Internal-Secret`, which the gateway writes to `<home>/.local_secret` (0600) each time it starts.
+Every caller reads it from the same home, resolved at the call (the gateway declares
+`PERSONALCLAW_HOME` to each `mcp-core` server it starts), and none makes a home to look in one.
+
+- **It opens a list of operations and nothing else.** `dashboard/server.py` names each one as a
+  method and a route in the router's own syntax (`INTERNAL_ROUTES`, `MIXED_INTERNAL_ROUTES`,
+  parsed by `token_auth.InternalRoute`), matched whole: an entry opens neither a route under it nor
+  another method on the same route. A strict entry is refused from off this computer. A mixed one
+  is the dashboard's too, so a browser's session is judged there from any address.
+  `tests/test_every_internal_call_names_an_operation_that_takes_it.py` reads the calls and the
+  lists out of the source, and fails when either names what the other does not.
+- **Presented anywhere else, it is refused as what it is:** `403 internal_route_refused`, whatever
+  credential rides beside it, with an audit row. It used to be ignored there, so the call was judged
+  as a browser that had not signed in and answered with the sign-in sentence, on every install. The
+  development server's local-network bypass admitted it, so this refusal runs ahead of that bypass.
+- **A credential this gateway did not issue** is refused with `403 internal_secret_invalid`, whose
+  sentence says so. **A caller with none to read sends nothing:** a tool's result names the home it
+  looked in (`mcp_core._internal_secret`), and a scheduled script's call back returns
+  `{"ok": false, "error": {"code": "internal_secret_unavailable", …}}` while the rest of the script
+  runs.
+
 ### Webhook auth
 
-`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is one of the token
-middleware's internal paths: from this machine it takes the internal secret (a
-local relay, the way the `mcp-core` process calls in) or an owner session, and
+`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is one of the internal
+credential's operations: from this machine it takes the internal secret (a local
+relay presents it; no PersonalClaw process calls the route) or an owner session, and
 from anywhere else it is refused. Past that, `_verify_hook_token` is a
 constant-time (`hmac.compare_digest`) check of the Bearer or
 `x-personalclaw-token` header against `hooks.webhook_token` in config — a
@@ -516,7 +542,8 @@ used to allow:
   only lifts a pause. `POST /api/workflows/runs/{id}/confirm` was open to apps, and the resume route
   took an agent's tool as you where every loopback caller is you.
 - **A trigger's question.** `POST /api/triggers/{id}/answer` accepted the internal secret, which
-  `/api/triggers` admits for an agent's `/run`.
+  the gateway admitted on every trigger route for an agent's `/run`. The credential now opens that
+  one route ([the internal credential](#the-internal-credential)).
 - **Control-bridge confirmations.** The client that asked redeemed its own token at `/confirm`, with
   the bearer it asked with, and `personalclaw inbound confirm` did the same with the bridge's token.
   A confirmation now waits in your Inbox, where you confirm or decline it

@@ -1,10 +1,12 @@
 """Property tests for dashboard token authentication."""
 
+import json
 import string
 from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
+from yarl import URL
 
 from personalclaw.dashboard.session_store import POOL_CAPS, POOL_TOKEN
 from personalclaw.dashboard.token_auth import (
@@ -213,6 +215,7 @@ def _make_request(
     """Build a mock aiohttp request."""
     req = MagicMock(spec=web.Request)
     req.path = path
+    req.rel_url = URL(path)
     req.query = query or {}
     req.cookies = cookies or {}
     req.remote = remote
@@ -364,7 +367,9 @@ async def test_loopback_requires_token(path: str) -> None:
 @pytest.mark.asyncio
 async def test_internal_path_trusts_loopback() -> None:
     secret = "test-secret-123"
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret=secret)
+    mw = token_auth_middleware(
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret=secret
+    )
     req = _make_request(path="/api/spawn", headers={"X-Internal-Secret": secret})
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
@@ -374,7 +379,9 @@ async def test_internal_path_trusts_loopback() -> None:
 async def test_internal_path_non_loopback_denied_in_local_only_mode() -> None:
     """Default local_only=True denies non-loopback even with valid secret."""
     secret = "test-secret-123"
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret=secret)
+    mw = token_auth_middleware(
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret=secret
+    )
     req = _make_request(path="/api/spawn", remote="10.0.0.1", headers={"X-Internal-Secret": secret})
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
@@ -385,7 +392,7 @@ async def test_internal_path_non_loopback_cookie_auth_when_not_local_only() -> N
     """When local_only=False, non-loopback with valid cookie is granted."""
     token = generate_token("testuser", ttl_seconds=300)
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="s", local_only=False
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="s", local_only=False
     )
     req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token})
     resp = await mw(req, _ok_handler)
@@ -396,7 +403,7 @@ async def test_internal_path_non_loopback_cookie_auth_when_not_local_only() -> N
 async def test_internal_path_non_loopback_no_cookie_denied() -> None:
     """When local_only=False, non-loopback without cookie is denied."""
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="s", local_only=False
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="s", local_only=False
     )
     req = _make_request(path="/api/spawn", remote="10.0.0.1")
     resp = await mw(req, _ok_handler)
@@ -408,7 +415,7 @@ async def test_internal_path_non_loopback_wrong_secret_denied() -> None:
     """When local_only=False, wrong X-Internal-Secret is denied even with cookie."""
     token = generate_token("testuser", ttl_seconds=300)
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
         path="/api/spawn",
@@ -425,7 +432,7 @@ async def test_internal_path_non_loopback_valid_secret_and_cookie_granted() -> N
     """Both valid secret and valid cookie on non-loopback → granted."""
     token = generate_token("testuser", ttl_seconds=300)
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
         path="/api/spawn",
@@ -441,7 +448,7 @@ async def test_internal_path_non_loopback_valid_secret_and_cookie_granted() -> N
 async def test_internal_path_non_loopback_valid_secret_no_cookie_denied() -> None:
     """Valid secret alone is not enough for non-loopback; cookie is still required."""
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="real", local_only=False
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
         path="/api/spawn",
@@ -455,34 +462,78 @@ async def test_internal_path_non_loopback_valid_secret_no_cookie_denied() -> Non
 @pytest.mark.asyncio
 async def test_internal_path_rejects_wrong_secret() -> None:
     mw = token_auth_middleware(
-        internal_paths=frozenset({"/api/spawn"}), internal_secret="real-secret"
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real-secret"
     )
     req = _make_request(path="/api/spawn", headers={"X-Internal-Secret": "wrong-secret"})
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
+    assert json.loads(resp.body)["error"]["code"] == "internal_secret_invalid"
 
 
 @pytest.mark.asyncio
-async def test_internal_path_matches_sub_paths() -> None:
-    """GET /api/spawn/{id} should be granted via /api/spawn prefix."""
+async def test_an_internal_route_matches_its_parameters() -> None:
+    """``GET /api/spawn/{agent_id}`` admits the credential for an agent id, as routed."""
     secret = "test-secret-123"
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret=secret)
+    mw = token_auth_middleware(
+        internal_routes=frozenset({"GET /api/spawn/{agent_id}"}), internal_secret=secret
+    )
     req = _make_request(path="/api/spawn/abc123", headers={"X-Internal-Secret": secret})
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
 
 
 @pytest.mark.asyncio
+async def test_an_internal_route_opens_no_route_under_it() -> None:
+    """🔴 An entry was a path prefix: ``/api/spawn`` opened ``/api/spawn/{agent_id}`` and every
+    other route under it. It opens the one route it names, and says so to a call anywhere else."""
+    secret = "test-secret-123"
+    mw = token_auth_middleware(
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret=secret
+    )
+    req = _make_request(path="/api/spawn/abc123", headers={"X-Internal-Secret": secret})
+    resp = await mw(req, _ok_handler)
+    assert resp.status == 403
+    assert json.loads(resp.body)["error"]["code"] == "internal_route_refused"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_route_opens_no_other_method_on_it() -> None:
+    """Stopping a nudge loop is one method on its route; changing the loop is another."""
+    secret = "test-secret-123"
+    mw = token_auth_middleware(
+        mixed_internal_routes=frozenset({"DELETE /api/autonudge/{loop_id}"}), internal_secret=secret
+    )
+    stop = _make_request(
+        path="/api/autonudge/l1", method="DELETE", headers={"X-Internal-Secret": secret}
+    )
+    assert (await mw(stop, _ok_handler)).status == 200
+    change = _make_request(
+        path="/api/autonudge/l1", method="PATCH", headers={"X-Internal-Secret": secret}
+    )
+    resp = await mw(change, _ok_handler)
+    assert resp.status == 403
+    assert json.loads(resp.body)["error"]["code"] == "internal_route_refused"
+
+
+@pytest.mark.parametrize("entry", ["/api/spawn", "GET api/spawn", "FETCH /api/spawn", ""])
+def test_an_internal_route_that_is_not_one_refuses_to_start(entry: str) -> None:
+    with pytest.raises(ValueError, match="an internal route is written"):
+        token_auth_middleware(internal_routes=frozenset({entry}))
+
+
+@pytest.mark.asyncio
 async def test_internal_path_does_not_match_sibling_prefix() -> None:
     """GET /api/spawnfoo must NOT be treated as internal via /api/spawn."""
     secret = "test-secret-123"
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret=secret)
+    mw = token_auth_middleware(
+        internal_routes=frozenset({"GET /api/spawn"}), internal_secret=secret
+    )
     req = _make_request(path="/api/spawnfoo", headers={"X-Internal-Secret": secret})
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
 
 
-# -- Mixed_internal_paths (loopback MCP + non-loopback browser) --
+# -- Mixed internal routes (loopback MCP + non-loopback browser) --
 
 
 @pytest.mark.asyncio
@@ -490,7 +541,7 @@ async def test_mixed_path_loopback_with_secret_granted() -> None:
     """MCP path: loopback + X-Internal-Secret → granted via fast-path."""
     secret = "test-secret-123"
     mw = token_auth_middleware(
-        mixed_internal_paths=frozenset({"/api/spawn"}), internal_secret=secret
+        mixed_internal_routes=frozenset({"GET /api/spawn"}), internal_secret=secret
     )
     req = _make_request(path="/api/spawn", headers={"X-Internal-Secret": secret})
     resp = await mw(req, _ok_handler)
@@ -500,7 +551,7 @@ async def test_mixed_path_loopback_with_secret_granted() -> None:
 @pytest.mark.asyncio
 async def test_mixed_path_non_loopback_with_valid_cookie_granted() -> None:
     """DCV/SSH-forwarded browser: non-loopback + valid cookie → granted (no false banner)."""
-    mw = token_auth_middleware(mixed_internal_paths=frozenset({"/api/spawn"}))
+    mw = token_auth_middleware(mixed_internal_routes=frozenset({"GET /api/spawn"}))
     token = generate_token("dcvuser", ttl_seconds=300)
     bind_token_ip(token, "10.0.0.1")
     mark_consumed(token)
@@ -512,7 +563,7 @@ async def test_mixed_path_non_loopback_with_valid_cookie_granted() -> None:
 @pytest.mark.asyncio
 async def test_mixed_path_non_loopback_without_cookie_denied() -> None:
     """Non-loopback + no cookie → still denied (security preserved)."""
-    mw = token_auth_middleware(mixed_internal_paths=frozenset({"/api/spawn"}))
+    mw = token_auth_middleware(mixed_internal_routes=frozenset({"GET /api/spawn"}))
     req = _make_request(path="/api/spawn", remote="10.0.0.1")
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
@@ -522,12 +573,15 @@ async def test_mixed_path_non_loopback_without_cookie_denied() -> None:
 async def test_strict_path_non_loopback_still_hard_denied() -> None:
     """Strict internal path: non-loopback → hard-denied even with valid cookie
     (invariant: machine-to-machine isolation preserved)."""
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/send-message"}))
+    mw = token_auth_middleware(internal_routes=frozenset({"POST /api/send-message"}))
     token = generate_token("attacker", ttl_seconds=300)
     bind_token_ip(token, "10.0.0.1")
     mark_consumed(token)
     req = _make_request(
-        path="/api/send-message", remote="10.0.0.1", cookies={"pc_token_10000": token}
+        path="/api/send-message",
+        method="POST",
+        remote="10.0.0.1",
+        cookies={"pc_token_10000": token},
     )
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
@@ -960,6 +1014,29 @@ async def test_local_network_bypass_records_reason_not_error(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_the_local_network_bypass_refuses_the_credential_where_every_install_does(
+    monkeypatch,
+) -> None:
+    """🔴 The development server runs with the bypass, which admitted a tool's call before its
+    credential was looked at: a call every install refused worked there, so it was never seen
+    failing. It is refused there too now. A listed operation, and a request carrying no
+    credential, are admitted as before."""
+    monkeypatch.setenv("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", "1")
+    mw = token_auth_middleware(
+        mixed_internal_routes=frozenset({"GET /api/lessons"}), internal_secret="s"
+    )
+    unlisted = _bypass_capturing_request(path="/api/status", headers={"X-Internal-Secret": "s"})
+    resp = await mw(unlisted, _ok_handler)
+    assert resp.status == 403
+    assert json.loads(resp.body)["error"]["code"] == "internal_route_refused"
+
+    listed = _bypass_capturing_request(path="/api/lessons", headers={"X-Internal-Secret": "s"})
+    assert (await mw(listed, _ok_handler)).status == 200
+    browser = _bypass_capturing_request(path="/api/status")
+    assert (await mw(browser, _ok_handler)).status == 200
+
+
+@pytest.mark.asyncio
 async def test_internal_path_cookie_auth_no_secret_header_records_reason_not_error() -> None:
     """The no-secret-header cookie-auth branch on an internal path is also a
     success path that used to stuff its allow reason into ``error`` (#2948)."""
@@ -968,7 +1045,7 @@ async def test_internal_path_cookie_auth_no_secret_header_records_reason_not_err
     token = generate_token("browseruser", ttl_seconds=300)
     bind_token_ip(token, "127.0.0.1")
     mark_consumed(token)
-    mw = token_auth_middleware(internal_paths=frozenset({"/api/spawn"}), internal_secret="s")
+    mw = token_auth_middleware(internal_routes=frozenset({"GET /api/spawn"}), internal_secret="s")
     req = _make_request(path="/api/spawn", cookies={"pc_token_10000": token})
 
     resp = await mw(req, _ok_handler)

@@ -6,10 +6,10 @@ exceptions into one wire envelope. **No decision is made here** — this handler
 half of the transport, and a screen implemented at the route would be a screen the dispatch's
 other callers do not get.
 
-**Internal-only, and that is registered in one place.** ``/api/computer-use/dispatch`` is in
-``server.py``'s ``internal_paths``, so a request must be loopback and carry
+**Internal-only, and that is registered in one place.** ``POST /api/computer-use/dispatch`` is
+in ``server.py``'s ``INTERNAL_ROUTES``, so a request must be loopback and carry
 ``X-Internal-Secret``. The shim gets both from ``mcp_core._post``. It is not in
-``mixed_internal_paths``: no browser surface calls it, and widening the auth model of the one
+``MIXED_INTERNAL_ROUTES``: no browser surface calls it, and widening the auth model of the one
 route that can drive the operator's desktop to admit cookie auth would put it behind whatever
 the weakest browser path is.
 
@@ -136,7 +136,7 @@ async def api_computer_use_live_view(request: web.Request) -> web.Response:
     A READ of :func:`personalclaw.computer_use.render.live_view` and nothing else: the
     keystone posture, the mirrored snapshots the model already walked, the cursor-motion
     trail, and the recent SEL attempt rows. It runs no screen and can run none — there is
-    nothing to decide about a mirror — and it is deliberately NOT in ``internal_paths``:
+    nothing to decide about a mirror — and it is deliberately NOT in ``INTERNAL_ROUTES``:
     unlike the dispatch above, this is a browser surface for a watching human, and the one
     fact that matters is that it shares no verb with the route that can act. GET here, POST
     there, and the census in ``tests/test_computer_use_live_view.py`` pins that split.

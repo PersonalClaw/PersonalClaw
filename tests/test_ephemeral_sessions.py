@@ -11,6 +11,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 
@@ -505,7 +506,15 @@ class TestMcpCoreSessionKeyPassthrough:
     """``PERSONALCLAW_PORT`` is set here because ``mcp_core`` now REFUSES rather than
     assuming the default port when it cannot resolve this instance's gateway (#2539) — so a
     test that wants to inspect the outgoing request must first give it a gateway to address.
+    The same holds for the internal credential that gateway writes to its home: with none,
+    ``mcp_core`` sends nothing.
     """
+
+    @pytest.fixture(autouse=True)
+    def _the_credential_the_gateway_wrote(self):
+        home = config_loader.resolve_config_dir()
+        home.mkdir(parents=True, exist_ok=True)
+        (home / ".local_secret").write_text("a-gateway-credential", encoding="utf-8")
 
     def test_learn_add_sends_session_key_header(self):
         with (
@@ -527,6 +536,7 @@ class TestMcpCoreSessionKeyPassthrough:
 
         req = mock_urlopen.call_args[0][0]
         assert req.get_header("X-session-key") == "dashboard:e1"
+        assert req.get_header("X-internal-secret") == "a-gateway-credential"
 
     def test_learn_add_no_session_key_header_when_unset(self):
         with (

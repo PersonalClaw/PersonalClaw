@@ -803,12 +803,51 @@ def _list_tools() -> list[dict[str, Any]]:
     ]
 
 
+class InternalSecretUnavailable(RuntimeError):
+    """This process's home holds no internal credential it can read, so no call was sent."""
+
+
 def _internal_secret() -> str:
-    """Read the per-session secret for IPC authentication."""
+    """The credential this home's gateway checks on its internal routes (``.local_secret``).
+
+    The gateway writes a fresh one there each time it starts, and every caller reads it from the
+    SAME home, resolved at the call: the gateway itself for its in-process tools, the ``mcp-core``
+    server an agent CLI runs (whose ``PERSONALCLAW_HOME`` the gateway declares), a scheduled
+    script's launcher. Read without creating the home: asking where a credential is must not make
+    an empty home where there was none.
+
+    Raises :class:`InternalSecretUnavailable` when there is none to read. It returned ``""``, and a
+    call sent with an empty credential is refused with nothing to say why.
+    """
+    home = config_loader.resolve_config_dir()
     try:
-        return (config_dir() / ".local_secret").read_text().strip()
-    except Exception:
-        return ""
+        secret = (home / ".local_secret").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        secret = ""
+    except OSError as exc:
+        raise InternalSecretUnavailable(
+            f"PersonalClaw's gateway could not be called: the internal credential in {home} "
+            f"cannot be read ({exc.strerror or exc})."
+        ) from exc
+    if not secret:
+        raise InternalSecretUnavailable(
+            "PersonalClaw's gateway could not be called: there is no internal credential in "
+            f"{home}. The gateway writes one there each time it starts, so no gateway is running "
+            "with this home, or the gateway runs with a different one."
+        )
+    return secret
+
+
+def _internal_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The headers a call to the gateway carries: its internal credential, and this session.
+
+    Raises :class:`InternalSecretUnavailable` (:func:`_internal_secret`).
+    """
+    headers = {**(extra or {}), "X-Internal-Secret": _internal_secret()}
+    sk = _resolve_session_key()
+    if sk:
+        headers["X-Session-Key"] = sk
+    return headers
 
 
 def _get_ppid(pid: int) -> int:
@@ -895,22 +934,19 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
     return {**body, "error": str(error) if error else f"HTTP {exc.code}: {text}"}
 
 
-# NB: ``_api_base()`` is resolved INSIDE each try below. It refuses (raises
-# ``GatewayBaseUnresolved``) rather than guessing a port, and a refusal must reach the
-# agent as this tool's result text — the named, fail-fast answer. Built outside the try it
-# would instead escape ``run_mcp_stdio_loop`` and take the whole MCP server down mid-turn,
-# which is the "hang" shape the refusal exists to replace.
+# NB: ``_api_base()`` and the credential are resolved INSIDE each try below. Each refuses
+# (``GatewayBaseUnresolved``, ``InternalSecretUnavailable``) rather than guessing a port or
+# sending an empty credential, and a refusal must reach the agent as this tool's result
+# text — the named, fail-fast answer. Built outside the try it would instead escape
+# ``run_mcp_stdio_loop`` and take the whole MCP server down mid-turn, which is the "hang"
+# shape the refusal exists to replace.
 def _post(path: str, body: dict | None = None) -> dict:
     data = json.dumps(body or {}).encode()
-    headers = {"Content-Type": "application/json", "X-Internal-Secret": _internal_secret()}
-    sk = _resolve_session_key()
-    if sk:
-        headers["X-Session-Key"] = sk
     try:
         req = urllib.request.Request(
             f"{_api_base()}{path}",
             data=data,
-            headers=headers,
+            headers=_internal_headers({"Content-Type": "application/json"}),
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -922,14 +958,10 @@ def _post(path: str, body: dict | None = None) -> dict:
 
 
 def _get(path: str) -> dict:
-    headers = {"X-Internal-Secret": _internal_secret()}
-    sk = _resolve_session_key()
-    if sk:
-        headers["X-Session-Key"] = sk
     try:
         req = urllib.request.Request(
             f"{_api_base()}{path}",
-            headers=headers,
+            headers=_internal_headers(),
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
@@ -941,17 +973,11 @@ def _get(path: str) -> dict:
 
 def _delete(path: str, body: dict | None = None) -> dict:
     data = json.dumps(body or {}).encode() if body else None
-    headers = {"X-Internal-Secret": _internal_secret()}
-    sk = _resolve_session_key()
-    if sk:
-        headers["X-Session-Key"] = sk
-    if data:
-        headers["Content-Type"] = "application/json"
     try:
         req = urllib.request.Request(
             f"{_api_base()}{path}",
             data=data,
-            headers=headers,
+            headers=_internal_headers({"Content-Type": "application/json"} if data else None),
             method="DELETE",
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1169,8 +1195,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             qs.append("query=" + urllib.parse.quote(query))
         if project_id:
             qs.append("project_id=" + urllib.parse.quote(project_id))
-        path = "/api/context" + ("?" + "&".join(qs) if qs else "")
-        resp = _get(path)
+        # The path is written in the call, like every internal call's, so the census of what the
+        # internal credential must open can read it.
+        resp = _get(f"/api/context?{'&'.join(qs)}")
         if resp.get("error"):
             return tool_failure(f"loading context: {resp['error']}")
         # The endpoint already renders the tiered markdown body; return it verbatim so

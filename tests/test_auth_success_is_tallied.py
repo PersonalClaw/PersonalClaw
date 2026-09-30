@@ -132,7 +132,7 @@ async def test_a_closed_window_is_summarized_by_the_next_request(audit, monkeypa
 async def test_an_internal_grant_is_one_row_family_not_two(audit):
     """An internal-secret grant wrote TWO rows per request (`internal_auth` and a
     `dashboard.token_auth` duplicate). It is one tallied family now."""
-    app = _app(internal_paths=frozenset({"/api/internal/ping"}), internal_secret="s3cret")
+    app = _app(internal_routes=frozenset({"GET /api/internal/ping"}), internal_secret="s3cret")
     async with TestClient(TestServer(app)) as http:
         for _ in range(10):
             resp = await http.get("/api/internal/ping", headers={"X-Internal-Secret": "s3cret"})

@@ -34,7 +34,7 @@ from pathlib import Path
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
 from personalclaw.hooks import validate_file_path
-from personalclaw.mcp_core import _internal_secret
+from personalclaw.mcp_core import InternalSecretUnavailable, _internal_secret
 from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv, wrap_argv
 
 
@@ -140,6 +140,7 @@ def _load_config():
 
 _CFG = _load_config()
 _SECRET = _CFG.get("secret", "")
+_SECRET_UNAVAILABLE = _CFG.get("secret_unavailable", "")
 _PORT = _CFG.get("port", 0)
 _SESSION_KEY = _CFG.get("session_key", "")
 
@@ -157,6 +158,11 @@ class Report(Exception):
 
 
 def _post(path, payload):
+    if _SECRET_UNAVAILABLE:
+        # The gateway had no credential to hand over, so the call would be refused. It is not
+        # sent, and the refusal says why, in the shape the gateway's own refusals take.
+        return {"ok": False, "status": 0,
+                "error": {"code": "internal_secret_unavailable", "message": _SECRET_UNAVAILABLE}}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         "http://127.0.0.1:%d%s" % (_PORT, path),
@@ -317,11 +323,19 @@ def run_script_sandboxed(
         _port = gateway_base.resolve_port()
     except gateway_base.GatewayBaseUnresolved as exc:
         return {"status": "error", "error": str(exc)}
+    # The credential a call back carries. With none to hand over, a ctx.notify or ctx.call_tool
+    # would be refused with nothing to say why, so the launcher refuses it itself with this reason
+    # and sends nothing. A script that never calls back runs as before.
+    try:
+        _secret, _no_secret = _internal_secret(), ""
+    except InternalSecretUnavailable as exc:
+        _secret, _no_secret = "", str(exc)
     cfg = {
         "script_path": str(resolved),
         "func": func,
         "message": job_message,
-        "secret": _internal_secret(),
+        "secret": _secret,
+        "secret_unavailable": _no_secret,
         "port": _port,
         "session_key": f"cron:{job_id}",
     }

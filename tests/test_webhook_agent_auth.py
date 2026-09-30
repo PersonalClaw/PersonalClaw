@@ -3,8 +3,9 @@
 Regression: ``_verify_hook_token`` called ``AppConfig.load()`` without importing
 ``AppConfig`` — a NameError since the handler split, so EVERY external webhook
 call to /api/hooks/agent crashed (500) instead of running the agent turn. The
-route is exempt from dashboard auth middleware (internal_paths), so this token
-check is its ONLY auth gate — it must actually execute.
+route is one of the gateway's internal routes (``server.INTERNAL_ROUTES``: a relay
+on this computer presents the internal credential), and past that this token check
+is the webhook's own gate — it must actually execute.
 """
 
 from unittest.mock import MagicMock

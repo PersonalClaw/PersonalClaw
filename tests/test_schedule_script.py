@@ -15,6 +15,7 @@ import pytest
 
 import personalclaw.schedule_script as ss
 from personalclaw import gateway_base
+from personalclaw.config import loader as config_loader
 from personalclaw.schedule import (
     ScheduleJob,
     make_agent_action,
@@ -30,18 +31,25 @@ from personalclaw.schedule import (
 # under pytest's 120s per-test ceiling, and a genuinely hung script is caught.
 _SCRIPT_TIMEOUT = 90
 
+#: The internal credential the gateway these tests address wrote to the home.
+_CREDENTIAL = "a-gateway-credential"
+
 
 @pytest.fixture(autouse=True)
 def _a_gateway_to_address(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Declare a gateway for the cron launcher to address.
+    """Declare a gateway for the cron launcher to address: its port, and the credential it wrote.
 
     ``run_script_sandboxed`` resolves the launcher's port from ``gateway_base`` at CALL time
     and REFUSES rather than assuming the default port when it cannot (#2539) — the previous
     ``config.loader.DASHBOARD_PORT`` was an import-time constant that happily named a port
     another instance was listening on. These tests exercise the sandbox, the resource ceiling
-    and the child environment, not the port, so they state one and move on.
+    and the child environment, not the port, so they state one and move on. A gateway also
+    writes its internal credential to the home when it starts, and the launcher hands it to the
+    script's calls back; for a home with none, see
+    :func:`test_a_call_back_with_no_credential_is_refused_unsent`.
     """
     monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
+    (config_loader.config_dir() / ".local_secret").write_text(_CREDENTIAL, encoding="utf-8")
 
 
 # ── exec_mode strategy axis ───────────────────────────────────────────
@@ -365,6 +373,42 @@ def test_a_non_json_4xx_body_is_still_a_dict(
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_a_call_back_with_no_credential_is_refused_unsent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_tool_route: list
+) -> None:
+    """🔴 Red on integration, where the launcher sent an empty credential: the gateway refused it
+    with nothing that said why. A home holding none now has the launcher refuse the call back
+    itself, with the reason, and send nothing. A script that never calls back runs as before."""
+    (config_loader.config_dir() / ".local_secret").unlink()
+    crons = _fake_crons(monkeypatch, tmp_path)
+    calls_back = _write_script(
+        crons,
+        "calls_back.py",
+        """
+        def run(ctx):
+            r = ctx.call_tool("memory_forget", {"query": "stale note"},
+                              confirm_risk="destructive")
+            return "ok=%s code=%s | %s" % (r["ok"], r["error"]["code"], r["error"]["message"])
+    """,
+    )
+    r = ss.run_script_sandboxed(calls_back, "j", "", timeout=_SCRIPT_TIMEOUT)
+    assert r["status"] == "ok", r
+    assert r["message"].startswith("ok=False code=internal_secret_unavailable | "), r
+    assert "there is no internal credential in" in r["message"], r
+    assert stub_tool_route == [], "a call with no credential reached the gateway"
+
+    own_work = _write_script(
+        crons,
+        "own_work.py",
+        """
+        def run(ctx):
+            return "did its own work"
+    """,
+    )
+    r = ss.run_script_sandboxed(own_work, "j", "", timeout=_SCRIPT_TIMEOUT)
+    assert (r["status"], r["message"]) == ("ok", "did its own work"), r
 
 
 def test_secret_not_in_script_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

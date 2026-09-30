@@ -1718,10 +1718,59 @@ def parse_config_duration(s: str, *, default_secs: int) -> int:
     return configured_lifetime(s, default_secs=default_secs)
 
 
+#: The methods an internal route names. No call of the gateway's own is a HEAD or an OPTIONS.
+_INTERNAL_ROUTE_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
+#: A ``{name}`` or ``{name:regex}`` parameter of a route template, in the router's own syntax.
+_ROUTE_PARAM = re.compile(r"\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::(?P<regex>[^{}]+))?\}")
+
+
+@dataclass(frozen=True)
+class InternalRoute:
+    """One operation the gateway's internal credential opens: a method on a route.
+
+    Written ``"<METHOD> <template>"``, the template in the router's own syntax (``{id}`` is one
+    path segment, ``{name:.+}`` is whatever the route itself allows there), and matched WHOLE. An
+    entry opens exactly the operation it names: never a route under it, and never another method
+    on the same route. Entries used to be path prefixes, so ``/api/triggers`` gave the credential
+    every trigger route, creating, deleting and answering one included, to open the one ``/run``
+    that is called with it.
+    """
+
+    method: str
+    template: str
+    pattern: re.Pattern[str]
+
+    @classmethod
+    def parse(cls, entry: str) -> "InternalRoute":
+        """*entry* as a route. Raises ``ValueError`` on anything else, at startup."""
+        method, _, template = entry.strip().partition(" ")
+        template = template.strip()
+        if method not in _INTERNAL_ROUTE_METHODS or not template.startswith("/"):
+            raise ValueError(f"an internal route is written '<METHOD> /path', not {entry!r}")
+        parts: list[str] = []
+        at = 0
+        for param in _ROUTE_PARAM.finditer(template):
+            parts.append(re.escape(template[at : param.start()]))
+            parts.append(f"(?:{param['regex']})" if param["regex"] else "[^{}/]+")
+            at = param.end()
+        parts.append(re.escape(template[at:]))
+        return cls(method=method, template=template, pattern=re.compile("".join(parts)))
+
+    def admits(self, method: str, path: str) -> bool:
+        """Whether a *method* request for *path* is this operation.
+
+        *path* is the string the router resolves (``request.rel_url.path_safe``: decoded, except
+        that an encoded ``/`` stays encoded), so an entry admits exactly the requests its route
+        serves. The decoded ``request.path`` is not that string: a job name holding a ``/``,
+        sent percent-encoded, is one ``{id}`` segment to the router and two in ``request.path``.
+        """
+        return method == self.method and self.pattern.fullmatch(path) is not None
+
+
 def token_auth_middleware(
     *,
-    internal_paths: frozenset[str] = frozenset(),
-    mixed_internal_paths: frozenset[str] = frozenset(),
+    internal_routes: frozenset[str] = frozenset(),
+    mixed_internal_routes: frozenset[str] = frozenset(),
     internal_secret: str = "",
     port: int = _DEFAULT_PORT,
     local_only: bool = True,
@@ -1732,19 +1781,26 @@ def token_auth_middleware(
     local port forwarders (socat, ssh -R, custom scripts) make remote
     traffic appear as 127.0.0.1, which would otherwise bypass auth entirely.
 
-    *internal_paths* are exact paths that internal processes (mcp-core,
-    doctor) call — these require loopback AND a matching
-    ``X-Internal-Secret`` header (read from ``~/.personalclaw/.local_secret``).
-    Non-loopback access to these paths is always denied.
+    *internal_routes* are the operations (:class:`InternalRoute`) that
+    PersonalClaw's own processes (an agent's tools, a scheduled script, the
+    CLI) call with the gateway's internal credential: loopback AND a matching
+    ``X-Internal-Secret`` header, read from ``<home>/.local_secret``.
+    Non-loopback access to these is always denied.
 
-    *mixed_internal_paths* are paths called by BOTH internal processes
+    *mixed_internal_routes* are operations called by BOTH those processes
     (loopback + secret) AND the browser (cookie auth).  On non-loopback
     they perform explicit cookie validation (deny-by-default) instead
     of hard-denying, so DCV/SSH-forwarded browsers polling these routes
     (e.g. ``/api/spawn`` every 5s) don't trigger false session-expired
-    banners.  Use this for any internal-path that the browser polls.
+    banners.  Use this for any internal route that the browser calls too.
 
+    A request that presents the internal credential on any other operation is
+    refused as one (``internal_route_refused``). It is never judged as a
+    browser that has not signed in: that answer is a sign-in sentence, which
+    no process can act on, and which names the wrong cause.
     """
+    strict_routes = tuple(InternalRoute.parse(entry) for entry in sorted(internal_routes))
+    mixed_routes = tuple(InternalRoute.parse(entry) for entry in sorted(mixed_internal_routes))
 
     def _resolved_client_ip(request: web.Request) -> str:
         """Return the browser's IP, preferring a forwarded header from a TRUSTED peer.
@@ -1866,6 +1922,32 @@ def token_auth_middleware(
             request["user"] = request.get("user") or "dev-local"
             return await handler(request)  # type: ignore[operator]
 
+        path = request.path
+        routed = request.rel_url.path_safe
+        _matches_strict = any(route.admits(request.method, routed) for route in strict_routes)
+        _matches_mixed = any(route.admits(request.method, routed) for route in mixed_routes)
+
+        # The internal credential opens the listed operations and no other. Presented anywhere
+        # else, it is refused as what it is, whichever credential rides beside it: it is never
+        # passed on to the browser's session check, which reads a request carrying no session as
+        # a device that has not signed in and answers with a sentence no process can act on.
+        # Ahead of the local-network bypass on purpose: the development server runs with it, so a
+        # call that bypass admitted was never seen failing, and every install refused it.
+        if "X-Internal-Secret" in request.headers and not (_matches_strict or _matches_mixed):
+            reason = f"{request.method} {path} does not take the internal secret"
+            _sel_fn().log_api_access(
+                caller=request.remote or "",
+                operation="internal_auth",
+                outcome="denied",
+                source="token_auth",
+                resources=path,
+                error=reason,
+            )
+            _log_auth(request, "internal", "denied", reason)
+            from personalclaw.http_errors import json_error
+
+            return json_error("internal_route_refused", status=403)
+
         # Local-network bypass — opt-in, IP-gated.
         # When PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, requests from loopback,
         # RFC1918, link-local, or ULA addresses skip token validation.
@@ -1889,19 +1971,10 @@ def token_auth_middleware(
                 )
                 return await handler(request)  # type: ignore[operator]
 
-        path = request.path
-
-        # Internal API paths: loopback + secret grants immediate access.
+        # Internal routes: loopback + secret grants immediate access.
         # If the secret is missing (browser request), fall through to
         # normal cookie auth so dashboard pages can call these routes.
-        _matches_strict = internal_paths and (
-            path in internal_paths or any(path.startswith(p + "/") for p in internal_paths)
-        )
-        _matches_mixed = mixed_internal_paths and (
-            path in mixed_internal_paths
-            or any(path.startswith(p + "/") for p in mixed_internal_paths)
-        )
-        # local_only=False: treat ALL internal paths as mixed (the user has
+        # local_only=False: treat ALL internal routes as mixed (the user has
         # opted into remote access).
         if not local_only and _matches_strict and not _matches_mixed:
             _matches_mixed = True
@@ -1942,7 +2015,7 @@ def token_auth_middleware(
                     error="wrong secret",
                 )
                 _log_auth(request, "internal", "denied", "wrong secret")
-                return _deny(request, "Forbidden")
+                return _internal_secret_invalid()
             # No secret header (a browser, the CLI) → verify session auth inline to satisfy
             # deny-by-default: positively confirm auth at the decision point rather than
             # deferring to downstream. The same selection the strict path below makes.
@@ -1995,7 +2068,7 @@ def token_auth_middleware(
                         _log_auth(
                             request, "internal", "denied", "wrong secret (non-loopback mixed)"
                         )
-                        return _deny(request, "Forbidden")
+                        return _internal_secret_invalid()
                 credentials = _select_request_credentials(request, port)
                 if not credentials.valid:
                     _sel = _sel_fn()
@@ -2024,7 +2097,7 @@ def token_auth_middleware(
                 )
                 return await handler(request)  # type: ignore[operator]
             else:
-                # INVARIANT: non-loopback access to strict internal paths is
+                # INVARIANT: non-loopback access to strict internal routes is
                 # ALWAYS denied.  Do NOT remove this branch — without it,
                 # non-loopback requests would silently fall through to
                 # normal cookie auth, defeating the machine-to-machine
@@ -2112,8 +2185,8 @@ def token_auth_middleware(
 def auth_middleware(
     auth_cfg: Any,  # personalclaw.auth.modes.AuthConfig — typed as Any to avoid circular import
     *,
-    internal_paths: frozenset[str] = frozenset(),
-    mixed_internal_paths: frozenset[str] = frozenset(),
+    internal_routes: frozenset[str] = frozenset(),
+    mixed_internal_routes: frozenset[str] = frozenset(),
     internal_secret: str = "",
     port: int = _DEFAULT_PORT,
     local_only: bool = True,
@@ -2143,8 +2216,8 @@ def auth_middleware(
 
     if mode == AuthMode.LOCAL_TOKEN:
         return token_auth_middleware(
-            internal_paths=internal_paths,
-            mixed_internal_paths=mixed_internal_paths,
+            internal_routes=internal_routes,
+            mixed_internal_routes=mixed_internal_routes,
             internal_secret=internal_secret,
             port=port,
             local_only=local_only,
@@ -2223,10 +2296,11 @@ def _deny(
     opened on a second device (:func:`link_used_notice`) — an API request gets the registered
     envelope (``session_signed_out`` / ``session_expired`` / ``session_required``) carrying the
     sentence and the reason, which the SPA and the desktop app show; a page gets the same
-    sentence under the notice's heading on the paste-token gate. Without one — only the
-    machine callers of the internal routes (a wrong ``X-Internal-Secret``) — an API request
-    keeps the bare ``{"error": reason}`` a script branches on, and a page is treated as a
-    device that is not signed in.
+    sentence under the notice's heading on the paste-token gate. Without one — a strict internal
+    route reached from off this computer, or a credential presented to a gateway that holds none —
+    an API request keeps the bare ``{"error": reason}`` a script branches on, and a page is
+    treated as a device that is not signed in. A wrong credential is
+    :func:`_internal_secret_invalid`.
     """
     headers = {"X-Auth-Required": "true"}
     if request.path.startswith("/api/"):
@@ -2257,6 +2331,19 @@ def _deny(
         content_type="text/html",
         headers=headers,
     )
+
+
+def _internal_secret_invalid() -> web.Response:
+    """The refusal of an internal route presented a credential this gateway did not issue.
+
+    It used to be the bare word "Forbidden", and a tool shows the refusal it gets as its result,
+    so the agent and its owner read a word that named nothing. One of PersonalClaw's own processes
+    that gets it read its credential in a home other than this gateway's: each re-reads it at every
+    call. The sentence is fixed, like every auth refusal's, and says only what this gateway knows.
+    """
+    from personalclaw.http_errors import json_error
+
+    return json_error("internal_secret_invalid", status=403)
 
 
 #: Successful authentications of ONE identity fold into one SEL row per this many seconds.

@@ -171,6 +171,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "session_signed_out": "This device was signed out; the message says why and how to sign in.",
     "session_expired": "This device's sign-in ended; the message says when and how to sign in.",
     "session_required": "No usable sign-in came with the request; the message says how to sign in.",
+    # ── the gateway's internal credential (dashboard/token_auth.py): what one of PersonalClaw's own
+    # processes (an agent's tool, a scheduled script, the CLI) is told when its call is refused.
+    # A tool shows it as its result, so it names the cause, never a sign-in no process can do ──
+    "internal_route_refused": (
+        "This route does not accept the gateway's internal credential: it opens only the "
+        "operations PersonalClaw's own processes perform."
+    ),
+    "internal_secret_invalid": (
+        "The internal credential on this request is not the one this gateway issued when it "
+        "started."
+    ),
     # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
     # 90 days, and the message is the sentence that says so ──
     "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",

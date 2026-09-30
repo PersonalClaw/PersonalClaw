@@ -8,11 +8,12 @@ Measured on `main` before this was written, each of these answered what it shoul
 * an app that declared `/api/proactive` answered the digest's proposals;
 * an agent's tool, which presents the gateway's internal secret, answered a chat's pending tool
   call through `POST /api/approvals/{id}/approve` and the chat card's own route, answered a run's
-  gate through its resume and confirm routes, and taught an approve rule through its route. Those
-  routes are not internal paths, so in the default auth mode the middleware refuses the secret
-  first. The requests here are admitted the way `auth_mode=none` and the local-network bypass
-  admit every loopback caller, as you, which is where the handler's own refusal is the one that
-  holds;
+  gate through its resume and confirm routes, and taught an approve rule through its route. The
+  approval and gate routes are not internal routes, so wherever a sign-in is asked the middleware
+  refuses the secret first. The approval-rule route is one (the triage tools list, add and revoke
+  rules through it), so there the handler's own refusal is what holds, in every auth mode. The
+  requests here are admitted the way `auth_mode=none` admits every loopback caller, as you, which
+  is where the handler's own refusal is the one that holds;
 * a control-bridge action waiting for confirmation had no way for you to confirm it at all, only
   the asking client's own `/confirm` (tested in `test_control_bridge.py`).
 

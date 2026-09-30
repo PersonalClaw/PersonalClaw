@@ -22,10 +22,8 @@ that cannot resolve.
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import contextlib
-import inspect
 import json
 import os
 import sys
@@ -609,16 +607,13 @@ def test_the_gateways_internal_secret_reaches_no_mcp_route():
     """🔴 Red on main: ``/api/mcp/servers`` took the loopback internal secret, which a process on
     the machine presents, as the owner. Nothing in PersonalClaw called it that way."""
     from personalclaw.dashboard import server
+    from personalclaw.dashboard.token_auth import InternalRoute
 
-    named: list[str] = []
-    for node in ast.walk(ast.parse(inspect.getsource(server))):
-        if isinstance(node, ast.keyword) and node.arg in ("internal_paths", "mixed_internal_paths"):
-            named += [
-                c.value
-                for c in ast.walk(node.value)
-                if isinstance(c, ast.Constant) and isinstance(c.value, str)
-            ]
-    assert "/api/tools/invoke" in named, "vacuity: the internal paths were not found"
+    named = [
+        InternalRoute.parse(entry).template
+        for entry in server.INTERNAL_ROUTES | server.MIXED_INTERNAL_ROUTES
+    ]
+    assert "/api/tools/invoke" in named, "vacuity: the internal routes were not found"
     assert [p for p in named if p.startswith("/api/mcp")] == []
 
 

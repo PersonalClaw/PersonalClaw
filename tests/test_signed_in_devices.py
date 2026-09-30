@@ -535,7 +535,7 @@ async def test_an_internal_route_refuses_a_browser_in_the_same_words() -> None:
 
     middleware = token_auth.token_auth_middleware(
         port=PORT,
-        mixed_internal_paths=frozenset({"/api/internal/probe"}),
+        mixed_internal_routes=frozenset({"GET /api/internal/probe"}),
         internal_secret="an-internal-secret",
     )
     app = web.Application(middlewares=[middleware])

@@ -118,12 +118,11 @@ def _resolve_excluded_tools() -> set[str]:
         # answered by a stranger.
         api_base = gateway_base.resolve_api_base()
 
-        # Read internal secret for auth
-        secret = ""
-        try:
-            secret = (config_dir() / ".local_secret").read_text().strip()
-        except Exception:
-            pass
+        # The one reader of the gateway's internal credential. A home with none raises, and
+        # the documented fail-open below applies with that cause named.
+        from personalclaw.mcp_core import _internal_secret
+
+        secret = _internal_secret()
 
         # Resolve session key (same logic as mcp_core._resolve_session_key)
         session_key = os.environ.get("PERSONALCLAW_SESSION_KEY", "")

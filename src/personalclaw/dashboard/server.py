@@ -515,6 +515,65 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
     return ""
 
 
+# ── What the gateway's internal credential opens ──────────────────────────────────────────────
+#
+# PersonalClaw's own processes call the gateway over loopback with its internal credential, the
+# `X-Internal-Secret` the gateway writes to `<home>/.local_secret` each time it starts: an agent's
+# tools (in the gateway, and in the `mcp-core` server an agent CLI runs), a scheduled script, the
+# CLI. The credential opens exactly the operations below, each one method on one route written in
+# the router's own syntax (`token_auth.InternalRoute`), and no other: an operation missing here is
+# a tool that fails on every gateway that asks for a sign-in, and an entry nothing calls is a door
+# the credential holds open for nobody. The rail
+# `tests/test_every_internal_call_names_an_operation_that_takes_it.py` holds the list to the calls
+# in the source, both ways.
+
+#: Called only by PersonalClaw's processes, so from off this computer they are refused outright.
+INTERNAL_ROUTES: frozenset[str] = frozenset(
+    {
+        "POST /api/send-message",  # `notify`, and a scheduled script's ctx.notify
+        "POST /api/session-keepalive",  # `wait`
+        "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
+        # A webhook, relayed on this computer (docs/architecture/security.md#webhook-auth); the
+        # route then checks the webhook's own token.
+        "POST /api/hooks/agent",
+        "POST /api/outbox/notify",  # `notify_attachment`
+        "POST /api/channel/upload-file",  # `notify_attachment`
+        "POST /api/tools/invoke",  # a scheduled script's ctx.call_tool
+        # The computer-use shim in the `mcp-core` process. Deliberately not mixed: no browser
+        # surface drives the desktop, and admitting cookie auth on this one route would put the
+        # operator's keyboard behind the weakest browser path.
+        "POST /api/computer-use/dispatch",
+    }
+)
+
+#: Called by those processes AND by the dashboard, so a browser's session is judged here from any
+#: address (a browser reaching the gateway through a forward or a container's port is not on
+#: loopback), and a wrong credential beside it is still refused.
+MIXED_INTERNAL_ROUTES: frozenset[str] = frozenset(
+    {
+        "GET /api/spawn",  # `subagent_list`
+        "POST /api/spawn",  # `subagent_run`
+        "GET /api/spawn/{agent_id}",  # `subagent_status`
+        "GET /api/lessons",  # `memory_list`
+        "POST /api/lessons",  # `memory_remember`
+        "DELETE /api/lessons",  # `memory_forget`
+        "GET /api/memory/recall",  # `memory_recall`
+        "GET /api/memory/approval-rules",  # `triage_rules_list`
+        "POST /api/memory/approval-rules",  # `triage_rules` add
+        "DELETE /api/memory/approval-rules/{key:.+}",  # `triage_rules` revoke
+        "POST /api/prompts/{name:.+}/render",  # `prompt_render`
+        "POST /api/workflows",  # `subagent_run` saves a batch it compiled ...
+        "POST /api/workflows/runs",  # ... and starts it
+        "GET /api/autonudge/session/{session_name}",  # `loop_nudge_stop` finds its loop ...
+        "DELETE /api/autonudge/{loop_id}",  # ... and stops it
+        "GET /api/chat/sessions/bound-project",  # the artifact tools' project, in `mcp-core`
+        "GET /api/context",  # `get_context`
+        "POST /api/triggers/{id}/run",  # `automation_run`, `personalclaw cron trigger`
+        "POST /api/auth/rotate-key",  # `personalclaw auth rotate-key`
+    }
+)
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -869,37 +928,8 @@ async def start_dashboard(
             else [
                 csrf_middleware,
                 token_auth_middleware(
-                    internal_paths=frozenset(
-                        {
-                            "/api/send-message",
-                            "/api/session-keepalive",
-                            "/api/session-tool-policy",
-                            "/api/hooks/agent",
-                            "/api/outbox/notify",
-                            "/api/channel/upload-file",
-                            "/api/tools/invoke",
-                            # The computer-use shim runs in the mcp-core process and posts
-                            # here with the internal secret. Deliberately NOT in
-                            # mixed_internal_paths: no browser surface drives the desktop, and
-                            # admitting cookie auth on this one route would put the operator's
-                            # keyboard behind the weakest browser path.
-                            "/api/computer-use/dispatch",
-                        }
-                    ),
-                    mixed_internal_paths=frozenset(
-                        {
-                            # Called by MCP (loopback + secret) AND browser polling
-                            # (DCV/SSH-forwarded cookie auth).  See token_auth.py.
-                            "/api/spawn",
-                            "/api/lessons",
-                            # Trigger routes: browser (cookie) for the UI, plus the
-                            # internal on-demand fire (cron trigger / schedule_trigger
-                            # MCP tool) POSTs /api/triggers/{id}/run with the secret.
-                            "/api/triggers",
-                            # Settings → Security (cookie) and `personalclaw auth rotate-key`.
-                            "/api/auth/rotate-key",
-                        }
-                    ),
+                    internal_routes=INTERNAL_ROUTES,
+                    mixed_internal_routes=MIXED_INTERNAL_ROUTES,
                     internal_secret=_internal_secret,
                     port=port,
                     local_only=local_only,

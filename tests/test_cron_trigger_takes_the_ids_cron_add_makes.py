@@ -49,6 +49,7 @@ _AGENT = {
 def home(tmp_path, monkeypatch):
     """One home for the CLI and the gateway's handlers, as an install has."""
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(loader, "resolve_config_dir", lambda env=None: tmp_path)
     monkeypatch.setattr(cli_commands, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(T, "_trigger_store", lambda: TriggerStore(base_dir=tmp_path))
@@ -78,7 +79,9 @@ def ran(monkeypatch):
 
 @pytest.fixture
 def gateway(home, monkeypatch):
-    """The gateway's real run and history routes on 127.0.0.1, with `_post` pointed at them."""
+    """The gateway's real run and history routes on 127.0.0.1, with `_post` pointed at them,
+    and the internal credential a gateway writes to its home when it starts."""
+    (home / ".local_secret").write_text("a-gateway-credential", encoding="utf-8")
 
     @web.middleware
     async def as_owner(request, handler):
