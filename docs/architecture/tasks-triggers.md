@@ -541,6 +541,30 @@ warns only when the action can call a model: providers listed in
 are exempt, and anything unlisted — app-contributed actions included — keeps
 the warning.
 
+### A one-shot runs, is recorded, and only then leaves the list
+
+A clock trigger with no next fire — a one-time `at` — has its slot taken by the
+fire that grants it (`service.tick`): switched off with no next fire, in the same
+write that records the grant, after its claim is on disk. The gateway's runner
+fires the STORED row (read through `routing.routed`, so a row an app serves is
+found too), and the recorder writes its run. A one-shot that retires after its
+run (`spec.delete_after_run`: the Triggers page's One-shot and a decision's
+review) leaves the store only then (`service.retire_after_run`), and only for a
+run that did its work: on time, late, or with nothing to do. One whose action
+only started work (an agent, a workflow run) goes when that work ends and its
+note has gone out (`GatewayOrchestrator._report_to_its_trigger`). A run that
+failed, was held by a gate or waits on you leaves the row in the list, switched
+off, with its record. The chat's one-time task keeps its row either way. A
+run's record outlives its trigger, so a new trigger never takes the id of one
+whose runs are kept (`tools._unique_id`): its history is its own.
+
+A fire that starts after its slot by more than `scheduling.LATE_THRESHOLD_SECS`
+is recorded `ran_late` with how late (`missed.late_outcome`, carried on the fire
+as `DueFire.late`). A tick that dies before the grant is written leaves the
+one-shot armed, so it fires on the next tick; one that dies after leaves its
+claim, which the boot's orphan pass below records as interrupted and puts on
+the review, where Run now runs it and it then retires.
+
 ### After a restart: missed and interrupted runs wait for you
 
 Two boot passes find work that did not happen, and neither re-runs it on its

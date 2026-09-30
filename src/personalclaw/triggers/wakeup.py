@@ -302,6 +302,8 @@ def wakeup_for(fire: Any, *, seq: int = 0, now: float = 0.0) -> Wakeup:
             "kind": str(getattr(trigger, "kind", "") or ""),
             "scheduled_for": float(getattr(fire, "scheduled_for", 0) or 0),
             "reason": str(getattr(fire, "reason", "") or ""),
+            # Why the tick counts this fire as late, for the run's record (`DueFire.late`).
+            "late": str(getattr(fire, "late", "") or ""),
         },
         seq=seq,
         emitted_at=now or time.time(),

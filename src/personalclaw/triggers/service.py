@@ -43,7 +43,9 @@ payload surviving in the inbox, which is only true if deciding and running are s
 so a crash
 mid-fire cannot double-fire. The alternative — recompute-on-poll — re-derives the same due
 time after a
-crash and fires again.
+crash and fires again. A one-shot has no next fire, so what is persisted is that its slot is
+taken — in the same write that grants its fire — and its row stays until a run of it has done its
+work (`retire_after_run`), because the dispatch fires the STORED row.
 
 **Recompute from COMPLETION, anchored to `created_at`.** Not from the missed slot: a run that
 overruns its interval would otherwise produce a fire storm catching up. And anchored to the
@@ -105,6 +107,10 @@ class DueFire:
     claim: Any = None
     scheduled_for: float = 0.0
     reason: str = ""
+    #: Why this fire counts as late (`missed.late_outcome`), or "" when it is on time. The tick is
+    #: the one place holding both the slot and the start, and the run's record is written by the
+    #: dispatch once the run settles, so the decision rides the fire to it.
+    late: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +118,7 @@ class DueFire:
             "kind": self.trigger.kind,
             "scheduled_for": self.scheduled_for,
             "reason": self.reason,
+            "late": self.late,
         }
 
 
@@ -130,9 +137,12 @@ class TickResult:
     next_sleep: float = MAX_SLEEP_SECS
     #: Trigger ids whose `next_fire_at` this tick advanced and persisted.
     rescheduled: list[str] = field(default_factory=list)
-    #: Trigger ids retired this tick — a one-shot that has no next fire. Named rather than silent:
-    #: "it stopped existing" is the one state change a user most needs to see explained, and leaving
-    #: an elapsed `next_fire_at` in place instead would re-fire the same past slot every tick.
+    #: Trigger ids whose last slot this tick took — a one-shot, which has no next fire. Each is
+    #: switched off with no next fire, never left holding its elapsed `next_fire_at`, which would
+    #: re-fire the same past slot every tick. Named rather than silent: "it stopped" is the one
+    #: state change a user most needs explained. A one-shot that retires after its run
+    #: (`delete_after_run`) leaves the store only once a run of it has done its work
+    #: (`retire_after_run`).
     retired: list[str] = field(default_factory=list)
     #: Trigger ids brought back from PARKED this tick, their cooldown having elapsed. Named
     #: for the same reason `retired` is: a state change the user did not make must be explainable,
@@ -397,7 +407,7 @@ def next_after_completion(trigger: Trigger, *, completed_at: float, now: float) 
             interval_secs=interval, created_at=anchor, completed_at=completed_at
         )
     # cron / at: the spec decides. `at` correctly yields 0.0 once elapsed — a one-shot has no next
-    # fire, and `delete_after_run` retires the row.
+    # fire, so the tick takes its slot and `retire_after_run` removes a `delete_after_run` row.
     return next_fire(trigger, now=max(now, completed_at))
 
 
@@ -487,27 +497,30 @@ async def tick(
         # twice, and
         # a double-fire is the one failure a user cannot undo.
         advanced = next_after_completion(trigger, completed_at=now, now=now)
-        if persist:
-            if advanced > 0:
-                trigger.next_fire_at = to_iso(advanced)
-                store.upsert(trigger)
-                result.rescheduled.append(trigger.id)
-            else:
-                # 🔴 A trigger with no next fire is RETIRED here, never left holding its elapsed
-                # `next_fire_at`. A one-shot `at` kept the past timestamp, so EVERY later
-                # tick read it as still-due and re-fired it — a storm on a single past slot, not
-                # merely an inert row. `delete_after_run` (declared in the clock spec, defaulting
-                # True for a migrated `at`, and until now consumed by nothing) decides which:
-                # delete the row, or clear the fire and disable so it stays visible in the UI.
-                spec = trigger.spec if isinstance(trigger.spec, dict) else {}
-                if bool(spec.get("delete_after_run", False)):
-                    store.delete(trigger.id)
-                    result.retired.append(trigger.id)
-                else:
-                    trigger.next_fire_at = ""
-                    trigger.enabled = False
-                    store.upsert(trigger)
-                    result.retired.append(trigger.id)
+        spent = advanced <= 0
+        if spent:
+            # 🔴 A trigger with no next fire (a one-shot) has its slot TAKEN: switched off with no
+            # next fire, never left holding its elapsed `next_fire_at`, which every later tick read
+            # as still-due — a storm on one past slot. And never DELETED here: that is what the
+            # Triggers page's One-shot did (`delete_after_run`), and the dispatch fires the STORED
+            # row, so it found nothing and the reminder vanished at its time with no run, no record
+            # and no error. The row goes once a run of it has done its work (`retire_after_run`).
+            #
+            # Persisted by the grant in `admit_fire` — after its claim is on disk, in the same write
+            # as its meters — or below for a refused fire. A tick that dies before then leaves the
+            # one-shot armed, so it fires again; one that dies after leaves a claim the boot's
+            # orphan pass puts on the review. Neither loses it, and a fire whose action may have run
+            # is never run again on its own.
+            trigger.next_fire_at = ""
+            trigger.enabled = False
+            # Its slot is its own time. A boot that re-armed it to run just after a restart moved
+            # the fire, not the time it was for, and its history says how late it ran.
+            scheduled_for = _own_time(trigger) or scheduled_for
+            result.retired.append(trigger.id)
+        elif persist:
+            trigger.next_fire_at = to_iso(advanced)
+            store.upsert(trigger)
+            result.rescheduled.append(trigger.id)
 
         # 🔴 `payload_text` is deliberately LEFT EMPTY here (§7/R4 rule a), and that is
         # correct rather than the omission it looks like. A clock trigger carries no external
@@ -526,15 +539,13 @@ async def tick(
             holder=f"tick:{int(now)}",
             user_active=user_active,
             persist=persist,
-            # 🔴 NOT persisted for a RETIRED trigger. Found by a red test rather than by reading:
-            # the retirement branch above `store.delete()`s a `delete_after_run` one-shot, and an
-            # unconditional upsert on the grant RESURRECTED the row it had just removed — turning a
-            # retired one-shot back into a live trigger holding an elapsed slot, which is the storm
-            # The retirement exists to prevent. The in-memory count still rides on the DueFire.
-            persist_trigger=trigger.id not in result.retired,
             slot_map=slot_map,
         )
         decision, row = admission.decision, admission.row
+        if spent and persist and not decision.allowed:
+            # Refused: nothing will run, and its typed row is already its record. No grant wrote the
+            # taken slot, so it is written here — and the row stays, switched off, to be run again.
+            store.upsert(trigger)
         row["scheduled_for"] = scheduled_for
         # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. §1.3 added
         # the outcome and `scheduled_for` together — "a run that started 40 minutes after its
@@ -561,6 +572,7 @@ async def tick(
                     claim=decision.claim,
                     scheduled_for=scheduled_for,
                     reason="due",
+                    late=late_reason,
                 )
             )
 
@@ -589,7 +601,6 @@ async def admit_fire(
     holder: str = "",
     user_active: bool = False,
     persist: bool = True,
-    persist_trigger: bool = True,
     slot_map: dict[str, str] | None = None,
 ) -> Admission:
     """Walk ONE trigger through S86's fire path and record what it decided (§3).
@@ -614,8 +625,9 @@ async def admit_fire(
       writing it on a SUPPRESSED fire would make a blocked fire space out the next real one.
 
     `persist=False` is the dry run (`automation doctor`): the walk runs and nothing is written.
-    `persist_trigger=False` keeps the meters in memory only — the tick's case for a trigger it has
-    just retired, which an upsert here would resurrect.
+
+    The grant's write is the trigger as the caller hands it over, so a one-shot whose slot the tick
+    has taken is switched off by this same write — after its claim is on disk, never before it.
     """
     from personalclaw.triggers import claims
     from personalclaw.triggers import firepath as fp
@@ -688,7 +700,7 @@ async def admit_fire(
         claims.write_claim(decision.claim, base_dir=base_dir)
     trigger.run_count = int(getattr(trigger, "run_count", 0) or 0) + 1
     trigger.last_fired_at = to_iso(now)
-    if persist and persist_trigger:
+    if persist:
         store.upsert(trigger)
     return Admission(decision=decision, row=row)
 
@@ -963,6 +975,59 @@ def budget_spent(trigger: Any) -> bool:
     """
     remaining = _budget_remaining(trigger)
     return remaining is not None and remaining <= 0
+
+
+def _own_time(trigger: Any) -> float:
+    """A one-shot's own time (`spec.at`, epoch seconds), or 0.0 for any other trigger."""
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    if str(spec.get("kind") or "") != "at":
+        return 0.0
+    try:
+        at = float(spec.get("at") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return at if at > 0 else 0.0
+
+
+#: What a run must be recorded as for a one-shot that retires after its run to go: it did its work,
+#: on time or late, or had nothing to do.
+_DID_ITS_WORK: frozenset[str] = frozenset(
+    {Outcome.RAN.value, Outcome.RAN_LATE.value, Outcome.SKIPPED_NOOP.value}
+)
+
+
+def retire_after_run(store: Any, trigger: Any, *, status: str) -> bool:
+    """Remove a `delete_after_run` one-shot once a run of it is recorded as having done its work.
+
+    ``status`` is what the caller just recorded for that run (`ScheduleRun.status`), and
+    ``trigger`` the stored row it read to record it. True when the row went.
+
+    Called by the recorders, after they write the run: the scheduled fire's
+    (`gateway._record_fire_outcome`), the end of work a fire only started
+    (`gateway._report_to_its_trigger`), and a Run now's (`_record_manual_run`), which is how the
+    review runs an interrupted one. The row goes only for a one-shot whose own fire the clock has
+    granted (`last_fired_at` at or after its time) and whose slot the tick took (switched off, no
+    next fire) — never for one switched off before its time, or re-armed since.
+
+    A run that did not do its work — it failed, a gate or the owner held it, it only started work
+    that has not ended, it waits on you — leaves the row in the list, switched off, with its
+    record, so it can still be run. Deleting it would take away the one thing that runs it.
+    """
+    from personalclaw.triggers.history import SCHEDULE_STATUS_TO_OUTCOME
+
+    if SCHEDULE_STATUS_TO_OUTCOME.get(status) not in _DID_ITS_WORK:
+        return False
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    at = _own_time(trigger)
+    if (
+        not bool(spec.get("delete_after_run", False))
+        or bool(getattr(trigger, "enabled", False))
+        or str(getattr(trigger, "next_fire_at", "") or "").strip()
+        or at <= 0
+        or to_epoch(getattr(trigger, "last_fired_at", "")) < at
+    ):
+        return False
+    return bool(store.delete(trigger.id))
 
 
 def boot(store: Any, *, now: float = 0.0, persist: bool = True) -> dict[str, Any]:

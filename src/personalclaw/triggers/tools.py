@@ -484,13 +484,27 @@ def _unique_id(store: Any, base: str) -> str:
     Measured against the real store: `upsert` is an UPSERT, so creating "daily digest" twice would
     replace the first one and report success. A user who asked for a second automation and lost
     their first would have no way to know.
+
+    Nor an automation that is gone but whose runs are still recorded: a one-shot that retired
+    after its run, or one the chat deleted. Its history is keyed by its id, so a new automation
+    taking that id would show a run it never made as its own.
     """
+    from pathlib import Path
+
+    from personalclaw.schedule_history import ScheduleRunStore
+
     existing = {row.trigger.id for row in store.load()}
-    if base not in existing:
+    root = getattr(store, "base_dir", None)
+    runs = ScheduleRunStore(Path(root)) if root is not None else None
+
+    def taken(candidate: str) -> bool:
+        return candidate in existing or (runs is not None and runs.has_runs(candidate))
+
+    if not taken(base):
         return base
     for n in range(2, 100):
         candidate = f"{base}-{n}"
-        if candidate not in existing:
+        if not taken(candidate):
             return candidate
     return f"{base}-{len(existing) + 1}"
 

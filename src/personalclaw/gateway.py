@@ -1240,14 +1240,18 @@ class GatewayOrchestrator:
         """
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers import loop as clock_loop
+        from personalclaw.triggers.routing import routed
         from personalclaw.triggers.store import TriggerStore
 
         store = TriggerStore(base_dir=config_dir())
 
         async def _runner(payload: dict[str, Any]) -> Any:
             trigger_id = str(payload.get("trigger_id") or "")
-            row = store.get(trigger_id)
+            # From every store the tick fired from: an app serves some rows (`routing`), and a
+            # lookup in the local file alone found none of them, so none of them ever ran.
+            row = routed(store).get(trigger_id)
             if row is None:
+                logger.warning("trigger %s was removed before its run; nothing ran", trigger_id)
                 return {"status": "error"}
             await self._fire_store_trigger(row.trigger, payload)
             return {"status": "launched"}
@@ -1723,7 +1727,11 @@ class GatewayOrchestrator:
                         "provider": provider_name,
                     },
                 )
-            await self._record_fire_outcome(trigger, result=result)
+            # The tick's word on lateness rides the fire (`DueFire.late`); only the run's record
+            # knows whether it then ran, so that is where it becomes `ran_late`.
+            await self._record_fire_outcome(
+                trigger, result=result, late=str(payload.get("late") or "")
+            )
             fired_ok = bool(getattr(result, "success", True))
             # An action that only STARTED its work (an agent task, a workflow run) or parked it
             # says nothing yet: "<name> finished" went out the moment the agent started. The work
@@ -2148,22 +2156,36 @@ class GatewayOrchestrator:
         report_to_trigger`): the fire, or the Run now, that started either said nothing, since
         nothing had happened yet (`_says_nothing_now`). Returns whether a note went out; a trigger
         whose route is ``none`` sends nothing.
+
+        A one-shot that retires after its run (`delete_after_run`) and only started this work
+        leaves the list here, once the work has done what it was for and the note has gone out:
+        the note is read off the row, so the row is the last thing to go.
         """
         if not trigger_id:
             return False
         try:
             from personalclaw.config.loader import config_dir
+            from personalclaw.triggers.routing import routed
             from personalclaw.triggers.store import TriggerStore
 
-            row = TriggerStore(base_dir=config_dir()).get(trigger_id)
+            store = routed(TriggerStore(base_dir=config_dir()))
+            row = store.get(trigger_id)
         except Exception:  # noqa: BLE001 - a lookup that fails reports nothing, never raises
             logger.debug("could not read trigger %s for its report", trigger_id, exc_info=True)
             return False
         if row is None:
             return False
-        return self._deliver_fire_outcome(
+        told = self._deliver_fire_outcome(
             row.trigger, ok=not error, error=error, summary=summary, run_id=run_id
         )
+        if not error:
+            try:
+                from personalclaw.triggers.service import retire_after_run
+
+                retire_after_run(store, row.trigger, status="success")
+            except Exception:  # noqa: BLE001 - the report is out; a failed retire leaves the row
+                logger.debug("could not retire trigger %s after its run", trigger_id, exc_info=True)
+        return told
 
     def _deliver_fire_outcome(
         self,
@@ -2279,8 +2301,12 @@ class GatewayOrchestrator:
         result: Any = None,
         exc: BaseException | None = None,
         error: str = "",
+        late: str = "",
     ) -> None:
         """Record a fire's outcome and autopause a failing trigger (§3.7 / crit 3 — S139).
+
+        ``late`` is why the tick counted this fire as late (`missed.late_outcome`): a fire that
+        then did its work records ``ran_late`` and says why, as the review's Run now does.
 
         On the raise path the caller passes the pre-rendered WHAT/WHY/FIX envelope as
         ``error`` (PLATFORM-LEGIBILITY §2); ``exc`` is still passed because the autopause
@@ -2307,11 +2333,14 @@ class GatewayOrchestrator:
             from personalclaw.schedule_history import (
                 ScheduleRun,
                 failure_for_result,
+                late_summary,
                 status_for_result,
                 summary_for_result,
             )
             from personalclaw.triggers import autopause
             from personalclaw.triggers.models import TriggerState
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.service import retire_after_run
             from personalclaw.triggers.store import TriggerStore
 
             trigger_id = str(getattr(trigger, "id", "") or "")
@@ -2354,6 +2383,10 @@ class GatewayOrchestrator:
             if ok_exit and parks.parked(result):
                 # A park's row says it waits on you and on what, not the payload it parked with.
                 output = line = parks.waiting_line(result)
+            status = status_for_result(result) if ok_exit else "failure"
+            if late and status == "success":
+                status = "ran_late"
+                line = late_summary(late, line)
             await store_runs.append(
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
@@ -2361,7 +2394,7 @@ class GatewayOrchestrator:
                     trigger=exit_type,
                     started_at=now,
                     finished_at=now,
-                    status=status_for_result(result) if ok_exit else "failure",
+                    status=status,
                     summary=line if ok_exit else run_error,
                     trace=(output or line) if ok_exit else run_error,
                     error=run_error[:_ERROR_SUMMARY_MAX],
@@ -2395,7 +2428,9 @@ class GatewayOrchestrator:
                 quarantined=str(getattr(trigger, "state", "")) == TriggerState.QUARANTINED.value,
             )
 
-            store = TriggerStore(base_dir=config_dir())
+            # Routed, as the tick is: a row an app serves has its health and stamps kept where it
+            # lives, and a plain lookup in the local file found none of them.
+            store = routed(TriggerStore(base_dir=config_dir()))
             row = store.get(trigger_id)
             if row is None:
                 return
@@ -2457,6 +2492,9 @@ class GatewayOrchestrator:
             # indistinguishable from one that finished. The card is what turns the state change into
             # something the user can act on.
             self._surface_attention_card(live, decision)
+            # A one-shot that retires after its run goes now, its run recorded: last, so no write
+            # above can put it back. One whose run did not do its work stays, switched off.
+            retire_after_run(store, live, status=status)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.debug("could not record the fire outcome for %s", trigger, exc_info=True)
 

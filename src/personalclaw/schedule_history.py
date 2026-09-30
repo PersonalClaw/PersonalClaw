@@ -215,6 +215,17 @@ def failure_for_result(result: Any) -> str:
     return "the action reported failure"
 
 
+def late_summary(late: str, summary: str) -> str:
+    """The history row's line for a run that ran late: why, as its own sentence, then what it did.
+
+    ONE answer for both recorders, as :func:`summary_for_result` is: a scheduled fire the clock
+    reached well after its slot (`missed.late_outcome`) and the review's Run now standing in for a
+    slot that did not run (`missed.resolve_missed`). Such a run records `ran_late` when it
+    succeeded; this is what its row then says.
+    """
+    return f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
+
+
 def _redact_stored(text: str | None) -> str:
     """Credential-redact a field on its way INTO the run ledger (criterion 11 — S138).
 
@@ -427,6 +438,18 @@ class ScheduleRunStore:
         return True
 
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
+
+    def has_runs(self, job_id: str) -> bool:
+        """Whether any run of ``job_id`` is recorded. Sync and cheap: one ``stat``.
+
+        A run's record outlives its trigger — a one-shot retires after its run, and the chat's
+        delete keeps the history — so a new trigger must not take an id that still has runs, or
+        it would show them as its own (`triggers.tools._unique_id`).
+        """
+        try:
+            return self._job_path(job_id).exists()
+        except ValueError:
+            return False
 
     def _list_for_job_sync(
         self, job_id: str, offset: int, limit: int

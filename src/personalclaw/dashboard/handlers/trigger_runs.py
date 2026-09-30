@@ -747,10 +747,12 @@ async def _record_manual_run(
         from personalclaw.schedule_history import (
             ScheduleRun,
             failure_for_result,
+            late_summary,
             status_for_result,
             summary_for_result,
         )
         from personalclaw.triggers import parks
+        from personalclaw.triggers.service import retire_after_run
 
         trigger_id = str(getattr(trigger, "id", "") or "")
         if not trigger_id:
@@ -786,7 +788,7 @@ async def _record_manual_run(
                 # A park's row says it waits on you and on what, not the payload it parked with.
                 summary = trace = parks.waiting_line(result)
         if late and status != "failure":
-            summary = f"{late[:1].upper()}{late[1:]}." + (f" {summary}" if summary else "")
+            summary = late_summary(late, summary)
 
         run_id = f"manual-{int(finished * 1000)}"
         # The same store the autonomous recorder appends to; `append_sync` credential-redacts
@@ -835,6 +837,9 @@ async def _record_manual_run(
         else:
             live.last_success_at = stamp
         store.upsert(live)
+        # A one-shot whose own fire was cut off, run again from the review: once this run has done
+        # its work it leaves the list, as its scheduled run would have (`retire_after_run`).
+        retire_after_run(store, live, status=status)
     except Exception:  # noqa: BLE001 - see the docstring: recording must never fail the run
         logger.debug("could not record the manual run for %s", trigger, exc_info=True)
 

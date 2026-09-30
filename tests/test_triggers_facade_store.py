@@ -1534,8 +1534,8 @@ def test_delete_removes_the_store_row(home, state):
 def test_delete_still_drops_the_run_history(home, state):
     """Run history lives in `ScheduleRunStore` (keyed by a plain id, so it survives the cutover), so
     a delete has two halves: drop the trigger AND drop its runs."""
-    _append_run(home)
     _create_schedule(state)
+    _append_run(home)
     _run(
         T.api_trigger_detail(
             _req("DELETE", "/x", state, match_info={"id": "schedule:clock:nightly"})
@@ -1999,8 +1999,8 @@ def test_one_full_run_reads_the_store(home, state):
 
 def test_the_cross_trigger_feed_reads_the_store_and_joins_names(home, state):
     """A run row carries only a `job_id`, so the name is a join (the map) over store rows."""
-    _append_run(home)
     _create_schedule(state, name="Nightly")
+    _append_run(home)
     del state.crons.list_all_runs
     resp = _run(
         T.api_trigger_history_all(_req("GET", "/api/triggers/history", state, query="shape=legacy"))
@@ -2012,8 +2012,8 @@ def test_the_cross_trigger_feed_reads_the_store_and_joins_names(home, state):
 
 def test_deleting_a_trigger_drops_its_runs_through_the_store(home, state):
     """A delete has two halves; the run half no longer needs the legacy service."""
-    _append_run(home)
     _create_schedule(state, name="Nightly")
+    _append_run(home)
     del state.crons.delete_runs
     _run(
         T.api_trigger_detail(

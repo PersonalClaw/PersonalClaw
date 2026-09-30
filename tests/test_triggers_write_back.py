@@ -374,19 +374,31 @@ def test_boot_arms_an_app_served_row_into_the_providers_store(native, team):
     assert _local_ids(native) == []
 
 
-def test_a_retiring_one_shot_is_deleted_from_the_providers_store(native, team):
-    """`delete_after_run` retirement must remove the row where it lives. Deleting a local row that
-    never existed would leave the provider's copy live on an elapsed slot — the storm again."""
+def _fired_one_shot(native, team, tid: str):
+    """An app-served `delete_after_run` one-shot whose fire the tick has granted. Returns the row as
+    the provider now holds it."""
     team.seed(
         _trigger(
-            "one-shot",
+            tid,
             author=OWNER,
             next_at=NOW - 60,
-            spec={"kind": "at", "at": SVC.to_iso(NOW - 60), "delete_after_run": True},
+            spec={"kind": "at", "at": NOW - 60, "delete_after_run": True},
         )
     )
     result = asyncio.run(SVC.tick(native, now=NOW, persist=True))
-    assert result.retired == ["one-shot"]
+    assert result.retired == [tid]
+    return team.get(tid).trigger
+
+
+def test_a_retiring_one_shot_is_deleted_from_the_providers_store(native, team):
+    """`delete_after_run` retirement must remove the row where it lives. Deleting a local row that
+    never existed would leave the provider's copy live on an elapsed slot — the storm again.
+    Its fire takes the slot IN the provider's store; the run that did its work then removes it
+    there."""
+    taken = _fired_one_shot(native, team, "one-shot")
+    assert taken.enabled is False and taken.next_fire_at == ""
+    assert _local_ids(native) == []
+    assert SVC.retire_after_run(ROUTE.routed(native), taken, status="success") is True
     assert team.load() == []
     assert _local_ids(native) == []
 
@@ -469,17 +481,11 @@ def test_a_provider_whose_write_cannot_be_read_back_is_quarantined(native, team)
 
 
 def test_a_provider_whose_delete_leaves_the_row_is_quarantined(native, team):
-    """A retirement that did not take leaves a live row on an elapsed slot — the same storm."""
-    team.seed(
-        _trigger(
-            "sticky",
-            author=OWNER,
-            next_at=NOW - 60,
-            spec={"kind": "at", "at": SVC.to_iso(NOW - 60), "delete_after_run": True},
-        )
-    )
+    """A retirement that did not take leaves the row behind — the provider says it deleted and did
+    not, so nothing it reports can be trusted."""
+    taken = _fired_one_shot(native, team, "sticky")
     team.noop_delete = True
-    asyncio.run(SVC.tick(native, now=NOW, persist=True))
+    SVC.retire_after_run(ROUTE.routed(native), taken, status="success")
     assert "delete()" in ROUTE.quarantine_report()["team"]
     assert asyncio.run(SVC.tick(native, now=NOW, persist=True)).fires == []
 

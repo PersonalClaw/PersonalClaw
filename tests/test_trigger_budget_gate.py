@@ -336,14 +336,11 @@ def test_a_24H_STORM_drops_NOTHING(store, tmp_path):
     assert rows == 1440, "one typed row per slot — zero silent drops"
 
 
-def test_the_counter_does_NOT_RESURRECT_a_retired_one_shot(store, tmp_path):
-    """🔴 Found by a red test, not by reading. The retirement branch `store.delete()`s a
-    `delete_after_run` one-shot; an unconditional counter upsert RESURRECTED the row it had just
-    removed — turning a retired one-shot back into a live trigger holding an elapsed slot, which is
-    exactly the storm the retirement exists to prevent.
-
-    The counter increment and the retirement both write the store in the same iteration, so their
-    ORDER is a real contract rather than an implementation detail.
+def test_the_counter_write_does_NOT_RE_ARM_a_one_shot_whose_slot_was_taken(store, tmp_path):
+    """🔴 Found by a red test, not by reading. The counter increment and the slot being taken write
+    the same row in the same iteration; a counter upsert of a stale copy would put the one-shot
+    back as a live trigger holding an elapsed slot, which is exactly the storm the retirement
+    exists to prevent. So the grant's one write carries both: counted, and switched off.
     """
     store.upsert(
         Trigger(
@@ -360,7 +357,10 @@ def test_the_counter_does_NOT_RESURRECT_a_retired_one_shot(store, tmp_path):
     result = asyncio.run(svc.tick(store, now=NOW + 3601, base_dir=tmp_path, persist=True))
     assert [f.trigger.id for f in result.fires] == ["clock:once"]
     assert result.retired == ["clock:once"]
-    assert store.get("clock:once") is None, "a retired one-shot must stay deleted"
+    taken = store.get("clock:once").trigger
+    assert taken.run_count == 1
+    assert taken.enabled is False and taken.next_fire_at == "", "its slot stays taken"
+    assert asyncio.run(svc.tick(store, now=NOW + 3700, base_dir=tmp_path)).fires == []
 
 
 def test_a_one_shot_that_KEEPS_its_row_is_still_disabled(store, tmp_path):

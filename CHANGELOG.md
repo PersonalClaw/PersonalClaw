@@ -147,6 +147,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings → Security says how long a sign-in from a token link lasts, beside how long a browser sign-in lasts.**
 - **Where there is no keychain, the keychain switch in Settings → Security is unavailable and says why.**
 - **Settings → External access says when the control bridge is switched on but not listening yet, and that it starts listening the next time PersonalClaw starts.**
+- **A one-shot made on the Triggers page, or a decision's review, runs at its time and is in its history before it leaves the list, a late run says it ran late, and a schedule an app serves runs its action.**
 - **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
 - **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
 - **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**

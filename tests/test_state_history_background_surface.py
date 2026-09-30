@@ -256,7 +256,7 @@ def test_the_surface_still_holds_when_the_OUTCOME_is_recorded(probe, monkeypatch
     orch = _orch()
     at_record: list[str] = []
 
-    async def _record(trigger, *, result=None, exc=None):  # noqa: ANN001, ARG001
+    async def _record(trigger, *, result=None, exc=None, **_kw):  # noqa: ANN001, ARG001
         at_record.append(sh.current_surface())
 
     orch._record_fire_outcome = _record

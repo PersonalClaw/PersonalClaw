@@ -171,15 +171,21 @@ def test_a_second_tick_at_the_same_instant_fires_nothing(tmp_path):
 
 def test_a_one_shot_is_retired_after_firing(tmp_path):
     """🔴 An `at` has no next fire, so leaving its elapsed `next_fire_at` in place re-fires the same
-    past slot forever. `delete_after_run` (declared in the spec, defaulting True for a migrated
-    `at`, and consumed by NOTHING before this) decides how it retires."""
+    past slot forever. Its fire takes the slot: switched off, no next fire. A `delete_after_run`
+    one-shot is removed only after a run of it has done its work (`retire_after_run`) — the
+    dispatch fires the stored row, so deleting it here left its fire nothing to run."""
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_clock({"kind": "at", "at": NOW + 3600, "delete_after_run": True}, tid="once"))
     SVC.boot(store, now=NOW)
     result = asyncio.run(SVC.tick(store, now=NOW + 3601))
     assert [f.trigger.id for f in result.fires] == ["once"]
     assert result.retired == ["once"]
-    assert store.get("once") is None  # deleted
+    taken = store.get("once").trigger
+    assert taken.enabled is False and taken.next_fire_at == ""
+    assert asyncio.run(SVC.tick(store, now=NOW + 3700)).fires == []
+    assert SVC.retire_after_run(store, taken, status="failure") is False
+    assert SVC.retire_after_run(store, taken, status="success") is True
+    assert store.get("once") is None
 
 
 def test_a_one_shot_that_keeps_its_row_is_disabled_not_left_armed(tmp_path):
