@@ -22,8 +22,8 @@ this merger touches only the authoritative DB, per §4.1 "indexes rebuilt on imp
 
 Verdicts returned to the cursor: ``consumed`` on a clean merge; ``prerequisite-absent`` if this
 seq carried no DB copy for the entry (a row-only export mis-routed here — hold, don't advance
-past unmerged data); ``payload-bad`` if the merge itself fails (advance past a poison DB so it
-can't wedge every later seq).
+past unmerged data); ``payload-bad`` if the merge itself fails or leaves the DB, or a table of
+it, unchanged (advance past a poison DB so it can't wedge every later seq).
 """
 
 from __future__ import annotations
@@ -67,18 +67,26 @@ def make_db_merger(home: Path) -> DbMerger:
             return PREREQ_ABSENT
         dst = Path(home) / entry.path
         try:
-            _apply_db_merge(entry.id, src, dst)
+            left = _apply_db_merge(entry.id, src, dst)
         except Exception as exc:  # noqa: BLE001 — one bad DB must not wedge the whole pull
             logger.warning("db_merge: %s failed (%s) — advancing past it", entry.id, exc)
             return PAYLOAD_BAD
         embedding_arrivals.arrived()
+        if left:
+            # The merge functions report what they could not bring in rather than raising, so
+            # a restore goes on to the next store; here that is this seq's verdict.
+            logger.warning(
+                "db_merge: %s left unchanged: %s — advancing past it", entry.id, ", ".join(left)
+            )
+            return PAYLOAD_BAD
         return CONSUMED
 
     return _merge
 
 
-def _apply_db_merge(entry_id: str, src: Path, dst: Path) -> None:
-    """ATTACH-merge ``src`` into the live ``dst`` DB via the right snapshot merge function.
+def _apply_db_merge(entry_id: str, src: Path, dst: Path) -> list[str]:
+    """ATTACH-merge ``src`` into the live ``dst`` DB via the right snapshot merge function, and
+    return what it left unchanged (empty when everything came in).
 
     A live DB that doesn't exist yet is created by copying the source wholesale (the first sync
     onto a fresh machine); otherwise the merge functions ATTACH and INSERT OR IGNORE, so the
@@ -92,9 +100,11 @@ def _apply_db_merge(entry_id: str, src: Path, dst: Path) -> None:
         import shutil
 
         shutil.copy2(src, dst)
-        return
+        return []
+    left: list[str] = []
     if entry_id == _MEMORY_DB_ENTRY:
         # memory.db: the is_deleted=0 allowlist merge, so deletes are not resurrected.
-        snapshot._merge_memory(src, dst)
+        snapshot._merge_memory(src, dst, left_unchanged=left)
     else:
-        snapshot._merge_sqlite_attach(src, dst, entry_id)
+        snapshot._merge_sqlite_attach(src, dst, entry_id, left_unchanged=left)
+    return left

@@ -11,6 +11,7 @@ import {
   type DurabilityHistoryDiffFile,
   type DurabilityHistoryEntry,
   type DurabilityHistoryPreview,
+  type DurabilityRestoreResult,
   type DurabilityStatus,
   type DurabilitySyncStatus,
   type SettingsProvider,
@@ -414,6 +415,16 @@ function namePaths(paths: string[]): string {
  *  is being done, so the count and the names are IN the dialog rather than left implied by the
  *  ticks on the card behind it. The whole-root wording is unchanged: the default path is the same
  *  sentence it has always been. */
+/** What a merge restore says once it is done. A part it could not bring in is named, so a merge
+ *  that left the knowledge library as it was never reads as "Merged". */
+export function mergedCopy(name: string, r: DurabilityRestoreResult): string {
+  const left = r.left_unchanged ?? []
+  const restart = r.restart ? ` ${r.restart}` : ''
+  if (left.length === 0) return `Merged ${name}.${restart}`
+  const parts = left.length === 1 ? '1 part' : `${left.length} parts`
+  return `Merged ${name}, but left ${parts} unchanged: ${left.join(', ')}.${restart}`
+}
+
 /** The sentences a user reads before letting the app set aside work on disk.
  *
  *  EXPORTED for its rail. This is a pure function from counts to prose, so its contract can be
@@ -721,10 +732,8 @@ function ArchiveSection({ snaps, onChanged }: {
     try {
       const r = await api.durabilityArchiveRestore(a.id, { mode: 'merge', confirm: true })
       notify(
-        r.ok === false
-          ? `Restore refused: ${r.error?.message ?? 'unknown reason'}`
-          : `Merged ${a.name}.${r.restart ? ` ${r.restart}` : ''}`,
-        r.ok === false ? 'error' : 'success',
+        r.ok === false ? `Restore refused: ${r.error?.message ?? 'unknown reason'}` : mergedCopy(a.name, r),
+        r.ok === false || (r.left_unchanged ?? []).length > 0 ? 'error' : 'success',
       )
       onChanged()
     } catch (e) {

@@ -65,13 +65,11 @@ const useSecurity = () => useQuery('settings:security', () => api.securityStats(
 // panel's rails.
 const useSecretsVault = () => useQuery('settings:secrets-card', () => api.secrets(), { persist: true })
 const useMemoryStats = () => useQuery('settings:memory-stats', () => api.memoryStats(), { persist: true })
-// Today's spend for the Usage bento tile. Midnight-UTC
-// window matches the Usage panel's "Today". A ledger read that FAILS now rejects and the tile says
-// so; `null` is once again only what the ledger itself returns.
-const useUsageToday = () => useQuery('settings:usage-today', () => {
-  const since = `${new Date().toISOString().slice(0, 10)}T00:00:00+00:00`
-  return api.usageTotals({ since }).then((d) => d.totals)
-}, { persist: false })
+// Today's spend for the Usage bento tile: the Usage panel's "Today", the gateway's local day the
+// daily cap counts. A ledger read that FAILS now rejects and the tile says so; `null` is once again
+// only what the ledger itself returns.
+const useUsageToday = () => useQuery('settings:usage-today',
+  () => api.usageTotals({ window: 'day' }).then((d) => d.totals), { persist: false })
 const useModelsActive = () => useQuery('settings:models-active', () => api.modelsActive(), { persist: true })
 // Routing efficiency for the default (chat, short_chat) bucket — the card's headline
 // is how many models are on the Pareto frontier there; deep-links into the subpage,

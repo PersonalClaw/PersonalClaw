@@ -5,7 +5,8 @@ Four read-only GETs, deliberately in ONE module because they answer one user que
 this cost me?") at different grains, and a second usage handler module would split that answer:
 
 * ``/api/usage/rollup`` + ``/api/usage/totals`` — the ledger (``usage_ledger``), one row
-  per model call, filterable by session and an arbitrary ``[since, until)`` window. The
+  per model call, filterable by session and an arbitrary ``[since, until)`` window, or by the
+  fold's ``window`` of local days so a page's tiles and its chart count the same days. The
   session-grain forensic view.
 * ``/api/usage`` — the per-DAY durable fold (``routing/usage.py``) of the same ledger,
   grouped by model / provider / purpose under the single ``interactive|background|loop|eval|app``
@@ -29,6 +30,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw import spend_day
 from personalclaw import usage_ledger as ul
 from personalclaw.constants import dashboard_history_key
 from personalclaw.http_errors import json_error
@@ -36,16 +38,40 @@ from personalclaw.routing import usage as usage_fold
 
 logger = logging.getLogger(__name__)
 
+
+def _bounds(request: web.Request) -> tuple[str, str] | web.Response:
+    """The ``[since, until)`` a ledger read covers: the query's own, or the start of the fold's
+    ``window`` (``day``/``week``/``month``) of local days, which ends now. A window is the days the
+    daily cap counts (``spend_day``), so "Today" here is the cap's today, not the UTC one."""
+    since = request.query.get("since", "")
+    until = request.query.get("until", "")
+    window = request.query.get("window", "")
+    if not window:
+        return since, until
+    if window not in usage_fold.WINDOW_DAYS:
+        return json_error(
+            "bad_request",
+            message=f"window must be one of {list(usage_fold.WINDOW_DAYS)}, got {window!r}",
+            status=400,
+        )
+    if since or until:
+        return json_error(
+            "bad_request", message="give a window or since/until, not both", status=400
+        )
+    return spend_day.start_of(usage_fold.window_dates(window)[0]), ""
+
+
 # The rollup grouping keys the ledger supports (mirrors usage_ledger._GROUP_KEYS);
 # validated at the route boundary so a bad ?group_by= is a clean 400, not a 500.
 _GROUP_KEYS = ("model", "source", "agent", "provider", "day")
 
 
 async def api_usage_rollup(request: web.Request) -> web.Response:
-    """GET /api/usage/rollup?group_by=&since=&until=&session= — aggregated ledger rows.
+    """GET /api/usage/rollup?group_by=&since=&until=&window=&session= — aggregated ledger rows.
 
     ``group_by`` defaults to ``model``; ``since``/``until`` are optional ISO
-    timestamps bounding a ``[since, until)`` window (empty = unbounded); ``session``
+    timestamps bounding a ``[since, until)`` window (empty = unbounded), or ``window`` names
+    the fold's days instead (:func:`_bounds`); ``session``
     restricts to one session key (empty = all). The param carries the bare chat session
     id the frontend/URL hold; ledger rows are keyed by the ``dashboard:``-namespaced
     form (``chat_runner.run_chat`` writes via ``_history_key_for``), so it is
@@ -59,8 +85,10 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
             message=f"group_by must be one of {list(_GROUP_KEYS)}, got {group_by!r}",
             status=400,
         )
-    since = request.query.get("since", "")
-    until = request.query.get("until", "")
+    bounds = _bounds(request)
+    if isinstance(bounds, web.Response):
+        return bounds
+    since, until = bounds
     session = request.query.get("session", "")
     session_key = dashboard_history_key(session) if session else session
     try:
@@ -77,13 +105,17 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
 
 
 async def api_usage_totals(request: web.Request) -> web.Response:
-    """GET /api/usage/totals?since=&until=&session= — the grand total over the window.
+    """GET /api/usage/totals?since=&until=&window=&session= — the grand total over the window.
+
+    The window is bounded as :func:`api_usage_rollup` bounds it.
 
     ``session`` (when given) restricts to one session key — the session-total surface
     (``ChatPage``'s cost chip). Canonicalized the same way as ``api_usage_rollup``
     above — see that docstring (CATO-7)."""
-    since = request.query.get("since", "")
-    until = request.query.get("until", "")
+    bounds = _bounds(request)
+    if isinstance(bounds, web.Response):
+        return bounds
+    since, until = bounds
     session = request.query.get("session", "")
     session_key = dashboard_history_key(session) if session else session
     try:

@@ -198,6 +198,14 @@ cosine floor keeps weak vector hits from polluting precise keyword queries.
 `search()` returns hits only; `search_with_diagnostics()` returns the same hits
 plus the typed reasons the library could not answer.
 
+The vector arm's candidates come from a sqlite-vec index of the chunk vectors
+(`knowledge/vector_index.py`), in the same database file. Rows that arrive around
+the store's write-through, a merge restore or a folder sync taking another copy's
+chunks, rebuild it from the chunk rows (`ChunkVectorIndex.rebuild_all`, from
+`snapshot._merge_sqlite_attach`), and the full-text index is rebuilt by its own
+command; a process that cannot load sqlite-vec leaves the index to the store's
+reconciliation on its next search.
+
 ### Searchability
 
 `knowledge/searchability.py` owns ONE vocabulary for "this item persisted and

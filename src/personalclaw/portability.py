@@ -952,8 +952,11 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     shutil.copy2(str(snap / "memory.db"), str(pc / "memory.db"))
                     summary["items"].append("memory (copied)")
                 else:
-                    _merge_memory(snap / "memory.db", pc / "memory.db")
-                    summary["items"].append("memory (merged)")
+                    left: list[str] = []
+                    _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
+                    summary["items"].append(
+                        "memory (left unchanged)" if left else "memory (merged)"
+                    )
 
             # Staging is append-only and prunable: copy it when absent, never merge.
             # Merging two capture logs would double-count evidence occurrences, and

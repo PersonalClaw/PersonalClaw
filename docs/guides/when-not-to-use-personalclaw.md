@@ -239,7 +239,8 @@ have controls under **Settings → Guardrails**: `guardrails.budgets.max_tokens_
 `BudgetConfig`). A spent token ceiling pauses unattended runs into needs-input rather than
 overspending quietly, and a dollar ceiling refuses each call that costs money once there is no
 room for it, while calls to a model that costs nothing keep running. The day counter is
-persisted to `~/.personalclaw/spend.json` so it survives a restart. That is a genuine control.
+persisted to `~/.personalclaw/spend.json` so it survives a restart, and its day is this
+machine's local day, the day Settings → Usage counts too. That is a genuine control.
 Four things about it are worth knowing *before* you point a goal loop at something and go to
 bed:
 

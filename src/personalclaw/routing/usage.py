@@ -67,19 +67,24 @@ yet: ``--rebuild-routing-stats`` appears in §1.3 and in ``stats.py``'s docstrin
 argument implements it, so the rebuild is reached through :func:`refresh`, which every
 ``GET /api/usage`` calls — a deleted fold self-heals on the next read. :func:`refresh` merges the
 refold OVER the persisted fold so days that have aged out of the capped JSONL survive (the ledger
-trims at 2×50000): per cell it keeps whichever saw more ``calls``, which is correct because trimming
-can only remove rows from a completed day, never add them. That is why a durable fold earns its
-place beside the ledger's own ``group_by="day"`` rollup, which can only see the retained tail.
+trims at 2×50000): the refold owns every day after its first, and on that first day, which trimming
+may have cut into, per cell it keeps whichever saw more ``calls`` (:func:`_merge_days`). That is why
+a durable fold earns its place beside the ledger's own ``group_by="day"`` rollup, which can only see
+the retained tail.
+
+**A day is this machine's local day** (:mod:`personalclaw.spend_day`), the day the daily cap counts,
+so the Usage page's "Today" and chart and the cap beside them count one day.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from personalclaw import spend_day
 from personalclaw.atomic_write import atomic_write
 from personalclaw.routing.rates import rate_for
 from personalclaw.routing.stats import ref_of
@@ -257,20 +262,6 @@ def _count(bucket: dict[str, Any], key: str) -> None:
     bucket[key] = int(bucket.get(key, 0)) + 1
 
 
-def _day_from_iso(ts: Any) -> str:
-    """``YYYY-MM-DD`` for the ledger's ISO ``ts`` (same prefix rule as ``usage_ledger._day_of``)."""
-    text = str(ts or "")
-    return text[:10] if len(text) >= 10 else ""
-
-
-def _day_from_epoch(ts: Any) -> str:
-    """``YYYY-MM-DD`` (UTC) for the attempt audit's float-epoch ``ts`` — census use only."""
-    try:
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d")
-    except (TypeError, ValueError, OSError, OverflowError):
-        return ""
-
-
 def fold_turn_row(
     fold: dict[str, Any],
     row: dict[str, Any],
@@ -279,7 +270,7 @@ def fold_turn_row(
 ) -> bool:
     """Fold one ``usage/turns.jsonl`` ledger turn in place. Returns whether it landed in a cell."""
     look = look or _rate_lookup(None)
-    date = _day_from_iso(row.get("ts"))
+    date = spend_day.day_of(row.get("ts"))
     provider = str(row.get("provider", "") or "")
     model = str(row.get("model", "") or "")
     if not date or not (provider or model):
@@ -369,7 +360,7 @@ def audit_census(
         if not row_priced(rec):
             out["unpriced_calls"] += 1
         _count(out["by_use_case"], str(rec.get("use_case", "") or "(blank)"))
-        day = _day_from_epoch(rec.get("ts"))
+        day = spend_day.day_of_epoch(rec.get("ts"))
         if day:
             _count(out["days"], day)
     return out
@@ -451,13 +442,21 @@ def rebuild(
 
 
 def _merge_days(prior: dict[str, Any], fresh: dict[str, Any]) -> dict[str, Any]:
-    """Fresh over prior, per (date, ref, purpose) cell, keeping whichever saw more calls.
+    """The refold for every day it covers whole, and the persisted fold for the days before it.
 
-    Trimming can only REMOVE rows from a completed day, so for an aged day the archived cell is the
-    more complete record; for the still-growing current day the refold is. Monotone either way.
+    Trimming only removes the OLDEST rows, so the refold's first day may be missing some and every
+    later day is complete: on its first day each (ref, purpose) cell keeps whichever saw more
+    calls, and an earlier day survives only in the persisted fold. A later day is the refold's
+    alone, so a persisted day that no longer matches how the retained rows fold (a fold keyed by
+    another zone's days) is replaced, not counted a second time beside them.
     """
+    first = min(fresh) if fresh else ""
     out: dict[str, Any] = {}
     for date in set(prior) | set(fresh):
+        if first and date > first:
+            if date in fresh:
+                out[date] = fresh[date]
+            continue
         p_day, f_day = prior.get(date) or {}, fresh.get(date) or {}
         if not isinstance(p_day, dict) or not isinstance(f_day, dict):
             out[date] = f_day if isinstance(f_day, dict) else p_day
@@ -506,19 +505,14 @@ def refresh(
 # ── query (the read model behind GET /api/usage) ────────────────────────────────────────
 
 
-def _today_utc() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-
-
 def window_dates(window: str, *, today: str = "") -> list[str]:
-    """The dates a window covers, oldest first — a rolling N days including the reference day."""
+    """The days a window covers, oldest first: N local days ending with *today*, which is the day
+    the daily cap is counting unless a caller names another (:mod:`personalclaw.spend_day`)."""
     days = WINDOW_DAYS.get(window, WINDOW_DAYS["day"])
-    ref = today or _today_utc()
     try:
-        end = datetime.strptime(ref, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return spend_day.days_ending(today or spend_day.today(), days)
     except ValueError:
-        end = datetime.now(tz=timezone.utc)
-    return [(end - timedelta(days=n)).strftime("%Y-%m-%d") for n in range(days - 1, -1, -1)]
+        return spend_day.days_ending(spend_day.today(), days)
 
 
 def _agg() -> dict[str, Any]:

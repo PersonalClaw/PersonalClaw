@@ -441,7 +441,7 @@ def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path, ollama_app):
         )
     fold = U.empty_fold()
     look = U._rate_lookup(tmp_path)
-    base = {"ts": f"{DAY1}T00:00:00+00:00", "source": "chat", "input_tokens": 1, "output_tokens": 1}
+    base = {"ts": f"{DAY1}T12:00:00+00:00", "source": "chat", "input_tokens": 1, "output_tokens": 1}
     U.fold_turn_row(fold, {**base, "provider": "ollama", "model": "qwen3:8b"}, look=look)
     U.fold_turn_row(fold, {**base, "provider": "gpu-box", "model": "qwen3:8b"}, look=look)
     U.fold_turn_row(fold, {**base, "provider": "nonesuch", "model": "no-such-model-xyz"}, look=look)
@@ -470,7 +470,7 @@ def test_a_local_turn_is_never_unpriced_whatever_its_row_says(tmp_path, ollama_a
         )
     look = U._rate_lookup(tmp_path)
     base = {
-        "ts": f"{DAY1}T00:00:00+00:00",
+        "ts": f"{DAY1}T12:00:00+00:00",
         "source": "chat",
         "input_tokens": 1,
         "output_tokens": 1,

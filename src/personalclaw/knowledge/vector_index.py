@@ -328,7 +328,15 @@ class ChunkVectorIndex:
             table = index_table_name(dim)
             indexed = self.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
             if indexed != live:
-                self._rebuild(dim, live=live, indexed=indexed)
+                logger.info(
+                    "knowledge vector search: rebuilding the chunk ANN index at %d dimensions "
+                    "(index had %d rows, %d embedded chunks live) — a database written before "
+                    "the index existed, or by a process that could not load sqlite-vec.",
+                    dim,
+                    indexed,
+                    live,
+                )
+                self._rebuild(dim)
             self._synced.add(dim)
             return True
         except Exception as exc:  # noqa: BLE001 — reconciliation failure means exact scan
@@ -375,7 +383,21 @@ class ChunkVectorIndex:
             f"vec0(chunk_id text primary key, embedding float[{int(dim)}] distance_metric=cosine)"
         )
 
-    def _rebuild(self, dim: int, *, live: int, indexed: int) -> None:
+    def rebuild_all(self) -> bool:
+        """Rebuild every dimension's index from the chunk rows, whatever its row count says.
+
+        For chunk rows that arrived around the write-through: a merge restore inserts them
+        straight into ``chunks``, and a count that happened to match would leave them out of
+        the index. False when sqlite-vec cannot load here; the index is then left as it is, and
+        the reconciliation above repairs it in the first process that can load it.
+        """
+        if not self.enabled:
+            return False
+        for table in self._tables():
+            self._rebuild(int(table[len(_TABLE_PREFIX) :]))
+        return True
+
+    def _rebuild(self, dim: int) -> None:
         """Rebuild this dimension's index from the live chunk rows.
 
         DROP + CREATE + INSERT..SELECT rather than an incremental diff: the whole point of a
@@ -384,14 +406,6 @@ class ChunkVectorIndex:
         second thing to get wrong.
         """
         table = index_table_name(dim)
-        logger.info(
-            "knowledge vector search: rebuilding the chunk ANN index at %d dimensions "
-            "(index had %d rows, %d embedded chunks live) — a database written before the "
-            "index existed, or by a process that could not load sqlite-vec.",
-            dim,
-            indexed,
-            live,
-        )
         self.db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
         self._ensure_table(dim)
         self.db.execute(
@@ -400,7 +414,8 @@ class ChunkVectorIndex:
             "WHERE embedding IS NOT NULL AND length(embedding) = ?",
             (dim * 4,),
         )
-        self._last_rebuild[str(dim)] = live
+        rows = self.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+        self._last_rebuild[str(dim)] = int(rows)
 
     # ── introspection (Doctor) ───────────────────────────────────────────────
 

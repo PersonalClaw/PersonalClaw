@@ -1,6 +1,5 @@
-import { useMemo } from 'react'
 import { Coins } from 'lucide-react'
-import { api, type UsageAgg, type UsageBudget, type UsageFold } from '../../lib/api'
+import { api, type UsageAgg, type UsageBudget, type UsageFold, type UsageWindow } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
@@ -19,27 +18,15 @@ import { ModelPricesSection } from './ModelPricesSection'
  *  held to (`GET /api/usage/budget`); it is read-only. Honest-partial: a period mixing a model
  *  with no price row shows a "partial — N unpriced" marker, never a confidently-complete dollar
  *  figure. */
-const PERIODS = [
-  { id: 'today', label: 'Today', days: 1 },
-  { id: '7d', label: '7 days', days: 7 },
-  { id: '30d', label: '30 days', days: 30 },
-] as const
-
-/** The same period control drives both lenses, so the page never shows two different windows.
- *  `GET /api/usage` speaks day|week|month; the ledger routes speak an ISO `since`. */
-const FOLD_WINDOW: Record<string, 'day' | 'week' | 'month'> = {
-  today: 'day', '7d': 'week', '30d': 'month',
-}
-
-function _sinceIso(days: number): string {
-  // Start-of-window in ISO-UTC. "Today" = midnight UTC today; N days = N*24h back.
-  const now = Date.now()
-  if (days === 1) {
-    const d = new Date(now)
-    return `${d.toISOString().slice(0, 10)}T00:00:00+00:00`
-  }
-  return new Date(now - days * 24 * 60 * 60 * 1000).toISOString()
-}
+/** The same period control drives every read on the page, as one `window` of the gateway's local
+ *  days, so the tiles, the tables and the chart never count two different spans. The gateway
+ *  decides where each day starts, because the daily cap beside them counts its days: a page that
+ *  worked out "today" from UTC said a turn cost money today while the cap said nothing had. */
+const PERIODS: ReadonlyArray<{ id: string; label: string; days: number; window: UsageWindow }> = [
+  { id: 'today', label: 'Today', days: 1, window: 'day' },
+  { id: '7d', label: '7 days', days: 7, window: 'week' },
+  { id: '30d', label: '30 days', days: 30, window: 'month' },
+]
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
@@ -83,12 +70,11 @@ function fmtDuration(ms: number): string {
 
 export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   const [period, setPeriod] = useQueryParam(query, setQuery, 'period', 'today', { replace: true })
-  const days = (PERIODS.find((p) => p.id === period) ?? PERIODS[0]).days
-  const since = useMemo(() => _sinceIso(days), [days])
+  const { days, window } = PERIODS.find((p) => p.id === period) ?? PERIODS[0]
 
   const { data: totals } = useQuery(
     `settings:usage-totals:${period}`,
-    () => api.usageTotals({ since }).then((d) => d.totals).catch(() => null),
+    () => api.usageTotals({ window }).then((d) => d.totals).catch(() => null),
     { persist: false },
   )
   // 🔴 BOTH ROLLUPS SWALLOWED THEIR REJECTION AND THE TABLES ANSWERED FOR THE LEDGER (#532). `[]`
@@ -102,24 +88,24 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   // carries its own error rather than one banner speaking for both.
   const { data: byModel, error: byModelErr, refresh: refreshByModel } = useQuery(
     `settings:usage-rollup:model:${period}`,
-    () => api.usageRollup({ group_by: 'model', since }).then((d) => d.rows),
+    () => api.usageRollup({ group_by: 'model', window }).then((d) => d.rows),
     { persist: false },
   )
   const { data: bySource, error: bySourceErr, refresh: refreshBySource } = useQuery(
     `settings:usage-rollup:source:${period}`,
-    () => api.usageRollup({ group_by: 'source', since }).then((d) => d.rows),
+    () => api.usageRollup({ group_by: 'source', window }).then((d) => d.rows),
     { persist: false },
   )
   // Which provider entry answered: the `FakeUp` of `FakeUp:gpt-4o`, or an ACP runtime. The same
   // model id can come from two entries at two prices, and "By model" folds them together.
   const { data: byProvider, error: byProviderErr, refresh: refreshByProvider } = useQuery(
     `settings:usage-rollup:provider:${period}`,
-    () => api.usageRollup({ group_by: 'provider', since }).then((d) => d.rows),
+    () => api.usageRollup({ group_by: 'provider', window }).then((d) => d.rows),
     { persist: false },
   )
   // Today's spend as the daily cap counts it, beside the cap (read-only; SpendMeter owns
-  // enforcement). The ledger totals on this page include chat turns, which no cap covers, and
-  // run on UTC days, so they are never the number set beside the cap.
+  // enforcement). The ledger totals on this page include chat turns, which no cap covers, so they
+  // are never the number set beside the cap, though both count the same day.
   const { data: budget } = useQuery(
     'settings:usage-budget',
     () => api.usageBudget().catch(() => null),
@@ -137,7 +123,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   // size of the unattended spend that is deliberately excluded from every figure on this page.
   const { data: fold } = useQuery(
     `settings:usage-fold:${period}`,
-    () => api.usageFold({ window: FOLD_WINDOW[period] ?? 'day', group: 'purpose' }).catch(() => null),
+    () => api.usageFold({ window, group: 'purpose' }).catch(() => null),
     { persist: false },
   )
 

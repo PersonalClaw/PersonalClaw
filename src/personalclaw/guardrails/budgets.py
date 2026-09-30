@@ -10,7 +10,8 @@ Two scopes matter for a personal gateway:
 * ``run`` — one unattended run (a goal-loop cycle, a cron fire, a subagent). The
   counter is in-memory, keyed by a caller-supplied run key, and reset when the run
   ends. It stops a single runaway from burning a whole day's budget in one go.
-* ``day`` — all unattended spend for a calendar day, persisted to
+* ``day`` — all unattended spend for a calendar day (this machine's local day,
+  :mod:`personalclaw.spend_day`, the day every spend surface counts), persisted to
   ``~/.personalclaw/spend.json`` (atomic_write, pruned >30 days) so it survives a
   restart. It is the real cost guardrail.
 
@@ -56,6 +57,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from personalclaw import spend_day
 from personalclaw.atomic_write import atomic_write
 from personalclaw.guardrails.failure import NO_ROOM, SPENT, UNPRICED, BudgetExceededError
 
@@ -113,11 +115,6 @@ class BudgetVerdict(str, Enum):
 
 
 _WARN_FRACTION = 0.8
-
-
-def _today_key() -> str:
-    """The calendar-day key for the day-scope counter (local date, ISO)."""
-    return datetime.now().strftime("%Y-%m-%d")
 
 
 @dataclass
@@ -332,7 +329,7 @@ class SpendMeter:
             return
         # Day scope (persisted).
         data = self._load_day()
-        day = _today_key()
+        day = spend_day.today()
         existing = data.get(day)
         prev = existing if isinstance(existing, dict) else {}
         data[day] = {
@@ -512,7 +509,7 @@ class SpendMeter:
 
     def _seen_today(self) -> dict[str, _Seen]:
         """What calls to each model have cost today; a new day starts with nothing known."""
-        day = _today_key()
+        day = spend_day.today()
         if self._seen_day != day:
             self._seen_day = day
             self._seen = {}
@@ -544,7 +541,7 @@ class SpendMeter:
             return self._day_total_locked()
 
     def _day_total_locked(self) -> _ScopeTotal:
-        row = self._load_day().get(_today_key(), {})
+        row = self._load_day().get(spend_day.today(), {})
         if not isinstance(row, dict):
             row = {}
         return _ScopeTotal(

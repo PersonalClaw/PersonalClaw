@@ -786,7 +786,8 @@ class TestSchemaIncompatibleMerge:
 
 class TestCorruptSourceDB:
     def test_merge_corrupt_source_db(self, env, capsys, monkeypatch):
-        """Merge with corrupt source DB skips merge gracefully."""
+        """A corrupt memory.db in the snapshot is skipped, the rest still merges, and the restore
+        says memory.db was left unchanged and fails: it never ends "✅ Merge complete."."""
         src, _, _, tmp_path = env
         out = tmp_path / "corrupt_src_out"
         out.mkdir()
@@ -808,9 +809,12 @@ class TestCorruptSourceDB:
         _setup_fake_personalclaw(dst)
         monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
         ret = restore_main([str(corrupt_tar), "--mode", "merge"])
-        assert ret == 0
+        assert ret == 1
         out_text = capsys.readouterr().out
-        assert "Source DB" in out_text or "Merge complete" in out_text
+        assert "Source DB unreadable" in out_text
+        assert "✅ memory" not in out_text and "✅ Merge complete." not in out_text
+        assert "⚠️  Merge finished, but 1 part was left unchanged: memory.db." in out_text
+        assert "✅ skills" in out_text, "the rest of the snapshot still merges"
 
 
 class TestGatewayRunningRefusal:

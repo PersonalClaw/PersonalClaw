@@ -4405,6 +4405,9 @@ export interface DurabilityRestoreResult {
   ok?: boolean
   plan?: boolean
   error?: { code: string; message: string }
+  /** After a merge: each part it could not bring in and left as it was (a store, or
+   *  `store (table)`). Empty when every part came in. */
+  left_unchanged?: string[]
   /** After a merge, as on an import's. */
   restart?: string
   [k: string]: unknown
@@ -6554,6 +6557,11 @@ export interface UsageFoldRow {
   priced: boolean
 }
 
+/** A period of the gateway's local days, today included: the days the daily cap counts. `day` is
+ *  today, `week` the last 7 days, `month` the last 30. Every usage read takes the same one, so
+ *  the Usage page's tiles, tables and chart count the same days as the cap beside them. */
+export type UsageWindow = 'day' | 'week' | 'month'
+
 /** `GET /api/usage` — grouped rows + the window total + the per-day series behind the chart.
  *
  *  · `uncounted` — guarded model-call spend (`model_calls.jsonl`) that is NOT in any figure above:
@@ -6709,9 +6717,10 @@ export interface RoutingProposal {
 
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
-function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
+function _usageQuery(opts?: { since?: string; until?: string; window?: UsageWindow; session?: string; group_by?: string }): string {
   const p = new URLSearchParams()
   if (opts?.group_by) p.set('group_by', opts.group_by)
+  if (opts?.window) p.set('window', opts.window)
   if (opts?.since) p.set('since', opts.since)
   if (opts?.until) p.set('until', opts.until)
   if (opts?.session) p.set('session', opts.session)
@@ -7011,11 +7020,12 @@ export const api = {
   routingUnmute: (agent: string) => post<{ ok: boolean }>('/api/agents/routing/unmute', { agent }),
   routingStatus: () => get<{ enabled: boolean; muted: string[]; dismissals: Record<string, { count: number; last_dismissed_at: number }> }>('/api/agents/routing/status'),
   // Cost/token usage. `session` scopes to one chat
-  // (the header chip); `since`/`until` bound a period (the Usage panel's Today/7d/30d).
+  // (the header chip); `window` is a period of the gateway's local days, the days the daily cap
+  // counts (the Usage panel's Today/7d/30d); `since`/`until` bound any other span.
   // `priced=false` ⇒ the window mixes a model with no price row, so the total is a
   // partial (render "unpriced" / a partial marker — never a confidently-complete $).
-  usageTotals: (opts?: { session?: string; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
-  usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
+  usageTotals: (opts?: { session?: string; window?: UsageWindow; since?: string; until?: string }) => get<{ session: string; totals: UsageAgg }>(`/api/usage/totals${_usageQuery(opts)}`),
+  usageRollup: (opts?: { group_by?: 'model' | 'source' | 'agent' | 'provider' | 'day'; window?: UsageWindow; since?: string; until?: string; session?: string }) => get<{ group_by: string; rows: Array<UsageAgg & Record<string, string>> }>(`/api/usage/rollup${_usageQuery(opts)}`),
   // Today's spend as the daily cap counts it, beside that cap: the only numbers the Usage page
   // may set side by side (the ledger totals above include chat turns, which no cap covers).
   usageBudget: () => get<UsageBudget>('/api/usage/budget'),
@@ -7029,7 +7039,7 @@ export const api = {
   // The per-day spend fold: the same per-call ledger grouped by purpose and day, plus a
   // census of the guarded model calls no row counts. Read-only, derived on request; a deleted
   // fold self-heals.
-  usageFold: (opts?: { window?: 'day' | 'week' | 'month'; group?: 'model' | 'provider' | 'purpose' }) => {
+  usageFold: (opts?: { window?: UsageWindow; group?: 'model' | 'provider' | 'purpose' }) => {
     const p = new URLSearchParams()
     if (opts?.window) p.set('window', opts.window)
     if (opts?.group) p.set('group', opts.group)

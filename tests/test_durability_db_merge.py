@@ -93,10 +93,10 @@ class TestMemoryDbNoResurrection:
 
         called = {}
 
-        def fake_merge_memory(src, dst):
+        def fake_merge_memory(src, dst, *, left_unchanged=None):
             called["memory"] = (src, dst)
 
-        def fake_attach(src, dst, label):
+        def fake_attach(src, dst, label, *, left_unchanged=None):
             called["attach"] = label
 
         from personalclaw import snapshot
@@ -142,7 +142,7 @@ class TestVerdicts:
 
         from personalclaw import snapshot
 
-        def boom(src, dst, label):
+        def boom(src, dst, label, *, left_unchanged=None):
             raise sqlite3.OperationalError("disk I/O error")
 
         monkeypatch.setattr(snapshot, "_merge_sqlite_attach", boom)

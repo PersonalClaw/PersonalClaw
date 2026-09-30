@@ -3,6 +3,7 @@
 import contextlib
 import json
 import logging
+import os
 import re
 from collections.abc import Iterator
 from dataclasses import replace
@@ -652,6 +653,20 @@ _RUNTIME_DISPLAY = {
     "cli": "CLI terminal",
     "channel": "messaging channel",
 }
+
+
+def _home_directory_line() -> str:
+    """What ``~`` means in a path the user writes: the home of the account the gateway runs as.
+
+    A saved prompt said "Run my weekly review from ~/Notes/Garden", and the only folder the request
+    named was the working directory, so the model wrote the path under that and the notes tool,
+    allowed the real folder only, refused it. The built-in file tools already read a leading ``~/``
+    as this folder (``NativeBuiltinToolProvider._resolve``); this tells the model the same, and
+    widens nothing any tool may reach.
+    """
+    home = os.path.expanduser("~")
+    notes = Path(home) / "Notes"
+    return f"[HOME DIRECTORY] {home}: ~ in a path is this folder, so ~/Notes is {notes}\n"
 
 
 def _runtime_display_name(session_key: str) -> str:
@@ -1734,8 +1749,9 @@ class ContextBuilder:
         # Append the date AFTER truncation so it survives even an oversized
         # context — truncation cut from the end, so a date placed earlier could have
         # been dropped. Appended for both the custom and personalclaw paths (this is
-        # the single assembly tail both take).
-        context += current_date_line
+        # the single assembly tail both take). The home directory rides with it for the
+        # same reason: every path the user writes with ~ depends on it.
+        context += _home_directory_line() + current_date_line
 
         logger.debug(
             "Session context: agent=%s, custom=%s, %d chars",

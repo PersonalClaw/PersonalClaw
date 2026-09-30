@@ -981,7 +981,9 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
-def _merge_memory(src_db: Path, dst_db: Path) -> None:
+def _merge_memory(src_db: Path, dst_db: Path, *, left_unchanged: list[str] | None = None) -> None:
+    """Merge a snapshot's memories into this home's `memory.db`. A source it cannot read is
+    skipped, and ``memory.db`` goes on *left_unchanged* (as :func:`_merge_sqlite_attach` does)."""
     # Integrity check on source DB before ATTACH
     try:
         from contextlib import closing
@@ -992,9 +994,13 @@ def _merge_memory(src_db: Path, dst_db: Path) -> None:
             result = check_conn.execute("PRAGMA integrity_check;").fetchone()[0]
         if result != "ok":
             print(f"  ⚠️  Source DB integrity check failed: {result} — skipping merge")
+            if left_unchanged is not None:
+                left_unchanged.append("memory.db")
             return
     except Exception as e:
         print(f"  ⚠️  Source DB unreadable: {e} — skipping merge")
+        if left_unchanged is not None:
+            left_unchanged.append("memory.db")
         return
 
     conn = sqlite3.connect(str(dst_db))
@@ -1291,7 +1297,19 @@ def _merge_json_map(src: Path, dst: Path, *, wrapper: str | None = None) -> int:
     return len(added)
 
 
-def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
+def _virtual_tables(conn: "sqlite3.Connection", schema: str) -> dict[str, str]:
+    """Each virtual table in *schema* and the module it is built on (``fts5``, ``vec0``, …)."""
+    found: dict[str, str] = {}
+    query = f"SELECT name, sql FROM {schema}.sqlite_master WHERE sql LIKE '%VIRTUAL TABLE%'"
+    for name, sql in conn.execute(query):  # noqa: S608 — *schema* is main or src, never input
+        module = re.search(r"\bUSING\s+(\w+)", sql or "", re.IGNORECASE)
+        found[name] = module.group(1).lower() if module else ""
+    return found
+
+
+def _merge_sqlite_attach(
+    src_db: Path, dst_db: Path, label: str, *, left_unchanged: list[str] | None = None
+) -> int:
     """Merge a declared sqlite store table-by-table with `INSERT OR IGNORE` (S180).
 
     🔴 WHY THIS EXISTS. Seven entries declare `merge=sqlite_attach_ignore` and only `memory.db` had
@@ -1319,21 +1337,35 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
     segment state (measured) only to overwrite them, and it means a future caller that rebuilds
     conditionally cannot reintroduce the doubling.
 
+    🔴 **Each index is rebuilt by its own module.** The knowledge library keeps a sqlite-vec
+    ``vec0`` table beside its FTS5 one, and this sent both FTS5's ``rebuild`` command: the
+    statement failed ("no such module: vec0"), the whole library's merge rolled back, and a merge
+    restore never brought back a single knowledge item. FTS5 still rebuilds by its command; the
+    chunk vector index is rebuilt from the chunk rows by its owner (``knowledge.vector_index``),
+    which loads sqlite-vec the way the store does. Where sqlite-vec cannot load, the rows still
+    merge and the store's own reconciliation rebuilds the index on its next search.
+
     `memory.db` keeps its own executor and is NOT routed here: it filters `WHERE is_deleted=0`, so a
     generic all-tables merge would resurrect memories the user deleted. That filter is the reason
     the
     allowlist exists, not an accident of it.
+
+    What it could not bring in goes on *left_unchanged*: *label* when the store took nothing, and
+    ``label (table)`` for a table it skipped, so a restore's last line can say what it left.
     """
+    unchanged = left_unchanged if left_unchanged is not None else []
     try:
         check = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
         try:
             if check.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
                 print(f"  ⚠️  {label}: source integrity check failed — skipping merge")
+                unchanged.append(label)
                 return 0
         finally:
             check.close()
     except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
         print(f"  ⚠️  {label}: source unreadable ({exc}) — skipping merge")
+        unchanged.append(label)
         return 0
 
     conn = sqlite3.connect(str(dst_db))
@@ -1348,14 +1380,10 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
         # at BEGIN makes contention fail once, here, falling to the outer skip deterministically.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("ATTACH DATABASE ? AS src", (str(src_db),))
-        virtual = [
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM src.sqlite_master WHERE sql LIKE '%VIRTUAL TABLE%'"
-            )
-        ]
+        virtual = _virtual_tables(conn, "src")
         # A virtual table's shadow tables are `<name>_data`, `_idx`, `_docsize`, `_config`,
-        # `_content`. Matching by prefix covers them without hardcoding FTS5's internals.
+        # `_content` (FTS5) or `<name>_chunks`, `_rowids`, `_info`, … (vec0). Matching by prefix
+        # covers them without hardcoding either module's internals.
         skip = tuple(virtual) + tuple(v + "_" for v in virtual)
         local = {
             r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
@@ -1377,11 +1405,16 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
                 # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
                 # column, for the same reason: a partial restore beats an aborted one.
                 print(f"  ⚠️  {label}.{table}: {exc} — skipped")
+                unchanged.append(f"{label} ({table})")
                 continue
             imported += conn.total_changes - before
-        for view in virtual:
-            if view in local:
+        for view, module in virtual.items():
+            if view in local and module == "fts5":
                 conn.execute(f'INSERT INTO main."{view}"("{view}") VALUES(\'rebuild\')')
+        if imported and "vec0" in _virtual_tables(conn, "main").values():
+            from personalclaw.knowledge.vector_index import ChunkVectorIndex
+
+            ChunkVectorIndex(conn).rebuild_all()
         conn.execute("COMMIT")
     except Exception as exc:  # noqa: BLE001
         # ROLLBACK is itself best-effort: when BEGIN IMMEDIATE was the statement that failed
@@ -1394,6 +1427,7 @@ def _merge_sqlite_attach(src_db: Path, dst_db: Path, label: str) -> int:
             except sqlite3.Error:
                 pass
         print(f"  ⚠️  {label}: merge failed ({exc}) — left unchanged")
+        unchanged.append(label)
         return 0
     finally:
         try:
@@ -1925,8 +1959,18 @@ def print_merge_plan(rows: list[dict]) -> None:
     print("  " + ", ".join(f"{n} {a}" for a, n in sorted(counts.items())))
 
 
-def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
+def _left_unchanged_line(left: list[str]) -> str:
+    """The last line of a merge that could not bring everything in: how many parts, and which."""
+    parts = "1 part was" if len(left) == 1 else f"{len(left)} parts were"
+    return f"⚠️  Merge finished, but {parts} left unchanged: {', '.join(left)}."
+
+
+def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
+    """Merge *snap* into the home at *pc*, and return what it left unchanged (empty when every
+    part came in): a store that took nothing, or a table it skipped. The last line says which, so
+    a restore that left the knowledge library as it was never ends "✅ Merge complete."."""
     print("🔀 Merge mode — importing...")
+    left: list[str] = []
 
     if _want(components, "memory") and (snap / "memory.db").is_file():
         if not (pc / "memory.db").is_file():
@@ -1935,8 +1979,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
                 shutil.copy2(str(snap / "memory_index.db"), str(pc / "memory_index.db"))
             print("  Memory: copied (no existing memory.db)")
         else:
-            _merge_memory(snap / "memory.db", pc / "memory.db")
-        print("  ✅ memory")
+            _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
+        if "memory.db" not in left:
+            print("  ✅ memory")
 
     if _want(components, "crons"):
         st, dt = snap / "triggers.json", pc / "triggers.json"
@@ -2039,7 +2084,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         for rel in _attach_merge_paths():
             s_db, d_db = snap / rel, pc / rel
             if s_db.is_file() and d_db.is_file():
-                _merge_sqlite_attach(s_db, d_db, rel)
+                _merge_sqlite_attach(s_db, d_db, rel, left_unchanged=left)
 
     # `autonudge.json`, the legacy auto-nudge loops, is a map keyed by loop under `loops`: each
     # the live home lacks comes in, and the boot's legacy import brings it into the trigger store
@@ -2110,7 +2155,8 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
         from personalclaw import embedding_arrivals
 
         embedding_arrivals.arrived()
-    print("✅ Merge complete.")
+    print(_left_unchanged_line(left) if left else "✅ Merge complete.")
+    return left
 
 
 def _is_gateway_running() -> bool:
@@ -2209,6 +2255,9 @@ def restore_merge(archive: Path, components: list[str] | None) -> dict:
     with the gateway stopped (`dashboard.handlers.durability._replace_refused`). This used to
     probe for a running gateway first and refuse — and from inside the gateway the probe always
     found one, so a merge from the dashboard never ran.
+
+    ``left_unchanged`` names each part it could not bring in (empty when every part came in), so
+    the page never reads a partial merge as a whole one.
     """
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
@@ -2219,9 +2268,15 @@ def restore_merge(archive: Path, components: list[str] | None) -> dict:
             return {"ok": False, "error": "invalid snapshot format"}
         pc = _pc_dir()
         pc.mkdir(parents=True, exist_ok=True)
-        _do_merge(roots[0], pc, components)
-    _audit("state_restored", f"mode=merge snapshot={archive.name}")
-    return {"ok": True, "mode": "merge", "snapshot": archive.name, "restart": MERGE_RESTART_NOTE}
+        left = _do_merge(roots[0], pc, components)
+    _audit("state_restored", f"mode=merge snapshot={archive.name} left_unchanged={len(left)}")
+    return {
+        "ok": True,
+        "mode": "merge",
+        "snapshot": archive.name,
+        "left_unchanged": left,
+        "restart": MERGE_RESTART_NOTE,
+    }
 
 
 def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
@@ -2367,10 +2422,11 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             return 1
 
         pc.mkdir(parents=True, exist_ok=True)
+        left: list[str] = []
         if mode == "replace":
             _do_replace(snap, pc, components)
         else:
-            _do_merge(snap, pc, components)
+            left = _do_merge(snap, pc, components)
         engines = _engines_not_here(snap, components)
 
     # Integrity check
@@ -2395,7 +2451,10 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             )
 
     comp_str = ",".join(components) if components else "all"
-    _audit("state_restored", f"mode={mode} components={comp_str} from={snap_path.name}")
+    _audit(
+        "state_restored",
+        f"mode={mode} components={comp_str} from={snap_path.name} left_unchanged={len(left)}",
+    )
 
     for name, has_one in engines:
         if has_one:
@@ -2410,4 +2469,6 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             "in Settings → Providers."
         )
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
-    return 0
+    # A merge that left a part unchanged did not do what it was asked: the failed status, as the
+    # integrity check above answers a damaged memory.db, so a script sees it too.
+    return 1 if left else 0

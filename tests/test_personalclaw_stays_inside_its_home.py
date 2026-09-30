@@ -96,6 +96,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("loop/validation.py", "workspace_write_target_errors"): "a guard: HOME is no workspace",
     ("agent.py", "_apply_user_agent_hooks"): "a guard: a configured hooks folder must sit in HOME",
     ("command_paths.py", "named_paths"): "a guard: reads ~ and $HOME in a command as a shell does",
+    (
+        "context.py",
+        "_home_directory_line",
+    ): "tells the agent what ~ means in a path the owner writes",
     ("acp/cli_resolve.py", "_node_manager_bin_globs"): "finds an agent CLI the owner installed",
     ("env.py", "augmented_path"): "finds MCP server binaries the owner installed",
     ("transcribe.py", "<module>"): "finds ffmpeg where the owner installed it",

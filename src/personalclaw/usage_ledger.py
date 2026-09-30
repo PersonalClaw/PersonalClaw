@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from personalclaw import spend_day
 from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -268,11 +269,6 @@ def _iter_rows() -> list[dict]:
     return out
 
 
-def _day_of(ts: str) -> str:
-    """The YYYY-MM-DD prefix of an ISO timestamp (the ``day`` group key)."""
-    return ts[:10] if len(ts) >= 10 else ts
-
-
 def _in_window(ts: str, since: str, until: str) -> bool:
     if since and ts < since:
         return False
@@ -348,7 +344,8 @@ def rollup(
     session_key: str = "",
     session_prefix: str = "",
 ) -> list[dict]:
-    """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day``.
+    """Aggregate the ledger, grouped by one of ``model|source|agent|provider|day`` (a ``day`` is
+    the local day the daily cap counts, :mod:`personalclaw.spend_day`).
 
     Rows carry summed tokens + cost + a ``priced`` flag that is False when ANY
     constituent row was unpriced (so a partially-unpriced group can't look complete).
@@ -364,7 +361,7 @@ def rollup(
         if not _row_selected(row, since, until, session_key, session_prefix):
             continue
         ts = str(row.get("ts", ""))
-        key = _day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
+        key = spend_day.day_of(ts) if group_by == "day" else str(row.get(group_by, ""))
         agg = groups.setdefault(key, _blank_agg())
         _fold(agg, row)
     out = [{group_by: k, **v} for k, v in groups.items()]

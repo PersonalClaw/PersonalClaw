@@ -90,8 +90,8 @@ def test_priced_total_stays_true_when_all_priced(_home):
 
 
 def test_rollup_window_filters_by_ts(_home):
-    ul.record_turn(_u(ts="2026-08-01T00:00:00+00:00", cost_usd=1.0))
-    ul.record_turn(_u(ts="2026-08-05T00:00:00+00:00", cost_usd=2.0))
+    ul.record_turn(_u(ts="2026-08-01T12:00:00+00:00", cost_usd=1.0))
+    ul.record_turn(_u(ts="2026-08-05T12:00:00+00:00", cost_usd=2.0))
     # [since, until) half-open window.
     rows = ul.rollup(since="2026-08-03T00:00:00+00:00", group_by="day")
     assert len(rows) == 1 and rows[0]["day"] == "2026-08-05"

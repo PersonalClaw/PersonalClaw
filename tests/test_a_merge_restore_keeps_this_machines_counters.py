@@ -102,8 +102,9 @@ def test_an_import_leaves_them_as_they_are(tmp_path, monkeypatch):
 def test_another_machines_spend_never_counts_against_the_caps_here(tmp_path, monkeypatch):
     """What the counter is for: today's spend, which the day's budget cap is checked against.
     Another machine spent today; this one has spent nothing yet."""
-    from personalclaw.guardrails.budgets import SpendMeter, _today_key
+    from personalclaw.guardrails.budgets import SpendMeter
     from personalclaw.snapshot import _do_merge
+    from personalclaw.spend_day import today
 
     snap, home = tmp_path / "snap", tmp_path / "home"
     snap.mkdir()
@@ -111,7 +112,7 @@ def test_another_machines_spend_never_counts_against_the_caps_here(tmp_path, mon
     (snap / "config.json").write_text("{}", encoding="utf-8")
     (home / "config.json").write_text("{}", encoding="utf-8")
     (snap / "spend.json").write_text(
-        json.dumps({_today_key(): {"tokens": 90_000, "dollars": 99.0, "unpriced": 0}})
+        json.dumps({today(): {"tokens": 90_000, "dollars": 99.0, "unpriced": 0}})
     )
     (home / "spend.json").write_text(json.dumps({"2026-01-01": {"tokens": 1, "dollars": 0.01}}))
     monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
