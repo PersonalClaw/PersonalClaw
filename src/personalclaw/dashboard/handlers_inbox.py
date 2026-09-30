@@ -23,6 +23,7 @@ from personalclaw.inbox import (
     set_item_status,
     validate_updatable_fields,
 )
+from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.security import MaskConflict, keep_masked_spans
 from personalclaw.sel import sel
@@ -675,7 +676,12 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
 
 
 async def api_inbox_draft(request: web.Request) -> web.Response:
-    """POST /api/inbox/{id}/draft — generate draft reply on demand."""
+    """POST /api/inbox/{id}/draft — generate draft reply on demand.
+
+    An optional JSON body ``{"instructions": "<what the reply should say>"}`` carries the owner's
+    words for this one draft. It must be text of at most ``DRAFT_INSTRUCTIONS_MAX_CHARS``; anything
+    else is refused before the model runs. No body drafts with nothing said.
+    """
     logger.info("Draft request received for %s", request.match_info.get("id", "?"))
     state: "DashboardState" = request.app["state"]
     svc = getattr(state, "_inbox_svc", None)
@@ -696,7 +702,17 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "this item's source does not support replies"}, status=400
         )
-    item = await svc.draft_reply(item_id)
+    # No body is a draft with nothing said; a body that does not parse, or instructions that
+    # are not text, are refused (`request_boundary` answers them) before the model runs.
+    instructions = string_field(await json_object_body(request), "instructions")
+    if len(instructions) > DRAFT_INSTRUCTIONS_MAX_CHARS:
+        return json_error(
+            "instructions_too_long",
+            message="Say what the reply should contain in at most "
+            f"{DRAFT_INSTRUCTIONS_MAX_CHARS} characters.",
+            status=400,
+        )
+    item = await svc.draft_reply(item_id, instructions=instructions)
     if not item:
         logger.warning("Draft failed for %s", item_id)
         try:

@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**
 - **An answer drawn from a learned lesson can cite it as [Lesson N], which opens that lesson in Memory (`ContextBuilder.build_session_context` and `MemoryService.lessons_context` take an optional `citations_out`: an SDK addition no app has to change for).**
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
@@ -134,6 +135,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
+- **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
+- **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**
+- **A turn sent again after an empty answer or a lost connection is the same message: no second bubble holding the chat's context blocks, and the retry is given the context the first attempt had.**
 - **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**

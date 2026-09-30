@@ -21,7 +21,11 @@ against core protocols). Paths are relative to
   is the implementation the engine drives, bounced onto the loop that owns the
   store via `run_maintenance_threadsafe` so nothing mutates it off-thread.
 - **AI drafts** write on behalf of the operator (the `dashboard.user_name`
-  identity), not the bot.
+  identity), not the bot. The reply panel's "What should the reply say?" field is the
+  owner's instruction for one draft: `POST /api/inbox/{id}/draft {"instructions"}` (text of
+  at most `DRAFT_INSTRUCTIONS_MAX_CHARS`) hands it to the model after the `inbox_draft`
+  prompt, outside the fence around the sender's text, so it is followed whatever prompt is
+  bound for drafting.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;
   the seam is entry-point discoverable (`provider_registry.py`) and apps
   contribute their own. A **channel app is expected to register one**: the
@@ -257,6 +261,13 @@ that agent's approvals under it (`request_approval(trigger=…)`), so the ask an
 name the trigger. The chat's steps summary says the same thing as the note: an expired call's
 step reads "(denied, no answer)", a stopped turn's "(cancelled)", and only a Deny reads
 "(rejected)", in the transcript row and in the audit row's outcome.
+
+**What one answer covers.** A Deny, or an approval nobody answered, also covers the requests the
+agent had already sent with the call it answers: they wait right behind it in the stream and are
+refused the same way, audited with the reason `batch_rejection`. Anything else the agent reports
+first (the refused call's result, the next call's card, a word of text) means it has the answer,
+so the next call it makes is asked about again, as the card's "The next tool call asks again"
+says (`chat_runner._REFUSALS_OF_ONE_BATCH`). A stopped turn asks nothing more until it ends.
 
 The Inbox offers the one next step the call really has, by where it was asked
 (`web/src/pages/inbox/DeniedCallRerun.tsx`), and only for an `expired` call, since that one

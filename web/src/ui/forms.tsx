@@ -318,7 +318,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
 // `sm`. A mono textarea always rides body-s, the dense technical size the mono
 // branch has always pinned regardless of `size`.
 
-export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', surface = 'container', disabled, disabledReason, id, onKeyDown }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
+export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', surface = 'container', disabled, disabledReason, id, onKeyDown, maxLength }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
   /** The same fill axis `TextInput` carries. TextArea and Select were the family's two
    *  fixed-FILL fields, which showed up as drift inside a single form: the provider form's
    *  JSON rows rendered `container` while every sibling text field rendered `high`, so the
@@ -336,7 +336,10 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
    *  key hook, so any surface needing a send shortcut (⌘/Ctrl+Enter on a multi-line message
    *  box) had to drop to a raw `<textarea>` — which is what `primitiveAdoption` exists to
    *  prevent. The handler runs BEFORE the field's own behaviour and may `preventDefault`. */
-  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void }) {
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  /** Native `maxlength`, exactly `TextInput`'s: for a field the BACKEND bounds, the same limit here
+   *  makes the cap reachable while typing instead of only as a rejection afterwards. */
+  maxLength?: number }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -350,6 +353,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // ariaLabel.
   return (
     <textarea value={value} rows={rows} autoFocus={autoFocus} id={id || autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
+      maxLength={maxLength}
       disabled={disabled} title={disabled ? disabledReason || undefined : undefined}
       data-type={mono ? 'body-s' : FIELD_ROLE[size]}
       className={cx('w-full rounded-md px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary', FIELD_SURFACE[surface], mono && 'font-mono')} />

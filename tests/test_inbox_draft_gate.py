@@ -17,10 +17,13 @@ import pytest
 from aiohttp import web
 
 from personalclaw.dashboard.handlers_inbox import api_inbox_draft
+from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS
+from personalclaw.request_validation import RequestValidationError
 
 
-def _req(item) -> tuple[MagicMock, AsyncMock]:
-    """A request whose inbox service holds exactly ``item`` (or nothing)."""
+def _req(item, body: object = None) -> tuple[MagicMock, AsyncMock]:
+    """A request whose inbox service holds exactly ``item`` (or nothing), carrying ``body``
+    as its JSON body (no body at all when ``None``)."""
     draft_spy = AsyncMock(return_value=item)
     svc = MagicMock()
     svc.draft_reply = draft_spy
@@ -35,6 +38,13 @@ def _req(item) -> tuple[MagicMock, AsyncMock]:
     app["state"] = MagicMock(_inbox_svc=svc)
     r.app = app
     r.match_info = {"id": item.id if item is not None else "missing"}
+    # What aiohttp does: an empty body does not parse, and reads as no bytes at all.
+    if body is None:
+        r.json = AsyncMock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+        r.read = AsyncMock(return_value=b"")
+    else:
+        r.json = AsyncMock(return_value=body)
+        r.read = AsyncMock(return_value=json.dumps(body).encode())
     return r, draft_spy
 
 
@@ -65,7 +75,65 @@ async def test_replyable_item_still_drafts():
     req, draft_spy = _req(_item(can_reply=True))
     resp = await api_inbox_draft(req)
     assert resp.status == 200
-    draft_spy.assert_awaited_once_with("it-1")
+    draft_spy.assert_awaited_once_with("it-1", instructions="")
+
+
+@pytest.mark.asyncio
+async def test_the_draft_is_given_what_she_said_it_should_contain():
+    said = "Accept, and ask when the slides are due."
+    req, draft_spy = _req(_item(can_reply=True), {"instructions": f"  {said}\n"})
+    resp = await api_inbox_draft(req)
+    assert resp.status == 200
+    draft_spy.assert_awaited_once_with("it-1", instructions=said)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        ({"instructions": 5}, "field_not_a_string"),
+        ({"instructions": ["accept"]}, "field_not_a_string"),
+        (["accept"], "invalid_body"),
+        ("accept", "invalid_body"),
+    ],
+    ids=["a number", "a list", "a bare list", "a bare string"],
+)
+async def test_what_the_draft_should_say_must_be_text(body, code):
+    req, draft_spy = _req(_item(can_reply=True), body)
+    with pytest.raises(RequestValidationError) as refused:
+        await api_inbox_draft(req)
+    assert (refused.value.code, refused.value.status) == (code, 400)
+    draft_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_body_that_is_not_json_is_refused_before_the_model_runs():
+    req, draft_spy = _req(_item(can_reply=True), {})
+    req.json = AsyncMock(side_effect=json.JSONDecodeError("Expecting value", "accept", 0))
+    req.read = AsyncMock(return_value=b"accept")
+    with pytest.raises(RequestValidationError) as refused:
+        await api_inbox_draft(req)
+    assert refused.value.code == "invalid_json"
+    draft_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_what_the_draft_should_say_has_a_length_limit():
+    req, draft_spy = _req(
+        _item(can_reply=True), {"instructions": "a" * (DRAFT_INSTRUCTIONS_MAX_CHARS + 1)}
+    )
+    resp = await api_inbox_draft(req)
+    assert resp.status == 400
+    error = (await _json(resp))["error"]
+    assert error["code"] == "instructions_too_long"
+    assert str(DRAFT_INSTRUCTIONS_MAX_CHARS) in error["message"]
+    draft_spy.assert_not_awaited()
+
+    req, draft_spy = _req(
+        _item(can_reply=True), {"instructions": "a" * DRAFT_INSTRUCTIONS_MAX_CHARS}
+    )
+    assert (await api_inbox_draft(req)).status == 200
+    draft_spy.assert_awaited_once()
 
 
 @pytest.mark.asyncio

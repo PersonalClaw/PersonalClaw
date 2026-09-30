@@ -13,13 +13,15 @@
  *   output: native override (by tool name) → content_type renderer
  *           → sniff (reuse ToolOutput) → raw <pre>
  *
- * BOTH dispatch paths hand a renderer the segment UNTOUCHED. `resolveInputObj` is
- * the one owner of "where does this call's input object come from" and every
+ * BOTH dispatch paths hand a renderer the segment's INPUT untouched. `resolveInputObj`
+ * is the one owner of "where does this call's input object come from" and every
  * renderer that wants a field out of the input goes through it — see `inputOf` in
- * native.tsx.
+ * native.tsx. The OUTPUT a renderer is handed is the one a person reads: the result
+ * with the model-side fence taken off (`withoutFence`), nothing else changed.
  */
 import { type ReactNode } from 'react'
 import type { ToolSegment } from '../chatTypes'
+import { withoutFence } from '../../../lib/untrustedFence'
 import { ToolOutput } from '../../tools/ToolOutput'
 import { RawBlock, KeyValueFields, ContentTypeOutput, resolveInputObj } from './primitives'
 import { NATIVE_RENDERERS } from './native'
@@ -62,13 +64,19 @@ export function renderToolInput(seg: ToolSegment): ReactNode {
   return null
 }
 
-/** Render the tool's OUTPUT region. */
+/** Render the tool's OUTPUT region.
+ *
+ *  Every renderer below reads the output a PERSON sees: the result with the model-side fence
+ *  taken off (`withoutFence`). The fence tells the model the text is data; on the card it is
+ *  noise around the text. The result itself, and so what the model reads, is unchanged. */
 export function renderToolOutput(seg: ToolSegment): ReactNode {
   if (seg.output == null || seg.output === '') return null
+  const output = withoutFence(seg.output)
+  const shown: ToolSegment = output === seg.output ? seg : { ...seg, output }
   // 1. native override
-  const native = findNative(seg)
+  const native = findNative(shown)
   if (native?.output) {
-    const node = safe(() => native.output!(seg))
+    const node = safe(() => native.output!(shown))
     if (node !== undefined) return node
   }
   // 2. content-type renderer. Prefer the BACKEND-declared type; if absent (the
@@ -76,19 +84,19 @@ export function renderToolOutput(seg: ToolSegment): ReactNode {
   //    of which carry content_type), SNIFF it client-side so a reloaded/external
   //    diff/log/json/csv still gets its rich view instead of degrading to plain
   //    sniff. This is the fix for "old sessions render worse than live".
-  const ct = (seg.contentType && seg.contentType !== 'generic')
-    ? seg.contentType
-    : sniffContentType(seg.output)
+  const ct = (shown.contentType && shown.contentType !== 'generic')
+    ? shown.contentType
+    : sniffContentType(output)
   if (ct && ct !== 'generic') {
-    const eff: ToolSegment = ct === seg.contentType ? seg : { ...seg, contentType: ct }
+    const eff: ToolSegment = ct === shown.contentType ? shown : { ...shown, contentType: ct }
     const node = safe(() => <ContentTypeOutput seg={eff} />)
     if (node !== undefined) return node
   }
   // 3. sniff (reuse the existing ToolOutput: json tree/table, markdown, raw)
-  const node = safe(() => <RawBlock label="Result"><ToolOutput text={seg.output!} /></RawBlock>)
+  const node = safe(() => <RawBlock label="Result"><ToolOutput text={output} /></RawBlock>)
   if (node !== undefined) return node
   // 4. absolute fallback
-  return <RawBlock label="Result">{seg.output}</RawBlock>
+  return <RawBlock label="Result">{output}</RawBlock>
 }
 
 /** Client-side content-type sniff — a faithful mirror of the backend

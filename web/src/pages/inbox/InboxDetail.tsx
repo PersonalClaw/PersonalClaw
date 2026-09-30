@@ -7,7 +7,7 @@ import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { InlineLoadError } from '../../ui/ListScaffold'
-import { TextArea, Segmented, FieldError, useSyncedDraft } from '../../ui/forms'
+import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
@@ -31,6 +31,8 @@ import { BUSY_REASON } from '../../ui/unavailable'
 export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: InboxItem; owner?: string; onChanged: () => void; navigate: (path: string) => void }) {
   // Re-seeded when another item is shown, never on mount (`useSyncedDraft`).
   const [draft, setDraft] = useSyncedDraft(item.draft ?? '', item.id)
+  // What she says the reply should contain. Kept for Regenerate; another item starts empty.
+  const [said, setSaid] = useSyncedDraft('', item.id)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const cm = classMeta(item.classification)
@@ -53,7 +55,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   }
   async function generate() {
     setBusy('draft'); setErr('')
-    try { const u = await api.draftInboxReply(item.id); setDraft(u.draft ?? ''); onChanged() }
+    try { const u = await api.draftInboxReply(item.id, said.trim()); setDraft(u.draft ?? ''); onChanged() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Draft failed') } finally { setBusy(null) }
   }
   async function send() {
@@ -282,6 +284,14 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
                   snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
               ) : undefined}>
               {repliedAt > 0 && <p data-type="caption" className="mb-1.5 text-on-surface-low">You replied {relPast(repliedAt)}. A reply sent now goes out as another one.</p>}
+              {/* What the draft should contain, in her words. Generate draft and Regenerate hand it
+                  to the model as her instruction; the bound matches `DRAFT_INSTRUCTIONS_MAX_CHARS`. */}
+              <div className="mb-s">
+                <Field label="What should the reply say?">
+                  <TextArea value={said} onChange={setSaid} rows={2} size="sm" maxLength={2000}
+                    placeholder="Optional — e.g. accept, and ask when the slides are due" />
+                </Field>
+              </div>
               <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
               <div className="mt-2 flex flex-wrap items-center gap-s">
                 <Button size="sm" variant="secondary" onClick={generate} loading={busy === 'draft'}><Sparkles size={14} /> {item.draft ? 'Regenerate' : 'Generate draft'}</Button>

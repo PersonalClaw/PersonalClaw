@@ -91,6 +91,45 @@ async def test_draft_reply_fences_input_and_stores(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_draft_reply_follows_what_the_owner_says_it_should_contain(monkeypatch):
+    """Her words about the reply go to the model as hers: outside the sender's fenced text."""
+    item = _item(message="Your talk is accepted. Please send the abstract and a photo by Friday.")
+    svc = _svc_with(item)
+    seen: dict = {}
+
+    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+        seen["prompt"] = prompt
+        return "Thank you! My abstract: a short tour of reading feeds well."
+
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
+    said = "Accept, and include my abstract: a short tour of reading feeds well."
+    out = await svc.draft_reply(item.id, instructions=said)
+
+    assert out is not None and out.draft.startswith("Thank you!")
+    prompt = seen["prompt"]
+    assert said in prompt
+    assert prompt.index(said) > prompt.rindex("</untrusted_content>")
+    assert "Your talk is accepted." in prompt
+
+
+@pytest.mark.asyncio
+async def test_draft_reply_with_nothing_said_asks_as_before(monkeypatch):
+    item = _item()
+    svc = _svc_with(item)
+    prompts: list[str] = []
+
+    async def fake_one_shot(prompt: str, *, use_case: str = "background") -> str:
+        prompts.append(prompt)
+        return "Sure."
+
+    monkeypatch.setattr("personalclaw.llm_helpers.one_shot_completion", fake_one_shot)
+    await svc.draft_reply(item.id)
+    await svc.draft_reply(item.id, instructions="   ")
+    assert prompts[0] == prompts[1]
+    assert "Alex said what this reply should say" not in prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_draft_reply_skip_sentinel_leaves_empty_draft(monkeypatch):
     item = _item(message="Thanks!")
     svc = _svc_with(item)

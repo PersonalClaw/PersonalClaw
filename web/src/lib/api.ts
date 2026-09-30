@@ -9155,7 +9155,9 @@ export const api = {
       `/api/inbox/${encodeURIComponent(id)}/apply`,
       edited ? { proposal: edited } : {},
     ),
-  draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
+  // `instructions`: what she says the reply should contain, for this draft only ('' says nothing).
+  draftInboxReply: (id: string, instructions = '') =>
+    post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`, { instructions }),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
   // POST, not GET: it creates that item and spends a model call, so a prefetch or a

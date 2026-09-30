@@ -649,6 +649,13 @@ payloads; memory recall applies the same data-not-instructions framing to
 recalled episodes (`dashboard/handlers/memory.py`; see
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard)).
 
+The markers are for the model. A tool result keeps them where it is stored and
+where the model reads it; where the dashboard shows it (a chat tool card, the
+full-result view, the Tools page runner) `web/src/lib/untrustedFence.ts` takes
+off the real markers and shows the text between them, rendered as text. A
+marker that was part of the wrapped text was escaped by the fence, so it is
+shown as the text it was.
+
 ## Stored and remote text on the page
 
 Everything the dashboard shows that it did not write — a model's reply, a

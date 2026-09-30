@@ -430,7 +430,9 @@ class _ChatSession:
         self._acp_pipe_death_retries: int = 0
         self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)
         # How this turn's refused batch was refused ("rejected" | "expired" | "cancelled"), or "".
-        # The rest of the batch is refused without asking, and says so in the same words.
+        # The requests already waiting behind the refused one are refused without asking, and say
+        # so in the same words; the next thing the agent reports ends a Deny's or an expiry's
+        # batch, and a stop's lasts until the turn ends (`chat_runner._REFUSALS_OF_ONE_BATCH`).
         self._batch_rejected: str = ""
         self.color_index: int | None = None
         self.color_theme: str = ""
@@ -704,10 +706,23 @@ class _ChatSession:
         self._queue.append(item)
         return qid
 
-    def queue_insert(self, index: int, content: str) -> str:
-        """Insert a message at a specific queue position. Returns the queue ID."""
+    def queue_retry(
+        self, content: str, *, from_channel: bool = False, regenerate_hint: str = ""
+    ) -> str:
+        """Queue the turn that just ended to run again, ahead of everything. Returns the queue ID.
+
+        A retry is the SAME message, not a new one: *content* is the text it was sent as, whose row
+        is already in the transcript. So its drain adds no row and no bubble, it is never merged
+        with a message queued behind it, and it runs as the same turn (`run_chat(_retry=True)`).
+        ``retry`` records where the message came from (``channel``: the chat channel the session is
+        linked to, which already shows it; ``here``: anywhere else), and ``hint`` a regenerate's
+        hint, so the retry is asked the same way.
+        """
         qid = uuid.uuid4().hex[:12]
-        self._queue.insert(index, {"id": qid, "content": content})
+        item = {"id": qid, "content": content, "retry": "channel" if from_channel else "here"}
+        if regenerate_hint:
+            item["hint"] = regenerate_hint
+        self._queue.insert(0, item)
         return qid
 
     def queue_pop(self, index: int = 0) -> dict[str, str]:

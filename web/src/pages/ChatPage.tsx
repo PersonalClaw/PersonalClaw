@@ -66,6 +66,7 @@ import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoMo
 import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
+import { withoutFence } from '../lib/untrustedFence'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
 import { WorkflowProgressCard, workflowRefFromTool } from './chat/WorkflowProgressCard'
 import { ApprovalCard } from './chat/ApprovalCard'
@@ -80,7 +81,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { readOnlyOf } from './chat/approvalMeta'
@@ -3906,7 +3907,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 {resultBody.length > 0 && (
                   <div className="text-on-surface-low text-[0.75rem]">{resultBody.length.toLocaleString()} chars</div>
                 )}
-                <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-3 py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{resultBody.content}</pre>
+                <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-3 py-2 font-mono text-on-surface-var text-[0.75rem] leading-relaxed">{withoutFence(resultBody.content)}</pre>
               </>
             )}
           </div>
@@ -4563,6 +4564,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     segments.filter((s, i) => i <= lastProcessIdx && s.kind === 'tool').map((s) => (s as ToolSegment).tool),
   )]
   const workSegs = lastProcessIdx >= 0 ? segments.slice(0, lastProcessIdx + 1) : []
+  const failedCount = failedStepCount(workSegs)
   const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
 
   // An SDLC create/start/status segment becomes a LIVE progress card that must stay
@@ -4588,7 +4590,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
     <>
       {workNodes.length > 0 && (
         collapseWork
-          ? <AgentWork stepCount={stepCount} toolNames={toolNames}>{workNodes}</AgentWork>
+          ? <AgentWork stepCount={stepCount} toolNames={toolNames} failedCount={failedCount}>{workNodes}</AgentWork>
           : <div className="flex flex-col gap-1">{workNodes}</div>
       )}
       {/* Live SDLC progress cards stay at the top level, always visible — never
@@ -4625,12 +4627,15 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
 
 /** The agent's intermediate work for a completed turn, folded into one compact
  *  disclosure so the FINAL ANSWER leads and the steps that produced it open only
- *  on demand. Summarizes as "Worked through N steps" + the distinct tools used.
- *  Collapsed by default; expanding reveals the original tool/approval/activity
- *  cards unchanged. (Replaces the old dot+rail timeline, whose connector added
- *  little once every step was followed by prose and whose dot ✓ duplicated each
- *  card's own status glyph.) */
-function AgentWork({ stepCount, toolNames, children }: { stepCount: number; toolNames: string[]; children: React.ReactNode }) {
+ *  on demand. Summarizes as "Worked through N steps" + how many of them failed +
+ *  the distinct tools used. Collapsed by default; expanding reveals the original
+ *  tool/approval/activity cards unchanged. (Replaces the old dot+rail timeline, whose
+ *  connector added little once every step was followed by prose and whose dot ✓
+ *  duplicated each card's own status glyph.)
+ *
+ *  The failure count sits before the tool names and never truncates: the reply below
+ *  can say the work succeeded when a step did not, and the fold is where that shows. */
+function AgentWork({ stepCount, toolNames, failedCount, children }: { stepCount: number; toolNames: string[]; failedCount: number; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
   const summary = toolNames.length
     ? `${toolNames.slice(0, 3).join(', ')}${toolNames.length > 3 ? ` +${toolNames.length - 3} more` : ''}`
@@ -4646,6 +4651,11 @@ function AgentWork({ stepCount, toolNames, children }: { stepCount: number; tool
         <span className="shrink-0" style={fvs(500)}>
           {open ? 'Hide work' : `Worked through ${stepCount} ${stepCount === 1 ? 'step' : 'steps'}`}
         </span>
+        {!open && failedCount > 0 && (
+          <span className="inline-flex shrink-0 items-center gap-xs text-danger" style={fvs(550)}>
+            · <AlertTriangle size={12} aria-hidden /> {failedCount} failed
+          </span>
+        )}
         {!open && summary && <span className="min-w-0 truncate text-on-surface-low/60">· {summary}</span>}
       </button>
       <AnimatePresence initial={false}>

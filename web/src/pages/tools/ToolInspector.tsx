@@ -5,6 +5,7 @@ import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle } from 'lucide-re
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { api, hasApiCode, type ToolItem, type ToolInvokeResult } from '../../lib/api'
+import { withoutFence } from '../../lib/untrustedFence'
 import { confirm, promptInput } from '../../ui/dialog'
 import { schemaProps, typeLabel, SchemaField, SchemaFields, buildArgs, useArgs, type JsonSchema } from './schema'
 import { ToolOutput } from './ToolOutput'
@@ -240,7 +241,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
                   the name — same trio as the rest of the family. */}
               <div tabIndex={0} role="group" aria-label="Tool result" className="max-h-96 overflow-y-auto">
                 {result.ok
-                  ? <ToolOutput text={result.output ?? ''} />
+                  ? <ToolOutput text={withoutFence(result.output ?? '')} />
                   : <pre data-type="body-s" className="text-danger font-mono whitespace-pre-wrap break-words">{result.error}</pre>}
               </div>
             </div>

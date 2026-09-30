@@ -863,7 +863,14 @@ def _remove_queued_by_id(messages: list[dict], queue_id: str) -> bool:
 
 
 def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
-    """Drain the queue: merge non-cron messages or pop the first one."""
+    """Drain the queue: merge non-cron messages or pop the first one.
+
+    A retry (`_ChatSession.queue_retry`) always runs alone: it is the turn that just ended, sent
+    again, and merged it would become a new message carrying hers a second time.
+    """
+    if session._queue and session._queue[0].get("retry"):
+        item = session.queue_pop(0)
+        return item["content"], [item]
     if merge_enabled and len(session._queue) > 1:
         to_merge: list[dict] = []
         for item in list(session._queue):

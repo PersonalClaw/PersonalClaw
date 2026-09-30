@@ -363,6 +363,13 @@ export function turnText(t: ChatTurn): string {
   return t.segments.filter((s): s is TextSegment => s.kind === 'text').map((s) => s.text).join('\n').trim()
 }
 
+/** How many of a turn's work steps failed: a tool call whose result says so (`ok` false, the one
+ *  bit a result carries for that) and an error the turn met on the way. The folded work says this
+ *  number, so a step that failed under a reply saying it worked is visible without opening it. */
+export function failedStepCount(work: Segment[]): number {
+  return work.filter((s) => (s.kind === 'tool' && s.ok === false) || s.kind === 'error').length
+}
+
 /** A subagent spawned during this session — driven by the subagent_spawn /
  *  subagent_tool / subagent_done WS events (fire-and-forget async subagents).
  *  Shown as live cards in the activity panel's Subagents tab. */

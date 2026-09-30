@@ -1,7 +1,7 @@
 """Tests for queue cancel feature.
 
 Covers:
-- _ChatSession queue helper methods (queue_append, queue_insert, queue_pop, queue_remove_by_id)
+- _ChatSession queue helper methods (queue_append, queue_retry, queue_pop, queue_remove_by_id)
 - DELETE /api/chat/sessions/{session}/queue/{queue_id} endpoint
 - Queue ID propagation in queue_push/queue_pop WS events
 """
@@ -35,13 +35,20 @@ class TestQueueHelpers:
         id2 = session.queue_append("b")
         assert id1 != id2
 
-    def test_queue_insert_at_front(self):
+    def test_queue_retry_goes_first_and_says_it_is_a_retry(self):
         session = _ChatSession("s1")
         session.queue_append("second")
-        qid = session.queue_insert(0, "first")
-        assert session._queue[0]["content"] == "first"
-        assert session._queue[0]["id"] == qid
+        qid = session.queue_retry("first", from_channel=True, regenerate_hint="shorter")
+        assert session._queue[0] == {
+            "id": qid,
+            "content": "first",
+            "retry": "channel",
+            "hint": "shorter",
+        }
         assert session._queue[1]["content"] == "second"
+        session.queue_retry("again")
+        assert session._queue[0]["retry"] == "here"
+        assert "hint" not in session._queue[0]
 
     def test_queue_pop_returns_dict(self):
         session = _ChatSession("s1")

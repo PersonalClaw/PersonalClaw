@@ -97,6 +97,7 @@ const docs: UiDoc[] = [
       { name: 'disabled', description: 'Dim + block the textarea — TextInput\'s pair, for an editor behind a consent gate.' },
       { name: 'disabledReason', description: 'Why the textarea is off, surfaced as a title WHILE disabled. A dead control owes a reason a keyboard user can reach.' },
       { name: 'onKeyDown', description: "Keydown passthrough, exactly TextInput's. Without it a surface needing a send shortcut (Cmd/Ctrl+Enter on a message box) had to drop to a raw <textarea>, which is the thing this primitive exists to replace." },
+      { name: 'maxLength', description: "Native maxlength, exactly TextInput's: for a field the backend bounds, pass the same limit so the cap is reached while typing rather than only as a rejection on submit." },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for TextArea for any multi-line entry rather than a raw <textarea> — it carries the blessed radius, focus ring, tone, and Field-label aria wiring.' },

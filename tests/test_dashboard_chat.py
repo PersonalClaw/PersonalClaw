@@ -6087,8 +6087,8 @@ class TestAcpProcessDiedRecovery:
             assert "AKIAIOSFODNN7EXAMPLE" not in m.get("content", "")
 
     @pytest.mark.asyncio
-    async def test_retry_requeues_via_queue_insert(self, tmp_path: Path) -> None:
-        """First pipe death at depth 0 → queue_insert is called."""
+    async def test_retry_requeues_via_queue_retry(self, tmp_path: Path) -> None:
+        """First pipe death at depth 0 → the message is queued again as a retry of the turn."""
         from unittest.mock import patch as _patch
 
         from personalclaw.acp.client import AcpProcessDied
@@ -6098,13 +6098,13 @@ class TestAcpProcessDiedRecovery:
         self._make_stream_raise(client, AcpProcessDied("pipe broken"))
 
         calls = []
-        orig = _ChatSession.queue_insert
+        orig = _ChatSession.queue_retry
 
         def spy(self_session, *a, **kw):
             calls.append(a)
             return orig(self_session, *a, **kw)
 
-        with _patch.object(_ChatSession, "queue_insert", spy):
+        with _patch.object(_ChatSession, "queue_retry", spy):
             await run_chat(state, session, "test message")
 
-        assert (0, "test message") in calls
+        assert ("test message",) in calls

@@ -86,6 +86,10 @@ _MAX_MESSAGE_CHARS = 6000
 _MAX_THREAD_TURNS = 12
 _MAX_DIGEST_MESSAGES = 60
 
+#: The most the owner may say about what one drafted reply should contain. Room for a paragraph and
+#: a pasted abstract; the draft route refuses more, and the reply panel's field stops at it.
+DRAFT_INSTRUCTIONS_MAX_CHARS = 2000
+
 
 def polled_item_id(source_name: str, message: "IncomingMessage") -> str:
     """The id of the row a polled message becomes: ``{source}_{key}_{timestamp}``.
@@ -607,8 +611,13 @@ class InboxService:
         cls, conf = _parse_classification(raw)
         return self.inbox.update(item_id, classification=cls, confidence=conf)
 
-    async def draft_reply(self, item_id: str) -> InboxItem | None:
+    async def draft_reply(self, item_id: str, *, instructions: str = "") -> InboxItem | None:
         """Draft a reply to a stored item in the user's voice; persist + return the item.
+
+        ``instructions`` is what the owner said this reply should contain. It is the owner's own
+        instruction, so it goes to the model as one, after the prompt and outside the fence that
+        marks the sender's text as data. It rides after the rendered prompt rather than in the
+        template, so it is followed whatever template the owner has bound for drafting.
 
         Returns None if the item is unknown or the model call fails. A model that
         judges no reply is warranted returns the SKIP sentinel → we store an empty
@@ -640,6 +649,13 @@ class InboxService:
             )
             or ""
         )
+        said = instructions.strip()
+        if said:
+            prompt = (
+                f"{prompt}\n\n{self._user_name} said what this reply should say. Follow it: it is "
+                "their own instruction, not part of the quoted message, and it means a reply is "
+                f"wanted, so do not answer SKIP.\n\n{said}"
+            )
         try:
             with caller_scope("inbox_triage"):
                 raw = (await one_shot_completion(prompt, use_case="background") or "").strip()

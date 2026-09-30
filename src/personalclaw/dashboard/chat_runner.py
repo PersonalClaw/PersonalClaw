@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -168,6 +169,12 @@ _UNRUN_STEP_WORDS = {
     "expired": "denied, no answer",
     "cancelled": "cancelled",
 }
+
+#: The refusals that reach only the requests waiting behind them in the stream: a Deny, and an
+#: approval nobody answered in time. The approval card says "The next tool call asks again", so
+#: once the agent reports anything else it has the answer, and its next call is asked about. A
+#: stopped turn (`cancelled`) asks nothing more, so that refusal holds until the turn ends.
+_REFUSALS_OF_ONE_BATCH = frozenset({"rejected", "expired"})
 
 
 def _line_status(meta: dict[str, Any]) -> str:
@@ -1960,13 +1967,37 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
     return f"{header}{fenced}\n\n---\n\n{message}"
 
 
+def _give_back_items(session: _ChatSession, attr: str, taken: list[Any]) -> Callable[[], None]:
+    """The way to put what a turn took from the session's one-turn list *attr* back at its head.
+
+    A retry of that turn (`run_chat`'s ``_send_again``) reads it again, so it is handed the same
+    context its first attempt was. The list is looked up when it is put back, not now.
+    """
+
+    def give_back() -> None:
+        getattr(session, attr)[:0] = taken
+
+    return give_back
+
+
+def _give_back_value(owner: object, attr: str, value: object) -> Callable[[], None]:
+    """The way to set *owner*'s one-turn *attr* back to the *value* a turn took, for its retry."""
+
+    def give_back() -> None:
+        setattr(owner, attr, value)
+
+    return give_back
+
+
 def _inject_investigate_context(
     state: "DashboardState", session: _ChatSession, message: str
 ) -> str:
-    """First turn only: prepend the staged investigate envelope (plan 60) to the
+    """First turn only: prepend the staged investigate envelope to the
     model-bound message — a short labelled preamble + ``fence_untrusted(snapshot,
     source="investigate:<kind>")`` — then CLEAR the staged copy so later turns
-    inject nothing. The user's visible message is untouched.
+    inject nothing. The user's visible message is untouched. When that first turn is
+    sent again (a retry), ``run_chat`` puts the staged copy back first, so it is
+    the first turn still.
 
     Entity snapshots contain external/LLM-authored text (an email body, a loop
     finding), so the fence is non-negotiable: the model reads the envelope as
@@ -2315,6 +2346,7 @@ async def run_chat(
     _prompt_depth: int = 0,
     regenerate_hint: str = "",
     arrived_from_channel: bool = False,
+    _retry: bool = False,
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
 
@@ -2330,6 +2362,10 @@ async def run_chat(
     ``arrived_from_channel`` says *message* came from the chat channel the session is linked
     to. The mirror shows that channel what was typed anywhere else; this message is already
     there, so it is not sent back. The answer is mirrored either way.
+
+    ``_retry`` says this run sends the turn that just ended again (``_send_again`` below, drained
+    by the queue): the same message, whose row is already in the transcript, and the same turn,
+    so it opens no new checkpoint turn and is handed the same context the first attempt was.
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False
@@ -2347,11 +2383,31 @@ async def run_chat(
     # retry it (`no_answer_notice`). A turn with no row of its own was asked for directly.
     _started_at = in_flight_index(session, _in_flight_text, nested=_prompt_depth > 0)
     _asked_by_person = _started_at is None or session.messages[_started_at].get("role") == "user"
+    # What this attempt takes from the session that rides one turn only, as the way to put each
+    # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
+    _taken_once: list[Callable[[], None]] = []
+
+    def _send_again() -> None:
+        """Queue this turn to run again: the same message, as the same turn.
+
+        It re-sends the text the dispatcher appended (its row is already in the transcript), not
+        the model-bound message this attempt built from it: that one carries the context blocks,
+        and queued as a message it showed up as a second message of hers, with the blocks in it.
+        The retry builds them again from her row, after what this attempt took is put back.
+        """
+        for put_back in _taken_once:
+            put_back()
+        _taken_once.clear()
+        session.queue_retry(
+            _in_flight_text, from_channel=arrived_from_channel, regenerate_hint=regenerate_hint
+        )
+
     # Phase 1 of the turn checkpoint: open a numbered turn and
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
-    # /rewind-to-turn N mean something the transcript's turn N does not.
-    if _prompt_depth == 0:
+    # /rewind-to-turn N mean something the transcript's turn N does not. A retry is the same
+    # turn too, sent again.
+    if _prompt_depth == 0 and not _retry:
         try:
             from personalclaw import turn_checkpoints
 
@@ -2550,10 +2606,13 @@ async def run_chat(
             message = _inject_artifact_content(state, session, message)
         except Exception:
             logger.warning("artifact content injection failed", exc_info=True)
+        _staged_investigation = session._investigate_ctx
         try:
             message = _inject_investigate_context(state, session, message)
         except Exception:
             logger.warning("investigate context injection failed", exc_info=True)
+        if session._investigate_ctx is not _staged_investigation:
+            _taken_once.append(_give_back_value(session, "_investigate_ctx", _staged_investigation))
 
     def _answered_locally() -> None:
         """This turn's reply was composed here, before any runtime was asked, and it is complete.
@@ -3133,6 +3192,7 @@ async def run_chat(
             _session = getattr(state.sessions, "_sessions", {}).get(session_key)
             if _session is not None and getattr(_session, "prev_turn_cancelled", False):
                 _session.prev_turn_cancelled = False
+                _taken_once.append(_give_back_value(_session, "prev_turn_cancelled", True))
                 if state.context_builder and state.context_builder.conversation_log:
                     from personalclaw.context import (  # circular: context -> dashboard.chat -> chat_runner (can't top-level: context imports chat at module load); circular: context -> chat -> chat_runner; circular: context -> chat  # noqa: E501
                         build_cancelled_turn_preamble,
@@ -3149,12 +3209,16 @@ async def run_chat(
             if session._pending_subagent_failures:
                 failures = session._pending_subagent_failures[:]
                 session._pending_subagent_failures.clear()
+                _taken_once.append(
+                    _give_back_items(session, "_pending_subagent_failures", failures)
+                )
                 message = _ahead_of_the_request("\n\n".join(failures), message)
             # Drain pending context injections (silent background context
             # from apps/subagents).  Expired entries are discarded.
             if session._pending_context:
                 now = time.time()
                 ctx_parts: list[str] = []
+                delivered: list[dict] = []
                 for entry in session._pending_context:
                     max_age = entry.get("maxAge")
                     if max_age is not None:
@@ -3162,12 +3226,14 @@ async def run_chat(
                         if injected_at + max_age < now:
                             continue  # expired — silently discard
                     source = entry.get("source", "app")
+                    delivered.append(entry)
                     ctx_parts.append(
                         f'[Background context from "{source}"]\n'
                         f'{entry["content"]}\n'
                         f"[End of background context]\n"
                     )
                 session._pending_context.clear()
+                _taken_once.append(_give_back_items(session, "_pending_context", delivered))
                 if ctx_parts:
                     message = _ahead_of_the_request("\n".join(ctx_parts), message, "\n")
             # Use resolved provider agent name (e.g. "personalclaw"), not the session
@@ -3600,6 +3666,16 @@ async def run_chat(
                 _tcid, _ = redact_exfiltration_urls(event.tool_call_id)
                 _tcid, _ = redact_credentials(_tcid)
                 event.tool_call_id = _tcid
+
+            # A refusal covers the requests the agent had already sent when it was decided, which
+            # wait right behind it in the stream. Anything else the agent reports first (the
+            # refused call's result, the next call's card, a word of text) means it has the
+            # answer, so the next call it makes is asked about again.
+            if (
+                session._batch_rejected in _REFUSALS_OF_ONE_BATCH
+                and event.kind != EVENT_PERMISSION_REQUEST
+            ):
+                session._batch_rejected = ""
 
             if event.kind == EVENT_TEXT_CHUNK:
                 # If we just exited a tool group, finalize the streaming
@@ -4549,8 +4625,9 @@ async def run_chat(
                         grant=auto_approval_reason(_app_auto, yolo_active),
                     )
                     continue
-                # Auto-reject remaining tools after one rejection in a batch — refused the way the
-                # batch was: a Deny, or no answer in time, or the turn being stopped.
+                # A request sent together with a refused one is refused the way it was: a Deny,
+                # or no answer in time, or the turn being stopped. The batch ends where the loop
+                # above clears it; a stopped turn's lasts until the turn ends.
                 refused_as = getattr(session, "_batch_rejected", "")
                 if refused_as:
                     await _refuse_call(event, refused_as)
@@ -4924,8 +5001,8 @@ async def run_chat(
                             ),
                         },
                     )
-                    # Refuse the rest of the batch the same way, and continue the loop instead of
-                    # breaking, so the other batched requests are marked too.
+                    # Refuse the requests already waiting behind this one the same way, and continue
+                    # the loop instead of breaking, so they are marked too.
                     session._batch_rejected = ended_as
                     logger.warning(
                         "PERM REJECTED tool=%r outcome=%r — auto-rejecting remaining batch",
@@ -5123,7 +5200,7 @@ async def run_chat(
             # A re-queued retry is not the end of the turn; the two branches that give up are.
             if _prompt_depth == 0 and session._acp_pipe_death_retries < 3:
                 session._acp_pipe_death_retries += 1
-                session.queue_insert(0, message)
+                _send_again()
                 _emit_error(f"⟳ Connection lost{_rc_suffix} — retrying...")
             elif _prompt_depth == 0 and session._acp_pipe_death_retries >= 3:
                 _emit_error(f"Session stuck{_rc_suffix} — please start a new chat.")
@@ -5214,7 +5291,7 @@ async def run_chat(
                     "Empty assistant turn for session %s — silently re-queuing once",
                     session.key,
                 )
-                session.queue_insert(0, message)
+                _send_again()
                 return
             elif session._empty_response_retries >= 1:
                 # Second consecutive empty → surface the card and reset the streak.
@@ -5425,7 +5502,7 @@ async def run_chat(
         if _prompt_depth == 0:
             session._acp_pipe_death_retries += 1
             if session._acp_pipe_death_retries <= 3:
-                session.queue_insert(0, message)
+                _send_again()
                 session.append("error", "⟳ Connection lost — retrying...", "msg msg-err")
             else:
                 session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
@@ -5444,7 +5521,7 @@ async def run_chat(
         if _prompt_depth == 0:
             session._prompt_busy_retries += 1
             if session._prompt_busy_retries <= 3:
-                session.queue_insert(0, message)
+                _send_again()
             else:
                 session.append("error", "Session stuck — please start a new chat.", "msg msg-err")
                 session._last_turn_errored = True
@@ -5476,7 +5553,7 @@ async def run_chat(
             if _prompt_depth == 0:
                 session._prompt_busy_retries += 1
                 if session._prompt_busy_retries <= 3:
-                    session.queue_insert(0, message)
+                    _send_again()
                 else:
                     session.append(
                         "error", "Session stuck — please start a new chat.", "msg msg-err"
@@ -5671,50 +5748,60 @@ async def run_chat(
                     "queue_pop",
                     {"session": session.key, "content": _redacted, "queue_id": item["id"]},
                 )
-            # Redact merged message before storing in session
-            next_msg, _ = redact_exfiltration_urls(next_msg)
-            next_msg, _ = redact_credentials(next_msg)
-            is_cron = next_msg.startswith(CRON_NOTIFY_PREFIX)
-            is_subagent = next_msg.startswith(SUBAGENT_COMPLETION_PREFIX)
-            _m = CRON_NOTIFY_RE.match(next_msg) if is_cron else None
-            cron_label = _m.group(1) if _m else "cron"
-            cron_label, _ = redact_exfiltration_urls(cron_label)
-            cron_label, _ = redact_credentials(cron_label)
-            session.append(
-                "subagent" if is_subagent else "inject" if is_cron else "user",
-                next_msg,
-                json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
-            )
-            # A queued user message is persisted here but session.append suppresses
-            # the SSE echo for role="user" (the live page normally adds the user
-            # bubble optimistically on send — which never happened for a queued
-            # message, only its strip card did). Emit a typed event so the bubble
-            # renders LIVE as the queue drains; without it the message only appeared
-            # after a manual reload (which rehydrated the persisted user turn).
-            # Mirrors the approval-card live-render fix above. cron/subagent rows
-            # have their own live rendering and must not show as user bubbles.
-            if not is_cron and not is_subagent:
-                _disp, _ = redact_exfiltration_urls(next_msg)
-                _disp, _ = redact_credentials(_disp)
-                _disp = _redact_for_display(_disp)
-                state.broadcast_ws(
-                    "chat_user_message",
-                    {
-                        "session": session.key,
-                        "content": _disp,
-                        "ts": session.messages[-1].get("ts", ""),
-                    },
+            retry = consumed[0].get("retry", "")
+            if retry:
+                # The turn that just ended, sent again as the same message and the same turn
+                # (`_ChatSession.queue_retry`): its row is already in the transcript, so nothing
+                # is appended and no bubble is echoed.
+                next_turn = run_chat(
+                    state,
+                    session,
+                    next_msg,
+                    regenerate_hint=consumed[0].get("hint", ""),
+                    arrived_from_channel=retry == "channel",
+                    _retry=True,
                 )
+            else:
+                # Redact merged message before storing in session
+                next_msg, _ = redact_exfiltration_urls(next_msg)
+                next_msg, _ = redact_credentials(next_msg)
+                is_cron = next_msg.startswith(CRON_NOTIFY_PREFIX)
+                is_subagent = next_msg.startswith(SUBAGENT_COMPLETION_PREFIX)
+                _m = CRON_NOTIFY_RE.match(next_msg) if is_cron else None
+                cron_label = _m.group(1) if _m else "cron"
+                cron_label, _ = redact_exfiltration_urls(cron_label)
+                cron_label, _ = redact_credentials(cron_label)
+                session.append(
+                    "subagent" if is_subagent else "inject" if is_cron else "user",
+                    next_msg,
+                    json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
+                )
+                # A queued user message is persisted here but session.append suppresses
+                # the SSE echo for role="user" (the live page normally adds the user
+                # bubble optimistically on send — which never happened for a queued
+                # message, only its strip card did). Emit a typed event so the bubble
+                # renders LIVE as the queue drains; without it the message only appeared
+                # after a manual reload (which rehydrated the persisted user turn).
+                # Mirrors the approval-card live-render fix above. cron/subagent rows
+                # have their own live rendering and must not show as user bubbles.
+                if not is_cron and not is_subagent:
+                    _disp, _ = redact_exfiltration_urls(next_msg)
+                    _disp, _ = redact_credentials(_disp)
+                    _disp = _redact_for_display(_disp)
+                    state.broadcast_ws(
+                        "chat_user_message",
+                        {
+                            "session": session.key,
+                            "content": _disp,
+                            "ts": session.messages[-1].get("ts", ""),
+                        },
+                    )
 
-            # A message the channel sent while this turn ran is not sent back to it. Merged
-            # with one typed here, the merged text is new to the channel, so it is.
-            from_channel = all(item.get("channel") for item in consumed)
-            task = asyncio.create_task(
-                asyncio.wait_for(
-                    run_chat(state, session, next_msg, arrived_from_channel=from_channel),
-                    timeout=CHAT_TURN_TIMEOUT,
-                )
-            )
+                # A message the channel sent while this turn ran is not sent back to it. Merged
+                # with one typed here, the merged text is new to the channel, so it is.
+                from_channel = all(item.get("channel") for item in consumed)
+                next_turn = run_chat(state, session, next_msg, arrived_from_channel=from_channel)
+            task = asyncio.create_task(asyncio.wait_for(next_turn, timeout=CHAT_TURN_TIMEOUT))
             session.task = task
             state._background_tasks.add(task)
             task.add_done_callback(state._background_tasks.discard)
