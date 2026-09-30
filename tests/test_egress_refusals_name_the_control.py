@@ -91,3 +91,48 @@ def test_the_named_control_is_the_one_the_security_page_renders():
     assert '<Section title="Network egress"' in panel
     assert '<HostList label="Allowed hosts"' in panel
     assert "Allowed hosts in Settings → Security → Network egress" in allow_host_step("h.example")
+
+
+def _unresolvable(host: str) -> list[str]:
+    raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+
+@pytest.mark.parametrize(
+    ("url", "policy", "resolver", "said"),
+    [
+        (
+            "https://search.example.com/api",
+            EgressPolicy(name="test", deny_hosts=("search.example.com",)),
+            None,
+            "https://search.example.com/api was not reached: search.example.com is on Denied "
+            "hosts in Settings → Security → Network egress.",
+        ),
+        (
+            "http://nas.example/api",
+            EgressPolicy(name="test"),
+            lambda h: ["10.0.0.4"],
+            "PersonalClaw's network settings refused http://nas.example/api, which is on a "
+            "private network (nas.example, which resolves to 10.0.0.4). If this endpoint is "
+            "yours, add nas.example to Allowed hosts in Settings → Security → Network egress, "
+            "then test again.",
+        ),
+        (
+            "https://search.invalid/api",
+            EgressPolicy(name="test"),
+            _unresolvable,
+            "search.invalid could not be found, so https://search.invalid/api was not reached "
+            "— check the address, and this computer's network connection.",
+        ),
+    ],
+    ids=["denied", "private", "unresolvable"],
+)
+def test_an_app_says_an_egress_refusal_in_the_guards_words(url, policy, resolver, said):
+    """An app turns the guard's refusal into the sentence core's own refusals use, naming the
+    control that lifts it (or none, when none does): ``personalclaw.sdk.net.egress_refusal``."""
+    from personalclaw.sdk.net import egress_refusal
+
+    kw = {"resolver": resolver} if resolver is not None else {}
+    decision = evaluate(url, policy, **kw)
+    assert not decision.allow
+    assert egress_refusal(url, decision) == said
+    assert not _CONFIG_DIALECT.search(said), said

@@ -107,6 +107,47 @@ class GuardDecision:
     address: str = ""
 
 
+def egress_refusal(url: str, decision: GuardDecision) -> str:
+    """The sentence for this guard refusing *url*, for the owner who reads it.
+
+    It names the control that lifts the refusal, in the guard's own words for it — Allowed hosts
+    in Settings → Security → Network egress, for the one host, or Denied hosts, where the owner
+    put it — and names nothing when no setting lifts it. One sentence for every surface that
+    says it: a model provider's Test and the apps that fetch through the SDK
+    (``personalclaw.sdk.net.egress_refusal``). It used to name two config keys, one of them the
+    switch that opens every private address at once, which is not what an owner vouching for one
+    server should reach for.
+    """
+    host = decision.host or "its host"
+    if decision.category == "unresolvable":
+        return (
+            f"{host} could not be found, so {url} was not reached — check the address, and this "
+            "computer's network connection."
+        )
+    if decision.category == "deny_list":
+        return f"{url} was not reached: {host} is on Denied hosts in {EGRESS_SETTINGS}."
+    if decision.category == "not_listed":
+        return (
+            f"PersonalClaw's network settings refused {url}: this run reaches only the hosts "
+            f"it lists. If this endpoint is yours, {allow_host_step(host)}, then test again."
+        )
+    if decision.category in OWNER_CAN_ALLOW:
+        where = PLACES[decision.category]
+        address = decision.address
+        place = (
+            f"{where} ({host})"
+            if not address or address == host
+            else f"{where} ({host}, which resolves to {address})"
+        )
+        return (
+            f"PersonalClaw's network settings refused {url}, which is on {place}. If this "
+            f"endpoint is yours, {allow_host_step(host)}, then test again."
+        )
+    # The metadata service, a link-local or reserved address, a URL the guard cannot read: no
+    # setting reaches these, so the guard's own reason is the whole answer.
+    return f"PersonalClaw's network settings refused {url}: {decision.reason}."
+
+
 def classify_host(ip_str: str) -> IpVerdict:
     """Classify a literal IP into a forbidden-range category, authoritatively.
 

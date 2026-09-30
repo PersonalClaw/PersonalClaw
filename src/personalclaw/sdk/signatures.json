@@ -7247,6 +7247,14 @@
   ],
   "returns": "EgressPolicy"
  },
+ "personalclaw.sdk.net.egress_refusal": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "url"},
+   {"annotation": "GuardDecision", "kind": "positional_or_keyword", "name": "decision"}
+  ],
+  "returns": "str"
+ },
  "personalclaw.sdk.net.evaluate": {
   "kind": "function",
   "params": [

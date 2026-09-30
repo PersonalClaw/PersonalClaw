@@ -29,6 +29,12 @@ from personalclaw.net import (  # noqa: F401
     sync_egress_policy,
 )
 
+# What an app says when the guard refuses one of its requests: the sentence core's own refusals
+# use, which names the control that lifts it (Allowed hosts or Denied hosts, under Settings →
+# Security → Network egress) or none when no setting does. Exported so a search app says it in
+# those words instead of relaying the guard's reason, which names no setting.
+from personalclaw.net.guard import egress_refusal  # noqa: F401
+
 # One vocabulary for what a failure to reach an endpoint SAYS (what failed, the likely cause,
 # the fix — the container-localhost case included). Exported so a provider app composes its
 # connection-test and discovery failures in core's words instead of relaying `str(exc)`,
@@ -61,6 +67,7 @@ __all__ = [
     "WEBHOOK",
     "EgressBlocked",
     "egress_policy_for",
+    "egress_refusal",
     "evaluate",
     "GuardDecision",
     # The sync transport's egress posture. `SYNC` is

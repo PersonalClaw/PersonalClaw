@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A search app's refusal names the network setting that lifts it, in the words a model provider's Test uses: `personalclaw.sdk.net.egress_refusal` (an SDK addition, used by `brave-search`, `duckduckgo-search`, `exa-search`, `perplexity-search`, `searxng-search`, `tavily-search`, `wikipedia-search` and `skills-sh`).**
 - **Settings → Backups → Sync asks for the sync passphrase when the chosen transport encrypts, before the first sync, and saves it to the credential store without showing it again.**
 - **An artifact's page pins it to Home, or unpins it, from its header: Pin to Home.**
 - **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**

@@ -501,46 +501,6 @@ def openai_compatible_models_url(
     return f"{base}/models"
 
 
-def _egress_refusal(url: str, decision: Any) -> str:
-    """The sentence for the egress guard refusing a provider's model list.
-
-    It names the control that lifts the refusal, in the guard's own words for it — Allowed hosts
-    in Settings → Security → Network egress, for the one host — and names nothing when no setting
-    lifts it. It used to name two config keys, one of them the switch that opens every private
-    address at once, which is not what an owner vouching for one server should reach for.
-    """
-    from personalclaw.net.guard import EGRESS_SETTINGS, OWNER_CAN_ALLOW, PLACES, allow_host_step
-
-    host = decision.host or "its host"
-    if decision.category == "unresolvable":
-        return (
-            f"{host} could not be found, so {url} was not reached — check this provider's "
-            "endpoint address."
-        )
-    if decision.category == "deny_list":
-        return f"{url} was not reached: {host} is on Denied hosts in {EGRESS_SETTINGS}."
-    if decision.category == "not_listed":
-        return (
-            f"PersonalClaw's network settings refused {url}: this run reaches only the hosts "
-            f"it lists. If this endpoint is yours, {allow_host_step(host)}, then test again."
-        )
-    if decision.category in OWNER_CAN_ALLOW:
-        where = PLACES[decision.category]
-        address = decision.address
-        place = (
-            f"{where} ({host})"
-            if not address or address == host
-            else f"{where} ({host}, which resolves to {address})"
-        )
-        return (
-            f"PersonalClaw's network settings refused {url}, which is on {place}. If this "
-            f"endpoint is yours, {allow_host_step(host)}, then test again."
-        )
-    # The metadata service, a link-local or reserved address, a URL the guard cannot read: no
-    # setting reaches these, so the guard's own reason is the whole answer.
-    return f"PersonalClaw's network settings refused {url}: {decision.reason}."
-
-
 async def openai_compatible_discover_models(
     endpoint: str | None, api_key: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> list[ModelInfo]:
@@ -560,7 +520,13 @@ async def openai_compatible_discover_models(
     """
     import json as _json
 
-    from personalclaw.sdk.net import CONNECTOR, EgressBlocked, egress_policy_for, fetch
+    from personalclaw.sdk.net import (
+        CONNECTOR,
+        EgressBlocked,
+        egress_policy_for,
+        egress_refusal,
+        fetch,
+    )
 
     if not api_key and not endpoint:
         raise ModelDiscoveryError(
@@ -580,7 +546,7 @@ async def openai_compatible_discover_models(
     try:
         r = await fetch(url, policy=policy, method="GET", headers=headers)
     except EgressBlocked as exc:
-        raise ModelDiscoveryError(_egress_refusal(url, exc.decision), url=url) from exc
+        raise ModelDiscoveryError(egress_refusal(url, exc.decision), url=url) from exc
     except Exception as exc:  # noqa: BLE001 — every transport failure, named not swallowed
         from personalclaw.providers.failure_copy import connectivity_guidance
 
