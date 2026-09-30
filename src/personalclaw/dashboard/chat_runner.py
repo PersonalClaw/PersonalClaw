@@ -2611,12 +2611,14 @@ async def run_chat(
             message = _inject_artifact_content(state, session, message)
         except Exception:
             logger.warning("artifact content injection failed", exc_info=True)
-        _staged_investigation = session._investigate_ctx
+        # Read the way `_inject_investigate_context` and every other reader read it: a session
+        # with no `_investigate_ctx` has nothing staged, the same as one holding None.
+        _staged_investigation = getattr(session, "_investigate_ctx", None)
         try:
             message = _inject_investigate_context(state, session, message)
         except Exception:
             logger.warning("investigate context injection failed", exc_info=True)
-        if session._investigate_ctx is not _staged_investigation:
+        if getattr(session, "_investigate_ctx", None) is not _staged_investigation:
             _taken_once.append(_give_back_value(session, "_investigate_ctx", _staged_investigation))
 
     def _answered_locally() -> None:
@@ -3675,9 +3677,10 @@ async def run_chat(
             # A refusal covers the requests the agent had already sent when it was decided, which
             # wait right behind it in the stream. Anything else the agent reports first (the
             # refused call's result, the next call's card, a word of text) means it has the
-            # answer, so the next call it makes is asked about again.
+            # answer, so the next call it makes is asked about again. Read as the refusal check
+            # below reads it: a session with no `_batch_rejected` has refused nothing.
             if (
-                session._batch_rejected in _REFUSALS_OF_ONE_BATCH
+                getattr(session, "_batch_rejected", "") in _REFUSALS_OF_ONE_BATCH
                 and event.kind != EVENT_PERMISSION_REQUEST
             ):
                 session._batch_rejected = ""
