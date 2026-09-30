@@ -429,11 +429,8 @@ async def test_guard_redact_mode_rewrites_prompt(tmp_path, monkeypatch):
     assert seen and "AKIA" not in seen[0]  # provider saw the redacted prompt
 
 
-@pytest.mark.asyncio
-async def test_local_provider_forced_to_warn(tmp_path, monkeypatch):
-    """A provider whose entry sends to localhost is forced to warn even if config says block —
-    the content never leaves the machine."""
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+async def _guard_for_a_local_ollama_entry():
+    """A guard for an Ollama entry at localhost whose setting asks to block."""
     from personalclaw.guardrails.model_call import wrap_model_call_guard
     from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
@@ -453,8 +450,31 @@ async def test_local_provider_forced_to_warn(tmp_path, monkeypatch):
         scan_mode="block",
     )
     await guard.start()
+    return guard
+
+
+@pytest.mark.asyncio
+async def test_local_provider_forced_to_warn(tmp_path, monkeypatch, ollama_app):
+    """An Ollama entry at localhost, with the Ollama app's type registered as the gateway registers
+    it at start, is forced to warn even if config says block — the content never leaves the
+    machine."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    guard = await _guard_for_a_local_ollama_entry()
     # block would raise; warn proceeds → returns text
     assert await _drain(guard, "AKIAIOSFODNN7EXAMPLE") == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_local_entry_no_loaded_app_serves_gets_the_settings_scan(tmp_path, monkeypatch):
+    """The same entry while no loaded app provides its type: nothing says its model runs here, so
+    the prompt gets the scan the setting asks for."""
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    from personalclaw.llm.registry import ProviderRegistry, set_default_registry
+
+    set_default_registry(ProviderRegistry())  # conftest restores the singleton afterwards
+    guard = await _guard_for_a_local_ollama_entry()
+    with pytest.raises(SecretLeakBlocked):
+        await _drain(guard, "AKIAIOSFODNN7EXAMPLE")
 
 
 # ── Gateway day-budget dispatch gate ─────────────────────────────────────────

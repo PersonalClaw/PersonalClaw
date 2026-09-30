@@ -90,16 +90,7 @@ def test_declared_proposals_reach_the_pre_install_consent_payload():
 # ── enable-time registration ──
 
 
-@pytest.fixture()
-def clean_registry():
-    """Snapshot/restore the process-global kind registry (test isolation)."""
-    saved = dict(notification_kinds._REGISTRY)
-    yield
-    notification_kinds._REGISTRY.clear()
-    notification_kinds._REGISTRY.update(saved)
-
-
-def test_register_app_kinds_mints_a_verifiable_attention_pair(clean_registry):
+def test_register_app_kinds_mints_a_verifiable_attention_pair():
     kinds = pc.register_app_proposal_kinds("demo", _manifest(proposals=[{"kind_suffix": "draft"}]))
     assert kinds == ["proposal:draft"]
     k = notification_kinds.resolve_kind("app:demo", "proposal:draft")
@@ -108,13 +99,13 @@ def test_register_app_kinds_mints_a_verifiable_attention_pair(clean_registry):
     assert k.verifiable is True and k.attention is True
 
 
-def test_re_enable_does_not_raise_on_the_duplicate(clean_registry):
+def test_re_enable_does_not_raise_on_the_duplicate():
     m = _manifest(proposals=[{"kind_suffix": "draft"}])
     pc.register_app_proposal_kinds("demo", m)
     assert pc.register_app_proposal_kinds("demo", m) == ["proposal:draft"]
 
 
-def test_deregister_leaves_no_phantom_kind(clean_registry):
+def test_deregister_leaves_no_phantom_kind():
     m = _manifest(proposals=[{"kind_suffix": "draft"}])
     pc.register_app_proposal_kinds("demo", m)
     assert pc.deregister_app_proposal_kinds("demo", m) == ["proposal:draft"]
@@ -122,7 +113,7 @@ def test_deregister_leaves_no_phantom_kind(clean_registry):
     assert ("app:demo", "proposal:draft") not in notification_kinds._REGISTRY
 
 
-def test_two_apps_declaring_the_same_suffix_do_not_collide(clean_registry):
+def test_two_apps_declaring_the_same_suffix_do_not_collide():
     m = _manifest(proposals=[{"kind_suffix": "draft"}])
     pc.register_app_proposal_kinds("a", m)
     pc.register_app_proposal_kinds("b", m)

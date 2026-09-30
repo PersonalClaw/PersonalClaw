@@ -49,14 +49,8 @@ class _Adapter:
         yield LLMEvent(kind=EVENT_COMPLETE, input_tokens=self.usage[0], output_tokens=self.usage[1])
 
 
-class _LoopbackAdapter(_Adapter):
-    """A local adapter by the guard's own rule: its endpoint is on this machine."""
-
-    _base_url = "http://127.0.0.1:11434"
-
-
 def _configured(name: str, endpoint: str) -> str:
-    """Register the provider entry *name* with *endpoint*, as the config sync does; conftest drops
+    """Register the Ollama entry *name* with *endpoint*, as the config sync does; conftest drops
     it after the test."""
     get_default_registry().register_entry(
         ProviderEntry(name=name, type="ollama", model="", options={"endpoint": endpoint})
@@ -169,12 +163,13 @@ async def test_the_guard_records_usage_model_and_the_temperature_it_sent():
 
 
 @pytest.mark.asyncio
-async def test_a_local_models_zero_is_a_measurement():
-    """Priced by the one pricing function, which knows a local model's $0 by where its entry
-    sends (``llm.registry.served_on_this_machine``)."""
+async def test_a_local_models_zero_is_a_measurement(ollama_app):
+    """Priced by the one pricing function, which knows a local model's $0 by what serves its entry
+    and where it sends (``llm.registry.served_on_this_machine``): an Ollama entry at a loopback
+    endpoint, with the Ollama app's type registered as the gateway registers it at start."""
     local = _configured("local-box", "http://127.0.0.1:11434")
     with capture_model_calls() as log:
-        await _call(_LoopbackAdapter(), provider=local)
+        await _call(_Adapter(), provider=local)
     assert log.calls[0].priced is True
     assert log.cost_usd == 0.0
 

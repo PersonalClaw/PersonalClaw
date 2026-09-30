@@ -1282,6 +1282,34 @@ def _restore_local_model_registry() -> object:
     _local_models._capabilities.update(capabilities)
 
 
+@pytest.fixture(autouse=True)
+def _restore_notification_kinds() -> object:
+    """Snapshot + restore the process-global notification-kind registry around every test.
+
+    Loading an app registers the proposal kinds its manifest declares
+    (`apps.app_runtime.load` → `proposals_contract.register_app_proposal_kinds`), and installing
+    one loads it, so a test that installs an app declaring `permissions.proposals` leaves
+    `app:<name>/proposal:<suffix>` in `notification_kinds._REGISTRY` for the rest of its worker's
+    life: nothing uninstalls a test's app. `test_notification_kinds.py`'s wire-vocabulary rail
+    then reads that app's kind as one the backend emits and the display map cannot label.
+    Measured, deterministic at `-n0`:
+
+        pytest tests/test_inbox_app_proposals.py tests/test_notification_kinds.py
+
+    failed `test_every_emittable_kind_has_a_frontend_row` with `['proposal:draft']`, and
+    `test_apps_cannot_post_into_your_chats.py` leaves the same pair.
+
+    Snapshot-and-restore rather than dropping known names, for the reason the guards above
+    give; restored in place, since the registry's readers hold the module's own dict.
+    """
+    from personalclaw import notification_kinds
+
+    before = dict(notification_kinds._REGISTRY)
+    yield
+    notification_kinds._REGISTRY.clear()
+    notification_kinds._REGISTRY.update(before)
+
+
 @pytest.fixture
 def ollama_app():
     """The bundled Ollama app's provider type, registered as the gateway registers it at start.
