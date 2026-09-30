@@ -129,7 +129,7 @@ def _said(name: str, attachments: int, why: str) -> None:
         sel().log_api_access(
             caller="dashboard",
             operation="chat.temporary_forgotten",
-            outcome="deleted",
+            outcome="success",
             source="dashboard",
             resources=f"{name} attachments={attachments} ({why})",
         )
