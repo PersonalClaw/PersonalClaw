@@ -4,7 +4,7 @@ Measured: a review turn ran fifteen commands, its model then answered with nothi
 said "Response complete." with no reply, no notice and no retry; the transcript held no answer
 and the log said nothing. The chat runner took "no text after the tools" for a finished turn.
 
-Now the native loop asks its model once for the reply (`runtime.ANSWER_OWED_NOTE`), and a turn
+Now the native loop asks its model once for the reply (`owed_reply.ANSWER_OWED_NOTE`), and a turn
 still without one ends in the error that says so: in the chat, where Retry asks again, on the
 channel the conversation is linked to, and in the turn's outcome every other reader goes by.
 
@@ -23,7 +23,8 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import channel_delivery, channel_trust
-from personalclaw.agents.native.runtime import ANSWER_OWED_NOTE, NativeAgentRuntime
+from personalclaw.agents.native.owed_reply import ANSWER_OWED_NOTE
+from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.channel_inbound import reset_admissions
 from personalclaw.channel_transports.base import ChannelMessage

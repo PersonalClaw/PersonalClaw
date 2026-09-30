@@ -237,7 +237,7 @@ with. On a failed turn's error row it is a plain retry, and nothing is kept as
 a variant.
 
 **A turn with no answer.** A native turn that ran tools and then wrote nothing
-is asked once for its reply (`ANSWER_OWED_NOTE` in `agents/native/runtime.py`,
+is asked once for its reply (`ANSWER_OWED_NOTE` in `agents/native/owed_reply.py`,
 a note on that one request that never enters the history). If it still writes
 nothing, the chat runner ends the turn in an error row ("The agent ran 3
 steps but did not write an answer. …"), the turn's outcome is `error`, a linked

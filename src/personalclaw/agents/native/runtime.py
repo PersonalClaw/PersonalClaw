@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +34,8 @@ from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import FAILOVER_MODES
+from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
+from personalclaw.agents.native.tool_names import build_sanitized_index
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
     format_tool_result,
@@ -106,18 +107,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Model-name-constraint sanitizer (provider-agnostic). Several providers must
-# rewrite tool names to satisfy a naming constraint before sending them to the
-# model — e.g. Bedrock Converse rejects "/" and caps names at 64 chars, matching
-# the common OpenAI ``^[a-zA-Z0-9_-]{1,64}$`` shape. Providers reverse-map the
-# name the model returns back to the real tool id, but if that round-trip ever
-# fails (a name not in the turn's reverse map, or the model echoing the rewritten
-# form) the sanitized name reaches dispatch and every exact-key lookup misses.
-# The runtime keeps a sanitized(real)->real fallback so it can heal ANY provider.
-_TOOL_NAME_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_-]")
-_TOOL_NAME_SANITIZE_MAX = 64
-
-
 # Brief pause before the one loop-level inference retry (#2287/#252) — long enough
 # to step over a same-instant transient, short enough that an interactive turn
 # doesn't visibly stall. Deliberately a constant: config/loader.py is at its line
@@ -144,49 +133,6 @@ def _inference_failure_mode(exc: BaseException) -> FailureMode:
         # is the one the kernel kills the whole gateway for.
         return FailureMode.PROMPT_TOO_LARGE
     return FailureMode.PROVIDER_ERROR
-
-
-def _sanitized_tool_key(name: str) -> str:
-    """Return the common model-safe form of ``name`` (illegal chars -> ``_``,
-    capped at 64). Mirrors the constraint providers like Bedrock apply so the
-    runtime can recognize a rewritten name and map it back to the real tool."""
-    safe = _TOOL_NAME_SANITIZE_RE.sub("_", name or "")[:_TOOL_NAME_SANITIZE_MAX]
-    return safe or "tool"
-
-
-def build_sanitized_index(names: Iterable[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """The sanitized(real)->real healing map for a tool census, plus its losses.
-
-    For each real name a provider WOULD have to rewrite, remember the rewritten
-    form -> real name, but ONLY when that sanitized form is unique across the
-    census (an ambiguous collision is dropped so we never dispatch the wrong
-    tool) and only when it differs from the real name (an already-legal name
-    needs no fallback). A key that would shadow a REAL exact name is likewise
-    never remapped.
-
-    Returns ``(healing_map, collisions)`` where ``collisions`` maps each dropped
-    sanitized key to the real names that fought over it — the ONE lossy spot in
-    the whole name wire (see docs/architecture/tool-name-wire.md), surfaced so a
-    caller can report it instead of losing tools silently. SM-12's census rail
-    (tests/test_tool_name_wire_fidelity.py) keeps the live census collision-free,
-    which is what makes every transform on the wire reversible in practice.
-    """
-    census = set(names)
-    healing: dict[str, str] = {}
-    collisions: dict[str, list[str]] = {}
-    for real in census:
-        key = _sanitized_tool_key(real)
-        if key == real or key in census:
-            # Legal already, or would shadow a real exact name — never remap.
-            continue
-        if key in collisions:
-            collisions[key].append(real)
-            continue
-        if key in healing and healing[key] != real:
-            collisions[key] = [healing.pop(key), real]
-            continue
-        healing[key] = real
-    return healing, {k: sorted(v) for k, v in collisions.items()}
 
 
 # Hook fire callback: (event_title, tool_input) -> awaitable[list[str]] of
@@ -218,22 +164,6 @@ _FAILED: dict[str, Any] = {"ok": False}
 # reach _run_tool's accounting tail. A unique object rather than a string or None, both of
 # which a legitimate result already occupies in the wave's `results` list.
 _DROPPED: Any = object()
-
-#: What the model is told, once, when it ran tools for a turn and then stopped without writing a
-#: word back. A local model measured doing exactly that after fifteen shell calls: its sixteenth
-#: answer was empty, the turn ended there, and the person got no reply at all. Resending their
-#: message would run every step again, so the turn goes on instead, with the results it already
-#: has, and asks for the reply. "What stopped you" is there because a model that went quiet was
-#: often stuck, and saying so is an answer too.
-ANSWER_OWED_NOTE = (
-    "You ran tools for this request and have not written your reply yet. Write it now from what "
-    "those steps found. If you could not do what was asked, say what stopped you."
-)
-
-#: The runtime surface of a loop's worker and planner (the `loops` model axis). Their deliverable
-#: is a file, not a reply, and the loop re-prompts a cycle that wrote none, so a turn there that
-#: ends on a tool call owes no answer.
-_LOOP_SURFACE = "loops"
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,9 +302,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._staged_images: list[str] = []
         self._turn_images: list[str] = []
         self._turn_message: dict | None = None
-        # Set for the one inference that asks a quiet model for its reply (`ANSWER_OWED_NOTE`);
-        # `_request_messages` lays the note on that request's tail and nowhere in the history.
-        self._answer_owed = False
+        # The reply the turn in flight owes (`owed_reply`): `_request_messages` lays the note that
+        # asks for it on one request's tail and nowhere in the history.
+        self._owed = OwedReply()
         # Discovered tool surface, populated by start().
         self._tool_defs: list[Any] = []
         self._tool_schema: list[dict] = []
@@ -1021,12 +951,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # turn scope, not per-inference: two separate transients in one turn mean
         # the provider is genuinely unhealthy, and the second failure surfaces.
         inference_retried = False
-        # ONE request for the reply per turn (``ANSWER_OWED_NOTE``): a model that goes quiet a
-        # second time ends the turn, and the surface says the turn has no answer. `wrote_text`
-        # is whether any inference of the turn wrote more than whitespace: a turn that answered
-        # and then made one closing call owes nothing.
-        answer_asked = False
-        wrote_text = False
+        # ONE request for the reply per turn (`owed_reply`): a model that goes quiet a second time
+        # ends the turn, and the surface says the turn has no answer.
+        owed = self._owed = OwedReply()
         # The model this turn starts on, put back when it ends: a turn that fell back must not
         # leave the next one answering on the fallback with nothing saying so.
         home = (self._model, self._definition.model)
@@ -1302,9 +1229,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                         )
                     break
 
-                # The request for the reply rode the inference that just answered, and no other.
-                self._answer_owed = False
-                wrote_text = wrote_text or bool(assistant_text.strip())
+                owed.answered(assistant_text)
 
                 if usage is not None:
                     agg_in += usage.input_tokens or 0
@@ -1336,18 +1261,15 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                 #    …or when the model ran tools this turn and has written nothing at all. It is
                 #    asked for its reply once, with the results it already has; a second silence
                 #    ends the turn, and the surface says it has no answer.
-                if (
-                    not tool_calls
-                    and not answer_asked
-                    and self._owes_an_answer(
-                        wrote_text=wrote_text, tool_calls_run=agg_tool_calls, usage=usage
-                    )
+                if not tool_calls and owed.ask(
+                    tool_calls_run=agg_tool_calls,
+                    usage=usage,
+                    cancelled=self._cancelled,
+                    surface=self._surface,
                 ):
-                    answer_asked = True
                     # Not kept: it says nothing, and a provider may refuse an empty assistant
                     # message in the history the next request replays.
                     self._messages.pop()
-                    self._answer_owed = True
                     logger.warning(
                         "native: the model stopped after %d tool call(s) without a reply — "
                         "asking it once for the answer (session=%s)",
@@ -1435,7 +1357,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             self._pending_substitution = ""
             self._turn_images = []
             self._turn_message = None
-            self._answer_owed = False
+            self._owed.pending = False
             self._cancel.end_turn()
 
     async def _tool_schema_budget(self) -> int | None:
@@ -2464,8 +2386,8 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         identity (``mark_cacheable_prefix`` keeps positions), so a steer or a volatile note
         appended later in the turn never takes them. A turn message compaction folded away
         takes its images with it — there is nothing left for them to belong to. The request for
-        the reply (``ANSWER_OWED_NOTE``) is a volatile note at the tail, like the correction
-        note, so it rides every attempt of that one inference and never enters the history.
+        the reply (`owed_reply`) is a volatile note at the tail, like the correction note, so it
+        rides every attempt of that one inference and never enters the history.
         """
         out = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
         if self._turn_images and self._turn_message is not None:
@@ -2479,25 +2401,9 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
                     {"type": "image_url", "image_url": {"url": u}} for u in self._turn_images
                 )
                 out[idx] = {**target, "content": parts}
-        if self._answer_owed:
-            out = [*out, {"role": "user", "content": ANSWER_OWED_NOTE, "_volatile": True}]
+        if self._owed.pending:
+            out = [*out, owed_note_message()]
         return out
-
-    def _owes_an_answer(
-        self, *, wrote_text: bool, tool_calls_run: int, usage: AgentEvent | None
-    ) -> bool:
-        """Whether a turn its model just ended owes the person a reply it can still be asked for.
-
-        It does when the model ran tools this turn and wrote nothing at all. Not when it wrote
-        something, ran nothing (a blank turn is its surface's to retry: nothing ran, so resending
-        the message costs nothing), was stopped, or hit its output cap (asking again meets the
-        same cap); and never for a loop's worker, whose deliverable is a file.
-        """
-        if self._cancelled or tool_calls_run == 0 or wrote_text:
-            return False
-        if usage is not None and is_length_stop(usage.stop_reason):
-            return False
-        return self._surface != _LOOP_SURFACE
 
     def announce_failover(self) -> None:
         """Let the next turn fall back down its model chain, for a caller that shows it.

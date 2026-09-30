@@ -13,7 +13,7 @@ parameter SCHEMA is [tool-schema-wire.md](tool-schema-wire.md).
 |---|-----|-----------|-------|
 | 1 | `ToolDefinition.name` → OpenAI-shape schema (`tool_definitions_to_openai_schema`, `agents/native/tools.py`) | **verbatim** | us |
 | 2 | Schema → provider adapter (`llm/openai.py` passthrough; `llm/anthropic.py` `_translate_tools` hoists fields) | **verbatim** — shape changes, the name string does not | us |
-| 3 | Adapter → provider API | **may rewrite or reject**: hosted APIs constrain names (commonly `[a-zA-Z0-9_-]`, ≤64 chars). We do not control this hop; `_sanitized_tool_key` (`agents/native/runtime.py`) mirrors it | provider |
+| 3 | Adapter → provider API | **may rewrite or reject**: hosted APIs constrain names (commonly `[a-zA-Z0-9_-]`, ≤64 chars). We do not control this hop; `_sanitized_tool_key` (`agents/native/tool_names.py`) mirrors it | provider |
 | 4 | Model → tool call | the model echoes either the real name or the provider-rewritten form — including a form it saw in an EARLIER turn's history (the chat turn boundary) | model |
 | 5 | Call → dispatch (`_resolve_name`) | **exact match first, always**; only a name that is neither a real tool nor a meta-tool consults the sanitized(real)→real healing map | us |
 

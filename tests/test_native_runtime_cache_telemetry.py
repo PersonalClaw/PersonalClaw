@@ -179,7 +179,7 @@ def test_a_multi_cycle_turn_sums_the_cache_counts_exactly_as_it_sums_input_token
         _complete(creation=10, read=100, inp=7, out=1),
     ]
     # The second cycle writes the reply: a cycle that wrote nothing after a tool call would be
-    # asked once for it (`runtime.ANSWER_OWED_NOTE`), which is a third cycle.
+    # asked once for it (`owed_reply.ANSWER_OWED_NOTE`), which is a third cycle.
     second = [
         AgentEvent(kind=EVENT_TEXT_CHUNK, text="Done."),
         _complete(creation=20, read=200, inp=11, out=2),

@@ -13,7 +13,8 @@ import logging
 
 import pytest
 
-from personalclaw.agents.native.runtime import ANSWER_OWED_NOTE, NativeAgentRuntime
+from personalclaw.agents.native.owed_reply import ANSWER_OWED_NOTE
+from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.llm.events import (
     EVENT_COMPLETE,

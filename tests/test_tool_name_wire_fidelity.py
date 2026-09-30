@@ -14,11 +14,8 @@ import asyncio
 
 import pytest
 
-from personalclaw.agents.native.runtime import (
-    NativeAgentRuntime,
-    _sanitized_tool_key,
-    build_sanitized_index,
-)
+from personalclaw.agents.native.runtime import NativeAgentRuntime
+from personalclaw.agents.native.tool_names import _sanitized_tool_key, build_sanitized_index
 
 # ── the pure function's contract ──────────────────────────────────────────────
 

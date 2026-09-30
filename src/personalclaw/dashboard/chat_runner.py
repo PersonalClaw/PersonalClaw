@@ -5185,7 +5185,7 @@ async def run_chat(
         # recorded at EVENT_COMPLETE, and the retry is a fresh turn, so nothing is
         # double-counted. A turn that RAN STEPS and wrote nothing after the last one
         # is never resent, which would run every step again: a native runtime has
-        # already asked its model once for the reply (`runtime.ANSWER_OWED_NOTE`), so
+        # already asked its model once for the reply (`owed_reply.ANSWER_OWED_NOTE`), so
         # the turn ends in the error that says it has no answer, where Retry is.
         # A loop's worker and planner own a dedicated re-prompt loop (gateway _fire,
         # the planner's nudge cycles), so this handling stands aside for them — two
