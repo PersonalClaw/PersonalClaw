@@ -23,6 +23,15 @@ describe('resolveSendButton', () => {
     expect(sendButtonIsActive('send')).toBe(true)
   })
 
+  it('idle + ready draft whose file is still uploading → held send, inert; a steer is not held', () => {
+    expect(resolveSendButton({ ...base, canSend: true, held: true })).toBe('send-held')
+    expect(sendButtonIsActive('send-held')).toBe(false)
+    // An empty draft still asks for text first, upload or not.
+    expect(resolveSendButton({ ...base, held: true })).toBe('send-disabled')
+    // A steer carries no files, so an upload in flight does not hold it.
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSend: true, held: true })).toBe('steer')
+  })
+
   it('just after send → transient sent bloom, inert (smoke: send→ confirmation)', () => {
     // justSent wins over the idle send/disabled choice, and is not clickable.
     expect(resolveSendButton({ ...base, justSent: true })).toBe('sent')

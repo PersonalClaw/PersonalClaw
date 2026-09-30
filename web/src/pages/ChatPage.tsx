@@ -925,11 +925,21 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // A captured frame awaiting a crop. Non-null = SnipOverlay is up; the capture is
   // ALREADY stopped by then, so nothing is watching the screen while the user crops.
   const [snip, setSnip] = useState<{ url: string; width: number; height: number; source: HTMLCanvasElement } | null>(null)
-  // Live upload progress for a large attach (chunked/resumable). name → pct; a
-  // small file completes in one POST and never shows here.
-  const [uploads, setUploads] = useState<{ name: string; pct: number }[]>([])
-  // AbortController for the in-flight attach upload, so the user can cancel it.
-  const uploadAbortRef = useRef<AbortController | null>(null)
+  // Live upload progress: one row per file still uploading, from every attach in flight (a second
+  // paste does not replace the first's rows). Each row names the attach it came from (`batch`), so
+  // an attach that finishes takes down its own rows and no one else's.
+  const [uploads, setUploads] = useState<{ batch: number; name: string; pct: number }[]>([])
+  // Each in-flight attach's AbortController, by batch, so a row's Cancel stops the upload it shows.
+  const uploadAborts = useRef(new Map<number, AbortController>())
+  const uploadBatch = useRef(0)
+  // 🔴 A MESSAGE IS NOT SENT WHILE A FILE IT CARRIES IS STILL UPLOADING. The file has no path until
+  // its upload answers, so a message sent before then went without it — and on a new chat that send
+  // creates the chat and remounts this component, so the upload that finished afterwards landed in
+  // an instance that was gone: the file was stored and attached to nothing, with nothing said. While
+  // any row is up, Send is off and says this, and `send` refuses with it.
+  const uploadHold = uploads.length === 0 ? ''
+    : uploads.length === 1 ? `Wait for ${uploads[0].name} to finish uploading, or cancel it.`
+    : `Wait for ${uploads.length} files to finish uploading, or cancel them.`
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   // `undefined` until the backend reports a measurement (it sends `pct: null` when it
   // has none) — an unmeasured context must show no percentage, not 0%.
@@ -2295,6 +2305,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         .catch(reportActionFailure('steer this turn'))
       return
     }
+    // Held while a file it carries uploads (`uploadHold`) — whichever way this send came: the
+    // composer, a follow-up chip, the prompt palette, a spoken submit. Refused where the user is
+    // looking, and the text is kept: a caller that emptied the draft to send it gets it back
+    // there, unless the user has typed something else since. A steer (above) carries no files.
+    if (uploadHold) {
+      if (!opts?.uiLabel) setInput((cur) => (cur.trim() ? cur : t))
+      notice.showError(uploadHold, 'upload')
+      return
+    }
     // The bubble keeps the prompt as typed (paste markers shown as chips); the
     // MODEL receives the markers expanded to the full pasted content.
     const blocks = pasteBlocks
@@ -3222,6 +3241,18 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function attach(files: File[]) {
     setAttachError(null)
+    // The rows go up before the size check, which reads the gateway's limits: sending is held
+    // from the moment a file is attached, not from the moment its bytes start to move.
+    const batch = ++uploadBatch.current
+    const ctrl = new AbortController()
+    uploadAborts.current.set(batch, ctrl)
+    const rows = (fs: File[]) => fs.map((f) => ({ batch, name: f.name, pct: 0 }))
+    setUploads((prev) => [...prev, ...rows(files)])
+    const done = () => {
+      uploadAborts.current.delete(batch)
+      setUploads((prev) => prev.filter((u) => u.batch !== batch))
+      if (uploadAborts.current.size === 0) notice.clear('upload')
+    }
     // Client-side per-filetype pre-check → reject oversize BEFORE uploading a byte,
     // with the same category message the server would give (better UX than a late 413).
     const { precheck } = await import('../lib/chunkedUpload')
@@ -3233,14 +3264,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       else ok.push(f)
     }
     if (rejected.length) setAttachError(rejected.join(' · '))
-    if (!ok.length) return
-    // Progress rows for large (chunked) files; small files POST in one shot. A shared
-    // AbortController lets the user cancel the in-flight upload from a progress row.
-    const ctrl = new AbortController()
-    uploadAbortRef.current = ctrl
-    setUploads(ok.map((f) => ({ name: f.name, pct: 0 })))
+    if (!ok.length) { done(); return }
+    setUploads((prev) => [...prev.filter((u) => u.batch !== batch), ...rows(ok)])
     const r = await api.uploadFiles(ok, (idx, p) => {
-      setUploads((prev) => prev.map((u, i) => (i === idx ? { ...u, pct: p.pct } : u)))
+      setUploads((prev) => { let i = -1; return prev.map((u) => (u.batch === batch && ++i === idx ? { ...u, pct: p.pct } : u)) })
     }, ctrl.signal).catch(async (e) => {
       // A user cancel is not an error — just clear silently; other failures surface.
       // (abort is named inconsistently across engines — isAbortError normalises it.)
@@ -3248,8 +3275,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       if (!isAbortError(e)) setAttachError((e as Error).message)
       return { paths: [] as string[] }
     })
-    uploadAbortRef.current = null
-    setUploads([])
+    // In the same render as the chips below, so the hold never lifts before the file is attached.
+    done()
     const paths = (r as { paths?: string[] }).paths ?? []
     // Thread uploaded paths into the next send's meta.files (B0) + show them as
     // removable chips alongside @-mentioned files.
@@ -3346,12 +3373,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             className="shrink-0 opacity-70 hover:opacity-100" />
         </div>
       )}
-      {/* Large-attachment upload progress (chunked/resumable). Small files POST in
-          one shot and never appear here. */}
+      {/* Upload progress: a row per file still uploading, small and large alike. While any
+          is up, sending is held (`uploadHold`). */}
       {uploads.length > 0 && (
         <div className="mb-2 flex flex-col gap-1 rounded-lg bg-surface-container/60 px-3 py-2">
-          {uploads.map((u) => (
-            <div key={u.name} className="flex items-center gap-2.5 text-[0.75rem] text-on-surface-var">
+          {uploads.map((u, i) => (
+            <div key={`${u.batch}:${i}`} className="flex items-center gap-2.5 text-[0.75rem] text-on-surface-var">
               <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
               <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
               {/* The bar takes the row's slack (prominent), pct + cancel stay compact —
@@ -3361,7 +3388,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   nothing about how far along any of them was. */}
               <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
-              <IconButton icon={X} label="Cancel upload" onClick={() => uploadAbortRef.current?.abort()} size={20} iconSize={13}
+              <IconButton icon={X} label="Cancel upload" onClick={() => uploadAborts.current.get(u.batch)?.abort()} size={20} iconSize={13}
                 tone="danger" className="shrink-0" />
             </div>
           ))}
@@ -3524,7 +3551,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={promptHistory}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue contextPct={contextPct} contextWindow={contextWindow}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
           onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }} />

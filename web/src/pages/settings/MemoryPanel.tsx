@@ -32,6 +32,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TextLink } from '../../ui/TextLink'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { semanticRowKind } from '../../lib/semanticRowKind'
 import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -385,12 +386,13 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
     for (const d of STUDIO_DOCS) out.push({ uid: `doc:${d.which}`, kind: 'doc', title: d.label, preview: 'Editable markdown memory', ref: null, doc: d })
     for (const s of slots) out.push({ uid: `slot:${s.name}`, kind: 'slot', title: s.title, preview: s.live_count ? `${s.live_count} line${s.live_count === 1 ? '' : 's'} · ${s.live_chars}/${s.cap_chars} chars` : 'empty register', ref: null, slot: s })
     for (const e of entities) out.push({ uid: `entity:${e.id}`, kind: 'entity', title: e.name, preview: `${e.entity_type} · ${e.inbound_count} memor${e.inbound_count === 1 ? 'y' : 'ies'}`, ref: `entity:${e.id}`, entity: e })
-    // `slot.*` rows are excluded from Facts: a slot is stored AS a semantic row, so listing
-    // both gives one object two entries — a readable Slot with its budget, and a raw
-    // `{"lines":[…]}` blob whose only edit affordance would corrupt the register. The Slots
-    // kind owns that surface (and is the only one that can enforce the cap on a write).
+    // Only facts are Facts. A slot and a lesson are each stored AS a semantic row, so listing
+    // every row gives one object two entries: a readable Slot with its budget beside a raw
+    // `{"lines":[…]}` blob whose only edit affordance would corrupt the register, and a Lesson
+    // with its standing beside a raw `lesson.<hash>` fact. Their own kinds own them (the Slots
+    // kind is also the only one that can enforce the cap on a write).
     for (const f of facts ?? []) {
-      if (f.key.startsWith('slot.')) continue
+      if (semanticRowKind(f.key) !== 'fact') continue
       const facet = facetOf(f)
       out.push(facet
         ? { uid: `fact:${f.key}`, kind: 'fact', title: facet.text, preview: `${facet.forgotten ? 'Forgotten' : 'Learned'} ${facet.cls || 'style'} preference`, ref: `sem:${f.key}`, fact: f, facet }

@@ -1234,6 +1234,9 @@ def _build_memory_graph(mem: Any) -> tuple[list[dict], list[dict]]:
         try:
             for entry in svc.get_all_semantic():
                 key = entry.get("key", "")
+                # A lesson is stored as a semantic row; it is drawn once, as its lesson, below.
+                if key.startswith("lesson."):
+                    continue
                 val = entry.get("value_json", "")
                 if isinstance(val, str):
                     try:

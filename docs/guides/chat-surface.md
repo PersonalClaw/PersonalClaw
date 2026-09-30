@@ -200,6 +200,10 @@ attached image does (below). A screenshot already on your clipboard needs no men
 into the composer (⌘V / Ctrl+V) and it attaches the same way. A paste that carries text as
 well — cells copied from a spreadsheet bring a picture of themselves along — pastes the text.
 
+A file still uploading shows its progress above the composer, and until it is in, Send is off
+and says which file it is waiting for; Enter says the same. The message then goes with the
+file. Cancel the upload to send without it.
+
 There are two ways it can happen, and PersonalClaw picks for you:
 
 - **On macOS**, the gateway's host uses the system snip: a crosshair, drag, done. No browser

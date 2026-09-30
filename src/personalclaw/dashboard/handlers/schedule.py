@@ -285,13 +285,17 @@ async def api_lessons(request: web.Request) -> web.Response:
     else:
         rows = svc.get_lessons()
     data = []
-    shown = rows[-50:]
+    # Every lesson, not a page of them: this is the list the Memory studio shows, opens a cited
+    # lesson in and deletes from, so a lesson left out is one the owner cannot see or remove. (It
+    # kept the LAST 50 of a newest-first read, so past 50 the lessons taught most recently were
+    # the ones missing.)
+    #
     # Confidence + standing per row. Read from the SAME derivation the
     # prompt filter uses, so "why is it still doing that" / "why did it stop doing
     # that" are answered with the number the gate actually compared rather than a
     # second estimate computed for the UI.
-    standings = svc.lesson_standings(shown)
-    for e in shown:
+    standings = svc.lesson_standings(rows)
+    for e in rows:
         try:
             rule = json.loads(e["value_json"])
         except (json.JSONDecodeError, TypeError):

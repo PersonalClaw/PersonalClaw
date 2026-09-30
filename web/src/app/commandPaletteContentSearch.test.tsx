@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   sessionsSearch: vi.fn(),
   searchEpisodic: vi.fn(),
   memorySemantic: vi.fn(),
+  lessons: vi.fn(),
   knowledgeItems: vi.fn(),
   searchTasks: vi.fn(),
 }))
@@ -42,6 +43,7 @@ beforeEach(() => {
     { key: 'budget.limit', value_json: '"4000 a month"' },
     { key: 'user.timezone', value_json: '"Europe/Lisbon"' },
   ])
+  h.lessons.mockReset().mockResolvedValue([])
   h.knowledgeItems.mockReset().mockResolvedValue({ items: [{ id: 'k1', title: 'Budget template', summary: 'A sheet' }], total: 1, page: 1, limit: 5 })
   h.searchTasks.mockReset().mockResolvedValue({ tasks: [{ id: 't1', title: 'Send the budget', status: 'open' }], total: 1 })
 })
@@ -126,6 +128,28 @@ describe('⌘K content search', () => {
     const note = await screen.findByText(/^Searched 3,210 of 12,005 chats — the search index is still being built/)
     expect(note.getAttribute('data-partial')).toBe('true')
     expect(within(screen.getByRole('group', { name: 'Chats' })).getByRole('option', { name: /Budget planning/ })).toBeTruthy()
+  })
+
+  it('opens a lesson as the lesson and a slot as its register, never as a raw fact row', async () => {
+    // Both are stored as semantic rows (`lesson.<hash>`, `slot.<name>`), and the Memory studio
+    // lists neither among its facts, so a hit on the raw row opened the studio at nothing.
+    h.memorySemantic.mockResolvedValue([
+      { key: 'lesson.0d07ddd7ad40', value_json: '"Budget reviews stay under ten minutes."' },
+      { key: 'slot.pending_items', value_json: '{"lines":[{"text":"budget sign-off by Friday"}]}' },
+    ])
+    h.lessons.mockResolvedValue([{ rule: 'Budget reviews stay under ten minutes.', category: 'knowledge' }])
+    const { user, navigate } = await openAndType('budget')
+    const memory = await screen.findByRole('group', { name: 'Memory' })
+    expect(within(memory).getAllByRole('option', { name: /Budget reviews stay under ten minutes/ }), 'the lesson, once').toHaveLength(1)
+    expect(within(memory).queryByRole('option', { name: /lesson\.0d07/ })).toBeNull()
+    expect(within(memory).queryByRole('option', { name: /slot\.pending_items/ })).toBeNull()
+
+    await user.click(within(memory).getByRole('option', { name: /Budget reviews stay under ten minutes/ }))
+    expect(navigate).toHaveBeenCalledWith(`settings/memory?tab=studio&sel=${encodeURIComponent('lesson:Budget reviews stay under ten minutes.')}`)
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })) })
+    await user.type(await screen.findByRole('searchbox'), 'budget')
+    await user.click(await screen.findByRole('option', { name: /^pending_items/ }))
+    expect(navigate).toHaveBeenLastCalledWith(`settings/memory?tab=studio&sel=${encodeURIComponent('slot:pending_items')}`)
   })
 
   it('does not search content for a single character', async () => {

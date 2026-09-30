@@ -11,6 +11,7 @@ export type SendButtonKind =
   | 'sent'       // transient success bloom right after an idle send
   | 'send'       // idle, draft meets minChars — the live send affordance
   | 'send-disabled' // idle, draft too short — dimmed, inert
+  | 'send-held'   // idle, draft ready but a file it carries is still uploading — dimmed, inert
 
 export interface SendButtonInputs {
   processing: boolean
@@ -18,6 +19,7 @@ export interface SendButtonInputs {
   canSend: boolean   // draft.trim().length >= minChars
   canQueue: boolean  // this surface allows steering a draft into a running turn
   justSent: boolean  // the transient post-send bloom window is open
+  held?: boolean     // a file the message carries is still uploading — an idle send waits for it
 }
 
 /** Resolve which action button the composer shows. Order matters: a one-shot
@@ -27,11 +29,12 @@ export function resolveSendButton(s: SendButtonInputs): SendButtonKind {
   if (s.processing) return 'processing'
   if (s.streaming) return s.canQueue && s.canSend ? 'steer' : 'stop'
   if (s.justSent) return 'sent'
-  return s.canSend ? 'send' : 'send-disabled'
+  if (!s.canSend) return 'send-disabled'
+  return s.held ? 'send-held' : 'send'
 }
 
 /** Whether a given button kind is clickable (has an onClick). 'sent' and
- *  'processing' are inert; 'send-disabled' is dimmed and inert. */
+ *  'processing' are inert; 'send-disabled' and 'send-held' are dimmed and inert. */
 export function sendButtonIsActive(kind: SendButtonKind): boolean {
   return kind === 'stop' || kind === 'steer' || kind === 'send'
 }

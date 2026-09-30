@@ -32,7 +32,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onTranscribe, onMicError, canQueue, contextPct, contextWindow, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  naturalVoice,
+  naturalVoice, sendHeldReason,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -55,6 +55,8 @@ export function Composer({
   const sentTimer = useRef<number | undefined>(undefined)
   const fireSend = () => {
     onSend()
+    // A held send is the host's to refuse (`sendHeldReason`), so nothing blooms "sent".
+    if (sendHeldReason) return
     window.clearTimeout(sentTimer.current)
     setJustSent(true)
     sentTimer.current = window.setTimeout(() => setJustSent(false), 620)
@@ -234,7 +236,7 @@ export function Composer({
       {/* The send/stop/steer/sent/processing choice is a pure state machine
           (resolveSendButton) so it's unit-testable without mounting the composer. */}
       {(() => {
-        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, justSent })) {
+        switch (resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, justSent, held: !!sendHeldReason })) {
           // one-shot pre-send processing (e.g. the goal analyze pass) → a spinning
           // send button, no stop/queue affordance.
           case 'processing':
@@ -254,6 +256,9 @@ export function Composer({
           // button is still findable by its own name while it is unavailable.
           case 'send-disabled':
             return <IconButton icon={ArrowUp} label="Send message" disabledReason="Type a bit more first" filled={false} disabled size={40} onClick={undefined} iconKey="send" />
+          // Held while a file the message carries uploads; the reason names the file.
+          case 'send-held':
+            return <IconButton icon={ArrowUp} label="Send message" disabledReason={sendHeldReason} filled={false} disabled size={40} onClick={undefined} iconKey="send" />
           case 'send':
             return <IconButton icon={ArrowUp} label="Send message" filled disabled={false} size={40} onClick={fireSend} iconKey="send" />
         }

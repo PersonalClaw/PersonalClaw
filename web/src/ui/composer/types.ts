@@ -126,6 +126,11 @@ export interface ComposerProps {
   /** When true, the send button becomes a "queue" affordance — the host runs the
    *  message after the in-flight turn finishes instead of dropping it. */
   canQueue?: boolean
+  /** Why a ready draft cannot be sent yet: a file it carries is still uploading. Non-empty → the
+   *  Send button is off and carries this as its reason. Enter still hands the draft to `onSend`,
+   *  so the host refuses it with this same sentence where the user is looking — a key that did
+   *  nothing would explain nothing. A steer into a running turn is not held: it carries no files. */
+  sendHeldReason?: string
   /** 0–100 context-window usage for the bound session → ring on the model pill.
    *  `undefined` means the backend reported NO measurement — the pill then shows a
    *  plain dot rather than a fabricated 0%. A measured `0` renders a 0% ring. */

@@ -8,14 +8,14 @@
  * (`aListSettingSavesWhatYouEntered.test.tsx`, `appConfigForm.test.ts`).
  */
 import { useState } from 'react'
-import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AppConfigFields, type SchemaProp } from './appConfigForm'
-import { SchemaField } from '../settings/ProviderConfigForm'
-import type { ProviderSchemaProp } from '../../lib/api'
+import { ProviderConfigForm, SchemaField } from '../settings/ProviderConfigForm'
+import { api, type ProviderSchemaProp } from '../../lib/api'
 
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const ID = '1289011223344556677'
 const APPLICATION_ID: SchemaProp = { type: 'string', default: '', 'x-meta': { label: 'Application ID' } }
@@ -46,6 +46,20 @@ describe('a long numeric ID in a text setting', () => {
     expect(container.textContent).not.toContain('⚠')
     fireEvent.change(screen.getByRole('textbox', { name: 'Variables' }), { target: { value: `{"channel": ${ID}}` } })
     expect(container.textContent).toContain(`⚠ ${ID} has more digits than a number here can keep`)
+  })
+
+  it('pasted whole into Settings › Providers, is saved as those digits', async () => {
+    // One input event carrying the whole value: a paste, or a browser driver's fill.
+    vi.spyOn(api, 'providerSchema').mockResolvedValue({ properties: { application_id: APPLICATION_ID as ProviderSchemaProp } })
+    vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: { application_id: '' }, _secret_set: [], revision: 'rev-1' })
+    const save = vi.spyOn(api, 'saveProviderConfig').mockImplementation((_n, config) =>
+      Promise.resolve({ config, _secret_set: [], revision: 'rev-2' }))
+    render(<ProviderConfigForm name="discord-channel" />)
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Application ID' }), { target: { value: ID } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(save).toHaveBeenCalledWith('discord-channel', { application_id: ID }, 'rev-1'))
+    // The request body carries the digits as text, which is what the gateway stores.
+    expect(JSON.stringify(save.mock.calls[0][1])).toBe(`{"application_id":"${ID}"}`)
   })
 
   it('reaches Apps › Configure as the digits typed', async () => {
