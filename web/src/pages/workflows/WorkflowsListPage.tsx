@@ -15,6 +15,7 @@ import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSo
 import { confirmDelete, promptForm, promptInput } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { fmtElapsed, isTerminal, runLook } from './workflowMeta'
+import { stoppedAtBudget } from './attentionMeta'
 import { coerceInputs, inputFields, intentInput, startsWithoutInput } from './templateStart'
 import { preflightRemediations } from './preflightRemediation'
 import { suggestTemplate } from './templateSuggest'
@@ -426,7 +427,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             className="flex flex-col gap-xs"
           >
             {(r, i, listCtx) => {
-              const look = runLook(r.status, r.held)
+              const look = runLook(r.status, r.held, stoppedAtBudget(r.status, r.attention))
               const Icon = look.icon
               const elapsed = fmtElapsed(r.elapsed_seconds)
               // index=0 while windowed — see ui/WindowedList's ctx.windowed doc.

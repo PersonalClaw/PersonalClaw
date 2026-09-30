@@ -319,7 +319,7 @@ class TestSpawnWithApprovalCallback:
 
     @pytest.mark.asyncio
     async def test_approval_callback_receives_correct_args(self) -> None:
-        """Approval callback receives request_id and task preview."""
+        """Approval callback receives the start's permission request and its parent session."""
         approval_callback = AsyncMock(return_value=True)
         manager = SubagentManager(
             sessions=_mock_sessions(),
@@ -332,11 +332,10 @@ class TestSpawnWithApprovalCallback:
             assert info is not None
             await manager._tasks[info.id]
 
-        call_args = approval_callback.call_args
-        request_id: str = call_args[0][0]
-        tool_description: str = call_args[0][1]
-        assert request_id == f"spawn:{info.id}"
-        assert "read the config file" in tool_description
+        event = approval_callback.call_args[0][0]
+        assert event.request_id == f"spawn:{info.id}"
+        assert event.title == "subagent_run"
+        assert event.tool_input == "read the config file"
 
     @pytest.mark.asyncio
     async def test_rejected_spawn_logs_sel_rejection(self) -> None:
@@ -366,7 +365,7 @@ class TestSpawnWithApprovalCallback:
 
     @pytest.mark.asyncio
     async def test_task_preview_is_redacted(self) -> None:
-        """Suspicious URLs in task preview are redacted before approval."""
+        """Suspicious URLs in the task are redacted before approval."""
         approval_callback = AsyncMock(return_value=True)
         manager = SubagentManager(
             sessions=_mock_sessions(),
@@ -380,9 +379,10 @@ class TestSpawnWithApprovalCallback:
             assert info is not None
             await manager._tasks[info.id]
 
-        # the raw URL should not appear in the approval message
-        tool_description: str = approval_callback.call_args[0][1]
-        assert "evil.com/steal?key=" not in tool_description
+        # the raw URL should not appear in the approval
+        event = approval_callback.call_args[0][0]
+        assert "evil.com/steal?key=" not in event.tool_input
+        assert "evil.com/steal?key=" not in event.title
 
 
 class TestSubagentManagerConstructor:

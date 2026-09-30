@@ -32,6 +32,7 @@ from personalclaw.workflows.models import (
     walk,
 )
 from personalclaw.workflows.resilience import (
+    BUDGET_TRIPS,
     BreakerState,
     BreakerVerdict,
     check_breaker,
@@ -41,19 +42,6 @@ from personalclaw.workflows.tick import derive_state, loop_should_continue
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
-
-
-#: Breaker reasons that are a DECLARED BUDGET being reached, not a stall.
-#:
-#: The distinction decides who answers the trip. A loop that thrashes is recoverable — that is
-#: what the escalation ladder is for, and failing it binary is the bug PP-15 fixes. A loop that
-#: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
-#: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
-#: re-run the work the cap existed to bound. So a spent budget skips the ladder and ends the
-#: loop — complete when its own exit test was met or its judge accepted the last iteration, and
-#: escalated, naming the budget, when it would otherwise have gone on — and only thrash reaches
-#: the ladder.
-BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
 
 
 def _consume_steering(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:

@@ -9657,8 +9657,8 @@ export const api = {
   // fuzzy filename search for the @-mention picker → {results:[{path,name,size,mtime}], root}
   fileSearch: (q: string, project?: string) =>
     get<{ results: { path: string; name: string; size: number; mtime: number }[]; root?: string }>(`/api/file-search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
-  fileComplete: (path: string, kind?: 'dir') =>
-    get<{ suggestions: FsEntry[] }>(`/api/file-complete?path=${encodeURIComponent(path)}${kind ? `&kind=${kind}` : ''}`),
+  fileComplete: (path: string) =>
+    get<{ suggestions: FsEntry[] }>(`/api/file-complete?path=${encodeURIComponent(path)}`),
   /** Directory navigator (for the Code workspace picker): list subdirs of a path
    *  (empty → home). Walks arbitrary non-sensitive dirs, unlike file-list. */
   browseDirs: (path?: string) =>

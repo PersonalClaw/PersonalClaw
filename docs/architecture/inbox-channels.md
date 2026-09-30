@@ -184,6 +184,12 @@ together; there is no path by which a surface learns of an approval another does
 approval used to broadcast its own frame and register nowhere else, so it reached only its own
 chat.
 
+A subagent's start asks the same way a tool call does (`subagent_ask.spawn_ask`): `tool` is
+`subagent_run`, `tool_purpose` says what allowing it does ("Starts a subagent on this task."),
+`tool_input` is the whole redacted task, and `risk` is `caution`. The Inbox row shows each line
+cut at a word (`textfmt.clip_words`), and the decision under it (`ApprovalDecision`) shows the
+whole input from the live entry whenever the row could not.
+
 Mission Control labels each card by the work that asked (`attentionLanes.approvalRaisedBy` and
 `inboxRaisedBy`): an approval by its trigger, else by its session key's owner (a workflow's step,
 a loop's worker, a trigger's session, an MCP server, a chat), and an Inbox row by the refs its

@@ -12,6 +12,11 @@ rest had run anyway.
 Both endings are built from the same parts, so they read alike: a step named by its label (and, in
 a fan-out, by its item), its failure as one clause (`clause`), and the steps after it in each
 sequence that holds it (`followers`).
+
+A loop that stopped at the budget it was given did not fail and gave nothing up, so it is not said
+to have "escalated": it ends with the sentence its escalation record carries ("It used its budget
+of 1 cycle, and the judge did not accept the last one."), and when that loop is the run's own root
+it names no step at all, because the loop is the run. Its id there was a template's internal name.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Iterator
 
+from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     InstanceState,
@@ -118,40 +124,97 @@ def for_failures(ctl: RunController) -> str:
     if not paths:
         return ""
     nodes = dict(walk(ctl.root))
+    stops = _budget_stops(ctl)
     went_on = [p for p in paths if _ran_after(ctl, p, nodes)]
     first, rest = paths[0], paths[1:]
     if went_on == [first] and not rest:
-        return f"The run continued past {_first_part(ctl, nodes, first, joined=', which')}"
+        return f"The run continued past {_first_part(ctl, nodes, first, stops, joined=', which')}"
     parts = []
     if went_on:
         parts.append(f"The run continued past {_listed([_name(ctl, nodes, p) for p in went_on])}.")
-    parts.append(_first_part(ctl, nodes, first))
+    parts.append(_first_part(ctl, nodes, first, stops))
     for kind in _KINDS:
-        named = [_name(ctl, nodes, p) for p in rest if _kind(ctl.instances[p].state) == kind]
+        named = [_name(ctl, nodes, p) for p in rest if _kind(ctl, p, stops) == kind]
         if named:
             parts.append(f"{_listed(named)} {_verb(kind, plural=len(named) > 1)} too.")
     return " ".join(parts)
 
 
-def _first_part(ctl: RunController, nodes: dict[str, Node], path: str, *, joined: str = "") -> str:
-    """“name” failed: its cause. — or, `joined` to a lead clause, “name”, which failed: …"""
+def _first_part(
+    ctl: RunController,
+    nodes: dict[str, Node],
+    path: str,
+    stops: dict[str, str],
+    *,
+    joined: str = "",
+) -> str:
+    """“name” failed: its cause. — or, `joined` to a lead clause, “name”, which failed: …
+
+    A loop that stopped at its budget says so with its own sentence, and the run's root loop —
+    which is the whole run — is not named at all."""
+    kind = _kind(ctl, path, stops)
+    if kind == BUDGET:
+        said = clause(stops[path])
+        if path == ROOT:
+            return f"{said}." if said else "The loop stopped at its budget."
+        head = f"{_name(ctl, nodes, path)}{joined} {_verb(kind)}"
+        return f"{head}: {said[:1].lower()}{said[1:]}." if said else f"{head}."
     inst = ctl.instances[path]
     cause = clause(inst.failure.cause_plain if inst.failure else "")
-    head = f"{_name(ctl, nodes, path)}{joined} {_verb(_kind(inst.state))}"
+    head = f"{_name(ctl, nodes, path)}{joined} {_verb(kind)}"
     return f"{head}: {cause}." if cause else f"{head}."
+
+
+#: The instance path of a run's root node: every other path starts with it.
+ROOT = "root"
+
+
+def _budget_stops(ctl: RunController) -> dict[str, str]:
+    """The loops of this run that stopped at the budget they were given, each with the sentence
+    its escalation says it in: instance path → that sentence.
+
+    Read off the run's ledger, the record every reader of an escalation reads
+    (`service._escalations`), and classified by the record itself (`budget`, written by
+    `resilience.escalation_artifact`), so the run's ending and the run page cannot disagree about
+    which stops were budgets. The LAST escalation of an instance speaks for it, and only an
+    instance that is still escalated counts: a rewind that re-ran it has taken the stop back.
+    """
+    try:
+        rows = journal_mod.ledger(ctl.run.id, kinds={journal_mod.STEP_ESCALATED})
+    except Exception:  # noqa: BLE001 - a sentence helper never fails the run it describes
+        return {}
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        path = str(row.get("instance_path") or "")
+        if path:
+            latest[path] = row
+    return {
+        path: str(row.get("detail") or "")
+        for path, row in latest.items()
+        if row.get("budget") is True
+        and (inst := ctl.instances.get(path)) is not None
+        and inst.state == InstanceState.ESCALATED
+    }
 
 
 def _name(ctl: RunController, nodes: dict[str, Node], path: str) -> str:
     return step_name(nodes.get(spec_path(path)), ctl.instances.get(path), path)
 
 
+#: The kind of a loop that stopped at the budget it was given (`_budget_stops`).
+BUDGET = "budget"
+
 #: How a sentence says each way a step did not succeed, in the order the rest are listed. A step
-#: that ESCALATED is a judge or a loop that would not decide (`surface_loop`), and a BLOCKED one
-#: was refused a redo of work it had already committed, or lost its worker — neither failed.
-_KINDS = ("failed", "escalated", "blocked")
+#: that ESCALATED is a judge or a loop that would not decide (`surface_loop`), one that stopped at
+#: its BUDGET used the room it was given, and a BLOCKED one was refused a redo of work it had
+#: already committed, or lost its worker — none of them failed.
+_KINDS = ("failed", "escalated", BUDGET, "blocked")
 
 
-def _kind(state: InstanceState) -> str:
+def _kind(ctl: RunController, path: str, stops: dict[str, str]) -> str:
+    if path in stops:
+        return BUDGET
+    state = ctl.instances[path].state
     if state == InstanceState.ESCALATED:
         return "escalated"
     if state == InstanceState.BLOCKED:
@@ -160,6 +223,8 @@ def _kind(state: InstanceState) -> str:
 
 
 def _verb(kind: str, *, plural: bool = False) -> str:
+    if kind == BUDGET:
+        return "stopped at their budgets" if plural else "stopped at its budget"
     if kind == "blocked":
         return "were blocked" if plural else "was blocked"
     return kind

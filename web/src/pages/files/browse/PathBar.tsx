@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { CornerDownLeft, Folder } from 'lucide-react'
+import { CornerDownLeft, FileText, Folder } from 'lucide-react'
 import { api, type FsEntry } from '../../../lib/api'
 import { useSyncedDraft } from '../../../ui/forms'
+import { resolveTypedPath } from '../filesData'
 
-/** Type/paste a directory path with autocomplete (file-complete). Enter or pick
- *  a suggestion navigates the explorer there. */
-export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir: string) => void }) {
+/** Type/paste a path — a folder's or a file's — with autocomplete (file-complete). Enter or a
+ *  picked suggestion goes there (`onNavigate`, which opens a file and lists a folder). A path that
+ *  is not absolute is relative to the folder the box shows (`value`), for the suggestions and for
+ *  the go alike (`resolveTypedPath`). */
+export function PathBar({ value, onNavigate }: { value: string; onNavigate: (path: string) => void }) {
   // Follows the folder shown when it moves, never on mount (`useSyncedDraft`).
   const [draft, setDraft] = useSyncedDraft(value)
   const [open, setOpen] = useState(false)
@@ -16,10 +19,10 @@ export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir
   useEffect(() => {
     if (!open || !draft) { setSuggestions([]); return }
     const t = setTimeout(() => {
-      api.fileComplete(draft, 'dir').then((r) => { setSuggestions(r.suggestions); setActiveIdx(-1) }).catch(() => setSuggestions([]))
+      api.fileComplete(resolveTypedPath(draft, value)).then((r) => { setSuggestions(r.suggestions); setActiveIdx(-1) }).catch(() => setSuggestions([]))
     }, 180)
     return () => clearTimeout(t)
-  }, [draft, open])
+  }, [draft, open, value])
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false) }
@@ -27,7 +30,11 @@ export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir
     return () => document.removeEventListener('mousedown', onDoc)
   }, [])
 
-  const go = (dir: string) => { onNavigate(dir.replace(/\/+$/, '') || dir); setOpen(false) }
+  const go = (typed: string) => {
+    const path = resolveTypedPath(typed, value)
+    onNavigate(path.replace(/\/+$/, '') || path)
+    setOpen(false)
+  }
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') { e.preventDefault(); activeIdx >= 0 && suggestions[activeIdx] ? go(suggestions[activeIdx].path) : go(draft) }
@@ -51,7 +58,9 @@ export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir
             <button key={s.path} onMouseEnter={() => setActiveIdx(i)} onClick={() => go(s.path)} type="button"
               className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[0.75rem]"
               style={{ background: i === activeIdx ? 'var(--color-surface-high)' : undefined }}>
-              <Folder size={12} className="shrink-0 text-primary" />
+              {s.is_dir
+                ? <Folder size={12} className="shrink-0 text-primary" />
+                : <FileText size={12} className="shrink-0 text-on-surface-low" />}
               <span className="truncate font-mono text-on-surface">{s.name}</span>
             </button>
           ))}

@@ -98,6 +98,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "path_protected": "The folder is a protected system or credential location the directory "
     "picker will not open or create in; the message names it and says why.",
     "not_found": "The addressed resource does not exist.",
+    # The explorer's listing asked to list a FILE: the path is admitted and exists, it just is not
+    # a folder — a different answer from `not_found`, which the explorer used to say for both.
+    "not_a_directory": "The path is a file, not a folder.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
     # ── the owner's security posture (config/edit_spec.py) ──

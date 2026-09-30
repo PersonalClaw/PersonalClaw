@@ -149,10 +149,8 @@ class TestSubagentPassesParentKey:
 
         captured_args: list = []
 
-        async def mock_spawn_approval(
-            request_id: str, description: str, parent_session_key: str = ""
-        ) -> bool:
-            captured_args.append((request_id, description, parent_session_key))
+        async def mock_spawn_approval(event: LLMEvent, parent_session_key: str = "") -> bool:
+            captured_args.append((event.request_id, event.title, parent_session_key))
             return False  # reject to avoid running
 
         sessions = MagicMock()

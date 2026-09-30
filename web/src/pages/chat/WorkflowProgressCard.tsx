@@ -7,7 +7,7 @@ import { accentChip } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
 import { Button } from '../../ui/Button'
-import { attentionLine, readAttention } from '../workflows/attentionMeta'
+import { attentionLine, readAttention, stoppedAtBudget } from '../workflows/attentionMeta'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLabel, nodeLook, runLook } from '../workflows/workflowMeta'
@@ -103,7 +103,10 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     )
   }
 
-  const look = vm ? runLook(vm.status, vm.held) : null
+  // A loop that stopped at the budget it was given did not give up: its status says so, and its
+  // ending line is the budget sentence, not an alert.
+  const atBudget = !!vm && stoppedAtBudget(vm.status, vm.attention)
+  const look = vm ? runLook(vm.status, vm.held, atBudget) : null
   // The escalation, if the run gave up. Reachable here only because the fold now KEEPS the
   // record through a terminal status (#565) — it used to be nulled on the very event that
   // carries the failure.
@@ -173,11 +176,13 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
           engine writes its escalation as the run goes terminal, and on the retries-exhausted
           path `run.error` is empty — so without this the card showed "Failed" and nothing else.
           The depth (per-attempt evidence, the suggested fix) is on the run page behind Open. */}
-      {escalation && (
+      {escalation && !atBudget && (
         <p data-type="caption" className="text-danger">Stopped: {escalation.headline}</p>
       )}
 
-      {vm?.error && <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>}
+      {vm?.error && (atBudget
+        ? <p data-type="caption" className="text-on-surface-var">{vm.error}</p>
+        : <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>)}
 
       {/* The currently-interesting node, not the whole list — a chat card is a glance, and
           twenty rows in a message stream is a wall. */}

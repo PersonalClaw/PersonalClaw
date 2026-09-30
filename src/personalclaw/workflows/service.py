@@ -2240,7 +2240,7 @@ def _escalations(run_id: str) -> list[dict[str, Any]]:
     gave up and has since SUCCEEDED (a rewind re-ran it) is left out: its escalation no longer
     says why the run is where it is.
     """
-    fields = ("node_id", "instance_path", "reason", "detail", "options", "attempts")
+    fields = ("node_id", "instance_path", "reason", "budget", "detail", "options", "attempts")
     instances = store.read_state(run_id)
     rows = journal_mod.ledger(run_id, kinds={journal_mod.STEP_ESCALATED})
     return [

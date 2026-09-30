@@ -341,11 +341,10 @@ def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
             state.notify(notification_kinds.LOOP_FAILED, "Loop failed", body[:300], meta=meta)
         elif status == RunStatus.ESCALATED:
             from personalclaw.inbox import ItemKind, emit_attention_item
-            from personalclaw.workflows.loop_iteration import BUDGET_TRIPS
 
             attention = getattr(run, "attention", None) or {}
             detail = str(attention.get("detail") or attention.get("reason") or "").strip()
-            budget = str(attention.get("reason") or "") in BUDGET_TRIPS
+            budget = attention.get("budget") is True
             return emit_attention_item(
                 state,
                 source=SOURCE,

@@ -45,6 +45,7 @@ from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.session_workspace import result_path as _ws_result_path
 from personalclaw.stats import Stats
+from personalclaw.subagent_ask import spawn_ask
 from personalclaw.subagent_persistence import (
     _agent_dir,
     create_agent_folder,
@@ -525,8 +526,10 @@ class ToolApprovalCallback(Protocol):
 
 
 class SpawnApprovalCallback(Protocol):
+    """Asks whether a subagent may start, with a tool call's permission request (`subagent_ask`)."""
+
     async def __call__(
-        self, request_id: str, description: str, parent_session_key: str = ""
+        self, event: LLMEvent, parent_session_key: str = ""
     ) -> "bool | ToolDecision":
         pass
 
@@ -1758,17 +1761,9 @@ class SubagentManager:
         assert self._on_spawn_approval is not None
         request_id: str = spawn_approval_id(info.id)
         try:
-            from personalclaw.security import (
-                redact_credentials,
-                redact_exfiltration_urls,
-            )
-
-            task_safe, _ = redact_exfiltration_urls(info.task)
-            task_safe, _ = redact_credentials(task_safe)
-            task_preview: str = task_safe[:80]
             decision = decision_of(
                 await self._on_spawn_approval(
-                    request_id, f"subagent_run({task_preview})", info.parent_session_key
+                    spawn_ask(request_id, info.task, info.agent), info.parent_session_key
                 )
             )
         except Exception:

@@ -62,12 +62,25 @@ function persistCache(cache: Record<string, FsEntry[]>): void {
 function listErrorLabel(e: unknown): string {
   const status = e instanceof ApiError ? e.status : 0
   if (status === 403) return 'You are not allowed to browse that location.'
+  // Both 404s say which they are: a file (a `?dir` link to one) is not "nothing there".
+  if (status === 404 && e instanceof ApiError && e.code === 'not_a_directory') return 'That path is a file, not a folder.'
   if (status === 404) return 'That path does not exist.'
   // 400 is the confinement validator refusing the path (outside the allowed roots,
   // or a traversal attempt) — a different sentence from "not found", because the
   // path may well exist and simply not be browsable from here.
   if (status === 400) return 'That path is outside the folders PersonalClaw can browse.'
   return 'Could not load that folder.'
+}
+
+/** Where the go-to-path box's text points. An absolute or `~` path is taken as typed; anything
+ *  else is relative to the folder the box shows (`shown`), as a shell's `cd` reads it — so the
+ *  workspace-relative `memory/notes.md`, typed over `/data/workspace`, is that file. The gateway
+ *  still admits the result exactly as it admits any other path (`..` included): resolving here only
+ *  supplies the base the server has no way to know. */
+export function resolveTypedPath(typed: string, shown: string): string {
+  const text = typed.trim()
+  if (!text || text.startsWith('/') || text.startsWith('~') || !shown) return text
+  return `${shown.replace(/\/+$/, '')}/${text.replace(/^(\.\/)+/, '')}`
 }
 
 /** Per-directory listing cache + lazy loader for the tree. */

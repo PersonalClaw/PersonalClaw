@@ -71,6 +71,20 @@ describe('a run that gave up', () => {
   })
 })
 
+describe('a run whose loop stopped at its budget', () => {
+  const BUDGET = 'It used its budget of 1 cycle, and the judge did not accept the last one.'
+  const STOP = { kind: 'escalation', node_id: 'project', reason: 'max_iterations', budget: true, detail: BUDGET }
+
+  it('🔴 says it stopped at its budget, not that it gave up, and raises no alert', async () => {
+    await mountCard({ status: 'escalated', error: BUDGET, attention: STOP })
+    await waitFor(() => expect(screen.getByText('Stopped at its budget')).toBeTruthy())
+    expect(screen.queryByText('Escalated')).toBeNull()
+    expect(screen.queryByText(/Stopped:/)).toBeNull()
+    expect(screen.getByText(BUDGET)).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
 describe('a run that is genuinely waiting', () => {
   it('shows the ask’s own prompt', async () => {
     // Vacuity floor: the surface that already worked must keep working. The prompt now arrives

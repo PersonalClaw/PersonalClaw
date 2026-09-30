@@ -23,7 +23,7 @@ import { reentrySummary, revalidateNotice, revalidateSummary } from './revalidat
 import { confirmationPreview, rewindNode } from './reentry'
 import { WorkflowAsk } from './WorkflowAsk'
 import { RunToolApprovals } from './RunToolApprovals'
-import { readEscalations, retryWindow } from './attentionMeta'
+import { readEscalations, retryWindow, stoppedAtBudget } from './attentionMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
@@ -288,7 +288,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
     await act('Start', () => api.startDraftWorkflowRun(runId))
   }, [act, runId])
 
-  const look = run ? runLook(run.status, run.held) : null
+  // A loop that stopped at the budget it was given ends the run `escalated`, and it is not a step
+  // that gave up: the page says it stopped at its budget, as the bell does, on every part of it.
+  const atBudget = run ? stoppedAtBudget(run.status, run.attention) : false
+  const look = run ? runLook(run.status, run.held, atBudget) : null
   const StatusIcon = look?.icon
 
   // Sorted by instance path so the list reads in the spec's own order, and indented to its
@@ -323,6 +326,11 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // so a run whose two steps both gave up explained only the second. Not status-gated: a run
   // whose failed `foreach` items were skipped finishes with them escalated, and says so.
   const escalations = useMemo(() => readEscalations(run?.escalations), [run])
+  // The instances that stopped at their budget, so their rows read as the run they ended does.
+  const budgetStops = useMemo(
+    () => new Set(escalations.filter((e) => e.budget && e.instancePath).map((e) => e.instancePath)),
+    [escalations],
+  )
 
   // Whether Retry is offered, and from when (`retryWindow`: every escalated step's own
   // `failure.retryable`, and `retry_at` while a provider's breaker refuses calls).
@@ -544,9 +552,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
             <RunToolApprovals runId={runId} />
 
             {/* A declined run's line is why it ended, not a fault: it names the approval and who
-                said no, in the informational tone its status takes (`runLook('declined')`). */}
+                said no, in the informational tone its status takes (`runLook('declined')`). A run
+                that stopped at its budget is not a fault either. */}
             {run.error && (
-              <p data-type="body-s" className={run.status === 'declined' ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' || atBudget ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
             {/* Incident mode holds a running run: its status stays `running`, so without this the
@@ -567,6 +576,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 retry={retryable ? { onRetry: retry, busy, waitSecs: retryWaitSecs } : undefined}
                 editHref={run.workflow ? `#/workflows/defs/${encodeURIComponent(run.workflow)}/edit` : undefined}
                 nameOf={nameOf}
+                atBudget={atBudget}
               />
             )}
 
@@ -631,7 +641,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
             <div className={`flex flex-col gap-xs${view === 'graph' ? ' hidden' : ''}`}>
               {shownRows.map(({ node: n, depth, descendants, collapsible }) => {
-                const nl = nodeLook(n.state)
+                const nl = nodeLook(n.state, budgetStops.has(n.instance_path))
                 const NIcon = nl.icon
                 // Re-entry (edit / rewind / run-from) is a mutation the LIVE controller applies at its
                 // drain point, so it exists only while the run is active. A draft has no controller

@@ -92,6 +92,7 @@
   "root": {
     "kind": "loop",
     "id": "project",
+    "label": "Work until done",
     "config": {
       "mode": "until_dry",
       "streak": 2,

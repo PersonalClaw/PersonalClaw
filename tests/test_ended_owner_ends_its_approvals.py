@@ -154,10 +154,11 @@ def _real_manager(state):
     ctx.hooks.auto_approve_subagent_spawn = False  # the interactive gate, as on the day-8 host
     holder: dict[str, Any] = {}
 
-    async def _spawn_approve(request_id: str, description: str, parent_key: str = "") -> bool:
+    async def _spawn_approve(event: Any, parent_key: str = "") -> bool:
+        request_id = str(event.request_id)
         info = holder["manager"].get(request_id.removeprefix("spawn:"))
         return await state.request_approval(
-            request_id, "subagent", description, session=info.parent_session_key if info else ""
+            request_id, "subagent", event.title, session=info.parent_session_key if info else ""
         )
 
     manager = SubagentManager(

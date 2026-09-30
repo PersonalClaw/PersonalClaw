@@ -1609,6 +1609,11 @@ async def api_file_list(request: web.Request) -> web.Response:
     children of ``path`` (non-recursive), sorted dirs-first then by name.
     Every path is validated through :func:`_validate_dashboard_path`, so the
     explorer can never escape the dashboard allowlist.
+
+    A path the allowlist admits but that is not a folder answers 404 either way, and says WHICH:
+    ``not_a_directory`` for a file, ``not_found`` for nothing at all. Both used to read "not a
+    directory", which the explorer could only turn into "That path does not exist." for a file
+    that plainly did. A refused path still learns nothing about what is there.
     """
 
     raw_path = request.query.get("path", "").strip()
@@ -1637,7 +1642,11 @@ async def api_file_list(request: web.Request) -> web.Response:
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_list", outcome="not_found", resources=path
         )
-        return web.json_response({"error": "not a directory"}, status=404)
+        if os.path.isfile(path):
+            return json_error(
+                "not_a_directory", message="That path is a file, not a folder.", status=404
+            )
+        return json_error("not_found", message="That path does not exist.", status=404)
 
     entries: list[dict] = []
     try:

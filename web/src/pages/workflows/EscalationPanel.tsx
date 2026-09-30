@@ -33,11 +33,19 @@ import type { EscalationRead } from './attentionMeta'
  *  run (pressed then, the new run was refused in microseconds). `editHref` opens the workflow's
  *  editor, for the failure a fresh attempt repeats until the step itself changes.
  *
- *  A step is named by its label (`nameOf`), as the run's ending and failure lines name it.
+ *  A step is named by its label (`nameOf`), as the run's ending and failure lines name it. The
+ *  run's own root is not named at all: a loop that IS the run has no better name than the run, and
+ *  its id is a template's internal word (a one-cycle loop read "reached its iteration ceiling at
+ *  project").
+ *
+ *  A run whose loop stopped at the budget it was given (`atBudget`) is not a step that gave up: it
+ *  is headed as a budget stop, and it is never told the workflow "fails the same way until the step
+ *  changes". A cycle budget is the run's own (Max cycles), so the way forward is a fork with more
+ *  of them; a token budget is the workflow's, so that one does offer the editor.
  *
  *  Every escalation is shown, oldest first. `run.attention` holds one, and each escalation
  *  overwrote the last, so a run whose two steps both gave up used to explain only the second. */
-export function EscalationPanel({ reads, runStatus, runError = '', retry, editHref, nameOf }: {
+export function EscalationPanel({ reads, runStatus, runError = '', retry, editHref, nameOf, atBudget = false }: {
   reads: EscalationRead[]
   runStatus: string
   runError?: string
@@ -46,8 +54,13 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
   editHref?: string
   /** What a step is called, by its id. */
   nameOf?: (nodeId: string) => string
+  /** The run ended because a loop stopped at the budget it was given (`stoppedAtBudget`). */
+  atBudget?: boolean
 }) {
-  const edit = stopped(runStatus) ? editHref : undefined
+  // Only a token budget lives in the workflow; a cycle budget is the run's own to raise.
+  const tokenBudget = atBudget && reads.some((r) => r.budget && r.reason === 'token_cap')
+  const edit = stopped(runStatus) && (!atBudget || tokenBudget) ? editHref : undefined
+  const forward = atBudget ? budgetForward(tokenBudget) : waysForward(retry, !!edit)
   return (
     <section
       aria-labelledby="escalation-heading"
@@ -56,14 +69,14 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
     >
       <h2 id="escalation-heading" data-type="label-s" className="flex items-center gap-s text-on-surface">
         <AlertTriangle size={14} className="shrink-0 text-warning" />
-        {escalationHeading(runStatus, reads.length)}
+        {escalationHeading(runStatus, reads.length, atBudget)}
       </h2>
 
       {reads.map((read, index) => (
         <EscalationEntry key={read.instancePath || `${read.nodeId}-${index}`} read={read} runError={runError} nameOf={nameOf} />
       ))}
 
-      {(retry || edit) && (
+      {(retry || edit || atBudget) && (
         <div className="flex flex-wrap items-center gap-s border-outline-variant border-t pt-s">
           {retry && (
             <Button
@@ -83,7 +96,7 @@ export function EscalationPanel({ reads, runStatus, runError = '', retry, editHr
               Change the workflow
             </TextLink>
           )}
-          <p data-type="caption" className="text-on-surface-low">{waysForward(retry, !!edit)}</p>
+          <p data-type="caption" className="text-on-surface-low">{forward}</p>
         </div>
       )}
     </section>
@@ -107,11 +120,19 @@ function waysForward(retry: { waitSecs: number } | undefined, edit: boolean): st
   return `A new run of this workflow fails the same way until the step changes: ${change}.`
 }
 
+/** What a run that stopped at its budget can do next: nothing failed, so nothing needs changing,
+ *  and more room is the run's to give (a cycle budget) or the workflow's (a token budget). */
+function budgetForward(tokenBudget: boolean): string {
+  return tokenBudget
+    ? 'It stopped at the token budget its workflow sets. To give it more, raise that budget in the workflow, then run it again.'
+    : 'It stopped at the budget it was given, so the workflow needs no change. For more cycles, fork it and set Max cycles before you start the new run.'
+}
+
 /** The panel's heading, true for the run's own status. An escalation is not always a stop: a
  *  `foreach` whose `on_item_error` is `skip` finishes with its failed items escalated, and a
  *  "stopped" heading over a Completed badge contradicted the page it sat on. */
-export function escalationHeading(runStatus: string, count: number): string {
-  if (stopped(runStatus)) return 'This run stopped'
+export function escalationHeading(runStatus: string, count: number, atBudget = false): string {
+  if (stopped(runStatus)) return atBudget ? 'This run stopped at its budget' : 'This run stopped'
   const steps = count === 1 ? '1 step' : `${count} steps`
   if (runStatus === 'complete') return `This run finished, but ${steps} failed`
   return `${steps} failed so far`
@@ -135,7 +156,8 @@ function EscalationEntry({ read, runError, nameOf }: {
 }) {
   const own = oneLine(read.detail)
   const detail = own && !oneLine(runError).includes(own) ? read.detail.trim() : ''
-  const name = read.nodeId ? (nameOf?.(read.nodeId) || read.nodeId) : ''
+  // The run's own root is the whole run: "at <its id>" names nothing the page does not already.
+  const name = read.nodeId && read.instancePath !== 'root' ? (nameOf?.(read.nodeId) || read.nodeId) : ''
   return (
     <div className="flex flex-col gap-s">
       <div className="flex min-w-0 flex-col gap-xs">

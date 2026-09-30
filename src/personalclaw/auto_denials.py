@@ -43,6 +43,7 @@ import time
 from typing import Any
 
 from personalclaw import notification_kinds
+from personalclaw.textfmt import clip_words
 from personalclaw.workflows import ownership
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,7 @@ def _clock(ts: float) -> str:
 
 
 def _input_line(tool_input: str) -> str:
-    text = " ".join(str(tool_input or "").split())
-    return text if len(text) <= 200 else text[:199] + "…"
+    return clip_words(str(tool_input or ""), 200)
 
 
 def answerable_chat(session_key: str) -> str:

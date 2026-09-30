@@ -41,6 +41,22 @@ _THINKING_TAG_RE = re.compile(
 )
 
 
+def clip_words(text: str, limit: int) -> str:
+    """``text`` on one line, and at most ``limit`` characters: cut at a word boundary with an
+    ellipsis when it is longer, so a sentence a person reads never stops mid-word ("Task: Draft a
+    s"). Only a single run of text with no boundary in its second half (a long link, a path) is cut
+    inside itself: dropping it whole would leave nothing to read.
+    """
+    line = " ".join(str(text or "").split())
+    if len(line) <= limit:
+        return line
+    head = line[: max(limit - 1, 0)]
+    cut = head.rfind(" ")
+    if cut >= len(head) // 2:
+        head = head[:cut]
+    return head.rstrip(" ,;:") + "…"
+
+
 def extract_options(text: str) -> tuple[str, list[str]]:
     """Extract ``[OPTIONS: a | b | c]`` choices from LLM output and strip the tag.
 

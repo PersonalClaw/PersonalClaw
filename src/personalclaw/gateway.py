@@ -4699,12 +4699,6 @@ class GatewayOrchestrator:
             trigger_resolver=_spawn_trigger_resolver,
         )
 
-        async def _spawn_approve(
-            request_id: str, description: str, parent_session_key: str = ""
-        ) -> "bool | ToolDecision":
-            event = LLMEvent(kind="permission_request", request_id=request_id, title=description)
-            return await _approve_subagent(event, parent_session_key)
-
         async def _subagent_event(etype: str, info: SubagentInfo, extra: dict) -> None:
             if not self.dashboard_state:
                 return
@@ -4802,7 +4796,9 @@ class GatewayOrchestrator:
             default_turn_limit=self._cfg.agent.subagent_max_turns,
             default_timeout=self._cfg.agent.subagent_timeout_secs,
             on_tool_approval=_approve_subagent,
-            on_spawn_approval=_spawn_approve,
+            # A start asks as its own permission request (`subagent_ask.spawn_ask`), through the
+            # same approval path as the agent's tool calls.
+            on_spawn_approval=_approve_subagent,
             is_yolo=_is_yolo,
             on_event=_subagent_event,
             # Settings → Agent defaults → Subagents, read at each decision: the values above are

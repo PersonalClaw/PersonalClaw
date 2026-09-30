@@ -49,6 +49,10 @@ export interface EscalationRead {
   instancePath: string
   /** The engine's raw reason token, kept so a reader can grep the source for it. */
   reason: string
+  /** The loop stopped at the budget it was given: the record's own classification
+   *  (`resilience.escalation_artifact`), never re-derived here from the reason token. Not a step
+   *  that gave up, so nothing about the workflow needs changing. */
+  budget: boolean
   /** That token as a sentence. */
   headline: string
   detail: string
@@ -139,6 +143,7 @@ export function readAttention(raw: unknown): AttentionRead {
       nodeId: str(record, 'node_id'),
       instancePath: str(record, 'instance_path'),
       reason,
+      budget: record.budget === true,
       headline: escalationHeadline(reason),
       detail: str(record, 'detail'),
       attempts: attempts.map(readAttempt),
@@ -151,6 +156,16 @@ export function readAttention(raw: unknown): AttentionRead {
   const prompt = str(record, 'prompt').trim()
   if (!prompt && !kind) return null
   return { kind: 'ask', askKind: kind, prompt }
+}
+
+/** Did this run end because a loop stopped at the budget it was given? Read off the escalation
+ *  that ended it (`attention`, which every run surface carries: the run page, the runs list, the
+ *  chat card's fold), so each of them says "Stopped at its budget" where the run's status alone
+ *  reads `escalated`. */
+export function stoppedAtBudget(status: string, attention: unknown): boolean {
+  if (status !== 'escalated') return false
+  const read = readAttention(attention)
+  return read?.kind === 'escalation' && read.budget
 }
 
 /** Every escalation in a run's `escalations` list (oldest first), skipping anything unreadable.

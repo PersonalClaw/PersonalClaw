@@ -154,6 +154,26 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
 
   const refresh = useCallback(() => { dirs.invalidate(activeRoot); setNonce((n) => n + 1) }, [dirs, activeRoot])
 
+  // "Go to path": a folder lists in the explorer; a FILE opens in the workbench, with the explorer
+  // on the folder that holds it, where its row is the active one. Which of the two a path is comes
+  // from its folder's own entries (`file-complete`, the box's autocomplete read, which admits
+  // exactly what the explorer may list and answers 200 for an admitted folder), so going somewhere
+  // that exists raises no error anywhere. Anything else still goes to the explorer, whose tree says
+  // why it cannot list it: refused, a file, or nothing there.
+  const goToPath = useCallback(async (path: string) => {
+    const name = baseName(path)
+    let found: FsEntry | undefined
+    try {
+      found = (await api.fileComplete(path)).suggestions.find((s) => s.name === name)
+    } catch { /* unread: the explorer's own listing says why */ }
+    if (found && !found.is_dir) {
+      setDir(found.path.slice(0, found.path.length - found.name.length).replace(/\/$/, '') || '/')
+      fileTabs.open({ name: found.name, path: found.path, is_dir: false })
+      return
+    }
+    setDir(found?.path ?? path)
+  }, [setDir, fileTabs.open])
+
   const openByPath = useCallback((path: string, rootPath?: string) => {
     if (rootPath) setTab(rootPath)
     fileTabs.open({ name: baseName(path), path, is_dir: false })
@@ -426,7 +446,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 {!showResults && (
                   <>
                     {/* full-width path bar on its own row */}
-                    <PathBar value={activeRoot} onNavigate={setDir} />
+                    <PathBar value={activeRoot} onNavigate={goToPath} />
                     {/* actions on a separate row below */}
                     <div className="flex items-center gap-0.5">
                       <RailBtn icon={FilePlus2} label="New file" onClick={() => { setCreating('file'); setNewName('') }} />

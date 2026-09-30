@@ -26,6 +26,7 @@ from personalclaw.constants import DASHBOARD_SESSION_PREFIX
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
 from personalclaw.task_modes import reads_only, resolve_effective_risk, tool_input_to_str
+from personalclaw.textfmt import clip_words
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import _ChatSession
@@ -169,9 +170,9 @@ def _approval_row_body(entry: dict[str, Any]) -> str:
         + (f" (risk: {risk})." if risk else ".")
     ]
     for detail in (entry.get("tool_purpose"), entry.get("tool_input")):
-        text = " ".join(str(detail or "").split())
+        text = clip_words(str(detail or ""), 200)
         if text:
-            lines.append(text if len(text) <= 200 else text[:199] + "…")
+            lines.append(text)
     return "\n".join(lines)
 
 

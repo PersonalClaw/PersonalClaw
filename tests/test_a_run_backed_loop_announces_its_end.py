@@ -21,6 +21,7 @@ from personalclaw.workflows import attention, store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
+from personalclaw.workflows.resilience import escalation_artifact
 
 
 @pytest.fixture(autouse=True)
@@ -93,11 +94,11 @@ def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -
     state = _State()
     run = _run(
         RunStatus.ESCALATED,
-        attention={
-            "kind": "escalation",
-            "reason": "max_iterations",
-            "detail": "It used its budget of 6 cycles before its exit condition was met.",
-        },
+        attention=escalation_artifact(
+            "project",
+            reason="max_iterations",
+            detail="It used its budget of 6 cycles before its exit condition was met.",
+        ),
     )
     assert attention.announce_run_end(state, run, RunStatus.ESCALATED) == "item-1"
     [call] = raised
@@ -111,7 +112,9 @@ def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -
 def test_a_loop_that_stopped_for_another_reason_says_it_stopped_before_it_finished(
     raised: list,
 ) -> None:
-    run = _run(RunStatus.ESCALATED, attention={"kind": "escalation", "reason": "iterations_failed"})
+    run = _run(
+        RunStatus.ESCALATED, attention=escalation_artifact("project", reason="iterations_failed")
+    )
     attention.announce_run_end(_State(), run, RunStatus.ESCALATED)
     assert [c["title"] for c in raised] == ["Loop stopped before it finished"]
 

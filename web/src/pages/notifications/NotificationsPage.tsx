@@ -215,7 +215,7 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
                 so it is answered HERE, where it says a run is waiting — it offered Mark read and
                 Delete, neither of which answers anything. Answering it is reading it. */}
             {open.approval && (
-              <ApprovalDecision approvalId={open.approval} onDecided={() => { if (!open.acked) void ack(open) }} />
+              <ApprovalDecision approvalId={open.approval} shown={open.body} onDecided={() => { if (!open.acked) void ack(open) }} />
             )}
             <div className="flex flex-wrap gap-s border-t border-outline-variant/40 pt-l">
               {/* The note's own deep link (R18 `statusUrl`) — a trigger fire opens that trigger's

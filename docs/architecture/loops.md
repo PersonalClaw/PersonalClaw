@@ -108,7 +108,12 @@ The loop surfaces do not care which home a loop has:
   go on: on the cycle the budget ends on, a judge stage that accepted the work is the loop's done
   (`workflows/loop_iteration.py:advance_loop`). A loop that genuinely runs out escalates with a
   sentence naming the budget ("It used its budget of 6 cycles, and the judge did not accept the
-  last one."). A run with a `loop_kind` announces its end as a loops-table loop does
+  last one."), and its escalation record says it was a budget stop (`budget: true`,
+  `workflows/resilience.py:escalation_artifact`). That sentence is the run's ending, naming no step
+  when the loop is the run's root (`workflows/ending_sentence.py`), and every run surface (the run
+  page, the Workflows list, the chat card) reads the record and says "Stopped at its budget", never
+  "Escalated", without offering a workflow change for a cycle budget the run was given. A run with a
+  `loop_kind` announces its end as a loops-table loop does
   (`workflows/attention.py:announce_loop_end`): a `loop_complete` / `loop_failed` notification, and
   an inbox item when it escalates, titled "Loop stopped at its budget" or "Loop stopped before it
   finished"; a cancel says nothing.

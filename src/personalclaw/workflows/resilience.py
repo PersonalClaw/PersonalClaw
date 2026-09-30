@@ -273,6 +273,19 @@ def check_breaker(node: Node, state: BreakerState) -> BreakerVerdict:
     return BreakerVerdict(False)
 
 
+#: Breaker reasons that are a DECLARED BUDGET being reached, not a stall.
+#:
+#: The distinction decides who answers the trip. A loop that thrashes is recoverable — that is
+#: what the escalation ladder is for, and failing it binary is what the ladder replaced. A loop that
+#: reached the `max_iterations` or token cap ITS AUTHOR SET is not thrashing and has nothing
+#: cheaper to try: spending a fresh session and a model switch on a satisfied budget would
+#: re-run the work the cap existed to bound. So a spent budget skips the ladder and ends the
+#: loop — complete when its own exit test was met or its judge accepted the last iteration, and
+#: escalated, naming the budget, when it would otherwise have gone on — and only thrash reaches
+#: the ladder. Kept beside `check_breaker`, which mints both tokens.
+BUDGET_TRIPS = frozenset({"max_iterations", "token_cap"})
+
+
 # ── escalation ───────────────────────────────────────────────────────────────
 
 #: The five typed options a human gets when the engine gives up. A free-text "it failed"
@@ -291,11 +304,17 @@ def escalation_artifact(
 
     Surfaced as a needs-input item, so the run parks on a real decision rather than
     dying silently.
+
+    ``budget`` says the loop stopped at the budget it was given (:data:`BUDGET_TRIPS`) rather
+    than giving up on the work. Classified once, here, so every surface that reads the record
+    (the run page, the runs list, the chat card, the Inbox row) tells the two apart the same way:
+    a stop at a budget someone set is not a step that needs changing.
     """
     return {
         "kind": "escalation",
         "node_id": node_id,
         "reason": reason,
+        "budget": reason in BUDGET_TRIPS,
         "detail": detail,
         "options": list(ESCALATION_OPTIONS),
         "attempts": [a.to_dict() for a in (attempts or [])],

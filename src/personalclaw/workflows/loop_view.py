@@ -62,7 +62,7 @@ _STATUS: dict[RunStatus, LoopStatus] = {
 }
 
 #: The escalation reasons that mean the loop spent its cycle budget, as opposed to giving up on the
-#: work (`loop_iteration.BUDGET_TRIPS` — the one token the engine surfaces a satisfied budget
+#: work (`resilience.BUDGET_TRIPS` — the one token the engine surfaces a satisfied budget
 #: with).
 _BUDGET_REASONS = frozenset({"max_iterations"})
 

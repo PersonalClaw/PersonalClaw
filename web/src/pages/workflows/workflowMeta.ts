@@ -1,4 +1,4 @@
-import { CircleCheck, CircleDashed, CircleSlash, Clock, Hand, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { CircleCheck, CircleDashed, CircleSlash, Clock, Gauge, Hand, Loader2, OctagonAlert, Pause, TriangleAlert, type LucideIcon } from 'lucide-react'
 import type { WorkflowRunStatus } from '../../lib/api'
 
 /** Presentation for one run status. Centralized so the list, the run view and any future
@@ -34,9 +34,18 @@ const RUN_LOOK: Record<WorkflowRunStatus, StatusLook> = {
  *  wire — a hold is not a pause, and the run carries on by itself — which is why it is derived. */
 const HELD_LOOK: StatusLook = { label: 'Held', icon: Hand, tone: 'text-warning' }
 
-/** The look for a run's status, or Held for a running run incident mode holds (`held`). */
-export function runLook(status: string, held?: string | null): StatusLook {
+/** An `escalated` run, or loop step, that stopped at the budget it was given
+ *  (`attentionMeta.stoppedAtBudget`). It did not fail and gave nothing up, so it must not read
+ *  "Escalated" in the danger tone: the bell says "Loop stopped at its budget" for the same run, and
+ *  the loop surfaces "Ended early" in the warning accent this shares. */
+const BUDGET_LOOK: StatusLook = { label: 'Stopped at its budget', icon: Gauge, tone: 'text-warning' }
+
+/** The look for a run's status, or Held for a running run incident mode holds (`held`), or
+ *  Stopped at its budget for an escalated run whose loop used the budget it was given
+ *  (`atBudget`). */
+export function runLook(status: string, held?: string | null, atBudget = false): StatusLook {
   if (status === 'running' && held) return HELD_LOOK
+  if (status === 'escalated' && atBudget) return BUDGET_LOOK
   return RUN_LOOK[status as WorkflowRunStatus] ?? { label: status || 'Unknown', icon: CircleDashed, tone: 'text-on-surface-low' }
 }
 
@@ -64,7 +73,10 @@ const NODE_LOOK: Record<string, StatusLook> = {
   discarded: { label: 'Discarded', icon: CircleSlash, tone: 'text-on-surface-low' },
 }
 
-export function nodeLook(state: string): StatusLook {
+/** The look for a node instance's state; a loop escalated at its budget (`atBudget`) reads as
+ *  the run it ended does. */
+export function nodeLook(state: string, atBudget = false): StatusLook {
+  if (state === 'escalated' && atBudget) return BUDGET_LOOK
   return NODE_LOOK[state] ?? { label: state || 'Unknown', icon: CircleDashed, tone: 'text-on-surface-low' }
 }
 

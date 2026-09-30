@@ -52,8 +52,8 @@ class _Owner:
         self.asked: list[str] = []
         self._allows = allows
 
-    async def __call__(self, request_id: str, description: str, parent: str = "") -> ToolDecision:
-        self.asked.append(request_id)
+    async def __call__(self, event: Any, parent: str = "") -> ToolDecision:
+        self.asked.append(str(event.request_id))
         if self._allows:
             return ToolDecision(True, "approved", YOU)
         return ToolDecision(False, "rejected", YOU)
