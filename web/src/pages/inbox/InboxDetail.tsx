@@ -10,7 +10,7 @@ import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui/forms'
 import { api, ApiError, type InboxItem, type InboxClassification, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel, verifyNote } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { DeniedCallRerun } from './DeniedCallRerun'
@@ -89,7 +89,7 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
   // no channel to reply into. Showing it a classification verdict, a Reclassify control, a
   // thumbs pair, a draft box or Mute thread would all be controls over something that does
   // not exist — and the thumbs would attribute a judgment no prompt ever made.
-  const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(item.item_kind || 'message')
+  const channelBacked = isChannelItem(item)
   const km = kindMeta(item.item_kind)
   const target = refTarget(item)
   // A workflow gate is answerable in place (below), which changes what the deep link is for. A

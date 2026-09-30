@@ -8,7 +8,8 @@ import {
 } from 'lucide-react'
 import {
   api, isLiveDownload, isNotRun, isSwitchedOff, type AvailableModel, type DownloadJob, type JudgeBenchRecommendation,
-  type ProviderHealth, type HfTokenSource, type LocalModelHealth, type LocalModelSelftest,
+  type ModelConnection, type ProviderHealth, type ProviderModels, type HfTokenSource, type LocalModelHealth,
+  type LocalModelSelftest,
 } from '../../lib/api'
 import { BundledDownloadProgress, modelBytes } from '../chat/bundledModelDownload'
 import { namesModel, splitModelRef } from '../../lib/modelRef'
@@ -114,6 +115,99 @@ export function capableModels(useCase: string, allModels: AvailableModel[], acti
     out.push({ id, name: id, provider, capabilities: [useCase], downloaded: false } as AvailableModel)
   }
   return out
+}
+
+/** What the page learned about one provider when it read its models: whether they could be
+ *  listed (`error`), the connection its last test measured, and the ids it lists. Read once for
+ *  every row, so a chain entry can say its instance is down or its model is gone. */
+export interface ProviderListing {
+  error: string
+  connection?: ModelConnection
+  /** The provider has a local download card (an Ollama instance, a bundled runtime): it lists
+   *  every model it has, so a bound model it does not list is gone from it. */
+  local: boolean
+  /** An array, not a Set: the panel's read is persisted to session storage as JSON. */
+  listed: readonly string[]
+}
+
+/** The listings of every provider the models read returned, by name. A media row (image or video
+ *  generation) is left out: why a provider cannot GENERATE says nothing about its chat models, and
+ *  it has its own notice (`unavailable`). */
+export function providerListings(rows: ProviderModels[]): Record<string, ProviderListing> {
+  const out: Record<string, ProviderListing> = {}
+  for (const r of rows) {
+    if (MEDIA_ROW_TYPES.has(r.type)) continue
+    const held = out[r.name]
+    out[r.name] = {
+      error: held?.error || r.error || '',
+      connection: held?.connection ?? r.connection,
+      local: !!held?.local || !!r.local,
+      listed: [...(held?.listed ?? []), ...(r.models ?? []).map((m) => m.id)],
+    }
+  }
+  return out
+}
+
+/** Why *provider* could not be asked for its models: its measured connection failed (a refused
+ *  key named as one), or listing them failed — in the words its test or its listing used. Null
+ *  when it answered. Its models are then MISSING from the list because it did not answer, not
+ *  because they are gone or not downloaded, so no row may say either of those about them. */
+export function listingFailure(
+  provider: string, listing: ProviderListing | undefined,
+): { tone: 'danger'; label: string; detail: string } | null {
+  const conn = listing?.connection
+  if (conn?.state === 'failed') {
+    return conn.rejected_credential
+      ? { tone: 'danger', label: 'key rejected', detail: conn.detail || `${provider} refused its key.` }
+      : { tone: 'danger', label: 'not answering', detail: conn.detail || listing?.error || `${provider} did not answer its connection test.` }
+  }
+  if (listing?.error) return { tone: 'danger', label: 'not answering', detail: listing.error }
+  return null
+}
+
+/** Why one chain entry cannot run right now, in words — or null when nothing says so.
+ *
+ *  A chain entry showed only its provider's breaker as a coloured dot, whose one text was a
+ *  tooltip: with its instance down the entry read "recovering — next call probes it", and one
+ *  whose model had vanished from its instance showed nothing at all. First match wins:
+ *
+ *  1. the instance's measured connection failed, or its models could not be listed → it is not
+ *     answering (or its key was refused), in the words its test or its listing used;
+ *  2. its breaker has tripped (`open`, or `half_open`: reached only from open, and left only by a
+ *     call that succeeds) → its calls are failing;
+ *  3. a LOCAL provider that answered does not list the model → the model is gone from it (the
+ *     Doctor prunes such a binding). A hosted provider can serve a model it does not list, so it
+ *     is never judged this way — the same line the Doctor's check draws;
+ *  4. a local model it lists is not downloaded → it will not run until it is.
+ *
+ *  Pure + exported for unit testing. */
+export function chainEntryStatus(
+  ref: string, listing: ProviderListing | undefined, health: ProviderHealth | undefined,
+  model: AvailableModel | undefined,
+): { tone: 'danger' | 'warn'; label: string; detail: string } | null {
+  const { provider, model: id } = splitModelRef(ref)
+  const down = listingFailure(provider, listing)
+  if (down) return down
+  if (health && (health.breaker_state === 'open' || health.breaker_state === 'half_open')) {
+    const n = health.consecutive_failures
+    const calls = `${provider}: its last ${n} call${n === 1 ? '' : 's'} failed`
+    return {
+      tone: 'danger', label: 'failing',
+      detail: health.breaker_state === 'open'
+        ? `${calls}. It is skipped until it answers again, and the next entry in this chain runs instead.`
+        : `${calls}. The next call to it tests whether it answers again.`,
+    }
+  }
+  if (listing?.local && !listing.listed.includes(id)) {
+    return {
+      tone: 'danger', label: 'unavailable',
+      detail: `${provider} no longer lists ${id}, so it cannot run. Remove it here, or prune it from Settings → Doctor.`,
+    }
+  }
+  if (listing?.local && model?.downloaded === false) {
+    return { tone: 'warn', label: 'not downloaded', detail: `${id} is not on ${provider} yet, so it cannot run until it is downloaded.` }
+  }
+  return null
 }
 
 /** The contract chips a model row shows (LMMV §2.2/§2.3), as pure data so the mapping
@@ -250,7 +344,10 @@ export function ModelsPanel() {
     const unavailable = rows
       .filter((r) => r.error && MEDIA_ROW_TYPES.has(r.type))
       .map((r): UnavailableProvider => ({ name: r.name, useCase: r.type, error: r.error ?? '' }))
-    return { allModels: rows.flatMap((r) => r.models ?? []), active, localProviders: rows.filter((r) => r.local).map((r) => r.name), unavailable }
+    return {
+      allModels: rows.flatMap((r) => r.models ?? []), active, localProviders: rows.filter((r) => r.local).map((r) => r.name),
+      unavailable, listings: providerListings(rows),
+    }
   }, { persist: true })
   // Per-provider breaker health for the chain-entry dots — refreshed on panel
   // mount (persist:false so a broken provider isn't shown green from cache).
@@ -315,6 +412,7 @@ export function ModelsPanel() {
             <div key={uc}>
               {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
               <UseCaseRow useCase={uc} chain={active[uc] ?? NO_CHAIN} allModels={allModels} localProviders={localProviders} downloads={downloads} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)}
+                listings={data?.listings ?? NO_LISTINGS}
                 unavailable={(data?.unavailable ?? []).filter((p) => p.useCase === uc)} onChanged={reloadActive} />
             </div>
           )
@@ -688,16 +786,21 @@ function PromptCacheSection() {
 }
 
 /** Breaker-state dot for one chain entry's provider: closed→green, half_open→amber,
- *  open→red (+ retry hint). No health row (provider never called) renders nothing —
- *  absence of data must not read as "healthy". */
+ *  open→red. No health row (provider never called) renders nothing — absence of data must not
+ *  read as "healthy". The entry's status pill (`chainEntryStatus`) says the same in words.
+ *
+ *  `half_open` said "recovering — next call probes it". It is not recovering: it is reached only
+ *  from `open`, once the wait has passed with nothing calling it, and only a call that succeeds
+ *  closes it — so an instance that was still down read as coming back. */
 function HealthDot({ provider, health }: { provider: string; health: ProviderHealth[] }) {
   const h = health.find((p) => p.name === provider)
   if (!h) return null
   const color = h.breaker_state === 'open' ? 'var(--color-danger)'
     : h.breaker_state === 'half_open' ? 'var(--color-warning)' : 'var(--color-ok)'
+  const failed = `its last ${h.consecutive_failures} call${h.consecutive_failures === 1 ? '' : 's'} failed`
   const label = h.breaker_state === 'open'
-    ? `${provider}: circuit open (${h.consecutive_failures} consecutive failures) — chain entries on this provider are skipped until it recovers`
-    : h.breaker_state === 'half_open' ? `${provider}: recovering — next call probes it` : `${provider}: healthy`
+    ? `${provider}: failing — ${failed}; chain entries on it are skipped until it answers again`
+    : h.breaker_state === 'half_open' ? `${provider}: failing — ${failed}; the next call tests it again` : `${provider}: healthy`
   // role="img": the dot is the ONLY carrier of the breaker state (no text equivalent
   // beside it), and on a role-less span `aria-label` is a PROHIBITED attribute — the name
   // is discarded, so a screen-reader user gets a coloured dot and nothing else.
@@ -707,6 +810,9 @@ function HealthDot({ provider, health }: { provider: string; health: ProviderHea
 /** A use case with nothing bound, for one the read did not list: its empty chain has no revision,
  *  so a save from it names none and is refused (`428`) rather than taken as a blind overwrite. */
 const NO_CHAIN: Revisioned<string[]> = { value: [], revision: '' }
+/** No provider listings: a read cached before the page kept them, or none at all. Nothing is then
+ *  claimed about any chain entry beyond its breaker. */
+const NO_LISTINGS: Record<string, ProviderListing> = {}
 
 /** The key a row finds its model's download by. */
 const downloadKey = (provider: string, model: string) => `${provider}\u0000${model}`
@@ -773,8 +879,10 @@ const moveRef = (ref: string, dir: -1 | 1): Rebase<string[]> => (theirs) => {
  *
  *  A column, not a bare button: the Repair, Test and Download affordances are buttons themselves
  *  and cannot nest inside the toggle. */
-function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle, onChanged, onDownloaded }: {
+function ModelRow({ model: m, on, saving, held, localProviders, listed, providerDown, onToggle, onChanged, onDownloaded }: {
   model: AvailableModel; on: boolean
+  /** Its provider did not answer when the page read its models (`listingFailure`), or null. */
+  providerDown: { label: string; detail: string } | null
   /** The chain is being saved. */
   saving: boolean
   /** A refused save of the chain is waiting for the user (`StaleWriteNotice`). */
@@ -812,9 +920,14 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle
   // A LOCAL model (carries a `downloaded` flag) that's bound but NOT
   // downloaded won't actually run — surface it so "configured" never
   // silently means "inert" (e.g. after deleting a bound model's weights).
-  const notDownloaded = m.downloaded === false
+  //
+  // 🔴 Not when its provider did not answer. A bound model is missing from the list of an
+  // instance that could not be listed, so it read "not downloaded … not on this machine yet" with
+  // a Download button, while the model sat on an instance that was merely down. That row says the
+  // instance is not answering instead, and offers nothing it could not do.
+  const notDownloaded = m.downloaded === false && providerDown === null
   // …and one this machine can fetch gets its Download right here (`InlineModelDownload`).
-  const downloadable = isDownloadable(m, localProviders)
+  const downloadable = providerDown === null && isDownloadable(m, localProviders)
   // A local model carries a `downloaded` flag; a hosted/remote model does not. Only a
   // present LOCAL model can run a real-inference selftest here.
   const isLocal = m.downloaded !== undefined
@@ -848,6 +961,12 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle
             <KeyRound size={9} /> needs token
           </StatusPill>
         )}
+        {on && providerDown && (
+          <StatusPill tone="danger" className="shrink-0 inline-flex items-center gap-xs" title={providerDown.detail}>
+            <AlertTriangle size={9} aria-hidden /> {providerDown.label}
+            <span className="sr-only">: {providerDown.detail}</span>
+          </StatusPill>
+        )}
         {on && notDownloaded && (
           <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
             style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
@@ -871,9 +990,11 @@ function ModelRow({ model: m, on, saving, held, localProviders, listed, onToggle
   )
 }
 
-function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, health, judgeRec, unavailable, onChanged }: {
+function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, health, listings, judgeRec, unavailable, onChanged }: {
   /** The use case's chain as the panel read it, with the revision of exactly that chain. */
   useCase: string; chain: Revisioned<string[]>; allModels: AvailableModel[]
+  /** What each provider's models read said (`providerListings`), for each chain entry's status. */
+  listings: Record<string, ProviderListing>
   /** This use case's providers that can't generate right now, each with the reason it gives. */
   unavailable: UnavailableProvider[]
   /** Providers that can download a model they do not have yet (see `isDownloadable`). */
@@ -1028,6 +1149,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
             // The model's name where the catalog has one (`SmolLM2-135M-Instruct`), not its file id.
             const known = capable.find((m) => m.provider === provider && m.id === id)
             const named = known ? modelLabel(known) : id
+            const status = chainEntryStatus(ref, listings[provider], health.find((h) => h.name === provider), known)
             return (
               <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
                 <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
@@ -1035,6 +1157,15 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
                 </span>
                 <HealthDot provider={provider} health={health} />
                 <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface" title={named !== id ? id : undefined}>{named}</span>
+                {/* Said in words beside the entry, not only in a dot's tooltip: an instance that is
+                    down, or a model gone from it, is what this chain most needs to tell you. */}
+                {status && (
+                  <StatusPill tone={status.tone} groundedOn="var(--color-surface-container)"
+                    className="shrink-0 inline-flex items-center gap-xs" title={status.detail}>
+                    <AlertTriangle size={9} aria-hidden /> {status.label}
+                    <span className="sr-only">: {status.detail}</span>
+                  </StatusPill>
+                )}
                 {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
                 {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
                     last row) is genuine unavailability and keeps `disabled` + the reason that
@@ -1137,6 +1268,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
                 const downloaded = () => { onChanged(); if (useCase === 'embedding') startReindex() }
                 return (
                   <ModelRow key={ref} model={m} on={activeModels.includes(ref)}
+                    providerDown={listingFailure(m.provider, listings[m.provider])}
                     saving={saving} held={conflicted} localProviders={localProviders}
                     listed={downloads.get(downloadKey(m.provider, m.id))}
                     onToggle={() => toggle(ref)} onChanged={onChanged} onDownloaded={downloaded} />

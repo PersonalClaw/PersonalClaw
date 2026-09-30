@@ -254,6 +254,90 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
         return []
 
 
+#: The key ``decompose_sub_goals`` files a goal loop's sub-goals list under. That list is found
+#: by NAME within the project, so every goal loop of one project shares it: it is read through
+#: the loop's own ``linked_task_ids``, never whole.
+_SUB_GOALS_KEY = "sub_goals"
+
+
+def _owned(loops: list[Loop]) -> tuple[set[str], set[str]]:
+    """``(list ids, task ids)`` whose tasks belong to *loops*: each loop's own phase lists, and
+    its linked tasks (the shared sub-goals list is never counted whole)."""
+    lists = {
+        str(list_id)
+        for loop in loops
+        for key, list_id in (loop.task_list_ids or {}).items()
+        if list_id and key != _SUB_GOALS_KEY
+    }
+    linked = {str(tid) for loop in loops for tid in (loop.linked_task_ids or [])}
+    return lists, linked
+
+
+async def _release(loops: list[Loop], task_ids: set[str] | None = None) -> int:
+    """Put back to ``open`` every task of *loops* marked ``in_progress`` (only *task_ids*, when
+    given). One read of the tasks in progress, however many loops. Never raises."""
+    from personalclaw.tasks import registry
+
+    lists, linked = _owned(loops)
+    try:
+        in_progress, _ = await registry.collect_tasks(
+            status="in_progress", provider_filter="native"
+        )
+    except Exception:
+        logger.warning(
+            "release_in_progress: the tasks in progress could not be read", exc_info=True
+        )
+        return 0
+    released = 0
+    for task in in_progress:
+        if task_ids is not None and task.id not in task_ids:
+            continue
+        if task.task_list_id not in lists and task.id not in linked:
+            continue
+        if _materialize.managed(task):
+            # A run's own task: its status is the run's projection, which settles it when the
+            # run ends. A second writer here would make the board disagree with the run.
+            continue
+        try:
+            await registry.update_task(task.id, provider_name="native", status="open")
+            released += 1
+        except Exception:
+            logger.warning("release_in_progress: task %s stays in progress", task.id, exc_info=True)
+    return released
+
+
+async def release_in_progress(loop_id: str, *, task_ids: list[str] | None = None) -> int:
+    """Put back to ``open`` every task of this loop still marked ``in_progress``: no worker has it.
+
+    A worker marks the task it takes ``in_progress`` (the spawn does, and so does the worker's own
+    ``task_update``), and nothing moved it on when the worker went away. So a stopped, failed or
+    finished loop left its task reading "in progress" for good while nothing worked on it, and a
+    task worker torn down before its task was done stranded that task in a resumed loop, whose
+    scheduler never takes a task in progress (:func:`ready_queued_tasks`). ``open`` is what such
+    a task is: not done, and free to be taken again.
+
+    ``task_ids`` narrows it to those tasks (one torn-down worker's). Returns how many were
+    released. Never raises: a task that cannot be written is logged and left as it is.
+    """
+    loop = store.get(loop_id)
+    if loop is None:
+        return 0
+    return await _release([loop], set(task_ids) if task_ids is not None else None)
+
+
+async def release_ended_loops() -> int:
+    """:func:`release_in_progress` for every loop that has ended, at once.
+
+    The boot sweep's half: a gateway that stopped between a loop's end and its release, and a
+    home written before the release existed, both hold ended loops whose tasks still read in
+    progress. Idempotent. Never raises."""
+    from personalclaw.loop.loop import ENDED_STATUSES
+
+    ended_values = {s.value for s in ENDED_STATUSES}
+    ended = [loop for loop in store.list_all() if loop.status in ended_values]
+    return await _release(ended) if ended else 0
+
+
 async def mark_task_done(task_id: str) -> bool:
     from personalclaw.tasks import registry
 

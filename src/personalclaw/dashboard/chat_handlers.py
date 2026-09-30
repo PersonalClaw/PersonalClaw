@@ -558,9 +558,11 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
             if origin == "loop":
                 # Unified loop sessions: loop-<id> (main worker), loop-<id>-<taskid>
                 # (a parallel code/design task-worker → its parent loop <id>), and
-                # loop-plan-<id> (the stepwise planner → no standing loop to link).
+                # loop-plan-<id> (the stepwise planner of loop <id>, which exists while it
+                # plans: every surface that lists the session names it by that loop).
                 if name.startswith(_LOOP_PLAN_PREFIX):
-                    return origin, ""
+                    planned = name[len(_LOOP_PLAN_PREFIX) :]
+                    return origin, (planned if loop_files.valid_loop_id(planned) else "")
                 rest = name[len(prefix) :]
                 if loop_files.valid_loop_id(rest):
                     return origin, rest  # main worker → exact loop id

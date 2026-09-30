@@ -958,6 +958,14 @@ class LoopWatchdog:
                 logger.info("loop: reaped %d orphan dir(s) with no DB row", reaped)
         except Exception:
             logger.warning("loop: orphan-dir GC failed", exc_info=True)
+        # An ended loop has no worker, so none of its tasks is in progress. One stopped by a
+        # process that went down before releasing them (or before releasing existed) still
+        # reads that way until this pass.
+        from personalclaw.loop import tasks_link
+
+        released = await tasks_link.release_ended_loops()
+        if released:
+            logger.info("loop: %d task(s) of ended loops were in progress, now open", released)
         return decided
 
     async def _rearm_running(self, loop: Loop) -> bool:

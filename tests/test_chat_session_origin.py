@@ -26,9 +26,11 @@ def test_code_task_worker_resolves_to_loop_id():
     assert _origin_of("loop-99875eaa-t-60e24dbb") == ("loop", "99875eaa")
 
 
-def test_planner_session_has_no_standing_loop():
-    # loop-plan-<id> is the stepwise planner session — no loop to link back to.
-    assert _origin_of("loop-plan-4171e24c") == ("loop", "")
+def test_planner_session_names_the_loop_it_plans():
+    # loop-plan-<id> is the stepwise planner of loop <id>: the loop exists while it plans, so
+    # the history row links to it and Mission Control cards the planner as that loop.
+    assert _origin_of("loop-plan-4171e24c") == ("loop", "4171e24c")
+    assert _origin_of("loop-plan-not-a-loop") == ("loop", "")
 
 
 def test_campaign_worker():

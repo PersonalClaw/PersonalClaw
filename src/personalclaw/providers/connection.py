@@ -12,6 +12,9 @@ So an instance's state is the outcome of its catalog's ``test_connection()``:
   than :data:`CHECK_TTL_SECS` — never on the request that asked, because a black-holed
   endpoint takes the whole connect timeout to fail;
 * measured NOW by the instance's Test button, the one inline caller (:func:`measure`);
+* measured again, in the background, when the instance's calls start failing and when they
+  answer again (:func:`recheck`, from its circuit breaker's trip and recovery), so an outage
+  is on the instance's card within one test rather than when the answer ages out;
 * keyed by a fingerprint of the instance's settings, so an edited endpoint or key is never
   judged by the answer its previous settings earned;
 * consulted by model discovery: an instance whose last check failed is not asked for its
@@ -170,6 +173,11 @@ class ConnectionBoard:
     def record(self, name: str, fingerprint: str, answer: Connection) -> None:
         self._answers.setdefault(name, {})[fingerprint] = (answer, time.monotonic())
 
+    def remeasure(self, name: str, fingerprint: str, catalog: Callable[[], Any]) -> None:
+        """Measure *name* again now, in the background, however fresh the answer it holds.
+        A check already running for it is not started twice."""
+        self._schedule(name, fingerprint, catalog)
+
     def forget(self, name: str) -> None:
         """Drop what was measured for an instance that was edited or removed."""
         self._answers.pop(name, None)
@@ -231,6 +239,29 @@ def entry_fingerprint(entry: Any) -> str:
     return settings_fingerprint(canonical_provider_type(entry.type), entry.options)
 
 
+def recheck(name: str) -> None:
+    """Measure instance *name*'s connection again, now, in the background.
+
+    Called when its calls start failing (its circuit breaker trips) and when they answer again
+    (the breaker closes). The answer a surface reads is otherwise the last one measured, and it
+    stands for :data:`CHECK_TTL_SECS`: an instance that went down right after its check read
+    "Connected" on Settings → Providers for up to fifteen minutes while every call to it failed.
+    A name that is no configured instance (a bundled provider) has nothing to measure.
+    """
+    import functools
+
+    from personalclaw.llm.registry import get_default_registry
+
+    registry = get_default_registry()
+    try:
+        entry = registry.get_entry(name)
+    except Exception:  # noqa: BLE001 — not a configured instance: nothing to measure
+        return
+    get_connection_board().remeasure(
+        name, entry_fingerprint(entry), functools.partial(registry.build_catalog, entry)
+    )
+
+
 def chat_provider_status() -> dict[str, Any] | None:
     """The measured connection of the instance chat is bound to — READ from the board.
 
@@ -270,6 +301,7 @@ __all__ = [
     "entry_fingerprint",
     "get_connection_board",
     "measure",
+    "recheck",
     "reset_connection_board",
     "settings_fingerprint",
 ]

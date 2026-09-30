@@ -16,6 +16,7 @@ import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
 import { useCompanionAction } from './useCompanionAction'
 import { signalPriority } from '../tasks/taskMeta'
+import { isChannelItem } from '../inbox/inboxMeta'
 
 /** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
  *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
@@ -311,7 +312,9 @@ export function InboxSection() {
           const who = i.sender_name || i.channel_name || i.channel || 'Unknown sender'
           return (
             <Row key={i.id} title={who} sub={i.message}
-              meta={[i.item_kind?.replace(/_/g, ' '), i.classification.replace(/_/g, ' ')].filter(Boolean).join(' · ')}
+              // The triage verdict belongs to a channel message only: a note or a notice was never
+              // triaged, and its stored default read "needs reply" (`isChannelItem`).
+              meta={[i.item_kind?.replace(/_/g, ' '), isChannelItem(i) ? i.classification.replace(/_/g, ' ') : ''].filter(Boolean).join(' · ')}
               actions={<>
                 <Button size="sm" loading={working} ariaLabel={`Mark the message from ${who} handled`}
                   onClick={() => resolve(i, 'handled', 'resolve')}>

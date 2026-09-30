@@ -408,11 +408,15 @@ async def pause(state, svc, loop_id: str) -> Loop:
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
-    """Stop (terminal): tear down, drop the STOP sentinel, and stop the turn in flight."""
+    """Stop (terminal): tear down, drop the STOP sentinel, and stop the turn in flight. Then no
+    worker has a task any more, so each task one held in progress goes back to open."""
+    from personalclaw.loop import tasks_link
+
     await _teardown(svc, loop_id)
     loop_files.write_stop_sentinel(loop_id)
     stopped = store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
     await halt_worker_turns(state, loop_id)
+    await tasks_link.release_in_progress(loop_id)
     return stopped
 
 
@@ -673,11 +677,15 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
 
 async def teardown_task_worker(svc, loop_id: str, task_id: str) -> None:
     """Remove a finished/cancelled task-worker's loop + clear its per-task guidance
-    (so stale steering isn't re-applied on a later re-queue)."""
+    (so stale steering isn't re-applied on a later re-queue). A task the worker leaves
+    unfinished goes back to open, so a resumed loop can take it again."""
+    from personalclaw.loop import tasks_link
+
     nudge_loop = svc.get_by_session(task_session_key(loop_id, task_id))
     if nudge_loop is not None:
         await svc.remove(nudge_loop.id)
     loop_files.clear_task_guidance(loop_id, task_id)
+    await tasks_link.release_in_progress(loop_id, task_ids=[task_id])
 
 
 def _is_parallel(loop: Loop) -> bool:
@@ -692,9 +700,14 @@ def _is_parallel(loop: Loop) -> bool:
 
 
 async def teardown_worker(svc, loop_id: str) -> None:
-    """Stop the loop's worker(s) WITHOUT touching its Tasks — used by complete/stop/
-    fail (the loop ends but its decomposed Tasks remain for review)."""
+    """Stop the loop's worker(s) WITHOUT deleting its Tasks — used by complete/fail, and stop
+    keeps them the same way (only :func:`teardown_for_delete` removes them). The decomposed Tasks
+    remain for review; only a task a worker held in progress goes back to open, since none holds
+    it now."""
+    from personalclaw.loop import tasks_link
+
     await _teardown(svc, loop_id)
+    await tasks_link.release_in_progress(loop_id)
 
 
 async def teardown_for_delete(state, svc, loop_id: str) -> None:

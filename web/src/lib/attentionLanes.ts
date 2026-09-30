@@ -57,10 +57,11 @@
  *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
  *  shown. Neither is a fallthrough — both branches are written out.
  */
-import type { ChatSession, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, WorkflowRunSummary } from './api'
+import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, WorkflowRunSummary } from './api'
 import { workflowApprovalSession } from '../app/approvalDestination'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
+import { sessionTitle } from './sessionTitle'
 
 export const LANES = ['needs-approval', 'your-turn', 'working', 'idle'] as const
 export type Lane = (typeof LANES)[number]
@@ -80,8 +81,13 @@ export type ApprovalInput = Pick<PendingApproval, 'id' | 'source' | 'tool' | 'to
   & Partial<Pick<PendingApproval, 'session_title' | 'trigger' | 'trigger_name'>>
 
 /** The only in-flight evidence on the wire (see fact 3). `running`/`stopping` are observed, not
- *  inferred. Optional: omit it and Working is empty rather than guessed. */
+ *  inferred. Optional: omit it and Working is empty rather than guessed.
+ *
+ *  `origin`/`source_id` are the list's own answer to "whose session is this" (`_origin_of`: a
+ *  loop's stage worker, its task workers and its planner all carry `origin: 'loop'` and the loop's
+ *  id), and the rest are what `sessionTitle` names a chat by. */
 export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'stopping' | 'pending_approval'>
+  & Partial<Pick<ChatSessionSummary, 'origin' | 'source_id' | 'source_label' | 'prompt_preview' | 'last_message' | 'created' | 'last_activity_ts' | 'last_ts'>>
 
 /** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
  *  carrying `run_id`, PP-16) has no chat session at all: its stages are subagents, so the sessions
@@ -280,6 +286,11 @@ function isoSeconds(raw: unknown): number | null {
   return Number.isFinite(ms) ? ms / 1000 : null
 }
 
+/** A loop's card title: its name, else its task's first line. */
+function loopTitle(l: Pick<LoopInput, 'name' | 'task'>): string {
+  return firstLine(l.name) || firstLine(l.task) || 'Loop'
+}
+
 function firstLine(text: unknown): string {
   if (typeof text !== 'string') return ''
   const trimmed = text.trim()
@@ -438,21 +449,27 @@ export function toLanes(
   // ── Running LOOPS. A General loop was working while this lane said "Nothing
   // is running right now" — it is run-backed, so no chat session carried it. A loop is carded when
   // it is `running` (a parked loop is not working, and one waiting on the user is already an inbox
-  // row). A loops-table loop's worker IS a chat session, so that session is skipped below: one
-  // worker, one card, and the loop's card is the one that names it and opens its cockpit.
-  const loopSessions = new Set<string>()
+  // row). A loops-table loop's workers ARE chat sessions, so every session of a carded loop is
+  // skipped below: one loop, one card, and the loop's card is the one that names it and opens its
+  // cockpit. `carded` holds the loops given a card here; `loopsById` every loop in the snapshot.
+  const loopsById = new Map<string, LoopInput>()
+  const loopBySessionKey = new Map<string, string>()
+  const carded = new Set<string>()
   for (const l of Array.isArray(loops) ? loops : []) {
     if (l === null || typeof l !== 'object') continue
     const id = typeof l.id === 'string' ? l.id : ''
-    if (id === '' || l.status !== 'running') continue
-    if (typeof l.session_key === 'string' && l.session_key !== '') loopSessions.add(l.session_key)
+    if (id === '') continue
+    loopsById.set(id, l)
+    if (typeof l.session_key === 'string' && l.session_key !== '') loopBySessionKey.set(l.session_key, id)
+    if (l.status !== 'running') continue
+    carded.add(id)
     const cycle = shownCycle(l.status, Number(l.total_cycles) || 0)
     out['working'].push({
       key: `loop:${id}`,
       lane: 'working',
       origin: 'loop',
       id,
-      title: firstLine(l.name) || firstLine(l.task) || 'Loop',
+      title: loopTitle(l),
       subtitle: l.max_cycles > 0 ? `running · cycle ${cycle}/${l.max_cycles}` : `running · cycle ${cycle}`,
       at: typeof l.started_at === 'number' && Number.isFinite(l.started_at) ? l.started_at : null,
       refs: { link: `#/${loopRoute(l)}` },
@@ -494,20 +511,63 @@ export function toLanes(
   // boolean cannot say WHICH tool is waiting. A session that is neither running nor stopping
   // contributes nothing — an idle session is not an attention item, and Idle is fed only by the
   // informational inbox kinds.
+  //
+  // 🔴 A LOOP'S SESSIONS ARE ITS LOOP, NEVER A CARD OF THEIR OWN. Only the stage worker's key was
+  // skipped, so a Code loop running a per-task worker read twice: its own card, and a second one
+  // titled by the worker's internal key (`loop-<id>-<task>`), with no link. Every session the list
+  // attributes to a loop (its stage worker, its task workers, its planner) is now that loop: skipped
+  // when the loop has its card above, and otherwise carded ONCE as the loop — named, and opening it
+  // — however many of its sessions run. A chat is named the way every other surface names one
+  // (`sessionTitle`), never by its key.
+  const loopCardsFromSessions = new Set<string>()
   for (const s of Array.isArray(activity) ? activity : []) {
     if (s === null || typeof s !== 'object') continue
     const key = typeof s.key === 'string' ? s.key : ''
     if (key === '') continue
     if (s.running !== true && s.stopping !== true) continue
-    if (loopSessions.has(key)) continue // carded as its loop, above
+    // `stopping` still counts as working: it is winding down, not idle.
+    const doing = s.stopping === true ? 'stopping' : 'running'
+    const loopId = (s.origin === 'loop' && typeof s.source_id === 'string' && s.source_id)
+      || loopBySessionKey.get(key) || ''
+    if (loopId !== '') {
+      if (carded.has(loopId) || loopCardsFromSessions.has(loopId)) continue
+      loopCardsFromSessions.add(loopId)
+      const l = loopsById.get(loopId)
+      if (l) {
+        out['working'].push({
+          key: `loop:${loopId}`,
+          lane: 'working',
+          origin: 'loop',
+          id: loopId,
+          title: loopTitle(l),
+          subtitle: l.status === 'planning' ? 'planning' : doing,
+          at: null,
+          refs: { link: `#/${loopRoute(l)}` },
+          loop: l,
+        })
+        continue
+      }
+      // A loop this snapshot does not hold (it went while the lists were read): named by the label
+      // the session list gives it, still never by the session's key.
+      out['working'].push({
+        key: `session:${key}`,
+        lane: 'working',
+        origin: 'session',
+        id: key,
+        title: firstLine(s.source_label) || 'Loop',
+        subtitle: doing,
+        at: null,
+        session: s,
+      })
+      continue
+    }
     out['working'].push({
       key: `session:${key}`,
       lane: 'working',
       origin: 'session',
       id: key,
-      title: firstLine(s.title) || key,
-      // `stopping` still counts as working: it is winding down, not idle.
-      subtitle: s.stopping === true ? 'stopping' : 'running',
+      title: sessionTitle(s),
+      subtitle: doing,
       at: null,
       session: s,
     })

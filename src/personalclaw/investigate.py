@@ -22,6 +22,7 @@ no surface grows its own bespoke "chat about this" wiring.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Callable
@@ -112,13 +113,28 @@ def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | None:
         item = None
     if item is None:
         return None
+    from personalclaw.inbox import SOURCE_DECLARABLE_KINDS, ItemKind
+
+    def _word(value: Any) -> str:
+        # The stored word: a row made in this process holds the dataclass's enum defaults, which
+        # format as `Classification.NEEDS_REPLY` rather than the word the store writes.
+        return str(getattr(value, "value", value))
+
     lines = [
         f"Inbox item {item.id}",
         f"From: {item.sender_name or item.sender_id}",
         f"Channel: {item.channel_name or item.channel}",
-        f"Classification: {item.classification} (confidence: {item.confidence})",
-        f"Status: {item.status}",
     ]
+    if (item.item_kind or ItemKind.MESSAGE.value) in SOURCE_DECLARABLE_KINDS:
+        # The triage verdict of a channel message. Every other row carries the store's default
+        # (`needs_reply`, high confidence) that nobody made: quoted, it tells the chat that a note
+        # she wrote to herself is waiting on her reply.
+        lines.append(
+            f"Classification: {_word(item.classification)} (confidence: {_word(item.confidence)})"
+        )
+    else:
+        lines.append(f"Kind: {item.item_kind}")
+    lines.append(f"Status: {_word(item.status)}")
     for turn in (item.thread_context or [])[-8:]:
         who = str(turn.get("sender_name") or turn.get("sender") or "someone")
         txt = str(turn.get("text") or "").strip()
@@ -878,8 +894,9 @@ async def _resolve_doctor_finding(entity_id: str, state) -> InvestigateContext |
                 fix = get_fix(fix_id)
                 if fix is not None:
                     lines.append(f"    {fix.title} — impact: {fix.impact}")
-                    # dry_preview is read-only by contract; apply() is never called.
-                    lines.append(f"    preview: {fix.dry_preview()}")
+                    # dry_preview is read-only by contract; apply() is never called. Off the
+                    # loop, as the Doctor routes run it: a preview may read a provider's models.
+                    lines.append(f"    preview: {await asyncio.to_thread(fix.dry_preview)}")
             except Exception:  # noqa: BLE001
                 logger.debug("fix preview failed for %s", fix_id, exc_info=True)
         elif r.get("remedy"):

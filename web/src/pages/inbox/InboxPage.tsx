@@ -19,7 +19,7 @@ import { ForeignBadge } from './ForeignContent'
 import { rowSubject } from '../../lib/rowSubject'
 import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
-import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
+import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, isChannelItem, isOpenWithVerdict, itemKindOf, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ComposeNoteModal } from './ComposeNoteModal'
@@ -39,6 +39,10 @@ const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'handled', label: 'Done' },
 ]
+/** What the page calls the filter that keeps the handled and dismissed rows. The Dismiss all
+ *  dialog sends her there by this name, read from here: it said "Handled", a filter the page calls
+ *  "Done". */
+const SETTLED_FILTER_LABEL = FILTERS.find((f) => f.key === 'handled')!.label
 
 /** Inbox = a general triage queue fed by pluggable message-source providers
  *  (filesystem today; Slack/email future). Each item is AI-classified with a
@@ -115,8 +119,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       // `favorites` is a CURATION view, not a status one: it cuts across open/handled
       // deliberately, because a starred item the user then handled is still the thing they
       // starred. Same predicate Knowledge uses for the same field (issue 620).
-      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? isSettled(it.status) : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
-      .filter((it) => !kind || (it.item_kind || 'message') === kind)
+      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? isSettled(it.status) : filter === 'filtered' ? it.status === 'filtered' : isOpenWithVerdict(it, filter))
+      .filter((it) => !kind || itemKindOf(it) === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
   }, [items, filter, kind, q, ownerFilter, me])
   const open = items?.find((it) => it.id === openId) ?? null
@@ -160,8 +164,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       title: `Dismiss all ${n} open item${n === 1 ? '' : 's'}?`,
       // Says BOTH halves, and now three: dismissing a proposal row also ANSWERS the proposal
       // (the same reject the row's own button does), which is a real deletion and not something
-      // Handled keeps. A confirm that named only the reversible half would understate it.
-      body: 'Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under Handled. Skill proposals are also rejected, which removes them from the Skills queue.',
+      // Done keeps. A confirm that named only the reversible half would understate it.
+      body: `Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under ${SETTLED_FILTER_LABEL}. Skill proposals are also rejected, which removes them from the Skills queue.`,
       danger: true,
       confirmLabel: 'Dismiss all',
     }))) return
@@ -257,7 +261,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
 
   // Live per-filter counts so the menu shows where items sit. Counts respect the active
   // KIND chip — a count that ignored it would disagree with the list right beside it.
-  const inKind = (it: InboxItem) => !kind || (it.item_kind || 'message') === kind
+  const inKind = (it: InboxItem) => !kind || itemKindOf(it) === kind
   const filterCount = (key: string) => {
     if (!items) return undefined
     const scoped = items.filter(inKind)
@@ -268,7 +272,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     // Counted across every status, matching the predicate above — a count that only saw open
     // items would disagree with the list it labels the moment a starred item is handled.
     if (key === 'favorites') return scoped.filter((it) => !!it.favorited).length
-    return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
+    return scoped.filter((it) => isOpenWithVerdict(it, key)).length
   }
   // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
   // the counts are of OPEN items — the chip badge answers "how much is waiting here".
@@ -276,7 +280,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (!items) return []
     const counts = new Map<string, number>()
     for (const it of items) {
-      const k = it.item_kind || 'message'
+      const k = itemKindOf(it)
       counts.set(k, (counts.get(k) ?? 0) + (isOpen(it.status) ? 1 : 0))
     }
     return ITEM_KINDS.filter((k) => counts.has(k.key)).map((k) => ({ ...k, open: counts.get(k.key) ?? 0 }))
@@ -428,11 +432,11 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 rather than minting a note-only exception. */
             <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }}
               icon={(() => {
-                const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                const channelBacked = isChannelItem(open)
                 const m = channelBacked ? classMeta(open.classification) : kindMeta(open.item_kind)
                 return <m.icon size={18} style={{ color: m.tone }} />
               })()}
-              title={!NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+              title={isChannelItem(open)
                 ? (open.sender_name || open.sender_id || 'Item')
                 : kindMeta(open.item_kind).label}
               onClose={() => setOpenId("")}>
@@ -653,7 +657,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               // its `sender_name` is the emitting subsystem. Rendering "Unknown" + a
               // #channel chip for it would be noise pretending to be provenance, so those
               // rows lead with the KIND and its own icon instead.
-              const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(it.item_kind || 'message')
+              const channelBacked = isChannelItem(it)
               const target = refTarget(it)
               // Right-click / long-press → scoped actions. Only "open" is wired at
               // the row level here (triage actions live in the detail panel); reuse

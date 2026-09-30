@@ -97,19 +97,26 @@ class CircuitBreaker:
 
     # ── Transitions ─────────────────────────────────────────────────────
 
-    def record_success(self) -> None:
-        """A call succeeded — reset failures and close the breaker."""
-        if self._state is not BreakerState.CLOSED:
+    def record_success(self) -> bool:
+        """A call succeeded — reset failures and close the breaker.
+
+        True when the breaker had tripped: this success is the provider answering again.
+        """
+        recovered = self._state is not BreakerState.CLOSED
+        if recovered:
             logger.info("circuit breaker %r → CLOSED (recovered)", self.name)
         self._state = BreakerState.CLOSED
         self._consecutive_failures = 0
         self._opened_at = 0.0
+        return recovered
 
-    def record_failure(self, *, now: float | None = None) -> None:
+    def record_failure(self, *, now: float | None = None) -> bool:
         """A call failed — count it and open the breaker at the threshold.
 
         A failure in HALF_OPEN (the probe failed) re-opens immediately and resets
-        the recovery clock, regardless of the running count.
+        the recovery clock, regardless of the running count. True when this failure TRIPPED
+        a closed breaker: the provider stopped answering. A failed probe is not a trip — the
+        breaker was already open, and nothing about the provider changed.
         """
         t = time.monotonic() if now is None else now
         if self._state is BreakerState.HALF_OPEN:
@@ -117,10 +124,11 @@ class CircuitBreaker:
             self._state = BreakerState.OPEN
             self._opened_at = t
             logger.warning("circuit breaker %r → OPEN (half-open probe failed)", self.name)
-            return
+            return False
         self._consecutive_failures += 1
         if self._consecutive_failures >= self.threshold:
-            if self._state is not BreakerState.OPEN:
+            tripped = self._state is not BreakerState.OPEN
+            if tripped:
                 logger.warning(
                     "circuit breaker %r → OPEN (%d consecutive failures)",
                     self.name,
@@ -128,6 +136,8 @@ class CircuitBreaker:
                 )
             self._state = BreakerState.OPEN
             self._opened_at = t
+            return tripped
+        return False
 
 
 # ── Process-global registry (one breaker per provider name) ──────────────────

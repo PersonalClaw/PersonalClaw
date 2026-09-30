@@ -285,9 +285,14 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // because the copy is only honest as a pair.
     const ui = web('pages/inbox/InboxPage.tsx')
     expect(ui, 'the whole sentence').toContain(
-      'There is no undo — but they stay readable under Handled.',
+      'There is no undo — but they stay readable under ${SETTLED_FILTER_LABEL}.',
     )
-    // The Handled filter reads the one settled set, which the detail panel's settled state reads too.
+    // …naming that filter by the label the page shows for it: the sentence said "Handled" beside
+    // a filter labelled "Done".
+    expect(ui, 'by the name the page gives the filter').toMatch(
+      /const SETTLED_FILTER_LABEL = FILTERS\.find\(\(f\) => f\.key === 'handled'\)!\.label/,
+    )
+    // The Done filter reads the one settled set, which the detail panel's settled state reads too.
     expect(ui, "and the filter that makes the second half true").toMatch(
       /filter === 'handled' \? isSettled\(it\.status\)/,
     )
@@ -295,8 +300,8 @@ describe('two more bodies: one corrected, one confirmed', () => {
       /SETTLED_STATUSES: readonly InboxItemStatus\[\] = \['handled', 'sent', 'dismissed'\]/,
     )
     // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
-    // which deletes its record — so for those rows "they stay readable under Handled" is not the
-    // whole story, and the copy owes the user the part Handled does not keep.
+    // which deletes its record — so for those rows "they stay readable under Done" is not the
+    // whole story, and the copy owes the user the part Done does not keep.
     expect(ui, 'the proposal half').toContain(
       'Skill proposals are also rejected, which removes them from the Skills queue.',
     )

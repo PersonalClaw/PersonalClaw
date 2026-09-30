@@ -9,8 +9,8 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.inbox import (
-    NON_CHANNEL_KINDS,
     OPEN_STATUSES,
+    SOURCE_DECLARABLE_KINDS,
     InboxFieldTypeError,
     InboxItem,
     InboxState,
@@ -419,7 +419,9 @@ async def api_inbox_kinds(request: web.Request) -> web.Response:
     Driven by what is actually in the store rather than by the enum: a chip for a kind
     with nothing behind it is a dead control. ``open`` counts :data:`OPEN_STATUSES`, the one
     definition every count on this surface reads — an unresolved request, whether or not it has
-    been glanced at.
+    been glanced at. ``channel`` is the allowlist a message source may declare
+    (:data:`SOURCE_DECLARABLE_KINDS`): a kind outside it has no channel, whether or not this
+    build knows it, so a stored kind no one declared is never offered the reply machinery.
     """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
@@ -437,7 +439,7 @@ async def api_inbox_kinds(request: web.Request) -> web.Response:
                     "kind": k,
                     "total": v["total"],
                     "open": v["open"],
-                    "channel": k not in NON_CHANNEL_KINDS,
+                    "channel": k in SOURCE_DECLARABLE_KINDS,
                 }
                 for k, v in sorted(counts.items())
             ]

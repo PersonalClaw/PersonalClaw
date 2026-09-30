@@ -281,9 +281,12 @@ async def api_models_available(request: web.Request) -> web.Response:
     models again until a check passes — its row carries the check's sentence as ``error`` —
     which is what stopped a rejected key being re-sent to its vendor on every load. A row
     that could not be listed says so in ``error``; ``models: []`` alone means "lists none".
+    One that could not be listed while its last check said Connected is measured again, in
+    the background, so its connection stops reading Connected on the next load.
     """
     from personalclaw.llm.registry import canonical_provider_type
     from personalclaw.providers.connection import (
+        CONNECTED,
         FAILED,
         Connection,
         get_connection_board,
@@ -294,13 +297,24 @@ async def api_models_available(request: web.Request) -> web.Response:
     result: list[dict[str, Any]] = []
     board = get_connection_board()
     connections: dict[str, Connection] = {}
+    measure_again: dict[str, Any] = {}  # name → a call that re-measures it in the background
     for p in providers_cfg:
         pname = str(p.get("name", ""))
-        connections[pname] = board.read(
-            pname,
-            settings_fingerprint(canonical_provider_type(p.get("type", "")), p.get("options")),
-            functools.partial(_catalog_for_config_provider, p),
+        fingerprint = settings_fingerprint(
+            canonical_provider_type(p.get("type", "")), p.get("options")
         )
+        catalog_factory = functools.partial(_catalog_for_config_provider, p)
+        connections[pname] = board.read(pname, fingerprint, catalog_factory)
+        measure_again[pname] = functools.partial(
+            board.remeasure, pname, fingerprint, catalog_factory
+        )
+
+    def _listing_failed(pname: str) -> None:
+        """Its models could not be listed, while its last test said Connected: that answer no
+        longer describes it, so it is measured again, and Settings → Providers stops showing an
+        instance as connected that did not answer here."""
+        if pname in connections and connections[pname].state == CONNECTED:
+            measure_again[pname]()
 
     # Providers that ALSO surface through the local-model registry below (they own
     # local download/management — ollama) are rendered ONCE there, with a download card
@@ -339,6 +353,7 @@ async def api_models_available(request: web.Request) -> web.Response:
         for (pname, ptype, _), models_or_exc in zip(tasks, results):
             connection = connections[pname].to_wire()
             if isinstance(models_or_exc, BaseException):
+                _listing_failed(pname)
                 result.append(
                     {
                         "name": pname,
@@ -399,6 +414,7 @@ async def api_models_available(request: web.Request) -> web.Response:
             except Exception as exc:  # noqa: BLE001 — one provider's failure is its row's error
                 logger.debug("local catalog failed for %s", pkey, exc_info=True)
                 rows, listing_error = [], relayed_failure_copy(exc)[:FAILURE_DETAIL_CHARS]
+                _listing_failed(pkey)
         # A family QUOTES its median variant, never its smallest: quoting the smallest
         # promises a fit the user will not get from the variant they actually pick. A
         # colonless name is a family of one, so its quote is its own size and nothing

@@ -138,6 +138,17 @@ def _mark(call: ModelCall | None, state: str) -> None:
         call.state = state
 
 
+def _recheck_connection(provider_name: str) -> None:
+    """Measure *provider_name*'s connection again, in the background, when its calls start or
+    stop failing. Best-effort: the call path it rides must never fail because of it."""
+    try:
+        from personalclaw.providers.connection import recheck
+
+        recheck(provider_name)
+    except Exception:  # noqa: BLE001 — a status refresh never breaks a model call
+        logger.debug("connection re-check for %s failed", provider_name, exc_info=True)
+
+
 def _iso_now() -> str:
     """Wall-clock ISO-UTC stamp for the routing-stats fold's ``updated_at``."""
     from datetime import datetime, timezone
@@ -506,7 +517,7 @@ class ModelCallGuard(ModelProvider):
                     tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                     tokens_out = int(getattr(event, "output_tokens", 0) or 0)
                     price = self._price(event)
-                    self._breaker.record_success()
+                    self._record_success()
                     # Charge the DAY scope always, and the ambient RUN scope when one is
                     # bound. `charge` has accepted `run_key=` since guardrails landed
                     # and this — its only production caller — never passed one, so
@@ -534,7 +545,7 @@ class ModelCallGuard(ModelProvider):
                     event = naming_the_call(event, audit_id)
                 yield event
         except TimeoutError:
-            self._breaker.record_failure()
+            self._record_failure()
             await self._aclose(source)
             if not recorded:
                 self._audit(
@@ -560,7 +571,7 @@ class ModelCallGuard(ModelProvider):
             raise
         except Exception:
             if not recorded:
-                self._breaker.record_failure()
+                self._record_failure()
                 self._audit(
                     audit_id,
                     1,
@@ -579,7 +590,7 @@ class ModelCallGuard(ModelProvider):
         # still audited exactly once — and charged, as any call that completed is.
         if not recorded:
             price = self._price(None)
-            self._breaker.record_success()
+            self._record_success()
             self._charge(tokens_in + tokens_out, price)
             self._audit(
                 audit_id,
@@ -593,6 +604,18 @@ class ModelCallGuard(ModelProvider):
                 price=price,
             )
             self._settle_call(call, tokens_in, tokens_out, price)
+
+    def _record_success(self) -> None:
+        """Close the breaker; a provider that had tripped it is answering again, so its measured
+        connection is re-checked and stops reading "not answering" (:func:`_recheck_connection`)."""
+        if self._breaker.record_success():
+            _recheck_connection(self._provider_name)
+
+    def _record_failure(self) -> None:
+        """Count a failed call; the failure that trips the breaker re-checks the provider's
+        measured connection, which otherwise kept its last "Connected" for up to its TTL."""
+        if self._breaker.record_failure():
+            _recheck_connection(self._provider_name)
 
     def _charge(self, tokens: int, price: "CallPrice") -> None:
         """Charge one call that completed to the day's meter, and to the ambient run's when one

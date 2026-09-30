@@ -1,5 +1,6 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
+import { isOpenStatus } from '../../lib/attentionLanes'
 import { approvalDestination } from '../../app/approvalDestination'
 import { notificationLink } from '../notifications/notificationMeta'
 import type { LucideIcon } from 'lucide-react'
@@ -120,18 +121,44 @@ export const ITEM_KINDS: KindMeta[] = [
   // a note you left yourself is something you meant to return to, not background chatter.
   { key: 'user_note', label: 'Notes', tone: 'var(--color-info)', icon: StickyNote },
 ]
-export function kindMeta(k?: string): KindMeta {
-  return ITEM_KINDS.find((x) => x.key === (k || 'message')) ?? ITEM_KINDS[0]
+
+/** The kind a row is, for every surface of this page: its own when this build knows it, `message`
+ *  when it has none (the server's default for rows written before kinds existed), and `system` for
+ *  a kind this build does not know. An unknown kind is a notice the system raised — it came through
+ *  `emit_attention_item`, the only door that writes one — never a message someone sent; it read as
+ *  "Messages" here, with a Reply arrow, a triage verdict and a draft box (an app-update notice once
+ *  arrived as `update`). */
+export function itemKindOf(it: Pick<InboxItem, 'item_kind'>): InboxItemKind {
+  return kindMeta(it.item_kind).key
 }
 
-/** Kinds with no channel behind them: no sender, no reply, no #channel label.
- *  Mirrors NON_CHANNEL_KINDS in inbox.py — rendering reply affordances for these
- *  would be dead controls. */
-export const NON_CHANNEL_ITEM_KINDS: InboxItemKind[] = [
-  'agent_request', 'proposal', 'needs_input', 'digest', 'system',
-  // A note has no sender to reply TO — you wrote it.
-  'user_note',
-]
+const SYSTEM_KIND = ITEM_KINDS.find((x) => x.key === 'system')!
+
+export function kindMeta(k?: string | null): KindMeta {
+  const key = k || 'message'
+  return ITEM_KINDS.find((x) => x.key === key) ?? SYSTEM_KIND
+}
+
+/** The kinds with a channel behind them: a sender, reply routing, a draft, and the triage verdict
+ *  (needs reply / FYI / noise) that only a channel message is ever judged by. Mirrors
+ *  SOURCE_DECLARABLE_KINDS in inbox.py.
+ *
+ *  An ALLOWLIST, and it replaced a list of the kinds WITHOUT a channel: that list could only let a
+ *  kind it did not name through as a message, which is how every app-update notice got the reply
+ *  machinery and sat under "Needs reply" beside the user's own note. */
+export const CHANNEL_ITEM_KINDS: readonly InboxItemKind[] = ['message', 'mention', 'email']
+
+/** Whether a row has a channel behind it (`CHANNEL_ITEM_KINDS`). */
+export function isChannelItem(it: Pick<InboxItem, 'item_kind'>): boolean {
+  return CHANNEL_ITEM_KINDS.includes(itemKindOf(it))
+}
+
+/** Whether a row is open and its triage verdict is *classification*. Only a channel message is
+ *  triaged: every other row carries the store's default verdict (`needs_reply`), which nobody made
+ *  — so a note she wrote to herself and an app's update notice both read "Needs reply". */
+export function isOpenWithVerdict(it: Pick<InboxItem, 'item_kind' | 'classification' | 'status'>, classification: string): boolean {
+  return isChannelItem(it) && it.classification === classification && isOpenStatus(it.status)
+}
 
 /** The router PATH an item's `refs` point at, or '' when it has nowhere to go.
  *  A bare path (no leading '#/') because callers hand it to RouteProps.navigate(), which

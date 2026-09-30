@@ -1,16 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, OPEN_STATUSES,
-  kindMeta, statusMeta, isOpen, refTarget, refLabel,
+  CHANNEL_ITEM_KINDS, ITEM_KINDS, OPEN_STATUSES,
+  isChannelItem, isOpenWithVerdict, itemKindOf, kindMeta, statusMeta, isOpen, refTarget, refLabel,
 } from './inboxMeta'
+import type { InboxItemKind } from '../../lib/api'
 
 describe('item kinds', () => {
-  it('falls back to message for an unknown or missing kind', () => {
-    // An item written by a NEWER build may carry a kind this build doesn't know; it must
-    // still render as a row rather than crash on an undefined icon.
+  it('reads a missing kind as a message, the server default for rows that predate kinds', () => {
     expect(kindMeta(undefined).key).toBe('message')
     expect(kindMeta('').key).toBe('message')
-    expect(kindMeta('some-future-kind').key).toBe('message')
+    expect(itemKindOf({})).toBe('message')
+  })
+
+  it('reads a kind it does not know as a system notice, never as a message', () => {
+    // A kind this build does not know came through the one door that raises notices; reading it
+    // as a message gave an app's update notice a Reply arrow, a triage verdict and a draft box.
+    // It still renders: the meta it gets has an icon.
+    expect(kindMeta('some-future-kind').key).toBe('system')
+    expect(kindMeta('some-future-kind').icon).toBeTruthy()
+    expect(itemKindOf({ item_kind: 'update' as InboxItemKind })).toBe('system')
   })
 
   it('resolves each declared kind to its own meta', () => {
@@ -25,19 +33,28 @@ describe('item kinds', () => {
     }
   })
 
-  it('lists non-channel kinds that must not render reply affordances', () => {
-    // Mirrors NON_CHANNEL_KINDS in inbox.py. A drift here means the UI shows a Send
-    // button on a row with nowhere to send.
-    expect(NON_CHANNEL_ITEM_KINDS).toContain('needs_input')
-    expect(NON_CHANNEL_ITEM_KINDS).toContain('proposal')
-    expect(NON_CHANNEL_ITEM_KINDS).not.toContain('message')
-    expect(NON_CHANNEL_ITEM_KINDS).not.toContain('mention')
-    expect(NON_CHANNEL_ITEM_KINDS).not.toContain('email')
+  it('gives the reply machinery to the three channel kinds and to nothing else', () => {
+    // Mirrors SOURCE_DECLARABLE_KINDS in inbox.py. An allowlist: a kind outside it — known or
+    // not — has no channel, so a Send button on it would have nowhere to send.
+    expect([...CHANNEL_ITEM_KINDS].sort()).toEqual(['email', 'mention', 'message'])
+    for (const k of ITEM_KINDS) {
+      expect(isChannelItem({ item_kind: k.key }), k.key).toBe(CHANNEL_ITEM_KINDS.includes(k.key))
+    }
+    expect(isChannelItem({})).toBe(true)
+    expect(isChannelItem({ item_kind: 'update' as InboxItemKind })).toBe(false)
   })
 
-  it('declares a meta row for every non-channel kind', () => {
-    const known = new Set(ITEM_KINDS.map((k) => k.key))
-    for (const k of NON_CHANNEL_ITEM_KINDS) expect(known.has(k)).toBe(true)
+  it('files a row under a triage verdict only when it is an open channel message', () => {
+    // Every row is stored with the verdict `needs_reply` until something triages it, and only a
+    // channel message is ever triaged.
+    const row = (item_kind: string, status = 'pending') =>
+      ({ item_kind: item_kind as InboxItemKind, classification: 'needs_reply' as const, status: status as 'pending' })
+    expect(isOpenWithVerdict(row('email'), 'needs_reply')).toBe(true)
+    expect(isOpenWithVerdict(row('message', 'seen'), 'needs_reply')).toBe(true)
+    expect(isOpenWithVerdict(row('email', 'handled'), 'needs_reply')).toBe(false)
+    for (const k of ['user_note', 'system', 'needs_input', 'agent_request', 'proposal', 'digest', 'update']) {
+      expect(isOpenWithVerdict(row(k), 'needs_reply'), k).toBe(false)
+    }
   })
 })
 

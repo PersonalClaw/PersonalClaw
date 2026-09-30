@@ -1944,7 +1944,7 @@ def surface_app_updates(state: Any) -> list[dict[str, Any]]:
 
 
 def _emit_app_update(state: Any, update: dict[str, Any]) -> None:
-    from personalclaw.inbox import emit_attention_item
+    from personalclaw.inbox import ItemKind, emit_attention_item
 
     name = update["name"]
     display = update.get("displayName") or name
@@ -1955,6 +1955,9 @@ def _emit_app_update(state: Any, update: dict[str, Any]) -> None:
             state,
             source="apps",
             kind="update",
+            # A notice, not a message. Without a row kind the notification's own (`update`) is
+            # stored, which is no inbox kind, and a surface would read it as a message.
+            item_kind=ItemKind.SYSTEM.value,
             title=f"Update available for {display}",
             body=f"Version {latest_version} is available (you have {installed_version}).",
             refs={"app": name, "latest_version": latest_version},

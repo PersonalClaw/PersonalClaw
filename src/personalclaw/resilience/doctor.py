@@ -550,86 +550,124 @@ async def _probe_channels(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+#: The Doctor's Fix for a binding that names a model which is gone (``fixes.prune_bindings``).
+PRUNE_BINDINGS_FIX = "model-providers.prune-bindings"
+
+
+def _bound_local_models() -> dict[str, set[str]]:
+    """Bound model ids per LOCAL provider key — the ``provider:model`` refs whose provider is a
+    registered local provider (cloud/config prefixes are not this pack's concern)."""
+    from personalclaw.local_models.registry import registered
+    from personalclaw.providers.use_cases import load_active_models, split_ref
+
+    reg = dict(registered())
+    bound: dict[str, set[str]] = {}
+    for refs in load_active_models().values():
+        for ref in refs:
+            parsed = split_ref(ref)
+            if parsed and parsed[0] in reg:
+                bound.setdefault(parsed[0], set()).add(parsed[1])
+    return bound
+
+
+async def _availability(keys: set[str] | None = None) -> dict[str, bool]:
+    """``is_available()`` per registered local provider (only *keys*, when given). A manager-backed
+    instance (an Ollama endpoint) answers from its connection test; a bundled runtime from whether
+    its dependencies import."""
+    from personalclaw.local_models.registry import registered
+
+    avail: dict[str, bool] = {}
+    for key, prov in registered():
+        if keys is not None and key not in keys:
+            continue
+        try:
+            avail[key] = bool(await prov.is_available())
+        except Exception:
+            avail[key] = False
+    return avail
+
+
+async def phantom_bindings(avail: dict[str, bool] | None = None) -> list[str]:
+    """Bound ``provider:model`` refs whose local provider ANSWERS and no longer lists the model.
+
+    A provider that is unavailable is skipped: its empty catalog would read every model it has as
+    gone, when what is true is that it did not answer. *avail* is the availability already
+    measured (the probe's); without it, only the providers with bindings are asked. Sorted.
+    """
+    from personalclaw.local_models.registry import catalog_for, get_provider
+
+    bound = _bound_local_models()
+    if avail is None:
+        avail = await _availability(set(bound))
+    phantom: list[str] = []
+    for key, model_ids in bound.items():
+        if not avail.get(key):
+            continue
+        prov = get_provider(key)
+        if prov is None:
+            continue
+        try:
+            catalog = await catalog_for(prov)
+        except Exception:
+            catalog = []
+        listed = {m.name for m in catalog}
+        phantom.extend(f"{key}:{model_id}" for model_id in model_ids if model_id not in listed)
+    return sorted(phantom)
+
+
 async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
     """local-models — per-provider availability + phantom-binding detection.
 
-    Per registered local provider: ``is_available()`` reports whether that
-    runtime's deps are importable. Phantom binding = a bound ``provider:model``
-    ref whose provider IS a registered local provider (so this pack owns it) but
-    whose model id is absent from that provider's own catalog. Refs to non-local
-    providers (cloud/config) are NOT this pack's concern and are never flagged —
-    that would false-alarm every ``bedrock:``/``openai:`` binding. A provider that
-    is unavailable is skipped for the catalog check (its unavailability is the
-    reported signal; an empty fail-soft catalog must not masquerade as phantoms).
+    Per registered local provider: ``is_available()`` (see :func:`_availability`). Phantom
+    binding (:func:`phantom_bindings`) = a bound ``provider:model`` ref whose provider IS a
+    registered local provider (so this pack owns it) but whose model id is absent from that
+    provider's own catalog; the Fix unbinds it (:data:`PRUNE_BINDINGS_FIX`). Refs to non-local
+    providers (cloud/config) are NOT this pack's concern and are never flagged — that would
+    false-alarm every ``bedrock:``/``openai:`` binding.
+
+    An unavailable provider is NAMED. One a use case is bound to fails the check: those use
+    cases are running on the next model of their chain, or on none. One nothing is bound to is
+    reported and passes: an installed runtime nobody uses is not a fault.
 
     Scope note: the on-disk HF ``models--`` layout probe belongs to
     LOCAL-MODEL-MANAGER-V2 (``local_models/layouts.py``, unbuilt) — this pack uses
     provider-computed availability and binding-integrity, not a raw cache scan.
     """
-    from personalclaw.local_models.registry import catalog_for, get_provider, registered
-    from personalclaw.providers.use_cases import load_active_models, split_ref
-
-    reg = dict(registered())  # {registry_key(app/ext name): provider}
-    avail: dict[str, bool] = {}
-    for key, prov in reg.items():
-        try:
-            avail[key] = bool(await prov.is_available())
-        except Exception:
-            avail[key] = False
-
-    # Bound model ids per LOCAL provider key (cloud/config prefixes excluded here).
-    bound_by_local: dict[str, set[str]] = {}
-    for refs in load_active_models().values():
-        for ref in refs:
-            parsed = split_ref(ref)
-            if not parsed:
-                continue
-            provider_name, model_id = parsed
-            if provider_name in reg:
-                bound_by_local.setdefault(provider_name, set()).add(model_id)
-
-    # Phantom = bound-to-a-local-provider model absent from that AVAILABLE
-    # provider's catalog.
-    phantom: list[str] = []
-    for key, model_ids in bound_by_local.items():
-        if not avail.get(key):
-            continue  # unavailable → skip; empty catalog would be a false phantom
-        bound_prov = get_provider(key)
-        if bound_prov is None:
-            continue
-        try:
-            catalog = await catalog_for(bound_prov)
-        except Exception:
-            catalog = []
-        catalog_ids = {m.name for m in catalog}
-        for model_id in model_ids:
-            if model_id not in catalog_ids:
-                phantom.append(f"{key}:{model_id}")
-
-    unavailable = [k for k, v in avail.items() if not v]
-    ok = not phantom  # unavailable providers are a WARN, not a failure of this pack
+    avail = await _availability()
+    phantom = await phantom_bindings(avail)
+    bound = _bound_local_models()
+    unavailable = sorted(k for k, v in avail.items() if not v)
+    bound_down = [k for k in unavailable if k in bound]
     detail_parts = []
     if phantom:
-        detail_parts.append(f"{len(phantom)} phantom binding{'s' if len(phantom) != 1 else ''}")
+        names = ", ".join(phantom)
+        detail_parts.append(
+            f"{len(phantom)} binding{'s' if len(phantom) != 1 else ''} to a model its "
+            f"provider no longer lists: {names}"
+        )
     if unavailable:
         detail_parts.append(
-            f"{len(unavailable)} provider{'s' if len(unavailable) != 1 else ''} unavailable"
+            f"{len(unavailable)} provider{'s' if len(unavailable) != 1 else ''} not available: "
+            + ", ".join(unavailable)
         )
     if not detail_parts:
-        detail_parts.append(f"{len(reg)} local provider{'s' if len(reg) != 1 else ''} ok")
+        detail_parts.append(f"{len(avail)} local provider{'s' if len(avail) != 1 else ''} ok")
     return ProbeResult(
-        ok=ok,
+        ok=not phantom and not bound_down,
         detail="; ".join(detail_parts),
         evidence={
             "available": avail,
             "unavailable": unavailable,
-            "phantom_bindings": sorted(phantom),
+            "phantom_bindings": phantom,
         },
+        fix_id=PRUNE_BINDINGS_FIX if phantom else None,
         remedy=(
-            "No automatic fix — each binding under `phantom_bindings` names a local model its "
-            "provider no longer lists (deleted or renamed). Bind that use case to a model that "
-            "exists in Settings → Models, or download the model again."
-            if phantom
+            f"No automatic fix — {', '.join(bound_down)} "
+            f"{'is' if len(bound_down) == 1 else 'are'} not available, so the use cases bound to "
+            f"{'it' if len(bound_down) == 1 else 'them'} run on the next model of their chain, or "
+            "on none. Settings → Providers says why: an instance that is not answering (start it, "
+            "or check its address), or a runtime that is not installed."
+            if bound_down and not phantom
             else ""
         ),
     )
@@ -850,32 +888,65 @@ async def _probe_serving_fs(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+#: The breaker states of a provider whose calls are failing. ``half_open`` is one of them: it is
+#: reached only from ``open``, once the recovery window has passed with nothing calling it, and
+#: only a call that succeeds closes it. Until then, every call to it has failed.
+FAILING_BREAKER_STATES = frozenset({"open", "half_open"})
+
+
+def _measured_failure(name: str) -> str:
+    """The last MEASURED connection failure of instance *name*, in its own words, or ``""``.
+    Read from the board, never measured here: a black-holed endpoint takes the whole connect
+    timeout to fail, and the Doctor must not be the thing that waits for it."""
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.connection import FAILED, entry_fingerprint, get_connection_board
+
+    try:
+        entry = get_default_registry().get_entry(name)
+    except Exception:  # noqa: BLE001 — not a configured instance: nothing was measured
+        return ""
+    answer = get_connection_board().peek(name, entry_fingerprint(entry))
+    return answer.detail if answer is not None and answer.state == FAILED else ""
+
+
 async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
     """model-providers — COMPOSED from AUTONOMY-GUARDRAILS §2.5 provider health
     (breaker state + latency + failure modes derived from the model-call audit).
 
-    The Doctor RENDERS this view; it never rebuilds the audit. An OPEN breaker is a
-    degraded row, not a core failure.
+    The Doctor RENDERS this view; it never rebuilds the audit. A provider whose breaker has
+    tripped is a degraded row, not a core failure — named, with how many calls in a row failed
+    and what its connection test said, so an instance that went down is on this row in words.
     """
     from personalclaw.guardrails.health import provider_health
 
     health = await asyncio.to_thread(provider_health)
     providers = health.get("providers", [])
-    open_breakers = [p["name"] for p in providers if p.get("breaker_state") == "open"]
+    failing = [p for p in providers if p.get("breaker_state") in FAILING_BREAKER_STATES]
+    named = []
+    measured = []
+    for p in failing:
+        n = int(p.get("consecutive_failures") or 0)
+        named.append(f"{p['name']} (its last {n} call{'s' if n != 1 else ''} failed)")
+        said = _measured_failure(str(p["name"]))
+        if said:
+            measured.append(f"{p['name']}: {said}")
     return ProbeResult(
-        ok=not open_breakers,
+        ok=not failing,
         detail=(
-            f"{len(open_breakers)} provider{'s' if len(open_breakers) != 1 else ''} "
-            "with an open breaker"
-            if open_breakers
-            else f"{len(providers)} provider{'s' if len(providers) != 1 else ''}, no open breakers"
+            f"{len(failing)} provider{'s' if len(failing) != 1 else ''} failing: "
+            + ", ".join(named)
+            if failing
+            else f"{len(providers)} provider{'s' if len(providers) != 1 else ''}, none failing"
         ),
         evidence={"providers": providers, "generated_from": health.get("generated_from", 0)},
         remedy=(
-            "No automatic fix, and none is needed to re-close a breaker: after its recovery "
-            "window the next call goes through as a test, and a success closes it. If calls keep "
-            "failing, check that provider's key and status under Settings → Providers."
-            if open_breakers
+            " ".join(measured)
+            + (" " if measured else "")
+            + "No automatic fix, and none is needed once it answers again: its chain entries are "
+            "skipped meanwhile, the next call after a short wait tests it, and a success brings it "
+            "back. If calls keep failing, check its address, key and status under Settings → "
+            "Providers."
+            if failing
             else ""
         ),
     )

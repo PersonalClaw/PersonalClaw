@@ -140,6 +140,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**
 - **A turn sent again after an empty answer or a lost connection is the same message: no second bubble holding the chat's context blocks, and the retry is given the context the first attempt had.**
 - **A message reaches its model a second or more sooner: the bundled prompts are seeded into the store once, not again at each of the prompt lookups a turn makes.**
+- **A model instance that stops answering says so on its Settings → Providers card, on each Settings → Models chain entry that uses it, and in the Doctor, by name and in words.**
+- **A chain entry whose model is gone from its instance reads "unavailable", and the Doctor offers to prune it; pruning removes the model from the chain.**
+- **A loop that is stopped, fails or finishes leaves none of its tasks "in progress", and a task its worker left unfinished can be taken again when the loop resumes.**
+- **Mission Control lists each loop once, by its name, however many of its workers are running, and never names a chat by its internal key.**
+- **The Inbox's "Needs reply" lists only messages that need a reply, not app-update notices, notes you wrote or requests from your agents.**
+- **The Inbox's Dismiss all dialog names the Done filter by the name the page shows.**
 - **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**

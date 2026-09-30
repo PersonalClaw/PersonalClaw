@@ -9,7 +9,7 @@ import { PageTitle } from '../../ui/PageTitle'
 import { TextLink } from '../../ui/TextLink'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
-import { LANES, toLanes, type Lane, type LaneCard } from '../../lib/attentionLanes'
+import { LANES, toLanes, type ActivityInput, type Lane, type LaneCard } from '../../lib/attentionLanes'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 // ── Mission Control — the locked four-lane attention view ──────────────────────────────────
@@ -113,14 +113,12 @@ interface Attention {
  *  `running` as optional. Two shapes of one entity disagreeing about three fields, the same defect
  *  `ChatSession.last_ts` carries a warning about. Normalizing here rather than widening the shared
  *  type keeps this inside one file; absent ⇒ `false` is the right default either way, because the
- *  fields are missing exactly for the disk-only sessions, which are by definition not running. */
-export interface SessionActivity {
-  key: string
-  title: string
-  running: boolean
-  stopping: boolean
-  pending_approval: boolean
-}
+ *  fields are missing exactly for the disk-only sessions, which are by definition not running.
+ *
+ *  The list's origin fields travel too: they say which loop a worker session belongs to, which is
+ *  how Working shows a loop once rather than once more per worker (`toLanes`), and the preview
+ *  fields are what a chat with no title yet is named by (`sessionTitle`). */
+export type SessionActivity = ActivityInput & { running: boolean; stopping: boolean; pending_approval: boolean }
 
 function activityOf(s: ChatSessionSummary): SessionActivity {
   const wire = s as ChatSessionSummary & { stopping?: boolean; pending_approval?: boolean }
@@ -130,6 +128,14 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
     running: Boolean(s.running),
     stopping: Boolean(wire.stopping),
     pending_approval: Boolean(wire.pending_approval),
+    origin: s.origin,
+    source_id: s.source_id,
+    source_label: s.source_label,
+    prompt_preview: s.prompt_preview,
+    last_message: s.last_message,
+    created: s.created,
+    last_activity_ts: s.last_activity_ts,
+    last_ts: s.last_ts,
   }
 }
 

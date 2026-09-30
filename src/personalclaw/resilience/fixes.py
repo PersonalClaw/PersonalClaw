@@ -4,8 +4,8 @@ Every fix is a ``Fix{id, title, impact, dry_preview(), apply()}`` paired with a 
 via its ``fix_id``. **Nothing auto-applies** — the Doctor tab renders the fix with its
 impact description and a two-step confirm runs it; every application is SEL-audited.
 Fixes touch harness mechanics ONLY (symlinks, caches, orphaned locks/PIDs, rollback
-leftovers) — never user content (memory entries, knowledge items, tasks); anything
-content-adjacent is flagged, never auto-deleted.
+leftovers, bindings to models that are gone) — never user content (memory entries,
+knowledge items, tasks); anything content-adjacent is flagged, never auto-deleted.
 
 ``dry_preview()`` is read-only and returns a human string describing what ``apply()``
 would do. ``apply()`` performs the repair and returns a result string. Both are
@@ -18,9 +18,9 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
-from personalclaw.resilience.doctor import MEMORY_INDEX_FIX
+from personalclaw.resilience.doctor import MEMORY_INDEX_FIX, PRUNE_BINDINGS_FIX
 
 logger = logging.getLogger(__name__)
 
@@ -208,34 +208,104 @@ def _orphan_prune_apply() -> str:
     return f"Removed {removed} stale lock(s); reconciled {len(recovered)} rollback leftover(s)."
 
 
-def _active_models_prune_preview() -> str:
-    # load_active_models() prunes removed-provider refs on read; persisting requires a
-    # save. Show the delta between raw on-disk and pruned.
+def _run_async(coro_fn: Callable[[], Any]) -> Any:
+    """Run an async check from a fix, which is sync by contract. Every caller runs a fix off the
+    gateway loop, on a worker thread with no loop of its own (the Doctor routes and the
+    Investigate snapshot alike), so the check gets a loop of its own there."""
+    import asyncio
+
+    return asyncio.run(coro_fn())
+
+
+def _bindings_that_cannot_run() -> dict[str, list[tuple[str, str]]]:
+    """``{use case: [(ref, why), …]}`` — every bound model that cannot run, with the reason.
+
+    Two kinds, both read fresh: a model whose provider was removed (the stored chain still names
+    it; every read already skips it), and one its local provider answers for and no longer lists
+    (deleted or renamed: :func:`doctor.phantom_bindings`). A provider that did not answer is not
+    asked about its models, so an outage never reads as models that are gone.
+    """
+    import json
+
+    from personalclaw.providers.use_cases import (
+        active_models_path,
+        load_active_models,
+        split_ref,
+    )
+    from personalclaw.resilience.doctor import phantom_bindings
+
+    path = active_models_path()
     try:
-        import json
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        raw = {}
+    kept = load_active_models()
+    phantom = set(_run_async(phantom_bindings))
+    out: dict[str, list[tuple[str, str]]] = {}
+    for use_case, refs in (raw if isinstance(raw, dict) else {}).items():
+        chain = [refs] if isinstance(refs, str) else refs if isinstance(refs, list) else []
+        for ref in chain:
+            ref = str(ref)
+            parsed = split_ref(ref)
+            provider = parsed[0] if parsed else ""
+            if ref not in kept.get(use_case, []):
+                out.setdefault(use_case, []).append((ref, f"{provider} was removed"))
+            elif ref in phantom:
+                out.setdefault(use_case, []).append((ref, f"{provider} no longer lists it"))
+    return out
 
-        from personalclaw.config.loader import config_dir
-        from personalclaw.providers.use_cases import load_active_models
 
-        raw_path = config_dir() / "active_models.json"
-        raw = json.loads(raw_path.read_text(encoding="utf-8")) if raw_path.exists() else {}
-        raw_refs = sum(len(v) for v in raw.values() if isinstance(v, list))
-        pruned = load_active_models()
-        pruned_refs = sum(len(v) for v in pruned.values())
-        stale = raw_refs - pruned_refs
-        if stale <= 0:
-            return "No active-model bindings reference removed providers."
-        return f"Would drop {stale} model binding(s) that reference removed providers."
-    except Exception:
-        return "Could not evaluate active-model bindings."
+def _use_case_label(use_case: str) -> str:
+    """The use case as Settings → Models names it (``code_tools`` → "Code tools")."""
+    return use_case.replace("_", " ").capitalize()
 
 
-def _active_models_prune_apply() -> str:
+def _left_empty(use_case: str, dropped: list[str]) -> str:
+    """What a use case falls back to once every model it names is unbound, or ``""``."""
+    from personalclaw.providers.use_cases import CHAT_SUBCATEGORIES, load_active_models
+
+    remaining = [r for r in load_active_models().get(use_case, []) if r not in dropped]
+    if remaining:
+        return ""
+    if use_case in CHAT_SUBCATEGORIES:
+        return f"{_use_case_label(use_case)} then uses your Chat models"
+    return f"{_use_case_label(use_case)} then has no model until you choose one"
+
+
+def _prune_bindings_preview() -> str:
+    gone = _bindings_that_cannot_run()
+    if not gone:
+        return "No binding names a model that is gone."
+    parts = []
+    for use_case, entries in gone.items():
+        models = ", ".join(f"{ref.split(':', 1)[-1]} ({why})" for ref, why in entries)
+        after = _left_empty(use_case, [ref for ref, _ in entries])
+        parts.append(
+            f"from {_use_case_label(use_case)}: {models}" + (f" — {after}" if after else "")
+        )
+    return "Would unbind " + "; ".join(parts) + "."
+
+
+def _prune_bindings_apply() -> str:
     from personalclaw.providers.use_cases import load_active_models, save_active_models
 
-    pruned = load_active_models()  # already drops removed-provider refs
-    save_active_models(pruned)
-    return "Persisted the pruned active-model bindings (removed-provider refs dropped)."
+    gone = _bindings_that_cannot_run()
+    if not gone:
+        return "No binding named a model that is gone; nothing changed."
+    active = load_active_models()  # removed providers' refs are already left out
+    for use_case, entries in gone.items():
+        drop = {ref for ref, _ in entries}
+        active[use_case] = [r for r in active.get(use_case, []) if r not in drop]
+    save_active_models(active)
+    return (
+        "Unbound "
+        + "; ".join(
+            f"{', '.join(ref.split(':', 1)[-1] for ref, _ in entries)} from "
+            f"{_use_case_label(use_case)}"
+            for use_case, entries in gone.items()
+        )
+        + "."
+    )
 
 
 def _memory_index_preview() -> str:
@@ -349,12 +419,14 @@ def _register_builtin_fixes() -> None:
     )
     register_fix(
         Fix(
-            id="model-providers.prune-bindings",
-            title="Drop model bindings for removed providers",
-            impact="Persists the removed-provider pruning that load_active_models already "
-            "does on read, so stale bindings stop being silently ignored.",
-            dry_preview=_active_models_prune_preview,
-            apply=_active_models_prune_apply,
+            id=PRUNE_BINDINGS_FIX,
+            title="Prune bindings to models that are gone",
+            impact="Removes from each use case in Settings → Models every model that cannot "
+            "run: one its local provider no longer lists (deleted or renamed), and one whose "
+            "provider was removed. The other models keep their order. To use a removed model "
+            "again, download it and choose it there.",
+            dry_preview=_prune_bindings_preview,
+            apply=_prune_bindings_apply,
         )
     )
     register_fix(

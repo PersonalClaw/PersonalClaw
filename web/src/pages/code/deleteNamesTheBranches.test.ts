@@ -139,8 +139,9 @@ describe('VACUITY: the destruction this copy warns about is real', () => {
     const mgr = py('loop/manager.py')
     expect(mgr, 'delete tears down tasks').toMatch(/teardown_tasks\(/)
     // The discriminator, in the codebase's own words: stop/complete/fail deliberately keep them, so
-    // "permanently deleted" is right for THIS dialog and would be wrong on the Stop one.
-    expect(mgr, 'stop/complete/fail keep them').toMatch(/WITHOUT touching its Tasks/)
+    // "permanently deleted" is right for THIS dialog and would be wrong on the Stop one. (Keeping a
+    // task is not leaving it untouched: one a worker held in progress goes back to open.)
+    expect(mgr, 'stop/complete/fail keep them').toMatch(/WITHOUT deleting its Tasks/)
   })
 
   it('🔑 the Stop dialog on the same page already said this, which is the sharpest evidence', () => {
