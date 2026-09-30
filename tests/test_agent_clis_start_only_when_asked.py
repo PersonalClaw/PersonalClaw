@@ -212,17 +212,18 @@ async def test_a_gateway_start_starts_no_agent_cli(stubs, monkeypatch):
 
 
 def test_doctor_reports_without_starting_and_starts_only_with_its_flag(stubs, capsys):
-    from personalclaw.cli_doctor import _doctor_providers
+    from personalclaw.cli_doctor import _doctor_providers, _GatewayReading
 
     _register("acp:stub-agent", [str(stubs.make("stub-agent")), "acp"])
+    no_gateway = _GatewayReading(why="no gateway of this home is running")
 
-    issues = _doctor_providers()
+    issues = _doctor_providers(no_gateway)
     out = capsys.readouterr().out
     assert stubs.starts() == [], "doctor started an agent CLI nobody asked it to"
     assert "installed, not started" in out and "--start-agent-clis" in out
     assert issues == [], "a CLI nobody started is not a failed check"
 
-    _doctor_providers(start_agent_clis=True)
+    _doctor_providers(no_gateway, start_agent_clis=True)
     assert stubs.starts() == ["stub-agent acp"], "the flag is the ask: it starts each CLI once"
 
 

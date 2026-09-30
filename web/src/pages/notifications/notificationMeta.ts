@@ -24,6 +24,10 @@ const KINDS: Record<string, KindMeta> = {
   // switched off until the owner reviews them. Warn tone: they have stopped, and only the owner
   // can start them again.
   trigger_import: { label: 'Triggers brought over for review', icon: ShieldQuestion, tone: 'var(--color-warn)' },
+  // cron/run_review — what a restart or a stop left undone: missed slots and runs it cut off, each
+  // waiting on the Triggers page's review. Warn tone: they did not run, and only the owner decides
+  // whether they run now.
+  run_review: { label: 'Runs to review after a restart', icon: Clock, tone: 'var(--color-warn)' },
   hook: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   fired: { label: 'Trigger fired', icon: Webhook, tone: 'var(--color-primary)' },
   agent: { label: 'Agent message', icon: Bot, tone: 'var(--color-primary)' },

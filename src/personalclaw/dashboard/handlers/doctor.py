@@ -755,21 +755,7 @@ def remediation_snapshot() -> dict:
     return {
         "score": _rem.health_score(deficits),
         "target_score": cfg.target_score,
-        "deficits": [
-            {
-                "key": d.key,
-                # The label when the key is not one: a failed Doctor check's probe title.
-                "title": d.title,
-                "count": d.count,
-                "penalty": round(d.penalty, 1),
-                "reachable": d.reachable,
-                # WHY the engine cannot clear an unreachable deficit. Computed where `reachable`
-                # is, and once dropped here, which left every surface with nothing to say past
-                # "not fixable yet". See `Deficit.blocked_by`.
-                "blocked_by": d.blocked_by,
-            }
-            for d in deficits
-        ],
+        "deficits": _rem.deficit_rows(deficits),
         "plan": preview.jobs,
         "recent_runs": _rem.recent_runs(10),
     }

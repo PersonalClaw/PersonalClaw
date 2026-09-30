@@ -139,13 +139,14 @@ def probe_gateway(
     return False  # pragma: no cover — the loop always returns
 
 
-def mint_local_token(port: int, *, timeout: float = 5.0) -> str:
+def mint_local_token(port: int, *, timeout: float = 5.0, ttl: str = _TOKEN_TTL) -> str:
     """Mint a dashboard token for a gateway already running on ``port``.
 
     Same handshake as ``personalclaw token``: read ``$PERSONALCLAW_HOME/.local_secret``
     and present it as ``X-Local-Secret`` to the loopback-only ``/api/token/local``. This
     is why ``run`` cannot drive a gateway whose home it does not share — and that is the
     correct limit, not a gap: the secret IS the proof that the caller owns the home.
+    ``ttl`` is its lifetime in the endpoint's grammar: no longer than the command needs it.
     """
     from personalclaw.config.loader import config_dir
 
@@ -162,7 +163,7 @@ def mint_local_token(port: int, *, timeout: float = 5.0) -> str:
     if not secret:
         raise RunError(f"{secret_path} is empty — cannot mint a token.")
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/token/local?ttl={_TOKEN_TTL}",
+        f"http://127.0.0.1:{port}/api/token/local?ttl={ttl}",
         headers={"X-Local-Secret": secret},
     )
     try:

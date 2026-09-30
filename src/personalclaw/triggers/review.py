@@ -153,14 +153,24 @@ def cards_from_boot(report: dict[str, Any]) -> list[ReviewCard]:
 
     A trigger the boot catches up on its own gets no card (`catching_up`).
     """
-    review = report.get("review") or {}
     skip = catching_up(report)
+    return [card for card in missed_by_trigger(report) if card.trigger_id not in skip]
+
+
+def missed_by_trigger(report: dict[str, Any]) -> list[ReviewCard]:
+    """Every trigger's missed slots in a `service.boot` report, as one card each.
+
+    The one reading of the report: the cards the Triggers page keeps (`cards_from_boot`, which
+    leaves out the triggers catching up on their own) and the notice that sends the owner there
+    (`boot_notice`) both come from it, so the two cannot count the same boot differently.
+    """
+    review = report.get("review") or {}
     by_trigger: dict[str, ReviewCard] = {}
     floor = bool(review.get("truncated"))
     for row in review.get("rows") or []:
         tid = str(row.get("trigger_id") or "")
         slot = float(row.get("scheduled_for") or 0.0)
-        if not tid or slot <= 0 or tid in skip:
+        if not tid or slot <= 0:
             continue
         card = by_trigger.setdefault(
             tid,
@@ -172,7 +182,7 @@ def cards_from_boot(report: dict[str, Any]) -> list[ReviewCard]:
     for summary in review.get("summaries") or []:
         tid = str(summary.get("trigger_id") or "")
         count = int(summary.get("count") or 0)
-        if not tid or count <= 0 or tid in skip:
+        if not tid or count <= 0:
             continue
         oldest = float(summary.get("oldest") or 0.0)
         newest = float(summary.get("newest") or 0.0)
@@ -207,6 +217,63 @@ def cards_from_orphans(records: list[dict[str, Any]], *, now: float) -> list[Rev
             )
         )
     return cards
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def boot_notice(report: dict[str, Any], cards: list[ReviewCard]) -> dict[str, Any] | None:
+    """The ONE notice about what a boot found, or None when it found nothing (§3.4).
+
+    *cards* are the ones this boot kept for the Triggers page (`cards_from_boot` plus
+    `cards_from_orphans`), so the sentence that sends the owner there counts exactly what waits
+    there. A trigger catching up on its own is counted as missed and named as firing by itself,
+    and has no card. One notice naming the count, not one per slot: a laptop opened after a
+    weekend would otherwise deliver hundreds. And none at all when nothing was missed:
+    "0 automations missed a run" on every restart trains the owner to dismiss the one that matters.
+    """
+    every = missed_by_trigger(report)
+    missed = sum(card.count for card in every)
+    cut_off = sum(1 for card in cards if card.kind == INTERRUPTED)
+    if missed <= 0 and cut_off <= 0:
+        return None
+    caught_up = len(catching_up(report))
+    waiting = sum(card.count for card in cards)
+    said: list[str] = []
+    if missed > 0:
+        said.append(
+            f"{missed} scheduled {_plural(missed, 'run was', 'runs were')} missed across "
+            f"{len(every)} {_plural(len(every), 'automation', 'automations')} while PersonalClaw "
+            "was not running."
+        )
+    if caught_up:
+        said.append(
+            f"{caught_up} with catch-up enabled will fire once, staggered, on "
+            f"{_plural(caught_up, 'its', 'their')} own."
+        )
+    if cut_off > 0:
+        said.append(
+            f"{cut_off} {_plural(cut_off, 'run was', 'runs were')} interrupted by the restart and "
+            f"{_plural(cut_off, 'is', 'are')} not run again on {_plural(cut_off, 'its', 'their')} "
+            "own."
+        )
+    if waiting > 0:
+        which = "the others" if caught_up and waiting > cut_off else _plural(waiting, "it", "them")
+        said.append(f"Review {which} on the Triggers page and choose what to run now.")
+    return {
+        "title": "Missed scheduled runs" if missed > 0 else "Runs interrupted by a restart",
+        "body": " ".join(said),
+        "meta": {
+            "event": "automation.missed_review",
+            "statusUrl": "#/triggers",
+            "missed": missed,
+            "interrupted": cut_off,
+            "triggers": len(every),
+            "caught_up": caught_up,
+            "truncated": bool((report.get("review") or {}).get("truncated")),
+        },
+    }
 
 
 def record(cards: list[ReviewCard], *, base_dir: Path | str | None = None) -> list[ReviewCard]:

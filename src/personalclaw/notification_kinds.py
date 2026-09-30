@@ -85,8 +85,9 @@ class NotificationKind:
     label: str
     default_mode: Mode = "immediate"
     default_severity: int = SEV_INFO
-    #: True when this kind carries a durable inbox item rather than only a transient
-    #: delivery. Set for the attention kinds folded in from Session 2 onward.
+    #: True when this kind carries a durable record rather than only a transient delivery: an
+    #: inbox item (the attention kinds folded in from Session 2 onward), or the card the Triggers
+    #: page's restart review keeps (`cron/run_review`).
     attention: bool = False
     #: True when this kind's payload asserts a checkable claim, so a rule MAY opt into a
     #: second-opinion verification pass before delivery. Parallel to ``attention``:
@@ -260,6 +261,21 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         decision=True,
         owner="personalclaw.inbox",
+    ),
+    # What a restart or a stop left undone: the slots a stopped gateway missed and the runs it cut
+    # off. A decision: none is run on its own, and each waits on the Triggers page's review until
+    # the owner runs or dismisses it, so its record is that card (`triggers/review.py`). WARNING
+    # with `attention`, like `cron/trigger_import`, so quiet hours record it silently rather than
+    # drop it: a restart at 01:00 inside them used to leave the card and no notice at all.
+    NotificationKind(
+        "cron",
+        "run_review",
+        "Runs to review after a restart",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+        decision=True,
+        owner="personalclaw.gateway",
     ),
     # heartbeat — 5 sites in gateway.py
     NotificationKind(
@@ -757,6 +773,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # would be system/generic's — the registry's 🪤 one level down, exactly as `autonomy_revocation`
     # above found.
     "trigger_import": ("cron", "trigger_import"),
+    # The restart review's notices. Its bare kind is unique and IS its wire string; the row is
+    # here for the reason `trigger_import`'s is.
+    "run_review": ("cron", "run_review"),
     # The bare kind is unique, so it is its own wire string — and it needs this row for the
     # same reason `autonomy_revocation` does: without one `kind_for_legacy` falls open to generic.
     "auto_denied": ("system", "auto_denied"),
@@ -808,6 +827,8 @@ APPROVAL = "approval"
 TASK_DUE = "task_due"
 #: A tool call denied with no answer (`auto_denials.py`).
 AUTO_DENIED = "auto_denied"
+#: The runs a restart or a stop left undone, waiting on the Triggers page's review.
+RUN_REVIEW = "run_review"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -834,6 +855,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     APPROVAL,
     TASK_DUE,
     AUTO_DENIED,
+    RUN_REVIEW,
     GENERIC,
 )
 

@@ -48,8 +48,9 @@ from personalclaw.inbox import OPEN_STATUSES, InboxStore, ItemKind, emit_attenti
 from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.providers import entity_routes as er
 
-#: Every registered kind that is a decision the user owes, and what parks on it. The attention
-#: ones carry a durable row; ``approval/requested`` is the phone ping of the same approval.
+#: Every registered kind that is a decision the user owes, and what parks on it. True: it carries
+#: a durable Inbox row. ``approval/requested`` is the phone ping of the same approval, and
+#: ``cron/run_review``'s record is the Triggers page's review card.
 DECISIONS = {
     # a tool call awaiting Allow/Deny, a project folder awaiting Trust, a one-tap held action
     "system/agent_request": True,
@@ -60,6 +61,9 @@ DECISIONS = {
     "agent/room_paused": True,
     # triggers an upgrade brought over and left off until you switch each on
     "cron/trigger_import": True,
+    # runs a restart or a stop left undone; each waits on the Triggers page's review card until
+    # you run or dismiss it, which is its record rather than an Inbox row
+    "cron/run_review": False,
     # the push that wakes a phone for a pending approval
     "approval/requested": False,
 }

@@ -593,7 +593,12 @@ and a run a restart cut off may already have done part of its work.
 Both land in `trigger-review.json` beside `triggers.json`
 (`triggers/review.py`): one card per trigger and kind, until you decide it.
 The "Missed scheduled runs" notice points at the Triggers page, where the
-cards sit above the list (`GET /api/triggers/review`). The boot passes run
+cards sit above the list (`GET /api/triggers/review`). It is composed from the
+cards this boot kept (`review.boot_notice`, over the one reading of the report
+the cards come from, `review.missed_by_trigger`), so it counts what waits
+there. It and a stop's "… was interrupted" notice are the decision kind
+`cron/run_review` (warning), so quiet hours put them in the bell without a
+toast rather than dropping them. The boot passes run
 before the dashboard exists, so the gateway holds the notice and sends it once
 the dashboard is up (`GatewayOrchestrator._surface_held_boot_review`). **Run now** runs the
 action once, however many slots the card covers, and records it `ran_late`

@@ -376,6 +376,26 @@ def measure_deficits() -> list[Deficit]:
     return out
 
 
+def deficit_rows(deficits: list[Deficit]) -> list[dict]:
+    """The deficits as the Doctor surfaces read them: the rows of ``GET /api/doctor/remediation``,
+    and what ``personalclaw doctor`` prints from, whether the gateway measured them or it did."""
+    return [
+        {
+            "key": d.key,
+            # The label when the key is not one: a failed Doctor check's probe title.
+            "title": d.title,
+            "count": d.count,
+            "penalty": round(d.penalty, 1),
+            "reachable": d.reachable,
+            # WHY the engine cannot clear an unreachable deficit. Computed where `reachable` is,
+            # and once dropped by the projection, which left every surface with nothing to say
+            # past "not fixable yet". See `Deficit.blocked_by`.
+            "blocked_by": d.blocked_by,
+        }
+        for d in deficits
+    ]
+
+
 def _failed_check_deficits(measured: dict[str, int]) -> list[Deficit]:
     """One deficit per FAILED Doctor capability check — the "one authority" half of the score.
 

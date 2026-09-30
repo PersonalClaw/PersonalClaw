@@ -491,7 +491,7 @@ class GatewayOrchestrator:
         self.channel_history: ChannelHistory | None = None
         self.dashboard_state: DashboardState | None = None
         #: The boot's missed-run notice, held while the dashboard is not up (`_record_boot_review`).
-        self._held_boot_review: tuple[dict[str, Any], list[dict[str, Any]]] | None = None
+        self._held_boot_review: tuple[dict[str, Any], list[Any]] | None = None
         self._background_tasks: "set[asyncio.Task]" = set()  # prevent GC of fire-and-forget tasks
         self._dashboard_runner: web.AppRunner | None = None
         self._handler_tasks: "set[asyncio.Task]" = set()  # type: ignore[type-arg]
@@ -1842,8 +1842,9 @@ class GatewayOrchestrator:
         title, _ = redact_exfiltration_urls(f"{name} was interrupted {what}")
         title, _ = redact_credentials(title)
         try:
+            # The same kind as the boot's notice: this run waits on the same review.
             state.notify(
-                kind=notification_kinds.INFO,
+                kind=notification_kinds.RUN_REVIEW,
                 title=title,
                 body=str(record.get("reason") or ""),
                 meta={
@@ -1852,7 +1853,9 @@ class GatewayOrchestrator:
                 },
             )
         except Exception:  # noqa: BLE001 - the run is recorded; a lost notice must not undo it
-            logger.debug("could not announce the interrupted run of %s", trigger_id, exc_info=True)
+            logger.warning(
+                "could not announce the interrupted run of %s", trigger_id, exc_info=True
+            )
 
     def _record_boot_review(
         self,
@@ -1869,14 +1872,14 @@ class GatewayOrchestrator:
         interrupted run may already have done part of its work. Never raises, like the passes it
         follows: the schedules are re-armed and the runs closed whether or not this lands.
         """
+        cards: list[Any] = []
         try:
             from personalclaw.triggers import review as _review
 
-            _review.record(
-                _review.cards_from_boot(report)
-                + _review.cards_from_orphans(interrupted, now=time.time()),
-                base_dir=base_dir,
+            cards = _review.cards_from_boot(report) + _review.cards_from_orphans(
+                interrupted, now=time.time()
             )
+            _review.record(cards, base_dir=base_dir)
         except Exception:  # noqa: BLE001 - see the docstring
             logger.warning("could not keep the boot's trigger review", exc_info=True)
         if getattr(self, "dashboard_state", None) is None:
@@ -1884,9 +1887,9 @@ class GatewayOrchestrator:
             # `_init_dashboard`), so a notice sent now reaches nothing: `_surface_missed_review`
             # returns without a state, and the "Missed scheduled runs" notice was never shown
             # after a real restart. Held until the dashboard is up (`_surface_held_boot_review`).
-            self._held_boot_review = (report, list(interrupted))
+            self._held_boot_review = (report, cards)
             return
-        self._surface_missed_review(report, interrupted)
+        self._surface_missed_review(report, cards)
 
     def _surface_held_boot_review(self) -> None:
         """Send what the boot passes found once the dashboard can deliver it.
@@ -1930,95 +1933,25 @@ class GatewayOrchestrator:
         settled = await reconcile_orphans(tracked_by(self.subagent_mgr))
         announce_orphans(self.dashboard_state, settled)
 
-    def _surface_missed_review(
-        self, report: dict[str, Any], interrupted: list[dict[str, Any]] | tuple = ()
-    ) -> None:
-        """Put the boot's missed-fire review in front of the user (§3.4 / crit 7 — S142).
-
-        Criterion 7 says "missed slots appear in the review card". §3.4's rule is REVIEW, don't lie
-        and don't storm: a boot that silently caught everything up is the storm, and one that says
-        nothing is the lie. So the review becomes ONE notification naming the count, not one per
-        missed slot — a laptop opened after a weekend would otherwise deliver hundreds. The runs a
-        restart interrupted are named in the same notice, because they wait on the same review.
-
-        Silent when nothing was missed, deliberately: "0 automations missed a run" on every restart
-        trains the user to dismiss the notification that matters. Goes through `state.notify` like
-        every other substrate notification (R18 — no second path), so a muted channel stays muted.
-        Never raises: the sweep already re-armed the schedule, and failing to announce it must not
-        undo that.
+    def _surface_missed_review(self, report: dict[str, Any], cards: list[Any]) -> None:
+        """Put the boot's review in front of the owner: ONE notice (`review.boot_notice`), read off
+        the *cards* it keeps on the Triggers page, as a decision the owner owes (`RUN_REVIEW`), so
+        quiet hours record it silently instead of dropping it. Goes through `state.notify` like
+        every other substrate notification (R18: no second path). Never raises: the sweep already
+        re-armed the schedule, and failing to announce it must not undo that; a failure is a
+        WARNING, because the card is then the only trace.
         """
         try:
             state = getattr(self, "dashboard_state", None)
             if state is None:
                 return
-            review = report.get("review") or {}
-            rows = review.get("rows") or []
-            summaries = review.get("summaries") or []
-            total = len(rows) + sum(int(s.get("count", 0) or 0) for s in summaries)
-            cut_off = len(list(interrupted or ()))
-            if total <= 0 and cut_off <= 0:
-                return
-            affected = len(
-                {str(r.get("trigger_id", "")) for r in rows}
-                | {str(s.get("trigger_id", "")) for s in summaries}
-            )
-            caught_up = [c for c in (report.get("catch_up") or []) if c.get("catching_up")]
-            # What the Triggers page holds a card for: a trigger catching up on its own has none
-            # (`review.catching_up`), so the sentence that sends you there counts only the rest.
-            from personalclaw.triggers.review import catching_up
+            from personalclaw.triggers.review import boot_notice
 
-            skip = catching_up(report)
-            waiting = (
-                sum(1 for r in rows if str(r.get("trigger_id", "")) not in skip)
-                + sum(
-                    int(s.get("count", 0) or 0)
-                    for s in summaries
-                    if str(s.get("trigger_id", "")) not in skip
-                )
-                + cut_off
-            )
-            said: list[str] = []
-            if total > 0:
-                said.append(
-                    f"{total} scheduled run{'s' if total != 1 else ''} "
-                    f"{'were' if total != 1 else 'was'} missed across "
-                    f"{affected} automation{'s' if affected != 1 else ''} while PersonalClaw was "
-                    "not running."
-                )
-            if caught_up:
-                said.append(
-                    f"{len(caught_up)} with catch-up enabled will fire once, staggered, on "
-                    f"{'their' if len(caught_up) != 1 else 'its'} own."
-                )
-            if cut_off > 0:
-                said.append(
-                    f"{cut_off} run{'s' if cut_off != 1 else ''} "
-                    f"{'were' if cut_off != 1 else 'was'} interrupted by the restart and "
-                    f"{'are' if cut_off != 1 else 'is'} not run again on "
-                    f"{'their' if cut_off != 1 else 'its'} own."
-                )
-            if waiting > 0:
-                if caught_up and waiting > cut_off:
-                    which = "the others"
-                else:
-                    which = "them" if waiting != 1 else "it"
-                said.append(f"Review {which} on the Triggers page and choose what to run now.")
-            state.notify(
-                kind="info",
-                title="Missed scheduled runs" if total > 0 else "Runs interrupted by a restart",
-                body=" ".join(said),
-                meta={
-                    "event": "automation.missed_review",
-                    "statusUrl": "#/triggers",
-                    "missed": total,
-                    "interrupted": cut_off,
-                    "triggers": affected,
-                    "caught_up": len(caught_up),
-                    "truncated": bool(review.get("truncated")),
-                },
-            )
+            notice = boot_notice(report, cards)
+            if notice is not None:
+                state.notify(kind=notification_kinds.RUN_REVIEW, **notice)
         except Exception:  # noqa: BLE001 - see the docstring
-            logger.debug("could not surface the missed-fire review", exc_info=True)
+            logger.warning("could not surface the missed-fire review", exc_info=True)
 
     def _surface_attention_card(self, trigger: Any, decision: Any) -> None:
         """Put an autopaused/quarantined trigger in front of the user (crit 3 — S141).

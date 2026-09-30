@@ -214,9 +214,13 @@ item vector).
   item's text is indexed, so **keyword search reaches it** and only semantic
   search cannot.
 - **The typed reasons** are closed: `no_extractable_text`,
-  `no_embedding_provider`, `not_indexed`, plus the read-time `stale_index`
+  `no_embedding_provider`, `not_indexed`, plus two read-time ones, which no
+  ingest records because what changed is the bound model: `stale_index`
   (vectors from a different embedding model than the one bound now, or with no
-  model recorded — a passage's or the whole-item one).
+  model recorded — a passage's or the whole-item one) and `awaiting_embedding`
+  (an item recorded `no_embedding_provider` that still has no vector while a
+  model is bound now: it was saved before the model was, and Maintenance's
+  embedding job or the re-index embeds it).
 - **One sentence per reason, minted once.** `Degradation.summary` is the
   count-bearing claim ("2 items and 1 artifact have no embeddings because no
   embedding model is bound — keyword search finds them, semantic search
@@ -233,7 +237,11 @@ item vector).
   `file_metadata.unsearchable_reason`; a re-ingest that lands clears both, and
   so does a vector landing any other way — the re-index or a backfill
   (`KnowledgeStore.retire_embedding_verdicts`, from `replace_chunks` and
-  `reembed_all`), so an embedded item stops saying it has no embeddings.
+  `reembed_all`), so an embedded item stops saying it has no embeddings. The
+  store retires, as it opens, any verdict an item's own vectors already make
+  false (`settle_embedding_verdicts`): a re-index from before the writers
+  retired it left some standing, and nothing else revisits an item that has a
+  vector.
 - Two surfaces READ that one recorded fact rather than re-deriving it, so they
   cannot drift: the `knowledge.searchability` Doctor probe (one row per
   affected item) and `knowledge_search` (the typed reason instead of a bare

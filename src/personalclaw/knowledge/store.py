@@ -475,6 +475,7 @@ class KnowledgeStore:
         # index use, so opening a store on a SQLite build that cannot load extensions costs
         # nothing and degrades to the exact scan.
         self.vec_index = ChunkVectorIndex(self.db)
+        self.settle_embedding_verdicts()
 
     def _init_schema(self):
         self.db.executescript("""
@@ -2765,6 +2766,25 @@ class KnowledgeStore:
             # Passages with vectors: an item that said it had no embeddings no longer can.
             self.retire_embedding_verdicts([item_id])
         return len(rows)
+
+    def settle_embedding_verdicts(self) -> int:
+        """Retire every no-embeddings verdict the item's own vectors already make false.
+
+        Run as the store opens. A re-index from before the verdict's writers retired it gave such
+        an item its vector and left "no embedding model is bound" standing, and nothing revisits
+        an item that has a vector, so a library upgraded with one kept reporting it forever — to
+        Doctor, to ``knowledge_search`` and on the item. Idempotent: one query that finds nothing
+        once they are settled. Returns how many it settled.
+        """
+        from .searchability import UNSEARCHABLE
+
+        rows = self.db.execute(
+            "SELECT id FROM items WHERE processing_status = ? AND ("
+            "COALESCE(LENGTH(embedding), 0) > 0 OR EXISTS (SELECT 1 FROM chunks c "
+            "WHERE c.item_id = items.id AND c.embedding IS NOT NULL))",
+            (UNSEARCHABLE,),
+        ).fetchall()
+        return self.retire_embedding_verdicts([r["id"] for r in rows]) if rows else 0
 
     def retire_embedding_verdicts(self, item_ids: Sequence[str]) -> int:
         """Clear the no-embeddings verdict of every item in *item_ids* that now holds a vector.

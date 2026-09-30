@@ -97,14 +97,23 @@ NOT_INDEXED = "not_indexed"
 #: re-index fixes it without re-ingesting anything.
 STALE_INDEX = "stale_index"
 
+#: An item recorded :data:`NO_EMBEDDING_PROVIDER` that still has no vector, while an embedding
+#: model IS bound now: it was saved before one was, and nothing has embedded it since. A READ-TIME
+#: reason, like :data:`STALE_INDEX` and for the same reason — the fact that changed is the binding,
+#: not the item — so the readers mint it (:func:`rows_from`) and no ingest persists it. Without it
+#: the recorded sentence, "because no embedding model is bound", was read out beside the name of
+#: the model that was bound. Maintenance's embedding job is what embeds such an item.
+AWAITING_EMBEDDING = "awaiting_embedding"
+
 #: The closed reason vocabulary. Matched explicitly by every consumer: an unknown value
 #: must read as "unknown reason", never fall into a default branch that reports health.
-#: :data:`STALE_INDEX` is last because it is the only member no ingest can mint — see
+#: The read-time reasons come last because no ingest can mint them — see
 #: :data:`INGEST_REASONS` for the subset ``verdict_for_ingest`` can return.
 REASONS: tuple[str, ...] = (
     NO_EXTRACTABLE_TEXT,
     NO_EMBEDDING_PROVIDER,
     NOT_INDEXED,
+    AWAITING_EMBEDDING,
     STALE_INDEX,
 )
 
@@ -131,6 +140,10 @@ REASON_REMEDY: dict[str, str] = {
     ),
     NO_EMBEDDING_PROVIDER: "Bind an embedding model in Settings → Models, then re-index.",
     NOT_INDEXED: "Re-ingest, and check the embedding provider's health in Doctor.",
+    AWAITING_EMBEDDING: (
+        "Run now under Maintenance on the Doctor page, or the embedding re-index in Settings → "
+        "Models, embeds it; nothing needs re-ingesting."
+    ),
     STALE_INDEX: (
         "Run the embedding re-index (Settings → Models) to rebuild the vectors; nothing "
         "needs re-ingesting."
@@ -192,6 +205,12 @@ def _reach_sentence(reason: str, subject: str, count: int) -> str:
         return (
             f"{subject} {has} no embeddings because the embedding step produced no vector — "
             f"keyword search finds {them}, semantic search cannot"
+        )
+    if reason == AWAITING_EMBEDDING:
+        was, embedded = ("it was", "it is") if one else ("they were", "they are")
+        return (
+            f"{subject} {has} no embeddings yet: {was} saved before an embedding model was bound "
+            f"— keyword search finds {them}, semantic search cannot until {embedded} embedded"
         )
     if reason == STALE_INDEX:
         # "Or with no model recorded": a vector written before its model was recorded (every
@@ -408,21 +427,26 @@ def row_select(present: Iterable[str] | None = None) -> str:
     return ", ".join(f if f in have else f"NULL AS {f}" for f in ROW_FIELDS)
 
 
-def rows_from(records: Iterable[tuple[Any, ...]]) -> list[UnsearchableItem]:
+def rows_from(records: Iterable[tuple[Any, ...]], *, model_bound: bool) -> list[UnsearchableItem]:
     """Build attention rows from ``(id, title, file_metadata, item_type, kind)`` records.
 
     Split out from the two readers below (the live store and the Doctor's read-only
     sqlite connection) so both produce identical rows from identical data — the reason
     and shelf resolution cannot drift between the surface a user sees and the one a test
-    asserts.
+    asserts. *model_bound* is whether an embedding model is bound now: an item recorded with
+    none bound then reads :data:`AWAITING_EMBEDDING` (the records are the items still without a
+    vector — a vector retires the verdict, ``KnowledgeStore.retire_embedding_verdicts``).
     """
     rows: list[UnsearchableItem] = []
     for item_id, title, meta, item_type, kind in records:
+        reason = _reason_of(meta) or "unknown"
+        if model_bound and reason == NO_EMBEDDING_PROVIDER:
+            reason = AWAITING_EMBEDDING
         rows.append(
             UnsearchableItem(
                 item_id=str(item_id),
                 title=str(title or ""),
-                reason=_reason_of(meta) or "unknown",
+                reason=reason,
                 shelf=shelf_of(item_type, kind),
             )
         )
@@ -446,7 +470,9 @@ def unsearchable_rows(store) -> list[UnsearchableItem]:
     except Exception:  # noqa: BLE001 — reporting must never break the caller it reports to
         logger.debug("unsearchable inventory read failed", exc_info=True)
         return []
-    return rows_from(records)
+    from personalclaw.knowledge.embedding_fingerprint import active_fingerprint
+
+    return rows_from(records, model_bound=active_fingerprint() is not None)
 
 
 def degradations_from(rows: Iterable[UnsearchableItem]) -> tuple[Degradation, ...]:

@@ -1886,7 +1886,7 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
                 stale = stale_rows(stale_vector_items(conn, fp))
         finally:
             conn.close()
-        rows = rows_from(records) + stale
+        rows = rows_from(records, model_bound=fp is not None) + stale
         listed = [r for r in rows if r.shelf == LIBRARY_SHELF]
         unlisted = [r for r in rows if r.shelf != LIBRARY_SHELF]
         degradations = degradations_from(rows)
@@ -1923,7 +1923,9 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
             "Each row under `items` is in your library and missing from part of search; its "
             "reason names which part. `no_embedding_provider`/`not_indexed`: keyword search "
             "already finds the item, so bind an embedding model (Settings → Models) and re-index "
-            "to add semantic search. `no_extractable_text`: the file is a scan, so add a text "
+            "to add semantic search. `awaiting_embedding`: an embedding model is bound now and "
+            "the item was saved before it was, so Run now under Maintenance (or the re-index) "
+            "embeds it. `no_extractable_text`: the file is a scan, so add a text "
             "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the "
             "item is fine and its vectors are not — they came from a different embedding model, "
             "or record none, so run the embedding re-index; nothing needs re-ingesting. Rows under "

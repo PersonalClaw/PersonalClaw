@@ -44,6 +44,7 @@ import pytest
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.triggers import service as SVC
 from personalclaw.triggers.models import Trigger
+from personalclaw.triggers.review import cards_from_boot
 from personalclaw.triggers.store import TriggerStore
 
 NOW = 1_700_000_000.0
@@ -169,7 +170,8 @@ def test_the_missed_review_SURFACES_as_one_notification():
                 "truncated": False,
             },
             "catch_up": [{"id": "a", "catching_up": True, "fire_at": NOW + 90}],
-        }
+        },
+        [],  # a trigger catching up on its own has no card
     )
     assert len(state.sent) == 1
     sent = state.sent[0]
@@ -185,15 +187,15 @@ def test_NOTHING_missed_says_NOTHING():
     that matters."""
     state = _State()
     _orchestrator(state)._surface_missed_review(
-        {"review": {"rows": [], "summaries": []}, "catch_up": []}
+        {"review": {"rows": [], "summaries": []}, "catch_up": []}, []
     )
     assert state.sent == []
 
 
 def test_the_surface_NEVER_raises_without_a_dashboard():
     """The sweep already re-armed the schedule; failing to announce it must not undo that."""
-    _orchestrator(None)._surface_missed_review({"review": {"rows": [{"trigger_id": "a"}]}})
-    _orchestrator(_State())._surface_missed_review({})
+    _orchestrator(None)._surface_missed_review({"review": {"rows": [{"trigger_id": "a"}]}}, [])
+    _orchestrator(_State())._surface_missed_review({}, [])
 
 
 # ── the boot report is what the gateway actually logs ──
@@ -210,7 +212,7 @@ def test_the_boot_report_carries_every_field_the_gateway_reads(tmp_path):
     assert {"rows", "summaries", "truncated"} <= set(report["review"])
     # Driven through the real surface, so the shapes are asserted together rather than assumed.
     state = _State()
-    _orchestrator(state)._surface_missed_review(report)
+    _orchestrator(state)._surface_missed_review(report, cards_from_boot(report))
     assert len(state.sent) == 1
 
 

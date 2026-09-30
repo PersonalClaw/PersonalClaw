@@ -123,7 +123,9 @@ An interrupted run is **not run again on its own**, because it may already have 
 work. It waits for you instead, with the slots a stopped PersonalClaw missed: the Triggers page
 lists both under **Waiting for you after a restart**, and each card offers **Run now** (once,
 however many slots it covers, recorded as late) and **Dismiss** (recorded as your decision). An
-automation with catch-up enabled gets no card: it fires once, staggered, on its own.
+automation with catch-up enabled gets no card: it fires once, staggered, on its own. One notice
+in the bell says what is waiting ("Missed scheduled runs"), even inside your quiet hours, where it
+is kept without a toast; its row in Settings → Notifications is **Runs to review after a restart**.
 
 | | |
 |---|---|

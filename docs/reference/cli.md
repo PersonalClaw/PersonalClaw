@@ -208,6 +208,14 @@ Doctor starts no agent CLI unless you ask it to. For each one it reports whether
 is installed and what its last Test found (the Test on its card in Settings → Providers);
 one nobody has tested reads as installed and not started, which is not an issue.
 
+With a gateway of this home running, the **Maintenance** score and deficits and each model
+provider's row under **Provider Health** are the gateway's own: the score its Doctor page shows,
+and each instance as its connection test found it (one that cannot be used says why, in its own
+words). Doctor asks it with a token that lasts two minutes, minted with the home's local secret as
+a sign-in link is, and listed under Settings → Devices while it lasts. With none running,
+the `measured:` row says the score was measured here, where no channel receives, and each provider
+reads as registered and not tested.
+
 | Flag | What it does |
 |---|---|
 | `--start-agent-clis` | Also start each of those agent CLIs once — its ACP handshake and one empty session, what its Test does — to check it runs and is signed in, and record the answer for its card. |

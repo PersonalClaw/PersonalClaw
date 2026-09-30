@@ -8,6 +8,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
@@ -44,15 +45,118 @@ def config_dir() -> Path:
 
 _MIN_NODE_VERSION = 18
 
+#: The lifetime of the token doctor signs into a running gateway with: long enough for its two
+#: reads, and over soon after. It is never printed.
+_GATEWAY_TOKEN_TTL = "2m"
+#: How long one read of the running gateway may take: its Maintenance read runs every Doctor check.
+_GATEWAY_READ_TIMEOUT_SECS = 60.0
 
-def _doctor_providers(*, start_agent_clis: bool = False) -> list[str]:
+
+@dataclass(frozen=True)
+class _GatewayReading:
+    """What the running gateway of this home measured, for the sections a live one answers.
+
+    Channel receivers, app backends and model-call breakers exist only in the gateway, and a
+    provider's connection is tested there, so this command asks it rather than measuring its
+    own process, where none of them runs: measured here, a Slack that was receiving read as a
+    channel whose transport was down, and the score disagreed with the Doctor page's. ``why``
+    says where the numbers came from when the gateway did not give them (no gateway, or one this
+    command could not ask), in the words the output prints.
+    """
+
+    port: int | None = None
+    #: Its ``GET /api/doctor/remediation`` body, or None.
+    remediation: dict | None = None
+    #: Its model-provider instances by name (``GET /api/model-providers``), or None.
+    providers: dict[str, dict] | None = None
+    why: str = ""
+
+
+def _gateway_get(port: int, token: str, path: str) -> dict:
+    """One authenticated read of the local gateway. Raises on anything but a JSON object."""
+    from personalclaw.cli_run import owner_headers
+
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=owner_headers(token))
+    with urllib.request.urlopen(  # noqa: S310 — a fixed loopback address
+        request, timeout=_GATEWAY_READ_TIMEOUT_SECS
+    ) as resp:
+        body = json.loads(resp.read())
+    if not isinstance(body, dict):
+        raise ValueError(f"{path} did not answer with an object")
+    return body
+
+
+def _read_running_gateway() -> _GatewayReading:
+    """Ask this home's running gateway for its own measurements, signed in the way
+    ``personalclaw token`` is (the home's local secret), with a token that lasts two minutes."""
+    from personalclaw.cli_run import RunError, mint_local_token
+    from personalclaw.gateway_base import live_port
+
+    port = live_port()
+    if port is None:
+        return _GatewayReading(
+            why="here, with no gateway of this home running: channels receive and app backends "
+            "run only in a gateway, so their checks fail until one starts"
+        )
+    try:
+        token = mint_local_token(port, ttl=_GATEWAY_TOKEN_TTL)
+        remediation = _gateway_get(port, token, "/api/doctor/remediation")
+        listed = _gateway_get(port, token, "/api/model-providers").get("providers") or []
+    except (RunError, OSError, ValueError) as exc:
+        return _GatewayReading(
+            port=port,
+            why=f"here, not by the gateway running on port {port}, which could not be asked "
+            f"({exc}): the checks of its channels, app backends and model calls read this "
+            "command's process instead, where none of them runs",
+        )
+    providers = {str(p.get("name")): p for p in listed if isinstance(p, dict)}
+    if "score" not in remediation:
+        # `{"enabled": false}`: the Doctor is switched off in that gateway.
+        return _GatewayReading(
+            port=port,
+            providers=providers,
+            why=f"here: the gateway running on port {port} has its Doctor switched off "
+            "(Settings → Doctor), so the checks of its channels and app backends read this "
+            "command's process instead",
+        )
+    return _GatewayReading(port=port, remediation=remediation, providers=providers)
+
+
+def _connection_row(name: str, gateway: _GatewayReading) -> str:
+    """How a model-provider instance's connection reads, from the test the gateway ran on it."""
+    from personalclaw.providers.connection import CHECKING, CONNECTED, FAILED, UNTESTABLE
+
+    if gateway.providers is None:
+        where = (
+            "no gateway of this home is running to test it"
+            if gateway.port is None
+            else "the running gateway could not be asked"
+        )
+        return f"⏹  registered, connection not tested ({where})"
+    connection = (gateway.providers.get(name) or {}).get("connection") or {}
+    state = connection.get("state")
+    detail = str(connection.get("detail") or "")
+    if state == CONNECTED:
+        return f"✅ {detail or 'connected'}"
+    if state == FAILED:
+        return f"⚠️  cannot be used: {detail or 'its connection test failed without saying why'}"
+    if state == CHECKING:
+        return "⏳ being tested now; its card in Settings → Providers shows the answer"
+    if state == UNTESTABLE:
+        return f"⏹  registered; {detail or 'its type has no connection test'}"
+    return "⏹  registered; the running gateway lists no connection test for it"
+
+
+def _doctor_providers(gateway: _GatewayReading, *, start_agent_clis: bool = False) -> list[str]:
     """Report each registered ProviderEntry. Returns an issue string for each that fails.
 
     An ``acp_agent`` entry is another agent's CLI, and doctor does not start it unless asked:
     by default it reports whether the CLI is installed and what its last Test found (the one on
     its card in Settings → Providers). ``start_agent_clis`` — ``personalclaw doctor
     --start-agent-clis`` — starts each one once, the same Test, and records the answer.
-    Other entries get a lightweight registration check.
+    A model-provider instance reads as the running gateway's connection test found it
+    (:func:`_connection_row`): one that cannot be used says why in its own words, and none reads
+    ✅ for being registered alone.
     """
     issues: list[str] = []
     try:
@@ -80,7 +184,7 @@ def _doctor_providers(*, start_agent_clis: bool = False) -> list[str]:
             # app: openai/anthropic/vllm/bedrock/…). The type is shown in the label;
             # no hardcoded core-native allow-list (that list went stale when the
             # model providers became apps).
-            print(f"  {label}: ✅ registered")
+            print(f"  {label}: {_connection_row(entry.name, gateway)}")
 
     return issues
 
@@ -463,7 +567,7 @@ def _doctor_external_vector_store() -> list[str]:
     return []
 
 
-def _doctor_maintenance() -> None:
+def _doctor_maintenance(gateway: _GatewayReading) -> None:
     """Print the remediation engine's health score and the deficits behind it.
 
     🔴 THE SECOND SURFACE OF THE SAME DROPPED EVIDENCE. `/api/doctor/remediation` measures
@@ -474,6 +578,9 @@ def _doctor_maintenance() -> None:
     keyword-only. Whoever reads the CLI instead of the dashboard read "a feature is off",
     not "a backlog is stuck".
 
+    The running gateway's own measurement when it gave one, so this and the Doctor page read
+    the same score; otherwise measured here, and the ``measured:`` row says so and why.
+
     Deliberately NOT appended to ``issues`` (which exits 1): a deficit is a maintenance
     backlog, not a broken setup, and a fresh install with unembedded notes must not fail its
     own doctor. Best-effort like every other probe here — a measure that raises prints one
@@ -482,24 +589,39 @@ def _doctor_maintenance() -> None:
     print("\nMaintenance")
     try:
         from personalclaw.config.loader import AppConfig as _Cfg
-        from personalclaw.resilience.remediation import health_score, measure_deficits
+        from personalclaw.resilience.remediation import (
+            deficit_rows,
+            health_score,
+            measure_deficits,
+        )
 
-        deficits = measure_deficits()
-        target = float(_Cfg.load().resilience.remediation.target_score)
-        score = health_score(deficits)
+        if gateway.remediation is not None:
+            score = float(gateway.remediation.get("score") or 0.0)
+            target = float(gateway.remediation.get("target_score") or 0.0)
+            deficits = [d for d in gateway.remediation.get("deficits") or [] if isinstance(d, dict)]
+            print(
+                f"  measured:    by the gateway running on port {gateway.port}, as its Doctor page"
+            )
+        else:
+            measured = measure_deficits()
+            score = health_score(measured)
+            target = float(_Cfg.load().resilience.remediation.target_score)
+            deficits = deficit_rows(measured)
+            print(f"  measured:    {gateway.why}")
         mark = "✅" if score >= target else "⚠️ "
         print(f"  health:      {mark} score {score:g} / target {target:g}")
         # Zero-count sources are measurements, not problems — the same filter the panel
         # applies, for the same reason: listing them buries the real ones.
-        present = [d for d in deficits if d.count > 0]
+        present = [d for d in deficits if int(d["count"]) > 0]
         if not present:
             print("  deficits:    none measured")
             return
-        for d in sorted(present, key=lambda d: (not d.reachable, -d.penalty)):
+        for d in sorted(present, key=lambda d: (not d["reachable"], -float(d["penalty"]))):
             # A failed Doctor check carries its probe title; a measured deficit only a key.
-            label = d.title or d.key.replace("_", " ")
-            if d.reachable:
-                print(f"  deficit:     ⚠️  {label} ×{d.count} (−{d.penalty:.1f}, fixable now)")
+            label = d["title"] or str(d["key"]).replace("_", " ")
+            count, penalty = int(d["count"]), float(d["penalty"])
+            if d["reachable"]:
+                print(f"  deficit:     ⚠️  {label} ×{count} (−{penalty:.1f}, fixable now)")
             else:
                 # `blocked_by` is the producer's own sentence — the panel prints this exact
                 # string, so the two surfaces cannot drift into two different explanations.
@@ -507,9 +629,9 @@ def _doctor_maintenance() -> None:
                 # rather than appended: the sentence carries its own dash, and two in one row
                 # reads as a stutter. The penalty is shown because it COUNTS: the score is the
                 # home's health, not only the part maintenance can repair.
-                print(f"  deficit:     ⏹  {label} ×{d.count} (−{d.penalty:.1f})")
-                print(f"               {d.blocked_by}")
-        if any(d.reachable for d in present):
+                print(f"  deficit:     ⏹  {label} ×{count} (−{penalty:.1f})")
+                print(f"               {d['blocked_by']}")
+        if any(d["reachable"] for d in present):
             print("               Fix: personalclaw doctor runs no jobs — use Settings → Doctor")
             print("               → Maintenance → Run now, or wait for the adaptive pass.")
     except Exception as exc:
@@ -904,6 +1026,10 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     except Exception:
         pass
 
+    # What the running gateway measures, for the two sections a live one answers (Maintenance,
+    # Provider Health): asked once, before either prints.
+    gateway = _read_running_gateway()
+
     # ── Vector Memory / embeddings ──
     # Provider-agnostic: model providers (incl. Ollama, now the ollama-models app)
     # report their own availability via the Provider Health section above + each
@@ -918,7 +1044,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         print("  embeddings:  ⏹ disabled (pick an embedding model in Settings → Models)")
     issues.extend(_doctor_external_vector_store())
 
-    _doctor_maintenance()
+    _doctor_maintenance(gateway)
 
     # ── Speech-to-Text ──
     # STT resolves through the typed registry: enabled lives in
@@ -1005,7 +1131,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
 
     # ── Provider Health ──
     print("\nProvider Health")
-    _provider_issues = _doctor_providers(start_agent_clis=start_agent_clis)
+    _provider_issues = _doctor_providers(gateway, start_agent_clis=start_agent_clis)
     issues.extend(_provider_issues)
 
     # ── Connectivity ──
