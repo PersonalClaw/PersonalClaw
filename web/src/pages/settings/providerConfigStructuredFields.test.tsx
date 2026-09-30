@@ -16,6 +16,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent } from '@testing-library/react'
 import { SchemaField } from './ProviderConfigForm'
+import { UnparsedJson } from '../apps/appConfigForm'
 import type { ProviderSchemaProp } from '../../lib/api'
 
 afterEach(() => cleanup())
@@ -56,12 +57,18 @@ describe('a structured provider setting is editable as JSON', () => {
     expect(onChange).toHaveBeenCalledWith([{ slack_id: 'U_BOB' }])
   })
 
-  it('invalid JSON explains itself and commits NOTHING', () => {
+  it('invalid JSON explains itself and hands the form nothing a save could send', () => {
     const { container, onChange } = renderField(ARRAY_PROP, [{ slack_id: 'U_ALICE' }])
     fireEvent.change(container.querySelector('textarea')!, { target: { value: '[{"slack_id":' } })
-    // Never commit a half-typed entry: a partial parse would save `{}` over a working
-    // allowlist, which is worse than refusing.
-    expect(onChange).not.toHaveBeenCalled()
+    // Never a half-typed entry as a value: a partial parse would save `{}` over a working
+    // allowlist. Nor the value from before, which is what keeping quiet amounted to: the form then
+    // held the old allowlist, and its Save put it back over what was typed. The form is handed the
+    // text itself, which no request can carry, and refuses to save while it holds one.
+    expect(onChange).toHaveBeenCalledTimes(1)
+    const handed = onChange.mock.calls[0][0]
+    expect(handed).toBeInstanceOf(UnparsedJson)
+    expect(() => JSON.stringify({ allowed_users: handed })).toThrow("Allowed Users isn't valid JSON yet")
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('[{"slack_id":')
     expect(container.textContent).toContain('⚠')
     expect(container.textContent).toContain('Each entry')
   })

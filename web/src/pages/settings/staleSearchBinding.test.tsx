@@ -23,7 +23,8 @@ import { SearchPanel, pickableProviders } from './SearchPanel'
 //
 // 🔑 EVERY "not installed" ASSERTION HERE IS PAIRED WITH ITS VACUITY CONTROL. A test that only
 // checked the stale case would pass if the chip list stopped rendering at all, so each one is
-// matched by the same panel with the provider REGISTERED, asserting `ready` and no stale wording.
+// matched by the same panel with the provider REGISTERED, asserting its measured state and no stale
+// wording.
 
 const searchProviders = vi.fn()
 const searchActive = vi.fn()
@@ -44,7 +45,8 @@ const CAPS: SearchCapabilitiesInfo = {
 }
 const FETCH_CAPS: SearchCapabilitiesInfo = { ...CAPS, supports_fetch: true }
 const DDG: SearchProviderInfo = {
-  name: 'duckduckgo', display_name: 'DuckDuckGo', capabilities: CAPS, available: true,
+  name: 'duckduckgo', display_name: 'DuckDuckGo', app: 'duckduckgo-search', capabilities: CAPS, available: true,
+  check: null,
 }
 
 /** Open a use-case card — `DisclosureCard` owns its own collapsed state, so the chip list is not
@@ -89,7 +91,8 @@ describe('pickableProviders offers every binding, not only the bindable ones', (
 
   it('still filters the OFFER for fetch-article by supports_fetch', () => {
     const fetcher: SearchProviderInfo = {
-      name: 'tavily', display_name: 'Tavily', capabilities: FETCH_CAPS, available: true,
+      name: 'tavily', display_name: 'Tavily', app: 'tavily-search', capabilities: FETCH_CAPS, available: true,
+      check: null,
     }
     expect(pickableProviders('fetch-article', [DDG, fetcher], []))
       .toEqual([{ kind: 'registered', name: 'tavily', provider: fetcher }])
@@ -113,14 +116,15 @@ describe('Settings → Search tells the truth about a binding whose app was unin
     expect(header.textContent).toMatch(/falls back to any available provider/i)
   })
 
-  it('the same panel says "ready" when the provider IS registered (the control)', async () => {
+  it('the same panel shows the provider as itself when it IS registered (the control)', async () => {
     searchProviders.mockResolvedValue([DDG])
     render(<SearchPanel />)
     const header = await screen.findByRole('button', { name: /General search/ })
     expect(header.textContent).not.toMatch(/not installed/i)
     await openCard(/General search/)
-    const chip = await screen.findByRole('button', { name: /DuckDuckGo/ })
-    expect(chip.textContent).toMatch(/ready/i)
+    // The registered provider's own state: nothing has searched through it yet, so it says so.
+    const chip = await screen.findByRole('button', { name: /^DuckDuckGo/ })
+    expect(chip.textContent).toMatch(/not checked/i)
     expect(chip.textContent).not.toMatch(/not installed/i)
   })
 

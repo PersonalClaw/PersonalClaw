@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **893 registrations** over **723 distinct paths** — 886 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **894 registrations** over **724 distinct paths** — 887 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -75,6 +75,7 @@ The 128 families the surface divides into, largest first.
 | `/api/themes` | 5 | 2 |
 | `/api/uploads` | 5 | 5 |
 | `/api/autonomy` | 4 | 4 |
+| `/api/search` | 4 | 4 |
 | `/api/update` | 4 | 4 |
 | `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
@@ -85,7 +86,6 @@ The 128 families the surface divides into, largest first.
 | `/api/logs` | 3 | 2 |
 | `/api/outbox` | 3 | 3 |
 | `/api/proactive` | 3 | 3 |
-| `/api/search` | 3 | 3 |
 | `/api/secrets` | 3 | 1 |
 | `/api/terminal` | 3 | 2 |
 | `/api/agent` | 2 | 1 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 887 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -850,7 +850,8 @@ The 886 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/screenshot` | capture screen region and return file path. |
 | `GET` | `/api/search/active` | bound provider name per use-case. |
 | `PUT` | `/api/search/active/{use_case}` | bind a provider to a use-case. |
-| `GET` | `/api/search/providers` | registered providers + capabilities + availability. |
+| `GET` | `/api/search/providers` | registered providers + capabilities + state. |
+| `POST` | `/api/search/providers/{name}/test` | run one small search through the provider now. |
 | `DELETE` | `/api/secrets` | remove one secret from the vault. |
 | `GET` | `/api/secrets` | the vault, presence only. |
 | `POST` | `/api/secrets` | store one secret's value. The response carries presence, not the value. |

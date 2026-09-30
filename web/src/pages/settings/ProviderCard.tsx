@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, KeyRound, AlertTriangle, CheckCircle2, Clock, TerminalSquare, Beaker, Plug, PlugZap, Loader2, HelpCircle, UserCheck, UserX } from 'lucide-react'
-import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
+import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime, type SearchProviderInfo } from '../../lib/api'
 import { reportingWrite } from '../../app/reportingWrite'
 import { setActivation } from '../../app/appActivation'
 import { Toggle } from './settingsUI'
@@ -9,6 +9,8 @@ import { Button } from '../../ui/Button'
 import { ProviderConfigForm } from './ProviderConfigForm'
 import { ChannelOwnerSection } from './ChannelOwnerSection'
 import { EngineSection } from './EngineSection'
+import { SearchProviderCheck } from './searchProviderState'
+import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
 
 /** One provider card: identity + enable toggle, with the provider's own
@@ -19,8 +21,13 @@ import { fvs } from '../../design/fontWeight'
  *  The config accordion is fully controlled by the parent so it can ride the URL
  *  (?open=<provider>, push → Back collapses it). One provider's config is open at
  *  a time across the whole panel; opening another closes the first. */
-export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChanged, onSignIn, onTest, onChannelChanged }: {
+export function ProviderCard({ ext, runtime, channel, search, searchUnread, onSearchRetry, open, onOpenChange, onChanged, onSignIn, onTest, onChannelChanged }: {
   ext: SettingsProvider; runtime?: AgentRuntime; channel?: ChannelRuntime; open: boolean; onOpenChange: (v: boolean) => void; onChanged: () => void
+  /** A search app's provider, as Settings → Search lists it: its measured state and its Test. */
+  search?: SearchProviderInfo
+  /** The search providers could not be read, so this search app's state is not known right now. */
+  searchUnread?: boolean
+  onSearchRetry?: () => void
   onSignIn?: (rt: AgentRuntime) => void; onTest?: (rt: AgentRuntime) => Promise<void> | void; onChannelChanged?: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -181,6 +188,12 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
           is the RUNTIME view (is the transport actually connected right now),
           distinct from the enable/config surface above. */}
       {channel && <ChannelRuntimeRow channel={channel} onChanged={onChannelChanged} />}
+
+      {/* A search provider's state is what its last search measured, and its Test tries the key
+          now — the pair a model provider's card and a channel's card already carry. */}
+      {searchUnread
+        ? <InlineError icon className="mt-s" onRetry={onSearchRetry}>Couldn't read what this provider's last search found.</InlineError>
+        : search && <SearchProviderCheck provider={search} />}
 
       {/* A save rebuilds the provider — for a channel, its receiver restarts on what was saved —
           so the card re-reads what the save changed instead of showing the status from before. */}

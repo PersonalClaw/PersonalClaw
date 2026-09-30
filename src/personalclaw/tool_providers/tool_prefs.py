@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
@@ -124,6 +125,28 @@ LOCKED_PROVIDERS: frozenset[str] = frozenset({"personalclaw-filesystem"})
 
 def is_provider_locked(provider: str) -> bool:
     return provider in LOCKED_PROVIDERS
+
+
+def stamp() -> tuple[object, ...]:
+    """The two files the tool switches are read from, as a value that changes when either does.
+
+    ``tool_prefs.json`` holds the native switches and ``mcp.json`` each MCP server's
+    ``disabledTools`` (and the servers themselves), so an agent runtime compares this at each turn
+    to learn that a tool it was built with was switched off or on, or that a server came or went.
+    A missing file stamps as absent; a file that cannot be read stamps as unreadable, which reads
+    as a change the next time it can be read.
+    """
+
+    def one(path: Path) -> tuple[object, ...]:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return ("absent",)
+        except OSError:
+            return ("unreadable",)
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+    return (one(_prefs_path()), one(config_dir() / "mcp.json"))
 
 
 def _load() -> dict:

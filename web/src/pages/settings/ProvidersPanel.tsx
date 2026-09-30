@@ -3,7 +3,7 @@ import {
   Bot, Cpu, Hash, Inbox, Bell, Wrench, ListChecks, Webhook, Sparkles,
   BookOpen, Database, FileText, Workflow, Search, RefreshCw, type LucideIcon,
 } from 'lucide-react'
-import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime } from '../../lib/api'
+import { api, type SettingsProvider, type AgentRuntime, type ChannelRuntime, type SearchProviderInfo } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
@@ -113,6 +113,18 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
     for (const c of channelsData ?? []) if (c.app) m.set(c.app, c)
     return m
   }, [channelsData])
+  // Each search app's provider, with the state its last search measured — folded onto the app's
+  // card beside its Test, as a channel's live health is. Keyed under `settings:search`, whose
+  // prefix every search surface busts after a Test. A failed read is said on those cards, never
+  // turned into an empty list: a state that could not be read must not show as one measured.
+  const { data: searchData, error: searchError, refresh: refreshSearch } = useQuery(
+    'settings:search-providers', () => api.searchProviders(), { persist: true },
+  )
+  const searchByApp = useMemo(() => {
+    const m = new Map<string, SearchProviderInfo>()
+    for (const p of searchData ?? []) if (p.app) m.set(p.app, p)
+    return m
+  }, [searchData])
   // A mutation (enable/disable/config) invalidates the cached catalog so the next
   // read revalidates against the changed state instead of a stale snapshot. The channel
   // runtime too: enabling, disabling or saving a channel starts or stops its receiver, and
@@ -120,8 +132,10 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   const reload = () => {
     // Prefix mode: `settings:channels-owners` (the chat's "Continue on" list and the Configure
     // page's owner section) reads the same channels without this page's catch.
+    // A saved setting rebuilds a search provider too, and its last check was for the old settings.
     invalidateKeys('settings:providers'); invalidateKeys('settings:models-available'); invalidateKeys('settings:channels', true)
-    refreshProviders(); refreshRuntimes(); refreshAvailable(); refreshChannels()
+    invalidateKeys('settings:search', true)
+    refreshProviders(); refreshRuntimes(); refreshAvailable(); refreshChannels(); refreshSearch()
   }
 
   // The card's Test — the ONE thing on this page that starts an agent CLI, and only the one
@@ -196,6 +210,8 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
               ext.provider?.multiInstance
                 ? <MultiInstanceCard key={ext.name} ext={ext} onChanged={reload} />
                 : <ProviderCard key={ext.name} ext={ext} channel={type === 'channel' ? channelByApp.get(ext.name) : undefined}
+                    search={type === 'search' ? searchByApp.get(ext.name) : undefined}
+                    searchUnread={type === 'search' && !!searchError} onSearchRetry={refreshSearch}
                     open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onChannelChanged={() => invalidateKeys('settings:channels', true)} />
             ))}
           </EntitySection>

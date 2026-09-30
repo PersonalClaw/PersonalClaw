@@ -3,7 +3,7 @@
 Install consent and the Store card read an app's ``requires`` (#3704), and the Store card only
 for an app that is not installed. ``GET /api/apps``, which the Library's panel for an installed
 app reads, carried no such field, so once Local Image Generation was in nothing said it needs a
-ComfyUI server.
+ComfyUI server. The row now carries the installed copy's whole disclosure, which names them.
 """
 
 from __future__ import annotations
@@ -48,5 +48,5 @@ async def test_the_row_carries_each_prerequisite_as_consent_showed_it():
     async with TestClient(TestServer(app)) as client:
         rows = {a["name"]: a for a in (await (await client.get("/api/apps")).json())["apps"]}
 
-    assert rows["needs-comfyui"]["requires"] == [COMFYUI]
-    assert rows["needs-nothing"]["requires"] == []
+    assert rows["needs-comfyui"]["disclosure"]["requires"] == [COMFYUI]
+    assert rows["needs-nothing"]["disclosure"]["requires"] == []

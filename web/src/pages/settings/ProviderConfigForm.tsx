@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api'
-// The SAME serialize/parse pair the Apps Configure dialog uses for structured fields —
-// imported rather than reimplemented, so the two schema-driven forms cannot disagree about
-// what a valid array/object entry is (they already disagreed about secrets).
-import { parseJsonField, serializeJsonField } from '../apps/appConfigForm'
+// The SAME JSON editor the Apps Configure dialog uses for structured fields — imported rather
+// than reimplemented, so the two schema-driven forms cannot disagree about what a valid
+// array/object entry is (they already disagreed about secrets), or about what a save may send.
+import { unparsedLabels, unparsedSentence, useJsonFieldText } from '../apps/appConfigForm'
 import { listFieldKind, listValueFits, SchemaListField } from '../apps/schemaListField'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -88,7 +88,10 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
   if (props.length === 0) return null
 
   const set = (k: string, v: unknown) => { setValues((p) => ({ ...p, [k]: v })); setDirty(true); setSaved(false); setErr('') }
+  // A JSON setting whose text does not parse has nothing valid to send (see `UnparsedJson`).
+  const unparsed = unparsedLabels(values)
   const save = async () => {
+    if (unparsed.length > 0) { setErr(unparsedSentence(unparsed)); return }
     setSaving(true); setErr('')
     // `false` is a refused stale copy: the notice keeps the edit, and the form stays dirty.
     try { await guard.save(base, values, rebaseRecord(base.value, values)) }
@@ -111,8 +114,10 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
       <StaleWriteNotice guard={guard} what="These settings"
         present={presentSecrets((k) => !!schema.properties?.[k]?.['x-meta']?.sensitive, secretSet)} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} loading={saving} disabled={!dirty || saving || guard.conflict !== null}
-          disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON : !dirty && !saving ? 'No changes to save' : undefined}>Save</Button>
+        <Button size="sm" onClick={save} loading={saving} disabled={!dirty || saving || guard.conflict !== null || unparsed.length > 0}
+          disabledReason={guard.conflict !== null ? HELD_CHANGE_REASON
+            : unparsed.length > 0 ? unparsedSentence(unparsed)
+            : !dirty && !saving ? 'No changes to save' : undefined}>Save</Button>
         <SavedToast show={saved} />
         {dirty && !saved && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
@@ -136,17 +141,19 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
   // explicit `id` for exactly this — before that only the raw controls could be bound, so the JSON
   // rows (already on TextArea) had a visible caption that named them for sighted users alone.
   const id = useId()
-  const [jsonText, setJsonText] = useState(() =>
-    serializeJsonField(value, prop.type === 'object' ? 'object' : 'array'))
-  const [jsonErr, setJsonErr] = useState<string | null>(null)
-
+  const structured = prop.type === 'array' || prop.type === 'object'
+  const expected = prop.type === 'object' ? 'object' : 'array'
   // A list whose schema says what its entries are is edited as a list (`SchemaListField`); only a
   // field that says nothing about its entries is left to the JSON editor below.
   const asList = prop.type === 'array' && listFieldKind(prop) !== null && listValueFits(prop, value)
+  // The JSON editor's text, error and edit: the Apps dialog's own (`useJsonFieldText`), so the two
+  // forms hand the form the same thing for the same text.
+  const json = useJsonFieldText(value, expected, label, onChange, structured && !asList)
+  const jsonErr = json.error
   let control: React.ReactNode
   if (asList) {
     control = <SchemaListField label={label} schema={prop} value={value} onChange={onChange} />
-  } else if (prop.type === 'array' || prop.type === 'object') {
+  } else if (structured) {
     // A structured field needs a JSON editor. It fell through to the text branch below,
     // whose `String(value)` renders an array of objects as the literal
     // "[object Object],[object Object]" — so slack-channel's **Allowed Users** (the very
@@ -154,23 +161,16 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
     // merely unhelpful here, they were unreadable and unfillable. The Apps Configure
     // dialog has always rendered these as JSON; this reuses ITS exported
     // serialize/parse helpers rather than growing a second parser.
-    const expected = prop.type === 'object' ? 'object' : 'array'
     control = (
       // The shared TextArea primitive rather than bespoke chrome: the design-system
       // adoption ratchet counts raw form elements and may only shrink. (It counts them by
       // regex over the file text, so do not spell the raw tag name in a comment here —
       // that alone tripped the ratchet.) `ariaLabel` because this form names its rows with
       // its own label element, not a Field context.
-      <TextArea id={id} surface="high" value={jsonText} rows={4} mono ariaLabel={label}
-        onChange={(nv) => {
-          setJsonText(nv)
-          const res = parseJsonField(nv, expected)
-          // Invalid JSON updates the buffer and the hint but never the value: a half-typed
-          // entry must not be savable as a silent {} that wipes a working allowlist.
-          if ('error' in res) { setJsonErr(res.error); return }
-          setJsonErr(null)
-          onChange(res.value)
-        }} />
+      // Text that does not parse is handed on as itself (`UnparsedJson`), never as the last value
+      // that parsed: the form must see there is nothing valid to save, or its Save puts the old
+      // value — an empty allowlist included — back over what was typed.
+      <TextArea id={id} surface="high" value={json.text} rows={4} mono ariaLabel={label} onChange={json.edit} />
     )
   } else if (prop.enum && prop.enum.length) {
     control = (

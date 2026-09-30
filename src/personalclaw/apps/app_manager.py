@@ -749,8 +749,10 @@ def _client_install_directive(r: _Reviewed) -> InstallResult | None:
     )
 
 
-def _installed_disclosure(name: str) -> dict[str, Any] | None:
-    """What the INSTALLED copy of ``name`` gets, or ``None`` when its manifest is unreadable."""
+def installed_disclosure(name: str) -> dict[str, Any] | None:
+    """What the INSTALLED copy of ``name`` gets and runs, or ``None`` when its manifest is
+    unreadable: the projection its install consent showed, which its panel in the Library shows
+    for as long as it is installed, and an update is compared against."""
     manifest = _manifest_of(name)
     return app_disclosure.describe(manifest) if manifest is not None else None
 
@@ -805,7 +807,7 @@ def preview(source: str | Path, *, origin: str = "local", name: str | None = Non
             if directive is not None:
                 return directive
             return _awaiting_consent(gate, error="")
-        previous = _installed_disclosure(name)
+        previous = installed_disclosure(name)
         needed = gate.report.verdict is Verdict.WARNING or app_disclosure.changed(
             previous, gate.disclosure
         )
@@ -1401,7 +1403,7 @@ def update(
             )
             return gate.result
         report = gate.report
-        previous = _installed_disclosure(name)
+        previous = installed_disclosure(name)
         needed = report.verdict is Verdict.WARNING or app_disclosure.changed(
             previous, gate.disclosure
         )

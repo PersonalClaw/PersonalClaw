@@ -953,8 +953,13 @@ export interface AppSummary {
   /** A provider of it runs its engine in a child process with a Python environment of its own,
    *  which Configure offers to install (Install engine). */
   sidecar?: boolean
-  /** What it needs that PersonalClaw does not install, as install consent showed it. */
-  requires?: AppPrerequisite[]
+  /** Everything the installed copy gets and runs, as its install consent showed it — what it
+   *  needs that PersonalClaw does not install, its grants, its scheduled jobs and what it runs on
+   *  this machine (`apps/disclosure.describe` of its manifest). `null` when that manifest cannot
+   *  be read, and for core's own always-on tools, which have none. */
+  disclosure?: AppDisclosure | null
+  /** The raw grants, which the app host enforces at the page (`appSdk`). The panel discloses them
+   *  through `disclosure`. */
   permissions: AppPermissionsWire
   tags: string[]
   installedAt?: string; updatedAt?: string
@@ -5277,8 +5282,19 @@ export type ProviderOptionValue = string | number | boolean | null | unknown[] |
 export interface SearchCapabilitiesInfo {
   returns_content: boolean; returns_answer: boolean; returns_highlights: boolean
   supports_recency: boolean; supports_domains: boolean; supports_fetch: boolean; depths: string[]
+  /** It runs with no API key at all (the keyless engine a failed search falls back to). */
+  keyless?: boolean
 }
-export interface SearchProviderInfo { name: string; display_name: string; capabilities: SearchCapabilitiesInfo; available: boolean }
+/** A search provider's last MEASURED search — its Test, or a real search. `detail` is the failed
+ *  search's own words (masked); `checked_at` is epoch seconds. */
+export interface SearchCheck { state: 'ok' | 'failed'; detail: string; checked_at: number }
+/** One registered search provider. `available` says only that it has what it needs to TRY (a key,
+ *  an endpoint); whether that works is `check`, `null` until something has measured it. `app` is
+ *  the installed app it came from, whose card in Settings → Providers shows the same state. */
+export interface SearchProviderInfo {
+  name: string; display_name: string; app: string; capabilities: SearchCapabilitiesInfo
+  available: boolean; check: SearchCheck | null
+}
 
 // Per-model capability flags (mirrors local_models/provider.py CapabilityMatrix) — a
 // binding UI renders these as chips instead of guessing (LMMV §2.1).
@@ -7712,6 +7728,9 @@ export const api = {
     (c): Revisioned<string[]> => c[useCase] ?? { value: [], revision: '' }),
   // ── Search entity (Settings → Search): registered providers + use-case bindings ──
   searchProviders: () => get<{ providers: SearchProviderInfo[] }>('/api/search/providers').then((d) => d.providers),
+  /** The Test: one small search through the provider now. Resolves with its row, carrying what the
+   *  search found. */
+  testSearchProvider: (name: string) => post<{ provider: SearchProviderInfo }>(`/api/search/providers/${encodeURIComponent(name)}/test`, {}).then((d) => d.provider),
   searchActive: () => get<{ use_cases: Record<string, string[]> }>('/api/search/active').then((d) => d.use_cases),
   setActiveSearchProvider: (useCase: string, providers: string[]) => put<{ ok?: boolean }>(`/api/search/active/${encodeURIComponent(useCase)}`, { providers }),
   // Local downloadable models — ONE uniform provider-scoped surface for every local

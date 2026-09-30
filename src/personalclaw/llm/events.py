@@ -73,7 +73,8 @@ TOOL_META_AUTO_DENIED = "auto_denied"
 #: The ``tool_meta`` key a TOOL_RESULT carries when the runtime's OWN gate refused the call before
 #: anyone could be asked, naming the gate: ``deny_list``, ``task_mode``, ``tool_grants`` (the host's
 #: grants for this run, ``NativeAgentRuntime.set_tool_grants``), ``hook``, ``loop_breaker``,
-#: ``unknown_tool``, or ``dry_run`` (observe mode, which runs nothing that writes).
+#: ``unknown_tool``, ``withdrawn`` (the tool's app was removed, or the tool switched off, after the
+#: turn's catalog was built), or ``dry_run`` (observe mode, which runs nothing that writes).
 TOOL_META_REFUSED_BY = "refused_by"
 
 #: The ``tool_meta`` key a TOOL_RESULT carries when the call was answered without running, for a

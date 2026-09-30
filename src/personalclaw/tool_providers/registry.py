@@ -244,6 +244,14 @@ _seq = itertools.count()
 _lock = threading.RLock()
 #: Admission passes still running after the caller that started them stopped waiting.
 _background: set[asyncio.Task] = set()
+#: Counts every change to which providers are registered: one registering, one leaving, one
+#: refused. A surface is a snapshot, so a reader that keeps one compares this to learn it is stale.
+_generation = 0
+
+
+def _surface_changed() -> None:
+    global _generation
+    _generation += 1
 
 
 def register_provider(
@@ -306,6 +314,7 @@ def register_provider(
             _provider_app.pop(name, None)
         _registrations[name] = _Registration(provider, app, standing, on_refused, next(_seq))
         _remember(provider)
+        _surface_changed()
 
 
 def unregister_provider(provider: ToolProvider) -> None:
@@ -326,6 +335,7 @@ def _drop(provider: ToolProvider) -> None:
     _registrations.pop(name, None)
     for tool in [t for t, holder in _claims.items() if holder is provider]:
         del _claims[tool]
+    _surface_changed()
 
 
 def _remember(provider: ToolProvider) -> None:
@@ -675,6 +685,32 @@ def tool_surface(platform: ToolProvider | None) -> list[ToolProvider]:
     *platform* is ``None`` where no workspace resolved to confine it to.
     """
     return ([platform] if platform is not None else []) + list_providers()
+
+
+def surface_stamp() -> tuple[object, ...]:
+    """What an agent's tool surface is built from, as a value that changes whenever it does.
+
+    Three things decide which tools an agent turn is offered: which providers are registered (an
+    app's tools arrive when it is installed or switched on and leave when it is removed or
+    switched off), which tools the user switched off, and which MCP servers ``mcp.json`` names.
+    A runtime keeps the surface it was built from for as long as its chat is open, so it reads
+    this at each turn and rebuilds its catalog when it differs from the one it was built at.
+    Cheap: a counter and two file stats, never a provider's tool list.
+    """
+    from personalclaw.tool_providers import tool_prefs
+
+    return (_generation, tool_prefs.stamp())
+
+
+def still_serves(provider: ToolProvider) -> bool:
+    """Whether *provider* may still be handed a call: one the caller built for its own surface
+    (the platform), or a registered one that has not left since.
+
+    A turn dispatches through the index its catalog was built with, so a call can name a tool
+    whose app was removed, switched off or refused after the turn began. That provider serves
+    nothing (:func:`serve`), and its call is refused rather than run.
+    """
+    return not _was_registered(provider) or _live(provider) is not None
 
 
 async def list_all_tools() -> list[ToolDefinition]:

@@ -32,6 +32,7 @@ from personalclaw import cancellation
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
+from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
 from personalclaw.agents.native.failover import FAILOVER_MODES
 from personalclaw.agents.native.owed_reply import OwedReply, owed_note_message
@@ -196,7 +197,7 @@ class _PreparedCall:
 # a notice's wording is defined once and cannot drift between the two runtimes.
 
 
-class NativeAgentRuntime(InProcessCompaction, AgentProvider):
+class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     """In-process agent runtime for one session."""
 
     def __init__(
@@ -205,6 +206,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         definition: "AgentRuntimeDefinition",
         model_provider: "ModelProvider",
         tool_providers: list["ToolProvider"] | None = None,
+        tool_surface: Callable[[], list["ToolProvider"]] | None = None,
         cwd: Path | None = None,
         session_key: str = "",
         max_turns: int = 100,
@@ -238,6 +240,7 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # map it (Anthropic thinking budget / OpenAI reasoning_effort); others ignore.
         self._reasoning_effort = reasoning_effort or ""
         self._tool_providers = list(tool_providers or [])
+        self._tool_surface = tool_surface  # read again when the tools change (`catalog_refresh`)
         self._cwd = Path(cwd) if cwd else None
         self._session_key = session_key
         # Per-turn procedural-outcome accumulator (M5d): bounded list of
@@ -419,11 +422,16 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
             self._tool_sanitized_index = {}
             self._groups, self._active_defs, self._group_of_name = [], [], {}
             return
+        await self._build_catalog(carry=False)
+
+    async def _build_catalog(self, *, carry: bool) -> None:
+        """Build the catalog; a *carry* rebuild keeps the session's choices (`catalog_refresh`)."""
+        self._stamp_surface()
         # User-disabled tools/providers (PT3 + UT4): a harder gate than retrieval —
         # a disabled tool (individually OR via its whole provider being off) is
         # removed from BOTH the schema/catalog AND the dispatch index, so the model
         # can't see or call it. Core-locked tools + the locked platform provider are
-        # never disabled (the tool_prefs guards ignore them). Load once; fail-open.
+        # never disabled (the tool_prefs guards ignore them). Read at every build; fail-open.
         from personalclaw.tool_providers import tool_prefs
         from personalclaw.tool_providers.portable_schema import offered_tool_definitions
         from personalclaw.tool_providers.registry import app_of, serve
@@ -491,12 +499,10 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # default; None = every group active.
         from personalclaw.tool_providers import groups as _groups
 
+        previous = ({g.name for g in self._groups}, self._active_groups) if carry else None
         self._provider_of = provider_of
         self._groups = _groups.partition(defs, provider_of=provider_of)
-        if self._group_seed is not None:
-            self._active_groups = {_groups.CORE_GROUP, *self._group_seed}
-        else:
-            self._active_groups = _groups.resolve_default_groups(self._surface)
+        self._active_groups = self._session_groups(previous)
         # SCHEMA ASSEMBLY (group filter → serialization) — factored out so a group
         # change can re-run it without re-discovering providers.
         self._assemble_schema()
@@ -528,54 +534,25 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # defaults above the builtin count → behavioral no-op until MCP catalogs
         # grow; selection only changes the schema the model SEES (dispatch via
         # _tool_index is untouched). Fails open (returns the full set on any issue).
-        from personalclaw.agents.native.tool_retrieval import ToolRetriever
+        from personalclaw.agents.native.tool_retrieval import (
+            ToolRetriever,
+            tool_schema_definition,
+            tool_search_definition,
+        )
 
-        self._tool_retriever = ToolRetriever(defs)
+        self._tool_retriever = ToolRetriever(
+            defs, carry_from=self._tool_retriever if carry else None
+        )
         # The catalog's vectors are asked of the process's index now, so they are ready before a
         # turn ranks with them (a restart finds them saved). Off the loop: resolving the bound
         # embedding model and reading the index's file are this thread's, not the gateway's.
         await asyncio.to_thread(self._tool_retriever.warm)
-        # Synthetic schema for the tool_search escape hatch — added to the surfaced
-        # set only on a reduced turn (handled in _invoke, not a provider).
+        # The retriever's two discovery tools, added to the surfaced set only on a reduced turn and
+        # answered in _invoke, not by a provider.
+        self._tool_search_def = tool_search_definition()
+        self._tool_schema_def = tool_schema_definition()
         from personalclaw.tool_providers.base import ToolDefinition as _TD
 
-        self._tool_search_def = _TD(
-            name="tool_search",
-            provider="native",
-            requires_approval=False,
-            risk_level=RiskLevel.SAFE,
-            description=(
-                "Find tools by capability. Searches the FULL catalog (incl. tools shown "
-                "this turn only as a name in the catalog). Args: query (str), optional "
-                "limit (int). Returns ranked name+description; then call tool_schema(name) "
-                "to see a tool's inputs, or just call it by name."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
-                "required": ["query"],
-            },
-        )
-        # Progressive disclosure: tools not in the per-turn full-schema set still
-        # appear in a name+description CATALOG. tool_schema expands ONE of them to
-        # its full input schema on demand, so the model can call any catalog tool
-        # correctly without ever carrying every schema.
-        self._tool_schema_def = _TD(
-            name="tool_schema",
-            provider="native",
-            requires_approval=False,
-            risk_level=RiskLevel.SAFE,
-            description=(
-                "Get the full input schema for a tool by name — use when the catalog lists "
-                "a tool you want but you need its exact arguments. Args: tool_name (str). "
-                "Returns the tool's parameters/description; then call the tool by name."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {"tool_name": {"type": "string"}},
-                "required": ["tool_name"],
-            },
-        )
         # The group meta-tool — final-state semantics, core group, SAFE: it
         # changes what the model SEES, not what it can do. Only ever surfaced on a
         # session where grouping is actually in effect (see _assemble_schema).
@@ -913,6 +890,8 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         self._messages.append({"role": "user", "content": message})
         self._turn_message = self._messages[-1]
 
+        # A tool installed, removed or switched off since the last turn reaches this one.
+        await self._follow_tool_surface()
         self._schema_budget = await self._tool_schema_budget()
         tools_kwarg, turn_note = await self._prepare_turn_tools(message)
         if turn_note:
@@ -2009,6 +1988,8 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         # before anything asks you about it: allowing the call could run nothing.
         if tool_name not in self._tool_index and tool_name not in self._META_TOOLS:
             return self._unknown_tool(tool_name, meta)
+        if (gone := self._no_longer_offered(tool_name, meta)) is not None:
+            return gone
         if self._requires_approval(tool_name):
             return _NEEDS_APPROVAL
         if self._asks_first(tool_name):
@@ -2098,6 +2079,8 @@ class NativeAgentRuntime(InProcessCompaction, AgentProvider):
         prov = self._tool_index.get(tool_name)
         if prov is None:
             return self._unknown_tool(tool_name, meta_sink)
+        if (gone := self._no_longer_offered(tool_name, meta_sink)) is not None:
+            return gone
         # Sticky set (TR2): a tool the agent actually called stays surfaced for the
         # rest of the session, so a multi-step task can't lose a tool mid-task when
         # the query phrasing drifts. Cheap insurance against the cardinal failure.

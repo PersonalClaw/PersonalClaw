@@ -21,6 +21,7 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.errors import AgentError
@@ -847,6 +848,10 @@ def _build_native_runtime(
     from personalclaw.tool_providers.registry import tool_surface
 
     tool_providers: list[Any] = []
+    # How the runtime reads its surface again when it changes: the registry's surface over this
+    # session's own platform provider, so a tool installed, removed or switched off while the
+    # session is open reaches its next turn. None for the lite agent, which has no tools to follow.
+    follow_surface: Callable[[], list[Any]] | None = None
     if name != LITE_AGENT_NAME:
         platform = NativeBuiltinToolProvider(
             cwd=_cwd,
@@ -858,11 +863,13 @@ def _build_native_runtime(
             display=PLATFORM_DISPLAY_NAME,
         )
         tool_providers = tool_surface(platform)
+        follow_surface = partial(tool_surface, platform)
 
     runtime = NativeAgentRuntime(
         definition=definition,
         model_provider=model_provider,  # type: ignore[arg-type]
         tool_providers=tool_providers,
+        tool_surface=follow_surface,
         cwd=_cwd,
         session_key=session_key or "",
         hook_fire=hook_fire,

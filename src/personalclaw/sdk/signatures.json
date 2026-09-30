@@ -7796,6 +7796,27 @@
    }
   }
  },
+ "personalclaw.sdk.search.SearchFallback": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "display_name"},
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "served_by"},
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "reason"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "notice": {"kind": "property", "returns": "str", "settable": false},
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   }
+  }
+ },
  "personalclaw.sdk.search.SearchHit": {
   "bases": ["object"],
   "init": {
@@ -7879,7 +7900,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "answer"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "provider"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "query"},
-    {"annotation": "str", "default": "'balanced'", "kind": "positional_or_keyword", "name": "depth"}
+    {"annotation": "str", "default": "'balanced'", "kind": "positional_or_keyword", "name": "depth"},
+    {"annotation": "SearchFallback | None", "default": "None", "kind": "positional_or_keyword", "name": "fallback"}
    ],
    "returns": "None"
   },
@@ -7900,8 +7922,9 @@
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "use_case"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "query"},
-   {"kind": "var_keyword", "name": "kw"}
-  ]
+   {"annotation": "Any", "kind": "var_keyword", "name": "kw"}
+  ],
+  "returns": "SearchResult | None"
  },
  "personalclaw.sdk.security.APP_SECRET_ENV": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_APP_SECRET'"},
  "personalclaw.sdk.security.PROXY_SIGNATURE_HEADER": {"kind": "value", "type": "str", "value": "'X-PersonalClaw-Proxy'"},

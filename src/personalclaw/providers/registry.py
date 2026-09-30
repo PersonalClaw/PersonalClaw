@@ -415,7 +415,9 @@ class SearchTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.search_providers.registry import register_provider
 
-        register_provider(instance)
+        # The app is named because this is where it is known: Settings → Providers puts the
+        # provider's measured state (its Test) on this app's card.
+        register_provider(instance, app=ext.name)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.search_providers.registry import unregister_provider

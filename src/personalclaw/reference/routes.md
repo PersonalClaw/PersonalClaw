@@ -697,7 +697,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.
 - `PUT /api/search/active/{use_case}` — bind a provider to a use-case.
-- `GET /api/search/providers` — registered providers + capabilities + availability.
+- `GET /api/search/providers` — registered providers + capabilities + state.
+- `POST /api/search/providers/{name}/test` — run one small search through the provider now.
 - `DELETE /api/secrets` — remove one secret from the vault.
 - `GET /api/secrets` — the vault, presence only.
 - `POST /api/secrets` — store one secret's value. The response carries presence, not the value.

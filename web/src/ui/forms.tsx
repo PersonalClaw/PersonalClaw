@@ -485,7 +485,27 @@ export function Select({ value, onChange, options, disabled, name, id, ariaLabel
 // import path.
 export { Segmented, type SegOption } from './Segmented'
 
-/** Tag / chip input — type + Enter (or comma) to add, × to remove.
+const LIST_ITEM_SRC = String.raw`"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?`
+/** A JSON-style list of strings or numbers, `["a@x.example", 'b', 12]`, and nothing else. */
+const LIST_SYNTAX = new RegExp(String.raw`^\[\s*(?:(?:${LIST_ITEM_SRC})\s*(?:,\s*(?:${LIST_ITEM_SRC})\s*)*,?\s*)?\]$`)
+const LIST_ITEM = /"([^"]*)"|'([^']*)'|(-?\d+(?:\.\d+)?)/g
+
+/** The entries in *text* when it is a list rather than one entry, else `null`.
+ *
+ *  A list is a JSON-style array of strings or numbers, or entries separated by commas or line
+ *  breaks ("a, b", or one per line). Each entry is trimmed and loses a pair of quotes around it.
+ *  Read as TEXT and never parsed as JSON, so a long number keeps every digit: `JSON.parse` turns
+ *  the ID `1289011223344556677` into `1289011223344556800`. One entry typed with brackets of its
+ *  own ("[draft]") is not list syntax, and stays as typed. */
+export function chipEntries(text: string): string[] | null {
+  const t = text.trim()
+  if (LIST_SYNTAX.test(t)) return [...t.matchAll(LIST_ITEM)].map((m) => m[1] ?? m[2] ?? m[3] ?? '')
+  if (!/[,\r\n]/.test(t)) return null
+  return t.split(/[,\r\n]+/).map((e) => e.trim().replace(/^(["'])(.*)\1$/, '$2').trim()).filter(Boolean)
+}
+
+/** Tag / chip input — type + Enter (or comma) to add, × to remove. A paste (or drop) of several
+ *  entries adds each one (`chipEntries`): a list of addresses pasted from anywhere is that list.
  *
  *  🔴 THE FIELD WAS 19.5px TALL INSIDE A 40px WELL. Measured on `#/tasks/new` and `#/prompts/new`
  *  (834×1112, and identical at 1440): every other input in this family renders 36-40px — `TextInput`
@@ -512,11 +532,14 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   const listId = useId()
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
-  const add = () => {
-    const v = draft.trim().replace(/,$/, '')
-    if (v && !values.includes(v) && (!max || values.length < max)) onChange([...values, v])
+  // Each entry once, up to `max`, after the ones already there.
+  const addAll = (entries: string[]) => {
+    const next = [...values]
+    for (const v of entries) if (v && !next.includes(v) && (!max || next.length < max)) next.push(v)
+    if (next.length > values.length) onChange(next)
     setDraft('')
   }
+  const add = () => addAll(chipEntries(draft) ?? [draft.trim().replace(/,$/, '')])
   // Suggest existing values the user hasn't already added (autocomplete to avoid
   // near-duplicate fragments like "Kubernetes" vs "kubernetes").
   const remaining = suggestions?.filter((s) => !values.includes(s)) ?? []
@@ -545,7 +568,20 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
           <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="inline-flex size-6 shrink-0 items-center justify-center text-on-surface-low hover:text-on-surface"><X size={12} /></button>
         </span>
       ))}
-      <input ref={fieldRef} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
+      <input ref={fieldRef} value={draft} placeholder={values.length ? '' : placeholder}
+        // Typing a comma adds the entry (onKeyDown), so a comma that reaches the value came with a
+        // drop or a fill of several entries at once: each is added, as a paste would add them.
+        onChange={(e) => { const entries = chipEntries(e.target.value); if (entries) addAll(entries); else setDraft(e.target.value) }}
+        // A paste is read from the clipboard, where its line breaks still are: a text field drops
+        // them, which would run one-per-line entries together into one.
+        onPaste={(e) => {
+          const el = e.currentTarget
+          const text = draft.slice(0, el.selectionStart ?? draft.length) + e.clipboardData.getData('text') + draft.slice(el.selectionEnd ?? draft.length)
+          const entries = chipEntries(text)
+          if (!entries) return  // one entry: it goes into the field to be finished, as typing does
+          e.preventDefault()
+          addAll(entries)
+        }}
         list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={hintId} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}

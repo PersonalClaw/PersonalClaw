@@ -50,3 +50,25 @@ describe('parseJsonField', () => {
     expect(parseJsonField('null', 'object')).toEqual({ error: 'must be a JSON object' })
   })
 })
+
+describe('a long number in a JSON setting', () => {
+  // `JSON.parse` turns the ID 1289011223344556677 into 1289011223344556800, and the form would save
+  // that: a different ID, with nothing on screen saying so. Such a number is refused with the fix;
+  // in quotes it is text, which keeps every digit.
+  it('is refused rather than saved rounded, naming it and how to keep it', () => {
+    const r = parseJsonField('{"application_id": 1289011223344556677}', 'object')
+    expect('error' in r && r.error).toContain('1289011223344556677')
+    expect('error' in r && r.error).toContain('quotes')
+  })
+
+  it('in quotes keeps every digit', () => {
+    expect(parseJsonField('{"application_id": "1289011223344556677"}', 'object'))
+      .toEqual({ value: { application_id: '1289011223344556677' } })
+  })
+
+  it('an ordinary number, and digits inside a string, are left alone', () => {
+    expect(parseJsonField('[12, -3.5, 1e3]', 'array')).toEqual({ value: [12, -3.5, 1000] })
+    expect(parseJsonField('{"note": "call 1289011223344556677"}', 'object'))
+      .toEqual({ value: { note: 'call 1289011223344556677' } })
+  })
+})

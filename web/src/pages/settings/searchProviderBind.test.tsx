@@ -39,6 +39,8 @@ const CAPS: SearchCapabilitiesInfo = {
 }
 
 /** Open a use-case row by its heading text — the row button is the disclosure. */
+// The choices in a group are its pressable buttons: each provider row also carries its Test, which
+// is beside the choice and not one.
 async function openRow(name: RegExp) {
   fireEvent.click(await screen.findByRole('button', { name }))
 }
@@ -70,7 +72,7 @@ describe('the search bind list announces which provider is bound, and to what', 
     render(<SearchPanel />)
     await openRow(/General search/)
     const group = await screen.findByRole('group', { name: 'General search provider' })
-    const opts = [...group.querySelectorAll('button')]
+    const opts = [...group.querySelectorAll('button[aria-pressed]')]
     expect(opts.map((b) => b.textContent?.includes('SearXNG'))).toContain(true)
     const pressed = opts.filter((b) => b.getAttribute('aria-pressed') === 'true')
     expect(pressed.length, 'single-select: one pressed, not zero and not two').toBe(1)
@@ -85,7 +87,7 @@ describe('the search bind list announces which provider is bound, and to what', 
     render(<SearchPanel />)
     await openRow(/Financial search/)
     const group = await screen.findByRole('group', { name: 'Financial search provider' })
-    const opts = [...group.querySelectorAll('button')]
+    const opts = [...group.querySelectorAll('button[aria-pressed]')]
     expect(opts.length, 'both providers are eligible for a plain search use case').toBe(2)
     expect(opts.filter((b) => b.getAttribute('aria-pressed') === 'true')).toEqual([])
   })
@@ -98,7 +100,7 @@ describe('the search bind list announces which provider is bound, and to what', 
     const group = await screen.findByRole('group', { name: 'General search provider' })
     searchActive.mockResolvedValue({ 'search-general': ['tavily'] })
     setActiveSearchProvider.mockResolvedValue({ ok: true })
-    fireEvent.click([...group.querySelectorAll('button')].find((b) => b.textContent?.includes('Tavily'))!)
+    fireEvent.click([...group.querySelectorAll('button[aria-pressed]')].find((b) => b.textContent?.includes('Tavily'))!)
     expect(setActiveSearchProvider).toHaveBeenCalledWith('search-general', ['tavily'])
     await waitFor(() => {
       const now = [...screen.getByRole('group', { name: 'General search provider' }).querySelectorAll('button')]
@@ -112,7 +114,7 @@ describe('the search bind list announces which provider is bound, and to what', 
     render(<SearchPanel />)
     await openRow(/Article fetch/)
     const group = await screen.findByRole('group', { name: 'Article fetch provider' })
-    const opts = [...group.querySelectorAll('button')]
+    const opts = [...group.querySelectorAll('button[aria-pressed]')]
     expect(opts.length).toBe(1)
     expect(opts[0].textContent).toContain('Tavily')
   })

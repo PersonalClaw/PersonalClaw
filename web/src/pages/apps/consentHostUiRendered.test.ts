@@ -11,11 +11,12 @@ import { join } from 'node:path'
 // open — which makes a call-site rail the only thing standing between that design and the
 // original defect coming back one surface at a time.
 //
-// A CENSUS OF EVERY PRODUCTION FILE, not a list of known ones. Every pre-install surface now
-// renders the one disclosure (`AppDisclosureView`), so the whole population of `PermissionList`
-// renders is two — that view and the installed-app panel — and a third, anywhere in the tree,
-// is a surface that went around the one disclosure. `consentPythonDeps.test.tsx` counts the
-// same population for the Python-dependency fact.
+// A CENSUS OF EVERY PRODUCTION FILE, not a list of known ones. Every surface that says what an
+// app gets renders the one disclosure (`AppDisclosureView`): the install dialog, the Store detail
+// panel, and the installed-app panel (with the installed copy's own disclosure). So the whole
+// population of `PermissionList` renders is ONE, that view, and a second anywhere in the tree is
+// a surface that went around it. `consentPythonDeps.test.tsx` counts the same population for the
+// Python-dependency fact.
 
 const SRC = join(process.cwd(), 'src')
 
@@ -33,7 +34,7 @@ function productionFiles(dir: string): string[] {
 }
 
 describe('every consent surface is handed the host-page fact (#492)', () => {
-  it('every PermissionList render passes hostUi, and there are exactly two', () => {
+  it('every PermissionList render passes hostUi, and there is exactly one', () => {
     const renders = productionFiles(SRC).flatMap((abs) =>
       [...strip(readFileSync(abs, 'utf8')).matchAll(/<PermissionList\b[^>]*\/?>/g)]
         .map((m) => ({ rel: abs.slice(SRC.length + 1), tag: m[0] })))
@@ -41,9 +42,15 @@ describe('every consent surface is handed the host-page fact (#492)', () => {
       expect(r.tag, `${r.rel}: a PermissionList renders without the host-page fact`)
         .toMatch(/hostUi=\{consentHostUi\(/)
     }
-    // The one pre-install disclosure (the install dialog and the Store detail panel both render
-    // it) and the installed-app panel. A third that forgets must fail this, not pass vacuously.
-    expect(renders.map((r) => r.rel).sort()).toEqual(['pages/apps/AppsSection.tsx', 'pages/apps/installConsent.tsx'])
+    // The one disclosure, which every surface renders. A second that forgets must fail this, not
+    // pass vacuously.
+    expect(renders.map((r) => r.rel)).toEqual(['pages/apps/installConsent.tsx'])
+  })
+
+  it('the installed-app panel renders the one disclosure, with the installed copy’s own', () => {
+    // It rendered a `PermissionList` of its own, and so it said the grants and forgot what the
+    // app runs on this machine, its scheduled jobs and its packages, which the Store had said.
+    expect(code('pages/apps/AppsSection.tsx')).toMatch(/<AppDisclosureView disclosure=\{app\.disclosure\} action="installed" \/>/)
   })
 
   it('the pre-install disclosure reads the fact from the disclosure it renders', () => {

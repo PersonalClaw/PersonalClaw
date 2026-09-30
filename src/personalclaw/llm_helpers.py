@@ -1092,8 +1092,8 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       Answered before the empty-message rule too, since a bare ``MemoryError()`` is the same
       failure with the same fix.
     * ``ToolSchemaRejected`` — a provider refusing one of the request's tool definitions — is
-      already the sentence (which tool, whose bug, and a workaround that is true on the surface
-      that shows it). The raw dump it replaces contains ``400`` and ``permission``-shaped words
+      already the sentence (which tool, whose bug, and a workaround that is true in a chat and a
+      room alike). The raw dump it replaces contains ``400`` and ``permission``-shaped words
       the substring map below would misread.
     * ``NoModelAnswered`` names every model a turn fell back to and why each failed, which no
       one provider's error can; and a model app's ``ProviderResolutionError`` (the SDK's) is its
@@ -1144,7 +1144,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
     if isinstance(exc, ToolSchemaRejected):
-        return exc.sentence(room=bool(room_member))
+        return exc.sentence()
     if isinstance(exc, (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout)):
         return exc.sentence(room_member=room_member)
     if isinstance(exc, ProviderResolutionError) and str(exc).strip():

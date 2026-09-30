@@ -232,13 +232,16 @@ export function disclosureOf(entry: AppCatalogEntry | undefined): AppDisclosure 
   }
 }
 
-type DisclosureAction = 'install' | 'update'
+/** What the disclosure is about: an install or an update being reviewed, or an app that is
+ *  already `installed` (its panel in the Library), whose install steps have run. */
+type DisclosureAction = 'install' | 'update' | 'installed'
 
 /** Everything installing (or updating to) an app grants and runs, on ONE surface — the
  *  scheduled jobs it switches on, the permissions the gateway enforces with the advisory
  *  rows beside them, and what it runs on this machine. Every consent surface renders this
  *  and nothing else, so none can show the bullets and forget the jobs, or show the jobs and
- *  forget the packages — the failures this module has had one at a time. */
+ *  forget the packages — the failures this module has had one at a time. An installed app's
+ *  panel renders it too, so what the Store said before the install is what it says after. */
 export function AppDisclosureView({ disclosure, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
   return (
     <div className="flex flex-col gap-m" data-testid="app-disclosure">
@@ -268,7 +271,7 @@ const LATER_HOOKS: { key: 'onEnable' | 'onDisable' | 'onUninstall'; when: string
  *  verbatim so this row and the gateway cannot describe the code two ways. Renders nothing when
  *  there is none of it. */
 function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action: DisclosureAction }) {
-  const hook = action === 'update' ? d.onUpdate : d.onInstall
+  const hook = action === 'update' ? d.onUpdate : action === 'install' ? d.onInstall : ''
   const items: ReactNode[] = []
   if (d.hasBackend) {
     items.push(d.backendSandbox
@@ -290,6 +293,12 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
   }
   if (hook) {
     items.push(<>Runs {cmd(hook)} in the app's folder during the {action}.</>)
+  }
+  if (action === 'installed') {
+    // Its install step has run; an update runs its update step, which the update's own review
+    // names again before it does.
+    if (d.onInstall) items.push(<>Ran {cmd(d.onInstall)} in the app's folder when it was installed.</>)
+    if (d.onUpdate) items.push(<>Runs {cmd(d.onUpdate)} in the app's folder when it is updated.</>)
   }
   for (const { key, when } of LATER_HOOKS) {
     if (d[key]) items.push(<>Runs {cmd(d[key])} in the app's folder {when}.</>)
@@ -331,7 +340,7 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
  *  and what to do to have it — first, because it decides whether installing is worth it at all.
  *  An installed app's panel shows the same row, since the need outlasts the install. Plain text,
  *  as the manifest wrote it. Renders nothing when it needs nothing. */
-export function RequiresRow({ requires }: { requires: AppPrerequisite[] }) {
+function RequiresRow({ requires }: { requires: AppPrerequisite[] }) {
   if (!requires.length) return null
   return (
     <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-requires">
@@ -567,9 +576,9 @@ function specList(specs: string[]) {
 // capability the platform polices, which is the one thing that is false about it.
 //
 // It lives INSIDE `PermissionList` rather than at each consent surface, which is what puts
-// it on the install dialog and the Store detail panel by construction: both render
-// `AppDisclosureView`, and a disclosure that has to be remembered per caller is exactly what
-// failed here before.
+// it on the install dialog, the Store detail panel and the installed-app panel by construction:
+// all three render `AppDisclosureView`, and a disclosure that has to be remembered per caller is
+// exactly what failed here before.
 //
 // 🔑 IT IS NOT "ADVISORY ONLY", AND MUST NOT BORROW THAT PHRASE. Its two neighbours say
 // advisory because a manifest DECLARATION is not enforced there. Here the packages really
@@ -795,7 +804,9 @@ export function CronConsentList({ crons, action = 'install' }: { crons: AppCronS
         {on.length > 0 && (
           <>
             <span className="text-on-surface">
-              {action === 'update' ? `After the update it runs ${jobs(on.length)}` : `Installing turns on ${jobs(on.length)}`}
+              {action === 'update' ? `After the update it runs ${jobs(on.length)}`
+                : action === 'installed' ? `It runs ${jobs(on.length)}`
+                : `Installing turns on ${jobs(on.length)}`}
             </span>
             {` — ${on.length === 1 ? 'it runs' : 'each runs'} an agent on its own, on the schedule below, without asking you first. You can pause ${on.length === 1 ? 'it' : 'them'} on the Triggers page.`}
           </>

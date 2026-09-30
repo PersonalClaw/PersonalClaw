@@ -89,6 +89,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
 - **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
 
 - **The snapshot is the backup: Settings → Backups and `personalclaw backup` say so, and that the hourly export and sync carry your records only, not your skills, scripts or uploads.**
@@ -156,6 +157,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Past a spent daily dollar cap, calls to a model that costs nothing keep running, so automations, loops, subagents and app workers on local models no longer stop until midnight; only the token cap stops work before it starts.**
 - **A model reached through an OpenAI-compatible instance on this machine is no longer counted as free: it is priced by its model's id or has no price, a daily dollar cap refuses a model with no price, and Settings → Usage → Model prices lists it, and every model spent on in the last 30 days, to price ($0 declares it free).**
 - **An agent's memory recall, project context, triage rules, prompt render, batched subagents and self-nudge stop work on every install, not only on the development server, and a call the gateway refuses says why instead of asking to sign in.**
+- **A list setting takes the list you paste, as JSON, separated by commas or one per line, and a settings form whose JSON does not parse refuses to save, naming the field, instead of saving the value from before.**
+- **A search app's key is tested: Settings → Search and the app's card in Settings → Providers say what its last search found (working, or failed with the reason) or that nothing has tried it yet, with a Test, instead of "ready" for a key that is merely saved.**
+- **A web search that falls back to the keyless engine says so, to the agent and on its card, and one that fails on both says why each failed.**
+- **A tool installed, removed or switched off while a chat is open reaches that chat's next turn, and a call to a tool whose app left during a turn is refused instead of run.**
+- **An installed app's panel says what it runs on this machine, as the Store did before the install.**
+- **After an app is reinstalled, a setting whose saved credential was deleted reads as not set, so its form asks for it again.**
 - **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**

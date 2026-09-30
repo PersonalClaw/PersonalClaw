@@ -9,6 +9,7 @@ import { DisclosureCard } from '../../ui/DisclosureCard'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
+import { SearchFailure, SearchStatePill, SearchTestButton } from './searchProviderState'
 import { InlineError } from '../../ui/InlineError'
 
 // Canonical search use-cases (matches the backend SEARCH_USE_CASES). Single-select:
@@ -166,6 +167,9 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
   // No `open` flag here: `DisclosureCard` owns the disclosure state, which is the only thing this
   // component ever used it for.
   const [saving, setSaving] = useState(false)
+  // Each provider's row as its latest Test returned it, shown over the row it was tested from until
+  // the panel's own re-read brings a newer one.
+  const [tested, setTested] = useState<Record<string, { over: SearchProviderInfo; row: SearchProviderInfo }>>({})
   const meta = USE_CASE_META[useCase] ?? { label: useCase, description: '', icon: Globe }
   const rows = pickableProviders(useCase, providers, activeProviders)
   // The count pill is how many this use-case can BIND, so it counts registered rows only —
@@ -209,37 +213,42 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
           className="-m-1 flex flex-col gap-0.5 p-1" style={{ opacity: saving ? 0.6 : 1 }}>
           {rows.map((row) => {
             const on = activeProviders.includes(row.name)
+            // What the Test found shows at once, before the panel's re-read lands.
+            const t = tested[row.name]
+            const provider = row.kind === 'registered' ? (t && t.over === row.provider ? t.row : row.provider) : null
             return (
-              <button key={row.name} type="button" onClick={() => toggle(row.name)} disabled={saving}
-                aria-pressed={on}
-                className="flex items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
-                style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
-                <span className="grid size-4 shrink-0 place-items-center rounded-full border"
-                  style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
-                  {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
-                </span>
-                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">
-                  {row.kind === 'registered' ? row.provider.display_name : row.name}
-                </span>
-                {row.kind === 'registered' && <CapChips caps={row.provider.capabilities} />}
-                {/* Three distinct facts, three distinct words. `ready` and `not configured` are both
-                    about a provider that EXISTS; `not installed` is about one that does not, and it
-                    is the only one whose remedy is the Store rather than a key. Clicking it clears
-                    the binding — the one action a provider that is gone can still offer.
-                    The two TONED states ride ui/StatusPill: the 16% tint + ink pair is the
-                    primitive's business, and the copies of it left at call sites are exactly what
-                    `design/statusTint.test.ts` counts down. `not configured` keeps its solid fill
-                    here, because that is a neutral GROUND rather than a tone tint and so is not the
-                    primitive's business — the same split `settings/bento.tsx`'s local pill draws
-                    (toned variants compose the primitive, `muted` stays local), recorded as its
-                    `composes` verdict in `design/primitiveShadowing.test.ts`. */}
-                {row.kind === 'stale'
-                  ? <StatusPill tone="warn" className="py-0.5">not installed</StatusPill>
-                  : row.provider.available
-                    ? <StatusPill tone="ok" className="py-0.5">ready</StatusPill>
-                    : <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
-                      style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>not configured</span>}
-              </button>
+              <div key={row.name} className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => toggle(row.name)} disabled={saving}
+                    aria-pressed={on}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-surface-high"
+                    style={on ? { background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' } : undefined}>
+                    <span className="grid size-4 shrink-0 place-items-center rounded-full border"
+                      style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
+                      {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
+                    </span>
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">
+                      {provider ? provider.display_name : row.name}
+                    </span>
+                    {provider && <CapChips caps={provider.capabilities} />}
+                    {/* Each provider's state is what its last search MEASURED (`searchProviderState`):
+                        `working`, `failed`, `not checked`, `no key needed`, or `not configured` when it
+                        lacks a key. `ready` used to stand for a key merely being present. `not
+                        installed` is about a provider that is gone, and it is the only one whose
+                        remedy is the Store rather than a key. Clicking it clears the binding — the
+                        one action a provider that is gone can still offer. */}
+                    {provider
+                      ? <SearchStatePill provider={provider} />
+                      : <StatusPill tone="warn" className="py-0.5">not installed</StatusPill>}
+                  </button>
+                  {/* Beside the choice, not in it: testing a provider is not choosing it. */}
+                  {provider && row.kind === 'registered' && (
+                    <SearchTestButton provider={provider}
+                      onTested={(found) => setTested((cur) => ({ ...cur, [found.name]: { over: row.provider, row: found } }))} />
+                  )}
+                </div>
+                {provider && <div className="px-m"><SearchFailure provider={provider} /></div>}
+              </div>
             )
           })}
         </div>

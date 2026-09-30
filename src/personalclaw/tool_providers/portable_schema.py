@@ -702,10 +702,11 @@ class ToolSchemaRejected(Exception):
 
     The string IS the user-facing sentence (``llm_helpers.humanize_provider_error`` passes it
     through), because the raw provider dump is unreadable and blames nobody: this says which tool
-    and that it is PersonalClaw's bug. The workaround it offers is exactly what works: a session
-    keeps the toolset it started with, so switching the tool off helps a NEW conversation, not the
-    open one — and a core-locked tool (``can_turn_off=False``) cannot be switched off at all, so
-    for it the sentence offers nothing.
+    and that it is PersonalClaw's bug. The workaround it offers is exactly what works: a tool
+    switched off on the Tools page leaves the open conversation from its next turn (the runtime
+    rebuilds its catalog when the tools change), so sending the message again goes through without
+    it — and a core-locked tool (``can_turn_off=False``) cannot be switched off at all, so for it
+    the sentence offers nothing.
     """
 
     def __init__(self, tools: Sequence[str], *, can_turn_off: bool) -> None:
@@ -713,8 +714,7 @@ class ToolSchemaRejected(Exception):
         self.can_turn_off = can_turn_off
         super().__init__(self.sentence())
 
-    def sentence(self, *, room: bool = False) -> str:
-        """The sentence for a chat, or for a room (where the fresh start is a new room)."""
+    def sentence(self) -> str:
         plural = len(self.tools) > 1
         sentence = (
             f"The model provider rejected PersonalClaw's definition{'s' if plural else ''} of the "
@@ -724,7 +724,7 @@ class ToolSchemaRejected(Exception):
         if self.can_turn_off:
             which = "those tools" if plural else "that tool"
             sentence += (
-                f"; turn {which} off on the Tools page and start a new "
-                f"{'room' if room else 'chat'} to keep going until it is fixed"
+                f"; turn {which} off on the Tools page and send your message again to keep going "
+                "until it is fixed"
             )
         return sentence + "."

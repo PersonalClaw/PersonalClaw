@@ -200,17 +200,6 @@ def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
     return any(isinstance(p, dict) and p.get("execution") == EXECUTION_SIDECAR for p in declared)
 
 
-def _prerequisites(manifest: dict[str, Any]) -> list[dict[str, str]]:
-    """The raw manifest's ``requires``, each ``{name, why, how}`` as install consent showed it."""
-    from personalclaw.apps.manifest import Prerequisite
-
-    return [
-        Prerequisite.from_dict(r).to_dict()
-        for r in manifest.get("requires") or []
-        if isinstance(r, dict)
-    ]
-
-
 def _quality_wire(raw: Any) -> dict[str, Any]:
     """The DECLARED quality axes, and only those (APE-4).
 
@@ -242,12 +231,14 @@ async def api_apps_list(request: web.Request) -> web.Response:
     notification per newly-available version (deduped by ``name + latest_version`` in
     ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
     of the app starts when none was found: the source it was installed from."""
+    from personalclaw.apps.app_manager import installed_disclosure
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
         surface_app_updates,
         update_source_for,
     )
+    from personalclaw.apps.disclosure import describe
     from personalclaw.apps.manager import app_dir, list_apps, ui_revision
 
     # Compute available updates + emit the (deduped) notifications, on this read path.
@@ -353,9 +344,12 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # A provider of it runs its engine in a child process with its own Python
                 # environment, which Configure offers to install (Install engine).
                 "sidecar": _runs_a_sidecar(manifest),
-                # What it needs that PersonalClaw does not install. Install consent led with it
-                # before the app went in; the app's panel keeps saying it after.
-                "requires": _prerequisites(manifest),
+                # Everything it gets and runs, as its install consent showed it: what it needs
+                # that PersonalClaw does not install, the permissions the gateway enforces, its
+                # scheduled jobs, and what it runs on this machine. The panel renders it with the
+                # consent's own component, so an installed app says what the Store said before
+                # it went in. `None` when its manifest cannot be read.
+                "disclosure": installed_disclosure(name),
                 "permissions": manifest.get("permissions", {}),
                 "tags": [str(t) for t in manifest.get("tags", []) if t],
                 # The DECLARED quality block, for the Library card's badge row.
@@ -415,6 +409,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "providerType": "tool",
                     "hasConfig": False,
                     "configuredPerInstance": False,
+                    # Core's own tools, not an app: there is no manifest to disclose.
+                    "disclosure": None,
                     "permissions": {},
                     "tags": [],
                     "installedAt": "",
@@ -453,6 +449,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "hasConfig": not ext.provider_config.multiInstance
                     and bool((ext.provider_config.settingsSchema or {}).get("properties")),
                     "configuredPerInstance": bool(ext.provider_config.multiInstance),
+                    "disclosure": describe(ext.manifest),
                     "permissions": {},
                     "tags": [],
                     "installedAt": "",

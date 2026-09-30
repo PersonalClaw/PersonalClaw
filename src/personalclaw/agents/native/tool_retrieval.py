@@ -52,6 +52,7 @@ from personalclaw.agents.native.tool_vectors import (
 )
 from personalclaw.task_modes import SHELL_TOOL_NAMES
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
+from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def _schema_chars(d) -> int:
 
 
 class ToolRetriever:
-    """Per-turn tool selector over a fixed catalog (built once at startup).
+    """Per-turn tool selector over the session's catalog (built again when the tools change).
 
     Ranks each tool's ``name: description`` with the vectors of the process's index
     (:mod:`tool_vectors`), which holds one per text and model: a stable catalog is embedded once
@@ -184,18 +185,27 @@ class ToolRetriever:
         *,
         k: int = DEFAULT_K,
         semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+        carry_from: ToolRetriever | None = None,
     ) -> None:
+        """*carry_from* is this session's retriever over its last catalog, when the catalog was
+        rebuilt because the tools changed: what it learned (the tools the agent called, and the
+        hints carried into the next turn) carries over as far as this catalog still has them, so
+        a rebuild never loses a tool the agent is in the middle of using."""
         self._defs = list(defs)
         self._k = max(1, int(k))
         self._threshold = semantic_threshold
         self._by_name = {getattr(d, "name", ""): d for d in self._defs}
         # core = tools that must never be filtered out (control/orientation).
         self._core = {n for n, d in self._by_name.items() if _is_core(n, d)}
-        self._sticky: set[str] = set()
+        self._sticky: set[str] = (
+            {n for n in carry_from._sticky if n in self._by_name} if carry_from else set()
+        )
         # The tools the last request's hints named, carried into ONE next turn when that turn's
         # request names none: "It's ~/Notes/…" answers the question the agent asked about the
         # request before it, and the automation that request plainly needed is still the task.
-        self._carried: set[str] = set()
+        self._carried: set[str] = (
+            {n for n in carry_from._carried if n in self._by_name} if carry_from else set()
+        )
         self._last_surfaced = len(self._defs)  # tools surfaced last select() (for hidden_count)
         self._chars = {n: _schema_chars(d) for n, d in self._by_name.items()}
         # What the index embeds for each tool.
@@ -506,3 +516,48 @@ def _is_core(name: str, d) -> bool:
     if low in _CORE_NAMES:
         return True
     return any(frag in low for frag in _CORE_NAME_FRAGS)
+
+
+def tool_search_definition() -> ToolDefinition:
+    """Synthetic schema for the tool_search escape hatch, answered by the runtime from this
+    module's retriever (:meth:`ToolRetriever.search`), not by a provider."""
+    return ToolDefinition(
+        name="tool_search",
+        provider="native",
+        requires_approval=False,
+        risk_level=RiskLevel.SAFE,
+        description=(
+            "Find tools by capability. Searches the FULL catalog (incl. tools shown "
+            "this turn only as a name in the catalog). Args: query (str), optional "
+            "limit (int). Returns ranked name+description; then call tool_schema(name) "
+            "to see a tool's inputs, or just call it by name."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["query"],
+        },
+    )
+
+
+def tool_schema_definition() -> ToolDefinition:
+    """Progressive disclosure: tools not in the per-turn full-schema set still appear in a
+    name+description CATALOG (:meth:`ToolRetriever.catalog`). tool_schema expands ONE of them to
+    its full input schema on demand, so the model can call any catalog tool correctly without
+    ever carrying every schema."""
+    return ToolDefinition(
+        name="tool_schema",
+        provider="native",
+        requires_approval=False,
+        risk_level=RiskLevel.SAFE,
+        description=(
+            "Get the full input schema for a tool by name — use when the catalog lists "
+            "a tool you want but you need its exact arguments. Args: tool_name (str). "
+            "Returns the tool's parameters/description; then call the tool by name."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"tool_name": {"type": "string"}},
+            "required": ["tool_name"],
+        },
+    )

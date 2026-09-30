@@ -44,10 +44,10 @@ import { InstallDialogHarness } from '../../test/installDialogHarness'
 // joins them, and deliberately does NOT borrow their "advisory only" phrase: their
 // declaration is unenforced, whereas these packages really do install.
 //
-// 🔑 WHY IT LIVES INSIDE `PermissionList`. That is what puts it on the install dialog and the Store
-// detail panel by construction — both render `AppDisclosureView`, the one pre-install disclosure —
-// rather than by each caller remembering a prop, the mechanism that failed here before ("a comment
-// asking four callers to remember is what failed here").
+// 🔑 WHY IT LIVES INSIDE `PermissionList`. That is what puts it on the install dialog, the Store
+// detail panel and the installed-app panel by construction — all three render `AppDisclosureView`,
+// the one disclosure — rather than by each caller remembering a prop, the mechanism that failed
+// here before ("a comment asking four callers to remember is what failed here").
 
 const deps = (...d: AppPythonDependency[]) => d
 
@@ -255,17 +255,14 @@ describe('every consent surface is handed the Python-dependency fact', () => {
     expect(strip(raw)).not.toMatch(/🔑/)
   })
 
-  it('the one pre-install disclosure passes the review’s packages, and only the installed panel omits them', () => {
+  it('the one disclosure passes the packages, and no surface omits them', () => {
     const renders = permissionListRenders()
     const withFact = renders.filter((r) => /pythonDeps=\{disclosure\.pythonDependencies\}/.test(r.tag))
-    const without = renders.filter((r) => !/pythonDeps=/.test(r.tag))
-    // `AppDisclosureView` — what the install dialog AND the Store detail panel render.
-    expect(withFact.map((r) => r.rel), 'the disclosure every pre-install surface renders').toEqual(['pages/apps/installConsent.tsx'])
-    // The INSTALLED-app panel, whose wire (`AppSummary`) has no such field. By then the packages
-    // are already installed and this is an inventory, not a consent surface — omitting the row
-    // there is honest.
-    expect(without.map((r) => r.rel), 'only the installed-app panel may omit it').toEqual(['pages/apps/AppsSection.tsx'])
-    expect(renders, 'no third PermissionList anywhere — a new surface renders AppDisclosureView').toHaveLength(2)
+    // `AppDisclosureView`: what the install dialog, the Store detail panel and the installed-app
+    // panel render. The installed panel's wire carries the installed copy's disclosure
+    // (`AppSummary.disclosure`), packages included, so it says them as the Store did.
+    expect(withFact.map((r) => r.rel), 'the disclosure every surface renders').toEqual(['pages/apps/installConsent.tsx'])
+    expect(renders, 'no second PermissionList anywhere — a new surface renders AppDisclosureView').toHaveLength(1)
   })
 
   it('no surface fabricates the answer it is about to disclose', () => {

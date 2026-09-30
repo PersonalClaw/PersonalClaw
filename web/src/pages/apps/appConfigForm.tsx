@@ -34,7 +34,98 @@ export function parseJsonField(text: string, expected: 'array' | 'object'):
   const okType = expected === 'array' ? Array.isArray(parsed)
     : (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed))
   if (!okType) return { error: `must be a JSON ${expected}` }
+  const long = unsafeIntegerLiteral(trimmed)
+  if (long) return { error: `${long} has more digits than a number here can keep — put it in quotes to keep every digit` }
   return { value: parsed }
+}
+
+/** The first integer written in JSON *text*, outside its strings, that a JavaScript number cannot
+ *  hold exactly, or `''`. Parsed, `1289011223344556677` is `1289011223344556800`, a different
+ *  ID, and a save would store that with nothing on screen saying so. Called on text that parsed. */
+function unsafeIntegerLiteral(text: string): string {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '"') {
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++
+      continue
+    }
+    if (c !== '-' && (c < '0' || c > '9')) continue
+    const m = /^-?\d+(\.\d+)?([eE][+-]?\d+)?/.exec(text.slice(i))
+    if (!m) continue
+    if (!m[1] && !m[2] && !Number.isSafeInteger(Number(m[0]))) return m[0]
+    i += m[0].length - 1
+  }
+  return ''
+}
+
+/** A structured setting's text while it does not parse. The form holds THIS as the field's value,
+ *  not the last value that parsed: that value is not what the screen shows, and a save that sent
+ *  it closed the dialog as if saved and put back the old list (an empty one included) over the
+ *  text the user had entered. A save sees it and refuses, naming the field (`unparsedLabels`).
+ *
+ *  It cannot be sent by a form that forgot to look: serializing it throws that same sentence, so a
+ *  save that gets as far as the request fails loudly instead of writing a value nobody entered. */
+export class UnparsedJson {
+  constructor(readonly text: string, readonly error: string, readonly label: string) {}
+  toJSON(): never {
+    throw new Error(unparsedSentence([this.label]))
+  }
+}
+
+/** The labels of the structured settings in *values* whose text does not parse, in order. */
+export function unparsedLabels(values: Record<string, unknown>): string[] {
+  return Object.values(values)
+    .filter((v): v is UnparsedJson => v instanceof UnparsedJson)
+    .map((v) => v.label)
+}
+
+/** Why a save is refused while *labels* do not parse. */
+export function unparsedSentence(labels: string[]): string {
+  const one = labels.length === 1
+  return `${labels.join(', ')} ${one ? "isn't" : "aren't"} valid JSON yet — fix ${one ? 'it' : 'them'}, or clear ${one ? 'it' : 'them'}, before saving.`
+}
+
+/** A structured field's text on screen: what was typed while it does not parse, else the value. */
+export function jsonFieldText(value: unknown, expected: 'array' | 'object'): string {
+  return value instanceof UnparsedJson ? value.text : serializeJsonField(value, expected)
+}
+
+/** A JSON editor's text, its error and its edit, for both settings forms' editors (this dialog's
+ *  `JsonField` and Settings › Providers' `SchemaField`), so the two cannot disagree.
+ *
+ *  Each edit hands the form the parsed value (of the expected shape) or, while the text does not
+ *  parse, an `UnparsedJson` holding it — never the last value that parsed. The value coming back
+ *  as what the editor handed out is its own edit; a value that changes to anything else was
+ *  changed elsewhere (an edit discarded for the stored copy, the copy a save stored), and the text
+ *  follows it. The ⚠ is about text the user typed, and only that: the stored value written out is
+ *  not theirs to correct (a long number in it was already rounded when the browser read it, so
+ *  telling them to quote it would quote the wrong digits). `active` is false for a field this
+ *  editor does not render, which it then leaves alone. */
+export function useJsonFieldText(value: unknown, expected: 'array' | 'object', label: string,
+  onChange: (v: unknown) => void, active = true) {
+  const [text, setText] = useState(() => (active ? jsonFieldText(value, expected) : ''))
+  const [seen, setSeen] = useState<unknown>(value)
+  const [handedOut, setHandedOut] = useState<unknown>(value)
+  // Whether the text on screen is the user's own edit, rather than the form's value written out.
+  const [typed, setTyped] = useState(false)
+  if (active && value !== seen) {
+    setSeen(value)
+    if (value !== handedOut) {
+      setText(jsonFieldText(value, expected))
+      setTyped(false)
+    }
+  }
+  const own = active && typed ? parseJsonField(text, expected) : null
+  const error = value instanceof UnparsedJson ? value.error : own && 'error' in own ? own.error : null
+  const edit = (nv: string) => {
+    setText(nv)
+    setTyped(true)
+    const parsed = parseJsonField(nv, expected)
+    const next = 'error' in parsed ? new UnparsedJson(nv, parsed.error, label) : parsed.value
+    setHandedOut(next)
+    onChange(next)
+  }
+  return { text, error, edit }
 }
 
 /** An app's `meta.help` is markdown its AUTHOR wrote — the same string the Store card and the
@@ -47,18 +138,18 @@ function helpHint(help?: string) {
 /** JSON editor for a structured (array/object) config field whose schema does not describe its
  *  entries — a list that does gets `SchemaListField` instead. The backend validates
  *  the persisted type, so a plain text input (which stringifies an object to the
- *  literal "[object Object]") would both misrender AND be rejected on save. This
- *  keeps a local text buffer, parses on edit, and calls `set` only with valid JSON
- *  of the expected shape — surfacing a parse error inline instead of corrupting state. */
-function JsonField({ label, help, expected, value, onChange }: {
+ *  literal "[object Object]") would both misrender AND be rejected on save. What it hands the
+ *  form, and when its text follows the form, is `useJsonFieldText`. `name` is the field's label
+ *  without the required marker. */
+function JsonField({ label, name, help, expected, value, onChange }: {
   label: string
+  name: string
   help?: string
   expected: 'array' | 'object'
   value: unknown
   onChange: (v: unknown) => void
 }) {
-  const [text, setText] = useState(() => serializeJsonField(value, expected))
-  const [error, setError] = useState<string | null>(null)
+  const { text, error, edit } = useJsonFieldText(value, expected, name, onChange)
   // The error keeps its own literal text (ours, not the app's) beside the rendered help.
   const hint = error
     ? <>{help ? <>{helpHint(help)}{' — '}</> : null}⚠ {error}</>
@@ -70,13 +161,7 @@ function JsonField({ label, help, expected, value, onChange }: {
         rows={4}
         mono
         ariaLabel={label}
-        onChange={(nv) => {
-          setText(nv)
-          const res = parseJsonField(nv, expected)
-          if ('error' in res) { setError(res.error); return }
-          setError(null)
-          onChange(res.value)
-        }}
+        onChange={edit}
       />
     </Field>
   )
@@ -195,7 +280,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
         }
         if (p.type === 'array' || p.type === 'object') {
           return (
-            <JsonField key={key} label={label} help={meta.help}
+            <JsonField key={key} label={label} name={meta.label || key} help={meta.help}
               expected={p.type} value={v} onChange={(nv) => set(key, nv)} />
           )
         }
@@ -308,6 +393,9 @@ export function useAppConfig(name: string) {
   // schema key is not what the user is looking at.
   const missing = missingRequired(cur, required, { satisfied: secretSet })
   const missingLabels = missing.map((k) => props[k]?.['x-meta']?.label || k)
+  // The structured settings whose text on screen does not parse: there is nothing valid to send
+  // for them, and sending the value from before would throw away what was typed.
+  const unparsed = unparsedLabels(cur)
 
   async function save(onDone?: () => void) {
     // 🔴 REFUSE A WRITE FROM A FORM THAT NEVER LOADED. `cur` falls back to `{}` before `data`
@@ -329,6 +417,10 @@ export function useAppConfig(name: string) {
       setErr(`Fill in ${missingLabels.join(', ')} before saving.`)
       return
     }
+    if (unparsed.length > 0) {
+      setErr(unparsedSentence(unparsed))
+      return
+    }
     setBusy(true); setErr(null)
     onLanded.current = onDone
     try {
@@ -346,5 +438,5 @@ export function useAppConfig(name: string) {
   const present = presentSecrets((k) => !!props[k]?.['x-meta']?.sensitive, secretSet)
   return { loading: data === undefined && !loadErr, error: loadErr, reload,
     props, hasSchema, cur, set, save, busy, err, dirty, savedAt, secretSet,
-    required, missing, missingLabels, guard, present }
+    required, missing, missingLabels, unparsedLabels: unparsed, guard, present }
 }

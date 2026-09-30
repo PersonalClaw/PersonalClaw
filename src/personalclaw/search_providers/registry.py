@@ -11,15 +11,54 @@ Resolution order (mirrors the Model bridge, minus the agent/native axis):
 2. Implicit fallback: any registered provider (so search works out-of-box once a
    single provider is configured, without forcing a binding) — preferring an
    available one, and for ``fetch-article`` one that ``supports_fetch``.
+
+Whether a provider WORKS is measured, never inferred from its settings: a key that is present
+is not a key that is accepted. Each provider carries the outcome of its last search
+(:func:`last_check`), recorded by its Test (:func:`check_provider`) and by every real search
+(:func:`search_with_fallback`), and one nothing has measured says so.
 """
 
+import asyncio
 import logging
+import time
+from dataclasses import dataclass
+from typing import Any
 
-from personalclaw.search_providers.base import SearchProvider
+from personalclaw.search_providers.base import SearchFallback, SearchProvider, SearchResult
 
 logger = logging.getLogger(__name__)
 
+#: What a provider's Test searches for: a query any engine answers that names nothing of the
+#: user's. The Test spends one search from the provider's quota, as a search in a chat would.
+CHECK_QUERY = "PersonalClaw"
+#: The most one Test waits for its search before it reports the provider as not answering.
+CHECK_TIMEOUT_SECS = 30.0
+
+
+@dataclass(frozen=True)
+class SearchCheck:
+    """One measured search: whether it answered, the words its failure gave (masked, bounded),
+    and when (epoch seconds)."""
+
+    ok: bool
+    detail: str
+    checked_at: float
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "state": "ok" if self.ok else "failed",
+            "detail": self.detail,
+            "checked_at": self.checked_at,
+        }
+
+
 _providers: dict[str, SearchProvider] = {}
+#: provider name → the app that registered it, so Settings → Providers can show a provider's
+#: state on its app's card (the provider is ``brave``, the app ``brave-search``).
+_provider_app: dict[str, str] = {}
+#: provider name → its last measured search. Kept for the provider object that was measured: a
+#: provider registered again was rebuilt from saved settings, and is not judged by the old answer.
+_checks: dict[str, SearchCheck] = {}
 
 
 def _keyless_provider() -> SearchProvider | None:
@@ -38,12 +77,74 @@ def _keyless_provider() -> SearchProvider | None:
     return None
 
 
-def register_provider(provider: SearchProvider) -> None:
+def register_provider(provider: SearchProvider, *, app: str = "") -> None:
+    """Register *provider*, from the installed *app* ("" for one core registers itself).
+
+    A provider registered again under its name is the same app rebuilt from its saved settings
+    (a new key, say), so what the previous object's searches answered is forgotten with it.
+    """
     _providers[provider.name] = provider
+    _checks.pop(provider.name, None)
+    if app:
+        _provider_app[provider.name] = app
+    else:
+        _provider_app.pop(provider.name, None)
 
 
 def unregister_provider(name: str) -> None:
     _providers.pop(name, None)
+    _provider_app.pop(name, None)
+    _checks.pop(name, None)
+
+
+def app_of(name: str) -> str:
+    """The installed app that registered the provider *name* ("" when none did)."""
+    return _provider_app.get(name, "")
+
+
+def last_check(name: str) -> SearchCheck | None:
+    """The last measured search of the provider *name*, or ``None`` when nothing has measured it
+    since it was registered — which is what a surface then says, not "ready"."""
+    return _checks.get(name)
+
+
+def _record(provider: SearchProvider, *, ok: bool, detail: str = "") -> SearchCheck:
+    """Record how a search through *provider* went, while it is still the provider registered
+    under its name: a search that ends after a settings save answered for the settings before."""
+    check = SearchCheck(ok=ok, detail=detail, checked_at=time.time())
+    if _providers.get(provider.name) is provider:
+        _checks[provider.name] = check
+    return check
+
+
+def _failure_words(exc: BaseException) -> str:
+    """What a failed search said: its own words, masked and cut to the relayed-failure bound."""
+    from personalclaw.providers.failure_copy import failure_detail
+
+    return failure_detail(str(exc)) or f"It failed ({type(exc).__name__}) without saying why."
+
+
+def _sentence(words: str) -> str:
+    """*words* ending as a sentence does, so a second one can follow it."""
+    return words if words.endswith((".", "!", "?")) else f"{words}."
+
+
+async def check_provider(provider: SearchProvider) -> SearchCheck:
+    """The Test: one small search through *provider* now, recorded as its last check.
+
+    A real search, because that is the only thing that shows a key is accepted: a provider's
+    ``is_available`` says only that it has what it needs to try.
+    """
+    try:
+        await asyncio.wait_for(provider.search(CHECK_QUERY, max_results=1), CHECK_TIMEOUT_SECS)
+    except TimeoutError:
+        return _record(
+            provider, ok=False, detail=f"It did not answer within {CHECK_TIMEOUT_SECS:.0f} s."
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed Test is its answer, never a crash
+        logger.debug("search provider %r Test failed", provider.name, exc_info=True)
+        return _record(provider, ok=False, detail=_failure_words(exc))
+    return _record(provider, ok=True)
 
 
 def get_provider(name: str) -> SearchProvider | None:
@@ -114,35 +215,60 @@ async def resolve_search_provider_for_use_case(use_case: str) -> SearchProvider 
     return await _first_available(candidates)
 
 
-async def search_with_fallback(use_case: str, query: str, **kw):
+async def search_with_fallback(use_case: str, query: str, **kw: Any) -> SearchResult | None:
     """Resolve + run a search for ``use_case``, degrading to the keyless default when
-    the bound provider fails at call time.
+    the bound provider fails at call time. ``None`` when no provider is registered at all.
 
     A user may bind a keyed provider (Tavily/Exa/…) whose key later expires or hits a
     quota — the bound provider *resolves* fine but its ``search()`` raises (e.g. HTTP
     432). Rather than hard-fail (defeating the point of shipping a keyless floor), retry
     once with the keyless provider (the one declaring keyless=True) when it's a different,
-    registered provider. Returns ``(SearchResult, fell_back: bool)``; re-raises the original error
-    only if the fallback is unavailable or also fails.
+    registered provider — and SAY so: the result's ``fallback`` names the provider that failed
+    and what it said, so the agent and the user are told the answer came from somewhere else.
+    Every search is recorded as its provider's last check (:func:`last_check`). The original
+    error is raised when there is no fallback to try; when the fallback fails too, the error
+    says what each of them said, the bound provider's first.
     """
     provider = await resolve_search_provider_for_use_case(use_case)
     if provider is None:
-        return None, False
+        return None
     try:
-        return await provider.search(query, **kw), False
+        result = await provider.search(query, **kw)
     except Exception as exc:
+        reason = _failure_words(exc)
+        _record(provider, ok=False, detail=reason)
         fallback = _keyless_provider()
         if fallback is None or fallback.name == provider.name:
             raise
         logger.warning(
             "search via %r failed (%s); falling back to keyless %r",
             provider.name,
-            exc,
+            reason,
             fallback.name,
         )
         # The keyless default may not honor every kwarg (depth/domains) — it clamps
         # them itself, so pass through unchanged.
-        return await fallback.search(query, **kw), True
+        try:
+            result = await fallback.search(query, **kw)
+        except Exception as fallback_exc:
+            also = _failure_words(fallback_exc)
+            _record(fallback, ok=False, detail=also)
+            # Both, the bound one first: the fallback's error alone says the search went to an
+            # engine the owner never chose, and hides why the one they chose failed.
+            raise RuntimeError(
+                f"{provider.display_name} failed: {_sentence(reason)} {fallback.display_name}, "
+                f"tried instead, failed too: {_sentence(also)}"
+            ) from fallback_exc
+        _record(fallback, ok=True)
+        result.fallback = SearchFallback(
+            provider=provider.name,
+            display_name=provider.display_name,
+            served_by=fallback.display_name,
+            reason=reason,
+        )
+        return result
+    _record(provider, ok=True)
+    return result
 
 
 async def fetch_with_fallback(url: str, **kw):

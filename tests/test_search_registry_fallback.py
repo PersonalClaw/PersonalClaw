@@ -142,10 +142,12 @@ def _bound_failing(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_search_falls_back_to_floor_on_failure(_bound_failing):
-    result, fell_back = await reg.search_with_fallback("search-general", "q")
-    assert fell_back is True
+    result = await reg.search_with_fallback("search-general", "q")
     assert result.provider == "duckduckgo"
     assert result.results
+    # …and says so: the provider that failed, in the result the tool hands the agent.
+    assert result.fallback is not None and result.fallback.provider == "tavily"
+    assert "432" in result.fallback.reason
 
 
 @pytest.mark.asyncio
@@ -154,8 +156,8 @@ async def test_search_no_fallback_when_bound_provider_succeeds(monkeypatch, tmp_
     monkeypatch.setattr(uc, "_active_path", lambda: tmp_path / "a.json")
     reg.register_provider(_FakeDDG())  # floor bound + working — no fallback needed
     uc.set_active_search_provider("search-general", "duckduckgo")
-    result, fell_back = await reg.search_with_fallback("search-general", "q")
-    assert fell_back is False
+    result = await reg.search_with_fallback("search-general", "q")
+    assert result.fallback is None
     assert result.provider == "duckduckgo"
 
 

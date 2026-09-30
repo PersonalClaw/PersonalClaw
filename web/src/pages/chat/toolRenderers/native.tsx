@@ -105,15 +105,23 @@ function diffOutput(seg: ToolSegment): ReactNode {
   return <RawBlock label="Diff"><Markdown>{`\`\`\`diff\n${text}\n\`\`\``}</Markdown></RawBlock>
 }
 
-/** knowledge_search / web_search: render the JSON result array as cards. */
+/** knowledge_search / web_search: render the JSON result array as cards. A web search whose
+ *  provider failed and was answered by another carries `fallback.notice`, in PersonalClaw's words,
+ *  and it leads the card: results said as though the first provider had answered are not true. */
 function searchResultsOutput(seg: ToolSegment): ReactNode {
   const text = (seg.output ?? '').trim()
   let data: unknown
   try { data = JSON.parse(text) } catch { return undefined as unknown as ReactNode }
   const arr = Array.isArray(data) ? data : (asObj(data).results as unknown[]) || (asObj(data).items as unknown[])
   if (!Array.isArray(arr) || arr.length === 0) return undefined as unknown as ReactNode
+  const notice = str(asObj(asObj(data).fallback).notice)
   return (
     <RawBlock label={`${arr.length} result${arr.length === 1 ? '' : 's'}`}>
+      {notice && (
+        <div role="note" data-type="caption" className="mb-s rounded-md bg-surface px-s py-xs text-on-surface-var">
+          {notice} Settings › Search shows why.
+        </div>
+      )}
       <div className="flex flex-col gap-1.5">
         {arr.slice(0, 20).map((r, i) => {
           const o = asObj(r)

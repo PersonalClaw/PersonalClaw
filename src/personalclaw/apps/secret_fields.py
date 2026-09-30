@@ -76,9 +76,7 @@ def sensitive_field_names(schema: dict[str, Any]) -> set[str]:
 
 
 def _holds_reference(value: Any) -> bool:
-    from personalclaw.config.secret_refs import ref_key
-
-    return ref_key(value) is not None
+    return _reference_key(value) is not None
 
 
 def mask_secrets(
@@ -91,17 +89,41 @@ def mask_secrets(
     those fields so a UI can say "saved" without being told what was saved. An unset sensitive
     field is left as-is (empty), because "not configured" is not a secret and the operator
     needs to see the difference.
+
+    A reference is SET only while the credential store holds the key it names, judged by name
+    (:func:`~personalclaw.config.credentials.credential_names`, which reads no value). One whose
+    credential is gone — deleted when its app was uninstalled with its data kept, or removed in
+    Settings → Secrets — resolves to ``""`` wherever the app reads it, so it is shown the same
+    way: empty, and not named as saved, so the form asks for it again. The reference stays in
+    the file (a save of the blank field keeps it, :func:`preserve_unchanged_secrets`) and reads
+    as saved again the moment a value is stored under its key.
     """
     masked = dict(config or {})
-    sensitive = sensitive_field_names(schema) | {
-        k for k, v in masked.items() if _holds_reference(v)
-    }
+    refs = {k: key for k, v in masked.items() if (key := _reference_key(v)) is not None}
+    sensitive = sensitive_field_names(schema) | set(refs)
+    held = _held_keys() if refs else set()
     were_set: list[str] = []
     for key in sensitive:
+        if key in refs and refs[key] not in held:
+            masked[key] = ""
+            continue
         if str(masked.get(key, "") or ""):
             masked[key] = SECRET_MASK
             were_set.append(key)
     return masked, sorted(were_set)
+
+
+def _reference_key(value: Any) -> str | None:
+    from personalclaw.config.secret_refs import ref_key
+
+    return ref_key(value)
+
+
+def _held_keys() -> set[str]:
+    """Every key the credential store holds, by name. No value is read."""
+    from personalclaw.config.credentials import credential_names
+
+    return set(credential_names())
 
 
 def mask_instance(instance: Any, schema: dict[str, Any]) -> dict[str, Any]:

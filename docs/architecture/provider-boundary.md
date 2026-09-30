@@ -60,7 +60,10 @@ implements it. What matters here is where the boundary sits inside each family:
 - **Search providers** register through `search_providers/`; the zero-config
   floor is a declared `keyless` *capability*, not a vendor name in core
   (`search_providers/registry.py::_keyless_provider`: first registered keyless
-  provider wins).
+  provider wins). A search that falls back to it says so
+  (`SearchResult.fallback`), and a provider's state is what its last search
+  measured (`last_check`, recorded by its Test and by every search), never
+  what its settings suggest.
 - **The chat zero-config floor** is the model axis' version of that same rule
   (OU-14). `apps/native/bundled-chat` runs a small Apache-2.0 GGUF model in-process
   on `numpy`, so an install answers a first turn with no provider and no key. The

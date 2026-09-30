@@ -46,13 +46,13 @@ import { AppIcon } from './appIcon'
 import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
-import { AppConfigFields, useAppConfig } from './appConfigForm'
+import { AppConfigFields, unparsedSentence, useAppConfig } from './appConfigForm'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
 // The ONE install-consent path, shared with the first-run essential-apps step: every
 // install and update below opens its dialog through `useAppInstall`.
-import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf, PermissionList, consentHostUi, RequiresRow } from './installConsent'
+import { useAppInstall, installTargetFor, AppDisclosureView, disclosureOf } from './installConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
@@ -1685,11 +1685,17 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
           </div>
         )}
 
-        {/* What it needs that PersonalClaw doesn't install. Consent led with it, and the need
-            outlasts the install, so the installed app says it too. */}
-        <RequiresRow requires={app.requires ?? []} />
-
-        <PermissionList perms={app.permissions} hostUi={consentHostUi(app)} />
+        {/* Everything it gets and runs, as the Store and its install consent said it: what it
+            needs that PersonalClaw doesn't install, the grants the gateway enforces, its
+            scheduled jobs and what it runs on this machine. The consent's own component, so the
+            two cannot describe one app two ways. Core's own tools have no manifest to disclose. */}
+        {app.disclosure ? (
+          <AppDisclosureView disclosure={app.disclosure} action="installed" />
+        ) : !app.native && (
+          <div data-type="body-s" className="rounded-md border border-outline-variant bg-surface-high p-m text-on-surface-low">
+            What this app gets and runs could not be read from its manifest.
+          </div>
+        )}
 
         {app.hasBackend && (
           <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
@@ -1947,13 +1953,16 @@ function ConfigModal({ name, displayName, sidecar, onClose }: {
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
               footer sits outside the branch above, so this button was clickable during the load. */}
-          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0 || cfg.guard.conflict !== null}
+          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0 || cfg.unparsedLabels.length > 0 || cfg.guard.conflict !== null}
             disabledReason={cfg.guard.conflict !== null ? HELD_CHANGE_REASON
               : cfg.error ? 'The configuration failed to load'
               : cfg.loading ? 'Still loading the configuration'
               // #491: naming the LABELS is the fix — the old feedback was a server 400 quoting the
               // schema key, which the user then had to map to a form row themselves.
-              : cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}` : undefined}
+              : cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
+              // Nothing valid to send for a setting whose JSON does not parse, and the value from
+              // before would throw away what was typed.
+              : cfg.unparsedLabels.length > 0 ? unparsedSentence(cfg.unparsedLabels) : undefined}
             onClick={() => cfg.save(onClose)}>Save</Button>
         </div>
       </div>

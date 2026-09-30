@@ -98,12 +98,41 @@ class SearchHit:
         return d
 
 
+@dataclass(frozen=True)
+class SearchFallback:
+    """Why a search's results come from a provider other than the one it was sent to.
+
+    ``provider`` and ``display_name`` name the provider whose search failed, ``served_by`` the
+    one that answered instead, and ``reason`` is what the failed search said: the provider's own
+    words, masked and bounded, which can carry a remote server's text, so a caller handing them
+    to a model fences them. ``notice`` is the sentence the agent and the user are told, in
+    PersonalClaw's words alone.
+    """
+
+    provider: str
+    display_name: str
+    served_by: str
+    reason: str
+
+    @property
+    def notice(self) -> str:
+        return (
+            f"The search through {self.display_name} failed, so these results come from "
+            f"{self.served_by} instead."
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"provider": self.provider, "notice": self.notice, "reason": self.reason}
+
+
 @dataclass
 class SearchResult:
     """The ONE normalized search shape across all backends.
 
     ``answer`` is set only by answer-first providers; ``sources`` is the citation
-    URL list (deduped, in result order) every caller can attribute against.
+    URL list (deduped, in result order) every caller can attribute against. ``fallback`` is set
+    when the provider the search was sent to failed and another answered it
+    (``search_with_fallback``), so that is never said as though the first one had.
     """
 
     results: list[SearchHit] = field(default_factory=list)
@@ -111,6 +140,7 @@ class SearchResult:
     provider: str = ""
     query: str = ""
     depth: str = DEFAULT_DEPTH
+    fallback: SearchFallback | None = None
 
     @property
     def sources(self) -> list[str]:
@@ -133,6 +163,8 @@ class SearchResult:
         }
         if self.answer:
             d["answer"] = self.answer
+        if self.fallback is not None:
+            d["fallback"] = self.fallback.to_dict()
         return d
 
 

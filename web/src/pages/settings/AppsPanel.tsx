@@ -8,7 +8,7 @@ import { Skeleton, LoadingStatus, LoadError, FormSkeleton } from '../../ui/ListS
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { FieldError } from '../../ui/forms'
-import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
+import { AppConfigFields, unparsedSentence, useAppConfig } from '../apps/appConfigForm'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { AppIcon } from '../apps/appIcon'
 import { fvs } from '../../design/fontWeight'
@@ -167,9 +167,10 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
             <Button variant="primary" size="sm" loading={cfg.busy}
-              disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0 || cfg.guard.conflict !== null}
+              disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0 || cfg.unparsedLabels.length > 0 || cfg.guard.conflict !== null}
               disabledReason={cfg.guard.conflict !== null ? HELD_CHANGE_REASON
                 : cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
+                : cfg.unparsedLabels.length > 0 ? unparsedSentence(cfg.unparsedLabels)
                 : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>Save
             </Button>
           </div>

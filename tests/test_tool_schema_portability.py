@@ -647,8 +647,9 @@ class TestAProviderRejection:
         assert tools_named_in_rejection(message, payload) == []
 
     def test_the_sentence(self):
-        """Measured in the running product: a session keeps the toolset it started with, so
-        switching a tool off helps a NEW conversation only — the sentence says exactly that."""
+        """A tool switched off on the Tools page leaves an open conversation from its next turn
+        (``test_a_tool_changed_mid_chat_reaches_its_next_turn``), so sending the message again is
+        the workaround, in a chat and in a room alike — the sentence says exactly that."""
         from personalclaw.llm_helpers import humanize_provider_error
         from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
@@ -656,11 +657,11 @@ class TestAProviderRejection:
         assert str(rejected) == (
             'The model provider rejected PersonalClaw\'s definition of the "project_run_create" '
             "tool, so this turn could not run — that is a bug in PersonalClaw, not something you "
-            "did; turn that tool off on the Tools page and start a new chat to keep going until it "
-            "is fixed."
+            "did; turn that tool off on the Tools page and send your message again to keep going "
+            "until it is fixed."
         )
         in_a_room = humanize_provider_error(rejected, room_member="researcher")
-        assert in_a_room.endswith("start a new room to keep going until it is fixed.")
+        assert in_a_room == str(rejected)
         locked = str(ToolSchemaRejected(["bash", "grep"], can_turn_off=False))
         assert 'definitions of the "bash" and "grep" tools' in locked
         assert "Tools page" not in locked, "a core-locked tool cannot be turned off"
