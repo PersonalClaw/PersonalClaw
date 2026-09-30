@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { epochSeconds } from '../../lib/epoch'
 import { AlertTriangle, History, HardDriveDownload, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import {
@@ -12,12 +12,13 @@ import {
   type DurabilityHistoryEntry,
   type DurabilityHistoryPreview,
   type DurabilityStatus,
+  type DurabilitySyncStatus,
   type SettingsProvider,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
-import { Checkbox, NumberField, Select } from '../../ui/forms'
+import { Checkbox, NumberField, Select, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
 import { confirm } from '../../ui/dialog'
@@ -77,11 +78,11 @@ export function DurabilityPanel() {
       <PanelHeader
         title="Backups"
         hint="What gets backed up automatically, how long copies are kept, and whether a restore is ever actually rehearsed." />
-      <ScheduleSection cfg={cfg} setCfg={setCfg} status={data.status} />
+      <ScheduleSection cfg={cfg} setCfg={setCfg} status={data.status} onChanged={refresh} />
       <RetentionSection cfg={cfg} setCfg={setCfg} snaps={data.snaps} />
       <ArchiveSection snaps={data.snaps} onChanged={refresh} />
       <TimeTravelSection cfg={cfg} setCfg={setCfg} />
-      <SyncSection cfg={cfg} setCfg={setCfg} status={data.status} transports={data.transports} />
+      <SyncSection cfg={cfg} setCfg={setCfg} status={data.status} transports={data.transports} onChanged={refresh} />
       <ConflictsSection read={data.conflicts} onChanged={refresh} />
     </div>
   )
@@ -549,10 +550,12 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
 
 // ── The schedule (durability.auto_backup / restore_drills) ───────────────────
 
-function ScheduleSection({ cfg, setCfg, status }: {
+function ScheduleSection({ cfg, setCfg, status, onChanged }: {
   cfg: Record<string, unknown>
   setCfg: (c: Record<string, unknown>) => void
   status: DurabilityStatus | null
+  /** Re-reads the status and the archive: the page shows the run it just did, not the one before. */
+  onChanged: () => void
 }) {
   const [saved, flash] = useSavedFlash()
   const [running, setRunning] = useState('')
@@ -574,6 +577,9 @@ function ScheduleSection({ cfg, setCfg, status }: {
       notify(`${label} failed: ${String((e as Error)?.message || e)}`, 'error')
     } finally {
       setRunning('')
+      // The toast is the run's answer; "Last run" and the archive list are what the page says
+      // afterwards, and they were left showing the run before this one until a reload.
+      onChanged()
     }
   }
 
@@ -800,14 +806,18 @@ const ENCRYPT_OPTIONS = [
  *  Encryption is reported as the RESOLVED verdict rather than as the tri-state: "auto" does
  *  not tell a user whether their bytes are readable in someone else's storage, which is the
  *  only question the toggle exists to answer. */
-function SyncSection({ cfg, setCfg, status, transports }: {
+function SyncSection({ cfg, setCfg, status, transports, onChanged }: {
   cfg: Record<string, unknown>
   setCfg: (c: Record<string, unknown>) => void
   status: DurabilityStatus | null
   transports: Settled<SettingsProvider[]>
+  /** Re-reads the status. Whether encryption applies, and so whether a passphrase is needed, is
+   *  resolved by the server for the SAVED transport, so a change here is followed by a fresh read. */
+  onChanged: () => void
 }) {
   const [saved, flash] = useSavedFlash()
-  const patch = usePatch(cfg, setCfg, flash)
+  const patch = usePatch(cfg, setCfg, () => { flash(); onChanged() })
+  const sync = status?.sync
   const syncOn = cfg.sync_enabled === true
   const chosen = String(cfg.sync_transport ?? '')
   const enabledTransports = transports.ok ? transports.value.filter((t) => t.enabled) : []
@@ -868,20 +878,34 @@ function SyncSection({ cfg, setCfg, status, transports }: {
           />
         </Row>
 
-        {status?.sync && (
-          <div className="border-t border-outline-variant py-3">
+        {sync?.transport && sync.encrypted && !sync.passphrase_stored && (
+          <PassphraseRow credential={sync.passphrase_credential} onSaved={onChanged} />
+        )}
+
+        {sync && (
+          <div className="border-t border-outline-variant py-m">
             <div className="flex flex-col gap-1.5">
-              <JobLine label="Last sync" when={status.sync.last_run} due={status.sync.due} />
-              <div data-type="body-s" className="flex items-baseline justify-between gap-3">
+              <SyncRunLine sync={sync} />
+              <div data-type="body-s" className="flex items-baseline justify-between gap-m">
                 <span className="text-on-surface-var">Shards leaving this machine</span>
                 <span data-type="caption" className="shrink-0 text-on-surface-low">
-                  {!status.sync.transport
+                  {!sync.transport
                     ? 'no transport chosen'
-                    : status.sync.encrypted
-                      ? 'encrypted'
-                      : 'readable by anyone with access to that store'}
+                    : !sync.encrypted
+                      ? 'readable by anyone with access to that store'
+                      : sync.passphrase_stored
+                        ? 'encrypted'
+                        : 'encrypted, and nothing leaves this machine until a passphrase is saved'}
                 </span>
               </div>
+              {sync.transport && sync.encrypted && sync.passphrase_stored && (
+                <div data-type="body-s" className="flex items-baseline justify-between gap-m">
+                  <span className="text-on-surface-var">Sync passphrase</span>
+                  <span data-type="caption" className="shrink-0 text-on-surface-low">
+                    saved in the credential store · replace it under Settings → Secrets
+                  </span>
+                </div>
+              )}
             </div>
             <p data-type="caption" className="mt-2 text-on-surface-low">
               Credentials never sync — API keys and this instance's secrets are excluded before
@@ -891,6 +915,109 @@ function SyncSection({ cfg, setCfg, status, transports }: {
         )}
       </RowGroup>
     </Section>
+  )
+}
+
+/** The last sync RUN — what it did, not when the schedule last looked.
+ *
+ *  A failed run read "Last sync just now", because the line showed the schedule's stamp and the
+ *  stamp is written on a failure too. It now reads as failed, with the server's sentence for why
+ *  and what to do: the same words the Doctor and the failure note use, so the three cannot
+ *  disagree. A streak says how many runs it has lasted. */
+function SyncRunLine({ sync }: { sync: DurabilitySyncStatus }) {
+  const problem = sync.problem
+  if (!problem) {
+    return (
+      <>
+        <JobLine label="Last sync" when={sync.last_run} due={sync.due} />
+        {sync.enabled && sync.skipped && (
+          <div data-type="caption" className="text-on-surface-low">Last attempt skipped: {sync.skipped}.</div>
+        )}
+      </>
+    )
+  }
+  // The passphrase prompt above already asks for what this failure needs; once one is saved the
+  // failure is history, and the line says the next run will use it rather than repeat the remedy.
+  const remedy = problem.code !== 'passphrase'
+    ? problem.remedy
+    : sync.passphrase_stored ? 'A passphrase is saved now, and the next scheduled sync uses it.' : ''
+  return (
+    <div className="flex flex-col gap-xs">
+      <div data-type="body-s" className="flex items-baseline justify-between gap-m">
+        <span className="text-on-surface-var">Last sync</span>
+        <span data-type="caption" className="shrink-0" style={{ color: 'var(--color-error)' }}>
+          failed {relativeTime(sync.last_run)}{problem.failures > 1 ? ` · ${problem.failures} runs in a row` : ''}
+        </span>
+      </div>
+      <p data-type="body-s" style={{ color: 'var(--color-error)' }}>{problem.message}</p>
+      {remedy && <p data-type="caption" className="text-on-surface-low">{remedy}</p>}
+    </div>
+  )
+}
+
+/** The sync passphrase, asked for where it is needed.
+ *
+ *  Encryption on with no passphrase stored is a hard stop — the cycle refuses to send plaintext
+ *  to storage the user chose to encrypt, and that refusal stays — but the credential name it
+ *  needs appeared only in the gateway log. So the card asks, BEFORE the first run as well as
+ *  after a failed one.
+ *
+ *  Write-only, through the one secret write path the Secrets page uses (`POST /api/secrets`):
+ *  the value lives in this component's state until the request is sent and is cleared on
+ *  success, nothing renders it, and what comes back is presence — the status read that follows
+ *  carries a boolean. It never touches `config.json`. */
+function PassphraseRow({ credential, onSaved }: { credential: string; onSaved: () => void }) {
+  const headingId = useId()
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const save = async () => {
+    if (!value || busy) return
+    setBusy(true)
+    setErr('')
+    try {
+      await api.putSecret(credential, value)
+      setValue('')
+      notify('Sync passphrase saved', 'success')
+      onSaved()
+    } catch (e) {
+      setErr(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div role="group" aria-labelledby={headingId} className="border-t border-outline-variant py-m">
+      <div id={headingId} data-type="label-m" className="text-on-surface" style={fvs(500)}>Encryption needs a passphrase</div>
+      <p data-type="body-s" className="mt-xs text-on-surface-var">
+        This transport’s shards are encrypted before they leave this machine, and nothing syncs
+        until a passphrase is saved. Use the same passphrase on every machine that syncs with this
+        one: it is what lets them read each other’s shards.
+      </p>
+      <div className="mt-s flex flex-wrap items-center gap-s">
+        {/* `surface="high"`: this row sits on the group's `bg-surface-container`, which is also the
+            field's default fill, so a default field here would have no edge at all. */}
+        <div className="min-w-0 flex-1" style={{ maxWidth: 320 }}>
+          <TextInput value={value} onChange={setValue} ariaLabel="Sync passphrase" type="password" size="sm"
+            surface="high" onKeyDown={(e) => { if (e.key === 'Enter') void save() }} />
+        </div>
+        <Button size="sm" onClick={save} loading={busy} disabled={!value}
+          disabledReason={!value ? 'Type a passphrase first.' : undefined}>
+          Save passphrase
+        </Button>
+      </div>
+      <p data-type="caption" className="mt-xs text-on-surface-low">
+        Kept in the credential store as <code>{credential}</code>, like every other secret: it never
+        syncs and is never shown again. Replace it under Settings → Secrets.
+      </p>
+      {err && (
+        <div role="alert" data-type="body-s" className="mt-s" style={{ color: 'var(--color-error)' }}>
+          Couldn’t save the passphrase: {err}
+        </div>
+      )}
+    </div>
   )
 }
 

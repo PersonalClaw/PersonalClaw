@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Settings → Backups → Sync asks for the sync passphrase when the chosen transport encrypts, before the first sync, and saves it to the credential store without showing it again.**
 - **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**
 - **Files, a chat's file panel and the Code cockpit save an image or a PDF as a versioned artifact: a copy of the file, checked by its contents, which gains its next version each time it is saved again after the file changes.**
 - **A model server app can declare that it runs the models it serves where it is, `ProviderCapability.hosts_model` (an SDK addition, set by the bundled Ollama app and `vllm-models`): only an instance of such a type on this machine is a local model.**
@@ -148,6 +149,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Where there is no keychain, the keychain switch in Settings → Security is unavailable and says why.**
 - **Settings → External access says when the control bridge is switched on but not listening yet, and that it starts listening the next time PersonalClaw starts.**
 - **A one-shot made on the Triggers page, or a decision's review, runs at its time and is in its history before it leaves the list, a late run says it ran late, and a schedule an app serves runs its action.**
+- **A sync that fails reads as failed on Settings → Backups → Sync, with the reason in plain words; the Doctor reports it for as long as it lasts, and a note says when it starts failing and when it works again.**
+- **Settings → Backups shows an Export or Snapshot it has just run, and the archive it made, without a reload.**
 - **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
 - **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
 - **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**

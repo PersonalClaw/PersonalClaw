@@ -1184,6 +1184,86 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_sync(_ctx: DoctorContext) -> ProbeResult:
+    """durability — is sync doing what the Backups page says it is?
+
+    🔴 WHY THIS EXISTS. A folder sync set up with the default encryption failed every run for want
+    of a passphrase, and the Doctor said nothing: the only words for it were in the gateway log. A
+    sync that keeps failing is a health state, so it is a row here; the failure note is the event,
+    raised once per streak (``durability.service._notify_sync``).
+
+    Reads the one status projection the Backups card reads (``durability.service.status``), so the
+    two cannot disagree, and says the failure in the same sentence (``SYNC_PROBLEMS``). Sync off,
+    or on with no transport chosen, is idle rather than broken. A failure FAILS this tier-3 check,
+    which degrades the durability card and nothing else.
+    """
+    from personalclaw.durability import service
+
+    try:
+        sync = (await asyncio.to_thread(service.status))["sync"]
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(
+            ok=False, detail=f"sync status unreadable: {exc}", remedy=_CHECK_CRASHED_REMEDY
+        )
+    evidence = {
+        key: sync.get(key)
+        for key in ("enabled", "transport", "encrypted", "passphrase_stored", "last_run")
+    }
+    if not sync.get("enabled"):
+        return ProbeResult(ok=True, detail="sync is off", evidence=evidence)
+    if not sync.get("transport"):
+        return ProbeResult(
+            ok=True,
+            detail="sync is on, but no transport is chosen, so nothing syncs",
+            evidence=evidence,
+        )
+    needs_passphrase = bool(sync.get("encrypted")) and not sync.get("passphrase_stored")
+    problem = sync.get("problem")
+    if problem and problem.get("code") == "passphrase" and not needs_passphrase:
+        return ProbeResult(
+            ok=True,
+            detail="the last sync found no passphrase; one is saved now, and the next sync uses it",
+            evidence=evidence,
+        )
+    if problem:
+        failures = int(problem.get("failures", 1) or 1)
+        streak = f" The last {failures} runs all failed." if failures > 1 else ""
+        return ProbeResult(
+            ok=False,
+            detail=f"{problem.get('message', '')}{streak}",
+            evidence={**evidence, "code": problem.get("code"), "failures": failures},
+            remedy=_no_automatic_fix(str(problem.get("remedy", ""))),
+        )
+    if needs_passphrase:
+        return ProbeResult(
+            ok=False,
+            detail=(
+                "Sync can't run yet: shards are encrypted for this transport, and no sync "
+                "passphrase is saved on this machine."
+            ),
+            evidence=evidence,
+            remedy=_no_automatic_fix(service.SYNC_PROBLEMS["passphrase"][1]),
+        )
+    last = float(sync.get("last_run") or 0)
+    if not last:
+        return ProbeResult(ok=True, detail="no sync has run yet", evidence=evidence)
+    return ProbeResult(ok=True, detail=f"last synced {_minutes_ago(last)}", evidence=evidence)
+
+
+def _no_automatic_fix(remedy: str) -> str:
+    """A remedy in the Doctor's voice for a failure no confirm-gated fix repairs."""
+    return f"No automatic fix — {remedy[:1].lower()}{remedy[1:]}" if remedy else ""
+
+
+def _minutes_ago(ts: float) -> str:
+    mins = int(max(0.0, time.time() - ts) // 60)
+    if mins < 1:
+        return "under a minute ago"
+    if mins < 120:
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    return f"{mins // 60} hours ago"
+
+
 async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
     """remote — can this dashboard be reached from a phone, and safely? (MOBILE-COMPANION S1)
 
@@ -2179,6 +2259,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_state_inventory,
             "Every state path is claimed by the manifest",
+        )
+    )
+    register_probe(
+        Probe(
+            "durability.sync",
+            "durability",
+            Tier.CAPABILITY,
+            _probe_sync,
+            "Sync is sending and receiving",
         )
     )
     register_probe(

@@ -476,6 +476,63 @@ def run_restore_drill(*, notifier=None) -> JobResult:
     )
 
 
+#: The Backups page's address, where every sync failure note sends the reader.
+SYNC_STATUS_URL = "#/settings/durability"
+
+#: Each way a sync run fails, in the words the Backups card, the Doctor and the failure note all
+#: use, and what to do about it. One table, so the three cannot describe one failure three ways.
+#: ``{reason}`` is the transport's own error, or the refusal's sentence, where the step has one.
+SYNC_PROBLEMS: dict[str, tuple[str, str]] = {
+    "passphrase": (
+        "Nothing was synced: shards are encrypted for this transport, and no sync passphrase was "
+        "saved on this machine.",
+        "Save a sync passphrase under Settings → Backups → Sync, and use the same one on every "
+        "machine that syncs with this one.",
+    ),
+    "salt": (
+        "Nothing was synced: the shared store's encryption salt could not be read or written.",
+        "Check that this machine can write to the transport's storage; the next sync tries again.",
+    ),
+    "pull": (
+        "Nothing was synced: reading the shared store failed ({reason}).",
+        "Check the transport's settings under Settings → Providers and that its storage is "
+        "reachable; the next sync tries again.",
+    ),
+    "push": (
+        "This machine's changes were not sent: writing to the shared store failed ({reason}).",
+        "Check the transport's settings under Settings → Providers and that its storage is "
+        "writable; the next sync tries again.",
+    ),
+    "refused": (
+        "The sync ran, and {reason}.",
+        "Nothing was written for those paths. Check what the other machine is sending.",
+    ),
+    "error": (
+        "The sync stopped with an error ({reason}).",
+        "The gateway log has the details; the next sync tries again.",
+    ),
+}
+
+#: A transport's error is quoted, not pasted: a cap keeps one sentence one sentence.
+_REASON_CHARS = 240
+
+
+def sync_problem(code: str, reason: str = "") -> tuple[str, str]:
+    """The sentence and the remedy for one failure code (:data:`SYNC_PROBLEMS`).
+
+    The one place a transport's error enters words a person reads, so it is masked here: an
+    error that quotes a storage address can carry the login in it, and the card, the Doctor and
+    the note must not show it.
+    """
+    from personalclaw.security import redact_or_withhold
+
+    sentence, remedy = SYNC_PROBLEMS.get(code, SYNC_PROBLEMS["error"])
+    reason = " ".join(redact_or_withhold(str(reason or "")).split())
+    if len(reason) > _REASON_CHARS:
+        reason = reason[: _REASON_CHARS - 1] + "…"
+    return sentence.format(reason=reason or "no reason given"), remedy
+
+
 def run_sync_job() -> JobResult:
     """Run one sync cycle against the configured transport, if sync is enabled (§4).
 
@@ -527,25 +584,118 @@ def run_sync_job() -> JobResult:
             logger.warning("durability: sync cycle raised", exc_info=True)
             _audit("durability_sync", f"failed: {exc}", outcome="denied")
             return JobResult(
-                "sync", ok=False, detail=str(exc), duration_secs=time.monotonic() - started
+                "sync",
+                ok=False,
+                detail=str(exc),
+                duration_secs=time.monotonic() - started,
+                extra={"failure": "error", "reason": str(exc)},
             )
     # A path another machine named outside what a sync may write is refused, and the run says
     # so as a failure: it is the one thing in a sync report its owner has to look at.
     ok = report.ok and not report.refused
     _audit("durability_sync", report.detail, outcome="allowed" if ok else "denied")
+    extra: dict = {
+        "rows_added": report.rows_added,
+        "rows_updated": report.rows_updated,
+        "rows_removed": report.rows_removed,
+        "seq_published": report.seq_published,
+        "refused": dict(report.refused),
+    }
+    if not ok:
+        from personalclaw.durability.shards import refused_sentence
+
+        failure = report.failure or "refused"
+        extra.update(
+            failure=failure,
+            reason=(
+                refused_sentence(report.refused)
+                if failure == "refused"
+                else report.error.split(": ", 1)[-1]
+            ),
+        )
     return JobResult(
         "sync",
         ok=ok,
         detail=report.detail,
         duration_secs=time.monotonic() - started,
-        extra={
-            "rows_added": report.rows_added,
-            "rows_updated": report.rows_updated,
-            "rows_removed": report.rows_removed,
-            "seq_published": report.seq_published,
-            "refused": dict(report.refused),
-        },
+        extra=extra,
     )
+
+
+def sync_stamp_fields(result: JobResult, *, at: float, previous: dict) -> dict:
+    """The `durability_state.json` fields one scheduled sync attempt contributes.
+
+    Sync keeps two records, and reading one as the other is how a run that sent nothing read
+    "Last sync just now":
+
+    * ``last_sync`` is the SCHEDULE stamp `_due()` measures. Every attempt writes it, a skip
+      and a failure included, so an erroring or unconfigured sync is held to the staleness
+      window instead of reaching for the remote every tick.
+    * ``last_sync_run`` … ``sync_failures`` are what a run DID, written only when one ran. A
+      skip records its reason and leaves the last outcome as it was.
+
+    Kept apart from :func:`job_stamp_fields` because a failure here extends a STREAK
+    (``sync_failing_since``, ``sync_failures``), so it is read against ``previous``.
+    """
+    fields: dict = {"last_sync": at, "last_sync_skipped": result.skipped}
+    if result.skipped:
+        return fields
+    fields.update(last_sync_run=at, last_sync_ok=bool(result.ok))
+    if result.ok:
+        fields.update(
+            last_sync_success=at,
+            sync_failure="",
+            sync_failure_reason="",
+            sync_failing_since=0.0,
+            sync_failures=0,
+        )
+        return fields
+    extra = result.extra or {}
+    streak = previous.get("last_sync_ok") is False
+    fields.update(
+        # The code and the transport's own words, not a finished sentence: `SYNC_PROBLEMS` stays
+        # the one source of the wording, including for a record written before it changed.
+        sync_failure=str(extra.get("failure", "") or "error"),
+        sync_failure_reason=str(extra.get("reason", "") or result.detail),
+        sync_failing_since=float(previous.get("sync_failing_since", 0) or 0) if streak else at,
+        sync_failures=(int(previous.get("sync_failures", 0) or 0) if streak else 0) + 1,
+    )
+    return fields
+
+
+def _notify_sync(previous: dict, fields: dict, notifier=None) -> None:
+    """Say a sync started failing, or started working again — once each, not once a run.
+
+    The same delivery the restore drill uses (`DashboardState.notify`), and `warning` for the
+    same reason: a sync that sends nothing is exactly what a minimum-severity filter must not
+    hide. A run that fails the way the last one did says nothing new, so it raises nothing —
+    the Backups card and the Doctor keep saying it for as long as it lasts. A NEW reason is
+    news, and says so.
+    """
+    if notifier is None or "last_sync_ok" not in fields:
+        return
+    was_failing = previous.get("last_sync_ok") is False
+    try:
+        if fields["last_sync_ok"] is False:
+            code = fields["sync_failure"]
+            if was_failing and previous.get("sync_failure") == code:
+                return
+            sentence, remedy = sync_problem(code, fields["sync_failure_reason"])
+            notifier(
+                "warning",
+                "Sync failed",
+                f"{sentence} {remedy}",
+                meta={"statusUrl": SYNC_STATUS_URL},
+            )
+        elif was_failing:
+            notifier(
+                "info",
+                "Sync is working again",
+                "The last sync went through.",
+                meta={"statusUrl": SYNC_STATUS_URL},
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("durability: sync notification skipped", exc_info=True)
 
 
 def _draft_conflict_proposals(home: Path) -> None:
@@ -844,9 +994,9 @@ def run_due_jobs(*, now: float | None = None, force: str = "", notifier=None) ->
         if force == "sync" or _due(state, "last_sync", stale, now=stamp):
             result = run_sync_job()
             results.append(result)
-            # Stamp even on a skip/failure so a disabled-but-enabled or erroring sync
-            # doesn't hammer the remote every tick — the staleness window rate-limits it.
-            state["last_sync"] = stamp
+            fields = sync_stamp_fields(result, at=stamp, previous=state)
+            _notify_sync(dict(state), fields, notifier)
+            state.update(fields)
 
     if results:
         save_state(state)
@@ -883,13 +1033,18 @@ def status() -> dict:
 
     cfg = _cfg()
     stale = float(getattr(cfg, "sync_stale_after_secs", 900) or 900)
+    from personalclaw.durability.crypto import PASSPHRASE_CREDENTIAL, passphrase_stored
+
     return {
         "enabled": enabled(),
         "export": _entry("last_export", HOURLY_SECS),
         "snapshot": _entry("last_snapshot", NIGHTLY_SECS),
         "drill": _entry("last_drill", DRILL_SECS),
         "sync": {
+            # `due` runs on the schedule stamp; `last_run` is the last run that HAPPENED, so a
+            # skip (no transport installed, a held lock) never reads as a sync.
             **_entry("last_sync", stale),
+            **_sync_outcome(state),
             "enabled": bool(getattr(cfg, "sync_enabled", False)),
             "transport": getattr(cfg, "sync_transport", "") or "",
             # The RESOLVED encryption verdict, not the raw tri-state: "auto" tells a user
@@ -898,7 +1053,38 @@ def status() -> dict:
             # explicitly"). Names/booleans only — never the passphrase or a key.
             "encrypt": str(getattr(cfg, "sync_encrypt", "auto") or "auto"),
             "encrypted": _resolved_encryption(cfg),
+            "passphrase_credential": PASSPHRASE_CREDENTIAL,
+            "passphrase_stored": passphrase_stored(),
         },
+    }
+
+
+def _sync_outcome(state: dict) -> dict:
+    """What the last sync run did, from :func:`sync_stamp_fields`' record.
+
+    ``ok`` is ``None`` until a run has happened: "never ran" is neither a pass nor a failure.
+    ``problem`` carries the plain sentence and its remedy (:data:`SYNC_PROBLEMS`) and how long
+    it has lasted, so a sync that keeps failing reads as one that keeps failing.
+    """
+    ran = float(state.get("last_sync_run", 0) or 0)
+    failed = bool(ran) and state.get("last_sync_ok") is False
+    problem = None
+    if failed:
+        code = str(state.get("sync_failure", "") or "error")
+        message, remedy = sync_problem(code, str(state.get("sync_failure_reason", "") or ""))
+        problem = {
+            "code": code,
+            "message": message,
+            "remedy": remedy,
+            "since": float(state.get("sync_failing_since", 0) or ran),
+            "failures": int(state.get("sync_failures", 0) or 1),
+        }
+    return {
+        "last_run": ran,
+        "ok": (not failed) if ran else None,
+        "last_success": float(state.get("last_sync_success", 0) or 0),
+        "problem": problem,
+        "skipped": str(state.get("last_sync_skipped", "") or ""),
     }
 
 

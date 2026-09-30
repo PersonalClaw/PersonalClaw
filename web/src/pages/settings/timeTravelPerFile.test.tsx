@@ -100,7 +100,8 @@ function stubPanel(opts: { op?: 'rollback' | 'revert'; applyError?: Error; previ
     drill: { last_run: 0, due_in_secs: 0, due: false },
     sync: {
       last_run: 0, due_in_secs: 0, due: false, enabled: false,
-      transport: '', encrypt: 'auto', encrypted: false,
+      transport: '', encrypt: 'auto', encrypted: false, ok: null, last_success: 0, problem: null, skipped: '',
+      passphrase_credential: 'PERSONALCLAW_SYNC_PASSPHRASE', passphrase_stored: false,
     },
   })
   vi.spyOn(api, 'durabilityArchive').mockResolvedValue({

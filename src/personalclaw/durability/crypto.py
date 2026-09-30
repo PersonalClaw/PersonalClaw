@@ -466,6 +466,17 @@ def load_passphrase() -> str:
     return get_credential(PASSPHRASE_CREDENTIAL) or ""
 
 
+def passphrase_stored() -> bool:
+    """Whether a sync passphrase is stored, asked by NAME: the value is never read to answer it.
+
+    What the Backups card and the Doctor ask before a first run, so "nothing syncs until you
+    save a passphrase" is said ahead of the failure rather than after it.
+    """
+    from personalclaw.config.credentials import credential_names
+
+    return PASSPHRASE_CREDENTIAL in credential_names()
+
+
 def codec_for(transport: SyncTransportProvider, *, setting: str = "auto") -> SyncCodec | None:
     """The codec for this transport, or ``None`` when encryption is off for it.
 
@@ -506,5 +517,6 @@ __all__ = [
     "ensure_salt",
     "encryption_enabled_for",
     "load_passphrase",
+    "passphrase_stored",
     "codec_for",
 ]

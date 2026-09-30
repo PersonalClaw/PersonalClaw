@@ -351,16 +351,40 @@ export interface DurabilityJob {
   due_in_secs: number
   due: boolean
 }
+/** Why the last sync run failed, in the server's words (the same sentence the Doctor and the
+ *  failure note say), what to do about it, and how long it has lasted. */
+export interface DurabilitySyncProblem {
+  /** `passphrase` · `salt` · `pull` · `push` · `refused` · `error`. */
+  code: string
+  message: string
+  remedy: string
+  /** Epoch seconds of the first failed run in this streak. */
+  since: number
+  /** Failed runs in a row. */
+  failures: number
+}
 /** The sync leg of the schedule. `transport` is the CONFIGURED transport's provider
  *  name — empty means none is chosen, which is why "no conflicts" on this instance means
  *  "sync never ran" rather than "sync is healthy". `encrypted` is the RESOLVED verdict for
  *  that transport, not the `encrypt` tri-state, so the panel can answer "are my bytes
- *  readable in that store?" instead of echoing "auto". */
+ *  readable in that store?" instead of echoing "auto".
+ *
+ *  `last_run` is the last run that HAPPENED (a skip is not one), and `ok` its outcome: `null`
+ *  until a run has happened. `due` still follows the schedule, skips included. The passphrase
+ *  travels as a credential NAME and a presence flag, never a value. */
 export interface DurabilitySyncStatus extends DurabilityJob {
   enabled: boolean
   transport: string
   encrypt: 'auto' | 'on' | 'off' | string
   encrypted: boolean
+  ok: boolean | null
+  /** Epoch seconds of the last run that went through; 0 = none has. */
+  last_success: number
+  problem: DurabilitySyncProblem | null
+  /** Why the latest scheduled attempt did no work; '' when it ran. */
+  skipped: string
+  passphrase_credential: string
+  passphrase_stored: boolean
 }
 export interface DurabilityStatus {
   enabled: boolean

@@ -55,6 +55,10 @@ class SyncCycleReport:
     pulled: PullReport | None = None
     pushed: PushReport | None = None
     error: str = ""
+    #: Which step stopped a failed cycle, as a code the service puts into words
+    #: (``service.SYNC_PROBLEMS``): ``passphrase`` (encryption is on and none is stored),
+    #: ``salt``, ``pull`` or ``push``. Empty when the cycle did not fail.
+    failure: str = ""
     skipped: str = ""
     # roll-ups for the service log / doctor
     rows_added: int = 0
@@ -155,13 +159,18 @@ def run_sync_cycle(
     # which would upload the user's whole state in the clear to storage they chose to encrypt.
     codec = None
     try:
-        from personalclaw.durability.crypto import SyncEncryptionError, codec_for
+        from personalclaw.durability.crypto import (
+            MissingPassphrase,
+            SyncEncryptionError,
+            codec_for,
+        )
 
         codec = codec_for(transport, setting=encrypt)
     except SyncEncryptionError as exc:
         logger.warning("sync cycle: encryption unavailable (%s)", exc)
         report.ok = False
         report.error = f"encryption: {exc}"
+        report.failure = "passphrase" if isinstance(exc, MissingPassphrase) else "salt"
         return report
     except Exception as exc:  # noqa: BLE001 — a bad cycle must not kill the service loop
         # The salt is read from the remote through the transport's listing and read, and a
@@ -170,6 +179,7 @@ def run_sync_cycle(
         logger.warning("sync cycle: reading the encryption salt failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"pull: {exc}"
+        report.failure = "pull"
         report.refused.update(_refused_by(exc))
         return report
 
@@ -197,6 +207,7 @@ def run_sync_cycle(
         logger.warning("sync cycle: pull failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"pull: {exc}"
+        report.failure = "pull"
         report.refused.update(_refused_by(exc))
         return report
 
@@ -222,6 +233,7 @@ def run_sync_cycle(
         logger.warning("sync cycle: push failed (%s)", exc, exc_info=True)
         report.ok = False
         report.error = f"push: {exc}"
+        report.failure = "push"
         report.refused.update(_refused_by(exc))
         return report
     return report
