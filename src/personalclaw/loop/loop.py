@@ -202,6 +202,29 @@ ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
 }
 
 
+#: What a running loop's views say while incident mode holds it (``held`` on the redacted views).
+#: A loop is unattended work, so it honours the switch the way cron, hooks, triggers and app
+#: workers do: it starts no cycle and makes no model call while the switch is on, keeps its status,
+#: and carries on by itself once the switch is off (``watchdog.LoopWatchdog._hold_for_incident``).
+INCIDENT_HOLD = (
+    "Held: incident mode is on, so this loop starts no new cycle and makes no model calls. "
+    "It carries on by itself once incident mode is turned off."
+)
+
+
+def held_reason(status: str) -> str:
+    """:data:`INCIDENT_HOLD` for a loop incident mode is holding right now, else ``""``.
+
+    Only a ``running`` loop is held: every other status is already not working (it is waiting on
+    its owner, not launched yet, or ended), and saying "held" there would name a cause it lacks.
+    """
+    if status != LoopStatus.RUNNING.value:
+        return ""
+    from personalclaw.guardrails.incident import incident_active
+
+    return INCIDENT_HOLD if incident_active() else ""
+
+
 @dataclass
 class Loop:
     """One autonomous loop of any kind.

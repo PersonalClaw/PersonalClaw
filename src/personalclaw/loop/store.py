@@ -39,6 +39,7 @@ from personalclaw.loop.loop import (
     Loop,
     LoopStatus,
     LoopStopReason,
+    held_reason,
 )
 from personalclaw.security import redact_for_display, redact_values_for_display
 from personalclaw.sqlite_compat import sqlite3
@@ -816,6 +817,7 @@ def get_redacted(loop_id: str) -> dict | None:
     # ("loop_judge", kind) — the FE thumbs attribute a verdict with no lookup.
     view["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
     view["pending_question"] = files.pending_question(loop_id)
+    view["held"] = held_reason(loop.status)
     # The third-party judge's per-cycle verdicts + the marginal-value trail back the
     # cockpit's ROI rail / verdict nodes (open-ended goals). The FE reads these off
     # the redacted view for the INITIAL render — without them the rail paints empty
@@ -916,6 +918,9 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
         # already carries the projection it counts.
         d["total_cycles"] = len(d["findings"])
         d["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
+        # Why a running loop is doing nothing, when incident mode is holding it (the same sentence
+        # the detail view carries), so a list row does not read "Running" through the hold.
+        d["held"] = held_reason(loop.status)
         # The dashboard ActiveWork widget renders the loop's question inline for
         # needs_input rows. Gate the per-row fs read on that status so the list
         # stays lean (a needs_input loop is the rare, blocked-on-you case).

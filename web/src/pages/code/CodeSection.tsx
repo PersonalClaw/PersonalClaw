@@ -152,7 +152,7 @@ const stageStatus = (p: Loop): Record<string, string> => (p.phase_status ?? {}) 
 // NON-genuinely (budget/deadline/cost exhaustion) → the synthetic 'ended_early' (warn tone
 // + label), so it doesn't read as an identical green "Completed". Shared helper so the
 // distinction matches everywhere.
-const effectiveStatus = (p: Loop): string => effectiveLoopStatus(p.status, p.stop_reason)
+const effectiveStatus = (p: Loop): string => effectiveLoopStatus(p.status, p.stop_reason, p.held)
 
 // Pill tone for the list rows — the shared map (18% bg for a touch more presence in
 // a scanned list). needs_input/review/ready=info, blocked/stagnant/ended_early=warn,

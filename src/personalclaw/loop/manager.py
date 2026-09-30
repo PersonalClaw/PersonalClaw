@@ -362,27 +362,38 @@ async def halt_worker_turns(state, loop_id: str) -> int:
     its loop is still armed before each re-prompt, which is what keeps it from starting a new turn
     once this one ends.
     """
-    from personalclaw.constants import dashboard_session_key
-
-    sessions = getattr(state, "sessions", None)
     halted = 0
     for key in worker_session_keys(state, loop_id):
-        session = state._sessions.get(key)
-        if session is None:
-            continue
-        queue = getattr(session, "_queue", None)
-        if queue:
-            queue.clear()
-        if not getattr(session, "running", False) or sessions is None:
-            continue
-        try:
-            await sessions.stop_turn(dashboard_session_key(key), force=False)
+        if await halt_turn(state, key):
             halted += 1
-        except Exception:
-            # A worker that will not stop must not keep the loop from reaching the state the user
-            # asked for — the nudge loop is already disarmed, so no further cycle starts.
-            logger.warning("loop: stopping the worker turn failed for %s", key, exc_info=True)
     return halted
+
+
+async def halt_turn(state, key: str) -> bool:
+    """Drop session *key*'s queued turns and stop the one running, through the chat Stop's own
+    path (:func:`halt_worker_turns` says why both). Returns whether a running turn was stopped.
+
+    Also what holds a loop's planner session for incident mode (``planning.runner``): the same
+    stop, on a session that is not one of the loop's workers."""
+    from personalclaw.constants import dashboard_session_key
+
+    session = state._sessions.get(key)
+    if session is None:
+        return False
+    queue = getattr(session, "_queue", None)
+    if queue:
+        queue.clear()
+    sessions = getattr(state, "sessions", None)
+    if not getattr(session, "running", False) or sessions is None:
+        return False
+    try:
+        await sessions.stop_turn(dashboard_session_key(key), force=False)
+        return True
+    except Exception:
+        # A worker that will not stop must not keep the loop from reaching the state the user
+        # asked for — the nudge loop is already disarmed, so no further cycle starts.
+        logger.warning("loop: stopping the worker turn failed for %s", key, exc_info=True)
+        return False
 
 
 async def pause(state, svc, loop_id: str) -> Loop:

@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pause, Play, Square, X, Check, MessageSquarePlus,
   Play as Start, Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles,
+  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -37,7 +37,7 @@ import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
 import { type SkillUsed, joinedSkillsOf, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
 import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -259,6 +259,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // (useLoopStream below) per the realtime doctrine; the slow poll only
   // backstops a dropped stream — it's not the primary update path anymore.
   const loadReport = useRef<() => void>(() => {})
+  const reloadLoop = useRef<() => void>(() => {})
   const everLoaded = useRef(false)
   useEffect(() => {
     let alive = true
@@ -319,6 +320,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       }
     }
     loadReport.current = loadOutputs
+    reloadLoop.current = () => { void load() }
     load()
     t = window.setInterval(load, 30_000)  // fallback only; SSE drives live
     return () => { alive = false; if (t) clearInterval(t) }
@@ -422,6 +424,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   }, [workerKey, cyclesSeen])
 
   const onWs = useCallback((m: WsMessage) => {
+    // The incident switch moved (the gateway watches it, the CLI's flips included): re-read the
+    // loop, whose `held` sentence says whether the switch is holding it.
+    if (refreshKinds(m).includes('incident')) { reloadLoop.current(); return }
     if (!belongsToLoop(m.data?.session as string | undefined, id)) return
     if (m.type === 'chat_status') { const s = String(m.data.status ?? ''); setStatusText(s); setActivity((a) => [...a, { kind: 'status', label: s }].slice(-40)) }
     else if (m.type === 'tool_call') setActivity((a) => [...a, { kind: 'tool', label: String(m.data.tool ?? 'tool'), detail: String(m.data.purpose ?? m.data.input_preview ?? '') }].slice(-40))
@@ -454,6 +459,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   if (!c) return <div className="flex h-full items-center justify-center text-on-surface-low">Loading…</div>
   const active = ACTIVE_LOOP_STATUSES.has(c.status)
   const running = c.status === 'running'
+  // Incident mode holds a running loop: its status stays `running`, and it starts no cycle and
+  // makes no model call until the switch is off, so nothing here may read as working.
+  const held = running && !!c.held
+  const working = running && !held
+  const shownStatus = loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason, c.held))
   const findings = [...(c.findings ?? [])].sort((a, b) => b.cycle - a.cycle)
   // The judge's third-party verdict per cycle (open-ended loops only). A cycle can
   // carry MORE THAN ONE verdict — e.g. a real scored verdict plus a final/degraded
@@ -566,16 +576,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // Header status line (status dot/spinner + cycle + elapsed + rubric score).
   const statusLine = (
     <span data-type="body-s" className="inline-flex items-center gap-s text-on-surface-var truncate">
-      {running ? (
+      {working ? (
         <span className="relative inline-flex items-center justify-center size-4">
           <motion.span aria-hidden className="absolute inset-[-7px] rounded-pill" style={{ background: thinkingGlow() }}
             animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 3.2, ease: 'easeInOut', repeat: Infinity }} />
           <Spark size={13} />
         </span>
       ) : (
-        <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+        <span className="size-1.5 rounded-pill" style={{ background: c.status === 'failed' ? 'var(--color-danger)' : c.status === 'complete' ? 'var(--color-primary)' : held ? 'var(--color-warn)' : 'var(--color-on-surface-low)' }} />
       )}
-      {running ? (statusText || 'Working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason))}
+      {working ? (statusText || 'Working') : shownStatus}
       {/* FEED liveness, distinct from the LOOP's status beside it. A running loop whose stream has
           dropped keeps saying "Working" while nothing arrives — indistinguishable from a loop that is
           simply thinking. Same dot-plus-WORD form `settings/DiagnosticsPanel` ships and
@@ -795,6 +805,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <p className="mt-1.5 opacity-75">Fix the underlying cause, then <span style={fvs(500)}>Resume</span> to continue from where it left off.</p>}
             </motion.div>
           )})()}
+          {held && (
+            <div role="status" data-type="body-s" className="flex items-center gap-s rounded-md px-m py-s" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)', color: 'var(--color-warn)' }}>
+              <CirclePause size={14} className="shrink-0" /> {c.held}
+            </div>
+          )}
           {judgeDegraded && running && (
             <div data-type="body-s" className="rounded-md px-m py-2 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
               <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.
@@ -920,13 +935,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                      <div className="rounded-lg bg-surface-container px-m py-2">
                        <div className="flex items-center gap-s">
                          <span className="relative inline-flex items-center justify-center size-5 shrink-0">
-                           {running && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
-                           <span className={running ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
+                           {working && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
+                           <span className={working ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
                          </span>
-                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.stop_reason)).toLowerCase()}</span>
-                         {running && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{fmt(curCycleElapsed)}</span>}
+                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {working ? (statusText || 'working') : shownStatus.toLowerCase()}</span>
+                         {working && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{fmt(curCycleElapsed)}</span>}
                        </div>
-                       {running && activity.length > 0 && <LiveSubsteps activity={activity} />}
+                       {working && activity.length > 0 && <LiveSubsteps activity={activity} />}
                      </div>
                    ) : null
                    // No plan → flat list (legacy): live cycle on top, then findings.
@@ -1115,7 +1130,9 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
               {active
                 ? (loop.goal_type === 'verifiable'
                     ? 'This goal produces a passing check, not a document — outcomes will appear as the worker saves them.'
-                    : (loop.total_cycles > 0
+                    // "Working on the first cycle" only while it is: not for a loop that is paused, or
+                    // held by incident mode (its status stays `running`, and it makes no call).
+                    : (loop.total_cycles > 0 || loop.status !== 'running' || loop.held
                         ? 'No outputs saved yet — they’ll appear here as the loop produces them.'
                         : 'Working on the first cycle… outputs appear here as the loop produces them.'))
                 : 'No outputs yet.'}

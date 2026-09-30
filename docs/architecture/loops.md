@@ -120,6 +120,20 @@ stretch's `started_at` (the trust window and deadline are measured from it), and
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.
 
+Incident mode (`personalclaw incident on`, or Settings → Guardrails) **holds** a running loops-table
+loop, the way it suspends cron, hooks, triggers and app workers. The idle runtime fires no nudge row
+while the switch is on (`triggers/idle_poll.py`, skip reason `incident_active`), so no cycle starts;
+the watchdog stops the turn in flight on every worker through the same stop a pause uses and does no
+cycle bookkeeping — no crediting, no done-ness check, no stage hook — until the switch is off
+(`watchdog.LoopWatchdog._hold_for_incident`); and the cycle driver abandons the cycle's re-prompts.
+A loop's planner passes are held the same way (`planning/runner.py`), without spending their time
+budget. The status stays `running`: a hold is not a pause, and the loop carries on by itself once the
+switch is off. Both redacted views carry the sentence that says why (`held`, `loop.held_reason`),
+which the loop surfaces show as **Held**. The time held is not worker silence (the unresponsive
+deadline restarts at the release), and a turn the hold stopped is not counted as a worker failure.
+The gateway watches the switch (`guardrails/incident.watch`) and sends the `refresh` hint naming
+`incident` and `loops` when it moves, the CLI's flips included, so open pages re-read at once.
+
 ### Mode: Attended and Unattended
 
 A loops-table loop's Mode (`loop.attended`) decides who answers its workers' tool calls. It is set on

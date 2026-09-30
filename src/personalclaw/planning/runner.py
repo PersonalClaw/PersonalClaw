@@ -24,6 +24,8 @@ import os
 import shutil
 import time
 
+from personalclaw.guardrails.incident import incident_active
+
 logger = logging.getLogger(__name__)
 
 # Bounded planner-loop tuning (a planner investigates + authors, it is not a long
@@ -197,8 +199,26 @@ async def run_planner_pass(
         # promptly instead of after 600s.
         dead_polls = 0
         _GRACE_POLLS = 2
+        # The planner runs unattended, so incident mode holds it with every other runner: its
+        # turn in flight stops, its next one is held where it fires (the idle runtime), and the
+        # time the switch is on is not the pass's to spend — it carries on once the switch is off
+        # rather than report a time-out that never happened.
+        last = time.time()
+        stopped_for_incident = False
         while time.time() < deadline:
             await asyncio.sleep(PLANNER_POLL_SECS)
+            now = time.time()
+            if incident_active():
+                deadline += now - last
+                last = now
+                if not stopped_for_incident:
+                    stopped_for_incident = True
+                    from personalclaw.loop.manager import halt_turn
+
+                    await halt_turn(state, skey)
+                continue
+            last = now
+            stopped_for_incident = False
             reclaim_misplaced(_ws, files_dir, _scratch, users_own)
             raw = read_sentinel(files_dir, sentinel)
             if raw:

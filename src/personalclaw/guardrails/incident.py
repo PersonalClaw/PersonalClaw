@@ -4,8 +4,10 @@ One flag — ``~/.personalclaw/incident.json`` (``{active, reason, started_at}``
 suspends ALL unattended work within one poll interval. There is no unified trigger
 store to flip (six independent stores), so incident mode does NOT mutate stores; it
 is checked at the execution seams (cron due-collection, hook fire, event-trigger
-fire, autonudge, heartbeat tick, inbox AI, non-interactive subagent spawn). Each
-seam gains one ``if incident_active(): skip``.
+fire, the idle runtime that fires loop cycles and idle triggers, the loop watchdog,
+memory consolidation and background compression, inbox AI, non-interactive subagent
+spawn). Each seam gains one ``if incident_active(): skip``, and nothing is lost by
+it: the skipped work is still due when the switch is turned off.
 
 **Interactive chat is untouched** — the user talking to their assistant during an
 incident is the point. Resume is EXPLICIT (``POST /api/incident/resume {confirm}``
@@ -13,13 +15,16 @@ or ``personalclaw incident off``); activation/resume are SEL-audited.
 
 The in-process mirror is refreshed from the file's mtime (the existing mtime-sync
 habit), so a flag flipped by the CLI in another process is picked up by the running
-gateway without a restart.
+gateway without a restart. :func:`watch` is how the gateway tells its open pages that
+the switch moved, so no page has to poll it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +34,10 @@ from personalclaw.atomic_write import atomic_write
 logger = logging.getLogger(__name__)
 
 _INCIDENT_FILENAME = "incident.json"
+
+#: How often :func:`watch` looks at the flag. One ``stat`` of one small file, so it is cheap to
+#: look often, and this is what bounds how late an open page follows ``personalclaw incident``.
+WATCH_INTERVAL_SECS = 2.0
 
 
 @dataclass(frozen=True)
@@ -114,6 +123,30 @@ def resume() -> IncidentState:
     _audit("incident_resumed")
     logger.warning("Incident mode resumed (unattended work re-enabled)")
     return state
+
+
+async def watch(
+    on_change: Callable[[IncidentState], None], *, interval: float | None = None
+) -> None:
+    """Call *on_change* each time the switch is found to have moved, until the gateway stops.
+
+    A flip is a change of ``active`` or of the reason, made here or by the CLI in another
+    process (the mtime refresh in :func:`get_incident` sees both). A watcher whose callback
+    raises keeps watching: a page that missed one change must still hear the next.
+    """
+    from personalclaw import shutdown_event
+
+    last = get_incident()
+    while not shutdown_event.is_set():
+        await asyncio.sleep(WATCH_INTERVAL_SECS if interval is None else interval)
+        current = get_incident()
+        if (current.active, current.reason) == (last.active, last.reason):
+            continue
+        last = current
+        try:
+            on_change(current)
+        except Exception:
+            logger.debug("incident watch callback failed", exc_info=True)
 
 
 def _write(state: IncidentState) -> None:

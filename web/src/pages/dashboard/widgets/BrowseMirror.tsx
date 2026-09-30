@@ -64,8 +64,7 @@ const KEPT_STEPS = 12
 const DRAWN_STEPS = 8
 
 /** Status changes rarely and the CLI can flip the kill switch out-of-band, so a slow safety-net
- *  poll (the `browse_kill`/`browse_auth_expired` frames land a change immediately). Same cadence
- *  and reason as IncidentBanner's incident poll. */
+ *  poll (the `browse_kill`/`browse_auth_expired` frames land a change immediately). */
 const STATUS_POLL_MS = 15000
 
 /** The grant prompt's paint. WARNING, not danger: nothing has failed and nothing has been refused

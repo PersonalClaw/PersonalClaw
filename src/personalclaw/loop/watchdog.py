@@ -243,6 +243,9 @@ class LoopWatchdog:
         #: instead of being lost — the property the gateway startup hook this replaced could
         #: not have.
         self._swept = False
+        #: Loops this watchdog is holding for incident mode — kept only to say, once each, that a
+        #: loop was held and that it carries on (the hold itself is re-decided every poll).
+        self._held: set[str] = set()
 
     # ── lifecycle ──
 
@@ -260,9 +263,17 @@ class LoopWatchdog:
     def record_turn_outcome(self, loop_id: str, *, ok: bool) -> None:
         """Fail-fast on consecutive failing worker turns (gateway _fire callback).
         After ``_MAX_CONSECUTIVE_ERRORS`` failures with no new finding between, fail
-        the loop. A success / new finding resets the streak."""
+        the loop. A success / new finding resets the streak.
+
+        A turn that ends while incident mode is on is not counted: no turn STARTS during an
+        incident (the loop is held), so one ending then is a turn the hold stopped, and what its
+        runtime reported on the way out says nothing about the worker."""
         if ok:
             self._consec_errors[loop_id] = 0
+            return
+        from personalclaw.guardrails.incident import incident_active
+
+        if incident_active():
             return
         n = self._consec_errors.get(loop_id, 0) + 1
         self._consec_errors[loop_id] = n
@@ -1065,6 +1076,11 @@ class LoopWatchdog:
                 self._last_activity.pop(cid, None)
                 self._consec_errors.pop(cid, None)
                 self._running_since.pop(cid, None)
+        self._held &= live_ids
+        from personalclaw.guardrails.incident import incident_active
+
+        # Read once per poll: every running loop is held, or none is.
+        incident = incident_active()
 
         for loop in running:
             cid = loop.id
@@ -1094,6 +1110,16 @@ class LoopWatchdog:
                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                 self._publish(cid, "needs_input")
                 continue
+
+            # 2a. Incident mode holds the loop: nothing below runs while the switch is on — no
+            # stage hook, no crediting, no done-ness check (a judge's model call or a command) —
+            # and the turn in flight is stopped. The two steps above only take trust away.
+            if incident:
+                await self._hold_for_incident(cid)
+                continue
+            if cid in self._held:
+                self._held.discard(cid)
+                logger.info("loop %s carries on: incident mode is off", cid)
 
             # 2b. A kind that runs work beside the loop's worker (code's task workers) is
             # scheduled on every poll, not only when a finding lands — so a stage fans out
@@ -1356,6 +1382,24 @@ class LoopWatchdog:
                     await manager.teardown_worker(self._svc, cid)
                     self._clear_liveness(cid)
                     self._publish(cid, "failed")
+
+    async def _hold_for_incident(self, cid: str) -> None:
+        """Hold running loop *cid* while incident mode is on — the switch every runner honours.
+
+        Its next cycle is already held where cycles fire (the idle runtime keeps a due nudge row
+        due), so this stops the cycle IN FLIGHT: every worker's running turn, through the same
+        stop a Pause uses (``manager.halt_worker_turns``). The status stays ``running`` — a hold
+        is not a Pause, which waits on its owner: the loop carries on by itself once the switch is
+        off, as a cron fire or an app worker does. Its views say why meanwhile
+        (``loop.held_reason``), and the time the switch is on is not the worker's silence, so the
+        liveness clock is kept current and the unresponsive deadline starts over at the release.
+        """
+        self._last_activity[cid] = time.time()
+        self._running_since.pop(cid, None)
+        if cid not in self._held:
+            self._held.add(cid)
+            logger.info("loop %s held: incident mode is on", cid)
+        await manager.halt_worker_turns(self._state, cid)
 
     def _stagnation_disabled(self, loop) -> bool:
         """Whether the stall signal is off for this loop — read off the DECLARED policy

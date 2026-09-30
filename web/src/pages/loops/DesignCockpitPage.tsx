@@ -17,8 +17,9 @@ import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
 import type { Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { downloadText, safeFilename } from '../../lib/download'
-import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES, type LoopAction } from '../../lib/loopStatus'
+import { ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES, effectiveLoopStatus, loopStatusLabel, type LoopAction } from '../../lib/loopStatus'
 import { useRunStream } from './useRunStream'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { phaseKey } from './loopPhases'
 import { CockpitPromptBar } from './CockpitPromptBar'
 import { LoopApprovals } from './LoopApprovals'
@@ -174,6 +175,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     onSnapshot: (l) => setLoop(l),
     onLifecycle: () => { loadLoop(); loadTokens(); loadArtifacts() },
   })
+  // The incident switch moved: re-read the loop, whose `held` says whether the switch holds it.
+  useChatSocket((m: WsMessage) => { if (refreshKinds(m).includes('incident')) loadLoop() }, null)
 
   const status = loop?.status
   // `active` answers "is this loop in flight?" — it gates the NUDGE affordance and withholds
@@ -358,7 +361,8 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
         style={{ background: 'var(--color-surface-container)' }}>
         <DesignPhaseTrail plan={(loop.plan ?? []) as LoopPhase[]} phaseStatus={loop.phase_status || {}}
           cycle={loop.total_cycles || 0} active={active} complete={status === 'complete'} />
-        <span data-type="caption" className="text-on-surface-var capitalize">{status}{loop.total_cycles ? ` · cycle ${loop.total_cycles}/${loop.max_cycles}` : ''}</span>
+        {/* The one status vocabulary, so a loop incident mode holds reads "Held", not "running". */}
+        <span data-type="caption" className="text-on-surface-var">{loopStatusLabel(effectiveLoopStatus(loop.status, loop.stop_reason, loop.held))}{loop.total_cycles ? ` · cycle ${loop.total_cycles}/${loop.max_cycles}` : ''}</span>
         {(loop.elapsed_seconds ?? 0) > 0 && (
           <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low" title="Elapsed (running time)">
             <Clock size={11} />{fmtDesignElapsed(loop.elapsed_seconds ?? 0)}

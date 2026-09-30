@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
+from personalclaw.guardrails.incident import incident_active
 from personalclaw.security import (
     MaskConflict,
     keep_masked_lines,
@@ -1249,6 +1250,10 @@ class HistoryConsolidator:
     Two consolidation paths:
     - Preferences/projects: triggered by message count (30 messages)
     - Daily history: triggered by idle time (3h default) or end of day
+
+    Both are model calls nobody typed, so neither runs while incident mode is on. A skipped pass
+    advances no offset: the messages are still unconsolidated, and the first pass after the switch
+    is off takes them.
     """
 
     def __init__(
@@ -1335,7 +1340,7 @@ class HistoryConsolidator:
     def maybe_consolidate(self, key: str) -> None:
         """Fire preferences/projects consolidation if message threshold exceeded."""
         self._last_activity[key] = _time.time()
-        if key in self._running:
+        if key in self._running or incident_active():
             return
         total = len(self._log._read_messages(key))
         prefs_off = self._prefs_offset.get(key, 0)
@@ -1362,9 +1367,9 @@ class HistoryConsolidator:
         it (see ``_consolidate`` ``auto_skills_eligible``). Respects the running
         guard so it never double-runs against the idle poll; ``_consolidate``
         clears the guard in its ``finally``. Returns True if it ran, False if a
-        consolidation was already in flight for this key.
+        consolidation was already in flight for this key or incident mode is on.
         """
-        if key in self._running:
+        if key in self._running or incident_active():
             return False
         self._running.add(key)
         await self._consolidate(key, include_history=True)
@@ -1400,6 +1405,8 @@ class HistoryConsolidator:
 
     def check_idle_sessions(self) -> None:
         """Check all tracked sessions for idle-based history consolidation."""
+        if incident_active():
+            return
         now = _time.time()
         for key, last in list(self._last_activity.items()):
             if (

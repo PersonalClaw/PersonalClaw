@@ -39,6 +39,8 @@ vi.mock('../lib/api', () => ({
     incidentResume: () => Promise.resolve({}),
   },
 }))
+// The banner re-reads on the gateway's incident hint; no socket is needed to paint it.
+vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {}, refreshKinds: () => [] }))
 
 // ── The frozen pre-change markup ────────────────────────────────────────────
 //
@@ -86,9 +88,11 @@ const IB_BEFORE = {
     'background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); ' +
     'padding-right: calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px));',
   iconClass: 'lucide lucide-triangle-alert shrink-0',
+  // ⚠️ UPDATED, in the copy this time and deliberately: loops now honour the switch, so the
+  // banner names them beside the other runners it suspends. Chrome and actions are unchanged.
   text:
-    'Incident mode is active — all unattended work (cron, hooks, triggers, subagents) is ' +
-    'suspended · disk full. Chat still works.Resume',
+    'Incident mode is active — all unattended work (cron, hooks, triggers, loops, subagents) ' +
+    'is suspended · disk full. Chat still works.Resume',
 }
 
 /** Lucide emits its canonical icon class first and then appends a DEPRECATED ALIAS

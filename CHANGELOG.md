@@ -156,6 +156,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat paints the lines the gateway adds to it as they happen: /compact's outcome, a turn's own compaction and the notice of a restart at the context threshold no longer wait for a reload.**
 - **The context ring says why it shows no reading: not measured yet, with the window the model is served with, or no window declared, and a chat opened later draws the ring it was last told.**
 - **⌘K finds a command by the words its row shows, in any order: "Go to Discover" opens Discover.**
+- **Incident mode holds a running goal, research, code or design loop: it starts no new cycle and makes no model calls while the switch is on, its page says Held and why, and it carries on by itself once the switch is off. Memory consolidation and background compression skip while it is on.**
+- **The incident banner appears and clears within seconds of the switch, from the dashboard or `personalclaw incident`, on a tab nobody is using.**
 - **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
 - **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
 - **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**

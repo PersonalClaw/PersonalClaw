@@ -21,7 +21,7 @@ import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
 import { useQuery } from '../../lib/data'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
 import {
@@ -469,6 +469,8 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
   const [activityBySession, setActivityBySession] = useState<Record<string, ActivityItem[]>>({})
   const workerKey = `loop-${id}`
   const onWs = useCallback((m: WsMessage) => {
+    // The incident switch moved: re-read the project, whose `held` says whether it is held.
+    if (refreshKinds(m).includes('incident')) { load(); return }
     const sess = String(m.data?.session ?? '')
     // Accept the main worker, this project's task-workers, AND a coexistence run-scoped
     // key (`run:<id>` / `workflow:run:<id>`) once a code loop runs as a template — the
@@ -513,7 +515,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     } else if (m.type === 'chat_done') {
       setActivityBySession((m0) => ({ ...m0, [sess]: [] }))  // that worker's cycle ended
     }
-  }, [workerKey])
+  }, [workerKey, load])
   useChatSocket(onWs, null)  // a live ticker: nothing replays it, and the project is polled above
 
   // After a queue/unqueue mutation, refetch the project (queued_task_ids) + bump
@@ -999,7 +1001,7 @@ export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProjec
   // `effectiveLoopStatus` for the same reason every other surface uses it: a `complete` project
   // whose `stop_reason` names a ceiling rather than `done` finished non-genuinely, and must not
   // read as a green "Completed".
-  const dispStatus = effectiveLoopStatus(p.status, p.stop_reason)
+  const dispStatus = effectiveLoopStatus(p.status, p.stop_reason, p.held)
   return (
     <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
       {/* Status leads: it is the one line always true about a run, and the answer to the question

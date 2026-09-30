@@ -34,9 +34,10 @@ export interface LoopStatusLook {
  *  (a dot, a ring): low-emphasis on-surface, never an attention hue. */
 const NEUTRAL_ACCENT = 'var(--color-on-surface-low)'
 
-//: Keyed by `LoopStatus` (backend) PLUS the synthetic `ended_early` — a `complete` loop whose
+//: Keyed by `LoopStatus` (backend) PLUS two synthetic keys: `ended_early` — a `complete` loop whose
 //: `stop_reason` names a ceiling rather than `done` finished non-genuinely (budget exhausted,
-//: deadline or cost ran out, DoD unmet). `tests/test_loop_status_vocabulary.py` rails this table
+//: deadline or cost ran out, DoD unmet) — and `held`, a `running` loop incident mode is holding
+//: (its view's `held` sentence says why). `tests/test_loop_status_vocabulary.py` rails this table
 //: against the backend enum in both drift directions, so a new status cannot ship unnamed here.
 const LOOP_STATUS: Record<string, LoopStatusLook> = {
   intake: { label: 'Analyzing', accent: 'var(--color-primary)' },
@@ -52,6 +53,7 @@ const LOOP_STATUS: Record<string, LoopStatusLook> = {
   failed: { label: 'Failed', accent: 'var(--color-danger)' },
   stopped: { label: 'Stopped', accent: '' },
   ended_early: { label: 'Ended early', accent: 'var(--color-warn)' },
+  held: { label: 'Held', accent: 'var(--color-warn)' },
 }
 
 /** Label + accent for a loop/code status. An unmapped/future status keeps its raw wire
@@ -94,8 +96,13 @@ export function loopStatusColor(status: string): string {
  *
  *  An absent/empty `stop_reason` reads as a genuine completion. Pre-#2321 rows predate the
  *  column and carry `''`, so a historical non-genuine finish loses the "Ended early" label —
- *  an accepted clean break under the pre-1.0 banner, not a dual path. */
-export function effectiveLoopStatus(status: string, stopReason?: string | null): string {
+ *  an accepted clean break under the pre-1.0 banner, not a dual path.
+ *
+ *  `held` is the loop view's sentence while incident mode holds a `running` loop: it starts no
+ *  cycle and makes no model call, so it must not read "Running". Its status stays `running` on the
+ *  wire (a hold is not a pause, and the loop carries on by itself), which is why this is derived. */
+export function effectiveLoopStatus(status: string, stopReason?: string | null, held?: string | null): string {
+  if (status === 'running' && held) return 'held'
   return status === 'complete' && stopReason && stopReason !== 'done' ? 'ended_early' : status
 }
 

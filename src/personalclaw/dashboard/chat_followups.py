@@ -218,13 +218,20 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
     """Fire-and-forget: emit follow-up chips for a just-completed interactive turn.
 
     Gated OFF when: config disabled, session restricted (temporary/incognito —
-    mirrors auto-title), a message is queued (the next turn is imminent), or the
-    turn errored. Broadcasts ``chat_followups`` on success; silent on any failure
-    or when no model is bound.
+    mirrors auto-title), a loop's hidden worker or planner session, a message is
+    queued (the next turn is imminent), or the turn errored. Broadcasts
+    ``chat_followups`` on success; silent on any failure or when no model is bound.
     """
     if not _followups_enabled():
         return
     if getattr(session, "is_restricted", False):
+        return
+    # Nobody reads a chip in a loop's hidden session, so the call there only spent — once per
+    # cycle, and once more for each turn a Pause or incident mode stopped, which is how a held loop
+    # still reached the model.
+    from personalclaw.dashboard.chat_runner import _LOOP_WORK_APPS
+
+    if getattr(session, "_app", "") in _LOOP_WORK_APPS:
         return
     if session._queue:
         return

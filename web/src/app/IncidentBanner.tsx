@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { api } from '../lib/api'
 import { notify } from './appSdk'
-import { useVisiblePoll } from '../lib/useVisiblePoll'
+import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { Button } from '../ui/Button'
 import { ERROR_SURFACE_PAINT, treatmentPaint } from '../design/errorTreatments'
 import { useErrorTreatment } from './personality'
@@ -10,8 +10,8 @@ import { useErrorTreatment } from './personality'
 /** A persistent banner shown on every page while incident mode is active
  *  (§4.4). Incident mode suspends all unattended work;
  *  this makes that state impossible to miss and offers one-click resume.
- *  Polls the incident endpoint on a slow cadence (it changes rarely, and the CLI
- *  can flip it out-of-band). Renders nothing when there is no incident. */
+ *  Reads the incident endpoint once, then again each time the gateway says the switch moved.
+ *  Renders nothing when there is no incident. */
 export function IncidentBanner() {
   const [state, setState] = useState<{ active: boolean; reason: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -19,9 +19,16 @@ export function IncidentBanner() {
   // `role="alert"` and the Resume action below are the same for every identity.
   const treatment = useErrorTreatment()
 
-  useVisiblePoll(() => {
+  const load = useCallback(() => {
     api.incident().then((s) => setState({ active: s.active, reason: s.reason })).catch(() => {})
-  }, 15000)
+  }, [])
+  useEffect(load, [load])
+  // PUSHED, not polled. A poll through `useVisiblePoll` stretched to a minute and more on a tab
+  // nobody touched, so the banner about the kill switch appeared 24 s after `personalclaw incident
+  // on` and stayed 77 s after `off`. The gateway watches the switch, the CLI's flips included, and
+  // sends a `refresh` naming `incident` when it moves; a reconnect re-reads, since a hint sent
+  // while the socket was down is lost.
+  useChatSocket((m: WsMessage) => { if (refreshKinds(m).includes('incident')) load() }, load)
 
   if (!state?.active) return null
 
@@ -65,7 +72,7 @@ export function IncidentBanner() {
       <AlertTriangle size={16} className={['shrink-0', treatment?.iconClass].filter(Boolean).join(' ')} />
       <span className="min-w-0 flex-1 truncate">
         <strong>Incident mode is active</strong> — all unattended work (cron, hooks, triggers,
-        subagents) is suspended{state.reason ? ` · ${state.reason}` : ''}. Chat still works.
+        loops, subagents) is suspended{state.reason ? ` · ${state.reason}` : ''}. Chat still works.
       </span>
       <Button variant="danger" size="xs" onClick={resume} loading={busy} className="shrink-0">
         Resume

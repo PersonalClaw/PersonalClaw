@@ -208,7 +208,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                 // doesn't read as a genuine completion. Mirrors effectiveLoopStatus on the Code
                 // surfaces — and `endedEarly` is READ OFF that one derivation rather than
                 // re-deriving the same distinction a second time three lines below it.
-                const dispStatus = effectiveLoopStatus(c.status, c.stop_reason)
+                const dispStatus = effectiveLoopStatus(c.status, c.stop_reason, c.held)
                 const endedEarly = dispStatus === 'ended_early'
                 // A GENUINELY completed loop reached its Definition of Done — show a full
                 // ring. An ended-early one didn't, so its ring tracks actual cycle
@@ -271,7 +271,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                   >
                     <RowHitTarget label={rowSubject([title])} />
                     {/* running: faint left glow accent */}
-                    {running && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: 'var(--color-ok)' }} />}
+                    {running && !c.held && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: 'var(--color-ok)' }} />}
                     <span className="shrink-0 inline-flex items-center justify-center size-10 rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}>
                       {(() => { const KI = loopKindMeta((c as { kind?: string }).kind).icon; return <KI size={20} className="text-primary" /> })()}
                     </span>
@@ -348,7 +348,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
  *  goal/general/design (code has its own section), so labels say "loop" and the
  *  goal-type glyph only renders for the goal kind. */
 function LoopPeek({ loop, onOpenFull }: { loop: GoalLoop; onOpenFull: () => void }) {
-  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason)
+  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason, loop.held)
   const running = loop.status === 'running'
   const kind = (loop as { kind?: string }).kind
   const shownCycleNo = shownCycle(loop.status, loop.total_cycles)

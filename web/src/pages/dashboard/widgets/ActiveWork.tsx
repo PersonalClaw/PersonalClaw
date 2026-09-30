@@ -53,7 +53,7 @@ export function ActiveWork({ navigate }: RouteProps) {
 function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navigate'] }) {
   // One label for the row: the heading a user reads AND the subject each action names.
   const loopLabel = loop.name || loop.task?.slice(0, 60) || 'Loop'
-  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason)
+  const dispStatus = effectiveLoopStatus(loop.status, loop.stop_reason, loop.held)
   const statusColor = loopStatusColor(dispStatus)
   const question = pendingText(loop)
   const [answering, setAnswering] = useState(false)
@@ -92,7 +92,7 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
         <button type="button" onClick={() => navigate(loopRoute(loop))} className="flex min-w-0 flex-1 items-center gap-s text-left">
           {pct != null
             ? <ProgressRing pct={pct} tone={statusColor} label={`Cycle progress for ${loop.name || loop.task || 'this loop'}`} />
-            : <StatusDot color={statusColor} pulse={loop.status === 'running'} />}
+            : <StatusDot color={statusColor} pulse={dispStatus === 'running'} />}
           <div className="min-w-0">
             <p data-type="title-m" className="truncate text-on-surface">{loopLabel}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">

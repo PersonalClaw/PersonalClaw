@@ -254,9 +254,12 @@ async def run_bg_compression_pass(
     none of it, so a few small, very old chats can no longer stall every pass behind them.
 
     Best-effort throughout: config-off, no-log, or a per-session error each degrade to
-    "did nothing", never to an exception into the maintenance tick.
+    "did nothing", never to an exception into the maintenance tick. Nothing runs while incident
+    mode is on: a summary is a model call nobody typed, and the chat is still eligible after.
     """
-    if log is None:
+    from personalclaw.guardrails.incident import incident_active
+
+    if log is None or incident_active():
         return []
     try:
         from personalclaw.config.loader import AppConfig

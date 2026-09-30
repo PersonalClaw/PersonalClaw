@@ -1114,8 +1114,18 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
     """Run skill/memory extraction over one session (or every session) on demand.
 
     The same engine the 3-hour idle poll and session-end triggers use; always
-    extracts from the full transcript (``include_history=True``).
+    extracts from the full transcript (``include_history=True``). Refused while incident mode
+    is on, as a trigger's Run now is: consolidation is automation's model call.
     """
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        print(
+            "⛔ Incident mode is on — memory consolidation is suspended.\n"
+            "   Resume with: personalclaw incident off",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     sessions, consolidator, conv_log = _build_consolidator()
 
     if getattr(args, "all", False):

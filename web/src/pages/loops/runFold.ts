@@ -80,7 +80,7 @@ export interface RunViewModel {
 
 // A run is "parked" (stopped at its active stage, not progressing) in these statuses;
 // the SdlcProgressCard + cockpit color it warn. `status` is the EFFECTIVE status.
-const PARKED = new Set(['blocked', 'needs_input', 'stagnant', 'failed', 'stopped', 'ended_early'])
+const PARKED = new Set(['blocked', 'needs_input', 'stagnant', 'failed', 'stopped', 'ended_early', 'held'])
 
 const GOAL_TYPE_LABEL: Record<string, string> = {
   open_ended: 'Open-ended', verifiable: 'Verifiable', monitor: 'Monitoring',

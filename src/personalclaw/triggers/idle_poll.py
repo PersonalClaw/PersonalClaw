@@ -101,6 +101,10 @@ SKIP_SESSION_BUSY = "session_mid_turn"
 #: state stays un-advanced so the fire retries once the service exists — same rule as
 #: `no_session_manager` below, and NEVER a fall-through to the wake path.
 SKIP_NUDGE_UNAVAILABLE = "nudge_service_unavailable"
+#: Incident mode is on. Every due row is held — a loop worker's next cycle and a plain idle trigger
+#: alike, since both start a turn nobody typed — and its state stays un-advanced, so it fires on
+#: the first poll after the switch is off.
+SKIP_INCIDENT = "incident_active"
 
 
 @dataclass
@@ -405,6 +409,14 @@ async def poll(
     now = now or time.time()
     fires, skipped = due_fires(store, now=now, base_dir=base_dir)
     if not fires:
+        return 0, skipped
+
+    # The kill switch, first, as it is on the clock path (`firepath`): an incident halts every
+    # unattended fire unconditionally, and this runtime is the one that starts a loop's cycles.
+    from personalclaw.guardrails.incident import incident_active
+
+    if incident_active():
+        skipped.extend({"trigger_id": f.trigger.id, "reason": SKIP_INCIDENT} for f in fires)
         return 0, skipped
 
     # ── Nudge rows ride the adapter, not the wake path. ──

@@ -5896,6 +5896,8 @@ export interface GoalLoop {
   attended: boolean; granularity: Granularity
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
+  /** Carried through from `Loop.held` — why incident mode is holding this running loop. */
+  held?: string
   success_criteria: string | null; verify_command?: string
   rubric?: string[]; best_score?: number; last_score?: number | null; ratchet_mode?: string
   marginal_scores?: number[]
@@ -6022,6 +6024,8 @@ export interface CodeProject {
   files_dir?: string
   max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
   stop_reason?: string
+  /** Why incident mode is holding this running project (`Loop.held`); `''` otherwise. */
+  held?: string
   success_criteria: string | null; verify_command?: string; test_command?: string
   // Computed for this host + workspace on each detail response; never persisted and
   // never used to rewrite the configured command.
@@ -6187,6 +6191,9 @@ export interface Loop {
   // conflicting `evidence` types: goal string vs code unknown), keyed by loop.kind.
   findings?: (LoopFinding | CodeFinding)[]; verdicts?: LoopVerdict[]; marginal_scores?: number[]
   nudges?: LoopNudge[]; pending_question?: { question: string; why?: string } | string | null
+  /** While incident mode holds a `running` loop, the sentence that says so (`loop.held_reason`);
+   *  `''` otherwise. The status stays `running` — `effectiveLoopStatus` reads this to say "Held". */
+  held?: string
   // Feedback Signal: the producer the finding thumbs attribute to
   // (("loop_judge", kind) — per-kind, each kind carries its own brief/rubric).
   feedback_producer?: FeedbackProducer

@@ -292,3 +292,54 @@ def test_an_armed_cycle_still_reprompts_when_no_finding_appeared(tmp_path: Path)
 
     asyncio.run(_go())
     assert len(calls) == 1 + _MAX_CYCLE_REPROMPTS, calls
+
+
+def test_a_reprompt_turn_reads_as_running_so_a_halt_reaches_it(tmp_path: Path) -> None:
+    """`run_chat` clears the session's task as each turn ends, so a cycle's RE-PROMPT turn ran on a
+    session that read idle — and `halt_worker_turns` skips an idle session. A Pause, a Stop or
+    incident mode that arrived during a re-prompt therefore stopped nothing: the re-prompt made its
+    model calls to the end (measured: 25 s of one after incident mode was on).
+
+    At `integration` the second turn sees `running == False`.
+    """
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.gateway import _MAX_CYCLE_REPROMPTS, GatewayOrchestrator
+
+    cfg = AppConfig()
+    with patch.object(cfg, "load_credentials", return_value={}):
+        orch = GatewayOrchestrator(cfg, no_dashboard=False, no_crons=True, no_open=True)
+    key = "loop-abcd9999"
+    session = _LoopSession(key)
+    dstate = MagicMock()
+    dstate._sessions = {key: session}
+    dstate._background_tasks = set()
+    dstate.sessions.get_provider.return_value = MagicMock(start_fresh_turn_session=AsyncMock())
+    orch.dashboard_state = dstate
+    orch.loop_watchdog = None
+    running_at_start: list[bool] = []
+
+    async def _fake_run_chat(_state: Any, sess: Any, _msg: str) -> None:
+        running_at_start.append(sess.running)
+        sess.task = None  # what `run_chat`'s own finally does as a turn ends
+
+    nudge = MagicMock(
+        id="N1", session_name=key, message="do one cycle", stop_sentinel_path="", cycle_count=0
+    )
+
+    async def _go() -> None:
+        with (
+            patch("personalclaw.gateway.autonudge_enabled", return_value=True),
+            patch("personalclaw.gateway.AutoNudgeService", _FakeNudgeService),
+            patch("personalclaw.dashboard.chat.run_chat", _fake_run_chat),
+            patch("personalclaw.loop.files.get_findings", lambda _lid: []),
+            patch("personalclaw.loop.files.loop_dir", lambda _lid: tmp_path),
+        ):
+            await orch._init_autonudge()
+            svc = _FakeNudgeService.last
+            svc.rows[key] = _Nudge("N1", key)
+            assert await svc.on_fire(nudge) is True
+            task = session.task
+            await asyncio.wait_for(task, timeout=10)
+
+    asyncio.run(_go())
+    assert running_at_start == [True] * (1 + _MAX_CYCLE_REPROMPTS), running_at_start

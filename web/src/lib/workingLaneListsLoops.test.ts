@@ -45,6 +45,11 @@ describe('the Working lane', () => {
     expect(lanes.working).toEqual([])
   })
 
+  it('does not card a loop incident mode holds — its status stays running, and it is not working', () => {
+    const held = mkLoop({ id: 'h', kind: 'goal', run_id: undefined, held: 'Held: incident mode is on.' })
+    expect(toLanes([], [], [], [held]).working).toEqual([])
+  })
+
   it("a loops-table loop's worker session is ONE card — the loop's", () => {
     const goal = mkLoop({ id: 'g1', kind: 'goal', run_id: undefined, session_key: 'loop-g1' })
     const working = toLanes([], [], [mkSession({ key: 'loop-g1', title: 'Untitled chat' }), mkSession()], [goal]).working

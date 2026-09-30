@@ -472,6 +472,8 @@ class GatewayOrchestrator:
         self._clock_task: "asyncio.Task[None] | None" = None  # S100 unified clock loop
         self._reaper_task: "asyncio.Task[None] | None" = None  # S106 trigger reaper
         self._task_due_task: "asyncio.Task[None] | None" = None  # F-31 task due-date notices
+        # Tells the open pages when the incident switch moves (`_start_incident_watch`).
+        self._incident_watch_task: "asyncio.Task[None] | None" = None
         # The event bus's router (`triggers.event_fire`): fires `kind: "event"` triggers.
         self._event_router: Any = None
         # A staged auto-update waiter that HOLDS until in-flight work drains,
@@ -3398,12 +3400,15 @@ class GatewayOrchestrator:
             def _cycle_still_armed(_sess: Any) -> bool:
                 """Is the loop that fired this cycle still armed to run it?
 
-                Two facts, both required: the session is still the one the dashboard has
-                registered under its key (a delete pops it), and the nudge loop that fired the
-                cycle still exists and is active (a pause deactivates it, a stop removes it).
+                Three facts, all required: incident mode is off (the switch holds every loop),
+                the session is still the one the dashboard has registered under its key (a
+                delete pops it), and the nudge loop that fired the cycle still exists and is
+                active (a pause deactivates it, a stop removes it).
                 """
+                from personalclaw.guardrails.incident import incident_active
+
                 key = str(getattr(_sess, "key", "") or "")
-                if not key or dstate._sessions.get(key) is not _sess:
+                if incident_active() or not key or dstate._sessions.get(key) is not _sess:
                     return False
                 nudge_svc = self.autonudge_svc
                 armed = nudge_svc.get_by_session(key) if nudge_svc is not None else None
@@ -3490,17 +3495,27 @@ class GatewayOrchestrator:
                             else _CYCLE_REPROMPT_MSG
                         )
                         _sess.append("nudge", retry_msg, "msg msg-nudge")
+                        # The re-prompt is this cycle's turn too, so the session reads as
+                        # running through it. `run_chat` clears `task` as each turn ends, and a
+                        # session reading idle is one a Pause, a Stop or incident mode does not
+                        # stop (`manager.halt_turn`): the re-prompt then ran on to its end.
+                        _sess.task = asyncio.current_task()
                         await _run_one(_sess, retry_msg, turn_timeout)
                 finally:
                     _sess._suppress_autonudge_rearm = False
-                    # Re-arm the idle timer ONCE now the logical cycle is done.
+                    # Re-arm the idle timer ONCE now the logical cycle is done. A turn that ended
+                    # with incident mode on was stopped by the hold, so it is not the worker's
+                    # error (three in a row would switch the loop's cycles off for good).
                     try:
+                        from personalclaw.guardrails.incident import incident_active
                         from personalclaw.triggers.nudge import get_instance as _an_get
 
                         _an = _an_get()
                         if _an is not None:
                             _an.notify_turn_complete(
-                                _sess.key, errored=getattr(_sess, "_last_turn_errored", False)
+                                _sess.key,
+                                errored=getattr(_sess, "_last_turn_errored", False)
+                                and not incident_active(),
                             )
                     except Exception:
                         logger.debug("re-arm after cycle failed for %s", _sess.key, exc_info=True)
@@ -4933,6 +4948,20 @@ class GatewayOrchestrator:
             # No approval survives a restart, so an Inbox row still asking for one from the
             # previous run is asking for nothing — close those before anyone opens them.
             self.dashboard_state.close_orphaned_approval_rows()
+            self._start_incident_watch()
+
+    def _start_incident_watch(self) -> None:
+        """Tell every open page when the incident switch moves — the CLI's flips included, which
+        this process learns of only by looking. The banner and the loop views re-read on the
+        hint instead of polling a switch that rarely changes and must never be followed late."""
+        from personalclaw.guardrails import incident
+
+        state = self.dashboard_state
+        if state is None:
+            return
+        self._incident_watch_task = asyncio.create_task(
+            incident.watch(lambda _st: state.push_refresh("incident", "loops"))
+        )
 
     async def _init_api_server(self) -> None:
         """Start a minimal API-only HTTP server for MCP tool transport."""
@@ -5030,6 +5059,7 @@ class GatewayOrchestrator:
                     self._reaper_task,
                     self._task_due_task,
                     self._staged_apply_task,
+                    self._incident_watch_task,
                 ],
                 what="gateway background services",
             ),

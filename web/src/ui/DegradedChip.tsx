@@ -31,9 +31,8 @@ function useCaseLabel(uc: string): string {
 
 /** A compact shell chip shown when any model-dependent surface is running on its
  *  no-model floor. Self-polls the degraded endpoint on a
- *  slow cadence (the state changes rarely — a provider comes/goes), exactly like
- *  IncidentBanner; it does NOT use DashboardLive, which only wraps the dashboard
- *  page, not the shell. Renders nothing when every surface has a model. Click to
+ *  slow cadence (the state changes rarely — a provider comes/goes); it does NOT use
+ *  DashboardLive, which only wraps the dashboard page, not the shell. Renders nothing when every surface has a model. Click to
  *  expand a popover listing each degraded surface, its floor, and its backlog. */
 export function DegradedChip() {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)

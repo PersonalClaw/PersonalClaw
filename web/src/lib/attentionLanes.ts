@@ -92,7 +92,7 @@ export type ActivityInput = Pick<ChatSession, 'key' | 'title' | 'running' | 'sto
 /** `GET /api/loops` rows — the second in-flight evidence (see `toLanes`). A RUN-BACKED loop (one
  *  carrying `run_id`, PP-16) has no chat session at all: its stages are subagents, so the sessions
  *  above never see it. Optional, like `activity`. */
-export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id'>
+export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 'total_cycles' | 'max_cycles' | 'started_at' | 'session_key' | 'run_id' | 'held'>
 
 /** `GET /api/workflows/runs?status=running` rows — the third in-flight evidence. A run
  *  started from Workflows, by a trigger or by a project is neither a chat session nor a loop, so
@@ -448,8 +448,8 @@ export function toLanes(
 
   // ── Running LOOPS. A General loop was working while this lane said "Nothing
   // is running right now" — it is run-backed, so no chat session carried it. A loop is carded when
-  // it is `running` (a parked loop is not working, and one waiting on the user is already an inbox
-  // row). A loops-table loop's workers ARE chat sessions, so every session of a carded loop is
+  // it is `running` and nothing holds it (a parked loop is not working — paused, or held by incident
+  // mode, whose status stays `running` — and one waiting on the user is already an inbox row). A loops-table loop's workers ARE chat sessions, so every session of a carded loop is
   // skipped below: one loop, one card, and the loop's card is the one that names it and opens its
   // cockpit. `carded` holds the loops given a card here; `loopsById` every loop in the snapshot.
   const loopsById = new Map<string, LoopInput>()
@@ -461,7 +461,7 @@ export function toLanes(
     if (id === '') continue
     loopsById.set(id, l)
     if (typeof l.session_key === 'string' && l.session_key !== '') loopBySessionKey.set(l.session_key, id)
-    if (l.status !== 'running') continue
+    if (l.status !== 'running' || l.held) continue
     carded.add(id)
     const cycle = shownCycle(l.status, Number(l.total_cycles) || 0)
     out['working'].push({
