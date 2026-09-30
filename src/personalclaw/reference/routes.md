@@ -576,7 +576,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/models/local/{provider}/selftest` — a real per-capability inference (LMMV §6).
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `DELETE /api/models/rates` — remove the rate set for one key. Answers the new view.
-- `GET /api/models/rates` — the rates you set, and what each bound model is counted at.
+- `GET /api/models/rates` — the rates you set, and what each bound or recent model costs.
 - `PUT /api/models/rates` — set the rate for one key.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).

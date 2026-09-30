@@ -78,13 +78,16 @@ class InProcessCompaction:
         ``stream_options`` reports no usage), and it is also the case the shared table
         answers with an architectural maximum — so resolving it as any other model would
         divide by a number up to ~31x too large and produce an estimate that can never
-        cross the threshold this backstop exists to cross. The local-ness signal is the one
-        rule for "on this machine" (``llm.registry.served_on_this_machine``), asked of the
-        entry the provider was built for (``served_ref``), not a second one; the per-binding
-        ``context_window`` override the provider popped out of its options overrides both.
+        cross the threshold this backstop exists to cross. The local-ness signal is whether
+        the entry the provider was built for (``served_ref``) sends its requests to this
+        machine (``llm.registry.sends_to_this_machine``), which also counts an OpenAI-compatible
+        endpoint here, whatever runs behind it: a proxy for a cloud model compacts a little
+        early, which is cheap, while a local runtime reached that way and estimated against a
+        cloud model's window would never compact. The per-binding ``context_window`` override
+        the provider popped out of its options overrides both.
         """
         from personalclaw import context_compaction as cc
-        from personalclaw.llm.registry import served_on_this_machine
+        from personalclaw.llm.registry import sends_to_this_machine
         from personalclaw.model_windows import model_context_window
 
         chars = cc.total_chars(self._messages)
@@ -93,7 +96,7 @@ class InProcessCompaction:
         served = str(getattr(self._model, "served_ref", "") or "")
         window_tokens = model_context_window(
             self.agent_model or None,
-            local=served_on_this_machine(served.split(":", 1)[0]),
+            local=sends_to_this_machine(served.split(":", 1)[0]),
             override=getattr(self._model, "context_window", None),
         )
         if window_tokens <= 0:

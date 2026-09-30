@@ -55,6 +55,20 @@ describe('Daily budget', () => {
     expect(text).toContain('Your chat turns are not capped.')
   })
 
+  it('says what the dollar cap holds: calls running together, no unpriced model, no free one', async () => {
+    // Calls fanned out together used to pass one $0 reading and spend 2.6x the cap, a model with
+    // no price ran as if free, and a free local one was refused past the cap. The line says what
+    // it guarantees now.
+    const text = (await mount(BUDGET)).container.textContent ?? ''
+    expect(text).toContain(
+      'A call that costs money starts only when what it may cost fits in what is left, beside '
+      + 'what the calls already running have set aside. A model with no price is refused, and '
+      + 'one that costs nothing is not limited by it.',
+    )
+    const tokensOnly = await mount({ ...BUDGET, max_dollars_per_day: 0, max_tokens_per_day: 50000 })
+    expect(tokensOnly.container.textContent ?? '').not.toContain('A call that costs money')
+  })
+
   it('says how many calls the dollar total leaves out, rather than letting them read as free', async () => {
     // A call nothing priced is charged as one the cap could not count. Shown as the whole spend,
     // $0.2500 told the owner those calls were free.

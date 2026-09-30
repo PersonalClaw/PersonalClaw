@@ -16,10 +16,13 @@ effective rate, which resolves through a **total, explicit precedence**:
    tool must let its owner correct them without shipping a new app. Read fresh on every call
    (stat-keyed memo), so a change is the answer on the very next call with **no restart-order
    dependency**.
-2. **local** — a provider entry whose endpoint is on this machine prices ``0.0``: its cost axis
-   is latency/energy, not dollars. This is a real, known price, NOT an absence. Where the
-   endpoint is decides it, never what kind of provider it is
-   (:func:`personalclaw.llm.registry.served_on_this_machine`).
+2. **local** — a model this machine serves itself prices ``0.0``: its cost axis is
+   latency/energy, not dollars. This is a real, known price, NOT an absence. The model runs here
+   when its entry's type runs its models inside the gateway, or runs them where its endpoint is
+   and that endpoint is on this machine (:func:`personalclaw.llm.registry.served_on_this_machine`).
+   An endpoint on this machine alone does not make a model free: an OpenAI-compatible instance
+   there may be a proxy for a paid cloud API, so it is priced by the tiers below, by its model's
+   id, and is unpriced when none of them knows that id.
 3. **app default** — the declaration of the app that registered the entry's TYPE:
    :attr:`~personalclaw.sdk.provider_helpers.BrandedProviderSpec.pricing`
    (``{model_pattern: {in_per_mtok, out_per_mtok}}``), read from the live app registration, so a
@@ -32,9 +35,10 @@ effective rate, which resolves through a **total, explicit precedence**:
 
 **Absent is None, never 0.0.** A fabricated zero would report an unpriced cloud model as *free*,
 which is the one wrong answer a spend meter must never give. ``0.0`` is reserved for prices we
-actually know are zero (tier 2, or an explicit overlay/app entry). So a price says whether it is
-known (:attr:`CallPrice.priced`), and a cap that holds an unpriced call says so rather than
-counting it as free (``guardrails.budgets.SpendMeter``).
+actually know are zero (tier 2, or an explicit overlay/app entry: a price of $0 set for an
+instance, ``work:*``, is how its owner declares it free). So a price says whether it is known
+(:attr:`CallPrice.priced`), and a dollar cap refuses a call it has no price for rather than
+counting it as free (``guardrails.budgets.SpendMeter.admit``).
 
 Every read is **fail-open** to the next tier: an unreadable or corrupt overlay logs once and the
 tier below answers, and a lookup that fails outright reads as unpriced. Pricing never breaks a
@@ -118,6 +122,17 @@ class ModelRate:
             + (cache_creation_tokens or 0) * write_rate
         ) / 1_000_000.0
         return round(cost, 6)
+
+    def dearest_per_mtok(self) -> tuple[float, float]:
+        """USD per 1M prompt and answer tokens at the most this rate bills a token of each: a
+        prompt's at the dearest of its input, cache-read and cache-write rates. What a call about
+        to be made sets aside is weighed at it, before anyone knows how its prompt is billed."""
+        prompt = max(
+            self.in_per_mtok,
+            self.cache_read_per_mtok or 0.0,
+            self.cache_write_per_mtok or 0.0,
+        )
+        return prompt, self.out_per_mtok
 
     def to_dict(self) -> dict[str, float]:
         out = {"in_per_mtok": self.in_per_mtok, "out_per_mtok": self.out_per_mtok}
@@ -348,15 +363,16 @@ def _rate_fields(rate: ModelRate) -> dict[str, float | None]:
     }
 
 
-def rates_view(refs: Iterable[str], *, home: Path | None = None) -> dict[str, Any]:
+def rates_view(models: Iterable[tuple[str, str]], *, home: Path | None = None) -> dict[str, Any]:
     """What Settings → Usage → Model prices shows.
 
     ``rates`` — every rate set in the overlay, by key; a row that is no rate is not in effect and
-    not listed. ``models`` — each model *refs* names (the models the uses are bound to) with the
-    rate a call to it is counted at and where that rate comes from (``source``: ``overlay``,
-    ``local``, ``app_default``, ``builtin``), or ``priced: false`` when nothing prices it.
-    ``unreadable`` — why the overlay could not be read, when it could not: no rate in it is then in
-    effect, and a change is refused until it is fixed or removed.
+    not listed. ``models`` — each ``(provider, model)`` *models* names (the models the uses are
+    bound to, and the ones that were used lately) with the rate a call to it is counted at and
+    where that rate comes from (``source``: ``overlay``, ``local``, ``app_default``, ``builtin``),
+    or ``priced: false`` when nothing prices it, keyed by its ``ref``, the spelling a price is set
+    under. ``unreadable`` — why the overlay could not be read, when it could not: no rate in it is
+    then in effect, and a change is refused until it is fixed or removed.
     """
     unreadable = ""
     try:
@@ -369,20 +385,19 @@ def rates_view(refs: Iterable[str], *, home: Path | None = None) -> dict[str, An
         rate = ModelRate.from_obj(value, source="overlay")
         if isinstance(key, str) and rate is not None:
             rows.append({"key": key, **_rate_fields(rate)})
-    models: list[dict[str, Any]] = []
-    for ref in dict.fromkeys(str(r) for r in refs):
-        provider, _, model = ref.partition(":")
+    listed: list[dict[str, Any]] = []
+    for provider, model in dict.fromkeys((str(p), str(m)) for p, m in models):
         if not provider or not model:
             continue  # a ref that names no model has no model to price
-        rate = _effective_rate(provider, model, home)
+        rate = effective_rate(provider, model, home)
         entry: dict[str, Any] = {
-            "ref": ref,
+            "ref": ref_of(provider, model),
             "priced": rate is not None,
             "source": rate.source if rate is not None else "",
         }
         entry.update(_rate_fields(rate) if rate is not None else dict.fromkeys(RATE_FIELDS))
-        models.append(entry)
-    return {"rates": rows, "models": models, "unreadable": unreadable}
+        listed.append(entry)
+    return {"rates": rows, "models": listed, "unreadable": unreadable}
 
 
 # ── Resolution ───────────────────────────────────────────────────────────────────────────
@@ -487,8 +502,12 @@ def rate_for(provider: str, model: str, *, home: Path | None = None) -> ModelRat
     return _builtin_rate(model)
 
 
-def _effective_rate(provider: str, model: str, home: Path | None) -> ModelRate | None:
-    """:func:`rate_for`, with a lookup that fails outright read as no rate: unpriced, not free."""
+def effective_rate(provider: str, model: str, home: Path | None = None) -> ModelRate | None:
+    """:func:`rate_for`, with a lookup that fails outright read as no rate: unpriced, not free.
+
+    What a call is priced at when it settles (:func:`price_call`) and weighed at before it starts:
+    the spend caps set aside what a call about to be made may cost at this rate, and refuse one
+    it is ``None`` for (``guardrails.budgets.SpendMeter.admit``)."""
     try:
         return rate_for(provider, model, home=home)
     except Exception:  # noqa: BLE001 — pricing never breaks a call; an unknown is unpriced
@@ -517,7 +536,7 @@ def price_call(
     reported = max(0.0, float(reported_usd or 0.0))
     if reported > 0.0:
         return CallPrice(round(reported, 6), True, "reported")
-    rate = _effective_rate(provider, model, home)
+    rate = effective_rate(provider, model, home)
     if rate is None:
         return CallPrice(0.0, False, "")
     dollars = rate.cost(
@@ -572,7 +591,7 @@ def cache_savings_usd(
     the families that bill one), returned as-is rather than clamped: a cache write genuinely costs
     more than the uncached call it replaces, and the saving only materializes on the later reads.
     """
-    rate = _effective_rate(provider, model, home)
+    rate = effective_rate(provider, model, home)
     if rate is None:
         return None
     actual = rate.cost(
@@ -597,6 +616,7 @@ __all__ = [
     "RatesUnreadable",
     "cache_savings_usd",
     "clear_rate",
+    "effective_rate",
     "load_overlay",
     "price_call",
     "price_event",

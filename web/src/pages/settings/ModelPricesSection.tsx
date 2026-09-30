@@ -11,11 +11,12 @@ import { InlineLoadError, ListSkeleton } from '../../ui/ListScaffold'
 /** "Model prices" — the rate each model's calls are counted at, and where one is set.
  *
  *  A price is what the daily dollar cap, this page's dollars and cost-aware routing count a model's
- *  calls at. It is the first of: a price set here, this machine's known $0, the provider app's own,
- *  and PersonalClaw's shipped table. A model none of them prices is unpriced — its calls count
- *  toward no dollar figure, and each figure says how many it leaves out — and this is where it
- *  gets one. Every field `model_rates.json` holds is set here (`PUT /api/models/rates`), so the
- *  file needs no hand edit. */
+ *  calls at. It is the first of: a price set here, the known $0 of a model this machine serves
+ *  itself, the provider app's own, and PersonalClaw's shipped table. A model none of them prices is
+ *  unpriced — its calls count toward no dollar figure, each figure says how many it leaves out, and
+ *  a daily dollar cap refuses them — and this is where it gets one, $0 declaring it free. Listed:
+ *  each model a use is bound to and each one spent on lately. Every field `model_rates.json` holds
+ *  is set here (`PUT /api/models/rates`), so the file needs no hand edit. */
 const SOURCE_LABEL: Record<Exclude<ModelRateSource, ''>, string> = {
   overlay: 'your price',
   local: 'free: it runs on this machine',
@@ -200,7 +201,7 @@ export function ModelPricesSection() {
 
   return (
     <Section title="Model prices"
-      hint="What a model's calls are counted at by the daily dollar cap, this page and cost-aware routing. A price set here comes first; a model nothing prices counts toward no dollar figure until it has one.">
+      hint="What a model's calls are counted at by the daily dollar cap, this page and cost-aware routing: each model your uses are bound to, and each one spent on in the last 30 days. A price set here comes first. A model nothing prices counts toward no dollar figure, and a daily dollar cap refuses its calls, until it has one; a price of $0 declares it free.">
       <div className="flex flex-col gap-s">
         {shown.unreadable && (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-2.5 text-on-surface-var" role="status">
@@ -224,7 +225,7 @@ export function ModelPricesSection() {
                     {m.priced ? (
                       <><RateLine rate={m} /> — {SOURCE_LABEL[m.source as Exclude<ModelRateSource, ''>] ?? m.source}</>
                     ) : (
-                      <span className="text-warning">No price: its calls count toward no dollar figure.</span>
+                      <span className="text-warning">No price: its calls count toward no dollar figure, and a daily dollar cap refuses them. Set its price, or $0 if it costs nothing.</span>
                     )}
                   </div>
                 </div>

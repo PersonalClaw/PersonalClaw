@@ -79,3 +79,10 @@ class ProviderCapability:
     # The type runs its model inside the gateway's own process and sends its requests nowhere,
     # so an entry of it is on this machine whatever its options say.
     in_process: bool = False
+    # The type is a model server that runs the models it serves on the machine its endpoint is on
+    # (Ollama, vLLM), rather than passing each request on to a service that may be anywhere (an
+    # OpenAI-compatible endpoint, which a proxy on this machine can answer for a paid cloud API).
+    # Only for such a type does an endpoint on this machine mean the model runs here
+    # (``llm.registry.served_on_this_machine``): priced at a known $0, ordered first by local-first
+    # routing and scanned as a prompt that never leaves the machine.
+    hosts_model: bool = False

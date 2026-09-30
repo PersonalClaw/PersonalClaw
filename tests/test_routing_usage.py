@@ -423,7 +423,7 @@ def test_priced_false_wins_over_the_rate_table(tmp_path, stub_rates):
     assert day2["background"]["unpriced_calls"] == 5  # priced: False
 
 
-def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path):
+def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path, ollama_app):
     """The stubbed fixture proves the arithmetic; this proves the fold actually asks rates.py.
 
     Two Ollama entries, one on this machine and one on another: only the first ran locally at $0.
@@ -453,7 +453,7 @@ def test_local_and_unpriced_come_from_the_real_rate_table(tmp_path):
     assert cells["nonesuch:no-such-model-xyz"]["interactive"]["unpriced_calls"] == 1
 
 
-def test_a_local_turn_is_never_unpriced_whatever_its_row_says(tmp_path):
+def test_a_local_turn_is_never_unpriced_whatever_its_row_says(tmp_path, ollama_app):
     """The defect: a row's ``priced: false`` won even for a model served on this machine, whose
     price is a known $0, and every local turn written before local turns were priced carries it.
     Counted unpriced, those turns made the recap call the month's total a floor for turns known to

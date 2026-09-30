@@ -505,44 +505,83 @@ def reset_default_registry() -> None:
     _default_registry = None
 
 
-def served_on_this_machine(name: str) -> bool:
-    """Whether the provider entry named *name* serves its model on this machine.
-
-    THE one answer to "is this model local", asked wherever it matters: the rate table's free
-    local tier (``routing.rates``), the router's local-first ordering (``routing.policy``) and
-    the spend guard's outbound scan, which it relaxes only for a prompt that never leaves the
-    machine (``guardrails.model_call``). Where the entry sends decides it, never what kind of
-    provider it is or what it is called: a model server of any kind can run on another machine,
-    and one there can be billed for, and its prompts leave this one.
-
-    So local means the entry's type runs its model inside the gateway's own process
-    (:attr:`ProviderCapability.in_process`), or every endpoint it sends to is on this machine
-    (``net.guard.reaches_this_machine``): the ones it names (:attr:`ProviderEntry.endpoints`),
-    else the default its type declares (:attr:`ProviderCapability.default_endpoint`), which is
-    where an entry that names none sends. An entry with no endpoint either way, a name no
-    configured entry has, and an endpoint anywhere else are not local. An entry whose type is not
-    registered (its app is not installed) is answered by the endpoints it names alone.
-    """
-    from personalclaw.net.guard import reaches_this_machine
-
+def _entry_and_capability(name: str) -> tuple[ProviderEntry | None, ProviderCapability | None]:
+    """The configured entry named *name* and its type's declaration: ``(None, None)`` for a name
+    no configured entry has, and ``(entry, None)`` for an entry whose type is not registered."""
     key = str(name or "").strip()
     if not key:
-        return False
+        return None, None
     registry = get_default_registry()
     try:
         entry = registry.get_entry(key)
     except ProviderResolutionError:
-        return False
+        return None, None
     try:
-        capability: ProviderCapability | None = registry.capability_of(entry.type)
+        return entry, registry.capability_of(entry.type)
     except ProviderResolutionError:
-        capability = None
-    if capability is not None and capability.in_process:
-        return True
+        return entry, None
+
+
+def _endpoints_here(entry: ProviderEntry, capability: ProviderCapability | None) -> bool:
+    """Whether every endpoint *entry* sends to is on this machine (``net.guard``): the ones it
+    names (:attr:`ProviderEntry.endpoints`), else the default its type declares
+    (:attr:`ProviderCapability.default_endpoint`), which is where an entry that names none
+    sends. An entry with no endpoint either way sends nowhere this can see: not here."""
+    from personalclaw.net.guard import reaches_this_machine
+
     endpoints = entry.endpoints
     if not endpoints and capability is not None and capability.default_endpoint.strip():
         endpoints = (capability.default_endpoint.strip(),)
     return bool(endpoints) and all(reaches_this_machine(url) for url in endpoints)
+
+
+def served_on_this_machine(name: str) -> bool:
+    """Whether the provider entry named *name* serves its model on this machine.
+
+    THE one answer to "does this model run here", asked wherever being wrong towards "yes" costs
+    money or privacy: the rate table's free local tier (``routing.rates``), the router's
+    local-first ordering (``routing.policy``) and the spend guard's outbound scan, which it
+    relaxes only for a prompt that never leaves the machine (``guardrails.model_call``). What the
+    entry's type does with a request and where the entry sends it decide it together, never what
+    the provider is called: a model server of any kind can run on another machine, and one there
+    can be billed for, and its prompts leave this one; and an endpoint on this machine is not
+    proof that the model runs here, because a proxy on this machine can answer for a paid cloud
+    API.
+
+    So local means the entry's type runs its model inside the gateway's own process
+    (:attr:`ProviderCapability.in_process`), or the type runs the models it serves where its
+    endpoint is (:attr:`ProviderCapability.hosts_model`) and every endpoint the entry sends to is
+    on this machine. An entry of a type that passes requests on (an OpenAI-compatible endpoint),
+    an entry with no endpoint either way, a name no configured entry has, an endpoint anywhere
+    else, and an entry whose type is not registered (its app is not installed, so nothing says
+    what serves it) are not local.
+    """
+    entry, capability = _entry_and_capability(name)
+    if entry is None or capability is None:
+        return False
+    if capability.in_process:
+        return True
+    return capability.hosts_model and _endpoints_here(entry, capability)
+
+
+def sends_to_this_machine(name: str) -> bool:
+    """Whether every request the provider entry named *name* makes goes to this machine: its type
+    runs its model inside the gateway's own process, or every endpoint it sends to is here.
+
+    Not whether the model runs here (:func:`served_on_this_machine` answers that, and an endpoint
+    here may be a proxy for a service anywhere). Asked where taking a model as one this machine
+    runs is the cheap mistake and the other way round is the costly one: the compaction
+    estimate's served window (a runtime here serves a small one, and a history estimated against a
+    cloud model's window never compacts before it overflows) and a code loop's worker pool (calls
+    sent at once to one machine's model queue behind each other). An entry whose type is not
+    registered is answered by the endpoints it names alone.
+    """
+    entry, capability = _entry_and_capability(name)
+    if entry is None:
+        return False
+    if capability is not None and capability.in_process:
+        return True
+    return _endpoints_here(entry, capability)
 
 
 # Config-type → base-registry-type aliases. EMPTY after the model-provider-as-app

@@ -321,6 +321,13 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
         <span className="text-on-surface-low">
           The cap counts the model calls automations, loops, subagents and background work make.
           Your chat turns are not capped.
+          {dollarCap > 0 && !budget.cap_unreadable && (
+            <>
+              {' '}A call that costs money starts only when what it may cost fits in what is left,
+              beside what the calls already running have set aside. A model with no price is
+              refused, and one that costs nothing is not limited by it.
+            </>
+          )}
         </span>
       </div>
     </Section>

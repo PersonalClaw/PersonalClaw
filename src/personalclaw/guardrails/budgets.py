@@ -17,19 +17,39 @@ Two scopes matter for a personal gateway:
 Dollars come from ``routing.rates.price_call``, the one pricing function: the cost the provider
 reported, else the call's tokens at the effective rate (a rate the owner set, a local model's
 zero, a rate the serving app declared, the shipped table). A token ceiling and a dollar ceiling
-both apply, either can bite. A call nothing prices is counted as a call the dollar ceilings could
-not count (``unpriced``), never as a free one: its tokens still count against a token ceiling,
-and every place a dollar total is set against a ceiling says how many calls it leaves out.
+both apply, either can bite.
+
+**A ceiling holds calls that run at the same time** (:meth:`SpendMeter.admit`). Before a call is
+made it sets aside what it may use and cost: its prompt and an answer as long as the longest a
+call to its model has given today (:data:`ANSWER_TOKENS_BEFORE_FIRST_CALL` before the first), at
+its price, or the most a call to that model has used and cost today when that is more. It starts
+only when that fits beside what is spent and what the calls already running have set aside; one
+that would not fit waits for them, and is refused when it cannot fit even alone. What it set
+aside is replaced by what it cost when it settles (:meth:`SpendMeter.settle`), and given back when
+it fails (:meth:`SpendMeter.release`). Until a call to a model has finished today nothing says
+what it costs, so a second call to that model waits for the first. A call can still cost more
+than it set aside (an answer longer than any before it); it is charged what it cost, and nothing
+that costs money starts once the ceiling is reached.
+
+**A dollar ceiling limits the calls that cost money.** A call to a model priced at a known $0 is
+never refused by one; a call to a model nothing prices is always refused by one, since the
+ceiling could not count what it spends, and the refusal says where its price is set. A token
+ceiling counts every call. A call nothing prices that ran with no dollar ceiling set is counted
+as a call the dollar totals could not count (``unpriced``), never as a free one, and every place
+a dollar total is set against a ceiling says how many calls it leaves out.
 
 This is harness mechanics: ``spend.json`` is a file under the config dir, NOT a
-memory entry or knowledge item (§7 boundary).
+memory entry or knowledge item (§7 boundary). What calls running now have set aside, and what
+calls to each model have cost today, are held in the gateway process's memory.
 """
 
 from __future__ import annotations
 
 import contextvars
+import itertools
 import json
 import logging
+import math
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,6 +57,7 @@ from enum import Enum
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.guardrails.failure import NO_ROOM, SPENT, UNPRICED, BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -115,19 +136,133 @@ def unpriced_clause(count: int) -> str:
     return f"not counting {calls} that had no price"
 
 
+#: How long an answer a call is taken to give before any call to its model has finished today:
+#: the output cap PersonalClaw's own model adapters ask for when nothing sets one.
+ANSWER_TOKENS_BEFORE_FIRST_CALL = 4096
+
+
+def prompt_tokens(chars: int) -> int:
+    """A request of *chars* characters, in tokens, for what a call sets aside before it starts.
+
+    Over-estimated rather than under (``token_estimate.CONSERVATIVE_CHARS_PER_TOKEN``): a ceiling
+    that sets aside too little is one calls running together can pass.
+    """
+    from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
+
+    return math.ceil(max(0, int(chars or 0)) / CONSERVATIVE_CHARS_PER_TOKEN)
+
+
+@dataclass(frozen=True)
+class CallCost:
+    """A call about to be made, as the ceilings weigh it before it starts
+    (:meth:`SpendMeter.admit`).
+
+    ``ref`` is the ``provider:model`` it goes to, the key the meter keeps what calls to it have
+    used and cost today under. ``prompt_tokens`` is the size of its request (:func:`prompt_tokens`).
+    ``rate`` is what the model costs, USD per 1,000,000 prompt and answer tokens, or ``None`` when
+    nothing prices it; ``(0.0, 0.0)`` is a model known to cost nothing.
+    """
+
+    ref: str
+    prompt_tokens: int = 0
+    rate: tuple[float, float] | None = None
+
+    @property
+    def free(self) -> bool:
+        return self.rate is not None and self.rate[0] <= 0.0 and self.rate[1] <= 0.0
+
+
+@dataclass(frozen=True)
+class Hold:
+    """What one admitted call has set aside against the ceilings, until it settles or fails.
+
+    ``answer_tokens`` is the answer it was taken to give, which is what it is taken to have given
+    when its provider reports no usage."""
+
+    id: int
+    ref: str
+    run_key: str
+    tokens: int
+    dollars: float
+    answer_tokens: int
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """The call must wait: the calls running now hold room it may need, or a call to its model
+    whose cost nothing knows yet is running. ``refusal`` is what it gets if it stops waiting."""
+
+    refusal: BudgetExceededError
+
+
+@dataclass
+class _Seen:
+    """The most one call to a model has used and cost today, of the calls that settled."""
+
+    tokens: int = 0
+    answer_tokens: int = 0
+    dollars: float = 0.0
+
+
+#: A cent's millionth: two amounts closer than this are one amount (charges round to 6 places).
+_EPSILON = 1e-9
+
+
+@dataclass(frozen=True)
+class _Room:
+    """One ceiling, weighed for one call: what is spent against it, what the calls running now
+    have set aside, and what this call may use."""
+
+    scope: str
+    dimension: str
+    limit: float
+    spent: float
+    held: float
+    needed: float
+    unpriced: int
+
+    @property
+    def slack(self) -> float:
+        return self.limit - self.spent - self.held - self.needed
+
+    def fits(self) -> bool:
+        return self.slack >= -_EPSILON
+
+    def fits_alone(self) -> bool:
+        return self.limit - self.spent - self.needed >= -_EPSILON
+
+    def refusal(self, why: str, ref: str) -> BudgetExceededError:
+        return BudgetExceededError(
+            self.scope,
+            self.dimension,
+            self.limit,
+            self.spent,
+            unpriced=self.unpriced,
+            why=why,
+            needed=self.needed,
+            held=self.held,
+            ref=ref,
+        )
+
+
 class SpendMeter:
-    """Folds per-attempt spend into run- and day-scope counters, and verdicts a
-    prospective charge against a :class:`Budget`.
+    """Folds per-attempt spend into run- and day-scope counters, verdicts them against a
+    :class:`Budget`, and admits a call before it is made (:meth:`admit`).
 
     Thread-safety: the day-scope counter is persisted and may be touched from the
-    gateway loop + a subagent thread, so mutations take a lock. Run-scope counters
-    are in-memory dicts keyed by run key.
+    gateway loop + a subagent thread, so mutations take a lock. Run-scope counters,
+    what the calls running now have set aside and what calls to each model have cost
+    today are in-memory.
     """
 
     def __init__(self, *, config_dir: Path | None = None) -> None:
         self._config_dir = config_dir
         self._lock = threading.Lock()
         self._run_totals: dict[str, _ScopeTotal] = {}
+        self._holds: dict[int, Hold] = {}
+        self._hold_ids = itertools.count(1)
+        self._seen: dict[str, _Seen] = {}
+        self._seen_day = ""
 
     # ── Paths / persistence ─────────────────────────────────────────────
 
@@ -184,29 +319,204 @@ class SpendMeter:
         made. Their dollars are unknown, so ``dollars`` holds only what the priced ones cost, and
         they are counted as calls the figure leaves out rather than as free spend, even when they
         reported no tokens. Their tokens count as any call's do."""
+        with self._lock:
+            self._charge_locked(tokens, dollars, run_key, unpriced)
+
+    def _charge_locked(
+        self, tokens: int, dollars: float, run_key: str | None, unpriced: int
+    ) -> None:
         tokens = max(0, int(tokens or 0))
         dollars = max(0.0, float(dollars or 0.0))
         unpriced = max(0, int(unpriced or 0))
         if tokens == 0 and dollars == 0.0 and not unpriced:
             return
+        # Day scope (persisted).
+        data = self._load_day()
+        day = _today_key()
+        existing = data.get(day)
+        prev = existing if isinstance(existing, dict) else {}
+        data[day] = {
+            "tokens": int(prev.get("tokens", 0)) + tokens,
+            "dollars": round(float(prev.get("dollars", 0.0)) + dollars, 6),
+            "unpriced": int(prev.get("unpriced", 0) or 0) + unpriced,
+        }
+        self._save_day(data)
+        # Run scope (in-memory).
+        if run_key:
+            rt = self._run_totals.setdefault(run_key, _ScopeTotal())
+            rt.tokens += tokens
+            rt.dollars += dollars
+            rt.unpriced += unpriced
+
+    # ── Admitting a call before it is made ───────────────────────────────
+
+    def admit(
+        self,
+        cost: CallCost,
+        *,
+        day: Budget,
+        run: Budget | None = None,
+        run_key: str = "",
+    ) -> "Hold | Waiting | BudgetExceededError | None":
+        """Weigh a call about to be made against the day's ceilings and its run's (*run*, the
+        ceiling of the run *run_key* names).
+
+        Answers what it set aside (a :class:`Hold`, or ``None`` when no ceiling applies to it),
+        :class:`Waiting` when the calls running now hold room it may need, or the refusal:
+        a ceiling already reached (``spent``), one it cannot fit in even alone (``no_room``), or
+        a dollar ceiling set against a model nothing prices (``unpriced``). A dollar ceiling does
+        not weigh a call to a model known to cost nothing at all.
+        """
+        run = run if (run is not None and run_key) else Budget()
         with self._lock:
-            # Day scope (persisted).
-            data = self._load_day()
-            day = _today_key()
-            existing = data.get(day)
-            prev = existing if isinstance(existing, dict) else {}
-            data[day] = {
-                "tokens": int(prev.get("tokens", 0)) + tokens,
-                "dollars": round(float(prev.get("dollars", 0.0)) + dollars, 6),
-                "unpriced": int(prev.get("unpriced", 0) or 0) + unpriced,
-            }
-            self._save_day(data)
-            # Run scope (in-memory).
+            seen = self._seen_today().get(cost.ref)
+            answer = seen.answer_tokens if seen is not None else ANSWER_TOKENS_BEFORE_FIRST_CALL
+            tokens = max(0, int(cost.prompt_tokens)) + answer
+            dollars: float | None = None
+            if cost.rate is not None:
+                dollars = (cost.prompt_tokens * cost.rate[0] + answer * cost.rate[1]) / 1_000_000
+            if seen is not None:
+                tokens = max(tokens, seen.tokens)
+                if dollars is not None:
+                    dollars = max(dollars, seen.dollars)
+            dollars = None if dollars is None else round(dollars, 6)
+
+            rooms: list[_Room] = []
+            day_total = self._day_total_locked()
+            scopes = [("day", day, day_total, list(self._holds.values()))]
             if run_key:
-                rt = self._run_totals.setdefault(run_key, _ScopeTotal())
-                rt.tokens += tokens
-                rt.dollars += dollars
-                rt.unpriced += unpriced
+                run_total = self._run_totals.get(run_key, _ScopeTotal())
+                in_run = [h for h in self._holds.values() if h.run_key == run_key]
+                scopes.append(("run", run, run_total, in_run))
+            for scope, budget, total, holds in scopes:
+                if budget.max_tokens > 0:
+                    rooms.append(
+                        _Room(
+                            scope,
+                            "tokens",
+                            float(budget.max_tokens),
+                            float(total.tokens),
+                            float(sum(h.tokens for h in holds)),
+                            float(tokens),
+                            0,
+                        )
+                    )
+                if budget.max_dollars > 0.0 and not cost.free:
+                    if dollars is None:
+                        return BudgetExceededError(
+                            scope,
+                            "dollars",
+                            float(budget.max_dollars),
+                            float(total.dollars),
+                            unpriced=total.unpriced,
+                            why=UNPRICED,
+                            ref=cost.ref,
+                        )
+                    rooms.append(
+                        _Room(
+                            scope,
+                            "dollars",
+                            float(budget.max_dollars),
+                            float(total.dollars),
+                            round(sum(h.dollars for h in holds), 6),
+                            dollars,
+                            total.unpriced,
+                        )
+                    )
+            if not rooms:
+                return None
+            for room in rooms:
+                if room.spent >= room.limit - _EPSILON:
+                    return room.refusal(SPENT, cost.ref)
+            tightest = min(rooms, key=lambda room: room.slack)
+            first_call = seen is None
+            if first_call and any(h.ref == cost.ref for h in self._holds.values()):
+                # Nothing knows yet what a call to this model costs: learn it from the one that is
+                # running before a second one runs beside it.
+                return Waiting(tightest.refusal(NO_ROOM, cost.ref))
+            held = dollars if (dollars is not None and not cost.free) else 0.0
+            if all(room.fits() for room in rooms):
+                return self._hold_locked(cost.ref, run_key, tokens, held, answer)
+            if first_call:
+                # What it may cost is a guess until one call has settled: it runs when nothing
+                # else holds room, rather than never while the ceiling is not reached.
+                if all(room.held <= 0.0 for room in rooms):
+                    return self._hold_locked(cost.ref, run_key, tokens, held, answer)
+                return Waiting(tightest.refusal(NO_ROOM, cost.ref))
+            for room in rooms:
+                if not room.fits_alone():
+                    return room.refusal(NO_ROOM, cost.ref)
+            return Waiting(tightest.refusal(NO_ROOM, cost.ref))
+
+    def _hold_locked(
+        self, ref: str, run_key: str, tokens: int, dollars: float, answer_tokens: int
+    ) -> Hold:
+        hold = Hold(
+            id=next(self._hold_ids),
+            ref=ref,
+            run_key=run_key,
+            tokens=int(tokens),
+            dollars=float(dollars),
+            answer_tokens=int(answer_tokens),
+        )
+        self._holds[hold.id] = hold
+        return hold
+
+    def settle(
+        self,
+        hold: Hold | None,
+        *,
+        ref: str,
+        tokens: int,
+        answer_tokens: int,
+        dollars: float,
+        priced: bool,
+        run_key: str | None = None,
+    ) -> None:
+        """Replace what a call set aside with what it cost: charge the day, and the run
+        *run_key* names, and keep what it used as the most a call to *ref* has today when it is.
+
+        A call whose provider reported no usage at all is charged what it set aside, the most it
+        was taken to use: counting it as nothing would be a call the ceiling never saw.
+        Never raises."""
+        tokens = max(0, int(tokens or 0))
+        dollars = max(0.0, float(dollars or 0.0))
+        with self._lock:
+            held = self._holds.pop(hold.id, None) if hold is not None else None
+            if held is not None and tokens == 0 and dollars == 0.0:
+                tokens, answer_tokens, dollars = held.tokens, held.answer_tokens, held.dollars
+                priced = priced or held.dollars > 0.0
+            if tokens or dollars:
+                seen = self._seen_today().setdefault(ref, _Seen())
+                seen.tokens = max(seen.tokens, tokens)
+                seen.answer_tokens = max(seen.answer_tokens, max(0, int(answer_tokens or 0)))
+                if priced:
+                    seen.dollars = max(seen.dollars, dollars)
+            try:
+                self._charge_locked(tokens, dollars, run_key, 0 if priced else 1)
+            except Exception:  # noqa: BLE001 - settling never breaks the call it closes
+                logger.warning("spend charge failed", exc_info=True)
+
+    def release(self, hold: Hold | None) -> None:
+        """Give back what a call set aside, when it failed or was stopped and charged nothing."""
+        if hold is None:
+            return
+        with self._lock:
+            self._holds.pop(hold.id, None)
+
+    def held(self) -> tuple[int, float]:
+        """The tokens and dollars the calls running now have set aside."""
+        with self._lock:
+            holds = list(self._holds.values())
+        return sum(h.tokens for h in holds), round(sum(h.dollars for h in holds), 6)
+
+    def _seen_today(self) -> dict[str, _Seen]:
+        """What calls to each model have cost today; a new day starts with nothing known."""
+        day = _today_key()
+        if self._seen_day != day:
+            self._seen_day = day
+            self._seen = {}
+        return self._seen
 
     def charge_run(self, run_key: str, tokens: int, dollars: float) -> None:
         """Record spend against ``run_key``'s run scope ONLY — spend the day scope has already
@@ -231,7 +541,12 @@ class SpendMeter:
 
     def day_totals(self) -> _ScopeTotal:
         with self._lock:
-            row = self._load_day().get(_today_key(), {})
+            return self._day_total_locked()
+
+    def _day_total_locked(self) -> _ScopeTotal:
+        row = self._load_day().get(_today_key(), {})
+        if not isinstance(row, dict):
+            row = {}
         return _ScopeTotal(
             tokens=int(row.get("tokens", 0)),
             dollars=float(row.get("dollars", 0.0)),
@@ -256,6 +571,21 @@ class SpendMeter:
     def check_run(self, run_key: str, budget: Budget) -> tuple[BudgetVerdict, str]:
         """Verdict a run's accumulated total against ``budget``."""
         return self._verdict(self.run_totals(run_key), budget, scope="run")
+
+    def check_day_before_work(self, budget: Budget) -> tuple[BudgetVerdict, str]:
+        """The verdict a seam that STARTS unattended work asks (a trigger's fire, a subagent's
+        spawn, an app's worker, a proposal's execution, a browse step): the day's TOKEN ceiling.
+
+        Only the token ceiling stops work before it starts, because it counts every call. A
+        dollar ceiling limits the calls that cost money, each refused where it is made
+        (:meth:`admit`), so it never stops work up front: the work may run on a model that costs
+        nothing, or call no model at all.
+        """
+        return self.check_day(Budget(max_tokens=budget.max_tokens))
+
+    def check_run_before_work(self, run_key: str, budget: Budget) -> tuple[BudgetVerdict, str]:
+        """:meth:`check_day_before_work` for a run's ceiling: its token dimension only."""
+        return self.check_run(run_key, Budget(max_tokens=budget.max_tokens))
 
     @staticmethod
     def _verdict(total: _ScopeTotal, budget: Budget, *, scope: str) -> tuple[BudgetVerdict, str]:

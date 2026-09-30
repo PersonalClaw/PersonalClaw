@@ -1272,8 +1272,8 @@ class SubagentManager:
         except Exception:
             logger.debug("subagent spawn incident check failed (fail-open)", exc_info=True)
 
-        # --- Budget guard: refuse to spawn if the day-scope spend ceiling is hit ---
-        # A subagent is unattended work; if the day's guardrail budget is already
+        # --- Budget guard: refuse to spawn if the day-scope token ceiling is hit ---
+        # A subagent is unattended work; if the day's token budget is already
         # exhausted, don't start another one (§1.1 pause-into-refuse). An UNREADABLE
         # ceiling refuses too (#3458) — it follows `proactive/autoexec.py`'s "an unverified
         # ceiling authorises nothing" rather than this seam's old blanket fail-open,
@@ -1307,7 +1307,9 @@ class SubagentManager:
                     f"`guardrails.budgets` in config.json)",
                 )
             if not _day_budget.is_unlimited:
-                _verdict, _reason = get_meter().check_day(_day_budget)
+                # The token ceiling only: a spent dollar one refuses the spawn's calls that cost
+                # money where they are made, and one on a model that costs nothing still runs.
+                _verdict, _reason = get_meter().check_day_before_work(_day_budget)
                 if _verdict is BudgetVerdict.EXCEEDED:
                     logger.warning("Subagent spawn refused: %s", _reason)
                     sel().log_tool_invocation(

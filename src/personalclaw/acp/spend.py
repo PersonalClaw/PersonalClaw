@@ -8,12 +8,14 @@ was charged was its completion (which a loop's worker has none of).
 
 So an ACP provider acquired on a metered axis (``provider_bridge.METERED_AXES``, handed over by
 ``SessionManager`` through :meth:`AcpTurnMeter.set_spend_axis`) meters each of its turns the way
-the guard meters a call: refused before the prompt is sent once the day's or the run's ceiling is
-spent (``guardrails.model_call.spent_refusal``), charged at the turn's ``EVENT_COMPLETE`` with the
-cost the CLI reports (priced from its tokens by ``routing.rates.price_event`` when it reports none,
-and charged as unpriced when nothing prices them), recorded in the model-call log, and named on that
-event (``audit_ids``) so the turn's usage row joins it. A provider on no
-metered axis (a person's chat on an agent CLI) is left alone, as the chat binding is.
+the guard meters a call: admitted before the prompt is sent against the day's and the run's
+ceilings (``guardrails.model_call.admit_call``), setting aside what the turn may cost beside the
+guarded calls running with it and waiting for them when they hold the room it needs, refused when
+a ceiling is spent or a dollar one has no price for its model, charged at the turn's
+``EVENT_COMPLETE`` in place of what it set aside with the cost the CLI reports (priced from its
+tokens by ``routing.rates.price_event`` when it reports none), recorded in the model-call log, and
+named on that event (``audit_ids``) so the turn's usage row joins it. A provider on no metered axis
+(a person's chat on an agent CLI) is left alone, as the chat binding is.
 
 What it does not do is the guard's other half: no hard timeout (an agent's turn runs tools and
 can rightly take many minutes), no circuit breaker and no outbound scan of the prompt, which the
@@ -33,6 +35,11 @@ if TYPE_CHECKING:
     from personalclaw.guardrails.budgets import Budget
 
 logger = logging.getLogger(__name__)
+
+#: The longest a turn waits for the calls running beside it to leave the room it needs under a
+#: spend ceiling, before it is refused. Longer than a guarded call's wait: what it waits for may
+#: be another agent's turn, which runs tools and can rightly take many minutes.
+TURN_ROOM_WAIT_SECS = 1800.0
 
 
 class AcpTurnMeter:
@@ -74,9 +81,11 @@ class AcpTurnMeter:
             logger.warning("agent CLI turn: spend ceilings unreadable; keeping the last read")
         return self._spend_ceilings or (Budget(), Budget())
 
-    async def _metered(self, events: AsyncIterator[LLMEvent]) -> AsyncIterator[LLMEvent]:
-        """*events*, one turn's, refused before it starts when a ceiling is spent and charged at
-        its ``EVENT_COMPLETE``. Passes through untouched on no metered axis."""
+    async def _metered(
+        self, events: AsyncIterator[LLMEvent], *, prompt: str = ""
+    ) -> AsyncIterator[LLMEvent]:
+        """*events*, one turn's, admitted before it starts (*prompt* is what it sends) and charged
+        at its ``EVENT_COMPLETE``. Passes through untouched on no metered axis."""
         axis = self._spend_axis
         if not axis:
             async for event in events:
@@ -90,11 +99,12 @@ class AcpTurnMeter:
             record_attempt,
         )
         from personalclaw.guardrails.budgets import current_run_key, get_meter
-        from personalclaw.guardrails.failure import FailureMode
+        from personalclaw.guardrails.failure import BudgetExceededError, FailureMode
         from personalclaw.guardrails.model_call import (
+            admit_call,
+            call_cost,
             naming_the_call,
             new_audit_id,
-            spent_refusal,
         )
         from personalclaw.routing.rates import price_event
 
@@ -119,38 +129,53 @@ class AcpTurnMeter:
             )
 
         day, run = self._ceilings()
-        refused = spent_refusal(meter, day, run)
-        if refused is not None:
+        try:
+            hold = await admit_call(
+                meter,
+                call_cost(provider, model, prompt_chars=len(prompt or "")),
+                day,
+                run,
+                wait_secs=TURN_ROOM_WAIT_SECS,
+            )
+        except BudgetExceededError:
             # Refused before the prompt was sent: it cost nothing, a known $0.
             _record(FailureMode.BUDGET_EXCEEDED, priced=True)
             aclose = getattr(events, "aclose", None)
             if aclose is not None:
                 await aclose()
-            raise refused
+            raise
 
         started = now_ms()
         charged = False
-        async for event in events:
-            if event.kind == EVENT_COMPLETE and not charged:
-                tokens_in = int(getattr(event, "input_tokens", 0) or 0)
-                tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                price = price_event(event, provider=provider, model=model)
-                meter.charge(
-                    tokens_in + tokens_out,
-                    price.dollars,
-                    run_key=current_run_key() or None,
-                    unpriced=0 if price.priced else 1,
-                )
-                _record(
-                    FailureMode.NONE,
-                    latency_ms=round(now_ms() - started, 1),
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
-                    dollars_est=round(price.dollars, 6),
-                    estimated=price.source != "reported",
-                    passed=True,
-                    priced=price.priced,
-                )
-                charged = True
-                event = naming_the_call(event, audit_id)
-            yield event
+        try:
+            async for event in events:
+                if event.kind == EVENT_COMPLETE and not charged:
+                    tokens_in = int(getattr(event, "input_tokens", 0) or 0)
+                    tokens_out = int(getattr(event, "output_tokens", 0) or 0)
+                    price = price_event(event, provider=provider, model=model)
+                    meter.settle(
+                        hold,
+                        ref=f"{provider}:{model}",
+                        tokens=tokens_in + tokens_out,
+                        answer_tokens=tokens_out,
+                        dollars=price.dollars,
+                        priced=price.priced,
+                        run_key=current_run_key() or None,
+                    )
+                    _record(
+                        FailureMode.NONE,
+                        latency_ms=round(now_ms() - started, 1),
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        dollars_est=round(price.dollars, 6),
+                        estimated=price.source != "reported",
+                        passed=True,
+                        priced=price.priced,
+                    )
+                    charged = True
+                    event = naming_the_call(event, audit_id)
+                yield event
+        finally:
+            # A turn that ended without completing charged nothing: what it set aside is given
+            # back, as a settled one's already was.
+            meter.release(hold)

@@ -53,15 +53,17 @@ def _pool_cap(loop: Loop) -> int:
     so a second worker is not a second pair of hands but a second queue on the same one, and
     each call waits out the others' before its own answer starts (measured: two workers' calls
     on one local model aged past their timeout while queued). An agent CLI brings its own model,
-    so a loop that runs one keeps the pool. Local is the one rule every other reader uses
-    (``routing.policy.is_local_ref``): where the entry serving the loop's model sends."""
+    so a loop that runs one keeps the pool. On this machine is where the entry serving the loop's
+    model sends (``llm.registry.sends_to_this_machine``): an OpenAI-compatible endpoint here is
+    taken as a model here too, since a second queue on one machine's model is the costly mistake
+    and one worker on a proxy for a cloud model only the slower one."""
     if loop.provider:
         return _POOL_CAP
+    from personalclaw.llm.registry import sends_to_this_machine
     from personalclaw.llm_helpers import use_case_chain
-    from personalclaw.routing.policy import is_local_ref
 
     ref = loop.model if ":" in (loop.model or "") else next(iter(use_case_chain("loops")), "")
-    return 1 if ref and is_local_ref(ref) else _POOL_CAP
+    return 1 if ref and sends_to_this_machine(ref.split(":", 1)[0]) else _POOL_CAP
 
 
 _STALL_FINDINGS = 5  # a stage grinding this many findings w/o clearing its gate is "stuck"

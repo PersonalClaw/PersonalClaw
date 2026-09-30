@@ -242,7 +242,7 @@ def test_a_stage_worker_the_scheduler_did_not_stand_down_is_left_as_it_is(repo):
 
 def test_a_loop_on_a_model_on_this_machine_runs_one_task_worker_at_a_time(repo, monkeypatch):
     monkeypatch.setattr(
-        "personalclaw.routing.policy.is_local_ref", lambda ref: ref.startswith("ollama:")
+        "personalclaw.llm.registry.sends_to_this_machine", lambda entry: entry == "ollama"
     )
     loop, state, svc = _armed(repo, model="ollama:gemma4:12b")
 
@@ -252,7 +252,7 @@ def test_a_loop_on_a_model_on_this_machine_runs_one_task_worker_at_a_time(repo, 
 
 
 def test_a_loop_on_a_cloud_model_keeps_its_pool(repo, monkeypatch):
-    monkeypatch.setattr("personalclaw.routing.policy.is_local_ref", lambda ref: False)
+    monkeypatch.setattr("personalclaw.llm.registry.sends_to_this_machine", lambda entry: False)
     loop, state, svc = _armed(repo, model="cloud:big-model")
 
     _schedule(loop, state, svc)

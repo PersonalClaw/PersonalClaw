@@ -53,7 +53,11 @@ describe('Model prices', () => {
     const { container } = await mount(VIEW)
     const text = container.textContent ?? ''
     expect(text).toContain('Model prices')
-    expect(text).toContain(`${UNPRICED}No price: its calls count toward no dollar figure.`)
+    // A dollar cap refuses a call it has no price for, and the row says so and how to lift it.
+    expect(text).toContain(
+      `${UNPRICED}No price: its calls count toward no dollar figure, and a daily dollar cap refuses `
+      + 'them. Set its price, or $0 if it costs nothing.',
+    )
     expect(text).toContain('$0 in · $0 out per 1M tokens — free: it runs on this machine')
     expect(screen.getByRole('button', { name: `Set a price for ${UNPRICED}` })).toBeTruthy()
   })

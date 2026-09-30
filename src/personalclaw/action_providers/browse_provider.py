@@ -141,12 +141,14 @@ def _budget_check() -> tuple[str, str]:
         )
 
         meter = get_meter()
-        verdict, reason = meter.check_day(budget_from_config())
+        # The token ceilings only: each of the loop's model calls is weighed by the guard, which
+        # refuses the ones that cost money past a spent dollar ceiling.
+        verdict, reason = meter.check_day_before_work(budget_from_config())
         if verdict.value == "exceeded":
             return "exceeded", reason
         run_key = current_run_key()
         if run_key:
-            verdict, reason = meter.check_run(run_key, current_run_budget())
+            verdict, reason = meter.check_run_before_work(run_key, current_run_budget())
             if verdict.value == "exceeded":
                 return "exceeded", reason
         return "ok", ""

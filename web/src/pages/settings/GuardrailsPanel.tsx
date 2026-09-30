@@ -63,12 +63,12 @@ export function GuardrailsPanel() {
 
       <IncidentSection />
 
-      <Section title="Daily budget" hint="Cap what your automations spend in a day. At the ceiling, further unattended runs are skipped (a cron fire is paused, a subagent spawn refused) and resume automatically the next day. 0 = unlimited.">
+      <Section title="Daily budget" hint="Cap what your automations, loops, subagents and background work spend in a day; your chat turns are not capped. Each ceiling resets at midnight. 0 = unlimited.">
         <RowGroup>
-          <NumberRow label="Max tokens / day" hint="Across every trigger. 0 = unlimited."
+          <NumberRow label="Max tokens / day" hint="Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets."
             value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000}
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v, 'Max tokens / day') }} />
-          <NumberRow label="Max dollars / day" hint="Estimated from each model's price, set in Settings → Usage → Model prices. 0 = unlimited."
+          <NumberRow label="Max dollars / day" hint="A call that costs money starts only when what it may cost fits in what is left beside what the calls already running have set aside, so calls running together stay within it; one can still cost more than it set aside. A model with no price is refused, and one that costs nothing keeps running. Prices are estimates, set in Settings → Usage → Model prices."
             value={cfg.budgets?.max_dollars_per_day ?? 0} min={0} step={1} dollars
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_dollars_per_day: v } })); return patchNum('budgets.max_dollars_per_day', v, 'Max dollars / day') }} />
           <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."

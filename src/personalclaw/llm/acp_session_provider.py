@@ -121,7 +121,8 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         # clean accumulator per turn, every event folded in, and the turn metered on a
         # metered axis. See acp/outcomes.py and acp/spend.py.
         self._outcome_accumulator.begin_turn()
-        async for event in self._metered(self._events(self._session.stream_events(message))):
+        turn = self._events(self._session.stream_events(message))
+        async for event in self._metered(turn, prompt=message):
             self._outcome_accumulator.observe(event)
             yield event
 
@@ -143,7 +144,8 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
 
             raise AcpCommandsUnsupported(command)
         self._outcome_accumulator.begin_turn()
-        async for event in self._metered(self._events(self._session.stream_command(command))):
+        turn = self._events(self._session.stream_command(command))
+        async for event in self._metered(turn, prompt=command):
             self._outcome_accumulator.observe(event)
             yield event
 

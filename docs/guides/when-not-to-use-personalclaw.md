@@ -236,10 +236,12 @@ estimate.
 This one is easy to miss, because the feature exists. Three ceilings are real, wired, and
 have controls under **Settings → Guardrails**: `guardrails.budgets.max_tokens_per_run`,
 `max_tokens_per_day` and `max_dollars_per_day` (`src/personalclaw/config/safety.py`,
-`BudgetConfig`). A ceiling that bites pauses the run into needs-input rather than
-overspending quietly, and the day counter is persisted to `~/.personalclaw/spend.json` so
-it survives a restart. That is a genuine control. Three things about it are worth knowing
-*before* you point a goal loop at something and go to bed:
+`BudgetConfig`). A spent token ceiling pauses unattended runs into needs-input rather than
+overspending quietly, and a dollar ceiling refuses each call that costs money once there is no
+room for it, while calls to a model that costs nothing keep running. The day counter is
+persisted to `~/.personalclaw/spend.json` so it survives a restart. That is a genuine control.
+Four things about it are worth knowing *before* you point a goal loop at something and go to
+bed:
 
 - **All three default to zero, and zero means unlimited.** The dataclass says so in as
   many words — *"Zero means UNLIMITED for that dimension — the conservative default so an
@@ -255,13 +257,27 @@ it survives a restart. That is a genuine control. Three things about it are wort
   cap. Goal loops, cron fires and subagents are metered; typing into chat is not.
 - **The dollar ceiling is an estimate, not a bill.** A call costs what its provider reports,
   else its tokens at its model's rate: one you set in **Settings → Usage → Model prices**, a
-  known $0 for a model that runs on this machine (a model server here, or the bundled offline
+  known $0 for a model this machine serves itself (a model server whose app runs the models it
+  serves where it is, such as Ollama, at an address on this machine, or the bundled offline
   model), the rate its provider app declares, or the shipped price list (`price_call` in
   `src/personalclaw/routing/rates.py`, which prices every dollar the caps and the Usage page
-  count). A call none of those prices is not in the dollar
-  total: the meter counts it as a call the cap could not count, and Settings → Usage, a
-  refusal and a warning each say how many there were. PersonalClaw never sees your provider
-  invoice, so an estimated ceiling cannot be an authoritative one.
+  count). An OpenAI-compatible endpoint on this machine is not taken as free, because a proxy
+  there can answer for a paid cloud API: it is priced by its model's id, or has no price. A call
+  none of those prices is refused while a dollar ceiling is set, and the refusal says where to
+  price it; give it a price of $0 if it really costs nothing. With no dollar ceiling set such a
+  call runs, and the meter counts it as one its totals could not count. PersonalClaw never sees
+  your provider invoice, so an estimated ceiling cannot be an authoritative one.
+- **It holds calls that run at the same time, as far as it can estimate them.** Before a call
+  that costs money starts, it sets aside what it may cost: its prompt and an answer as long as
+  the longest a call to that model has given today (4,096 tokens before the first), at its
+  price, or the most a call to that model has cost today if that is more. It starts only when
+  that fits beside what is spent and what the calls already running have set aside; otherwise it
+  waits for them, and is refused when it cannot fit even alone. Until a call to a model has
+  finished today, a second call to that model waits for it, so a fan-out learns the price of the
+  first before it spends on the rest. A call can still cost more than it set aside (an answer
+  longer than any before it): it is charged what it cost, and nothing that costs money starts
+  once the ceiling is reached. A call whose provider reports no usage is counted at what it set
+  aside.
 
 What you *do* get for free is visibility rather than control: every model turn is recorded
 to a per-turn cost/token ledger (`src/personalclaw/usage_ledger.py`) and rolled up under
@@ -272,9 +288,10 @@ incomplete. So you can always answer "what did that cost me", and a model served
 machine costs nothing either way.
 
 To price a model the shipped list does not know, or correct one it has wrong, give it a price
-under **Settings → Usage → Model prices**. The section lists every model your uses are bound to
-with the price its calls are counted at and where that comes from, and a model nothing prices
-says so. A price is set for a `provider:model` ref, a pattern of them (`anthropic:claude-*`), or
+under **Settings → Usage → Model prices**. The section lists every model your uses are bound to,
+and every model spent on in the last 30 days, with the price its calls are counted at and where
+that comes from, and a model nothing prices says so. A price of $0 set for an instance's every
+model (`my-proxy:*`) declares that instance free. A price is set for a `provider:model` ref, a pattern of them (`anthropic:claude-*`), or
 a model id alone, which prices that model whoever serves it, this machine included; a rate is
 USD per million tokens for input and output, and optionally for cache reads and writes (unset,
 a cached token costs what an input token does). A price counts from the next call.

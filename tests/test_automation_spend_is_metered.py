@@ -589,10 +589,11 @@ async def test_a_named_model_on_the_orchestration_axis_is_metered_and_still_the_
 
 
 @pytest.mark.asyncio
-async def test_the_daily_dollar_cap_refuses_a_named_spawn_once_the_day_is_spent(calls):
+async def test_the_daily_dollar_cap_refuses_a_named_spawns_next_call_once_the_day_is_spent(calls):
     """The cap as the week drives it: set a small daily ceiling, let one spawn that names a model
-    spend past it, and the next call AND the next spawn are both refused, each saying which
-    ceiling stopped it."""
+    spend past it, and its next call is refused, saying which ceiling stopped it. A next spawn is
+    not refused before its model is known: its paid calls are, where they are made, and one on a
+    model that costs nothing runs."""
     from test_subagent import _mock_ctx_builder, _mock_sessions
 
     from personalclaw.guardrails.failure import BudgetExceededError
@@ -600,7 +601,9 @@ async def test_the_daily_dollar_cap_refuses_a_named_spawn_once_the_day_is_spent(
 
     _daily_dollar_cap(0.01)
     runtime = await _named_model_runtime(model_axis="orchestration")
-    await _turn(runtime)  # $0.35 of gpt-4o against a $0.01 ceiling: allowed, and charged
+    # $0.35 of gpt-4o against a $0.01 ceiling: allowed, as the model's first call today, when
+    # nothing knew yet what one costs, and charged.
+    await _turn(runtime)
 
     with pytest.raises(BudgetExceededError) as refused:
         await _turn(runtime)
@@ -614,8 +617,8 @@ async def test_the_daily_dollar_cap_refuses_a_named_spawn_once_the_day_is_spent(
     )
     with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
         spawn = manager.spawn("Name a colour.", parent_session_key="dashboard:p", model=NAMED_REF)
-    assert spawn is not None and spawn.done
-    assert "day dollar budget exceeded" in spawn.error, spawn.error
+        assert spawn is not None and "budget" not in (spawn.error or ""), spawn.error
+        await manager._tasks[spawn.id]
 
 
 # ── a knowledge node, a loop's judge and a one-shot call, whatever the axis ────────────────

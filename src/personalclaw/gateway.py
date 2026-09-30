@@ -1114,7 +1114,7 @@ class GatewayOrchestrator:
     # incremented at four call sites with no way to tell a policy block from a real failure).
 
     def _day_budget_exceeded(self, *, context: str) -> bool:
-        """True when the day-scope guardrail spend ceiling is already hit.
+        """True when the day's TOKEN ceiling is already hit, so unattended work must not start.
 
         The pre-dispatch gate for unattended work, called by `_fire_store_trigger` — every
         clock, file, webhook and chained fire. On the transition into exceeded, emits ONE
@@ -1124,6 +1124,12 @@ class GatewayOrchestrator:
         TOAST is de-duped. (Until AG-2 this said it emitted a "needs-input notification"
         while emitting a WARNING and having no caller at all — the docstring asserted the
         clause the code did not satisfy.)
+
+        The DOLLAR ceiling pauses nothing here (``SpendMeter.check_day_before_work``): it limits
+        the calls that cost money, and the guard refuses each one where it is made, while a fire
+        whose work runs on a model that costs nothing, or calls no model, runs. Pausing every fire
+        on it stopped every automation on the free local models until midnight. Reaching it still
+        tells the owner once (:meth:`_notify_dollars_spent`).
 
         Two different unknowns, two answers (#3458).
 
@@ -1159,7 +1165,9 @@ class GatewayOrchestrator:
         try:
             if budget.is_unlimited:
                 return False
-            verdict, reason = get_meter().check_day(budget)
+            meter = get_meter()
+            self._notify_dollars_spent(meter.day_totals().dollars, budget.max_dollars)
+            verdict, reason = meter.check_day_before_work(budget)
             if verdict is not BudgetVerdict.EXCEEDED:
                 # Re-arm the one-shot notification: once the day rolls over (or the
                 # user raises the budget) and we're back under the ceiling, the next
@@ -1167,7 +1175,7 @@ class GatewayOrchestrator:
                 self._budget_notified = False
                 return False
             self._notify_budget_once(
-                "Daily automation budget reached",
+                "Daily token budget reached",
                 f"{context} was skipped — {reason}. Unattended runs resume "
                 f"tomorrow, or raise the budget in Settings → Guardrails.",
             )
@@ -1176,6 +1184,29 @@ class GatewayOrchestrator:
         except Exception:
             logger.debug("day-budget check failed (fail-open)", exc_info=True)
             return False
+
+    def _notify_dollars_spent(self, spent: float, cap: float) -> None:
+        """Tell the owner once, for the day, that the dollar ceiling is reached: from now on the
+        calls that cost money are refused, and the rest keep running. Re-armed once spend is back
+        under it (a new day, or a raised ceiling). Never raises."""
+        if cap <= 0.0 or spent < cap:
+            self._dollars_notified = False
+            return
+        if getattr(self, "_dollars_notified", False):
+            return
+        self._dollars_notified = True
+        if self.dashboard_state is None:
+            return
+        try:
+            self.dashboard_state.notify(
+                notification_kinds.WARNING,
+                "Daily dollar budget reached",
+                f"Calls to models that cost money are refused until it resets tomorrow "
+                f"(${spent:.2f} of ${cap:.2f} spent); models that cost nothing keep running. "
+                "Raise it in Settings → Guardrails.",
+            )
+        except Exception:
+            logger.debug("dollar budget notify failed", exc_info=True)
 
     def _notify_budget_once(self, title: str, body: str) -> None:
         """One toast per pause window, never per fire.
@@ -1577,6 +1608,10 @@ class GatewayOrchestrator:
         # firing — and which, when it IS reached, raises into the fire's error path and reports a
         # BROKEN automation rather than a deliberate pause.
         #
+        # The TOKEN ceiling only: it counts every call, so work started past it could do nothing.
+        # The dollar ceiling limits the calls that cost money and the guard refuses each of those,
+        # so a fire whose work costs nothing still runs past it (`_day_budget_exceeded`).
+        #
         # `needs_input`, not `skipped_gate`: the clause says the fire "pauses into needs-input",
         # and `executor.STATUS_TO_OUTCOME` already maps that status to `Outcome.DEFERRED` — "parked
         # awaiting a human", the one reading of DEFERRED that means a ceiling only a person can
@@ -1598,7 +1633,7 @@ class GatewayOrchestrator:
                 trigger,
                 status="needs_input",
                 error=(
-                    "paused — the daily automation budget is spent. Unattended runs resume "
+                    "paused — the daily token budget is spent. Unattended runs resume "
                     "tomorrow, or raise the budget in Settings → Guardrails."
                 ),
             )

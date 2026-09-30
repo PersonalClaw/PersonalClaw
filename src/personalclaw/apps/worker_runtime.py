@@ -228,13 +228,15 @@ def _incident_pause_reason() -> str:
 
 
 def _budget_pause_reason() -> str:
-    """The wallet half: the DAY-scope spend ceiling, measured by the existing meter.
+    """The wallet half: the DAY-scope token ceiling, measured by the existing meter.
 
     This is ``guardrails/budgets.py``'s accounting, not a parallel one — the same
     ``SpendMeter`` ``ModelCallGuard`` charges on every model call, and the same
     ``budget_from_config()`` ceiling. ``BudgetVerdict.EXCEEDED`` is the breach ("the run
-    must pause", per ``check_day``); ``WARN`` is surfaced elsewhere and does not stop
-    anything here.
+    must pause", per ``check_day_before_work``); ``WARN`` is surfaced elsewhere and does not
+    stop anything here. A spent DOLLAR ceiling pauses no worker: it limits the calls that cost
+    money, which the guard refuses one by one, and a worker whose calls cost nothing (a local
+    model, or none at all) keeps running.
 
     Scope honesty: the meter has DAY and RUN scopes and no per-app scope, so a breach is a
     fact about *the day's whole spend*, not about this worker's. That is the strongest
@@ -264,9 +266,11 @@ def _budget_pause_reason() -> str:
             return f"{exc}, so this worker is paused"
         if budget.is_unlimited:
             return ""
-        verdict, reason = get_meter().check_day(budget)
+        # The token ceiling only: a spent dollar one refuses the worker's calls that cost money
+        # where they are made, and a worker on a model that costs nothing keeps running.
+        verdict, reason = get_meter().check_day_before_work(budget)
         if verdict is BudgetVerdict.EXCEEDED:
-            return reason or "the day spend budget is exceeded"
+            return reason or "the day token budget is exceeded"
     except Exception:  # noqa: BLE001
         logger.debug("worker sweep: budget probe failed", exc_info=True)
     return ""

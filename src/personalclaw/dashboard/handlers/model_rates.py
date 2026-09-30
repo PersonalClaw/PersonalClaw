@@ -1,10 +1,12 @@
 """The prices your model calls are counted at: model_rates.json, read and set one rate at a time.
 
 ``GET /api/models/rates`` answers what Settings → Usage → Model prices shows
-(``routing.rates.rates_view``): the rates you set, and each model your uses are bound to with the
-rate a call to it is counted at and where that comes from. ``PUT`` sets one rate and ``DELETE``
-removes one. Each is a change to one rate, applied to the file as it is stored now, so neither
-names a revision (``stale_write``): it cannot undo a change made elsewhere.
+(``routing.rates.rates_view``): the rates you set, and each model your uses are bound to, or that
+was spent on in the last :data:`USED_WINDOW_DAYS` days, with the rate a call to it is counted at
+and where that comes from. A model unbound after it spent money is listed too: the Usage page
+names it, and this is where its price is set. ``PUT`` sets one rate and ``DELETE`` removes one.
+Each is a change to one rate, applied to the file as it is stored now, so neither names a revision
+(``stale_write``): it cannot undo a change made elsewhere.
 
 A price is what the daily and per-run dollar caps count a call at, the Usage page's dollars and
 the order cost-aware routing tries models in. So all three routes are the owner's
@@ -31,18 +33,26 @@ def _sel():
     return _pkg.sel()
 
 
+#: How far back a model that was spent on is listed, bound or not: the Usage page's longest period.
+USED_WINDOW_DAYS = 30
+
+
 def _view() -> web.Response:
-    """The page's view (``routing.rates.rates_view``), over the models every use is bound to now."""
+    """The page's view (``routing.rates.rates_view``), over the models every use is bound to now
+    and the ones spent on lately."""
+    from datetime import datetime, timedelta, timezone
+
     from personalclaw.providers.use_cases import load_active_models
     from personalclaw.routing.rates import rates_view
+    from personalclaw.usage_ledger import models_used
 
-    refs = [
-        str(ref)
-        for chain in (load_active_models() or {}).values()
-        if isinstance(chain, list)
-        for ref in chain
-    ]
-    view = rates_view(refs)
+    bound: list[tuple[str, str]] = []
+    for chain in (load_active_models() or {}).values():
+        for ref in chain if isinstance(chain, list) else ():
+            provider, _, model = str(ref).partition(":")
+            bound.append((provider, model))
+    since = (datetime.now(timezone.utc) - timedelta(days=USED_WINDOW_DAYS)).isoformat()
+    view = rates_view([*bound, *models_used(since=since)])
     return web.json_response(
         {"rates": view["rates"], "models": view["models"], "unreadable": view["unreadable"]}
     )
@@ -60,7 +70,7 @@ def _unreadable(exc: Exception) -> web.Response:
 
 
 async def api_model_rates(request: web.Request) -> web.Response:
-    """GET /api/models/rates — the rates you set, and what each bound model is counted at."""
+    """GET /api/models/rates — the rates you set, and what each bound or recent model costs."""
     return _view()
 
 

@@ -254,11 +254,13 @@ def default_budget_check(run_key: str = "") -> BudgetCheckFn:
             )
 
             meter = get_meter()
-            verdict, reason = meter.check_day(budget_from_config())
+            # The token ceilings only: a spent dollar one refuses the calls that cost money where
+            # they are made, and a proposal whose work costs nothing still runs.
+            verdict, reason = meter.check_day_before_work(budget_from_config())
             if verdict is BudgetVerdict.EXCEEDED:
                 return True, reason
             if run_key:
-                verdict, reason = meter.check_run(run_key, run_budget_from_config())
+                verdict, reason = meter.check_run_before_work(run_key, run_budget_from_config())
                 if verdict is BudgetVerdict.EXCEEDED:
                     return True, reason
         except Exception as exc:  # noqa: BLE001 - an unverified ceiling authorises nothing

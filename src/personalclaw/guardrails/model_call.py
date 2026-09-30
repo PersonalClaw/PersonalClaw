@@ -25,23 +25,27 @@ generation paths) are intercepted.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
 from personalclaw.guardrails.budgets import (
     Budget,
-    BudgetVerdict,
+    CallCost,
+    Hold,
     SpendMeter,
+    Waiting,
     current_run_budget,
     current_run_key,
     get_meter,
+    prompt_tokens,
 )
 from personalclaw.guardrails.calls import ABANDONED, DONE, FAILED, OPEN, ModelCall, open_call
 from personalclaw.guardrails.failure import (
@@ -91,12 +95,86 @@ def naming_the_call(event: LLMEvent, audit_id: str) -> LLMEvent:
     return replace(event, audit_ids=(*event.audit_ids, audit_id))
 
 
-def spent_refusal(meter: SpendMeter, day: Budget, run: Budget) -> BudgetExceededError | None:
-    """The refusal a call gets BEFORE it is made, or ``None`` when every ceiling has room.
+#: The longest a call waits for the calls running beside it to leave the room it needs under a
+#: spend ceiling, before it is refused. A guarded call is bounded by its own clock, so what it
+#: waits for ends within about this long.
+ROOM_WAIT_SECS = _DEFAULT_TIMEOUT_SECS
+#: How often a call that is waiting for room looks again.
+_ROOM_POLL_SECS = 0.05
 
-    The day's ceiling first, then the ambient run's. The guard asks it of each call, and an agent
-    CLI's turn on a metered axis asks it too (``acp.spend``), so the two stop at the same numbers.
-    Cheap (reads spend.json) and skipped entirely for an unlimited ceiling.
+#: An image in a request, as the characters of text its tokens would be: about 1,600 tokens, the
+#: order a large image costs a vision model.
+_IMAGE_CHARS = 4_800
+
+
+def call_cost(provider: str, model: str, *, prompt_chars: int) -> CallCost:
+    """The call to *model* on the entry *provider* a request of *prompt_chars* characters is,
+    as the spend ceilings weigh it before it starts (``SpendMeter.admit``): at the rate it is
+    priced at when it settles (``routing.rates.effective_rate``), or unpriced when there is none.
+    """
+    from personalclaw.routing.rates import effective_rate
+
+    rate = effective_rate(provider, model)
+    return CallCost(
+        ref=f"{provider}:{model}",
+        prompt_tokens=prompt_tokens(prompt_chars),
+        rate=rate.dearest_per_mtok() if rate is not None else None,
+    )
+
+
+def request_chars(messages: list[dict], tools: list[dict] | None = None) -> int:
+    """How much a structured request sends, in characters: every message's text, the calls and
+    results it carries, and the tool schemas. An image counts as :data:`_IMAGE_CHARS`, never as
+    the length of its encoding."""
+
+    def _content(content: Any) -> int:
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            total = 0
+            for block in content:
+                if isinstance(block, str):
+                    total += len(block)
+                elif isinstance(block, dict):
+                    if str(block.get("type") or "").startswith("image"):
+                        total += _IMAGE_CHARS
+                    elif isinstance(block.get("text"), str):
+                        total += len(block["text"])
+                    else:
+                        total += len(json.dumps(block, default=str))
+            return total
+        return len(json.dumps(content, default=str)) if content else 0
+
+    total = 0
+    for message in messages or []:
+        if not isinstance(message, dict):
+            total += len(str(message))
+            continue
+        for key, value in message.items():
+            if key == "content":
+                total += _content(value)
+            elif key != "role" and value:
+                total += len(json.dumps(value, default=str))
+    if tools:
+        total += len(json.dumps(tools, default=str))
+    return total
+
+
+async def admit_call(
+    meter: SpendMeter,
+    cost: CallCost,
+    day: Budget,
+    run: Budget,
+    *,
+    wait_secs: float = ROOM_WAIT_SECS,
+) -> Hold | None:
+    """Admit a call BEFORE it is made, against the day's ceiling and the ambient run's
+    (``SpendMeter.admit``): what it set aside, which the caller settles or releases, or ``None``
+    when no ceiling applies to it. A call the calls running beside it hold the room for waits for
+    them, up to *wait_secs*; the refusal is raised (:class:`BudgetExceededError`).
+
+    The guard admits each call through it, and an agent CLI's turn on a metered axis too
+    (``acp.spend``), so the two share one set of ceilings and one account of what is set aside.
 
     The run's ceiling is read HERE, beside the day's, rather than as a ``firepath`` gate: run
     totals accrue in-process as the run spends, and the fire path binds a FRESH per-fire key
@@ -105,31 +183,21 @@ def spent_refusal(meter: SpendMeter, day: Budget, run: Budget) -> BudgetExceeded
     ``max_cost_usd_per_run`` is a tighter, run-specific promise than the operator's
     ``max_tokens_per_run`` default (*run*), and the run seam is the only place that knows it.
     """
-    if not day.is_unlimited:
-        verdict, reason = meter.check_day(day)
-        if verdict is BudgetVerdict.EXCEEDED:
-            totals = meter.day_totals()
-            dim = "tokens" if "token" in reason else "dollars"
-            limit = day.max_tokens if dim == "tokens" else day.max_dollars
-            spent = totals.tokens if dim == "tokens" else totals.dollars
-            return BudgetExceededError(
-                "day", dim, float(limit), float(spent), unpriced=totals.unpriced
-            )
     run_key = current_run_key()
     ceiling = current_run_budget()
     if ceiling.is_unlimited:
         ceiling = run
-    if run_key and not ceiling.is_unlimited:
-        verdict, reason = meter.check_run(run_key, ceiling)
-        if verdict is BudgetVerdict.EXCEEDED:
-            totals = meter.run_totals(run_key)
-            dim = "tokens" if "token" in reason else "dollars"
-            limit = ceiling.max_tokens if dim == "tokens" else ceiling.max_dollars
-            spent = totals.tokens if dim == "tokens" else totals.dollars
-            return BudgetExceededError(
-                "run", dim, float(limit), float(spent), unpriced=totals.unpriced
-            )
-    return None
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, float(wait_secs))
+    while True:
+        verdict = meter.admit(cost, day=day, run=ceiling, run_key=run_key)
+        if isinstance(verdict, BudgetExceededError):
+            raise verdict
+        if not isinstance(verdict, Waiting):
+            return verdict
+        if loop.time() >= deadline:
+            raise verdict.refusal
+        await asyncio.sleep(_ROOM_POLL_SECS)
 
 
 def _mark(call: ModelCall | None, state: str) -> None:
@@ -252,9 +320,10 @@ class ModelCallGuard(ModelProvider):
         # Mirror the wrapped provider's tool support so the loop treats the guard
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
-        # Whether this provider's requests stay on this machine: its outbound scan is then
-        # forced to warn, since the prompt never leaves it. Decided once, by the one rule the
-        # rate table prices a local model by and routing orders one by: where its entry sends.
+        # Whether this provider's model runs on this machine: its outbound scan is then forced to
+        # warn, since the prompt never leaves it. Decided once, by the one rule the rate table
+        # prices a local model by and routing orders one by: what its entry's type is and where
+        # it sends. An endpoint here that passes the prompt on (a proxy for a cloud API) is not.
         self._local = served_on_this_machine(provider_name)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
@@ -289,7 +358,10 @@ class ModelCallGuard(ModelProvider):
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         message = self._prescan(message)
         self._classify(message)
-        async for event in self._guarded(self._inner.stream(message), strategy="direct"):
+        guarded = self._guarded(
+            self._inner.stream(message), strategy="direct", prompt_chars=len(message)
+        )
+        async for event in guarded:
             yield event
 
     async def complete(
@@ -306,7 +378,10 @@ class ModelCallGuard(ModelProvider):
         inner = self._inner.complete(
             messages, tools=tools, model=model, reasoning_effort=reasoning_effort
         )
-        async for event in self._guarded(inner, strategy="direct"):
+        guarded = self._guarded(
+            inner, strategy="direct", prompt_chars=request_chars(messages, tools)
+        )
+        async for event in guarded:
             yield event
 
     @property
@@ -344,7 +419,10 @@ class ModelCallGuard(ModelProvider):
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         command = self._prescan(command)
         self._classify(command)
-        async for event in self._guarded(self._inner.stream_command(command), strategy="direct"):
+        guarded = self._guarded(
+            self._inner.stream_command(command), strategy="direct", prompt_chars=len(command)
+        )
+        async for event in guarded:
             yield event
 
     def _prescan(self, text: str) -> str:
@@ -438,10 +516,14 @@ class ModelCallGuard(ModelProvider):
     # ── The guard pipeline (breaker → hard timeout → audit) ──────────────
 
     async def _guarded(
-        self, source: AsyncIterator[LLMEvent], *, strategy: str
+        self, source: AsyncIterator[LLMEvent], *, strategy: str, prompt_chars: int
     ) -> AsyncIterator[LLMEvent]:
-        """Drive ``source`` under the breaker + a cumulative wall-clock deadline,
-        recording exactly one attempt row for the whole stream.
+        """Drive ``source`` under the breaker, the spend ceilings and a cumulative wall-clock
+        deadline, recording exactly one attempt row for the whole stream.
+
+        The ceilings admit the call before it is made (:func:`admit_call`), from the size of its
+        request (*prompt_chars*): it sets aside what it may cost, and whatever ends it, that is
+        replaced by what it cost or given back.
 
         Success is recorded the moment ``EVENT_COMPLETE`` is observed — BEFORE it is
         yielded — because the canonical consumer (``stream_and_collect``) ``break``s
@@ -463,13 +545,23 @@ class ModelCallGuard(ModelProvider):
             await self._aclose(source)
             raise CircuitOpenError(self._provider_name, retry_after)
 
-        # The day's and the run's ceilings, BEFORE the call (:func:`spent_refusal`): a run that
-        # has already crossed one gets its next unattended call refused.
-        refused = spent_refusal(self._meter, self._budget, self._run_budget)
-        if refused is not None:
+        # The day's and the run's ceilings, BEFORE the call (:func:`admit_call`): the call sets
+        # aside what it may cost and starts only when that fits beside what is spent and what the
+        # calls running now have set aside, waiting for them when they hold the room it needs.
+        try:
+            hold = await admit_call(
+                self._meter,
+                call_cost(self._provider_name, self._model, prompt_chars=prompt_chars),
+                self._budget,
+                self._run_budget,
+            )
+        except BudgetExceededError:
             self._audit(audit_id, 1, FailureMode.BUDGET_EXCEEDED, 0.0, 0, 0, False, strategy)
             await self._aclose(source)
-            raise refused
+            raise
+        except asyncio.CancelledError:
+            await self._aclose(source)
+            raise
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._timeout_secs if self._timeout_secs > 0 else None
@@ -492,118 +584,123 @@ class ModelCallGuard(ModelProvider):
         )
 
         try:
-            while True:
-                if deadline is not None:
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        raise TimeoutError
-                    try:
-                        event = await asyncio.wait_for(source.__anext__(), remaining)
-                    except StopAsyncIteration:
-                        break
-                else:
-                    try:
-                        event = await source.__anext__()
-                    except StopAsyncIteration:
-                        break
-                if call is not None:
-                    # The provider is still talking: the workflow stall clock reads this, so a
-                    # step whose model is generating slowly is not killed as a silent one.
-                    call.last_event_at = time.time()
-                if event.kind == EVENT_COMPLETE and not recorded:
-                    # Terminal signal: record success NOW (the consumer may break on
-                    # this event without draining), then keep yielding any trailing
-                    # events a provider might still emit.
-                    tokens_in = int(getattr(event, "input_tokens", 0) or 0)
-                    tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                    price = self._price(event)
-                    self._record_success()
-                    # Charge the DAY scope always, and the ambient RUN scope when one is
-                    # bound. `charge` has accepted `run_key=` since guardrails landed
-                    # and this — its only production caller — never passed one, so
-                    # `run_totals` was permanently empty and every run-scoped cap read zero.
-                    # Read from a ContextVar rather than a parameter because the guard is
-                    # built by `provider_bridge` from provider config and has no run identity;
-                    # threading one in would touch all 33 call sites reaching the bridge.
-                    self._charge(tokens_in + tokens_out, price)
+            try:
+                while True:
+                    if deadline is not None:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise TimeoutError
+                        try:
+                            event = await asyncio.wait_for(source.__anext__(), remaining)
+                        except StopAsyncIteration:
+                            break
+                    else:
+                        try:
+                            event = await source.__anext__()
+                        except StopAsyncIteration:
+                            break
+                    if call is not None:
+                        # The provider is still talking: the workflow stall clock reads this, so a
+                        # step whose model is generating slowly is not killed as a silent one.
+                        call.last_event_at = time.time()
+                    if event.kind == EVENT_COMPLETE and not recorded:
+                        # Terminal signal: record success NOW (the consumer may break on
+                        # this event without draining), then keep yielding any trailing
+                        # events a provider might still emit.
+                        tokens_in = int(getattr(event, "input_tokens", 0) or 0)
+                        tokens_out = int(getattr(event, "output_tokens", 0) or 0)
+                        price = self._price(event)
+                        self._record_success()
+                        # Charge the DAY scope always, and the ambient RUN scope when one is
+                        # bound. `charge` has accepted `run_key=` since guardrails landed
+                        # and this — its only production caller — never passed one, so
+                        # `run_totals` was permanently empty and every run-scoped cap read zero.
+                        # Read from a ContextVar rather than a parameter because the guard is
+                        # built by `provider_bridge` from provider config and has no run identity;
+                        # threading one in would touch all 33 call sites reaching the bridge.
+                        self._charge(hold, tokens_in, tokens_out, price)
+                        self._audit(
+                            audit_id,
+                            1,
+                            FailureMode.NONE,
+                            now_ms() - started,
+                            tokens_in,
+                            tokens_out,
+                            True,
+                            strategy,
+                            price=price,
+                        )
+                        self._settle_call(call, tokens_in, tokens_out, price)
+                        recorded = True
+                        # The usage this event carries is this call's, and the row a caller writes
+                        # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
+                        # that keeps the model-call census from counting the call a second time.
+                        event = naming_the_call(event, audit_id)
+                    yield event
+            except TimeoutError:
+                self._record_failure()
+                await self._aclose(source)
+                if not recorded:
+                    self._audit(
+                        audit_id, 1, FailureMode.TIMEOUT, now_ms() - started, 0, 0, False, strategy
+                    )
+                    _mark(call, FAILED)
+                raise ModelCallTimeout(
+                    use_case=self._use_case,
+                    provider=self._provider_name,
+                    model=self._model,
+                    waited_secs=self._timeout_secs,
+                ) from None
+            except (asyncio.CancelledError, GeneratorExit):
+                # Cooperative cancellation / caller closed the guard mid-stream: not a
+                # provider failure — don't trip the breaker. If the terminal COMPLETE was
+                # already seen (the common case: consumer breaks then closes the gen), the
+                # success was already recorded; otherwise record nothing (genuine abort) — except
+                # on the call record, where an abandoned generation is exactly what a cancel's
+                # accounting has to count.
+                await self._aclose(source)
+                if not recorded:
+                    _mark(call, ABANDONED)
+                raise
+            except Exception:
+                if not recorded:
+                    self._record_failure()
                     self._audit(
                         audit_id,
                         1,
-                        FailureMode.NONE,
+                        FailureMode.PROVIDER_ERROR,
                         now_ms() - started,
                         tokens_in,
                         tokens_out,
-                        True,
+                        False,
                         strategy,
-                        price=price,
                     )
-                    self._settle_call(call, tokens_in, tokens_out, price)
-                    recorded = True
-                    # The usage this event carries is this call's, and the row a caller writes
-                    # from it (`usage_ledger.record_from_event`) keeps the id: that is the join
-                    # that keeps the model-call census from counting the call a second time.
-                    event = naming_the_call(event, audit_id)
-                yield event
-        except TimeoutError:
-            self._record_failure()
-            await self._aclose(source)
+                    _mark(call, FAILED)
+                raise
+
+            # Stream ended via StopAsyncIteration. If no COMPLETE event ever arrived,
+            # record the (clean) outcome once here so a provider that omits COMPLETE is
+            # still audited exactly once — and charged, as any call that completed is.
             if not recorded:
-                self._audit(
-                    audit_id, 1, FailureMode.TIMEOUT, now_ms() - started, 0, 0, False, strategy
-                )
-                _mark(call, FAILED)
-            raise ModelCallTimeout(
-                use_case=self._use_case,
-                provider=self._provider_name,
-                model=self._model,
-                waited_secs=self._timeout_secs,
-            ) from None
-        except (asyncio.CancelledError, GeneratorExit):
-            # Cooperative cancellation / caller closed the guard mid-stream: not a
-            # provider failure — don't trip the breaker. If the terminal COMPLETE was
-            # already seen (the common case: consumer breaks then closes the gen), the
-            # success was already recorded; otherwise record nothing (genuine abort) — except
-            # on the call record, where an abandoned generation is exactly what a cancel's
-            # accounting has to count.
-            await self._aclose(source)
-            if not recorded:
-                _mark(call, ABANDONED)
-            raise
-        except Exception:
-            if not recorded:
-                self._record_failure()
+                price = self._price(None)
+                self._record_success()
+                self._charge(hold, tokens_in, tokens_out, price)
                 self._audit(
                     audit_id,
                     1,
-                    FailureMode.PROVIDER_ERROR,
+                    FailureMode.NONE,
                     now_ms() - started,
                     tokens_in,
                     tokens_out,
-                    False,
+                    True,
                     strategy,
+                    price=price,
                 )
-                _mark(call, FAILED)
-            raise
-
-        # Stream ended via StopAsyncIteration. If no COMPLETE event ever arrived,
-        # record the (clean) outcome once here so a provider that omits COMPLETE is
-        # still audited exactly once — and charged, as any call that completed is.
-        if not recorded:
-            price = self._price(None)
-            self._record_success()
-            self._charge(tokens_in + tokens_out, price)
-            self._audit(
-                audit_id,
-                1,
-                FailureMode.NONE,
-                now_ms() - started,
-                tokens_in,
-                tokens_out,
-                True,
-                strategy,
-                price=price,
-            )
-            self._settle_call(call, tokens_in, tokens_out, price)
+                self._settle_call(call, tokens_in, tokens_out, price)
+        finally:
+            # Whatever ended the call, nothing it set aside stays set aside: a settled call's hold
+            # is already gone, and a failed or stopped one charged nothing.
+            self._meter.release(hold)
 
     def _record_success(self) -> None:
         """Close the breaker; a provider that had tripped it is answering again, so its measured
@@ -617,15 +714,20 @@ class ModelCallGuard(ModelProvider):
         if self._breaker.record_failure():
             _recheck_connection(self._provider_name)
 
-    def _charge(self, tokens: int, price: "CallPrice") -> None:
+    def _charge(
+        self, hold: Hold | None, tokens_in: int, tokens_out: int, price: "CallPrice"
+    ) -> None:
         """Charge one call that completed to the day's meter, and to the ambient run's when one
-        is bound: a call nothing priced is charged as one the dollar caps could not count, never
-        as a free one."""
-        self._meter.charge(
-            tokens,
-            price.dollars,
+        is bound, in place of what it set aside (``SpendMeter.settle``): a call nothing priced is
+        charged as one the dollar caps could not count, never as a free one."""
+        self._meter.settle(
+            hold,
+            ref=f"{self._provider_name}:{self._model}",
+            tokens=tokens_in + tokens_out,
+            answer_tokens=tokens_out,
+            dollars=price.dollars,
+            priced=price.priced,
             run_key=current_run_key() or None,
-            unpriced=0 if price.priced else 1,
         )
 
     def _price(self, event: LLMEvent | None) -> "CallPrice":
@@ -801,10 +903,11 @@ def wrap_model_call_guard(
 
     Idempotent: an already-guarded provider is returned unchanged (defends against
     double-wrapping if two resolution layers both reach for the guard). A local
-    provider's scan mode is forced to ``warn`` regardless of ``scan_mode``: local is where the
-    entry *provider_name* sends (``llm.registry.served_on_this_machine``, the rule pricing and
-    routing ask too), so a prompt that leaves the machine gets the scan the setting asks for, and
-    one that never does is not redacted for a trip it does not take.
+    provider's scan mode is forced to ``warn`` regardless of ``scan_mode``: local is a model the
+    entry *provider_name* runs on this machine (``llm.registry.served_on_this_machine``, the rule
+    pricing and routing ask too), so a prompt that leaves the machine gets the scan the setting
+    asks for, one sent through an endpoint here that passes it on included, and one that never
+    does is not redacted for a trip it does not take.
     """
     if isinstance(provider, ModelCallGuard):
         return provider

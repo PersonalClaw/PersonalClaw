@@ -573,7 +573,7 @@ def test_store_trigger_day_budget_pause_records_each_fire_and_notifies_once(tmp_
         Outcome.DEFERRED.value,
     ]
     pause = (
-        "paused — the daily automation budget is spent. Unattended runs resume tomorrow, "
+        "paused — the daily token budget is spent. Unattended runs resume tomorrow, "
         "or raise the budget in Settings → Guardrails."
     )
     assert [row["error"] for row in rows] == [pause, pause]
@@ -808,8 +808,11 @@ def test_a_run_over_its_ceiling_is_REFUSED():
     assert exc.scope == "run", "the run scope, not the day scope"
     assert exc.dimension == "dollars"
     assert exc.limit == 0.02
-    assert exc.spent > 0.02
-    assert allowed >= 1, "the ceiling is checked BEFORE a call, so the first one must get through"
+    # The first call to the model runs, since nothing knew yet what one costs ($0.0125); the second
+    # is refused BEFORE it is sent, because one more would take the run past its ceiling.
+    assert allowed == 1
+    assert exc.why == "no_room"
+    assert exc.spent == pytest.approx(0.0125) and exc.spent + exc.needed > exc.limit
 
 
 def test_an_unscoped_call_is_never_run_capped():

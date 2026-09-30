@@ -6559,17 +6559,18 @@ export interface ModelRateFields {
 }
 
 /** Where the rate a model's calls are counted at comes from: a price set in Settings (`overlay`),
- *  this machine's known $0 (`local`), the provider app's own (`app_default`) or PersonalClaw's
- *  shipped table (`builtin`). `''` when nothing prices the model. */
+ *  the known $0 of a model this machine serves itself (`local`), the provider app's own
+ *  (`app_default`) or PersonalClaw's shipped table (`builtin`). `''` when nothing prices the model. */
 export type ModelRateSource = '' | 'overlay' | 'local' | 'app_default' | 'builtin'
 
 /** `GET /api/models/rates` — Settings → Usage → Model prices.
  *
  *  · `rates` — the prices set here, one per key: a `provider:model` ref, a pattern over refs
  *    (`anthropic:claude-*`) or a model name alone, which prices it whoever serves it.
- *  · `models` — each model a use is bound to, with the rate its calls are counted at and where it
- *    comes from. `priced: false` means nothing prices it: its rate fields are `null`, its calls
- *    count toward no dollar figure, and each figure says how many it leaves out.
+ *  · `models` — each model a use is bound to, and each one spent on in the last 30 days, with the
+ *    rate its calls are counted at and where it comes from. `priced: false` means nothing prices
+ *    it: its rate fields are `null`, its calls count toward no dollar figure (each figure says how
+ *    many it leaves out), and a daily dollar cap refuses them.
  *  · `unreadable` — why the price file could not be read, when it could not: no price in it is in
  *    effect, and setting one here is refused until it is fixed or removed. */
 export interface ModelRatesView {

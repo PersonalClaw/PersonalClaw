@@ -151,10 +151,11 @@ def reaches_this_machine(url: str) -> bool:
     Decided by the URL's host alone, and never resolved: ``localhost``, a loopback address, or
     the unspecified address (``0.0.0.0``, ``::``), which a connection reaches this machine
     through. An address on the network, any other name (it may point anywhere), a URL that does
-    not parse and no URL at all are not this machine. The one answer for "is this model server
-    local": the model-call guard's outbound scan asks it of the provider it wraps, and the rate
-    table's free local tier and the router's local-first ordering ask it of an entry's endpoints
-    (``llm.registry.served_on_this_machine``).
+    not parse and no URL at all are not this machine. The one answer for "is this endpoint on this
+    machine", asked of a provider entry's endpoints by the two rules built on it
+    (``llm.registry.served_on_this_machine``, where only a type that runs its models where its
+    endpoint is makes one here a model here, and ``llm.registry.sends_to_this_machine``). An
+    endpoint here alone does not say what runs behind it.
     """
     text = str(url or "").strip()
     if not text:

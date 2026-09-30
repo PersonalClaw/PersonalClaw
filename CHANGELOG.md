@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**
 - **Files, a chat's file panel and the Code cockpit save an image or a PDF as a versioned artifact: a copy of the file, checked by its contents, which gains its next version each time it is saved again after the file changes.**
+- **A model server app can declare that it runs the models it serves where it is, `ProviderCapability.hosts_model` (an SDK addition, set by the bundled Ollama app and `vllm-models`): only an instance of such a type on this machine is a local model.**
 - **An answer drawn from a learned lesson can cite it as [Lesson N], which opens that lesson in Memory (`ContextBuilder.build_session_context` and `MemoryService.lessons_context` take an optional `citations_out`: an SDK addition no app has to change for).**
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
@@ -151,6 +152,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An open artifact shows each new version as soon as it is written, whoever wrote it: the Iterate panel's chat, another chat, a workflow step or another tab. An image's page and its library card draw the new picture, not the first one they loaded.**
 - **A declined or retried tool call proposes a refinement only of a skill whose procedure asked for that call, never of one that joined the turn on a matching word.**
 - **A workflow run that fails or stops before it finished says so in the Inbox and the bell, and the row opens that run.**
+- **The daily dollar cap holds when calls run at the same time: a call that costs money sets aside what it may cost and starts only when that fits beside what is spent and what the calls already running have set aside.**
+- **Past a spent daily dollar cap, calls to a model that costs nothing keep running, so automations, loops, subagents and app workers on local models no longer stop until midnight; only the token cap stops work before it starts.**
+- **A model reached through an OpenAI-compatible instance on this machine is no longer counted as free: it is priced by its model's id or has no price, a daily dollar cap refuses a model with no price, and Settings → Usage → Model prices lists it, and every model spent on in the last 30 days, to price ($0 declares it free).**
 - **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**
@@ -791,6 +795,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A prompt sent through an OpenAI-compatible instance on this machine gets the outbound secret scan the setting asks for, since a proxy there can pass it on to a cloud service.**
 - **An Attended loop asks before its workers act: a call that needs your approval, from any of its workers, the per-task workers' included, waits for your answer on the loop's page, the bell and your approval channel, as a chat's does, and "This loop" lets its workers act without asking until the run ends. An Unattended loop's standing grant ends for every worker when its trust window does.**
 - **The agent's file tools, and a file sent to you, refuse a path with a control character in it, as the Files view already did.**
 - **What the dashboard shows from models, tools, feeds, pages, files, apps and other people is Markdown only: HTML in it reads as text (plain formatting tags such as `<kbd>` and `<br>` aside), only web and email links open, images load only over https or from the artifact library, and a `<widget>` runs only in a chat reply.**

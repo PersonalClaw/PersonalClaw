@@ -6804,7 +6804,8 @@
     {"annotation": "StructuredOutput", "default": "StructuredOutput.NONE", "kind": "positional_or_keyword", "name": "structured_output"},
     {"annotation": "PromptCache", "default": "PromptCache.NONE", "kind": "positional_or_keyword", "name": "prompt_cache"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "default_endpoint"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "in_process"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "in_process"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "hosts_model"}
    ],
    "returns": "None"
   },

@@ -7,11 +7,13 @@ of the scan the setting asked for: a credential in a one-shot prompt reached it 
 loopback check was a substring test besides, so ``http://localhost.example.test`` and
 ``http://[2001:db8::1]`` read as local too.
 
-Local now means the entry the call is made for sends to this machine
-(``llm.registry.served_on_this_machine``, which pricing and routing ask too): its endpoint's host is
-``localhost`` or a loopback address, and nothing else. The bundled Ollama provider itself is built
-here, so the rule is held for the class the product ships rather than for a stand-in with a similar
-name. ``_prescan`` is the chokepoint every generation path passes before the provider is called, so
+Local now means the entry the call is made for runs its model on this machine
+(``llm.registry.served_on_this_machine``, which pricing and routing ask too): its type runs the
+models it serves where its endpoint is, and that endpoint's host is ``localhost`` or a loopback
+address, and nothing else. An OpenAI-compatible endpoint on this machine is not local: a proxy there
+can pass the prompt on to a cloud API. The bundled Ollama provider itself is built here, so the
+rule is held for the class the product ships rather than for a stand-in with a similar name.
+``_prescan`` is the chokepoint every generation path passes before the provider is called, so
 nothing here reaches a network.
 """
 
@@ -23,7 +25,12 @@ import pytest
 
 from personalclaw.guardrails.failure import SecretLeakBlocked
 from personalclaw.guardrails.model_call import wrap_model_call_guard
-from personalclaw.llm.registry import ProviderEntry, get_default_registry, served_on_this_machine
+from personalclaw.llm.registry import (
+    ProviderEntry,
+    get_default_registry,
+    sends_to_this_machine,
+    served_on_this_machine,
+)
 
 #: A credential the outbound scan recognises by its shape (the documented example key id).
 _KEY = "AKIAIOSFODNN7EXAMPLE"
@@ -125,10 +132,11 @@ def test_a_provider_no_configured_entry_names_gets_the_settings_scan(home):
         "http://[2001:db8::1]:8000/v1",
     ],
 )
-def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url):
-    entry = _entry("base_url", base_url, provider_type="openai_compatible")
+def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url, ollama_app):
+    entry = _entry("base_url", base_url, provider_type="ollama")
 
     assert served_on_this_machine(entry) is False
+    assert sends_to_this_machine(entry) is False
 
 
 @pytest.mark.parametrize(
@@ -142,10 +150,32 @@ def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url):
         "http://[::]:8000/v1",
     ],
 )
-def test_a_loopback_endpoint_is_local(base_url):
-    entry = _entry("base_url", base_url, provider_type="openai_compatible")
+def test_a_model_server_at_a_loopback_endpoint_is_local(base_url, ollama_app):
+    entry = _entry("base_url", base_url, provider_type="ollama")
 
     assert served_on_this_machine(entry) is True
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://localhost:8000/v1", "http://127.0.0.1:1234/v1", "http://[::1]:8000/v1"],
+)
+def test_an_openai_compatible_endpoint_on_this_machine_gets_the_settings_scan(home, base_url):
+    """Its requests go to this machine, but a proxy there can pass the prompt on to a cloud API,
+    so nothing says the prompt stays here: the setting's scan applies."""
+    entry = _entry("base_url", base_url, provider_type="openai_compatible")
+    guard = wrap_model_call_guard(
+        _ollama("http://localhost:11434"),
+        use_case="background",
+        provider_name=entry,
+        model="gpt-4o-mini",
+        scan_mode="block",
+    )
+
+    assert sends_to_this_machine(entry) is True
+    assert served_on_this_machine(entry) is False
+    with pytest.raises(SecretLeakBlocked):
+        guard._prescan(_PROMPT)
 
 
 def test_an_entry_that_names_no_endpoint_and_has_no_default_is_not_local():

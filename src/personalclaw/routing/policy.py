@@ -295,14 +295,16 @@ def model_of(ref: str) -> str:
 
 
 def is_local_ref(ref: str) -> bool:
-    """Whether ``ref`` names a model served on this machine: its provider entry's endpoint is here.
+    """Whether ``ref`` names a model served on this machine: its provider entry's type runs its
+    models where its endpoint is, and that endpoint is here.
 
     The one rule for "local" (``llm.registry.served_on_this_machine``), the one the rate table
-    prices a local model free by and the model-call guard scans by: where the entry's endpoint is,
-    never what the provider is called. It was decided by the name, matched against the local-model
-    apps', so an Ollama on another machine, which bills and sends prompts off this one, was ordered
-    first as a free local model, and ``LocalOllama`` on this machine, whose name matches no app's,
-    was ordered as cloud.
+    prices a local model free by and the model-call guard scans by: what serves the entry and where
+    its endpoint is, never what the provider is called. It was decided by the name, matched against
+    the local-model apps', so an Ollama on another machine, which bills and sends prompts off this
+    one, was ordered first as a free local model, and ``LocalOllama`` on this machine, whose name
+    matches no app's, was ordered as cloud. An OpenAI-compatible endpoint on this machine is not
+    local either: a proxy there can answer for a paid cloud API.
 
     Conservative: an entry that names no endpoint, and a name no configured entry has, are CLOUD.
     Mis-labeling a cloud ref as local would order a paid, off-machine provider ahead of a free

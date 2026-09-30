@@ -11,7 +11,8 @@ Two lookups in the rate table (``routing.rates``) read a name where they meant t
   ``mistral``, …), matched by prefix. So a model of one of those families was free on any
   machine: an Ollama elsewhere serving ``llama3.1`` counted $0 against the daily cap, and so did
   every model of Mistral's billed API (``mistral-large-latest`` starts with ``mistral``). Free is
-  the local tier's answer, decided by where the entry sends (``served_on_this_machine``).
+  the local tier's answer, decided by what serves the entry and where it sends
+  (``served_on_this_machine``).
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def test_a_name_no_entry_has_takes_no_apps_rate(tmp_path, acme_declares_its_rate
 
 
 @pytest.mark.parametrize("model", ["llama3.1", "mistral", "qwen2.5-72b-instruct", "phi3"])
-def test_an_open_weight_model_is_free_only_on_this_machine(tmp_path, model):
+def test_an_open_weight_model_is_free_only_on_this_machine(tmp_path, model, ollama_app):
     _configured("here", "ollama", endpoint="http://localhost:11434")
     _configured("there", "ollama", endpoint="http://192.0.2.10:11434")
 

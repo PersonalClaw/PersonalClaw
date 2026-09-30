@@ -1282,6 +1282,19 @@ def _restore_local_model_registry() -> object:
     _local_models._capabilities.update(capabilities)
 
 
+@pytest.fixture
+def ollama_app():
+    """The bundled Ollama app's provider type, registered as the gateway registers it at start.
+
+    Whether a model runs on this machine is what its entry's type declares
+    (``ProviderCapability.hosts_model``) together with where it sends, so an ``ollama`` entry is a
+    model here only once its type is registered: a test that configures one asks for this rather
+    than relying on an earlier test on its worker having loaded the app."""
+    from personalclaw.apps.native_contract import NATIVE_DIR, load_bundle_module
+
+    return load_bundle_module(NATIVE_DIR / "ollama-models", "ollama-models", "provider")
+
+
 # (The slack-suite autouse fixtures — enterprise bypass, emoji reset, allowlist
 # reset — moved to apps/slack-channel/tests/conftest.py with the slack tests.)
 

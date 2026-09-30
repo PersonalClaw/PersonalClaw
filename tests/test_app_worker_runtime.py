@@ -554,13 +554,15 @@ def test_pause_keeps_the_row_that_stop_removes(
 
 def _breach(monkeypatch: pytest.MonkeyPatch, *, exceeded: bool) -> None:
     """Drive the REAL budget seam `_budget_pause_reason` reads: `budgets.budget_from_config`
-    plus the day-scope verdict from `budgets.get_meter().check_day`."""
+    plus the verdict work asks before it starts, `budgets.get_meter().check_day_before_work`:
+    the day's token ceiling, the one that stops a worker (a dollar one refuses its paid calls
+    where they are made)."""
     from personalclaw.guardrails import budgets
 
-    monkeypatch.setattr(budgets, "budget_from_config", lambda: budgets.Budget(max_dollars=1.0))
+    monkeypatch.setattr(budgets, "budget_from_config", lambda: budgets.Budget(max_tokens=1_000))
     verdict = budgets.BudgetVerdict.EXCEEDED if exceeded else budgets.BudgetVerdict.OK
-    reason = "day dollar budget exceeded ($2.5/$1)" if exceeded else ""
-    meter = types.SimpleNamespace(check_day=lambda budget: (verdict, reason))
+    reason = "day token budget exceeded (2500/1000)" if exceeded else ""
+    meter = types.SimpleNamespace(check_day_before_work=lambda budget: (verdict, reason))
     monkeypatch.setattr(budgets, "get_meter", lambda: meter)
 
 

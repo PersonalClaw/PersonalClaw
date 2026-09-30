@@ -243,8 +243,9 @@ The supervisor does not take the worker's word for it:
   from HEAD, so a phase fans out only from a tree with no uncommitted changes to tracked files and
   only while the stage worker is between cycles; otherwise its tasks stay the stage worker's. While
   task workers run, the stage worker's cycles stand down, and it stands back up when they drain. A
-  loop whose model runs on this machine (`routing.policy.is_local_ref`) runs one task worker at a
-  time, since calls sent to one machine's model at once only queue behind each other.
+  loop whose model's entry sends to this machine (`llm.registry.sends_to_this_machine`, which counts
+  an OpenAI-compatible endpoint here too) runs one task worker at a time, since calls sent to one
+  machine's model at once only queue behind each other.
 - **The planner's files.** The planner works in the bound workspace, but the files it writes for the
   walkthrough (`plan_steps.json`, `step_artifact.json`) go to the loop's own folder: its brief names
   the absolute path, and the runner (`planning/runner.py`) reads and clears only there. A file of

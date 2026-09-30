@@ -119,13 +119,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             recoverable=True,
         )
     if isinstance(exc, BudgetExceededError):
-        return Failure(
-            failure_class=FailureClass.BUDGET,
-            remediation=(
-                f"the {exc.scope} {exc.dimension} budget is spent; raise it in Settings → "
-                "Guardrails, or wait for the daily budget to reset"
-            ),
-        )
+        return Failure(failure_class=FailureClass.BUDGET, remediation=exc.remedy())
     if isinstance(exc, PromptExceedsWindow):
         return Failure(
             failure_class=FailureClass.USER,

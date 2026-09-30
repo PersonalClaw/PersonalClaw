@@ -22,8 +22,9 @@ from pathlib import Path
 import pytest
 
 import personalclaw
-from personalclaw.guardrails.budgets import Budget, BudgetVerdict, get_meter
-from personalclaw.guardrails.model_call import spent_refusal, wrap_model_call_guard
+from personalclaw.guardrails.budgets import Budget, BudgetVerdict, CallCost, get_meter
+from personalclaw.guardrails.failure import BudgetExceededError
+from personalclaw.guardrails.model_call import wrap_model_call_guard
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 from personalclaw.routing import rates as rates_mod
@@ -37,6 +38,8 @@ _OWNER_RATE = {"in_per_mtok": 3.0, "out_per_mtok": 15.0}
 #: One million tokens in and a hundred thousand out, at the owner's rate: $3.00 + $1.50.
 _TOKENS = (1_000_000, 100_000)
 _OWNER_COST = 4.5
+#: The next call a spent ceiling weighs: one to a priced model (gpt-4o, $2.50/$10 per 1M).
+_NEXT_CALL = CallCost(ref="some-cloud:gpt-4o", prompt_tokens=1, rate=(2.5, 10.0))
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +168,7 @@ async def test_a_call_nothing_prices_is_charged_as_one_the_cap_could_not_count()
 
 
 @pytest.mark.asyncio
-async def test_a_model_on_this_machine_is_charged_its_known_zero():
+async def test_a_model_on_this_machine_is_charged_its_known_zero(ollama_app):
     get_default_registry().register_entry(
         ProviderEntry(
             name="here", type="ollama", model="", options={"endpoint": "http://localhost:11434"}
@@ -186,9 +189,9 @@ async def test_a_cap_that_holds_an_unpriced_call_says_its_total_leaves_it_out():
     await _guarded_call(provider="some-cloud", model="gpt-4o")
     await _guarded_call(provider="some-cloud", model=_MODEL)
 
-    refusal = spent_refusal(get_meter(), Budget(max_dollars=1.0), Budget())
+    refusal = get_meter().admit(_NEXT_CALL, day=Budget(max_dollars=1.0))
 
-    assert refusal is not None
+    assert isinstance(refusal, BudgetExceededError)
     assert refusal.sentence() == (
         "The daily dollar budget is spent ($3.50 of $1.00, not counting 1 call that had no "
         "price): it resets tomorrow, or raise it in Settings → Guardrails."
@@ -200,9 +203,9 @@ def test_a_spent_cap_says_how_many_calls_its_total_leaves_out():
     meter.charge(1_000, 5.0)
     meter.charge(500, 0.0, unpriced=1)
 
-    refusal = spent_refusal(meter, Budget(max_dollars=5.0), Budget())
+    refusal = meter.admit(_NEXT_CALL, day=Budget(max_dollars=5.0))
 
-    assert refusal is not None
+    assert isinstance(refusal, BudgetExceededError)
     assert refusal.sentence() == (
         "The daily dollar budget is spent ($5.00 of $5.00, not counting 1 call that had no "
         "price): it resets tomorrow, or raise it in Settings → Guardrails."
@@ -216,9 +219,9 @@ def test_a_token_cap_counts_every_call_and_says_nothing_of_prices():
     meter = get_meter()
     meter.charge(1_000, 0.0, unpriced=1)
 
-    refusal = spent_refusal(meter, Budget(max_tokens=1_000), Budget())
+    refusal = meter.admit(_NEXT_CALL, day=Budget(max_tokens=1_000))
 
-    assert refusal is not None
+    assert isinstance(refusal, BudgetExceededError)
     assert "price" not in refusal.sentence()
 
 
@@ -309,7 +312,7 @@ def test_a_usage_row_nothing_prices_reads_unpriced():
     assert (row["cost_usd"], row["priced"]) == (0.0, False)
 
 
-def test_a_usage_row_for_a_model_on_this_machine_is_a_priced_zero():
+def test_a_usage_row_for_a_model_on_this_machine_is_a_priced_zero(ollama_app):
     get_default_registry().register_entry(
         ProviderEntry(
             name="here", type="ollama", model="", options={"endpoint": "http://127.0.0.1:11434"}

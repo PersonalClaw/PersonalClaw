@@ -6,11 +6,12 @@ tier is asserted at its boundary AND the absent case is asserted to be ``None`` 
 give. Every test passes an explicit ``home`` (or monkeypatches ``config_dir``); nothing here may
 touch the real ``~/.personalclaw``.
 
-The local tier is decided by where a provider entry's endpoint is. It was decided by the entry's
-NAME (anything spelled like a local engine, ``ollama`` among them), so an Ollama on another
-machine priced as a free local model: its turns read "ran locally at $0" and the router ranked it
-cheapest. The entries here are registered with the endpoint they are configured with, the way
-``config.json`` gives them to the gateway.
+The local tier is decided by what serves a provider entry and where its endpoint is: a type that
+runs its models where its endpoint is (the bundled Ollama app's) at an endpoint on this machine.
+It was decided by the entry's NAME (anything spelled like a local engine, ``ollama`` among them),
+so an Ollama on another machine priced as a free local model: its turns read "ran locally at $0"
+and the router ranked it cheapest. The entries here are registered with the endpoint they are
+configured with, the way ``config.json`` gives them to the gateway.
 """
 
 from __future__ import annotations
@@ -60,6 +61,11 @@ def _configured(name: str, provider_type: str = "ollama", **options: object) -> 
         ProviderEntry(name=name, type=provider_type, model="", options=dict(options))
     )
     return name
+
+
+@pytest.fixture(autouse=True)
+def _ollama_is_installed(ollama_app):
+    """The ``ollama`` entries here are of the bundled Ollama app's type, as a gateway has it."""
 
 
 @pytest.fixture(autouse=True)

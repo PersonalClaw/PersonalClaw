@@ -95,12 +95,27 @@ async def test_a_call_a_rate_prices_is_recorded_as_priced():
 
 
 @pytest.mark.asyncio
-async def test_a_call_on_this_machine_is_a_priced_zero():
-    _entry("here", base_url="http://127.0.0.1:8080/v1")
+async def test_a_call_on_this_machine_is_a_priced_zero(ollama_app):
+    get_default_registry().register_entry(
+        ProviderEntry(
+            name="here", type="ollama", model="", options={"endpoint": "http://127.0.0.1:11434"}
+        )
+    )
 
     row = await _call("here")
 
     assert (row["dollars_est"], row.get("priced")) == (0.0, True)
+
+
+@pytest.mark.asyncio
+async def test_an_openai_compatible_endpoint_on_this_machine_is_not_a_free_model():
+    """A proxy on this machine can answer for a paid cloud API: a model nothing prices behind it
+    is unpriced, not a known zero."""
+    _entry("here", base_url="http://127.0.0.1:8080/v1")
+
+    row = await _call("here")
+
+    assert (row["dollars_est"], row.get("priced")) == (0.0, False)
 
 
 @pytest.mark.asyncio

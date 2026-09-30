@@ -145,7 +145,7 @@ export function statusMeta(s?: string | null): StatusMeta {
   // the run waits on the Triggers page's review to be run again or dismissed.
   if (s === 'interrupted') return { label: 'interrupted by a restart', tone: 'var(--color-danger)', icon: PowerOff }
   // The day-budget pause, the one writer of this run status (`gateway._fire_store_trigger`):
-  // the fire was held because the daily automation budget is spent. The runs feed maps it to
+  // the fire was held because the daily token budget is spent. The runs feed maps it to
   // `deferred`, so it takes that tone; the row's `error` says when it resumes. It rendered as
   // "never run" before, beside a fire that had in fact been held.
   if (s === 'needs_input') return { ...statusMeta('deferred'), label: 'budget spent' }

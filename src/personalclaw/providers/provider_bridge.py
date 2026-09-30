@@ -516,7 +516,15 @@ def _named_override_refusal(
 
 
 def substitution_reason(exc: BaseException) -> tuple[str, str]:
-    """``(why, fix)`` for a named model that failed to serve, from the failure itself."""
+    """``(why, fix)`` for a named model that failed to serve, from the failure itself.
+
+    A spend ceiling that refused it says which one and what lifts it, as a person reads it: past
+    a spent dollar budget, a chain's model that costs nothing serving in a paid one's place is the
+    usual case, not a fault."""
+    from personalclaw.guardrails.failure import BudgetExceededError
+
+    if isinstance(exc, BudgetExceededError):
+        return exc.reason(), exc.fix()
     agent_error = getattr(exc, "agent_error", None)
     why = str(getattr(agent_error, "why", "") or "")
     if why:

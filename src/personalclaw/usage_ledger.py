@@ -372,6 +372,19 @@ def rollup(
     return out
 
 
+def models_used(*, since: str = "") -> list[tuple[str, str]]:
+    """Each ``(provider, model)`` a row since *since* was spent on, the latest first."""
+    seen: dict[tuple[str, str], None] = {}
+    for row in reversed(_iter_rows()):
+        if not _in_window(str(row.get("ts", "")), since, ""):
+            continue
+        provider = str(row.get("provider", "") or "")
+        model = str(row.get("model", "") or "")
+        if provider and model:
+            seen.setdefault((provider, model), None)
+    return list(seen)
+
+
 def totals(
     *, since: str = "", until: str = "", session_key: str = "", session_prefix: str = ""
 ) -> dict:

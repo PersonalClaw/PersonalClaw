@@ -175,31 +175,65 @@ class OutputContractError(GuardError):
         )
 
 
-class BudgetExceededError(GuardError):
-    """A model call was refused because an unattended run/day spend ceiling is hit.
+#: Why a spend ceiling refused a call before it was made (:attr:`BudgetExceededError.why`).
+SPENT = "spent"  # the ceiling is reached
+NO_ROOM = "no_room"  # what is spent and set aside leaves less than the call may use
+UNPRICED = "unpriced"  # a dollar ceiling cannot count a call to a model nothing prices
 
-    Carries the ``scope`` (``run`` | ``day``), the ``dimension`` (``tokens`` |
-    ``dollars``), and the offending ``limit`` so the caller (and the pause-into-
-    needs-input path) can explain exactly which ceiling bit. ``unpriced`` is how many
-    calls in that scope had no price, which a dollar total cannot count: the refusal says
+
+class BudgetExceededError(GuardError):
+    """A model call was refused before it was made, by an unattended run/day spend ceiling.
+
+    Carries the ``scope`` (``run`` | ``day``), the ``dimension`` (``tokens`` | ``dollars``), the
+    ``limit`` and what is ``spent`` against it, so the caller (and the pause-into-needs-input
+    path) can explain exactly which ceiling bit. ``why`` says how: :data:`SPENT`, the ceiling is
+    reached; :data:`NO_ROOM`, what is spent, plus what the calls running now have set aside
+    (``held``), leaves less than this call to ``ref`` may use (``needed``); :data:`UNPRICED`, a
+    dollar ceiling cannot count a call to ``ref``, a model nothing prices. ``unpriced`` is how
+    many calls in that scope had no price, which a dollar total cannot count: the refusal says
     so, rather than presenting what it counted as all that was spent.
     """
 
     mode = FailureMode.BUDGET_EXCEEDED
 
     def __init__(
-        self, scope: str, dimension: str, limit: float, spent: float, *, unpriced: int = 0
+        self,
+        scope: str,
+        dimension: str,
+        limit: float,
+        spent: float,
+        *,
+        unpriced: int = 0,
+        why: str = SPENT,
+        needed: float = 0.0,
+        held: float = 0.0,
+        ref: str = "",
     ) -> None:
         self.scope = scope
         self.dimension = dimension
         self.limit = limit
         self.spent = spent
         self.unpriced = max(0, int(unpriced or 0))
+        self.why = why
+        self.needed = needed
+        self.held = held
+        self.ref = ref
+        super().__init__(self._summary())
+
+    def _summary(self) -> str:
+        """The refusal as the logs and a chain's last error carry it."""
+        head = f"{self.scope} {self.dimension} budget"
+        if self.why == UNPRICED:
+            return f"{head} cannot count a call to {self.ref}: it has no price"
         left_out = self._left_out()
-        super().__init__(
-            f"{scope} {dimension} budget exceeded: spent {spent:.4g} of {limit:.4g}"
-            + (f", {left_out}" if left_out else "")
-        )
+        tail = f", {left_out}" if left_out else ""
+        if self.why == NO_ROOM:
+            held = f", {self.held:.4g} set aside by calls running now" if self.held > 0 else ""
+            return (
+                f"{head} has no room for this call: spent {self.spent:.4g} of "
+                f"{self.limit:.4g}{held}, and a call to {self.ref} may use {self.needed:.4g}{tail}"
+            )
+        return f"{head} exceeded: spent {self.spent:.4g} of {self.limit:.4g}{tail}"
 
     def _left_out(self) -> str:
         """What a dollar figure leaves out; nothing for a token one, which counts every call."""
@@ -207,23 +241,68 @@ class BudgetExceededError(GuardError):
 
         return unpriced_clause(self.unpriced) if self.dimension == "dollars" else ""
 
-    def sentence(self) -> str:
-        """The refusal as a person reads it: which ceiling stopped the run, what was spent
-        against it, and where it is changed."""
+    def _amount(self, value: float) -> str:
+        if self.dimension == "tokens":
+            return f"{int(value):,} tokens"
+        return f"${value:.2f}"
+
+    def reason(self) -> str:
+        """Why the call was refused, as a clause a person reads: which ceiling stopped it and
+        what was spent against it (``… : <fix>`` completes it, :meth:`sentence`)."""
         which = "daily" if self.scope == "day" else "per-run"
+        unit = "token" if self.dimension == "tokens" else "dollar"
+        if self.why == UNPRICED:
+            return (
+                f"{self.ref} has no price, so the {which} dollar budget cannot count what a call "
+                "to it would spend"
+            )
+        left_out = self._left_out()
+        if self.why == NO_ROOM:
+            left = max(0.0, self.limit - self.spent - self.held)
+            running = " once the calls running now are paid for" if self.held > 0 else ""
+            verb = "use" if self.dimension == "tokens" else "cost"
+            aside = f" ({left_out})" if left_out else ""
+            return (
+                f"the {which} {unit} budget has {self._amount(left)} left of "
+                f"{self._amount(self.limit)}{running}{aside}, and a call to {self.ref} may "
+                f"{verb} {self._amount(self.needed)}"
+            )
         if self.dimension == "tokens":
             figure = f"{int(self.spent):,} of {int(self.limit):,} tokens"
-            unit = "token"
         else:
             figure = f"${self.spent:.2f} of ${self.limit:.2f}"
-            left_out = self._left_out()
             if left_out:
                 figure = f"{figure}, {left_out}"
-            unit = "dollar"
-        fix = "raise it in Settings → Guardrails"
+        return f"the {which} {unit} budget is spent ({figure})"
+
+    def fix(self) -> str:
+        """Where the refusal is lifted, as a clause."""
+        if self.why == UNPRICED:
+            return "set its price in Settings → Usage → Model prices, or $0 if it costs nothing"
         if self.scope == "day":
-            fix = f"it resets tomorrow, or {fix}"
-        return f"The {which} {unit} budget is spent ({figure}): {fix}."
+            return "it resets tomorrow, or raise it in Settings → Guardrails"
+        return "raise it in Settings → Guardrails"
+
+    def sentence(self) -> str:
+        """The refusal as a person reads it: which ceiling stopped the call, what was spent
+        against it, and where it is changed."""
+        reason = self.reason()
+        if self.why != UNPRICED:  # a model's ref opens an unpriced one, spelled as it is
+            reason = reason[:1].upper() + reason[1:]
+        return f"{reason}: {self.fix()}."
+
+    def remedy(self) -> str:
+        """What lifts the refusal, as a step's suggested fix reads it."""
+        if self.why == UNPRICED:
+            return (
+                f"{self.ref} has no price, so the {self.scope} dollar budget cannot count it; set "
+                "its price in Settings → Usage → Model prices, or $0 if it costs nothing"
+            )
+        state = "has no room for this call" if self.why == NO_ROOM else "is spent"
+        return (
+            f"the {self.scope} {self.dimension} budget {state}; raise it in Settings → "
+            "Guardrails, or wait for the daily budget to reset"
+        )
 
 
 class SecretLeakBlocked(GuardError):

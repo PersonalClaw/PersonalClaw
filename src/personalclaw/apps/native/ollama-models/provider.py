@@ -1070,6 +1070,9 @@ OLLAMA_CAPABILITY = ProviderCapability(
     # Where an instance that names no endpoint sends (the factory's own fallback below), so core
     # reads such an instance as on this machine exactly as it is.
     default_endpoint=_DEFAULT_ENDPOINT,
+    # An Ollama server runs the models it serves on the machine it runs on: an instance at an
+    # endpoint on this machine runs its model here.
+    hosts_model=True,
 )
 
 

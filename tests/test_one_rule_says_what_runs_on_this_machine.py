@@ -8,9 +8,12 @@ type's default (Ollama's localhost) was unpriced and ordered as a cloud model, w
 treated it as local. And the bundled offline model, which runs inside the gateway and names no
 endpoint at all, was unpriced, and its prompts were redacted for a trip they never take.
 
-All three ask ``llm.registry.served_on_this_machine`` now. It reads the entry's endpoints, else the
-default its type declares (``ProviderCapability.default_endpoint``), and counts a type that runs
-its model in the gateway's own process (``ProviderCapability.in_process``) as local.
+All three ask ``llm.registry.served_on_this_machine`` now. It counts a type that runs its model in
+the gateway's own process (``ProviderCapability.in_process``) as local, and a type that runs the
+models it serves where its endpoint is (``ProviderCapability.hosts_model``) as local when the
+entry's endpoints, else the default its type declares (``ProviderCapability.default_endpoint``),
+are on this machine. An entry of a type that passes requests on is not a model here wherever it
+sends.
 """
 
 from __future__ import annotations
@@ -100,7 +103,11 @@ def test_an_entry_naming_an_endpoint_elsewhere_is_elsewhere_to_all_three():
     assert _the_three_answers("far-ollama", "llama3.1") == ("unpriced", False, False)
 
 
-def test_a_branded_entry_naming_no_endpoint_sends_where_its_app_says():
+def test_a_branded_entry_naming_no_endpoint_sends_where_its_app_says_and_is_no_local_model():
+    """A branded app passes each request on to the service its endpoint names, so even a default
+    on this machine is where the request goes, not where the model runs: a proxy there can answer
+    for a paid cloud API. Unpriced, ordered as remote, and scanned as the setting says."""
+    from personalclaw.llm.registry import sends_to_this_machine
     from personalclaw.sdk.provider_helpers import BrandedProviderSpec, register_branded_app
 
     register_branded_app(
@@ -108,7 +115,8 @@ def test_a_branded_entry_naming_no_endpoint_sends_where_its_app_says():
     )
     _configured("desk", "acme-desk-models")
 
-    assert _the_three_answers("desk", "acme-small") == ("local", True, True)
+    assert sends_to_this_machine("desk") is True
+    assert _the_three_answers("desk", "acme-small") == ("unpriced", False, False)
 
 
 def test_the_in_process_offline_model_is_local_to_all_three():

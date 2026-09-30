@@ -637,10 +637,11 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         # Procedural-memory signal: a new turn starts with a clean accumulator,
         # then every event is folded in. See acp/outcomes.py for why the reset is here.
-        # On a metered axis the turn is metered (acp/spend.py): refused before the prompt
-        # goes out once a spend ceiling is reached, and charged at its end.
+        # On a metered axis the turn is metered (acp/spend.py): admitted before the prompt
+        # goes out against the spend ceilings, and charged at its end.
         self._outcome_accumulator.begin_turn()
-        async for event in self._metered(self._events(self._client.stream_events(message))):
+        turn = self._events(self._client.stream_events(message))
+        async for event in self._metered(turn, prompt=message):
             self._outcome_accumulator.observe(event)
             yield event
 
@@ -656,7 +657,8 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         self._outcome_accumulator.begin_turn()
-        async for event in self._metered(self._events(self._client.stream_command(command))):
+        turn = self._events(self._client.stream_command(command))
+        async for event in self._metered(turn, prompt=command):
             self._outcome_accumulator.observe(event)
             yield event
 

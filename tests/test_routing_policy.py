@@ -54,6 +54,12 @@ _HERE = "http://localhost:11434"
 _ELSEWHERE = "http://192.0.2.10:11434"
 
 
+@pytest.fixture(autouse=True)
+def _ollama_is_installed(ollama_app):
+    """The entries here are the bundled Ollama app's, a model server that runs its models where
+    it is: only its type makes an endpoint on this machine a model here."""
+
+
 def _entry(name: str, endpoint: str) -> None:
     """Register the provider entry *name* with *endpoint*, as the config sync does; conftest drops
     it after the test."""

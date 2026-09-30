@@ -22,10 +22,12 @@ rejected the turn outright. (That rejection is the failure the sibling change re
 from; this one keeps the loop from getting there.)
 
 The fix passes local-ness in from the call site, because that is where the provider INSTANCE
-is — asked of the entry it was built for (its `served_ref`) by the one rule for "local",
-`llm.registry.served_on_this_machine`, which pricing, routing and the spend guard's scan ask
-too, instead of minting a second. A per-binding `context_window` (popped out of the provider's
-options bag) overrides both.
+is — asked of the entry it was built for (its `served_ref`): whether its requests go to this
+machine, `llm.registry.sends_to_this_machine`. That counts an OpenAI-compatible endpoint here
+whatever runs behind it, unlike `served_on_this_machine`, which pricing, routing and the spend
+guard's scan ask: for this estimate, taking a proxy for a cloud model as local compacts a little
+early, while taking a local runtime as a cloud model never compacts. A per-binding
+`context_window` (popped out of the provider's options bag) overrides both.
 """
 
 from __future__ import annotations
