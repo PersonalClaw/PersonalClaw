@@ -591,10 +591,10 @@ def _fire_reports(tmp_path, monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(AP, "get_action_provider", lambda name: _Reports())
     orch = object.__new__(GatewayOrchestrator)
 
-    def deliver(trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> None:
+    def deliver(state: Any, trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> None:
         _Reports.delivered.append((ok, error))
 
-    monkeypatch.setattr(orch, "_deliver_fire_outcome", deliver)
+    monkeypatch.setattr("personalclaw.triggers.delivery.report_run", deliver)
     trigger = store.get("clock:reports").trigger
     asyncio.run(orch._fire_store_trigger(trigger, {"trigger_id": "clock:reports"}))
     runs, _total = asyncio.run(ScheduleRunStore(tmp_path).list_for_job("clock:reports", 0, 5))

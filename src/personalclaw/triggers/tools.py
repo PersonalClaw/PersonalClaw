@@ -256,7 +256,7 @@ PATCHABLE: frozenset[str] = frozenset(
         "failure_delivery",
         # 🔴 `failure_policy` joins the allowlist. `failure_delivery` has been patchable
         # since S158 while the policy beside it was not, so `dedupe_hash` — the opt-in
-        # `gateway._dedupe_repeat_failure` gates on — was settable by the MIGRATION and by nothing
+        # `delivery.repeats_last_failure` gates on — was settable by the MIGRATION and by nothing
         # else. A control only a one-time migration can turn on is not a control.
         #
         # `autopause_after` rides in the same dict and is a threshold §3.7 acts on, which is why the

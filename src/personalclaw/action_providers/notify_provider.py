@@ -69,7 +69,7 @@ class NotifyActionProvider(ActionProvider):
                 success=False, error="notify hook: services unavailable (startup not wired)"
             )
         # The link back to the automation that fired this note. On a trigger fire this note is the
-        # ONE notification the user gets — `gateway._deliver_fire_outcome` skips the substrate's
+        # ONE notification the user gets — `delivery.report_run` skips the substrate's
         # "X finished" report for a notify action, because it would be a second note about the same
         # fire — so the deep link that report used to carry has to ride on this one instead.
         link = {"meta": {"statusUrl": ctx.status_url}} if ctx.status_url else {}

@@ -92,6 +92,7 @@ from personalclaw.llm.prompt_cache import (
     effective_cache_mode,
     mark_cacheable_prefix,
 )
+from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
 from personalclaw.tool_providers.base import RiskLevel, only_tells_the_owner
 from personalclaw.tool_providers.portable_schema import (
     ToolSchemaRejected,
@@ -313,6 +314,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         self._tool_defs: list[Any] = []
         self._tool_schema: list[dict] = []
         self._tool_index: dict[str, "ToolProvider"] = {}
+        # tool name → the input schema its provider declared, before the portable repair the model
+        # is shown (`_refuse_missing_arguments` checks a call against what the tool requires).
+        self._tool_input_schemas: dict[str, Any] = {}
         # Fallback name resolver (provider-agnostic): sanitized(real_name)->real_name,
         # populated ONLY for names that need rewriting AND sanitize uniquely (no
         # collisions). Consulted when the exact _tool_index lookup misses, so a
@@ -444,6 +448,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         disabled_provs = tool_prefs.load_disabled_providers()
         defs: list[Any] = []
         index: dict[str, ToolProvider] = {}
+        declared: dict[str, Any] = {}
         provider_of: dict[str, str] = {}  # tool name → resolved provider key (grouping)
         dropped: list[str] = []
         for prov in self._tool_providers:
@@ -469,6 +474,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     dropped.append(t.name)
                     continue
                 enabled.append(t)
+                declared[t.name] = t.parameters
             # THE TOOL SEAM: a provider validates the whole tool block, so one schema it
             # cannot accept fails every turn. Every tool — built-in or app — is brought inside
             # the portable profile here, where the request is assembled; one that cannot be
@@ -497,6 +503,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 logger.info("native: unattended run — stripped interactive tools %s", stripped)
         self._tool_defs = defs
         self._tool_index = index
+        self._tool_input_schemas = declared
         # GROUP PARTITION — derived from the assembled catalog, so it
         # reflects exactly the providers this session actually has (post-disable,
         # post-strip). Seeds activation from the explicit kwarg or this surface's
@@ -2000,13 +2007,27 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if (gone := self._no_longer_offered(tool_name, meta)) is not None:
             return gone
         if self._requires_approval(tool_name):
-            return _NEEDS_APPROVAL
+            # A call missing what its tool requires is answered with why before anyone is asked:
+            # approving it could run nothing, and the identical retry would ask again.
+            refused = self._refuse_missing_arguments(tool_name, args, meta)
+            return _NEEDS_APPROVAL if refused is None else refused
         if self._asks_first(tool_name):
             # The tool asks before it runs, and the session's approval policy answered for it.
             # Recorded HERE, past every refusal above, so only for a call that is about to run;
             # the host says whose switch set the policy (`chat_runner.auto_approval_reason`).
             meta[TOOL_META_APPROVAL_WAIVED] = True
         return await self._invoke(tool_name, args, meta_sink=meta)
+
+    def _refuse_missing_arguments(self, tool_name: str, args: dict, meta: dict) -> str | None:
+        """The answer to a call missing an argument its tool's declared input schema requires,
+        marked not run in *meta*; None when it has them, or when the schema cannot be checked."""
+        problems = missing_arguments(args, self._tool_input_schemas.get(tool_name))
+        if not problems:
+            return None
+        meta.update(_FAILED)
+        meta[TOOL_META_NOT_RUN] = "missing_arguments"
+        shown = next((t for t in self._tool_defs if t.name == tool_name), None)
+        return missing_arguments_note(tool_name, problems, getattr(shown, "parameters", None))
 
     @staticmethod
     def _unknown_tool(tool_name: str, meta: dict) -> str:

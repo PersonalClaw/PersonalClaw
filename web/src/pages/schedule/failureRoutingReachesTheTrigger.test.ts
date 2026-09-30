@@ -3,8 +3,8 @@
  * 🔴 THE DEFECT. The whole failure-delivery contract is BUILT and WIRED on the backend:
  * `Trigger.failure_delivery` (models.py:664, `to_dict` :763, `from_dict` :1072), the
  * `automation_update` PATCH allowlist (triggers/tools.py), outcome-picks-the-route
- * (`delivery.route_for`, called from `gateway._deliver_fire_outcome`), and the opt-in repeat-failure
- * dedup gated on `failure_policy.dedupe_hash` (`gateway._dedupe_repeat_failure`). And NEITHER field
+ * (`delivery.route_for`, called from `delivery.report_run`), and the opt-in repeat-failure
+ * dedup gated on `failure_policy.dedupe_hash` (`delivery.repeats_last_failure`). And NEITHER field
  * existed anywhere a user could see or set one: `git grep -c 'failure_delivery' -- web/src` was
  * **0**. A paid-for capability, unreachable — the config round-trip contract's last clause.
  *

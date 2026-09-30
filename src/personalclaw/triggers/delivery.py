@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import logging
 import re
 import time
@@ -344,7 +345,7 @@ def build_delivery(
 #: cron-result notification about it would be a notification about your notification". A
 #: user-authored notify trigger had nobody to set that for it.
 #:
-#: Decided per fire by `gateway._deliver_fire_outcome`, not stored as `delivery: "none"` at create
+#: Decided per run by `report_run`, not stored as `delivery: "none"` at create
 #: time: a stored route would go stale the moment the action is edited, would fix no trigger that
 #: already exists, and would overwrite a setting the user owns. It is also not a ROUTE (`route_for`
 #: still answers where a report would go) — it is whether there is a report at all. A FAILED fire
@@ -369,7 +370,7 @@ def route_for(trigger: Any, *, ok: bool) -> str:
     failures (R12). Failures reach the inbox even when `delivery` is none: an automation the user
     asked to stay quiet still has to be able to say it broke."*
 
-    Measured before writing: `_deliver_fire_outcome` passed `destination=trigger.delivery`
+    Measured before writing: the fire's report passed `destination=trigger.delivery`
     unconditionally, so the failure route was never consulted — and a `delivery: "none"` automation
     that broke reported its failure through the silent channel.
 
@@ -786,3 +787,181 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
     if isinstance(delivered_ids, set):
         delivered_ids.add(delivery.event_id)
     return True
+
+
+# ── reporting a run on its trigger's route ─────────────────────────────────────────────────────
+#
+# ONE reporter for every run a trigger makes: a scheduled fire (`gateway._fire_store_trigger`), the
+# end of work a fire only started (`gateway._report_to_its_trigger`), and every run the dispatch
+# every hand-run and outside fire shares makes (`trigger_runs._dispatch_store_action`: Run now, the
+# restart review's Run now, an answered park, a webhook fire, a view refresh). It lived on the
+# gateway, where that dispatch could not reach it, so a Run now of a trigger set to report to a
+# chat channel reported nowhere.
+
+#: The event ids this process has delivered (`is_duplicate`'s seen-set). Process-local, which is
+#: the honest scope: the retry window is a transport concern, and an in-memory set is right for one
+#: gateway process — a persisted one would claim a durability this path does not have. `event_id`
+#: is stable across retries by construction, so a redelivery inside the process is suppressed.
+_DELIVERED_EVENT_IDS: set[str] = set()
+
+#: The per-report attempt counter (:func:`next_attempt_key`).
+_ATTEMPTS = itertools.count(1)
+
+
+def says_nothing_now(result: Any) -> bool:
+    """Whether a run whose action succeeded has nothing to tell its trigger's route yet, or at all.
+
+    An action that only started or parked its work (``launched``, ``queued``, ``needs_input``:
+    `Outcome.DEFERRED`) has its trigger hear how it went when that work ends or is answered, not
+    now. One that had nothing to do (``skip``: `Outcome.SKIPPED_NOOP`) succeeded silently, which is
+    what the outcome means (`ActionResult.outcome`): its history row says why, and a "finished"
+    note about it would say something happened.
+    """
+    from personalclaw.triggers.executor import Outcome, classify
+
+    outcome, _ = classify(str(getattr(result, "outcome", "") or ""))
+    return outcome in (Outcome.DEFERRED.value, Outcome.SKIPPED_NOOP.value)
+
+
+def next_attempt_key() -> str:
+    """A monotonically increasing per-report key for `event_id` (S161).
+
+    Each run is a distinct event, so its delivery needs a distinct id — otherwise `is_duplicate`
+    reads the second run of a healthy automation as a redelivery of the first and drops it. A
+    counter rather than a timestamp because a millisecond stamp collides for runs in the same tick:
+    measured, 5 rapid `int(time.time() * 1000)` reads returned ONE distinct value, so 5 fires still
+    produced only 2 notifications. Process-local like the seen-set it is checked against.
+    """
+    return f"a{next(_ATTEMPTS)}"
+
+
+def repeats_last_failure(trigger: Any, *, error: str) -> bool:
+    """True when this failure repeats the last alerted one inside the reminder window (S161).
+
+    Persists the hash + timestamp on the trigger either way, so a NEW error resets the window
+    rather than inheriting the previous one's remaining time.
+
+    Gated on `failure_policy.dedupe_hash` because that is what §1.1 declares. Coalescing alerts
+    for a user who did not ask for it would be the opposite failure — a broken automation going
+    quieter than they expect.
+
+    **The autopause counter is untouched.** The legacy control advanced `consecutive_failures`
+    while suppressing the notification, and that separation is the point: dedup is about how
+    loudly the user is told, never about whether the failure counted. Coupling them would let a
+    repeating error escape autopause entirely — the worst possible reading.
+
+    Never raises: a bookkeeping failure must not swallow a real alert, so any error falls
+    through to delivering (fail-LOUD, the safe direction for a notification).
+    """
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers.store import TriggerStore
+
+        policy = getattr(trigger, "failure_policy", None)
+        if not isinstance(policy, dict) or not policy.get("dedupe_hash"):
+            return False
+        trigger_id = str(getattr(trigger, "id", "") or "")
+        if not trigger_id:
+            return False
+        # 🔴 READ THE DEDUP STATE FROM THE STORE, not from the passed-in trigger. Caught by
+        # driving it: the fire path hands `report_run` the in-memory row the TICK built, and this
+        # writes the hash back to disk — so the object the next fire arrives with is stale, its
+        # `last_alert_hash` still empty, and nothing ever matched. A dedup control whose state the
+        # reader cannot see is the inert shape again, one layer in. `_record_fire_outcome`
+        # re-reads the store for exactly this reason.
+        store = TriggerStore(base_dir=config_dir())
+        row = store.get(trigger_id)
+        live = row.trigger if row is not None else trigger
+        suppress, digest = suppress_repeat_failure(
+            error=error,
+            last_hash=str(getattr(live, "last_alert_hash", "") or ""),
+            last_at=float(getattr(live, "last_alert_at", 0.0) or 0.0),
+            now=time.time(),
+        )
+        if not digest:
+            return False
+        if not suppress:
+            if row is not None:
+                live.last_alert_hash = digest
+                live.last_alert_at = time.time()
+                store.upsert(live)
+            return False
+        logger.info(
+            "trigger %s: duplicate failure suppressed (same error within the reminder window)",
+            trigger_id,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - see the docstring: fall through to delivering
+        logger.debug("failure dedup check failed for %s", trigger, exc_info=True)
+        return False
+
+
+def report_run(
+    state: Any,
+    trigger: Any,
+    *,
+    ok: bool,
+    error: str = "",
+    summary: str = "",
+    run_id: str = "",
+) -> bool:
+    """Tell the trigger's route how a run went, with a deep link (§R18 / crit 10 — S140).
+
+    ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
+    run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
+    summary. Returns whether a note went out on the route. *state* is the dashboard state whose
+    `notify` every note goes through; with none, nothing is sent.
+
+    Routes through `state.notify` (:func:`deliver`): R18 says "the substrate does not build a
+    second notification path", so the existing `notification_allowed` gate and the per-(source,
+    kind) rule both still apply. A muted channel stays muted.
+
+    Never raises. A notification failure must not fail the run that already completed.
+    """
+    try:
+        if state is None:
+            return False
+        # 🔴 ONE NOTIFICATION PER RUN. A `notify` action's success already put the user's own
+        # note in front of them — measured: 5 fires of a per-minute notify trigger made 10
+        # notifications, each fire's "Standup nudge: review Q4 tasks" followed by an empty
+        # "Standup nudge finished". The report would be a note about the note, so it is not
+        # sent; the action's note carries the trigger link instead (`ActionContext.status_url`).
+        # A failure still reports: in that case the action's own note never went out.
+        if ok and notifies_on_its_own(trigger):
+            return False
+        # 🔴 SUPPRESS A REPEATED IDENTICAL FAILURE (R7's `dedupe_hash`). `event_id` dedupes the
+        # same event REDELIVERED (same run_id), not different runs carrying an identical error:
+        # the same error on 6 consecutive fires produced 6 notifications. Opt-in via
+        # `failure_policy.dedupe_hash`, and capped by a 1h window, so a still-broken automation
+        # re-alerts: "it stopped telling me" and "it got fixed" must not look alike.
+        if not ok and repeats_last_failure(trigger, error=error):
+            return False
+        note = build_delivery(
+            trigger_id=str(getattr(trigger, "id", "") or ""),
+            trigger_name=str(getattr(trigger, "name", "") or ""),
+            ok=ok,
+            # Whole: `build_delivery` sizes it for each surface. Cut here, an agent's reply
+            # reached its chat channel as its first 512 characters.
+            summary=summary if ok else error,
+            run_id=run_id,
+            # 🔴 EACH RUN IS A NEW EVENT (R18 / crit 10). Without an attempt key `event_id` — derived
+            # from the trigger, the run and this key — was the SAME for every fire of a trigger,
+            # and `is_duplicate` dropped every notification after the first: a healthy daily
+            # digest notified the user ONCE, EVER. Criterion 10's dedup is for the same event
+            # REDELIVERED (a transport retry), and applying it to distinct runs made it a mute.
+            attempt_key=next_attempt_key(),
+            # 🔴 The OUTCOME picks the route (R12 / decision 13), so `failure_delivery` is
+            # consulted for a failure: "failures reach the inbox even when `delivery` is none".
+            destination=route_for(trigger, ok=ok),
+            # A failure whose route is the Inbox is filed there, as the Triggers page's "If it
+            # fails: Inbox" says.
+            inbox=files_in_inbox(trigger, ok=ok),
+            # 🔴 A CLOCK TRIGGER IS A SCHEDULED JOB (issue #415), and its outcome belongs on the
+            # `cron/*` rows the matrix offers. Read off the trigger because this substrate also
+            # carries webhook, event, file and web_watch outcomes, and those are not scheduled jobs.
+            scheduled=is_scheduled(trigger),
+        )
+        return deliver(state, note, delivered_ids=_DELIVERED_EVENT_IDS)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("could not report the run of %s", trigger, exc_info=True)
+        return False

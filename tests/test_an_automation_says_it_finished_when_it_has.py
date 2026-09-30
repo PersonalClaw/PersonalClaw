@@ -86,11 +86,11 @@ def _fire(home, monkeypatch, result: ActionResult) -> list[tuple[bool, str]]:
     orch = object.__new__(GatewayOrchestrator)
     delivered: list[tuple[bool, str]] = []
 
-    def deliver(trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> bool:
+    def deliver(state: Any, trigger: Any, *, ok: bool, error: str = "", summary: str = "") -> bool:
         delivered.append((ok, error or summary))
         return True
 
-    monkeypatch.setattr(orch, "_deliver_fire_outcome", deliver)
+    monkeypatch.setattr("personalclaw.triggers.delivery.report_run", deliver)
     trigger = TriggerStore(base_dir=home).get(TRIGGER_ID).trigger
     asyncio.run(orch._fire_store_trigger(trigger, {"trigger_id": TRIGGER_ID}))
     return delivered

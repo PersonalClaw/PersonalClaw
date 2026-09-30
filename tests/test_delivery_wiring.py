@@ -241,18 +241,26 @@ def test_the_FIRE_PATH_delivers():
     import inspect
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
-    assert "_deliver_fire_outcome" in src
+    assert "report_run" in src
 
 
 # ── 🔴 every fire shared one event id, so a healthy automation notified ONCE ──
 
 
-def _gw():
-    from personalclaw.gateway import GatewayOrchestrator
+class _Reporter:
+    """`delivery.report_run` bound to one recording state."""
 
-    gw = GatewayOrchestrator.__new__(GatewayOrchestrator)
-    gw.dashboard_state = _State()
-    return gw
+    def __init__(self) -> None:
+        self.dashboard_state = _State()
+
+    def report(self, trigger, **kwargs):
+        from personalclaw.triggers.delivery import report_run
+
+        return report_run(self.dashboard_state, trigger, **kwargs)
+
+
+def _gw():
+    return _Reporter()
 
 
 def _trigger(tmp_path, *, policy=None, tid="clock:daily"):
@@ -278,7 +286,7 @@ def _trigger(tmp_path, *, policy=None, tid="clock:daily"):
 
 
 def test_a_HEALTHY_automation_notifies_on_EVERY_fire(tmp_path, monkeypatch):
-    """🔴 THE DEFECT, and it is severe. `_deliver_fire_outcome` passed neither `run_id` nor
+    """🔴 THE DEFECT, and it is severe. The fire's report passed neither `run_id` nor
     `attempt_key`, and `event_id` is derived from exactly those three parts — so every fire of a
     trigger produced the SAME id and `is_duplicate` dropped everything after the first.
 
@@ -290,17 +298,17 @@ def test_a_HEALTHY_automation_notifies_on_EVERY_fire(tmp_path, monkeypatch):
     _store, trigger = _trigger(tmp_path)
     gw = _gw()
     for _ in range(5):
-        gw._deliver_fire_outcome(trigger, ok=True)
+        gw.report(trigger, ok=True)
     assert len(gw.dashboard_state.sent) == 5, "each fire is a distinct event"
 
 
-def test_the_attempt_key_is_a_COUNTER_not_a_TIMESTAMP(tmp_path, monkeypatch):
+def test_the_attempt_key_is_a_COUNTER_not_a_TIMESTAMP():
     """🔴 A bug in my own first fix. `int(time.time() * 1000)` collides for fires in the same tick —
     measured, 5 rapid reads returned ONE distinct value, so 5 fires still produced only 2
     notifications. A counter is monotonic whatever the clock's resolution."""
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    gw = _gw()
-    keys = [gw._next_delivery_attempt() for _ in range(5)]
+    from personalclaw.triggers.delivery import next_attempt_key
+
+    keys = [next_attempt_key() for _ in range(5)]
     assert len(set(keys)) == 5, f"attempt keys must be distinct, got {keys}"
 
 
@@ -313,7 +321,7 @@ def test_a_REPEATED_identical_failure_is_SUPPRESSED(tmp_path, monkeypatch):
     _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
     gw = _gw()
     for _ in range(6):
-        gw._deliver_fire_outcome(trigger, ok=False, error="ConnectionError: host unreachable")
+        gw.report(trigger, ok=False, error="ConnectionError: host unreachable")
     assert len(gw.dashboard_state.sent) == 1
 
 
@@ -325,7 +333,7 @@ def test_dedup_is_OPT_IN(tmp_path, monkeypatch):
         _store, trigger = _trigger(tmp_path, policy=policy, tid=f"clock:{policy!r}")
         gw = _gw()
         for _ in range(6):
-            gw._deliver_fire_outcome(trigger, ok=False, error="ConnectionError: host unreachable")
+            gw.report(trigger, ok=False, error="ConnectionError: host unreachable")
         assert len(gw.dashboard_state.sent) == 6, policy
 
 
@@ -335,7 +343,7 @@ def test_a_DIFFERENT_error_always_alerts(tmp_path, monkeypatch):
     _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
     gw = _gw()
     for i in range(6):
-        gw._deliver_fire_outcome(trigger, ok=False, error=f"ConnectionError: host-{i} down")
+        gw.report(trigger, ok=False, error=f"ConnectionError: host-{i} down")
     assert len(gw.dashboard_state.sent) == 6
 
 
@@ -347,7 +355,7 @@ def test_a_NEW_error_RESETS_the_window(tmp_path, monkeypatch):
     _store, trigger = _trigger(tmp_path, policy={"dedupe_hash": True})
     gw = _gw()
     for err in ("A: one", "A: one", "B: two", "B: two", "A: one"):
-        gw._deliver_fire_outcome(trigger, ok=False, error=err)
+        gw.report(trigger, ok=False, error=err)
     assert len(gw.dashboard_state.sent) == 3
 
 
@@ -372,9 +380,9 @@ def test_dedup_does_NOT_touch_the_autopause_counter():
     whether the failure counted. Coupling them lets a repeating error escape autopause."""
     import inspect
 
-    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.triggers.delivery import repeats_last_failure
 
-    source = inspect.getsource(GatewayOrchestrator._dedupe_repeat_failure)
+    source = inspect.getsource(repeats_last_failure)
     assert "consecutive_failures" in source, "the reasoning must be recorded"
     assert "consecutive_failures =" not in source and "consecutive_failures=" not in source
 
@@ -408,7 +416,7 @@ def test_a_clock_triggers_outcome_is_delivered_as_a_SCHEDULED_JOB(tmp_path, monk
     The ScheduleService removal deleted every emitter of the `cron` kind but left its two rules
     rows, so "Scheduled job failed → Notify" was a configurable control nothing could trigger and
     the failure landed on `system/error` instead. Driven through the real
-    `_deliver_fire_outcome` with a real `kind="clock"` trigger, and asserted on the kind that
+    `delivery.report_run` with a real `kind="clock"` trigger, and asserted on the kind that
     reaches `notify` — which is what the rules engine resolves a rule from.
     """
     from personalclaw import notification_kinds as nk
@@ -417,8 +425,8 @@ def test_a_clock_triggers_outcome_is_delivered_as_a_SCHEDULED_JOB(tmp_path, monk
     _store, trigger = _trigger(tmp_path)
     gw = _gw()
 
-    gw._deliver_fire_outcome(trigger, ok=True)
-    gw._deliver_fire_outcome(trigger, ok=False, error="boom")
+    gw.report(trigger, ok=True)
+    gw.report(trigger, ok=False, error="boom")
 
     kinds = [n["kind"] for n in gw.dashboard_state.sent]
     assert kinds == [nk.CRON, nk.CRON_FAILED], kinds
@@ -428,7 +436,7 @@ def test_a_clock_triggers_outcome_is_delivered_as_a_SCHEDULED_JOB(tmp_path, monk
 def test_a_NON_clock_triggers_outcome_is_NOT_a_scheduled_job(tmp_path, monkeypatch):
     """🪤 THE VACUITY LEG. Same substrate, same handler, a webhook instead of a clock.
 
-    `_deliver_fire_outcome` carries EVERY trigger kind, so a blanket switch to the cron kinds would
+    `delivery.report_run` carries EVERY trigger kind, so a blanket switch to the cron kinds would
     label a webhook's outcome "Scheduled job result" in the feed and route it through the
     scheduled-job rule — a second wrong answer in place of the first.
     """
@@ -439,8 +447,8 @@ def test_a_NON_clock_triggers_outcome_is_NOT_a_scheduled_job(tmp_path, monkeypat
     trigger.kind = "webhook"
     gw = _gw()
 
-    gw._deliver_fire_outcome(trigger, ok=True)
-    gw._deliver_fire_outcome(trigger, ok=False, error="boom")
+    gw.report(trigger, ok=True)
+    gw.report(trigger, ok=False, error="boom")
 
     assert [n["kind"] for n in gw.dashboard_state.sent] == [nk.INFO, nk.ERROR]
 

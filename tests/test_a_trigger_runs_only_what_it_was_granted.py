@@ -305,7 +305,7 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
     """🔴 Red on main: a `view` trigger bound to a surface refreshed into `bash` with no grant."""
     dispatched: list[str] = []
 
-    async def _spy(trigger, payload, *, event="manual.run"):
+    async def _spy(trigger, payload, *, event="manual.run", state=None):
         dispatched.append(trigger.id)
         return True, "ran"
 

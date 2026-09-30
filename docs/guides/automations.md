@@ -33,12 +33,11 @@ anyone means by it.
 
 How it is implemented, in the order the fire path runs it:
 
-- `src/personalclaw/gateway.py:2121` — `_deliver_fire_outcome`, called once per fire with the
-  outcome.
-- `src/personalclaw/gateway.py:2211` — that call asks for the destination **per outcome**:
-  `destination=_delivery.route_for(trigger, ok=ok)`. This is the line that makes the guarantee real;
-  it used to pass `trigger.delivery` unconditionally, which routed a failure through the silent
-  channel.
+- `src/personalclaw/triggers/delivery.py` — `report_run`, called once per run with the outcome:
+  by a scheduled fire, and by every run you start by hand (**Run now**).
+- `report_run` asks for the destination **per outcome**: `destination=route_for(trigger, ok=ok)`.
+  This is the line that makes the guarantee real; it used to pass `trigger.delivery`
+  unconditionally, which routed a failure through the silent channel.
 - `src/personalclaw/triggers/delivery.py:363` — `route_for`, the decision. Its body
   (`delivery.py:387`–`390`) is the whole rule: a success returns `delivery`; a failure returns
   `failure_delivery`, falling back to `delivery` only when the failure route is blank. A success
@@ -167,14 +166,14 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
    protects you.
 
 2. **Let it fire and watch the Inbox — guarantee 1.** Set it to run every minute and wait for its
-   next fire. (**Run now** records the same history row, but this guarantee is about what a fire
-   tells you when nobody is watching, so let the schedule fire it.)
+   next fire. (**Run now** records the same history row and reports the same way, but this
+   guarantee is about what a fire tells you when nobody is watching, so let the schedule fire it.)
    - **Expected:** an item appears in your **Inbox** even though delivery is `none`, reading
      "<name> failed" and what the command said (its error output, or its exit code), with one
      entry in the bell for it; and the run history shows one `failure` row.
    - **The guarantee broken would look like:** a `failure` row in the history and **nothing** in the
      inbox — a broken automation that told you nothing. That is the defect the outcome-picks-the-route
-     rule in `GatewayOrchestrator._deliver_fire_outcome` exists to prevent.
+     rule in `delivery.report_run` exists to prevent.
    - Confirm the route rather than inferring it: the item's notification is the
      `automation.run.failed` event (`EVENT_FAILED` in `src/personalclaw/triggers/delivery.py`).
 

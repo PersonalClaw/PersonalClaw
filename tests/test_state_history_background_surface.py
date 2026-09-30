@@ -261,7 +261,7 @@ def test_the_surface_still_holds_when_the_OUTCOME_is_recorded(probe, monkeypatch
 
     orch._record_fire_outcome = _record
     monkeypatch.setattr(
-        type(orch), "_deliver_fire_outcome", lambda self, *a, **k: None, raising=True
+        "personalclaw.triggers.delivery.report_run", lambda *a, **k: None, raising=True
     )
     asyncio.run(orch._fire_store_trigger(_trigger(), {"trigger_id": "clock:surface"}))
 

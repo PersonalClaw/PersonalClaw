@@ -299,7 +299,9 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
     # `state._background_tasks` so the task is not garbage-collected mid-run — the idiom
     # `api_trigger_view_render` and the webhook-agent handler already follow.
     state: DashboardState = request.app["state"]
-    task = asyncio.create_task(_dispatch_store_action(row.trigger, payload, event="webhook.fire"))
+    task = asyncio.create_task(
+        _dispatch_store_action(row.trigger, payload, event="webhook.fire", state=state)
+    )
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
 
@@ -408,7 +410,9 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
     # Still 200, not 4xx: the request was understood and answered honestly, and a trigger whose
     # action cannot be resolved is not a malformed request — the same rule the kill-switch refusal
     # above and the event-trigger `/test` already follow.
-    ran, note = await _dispatch_store_action(row.trigger, {"trigger_id": raw, "manual": True})
+    ran, note = await _dispatch_store_action(
+        row.trigger, {"trigger_id": raw, "manual": True}, state=request.app["state"]
+    )
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
     from personalclaw.dashboard.handlers.triggers import _last_run_status_for
 
@@ -488,7 +492,11 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
             {"ok": True, "approved": False, "name": row.trigger.name, "result": "declined"}
         )
     ran, note = await _dispatch_store_action(
-        row.trigger, {"trigger_id": raw, "manual": True}, event="manual.answer", answer=True
+        row.trigger,
+        {"trigger_id": raw, "manual": True},
+        event="manual.answer",
+        answer=True,
+        state=request.app["state"],
     )
     return web.json_response(
         {
@@ -510,6 +518,7 @@ async def _dispatch_store_action(
     event: str = "manual.run",
     late: str = "",
     answer: Any = None,
+    state: Any = None,
 ) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry.
 
@@ -540,6 +549,12 @@ async def _dispatch_store_action(
 
     `late` is the review's reason when this run stands in for a slot that did not run (a missed
     fire, or a run a restart interrupted): the recorded row then says the run was late, and why.
+
+    `state` is the dashboard state the run is reported through, on the trigger's route, as a
+    scheduled fire's is (`delivery.report_run`): what the action produced, or why it failed. The
+    route was consulted by the scheduled fire alone, so a Run now of a trigger set to report to a
+    chat channel told that channel nothing. An action that only started its work reports when that
+    work ends, as it does for a fire (`delivery.says_nothing_now`).
 
     🔴 NOTHING RUNS WITHOUT ITS GRANT. Every attended run reaches its action here — Run now, the
     restart review's Run now, a view refresh, a webhook fire — and none of them walks
@@ -580,7 +595,7 @@ async def _dispatch_store_action(
     # docstring for why `run_count` (the fire budget) is not spent. A `view.rendered` refresh
     # flows through this same recorder, so a pull-on-view fire leaves the same run
     # evidence a manual Run does.
-    from personalclaw.triggers import fire_facts
+    from personalclaw.triggers import delivery, fire_facts
     from personalclaw.triggers.delivery import status_url
 
     # What started it, as the gateway's fire tells its run (a webhook's body, a view's open).
@@ -622,14 +637,24 @@ async def _dispatch_store_action(
         raise
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
         await _record_manual_run(trigger, started=started, exc=exc)
+        delivery.report_run(state, trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
         return False, f"failed: {type(exc).__name__}: {exc}"
     finally:
         if claimed is not None:
             _give_back_claim(trigger_id, holder=holder, root=claimed)
     await _record_manual_run(trigger, started=started, result=result, late=late)
-    if result is not None and not bool(getattr(result, "success", True)):
-        from personalclaw.schedule_history import failure_for_result
+    from personalclaw.schedule_history import failure_for_result, summary_for_result
 
+    ok = result is None or bool(getattr(result, "success", True))
+    if not (ok and delivery.says_nothing_now(result)):
+        delivery.report_run(
+            state,
+            trigger,
+            ok=ok,
+            summary=summary_for_result(result) if ok else "",
+            error="" if ok else failure_for_result(result),
+        )
+    if not ok:
         return False, f"failed: {failure_for_result(result)}"
     from personalclaw.triggers import parks
 
@@ -896,7 +921,7 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
         # `state._background_tasks` so a fire-and-forget refresh is not garbage-collected mid-run,
         # the idiom every other fire-and-forget handler here follows.
         task = asyncio.create_task(
-            _dispatch_store_action(row.trigger, payload, event="view.rendered")
+            _dispatch_store_action(row.trigger, payload, event="view.rendered", state=state)
         )
         state._background_tasks.add(task)
         task.add_done_callback(state._background_tasks.discard)

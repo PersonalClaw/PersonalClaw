@@ -105,7 +105,7 @@ def test_a_bound_view_trigger_past_TTL_is_REFRESHED_and_dispatched(home, state, 
 
     seen: list[tuple[str, str]] = []
 
-    async def _spy(trigger, payload, *, event="manual.run"):
+    async def _spy(trigger, payload, *, event="manual.run", state=None):
         seen.append((trigger.id, event))
         return True, "ran"
 
@@ -141,7 +141,7 @@ def test_two_renders_inside_the_TTL_serve_CACHE_with_no_second_dispatch(home, st
 
     calls = {"n": 0}
 
-    async def _spy(trigger, payload, *, event="manual.run"):
+    async def _spy(trigger, payload, *, event="manual.run", state=None):
         calls["n"] += 1
         return True, "ran"
 
@@ -200,7 +200,7 @@ def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state, monkeypat
 
     started = asyncio.Event()
 
-    async def _never_finishes(trigger, payload, *, event="manual.run"):
+    async def _never_finishes(trigger, payload, *, event="manual.run", state=None):
         started.set()
         await asyncio.Event().wait()  # blocks forever — an LLM turn the request must not await
         return True, "ran"

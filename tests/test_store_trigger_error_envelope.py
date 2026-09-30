@@ -10,7 +10,7 @@ clock/file/webhook/chained path), regressed: its handler emitted a bare
 run record.
 
 This pins the fix at the SEAM: a provider that raises must surface the coded envelope in
-BOTH sinks the handler feeds — the delivered outcome (`_deliver_fire_outcome`) and the
+BOTH sinks the handler feeds — the delivered outcome (`delivery.report_run`) and the
 recorded outcome (`_record_fire_outcome` → the run-ledger row + `last_error_summary`) —
 never a bare ``TypeName: msg``. It fails if the wrap is removed: the delivered/recorded
 error would collapse back to ``"RuntimeError: boom"`` with no WHY/FIX, which is exactly the
@@ -41,7 +41,7 @@ class _Raiser:
 def _drive_raise(tmp_path, monkeypatch, tid: str = "clock:env") -> tuple[dict, Trigger]:
     """Fire ONE store trigger whose provider raises, through the REAL dispatch seam.
 
-    Returns the ``error`` kwarg the handler passed to `_deliver_fire_outcome` (captured
+    Returns the ``error`` kwarg the handler passed to `delivery.report_run` (captured
     before its own truncation) and the trigger's persisted final state.
     """
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
@@ -63,13 +63,13 @@ def _drive_raise(tmp_path, monkeypatch, tid: str = "clock:env") -> tuple[dict, T
     orch = object.__new__(GatewayOrchestrator)
     delivered: dict = {}
 
-    def _capture(trigger, *, ok: bool, error: str = "") -> None:
+    def _capture(state, trigger, *, ok: bool, error: str = "") -> None:
         delivered["ok"] = ok
         delivered["error"] = error
 
-    # Shadow the bound method so we capture exactly what the seam hands the delivery sink,
+    # Shadow the reporter so we capture exactly what the seam hands the delivery sink,
     # without the notification transport (or its dedup) running in the test.
-    orch._deliver_fire_outcome = _capture  # type: ignore[method-assign]
+    monkeypatch.setattr("personalclaw.triggers.delivery.report_run", _capture)
     asyncio.run(orch._fire_store_trigger(store.get(tid).trigger, {"trigger_id": tid}))
 
     row = store.get(tid)

@@ -1512,7 +1512,7 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
     kwargs: dict[str, Any] = {}
     # 🔴 `failure_delivery`/`failure_dedupe` join this allowlist. The delivery contract
     # was fully wired on the fire path — `delivery.route_for` picks the route per outcome,
-    # `gateway._dedupe_repeat_failure` gates on `failure_policy.dedupe_hash` — and NEITHER field was
+    # `delivery.repeats_last_failure` gates on `failure_policy.dedupe_hash` — and NEITHER field was
     # readable or writable from any surface. `test_trigger_wire_field_census` is what keeps them
     # readable by BOTH this path and `_create_schedule`, which is the omission issue 272 was.
     for key in (
@@ -2316,6 +2316,7 @@ async def api_trigger_review(request: web.Request) -> web.Response:
         {"trigger_id": trigger_id, "manual": True, "review": kind, "scheduled_for": taken.latest},
         event="review.run_now",
         late=reason,
+        state=state,
     )
     state.push_refresh("crons")
     return web.json_response(

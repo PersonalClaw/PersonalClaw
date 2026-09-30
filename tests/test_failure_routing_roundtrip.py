@@ -2,8 +2,8 @@
 
 🔴 THE DEFECT. `Trigger.failure_delivery` and `failure_policy.dedupe_hash` are declared, persisted,
 round-tripped by `to_dict`/`from_dict`, defaulted by the migration and READ BY THE FIRE PATH:
-`delivery.route_for` picks the route per outcome (called from `gateway._deliver_fire_outcome`) and
-`gateway._dedupe_repeat_failure` gates on the policy key. And neither field existed anywhere a user
+`delivery.route_for` picks the route per outcome (called from `delivery.report_run`) and
+`delivery.repeats_last_failure` gates on the policy key. And neither field existed anywhere a user
 could see or set one — `git grep -c 'failure_delivery' -- web/src` was **0**, `failure_policy` was
 not even in `tools.PATCHABLE`, and `to_schedule_row` published neither. The capability was paid for
 and unreachable: the config round-trip contract's last clause (a user-facing field needs a frontend

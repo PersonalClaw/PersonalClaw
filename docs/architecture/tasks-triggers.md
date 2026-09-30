@@ -469,6 +469,13 @@ sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
+**Every run reports on its route.** A scheduled fire and every run the attended
+dispatch makes (`trigger_runs._dispatch_store_action`: Run now, the restart
+review's Run now, an answered park, a webhook fire, a view refresh) report
+through one reporter, `delivery.report_run`, with the same words, route and
+dedup. The route was the scheduled fire's alone, so a Run now of a trigger set
+to report to a chat channel told that channel nothing.
+
 **A report says what the run produced.** "X finished" carries the action's
 sentence for a person, else what it printed (`schedule_history.summary_for_result`),
 and "X failed" says why (`schedule_history.failure_for_result`): its error, else
@@ -492,7 +499,7 @@ says ("It still reaches the dashboard"), and so is a failure whose route is
 **Work a fire only started reports when it ends.** An action that starts an
 agent task or a workflow run returns `launched` (or `queued` behind a run in
 flight), and one that stopped for you returns `needs_input`; the fire sends no
-report for any of them (`gateway._says_nothing_now`), since nothing has finished.
+report for any of them (`delivery.says_nothing_now`), since nothing has finished.
 An action that had nothing to do (`skip`) sends none at all: its history row
 says why, and "X finished" would say something happened.
 The agent task reports on the trigger's route when it ends

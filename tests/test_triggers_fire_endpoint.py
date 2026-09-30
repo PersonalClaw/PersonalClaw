@@ -92,7 +92,7 @@ async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
     trigger_id = _make_webhook(tmp_path)
     captured: dict = {}
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
         captured.update(trigger=trigger, payload=payload, event=event)
         return True, "ran"
 
@@ -119,7 +119,7 @@ async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch)
     trigger_id = _make_webhook(tmp_path)
     captured: dict = {}
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
         captured.update(payload=payload)
         return True, "ran"
 
@@ -155,7 +155,7 @@ async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_a
     trigger_id = _make_webhook(tmp_path, capabilities={})
     dispatched: list = []
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
         dispatched.append(trigger.id)
         return True, "ran"
 
@@ -268,7 +268,7 @@ async def test_a_paused_webhook_trigger_answers_like_one_that_is_not_there(
     ghost = "store:webhook:ghost"
     dispatched: list = []
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run"):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
         dispatched.append(trigger.id)
         return True, "ran"
 

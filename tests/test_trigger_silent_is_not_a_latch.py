@@ -21,7 +21,7 @@ real handler, reads the value back out of the STORE, and then asks the fire path
 (``route_for`` → ``is_muted``) what they would do with it.
 
 🔴 WHY IT IS NOT COSMETIC ANY MORE. When #450 was filed ``delivery`` had no fire-path consumer, so
-the wrong state was display-only. Since then ``gateway._deliver_fire_outcome`` wired
+the wrong state was display-only. Since then the fire's report (``delivery.report_run``) wired
 ``build_delivery(destination=route_for(trigger, ok=ok))`` and ``delivery.deliver`` enforces
 ``if is_muted(delivery.destination): return False``. A "Silent OFF, no channel" row now genuinely
 drops the success notification the user asked to receive. Failures still escape (``route_for``

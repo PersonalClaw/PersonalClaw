@@ -104,7 +104,7 @@ def report_to_its_trigger(ctl: RunController, status: RunStatus) -> None:
     """Say how a run a trigger started went, on the trigger's route, now that it has ended.
 
     The fire that started it only said it launched the run, or queued it, which is not news yet
-    (`gateway._says_nothing_now`), so this is when the trigger's route hears: "<name> finished" and
+    (`delivery.says_nothing_now`), so this is when the trigger's route hears: "<name> finished" and
     what the run said it produced, or "<name> failed" and why, for a run that failed or stopped
     before it finished. Only a trigger's own start (`OriginKind.HOOK`) carries a trigger id; a
     sub-run's origin names its parent's node instead.

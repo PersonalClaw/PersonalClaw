@@ -247,7 +247,7 @@ def label_for_wire(flat: str) -> str:
 
 _KINDS: tuple[NotificationKind, ...] = (
     # cron / schedule — emitted by the trigger substrate for a CLOCK trigger's outcome
-    # (`triggers/delivery.build_delivery`, routed by `gateway._deliver_fire_outcome`).
+    # (`triggers/delivery.build_delivery`, routed by `delivery.report_run`).
     #
     # 🪤 THE COMMENT THAT USED TO BE HERE WAS STALE, AND IT ARGUED FOR THE WRONG SEVERITY (issue
     # #415). It claimed "5 sites in gateway.py" and justified ranking BOTH rows INFO because

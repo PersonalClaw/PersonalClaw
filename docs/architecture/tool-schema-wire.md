@@ -70,6 +70,20 @@ argument can be omitted instead), or drops a `required` name that is not a prope
 that would change the accepted values — an array with no `items`, a free-form object, an
 untyped value, a multi-type union — is not repairable, so the tool is left out.
 
+## A call is checked against what its tool declares
+
+A call to a tool that asks before it runs is checked for the arguments that tool's input schema
+requires before anyone is asked (`tool_providers/arguments.missing_arguments`, from
+`NativeAgentRuntime._guard_and_invoke`). A call missing one is answered at once with what is
+missing and the schema itself, and marked `not_run: missing_arguments`: approving it could run
+nothing, and the identical retry would ask again. The check reads the schema the tool DECLARED,
+never the repaired copy above. It refuses only a missing required argument, the one failure every
+tool that declares the schema refuses: a server built on a lax validator takes `"true"` for a
+boolean, the MCP client turns a number sent as text back into a number, and a built-in tool takes
+an object where it declares JSON text, so any other mismatch is the tool's to judge. It runs none
+of the schema's patterns, and a schema it cannot read (or one pointing at a document it will not
+fetch) refuses nothing.
+
 ## Free-form values travel as JSON text
 
 A free-form object, a map, or an untyped value has no portable schema. Such a parameter is

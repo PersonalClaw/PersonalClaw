@@ -11,7 +11,7 @@ not two.
 
 **What re-homing actually buys.** Nothing here re-implements scheduling, capability fencing,
 ledgering or delivery: the trigger tick arms the clock, `triggers/screen.py` freezes the grant,
-`_record_fire_outcome` writes the run record, and `_deliver_fire_outcome` → `state.notify` →
+`_record_fire_outcome` writes the run record, and `delivery.report_run` → `state.notify` →
 `notification_rules` routes the outcome. That last one is the second clause — *"the runs-inbox
 'learned overnight' digest picks them up like any other run"* — and it is satisfied by NOT having a
 private notification path: a remediation run reaches the digest queue through exactly the code that

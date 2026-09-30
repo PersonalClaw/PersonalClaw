@@ -242,7 +242,7 @@ def to_schedule_row(
         "silent": is_silent(trigger),
         # 🔴 FAILURE ROUTING, published. Both were declared, persisted, round-tripped and
         # READ BY THE FIRE PATH — `delivery.route_for` picks the route per outcome and
-        # `gateway._dedupe_repeat_failure` gates on the policy key — and neither appeared on this
+        # `delivery.repeats_last_failure` gates on the policy key — and neither appeared on this
         # wire row, so no surface could show a user what their automation was set to, let alone
         # change it. `failure_delivery` is published RAW (not `or None`, unlike `channel`/`timezone`
         # above): '' means "inherit `delivery`", so collapsing it to null would erase the difference

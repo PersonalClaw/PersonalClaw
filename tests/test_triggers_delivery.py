@@ -422,7 +422,7 @@ def test_a_MUTED_automation_still_reports_a_FAILURE():
     asked to stay quiet still has to be able to say it broke."*
 
     It was declared, persisted, round-tripped by `to_dict`/`from_dict`, defaulted by the migration
-    and editable through `automation_update` — and read by NOTHING. `_deliver_fire_outcome` passed
+    and editable through `automation_update` — and read by NOTHING. The fire's report passed
     `destination=trigger.delivery` unconditionally, so a quiet automation that BROKE reported its
     failure through the silent channel.
     """
@@ -507,8 +507,8 @@ def test_the_fire_path_routes_by_OUTCOME():
     """The wiring: the defect was `destination=trigger.delivery` regardless of `ok`."""
     import inspect
 
-    from personalclaw import gateway
+    from personalclaw.triggers import delivery
 
-    source = inspect.getsource(gateway)
-    assert "_delivery.route_for(trigger, ok=ok)" in source
+    source = inspect.getsource(delivery.report_run)
+    assert "destination=route_for(trigger, ok=ok)" in source
     assert 'destination=str(getattr(trigger, "delivery", "") or "")' not in source

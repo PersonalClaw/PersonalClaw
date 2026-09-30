@@ -12,7 +12,7 @@ rather than a config one:
    front-end half: it fails if the row stops rendering.
 
 2. **"its runs are picked up by the runs-inbox learned-overnight digest like any other run."**
-   Driven through `GatewayOrchestrator._deliver_fire_outcome` — the single point every store-backed
+   Driven through `delivery.report_run` — the single point every store-backed
    fire reports from — into a real `DashboardState.notify`, so the rule resolution
    (`resolve_rule_for_legacy` → mode) is the shipped one. A hand-built note in the queue would prove
    nothing: it would skip the very selection this clause is about. Each pickup assertion is paired
@@ -555,15 +555,14 @@ def _outcome_rule_key(trigger, *, ok: bool) -> str:
 
 
 def _deliver(monkeypatch, trigger, *, ok: bool, error: str = ""):
-    """Report a fire outcome through the SHIPPED path: `GatewayOrchestrator._deliver_fire_outcome`
-    is the single point every store-backed run reports from, so this is "like any other run" by
-    construction rather than by resemblance."""
-    from personalclaw.gateway import GatewayOrchestrator
+    """Report a fire outcome through the SHIPPED path: `delivery.report_run` is the single point
+    every store-backed run reports from, so this is "like any other run" by construction rather
+    than by resemblance."""
+    from personalclaw.triggers.delivery import report_run
 
-    orch = GatewayOrchestrator.__new__(GatewayOrchestrator)
-    orch.dashboard_state = _wire_state(monkeypatch)
-    orch._deliver_fire_outcome(trigger, ok=ok, error=error)
-    return orch.dashboard_state
+    state = _wire_state(monkeypatch)
+    report_run(state, trigger, ok=ok, error=error)
+    return state
 
 
 class TestTheRunsReachTheDigest:
