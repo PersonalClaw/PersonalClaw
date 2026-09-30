@@ -30,41 +30,40 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 
 import personalclaw
-from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
-from personalclaw.llm.registry import ProviderEntry, get_default_registry, reset_default_registry
+from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY, AcpAgentProvider
+from personalclaw.llm.registry import ProviderEntry, get_default_registry
+
+#: The process-wide provider registry and the runtime class every other module imported, as this
+#: file found them: nothing here may swap the one or re-import the other.
+_PROCESS_REGISTRY = get_default_registry()
+_RUNTIME_CLASS = AcpAgentProvider
 
 
 @pytest.fixture(autouse=True)
-def _restore_registry_singletons():
-    """A registry of our own for each test, and the process-wide one back afterwards.
+def _only_the_stubs_entries():
+    """The process-wide registry holds only the entries each test registers, and gets back after it
+    whatever it held before.
 
-    Our own because a doctor run with ``--start-agent-clis`` starts EVERY registered agent CLI:
-    an entry another test left behind could point anywhere. See test_agent_providers_endpoint.
+    Only ours because a doctor run with ``--start-agent-clis`` starts EVERY registered agent CLI:
+    an entry left there by anything else could point anywhere. The registry itself stays in place,
+    and ``acp_agent`` is never imported again. The gateway boot below loads the bundled apps, and
+    each registers its provider type into the registry of the moment when its module is first
+    imported, then stays cached: a registry swapped in for the test would leave with their types
+    while their modules stayed, and every later test on the worker would find no loaded app
+    providing ``ollama``. A re-import of ``acp_agent`` builds a second ``AcpAgentProvider``, which
+    every module that imported the first one no longer recognises.
     """
-    import importlib
-    import sys
-
-    import personalclaw.llm as _llm_pkg
-    from personalclaw.agents import registry as _agent_reg
-    from personalclaw.llm import registry as _model_reg
-
-    saved_registry = _model_reg._default_registry
-    saved_module = sys.modules.get("personalclaw.llm.acp_agent")
-    saved_pkg_attr = getattr(_llm_pkg, "acp_agent", None)
-    saved_agent_providers = dict(_agent_reg._providers)
-    reset_default_registry()
-    import personalclaw.llm.acp_agent as _acp_agent
-
-    importlib.reload(_acp_agent)
+    registry = get_default_registry()
+    others = registry.list_entries()
+    for entry in others:
+        registry.unregister_entry(entry.name)
     try:
         yield
     finally:
-        _model_reg.set_default_registry(saved_registry)
-        if saved_module is not None:
-            sys.modules["personalclaw.llm.acp_agent"] = saved_module
-            _llm_pkg.acp_agent = saved_pkg_attr
-        _agent_reg._providers.clear()
-        _agent_reg._providers.update(saved_agent_providers)
+        for entry in registry.list_entries():
+            registry.unregister_entry(entry.name)
+        for entry in others:
+            registry.register_entry(entry)
 
 
 class _Stubs:
@@ -369,6 +368,18 @@ def test_apps_cannot_start_an_agent_cli():
         ("POST", "/api/agent-runners/{id}/allow", "/api/agent-runners/x/allow"),
     ):
         assert owner_only_api_reason(path, method=method, route=route), route
+
+
+def test_a_test_here_runs_on_the_process_wide_registry_and_runtime_class():
+    """What the fixture above leaves alone, read from inside a test: the registry every loaded app
+    registered its type into, and the one ``AcpAgentProvider`` class the product builds and the
+    rest of the suite checks against. Either replaced here outlives the file on its worker."""
+    from personalclaw.agents.registry import get_agent_provider_class
+    from personalclaw.llm import acp_agent
+
+    assert get_default_registry() is _PROCESS_REGISTRY
+    assert acp_agent.AcpAgentProvider is _RUNTIME_CLASS
+    assert get_agent_provider_class("acp") is _RUNTIME_CLASS
 
 
 # ── the census: who may call the checks that start a CLI ─────────────────────────────────────

@@ -188,12 +188,18 @@ def kind_for_legacy_pair(source: str, kind: str) -> str:
     lives, so a new attention kind cannot invent a second convention.
 
     Prefers an existing legacy string when one maps to this pair — so ``inbox/alert`` keeps
-    emitting ``inbox_alert`` and its persisted history stays one kind — and otherwise falls
-    back to the bare ``kind``, which is what a brand-new attention kind wants.
+    emitting ``inbox_alert`` and its persisted history stays one kind. A pair registered at run
+    time has no string in the tables below — an app's proposal kind, registered when the app is
+    enabled — and its wire string is its key, ``app:<name>/proposal:<suffix>``, which
+    :func:`kind_for_legacy` reads back to it: the bare ``proposal:<suffix>`` resolved to
+    system/generic, so the rule the owner set for the kind governed nothing, and two apps that
+    declared one suffix shared a wire string. Anything else falls back to the bare ``kind``.
     """
     for flat, ident in _WIRE_TO_PAIR.items():
         if ident == (source, kind):
             return flat
+    if (source, kind) in _REGISTRY:
+        return f"{source}/{kind}"
     return kind
 
 
@@ -206,10 +212,31 @@ def kind_for_legacy(kind: str) -> NotificationKind:
     its registration. Unknown → generic, fail-open.
     """
     flat = (kind or "").strip().lower()
-    ident = _WIRE_TO_PAIR.get(flat)
+    ident = _WIRE_TO_PAIR.get(flat) or _pair_of_key(flat)
     if ident is None:
         return resolve_kind(GENERIC_SOURCE, flat or GENERIC_KIND)
     return resolve_kind(*ident)
+
+
+def _pair_of_key(flat: str) -> tuple[str, str] | None:
+    """The registered pair whose key *flat* is — the wire string of a pair registered at run
+    time (:func:`kind_for_legacy_pair`) — or ``None``."""
+    source, sep, kind = flat.partition("/")
+    return (source, kind) if sep and (source, kind) in _REGISTRY else None
+
+
+def label_for_wire(flat: str) -> str:
+    """The label its registration declares for the kind the wire string *flat* names, or ``""``
+    when no registration names it.
+
+    Carried on each note (``kind_label``), so a surface that shows the note can say what it is
+    in the registry's words — the Notifications page's own map has no row for a kind an app
+    registered — and a note from an app since removed still says it.
+    """
+    key = (flat or "").strip().lower()
+    ident = _WIRE_TO_PAIR.get(key) or _pair_of_key(key)
+    found = _REGISTRY.get(ident) if ident is not None else None
+    return found.label if found is not None else ""
 
 
 # ── Registrations ───────────────────────────────────────────────────────────
@@ -779,6 +806,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # The bare kind is unique, so it is its own wire string — and it needs this row for the
     # same reason `autonomy_revocation` does: without one `kind_for_legacy` falls open to generic.
     "auto_denied": ("system", "auto_denied"),
+    # A paused Agent Room. Its bare kind is its wire string, and without this row the rule for it
+    # was system/generic's.
+    "room_paused": ("agent", "room_paused"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:

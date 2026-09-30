@@ -423,10 +423,14 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     _row = TriggerStore(base_dir=config_dir()).get(job_id)
     job = _row.trigger if _row is not None else None
     # Masked like every read of the schedule (`schedule_view.MASKED_FIELDS`), prompt included below.
-    job_name = redact_for_display(job.name or "") if job else ""
+    # A job no longer in the list is named by the name its run kept.
+    job_name = redact_for_display((job.name if job else run.get("job_name")) or "")
+    job_line = " ".join(
+        part for part in (job_name, "" if job else "(no longer in the list)") if part
+    )
     lines = [
         f"Schedule run {run.get('run_id') or '?'} of job {job_id}",
-        f"Job: {job_name if job else '(deleted)'}",
+        f"Job: {job_line}",
         f"Trigger: {run.get('trigger') or '?'}",
         f"Status: {run.get('status') or '?'}",
         f"Duration: {run.get('duration_ms', 0)} ms",
@@ -455,7 +459,7 @@ async def _resolve_schedule_run(entity_id: str, state) -> InvestigateContext | N
     return InvestigateContext(
         kind="schedule_run",
         id=entity_id,
-        title=f"Run · {job_name if job else job_id}",
+        title=f"Run · {job_name or job_id}",
         snapshot="\n".join(lines),
         back_link=f"#/triggers?open=schedule:{job_id}",
         opening_prompt=(

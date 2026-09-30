@@ -384,7 +384,7 @@ def requeue_orphaned_stages(ctl: RunController) -> list[str]:
     process's manager" decisive: nothing this controller spawned can be unknown, and a
     subagent another controller in this process spawned is known (one manager per process).
     So this is not a verdict on the work — the stage goes back to PENDING at the same epoch,
-    exactly like a paused stage (`_pause_inflight`): its attempt is not charged, its
+    exactly like a paused stage (`_withdraw_inflight`): its attempt is not charged, its
     no-double-execution claim is released (a leftover claim makes the re-run meet its own
     lease, #3533), and the scheduler dispatches it again.
     """

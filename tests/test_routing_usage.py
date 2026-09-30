@@ -492,6 +492,58 @@ def test_a_local_turn_is_never_unpriced_whatever_its_row_says(tmp_path, ollama_a
     assert "so the total is a floor" in U.usage_recap(DAY1[:7], fold=remote)
 
 
+def test_the_local_share_counts_where_each_turn_ran_not_what_is_configured_now(
+    tmp_path, monkeypatch, ollama_app
+):
+    """Settings › Usage says what share of the window's turns "ran locally at $0", beside what
+    they cost. Each turn is local as it was priced when it ran, by the rule the spend caps charged
+    it by (``llm.registry.served_on_this_machine``), and the row says so: the fold used to judge
+    every row by the prices and instances configured at the moment the page was read, so a turn
+    charged at a price since removed read as run locally at $0 beside the dollars it cost, and a
+    turn on an instance since deleted stopped counting as local at all."""
+    from personalclaw import usage_ledger
+    from personalclaw.llm.base import EVENT_COMPLETE, LLMEvent
+    from personalclaw.llm.registry import ProviderEntry, get_default_registry
+    from personalclaw.routing import rates
+
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    rates._overlay_cache = None
+    registry = get_default_registry()
+    registry.register_entry(
+        ProviderEntry(
+            name="here", type="ollama", model="", options={"endpoint": "http://127.0.0.1:11434"}
+        )
+    )
+
+    def turn() -> None:
+        usage_ledger.record_from_event(
+            LLMEvent(kind=EVENT_COMPLETE, input_tokens=1_000_000, output_tokens=1_000_000),
+            source="chat",
+            provider="here",
+            model="gemma4:12b",
+        )
+
+    rates.set_rate("here:gemma4:12b", {"in_per_mtok": 1.0, "out_per_mtok": 2.0}, home=tmp_path)
+    turn()  # charged $3.00 at the price the owner set
+    rates.clear_rate("here:gemma4:12b", home=tmp_path)
+    turn()  # ran here at its known $0
+    turn()
+    rows = usage_ledger._iter_rows()
+    assert [(row["cost_usd"], row["local"]) for row in rows] == [
+        (3.0, False),
+        (0.0, True),
+        (0.0, True),
+    ]
+
+    registry.unregister_entry("here")  # the instance is gone; the two turns still ran here
+    ledger = tmp_path / "usage" / "turns.jsonl"
+    total = U.query(
+        U.fold_files(home=tmp_path, audit_path=tmp_path / "none.jsonl", ledger_path=ledger),
+        window="day",
+    )["total"]
+    assert (total["calls"], total["local_calls"], total["dollars_est"]) == (3, 2, 3.0)
+
+
 def test_an_empty_or_missing_jsonl_is_an_empty_fold_not_an_error(tmp_path):
     fold = U.rebuild(
         tmp_path, audit_path=tmp_path / "nope.jsonl", ledger_path=tmp_path / "no.jsonl"

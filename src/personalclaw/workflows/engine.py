@@ -41,7 +41,14 @@ from typing import Any
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
-from personalclaw.workflows import engine_support, leases, longrun, ownership, publish_seam
+from personalclaw.workflows import (
+    engine_support,
+    incident_hold,
+    leases,
+    longrun,
+    ownership,
+    publish_seam,
+)
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
 from personalclaw.workflows.failure_taxonomy import (
@@ -732,6 +739,12 @@ async def dispatch_stage(
             "the gateway did not initialize the subagent service",
         )
 
+    # Incident mode holds a stage rather than failing it. The run's hold keeps it from being
+    # dispatched while the switch is on (`incident_hold`); this is the switch moving between that
+    # look and here.
+    if incident_hold.active():
+        return _held_by_incident(prompt)
+
     # No double-execution. Taken BEFORE the spawn, because a lease acquired
     # after the work started would record the claim without preventing the thing it exists to
     # prevent — two co-tenant workers would both have spawned by the time either checked. The claim
@@ -851,6 +864,9 @@ async def dispatch_stage(
         # A REJECTED spawn never executed, so the claim is released for the same reason as the
         # capacity path: nothing is running, and holding the claim would only lock out the retry.
         release_execution_claim(claim_target, holder)
+        if incident_hold.active():
+            # Refused for the switch (`SubagentManager.spawn`): a hold, not the stage's failure.
+            return _held_by_incident(prompt)
         return NodeResult(
             state=InstanceState.FAILED,
             failure=Failure(
@@ -879,6 +895,15 @@ async def dispatch_stage(
         resolved_prompt=prompt,
         claim_target=claim_target,
         claim_holder=holder,
+    )
+
+
+def _held_by_incident(prompt: str) -> NodeResult:
+    """A stage incident mode kept from starting: it did not run, and waits for the switch."""
+    return NodeResult(
+        state=InstanceState.READY,
+        degraded_reason=incident_hold.DISPATCH_HELD,
+        resolved_prompt=prompt,
     )
 
 

@@ -692,7 +692,7 @@ async def admit_fire(
         # Gated on `persist` so `automation doctor`'s dry run stays side-effect free, which is the
         # whole point of that flag.
         if persist:
-            await persist_suppression(row, now=now, base_dir=base_dir)
+            await persist_suppression(row, now=now, base_dir=base_dir, name=trigger.name)
         return Admission(decision=decision, row=row)
     # Persist the granted claim so the NEXT decision (and any other process — the MCP tools and the
     # API read the same store) can see this run in flight.
@@ -738,7 +738,9 @@ def _run_store(base_dir: Any) -> Any:
     return ScheduleRunStore(Path(base_dir) if base_dir is not None else config_dir())
 
 
-async def persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any = None) -> None:
+async def persist_suppression(
+    row: dict[str, Any], *, now: float, base_dir: Any = None, name: str = ""
+) -> None:
     """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
 
     Called by `admit_fire` for every gate refusal, and by the event router for the one refusal it
@@ -783,6 +785,7 @@ async def persist_suppression(row: dict[str, Any], *, now: float, base_dir: Any 
             ScheduleRun(
                 run_id=f"skip-{int(now * 1000)}",
                 job_id=trigger_id,
+                job_name=name,
                 trigger=outcome,
                 started_at=now,
                 finished_at=now,

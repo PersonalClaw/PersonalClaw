@@ -330,6 +330,77 @@ async def test_a_new_trigger_never_takes_the_id_of_one_whose_runs_are_kept(
     assert _history(home, again) == []
 
 
+async def _runs_feed() -> list[dict[str, Any]]:
+    """The run feed across every trigger, as Home's recent runs read it."""
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import triggers as handlers
+
+    app = web.Application()
+    app["state"] = _State()
+    resp = await handlers.api_trigger_history_all(
+        make_mocked_request("GET", "/api/triggers/history?limit=20", app=app)
+    )
+    return json.loads(resp.body.decode())["runs"]
+
+
+@pytest.mark.parametrize("gone", ["retired-after-its-run", "deleted-by-the-chat"])
+@pytest.mark.asyncio
+async def test_a_run_whose_trigger_has_left_the_list_is_still_named_in_the_runs_feed(
+    gone, home, bell, monkeypatch
+):
+    """The feed named each run from the triggers in the list, so a one-shot that ran and retired,
+    or a trigger the chat deleted, read as its id. Its run keeps the name it ran under."""
+    from personalclaw.triggers import tools
+
+    at = _soon(3600)
+    tid = await _one_shot(at)
+    store = TriggerStore(base_dir=home)
+    if gone == "deleted-by-the-chat":
+        trigger = store.get(tid).trigger
+        trigger.spec = {**trigger.spec, "delete_after_run": False}
+        store.upsert(trigger)
+    await _tick_at(monkeypatch, bell, at + 1)
+    if gone == "deleted-by-the-chat":
+        assert tools.delete(store, trigger_id=tid, confirm=True).ok
+    assert _row(home, tid) is None
+
+    (run,) = [r for r in await _runs_feed() if str(r.get("trigger_id", "")).endswith(tid)]
+    assert run["trigger_name"] == "Pack the soccer bag"
+
+
+@pytest.mark.asyncio
+async def test_asking_about_a_run_whose_trigger_has_left_the_list_names_it(home):
+    """Investigate on a run puts the run in the agent's context under its trigger's name: a run of
+    a trigger no longer in the list read "Job: (deleted)" and its title named the bare id."""
+    from personalclaw import investigate
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+    ScheduleRunStore(home).append_sync(
+        ScheduleRun(run_id="fire-1", job_id="soccer-bag", job_name="Pack the soccer bag")
+    )
+    context = await investigate.resolve("schedule_run", "soccer-bag:fire-1", _State())
+    assert context is not None and context.title == "Run · Pack the soccer bag"
+    assert "Job: Pack the soccer bag (no longer in the list)" in context.snapshot
+
+
+@pytest.mark.asyncio
+async def test_a_renamed_trigger_is_named_in_the_runs_feed_as_it_is_called_now(
+    home, bell, monkeypatch
+):
+    """A trigger still in the list is named as it is now called, not as it was when it ran."""
+    at = _soon(3600)
+    tid = await _page_trigger(every=3600, start_at=at)
+    await _tick_at(monkeypatch, bell, at + 1)
+    store = TriggerStore(base_dir=home)
+    trigger = store.get(tid).trigger
+    trigger.name = "Pack the swim bag"
+    store.upsert(trigger)
+
+    runs = [r for r in await _runs_feed() if str(r.get("trigger_id", "")).endswith(tid)]
+    assert runs and {r["trigger_name"] for r in runs} == {"Pack the swim bag"}
+
+
 # ── every one-shot, however it was made ──────────────────────────────────────────────────────
 
 
@@ -564,3 +635,15 @@ async def test_a_schedule_an_app_serves_runs_its_action_and_retires_in_the_apps_
     assert [r["status"] for r in _history(home, "shared:pack-the-bag")] == ["success"]
     assert app_store.load() == []
     assert TriggerStore(base_dir=home).load() == [], "never copied into the local store"
+
+
+def test_the_name_a_run_keeps_is_masked_as_every_read_of_the_trigger_masks_it(home):
+    """The name is written to the run ledger with the credential masking its summary and error
+    get on the way in, so a key pasted into a trigger's name is not kept in its history."""
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+
+    ScheduleRunStore(home).append_sync(
+        ScheduleRun(run_id="fire-1", job_id="deploy", job_name="Deploy with AKIAIOSFODNN7EXAMPLE")
+    )
+    stored = (home / "cron-history" / "deploy.jsonl").read_text(encoding="utf-8")
+    assert "Deploy with" in stored and "AKIAIOSFODNN7EXAMPLE" not in stored

@@ -549,6 +549,12 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
               <p data-type="body-s" className={run.status === 'declined' ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
+            {/* Incident mode holds a running run: its status stays `running`, so without this the
+                page read as working while nothing ran. */}
+            {run.held && (
+              <p role="status" data-type="body-s" className="text-on-surface-var">{run.held}</p>
+            )}
+
             {/* Beneath the error line, because it explains the same failure in more depth: the
                 line names the step that failed and its cause, and this adds the attempts and the
                 engine's own next move. A run recorded before that line existed has it EMPTY, and

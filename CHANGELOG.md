@@ -152,6 +152,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat sent with no model set up says what is missing and what to do, instead of an error PersonalClaw doesn't recognize (`AgentError.sentence()`, an SDK addition no app has to change for).**
 - **A new chat on a model this machine runs is no longer compacted before its first reply: until usage is reported, its history is sized against the window the runtime says it serves.**
 - **A native chat sends one tool-catalog note per turn, not every earlier turn's as well.**
+- **Incident mode holds a workflow run, a general loop's included, instead of failing its stages: the stage in flight is stopped and waits, nothing starts while the switch is on, the run page says it is held, and the run carries on by itself once the switch is off.**
+- **An app's proposal notification says what it is in the words the app declared, and the rule set for that app's proposals in Settings → Notifications decides how it reaches you; two apps' proposals of one name are two kinds, a paused Agent Room's rule applies too, and the phone's Recent list names each notification.**
+- **Home's recent runs name a run by its trigger after the trigger has left the list: a one-shot that ran, or one that was deleted.**
+- **Settings → Usage's "ran locally at $0" counts the turns that ran on this machine when they ran, whatever prices and instances are configured since.**
 - **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
 - **Settings → Usage counts the day the daily cap counts, this machine's local day, in its Today, its 7- and 30-day totals, its chart and the Settings tile, where it counted the UTC day.**
 - **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**

@@ -28,7 +28,7 @@ import logging
 import time
 from typing import Any
 
-from personalclaw.loop.loop import LoopStatus, LoopStopReason
+from personalclaw.loop.loop import LoopStatus, LoopStopReason, held_reason
 from personalclaw.workflows import introspection
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import loop_aliases, store, supervisor_policy
@@ -206,6 +206,9 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
         "task": _redact(task),
         "summary": _redact(run.intent),
         "status": status.value,
+        # The loop surfaces' own sentence while incident mode holds the run (`incident_hold`), so a
+        # general loop reads "Held" there as every other loop does.
+        "held": held_reason(status.value),
         "stop_reason": _stop_reason(run),
         "error_message": _redact(_error_message(run)),
         # An explicit `attended: false` is the unattended grant; anything else asks per stage.

@@ -5,7 +5,7 @@ import { spring, physics, stagger, listItemEnter } from '../design/motion'
 import { api, type NotificationItem } from '../lib/api'
 import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { kindMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
+import { noteMeta, relTime, firstLine, toneChipBg } from '../pages/notifications/notificationMeta'
 import { RowHitTarget } from './RowHitTarget'
 import { UnreadRail } from '../pages/notifications/UnreadRail'
 import { rowSubject } from '../lib/rowSubject'
@@ -168,7 +168,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
 }
 
 function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; now: number; onOpen: () => void; onAck: () => void; onDelete: () => void }) {
-  const km = kindMeta(n.kind)
+  const km = noteMeta(n)
   // 🔴 THE ACTIONS WERE BARE VERBS, and the row beside them already knew better. Measured in the open
   // shade: **"Dismiss" named 5 controls and "Mark read" named 2** — one name per verb for the whole
   // dropdown — while the dashboard's Action Center rows a few pixels away announce

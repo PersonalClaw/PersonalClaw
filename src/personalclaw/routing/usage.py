@@ -280,7 +280,13 @@ def fold_turn_row(
     if app_name:
         _count(fold.setdefault("app_sources", {}), app_name)
 
-    rate_unpriced, local = look(provider, model)
+    rate_unpriced, local_now = look(provider, model)
+    # Where the turn ran is the row's own record (``local``), made by the price it was charged:
+    # judged by the prices and instances configured now, a turn charged at a price since removed
+    # read as run locally at $0 beside the dollars it cost. The rate table answers for a row
+    # written before the ledger recorded it.
+    recorded_local = row.get("local")
+    local = recorded_local if isinstance(recorded_local, bool) else local_now
     # ``priced`` is the ledger's own disclosure and wins when present; the rate table is the
     # fallback for a row written before that field existed. A turn on a model served on this
     # machine is never unpriced: its price is a known $0, and a row written before local turns

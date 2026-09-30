@@ -61,6 +61,7 @@ from personalclaw.workflows import (
     execution_hints,
     gate_answers,
     gate_policy,
+    incident_hold,
     iteration_context,
 )
 from personalclaw.workflows import journal as journal_mod
@@ -276,6 +277,11 @@ class RunController:
         #: instead of spinning: `_next_wake_delay` returns None for a run with nothing WAITING and
         #: nothing in flight, and the loop's `sleep(0)` fallback would busy-wait through the window.
         self._admission_wake: float = 0.0
+        #: Whether incident mode is holding this run, and when the held tick loop looks again
+        #: (`incident_hold`): a held run has nothing in flight and nothing WAITING, so without a
+        #: wake the loop would spin through the hold.
+        self._incident_held: bool = False
+        self._incident_wake: float = 0.0
         #: `(spec_version, declares)` — whether ANY node declares an admission key. Cached per
         #: spec version rather than per construction because a mid-flight mutation can add one.
         self._admission_declared: tuple[int, bool] | None = None
@@ -677,9 +683,17 @@ class RunController:
         # request handler recorded is applied by the ONE writer, on a step, with the lock held.
         # PAUSED is not terminal — the loop simply stops here, and `wake()` restarts it on resume.
         if store.pause_requested(self.run.id):
-            await self._pause_inflight()
+            await self._withdraw_inflight(reason="Stopped: the run was paused")
             await self._finish(RunStatus.PAUSED)
             return True
+
+        # Incident mode holds the run (`incident_hold`): after a cancel and a pause, so either still
+        # ends or parks a held run, and before anything below starts work.
+        if incident_hold.active():
+            await incident_hold.hold(self, wake_secs=TICK_WAKE_SECS)
+            return False
+        if self._incident_held:
+            incident_hold.carry_on(self)
 
         # Mutations drain HERE — lock held, nothing mid-launch (WF2-R20 safety #1). Before
         # the frontier, so an applied edit is reflected in this step's scheduling rather
@@ -1445,19 +1459,7 @@ class RunController:
         await asyncio.wait(tasks, timeout=TICK_WAKE_SECS, return_when=asyncio.FIRST_COMPLETED)
         async with self._lock:
             liveness.enforce_stall_timeouts(self)
-            for path, entry in list(self._inflight.items()):
-                if not entry.task.done():
-                    continue
-                self._inflight.pop(path, None)
-                try:
-                    result = entry.task.result()
-                except asyncio.CancelledError:
-                    continue
-                except Exception as exc:
-                    from personalclaw.workflows.failure_taxonomy import classify_exception
-
-                    result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
-                self._apply(entry, result)
+            self._apply_finished()
             self._persist_state()
             # `_apply` writes the RUN ROW as well as instance state — `total_tokens` (:3331) and
             # `agent_count` (the RUNNING branch) both live there — and `_persist_state` cannot see
@@ -1465,6 +1467,22 @@ class RunController:
             # unrelated caller happened to save. `service.status()` reads the store, so that is the
             # difference between a running run showing its spend and showing zero.
             self._save_run()
+
+    def _apply_finished(self) -> None:
+        """Apply the result of every in-flight node that has finished, under the lock."""
+        for path, entry in list(self._inflight.items()):
+            if not entry.task.done():
+                continue
+            self._inflight.pop(path, None)
+            try:
+                result = entry.task.result()
+            except asyncio.CancelledError:
+                continue
+            except Exception as exc:
+                from personalclaw.workflows.failure_taxonomy import classify_exception
+
+                result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+            self._apply(entry, result)
 
     def note_progress(self, path: str) -> None:
         """Feed the stall clock. Called by the dispatch layer when a node emits progress
@@ -1482,9 +1500,11 @@ class RunController:
         duration = max(0.0, time.time() - entry.started)
 
         if result.state == InstanceState.READY:
-            # Capacity backpressure, not an outcome: reset to pending so the next tick
-            # re-derives it as ready rather than treating it as finished.
+            # The step did not run — a stage incident mode held as it was dispatched, or one the
+            # subagent manager had no room for — so it is not an outcome and not an attempt: reset
+            # to pending so the next tick re-derives it as ready.
             inst.state = InstanceState.PENDING
+            inst.attempt = max(0, inst.attempt - 1)
             return
 
         if result.state == InstanceState.RUNNING:
@@ -2030,6 +2050,8 @@ class RunController:
             # the tick loop's no-deadline path sleeps zero and spins through the whole window —
             # a held step is not WAITING, so nothing else here would report its deadline.
             deadlines.append(self._admission_wake)
+        if self._incident_wake:
+            deadlines.append(self._incident_wake)
         if not deadlines:
             return None
         return max(0.05, min(TICK_WAKE_SECS, min(deadlines) - time.time()))
@@ -2100,26 +2122,27 @@ class RunController:
             )
         self._persist_state()
 
-    async def _pause_inflight(self) -> None:
-        """Withdraw the work in flight, so a paused run does nothing more until it is resumed.
+    async def _withdraw_inflight(self, *, reason: str) -> None:
+        """Withdraw the work in flight, so the run does nothing more until it goes on: a pause
+        (until it is resumed) or an incident hold (until the switch is off). *reason* is what a
+        stopped stage's subagent is told.
 
         "Pause — in-flight steps finish" is what the run page used to promise, and on a loop it is
         not a pause: a stage can run for many minutes and write files the whole time, and the
         loop measured 2026-09-25 wrote a finding 3.5 minutes after the user saw "Paused". So a
         pause STOPS it:
 
-        * a stage that already finished is settled first — its output is real work;
+        * a step that already finished is settled first — its output is real work — and so is a
+          stage whose dispatch has just returned, so its subagent is stopped below rather than left
+          working with no step to answer to;
         * a dispatched stage still running has its subagent stopped and goes back to PENDING at
           the SAME epoch, so a resume re-dispatches it (the committed-effect gate passes a
           same-epoch retry by design) and its withdrawn attempt is not counted as one;
         * an awaited node is cancelled and reset the same way.
         """
+        self._apply_finished()
         stage_settlement.reconcile_dispatched_stages(self)
-        withdrawn = list(
-            await stage_settlement.stop_dispatched_stages(
-                self, reason="Stopped: the run was paused"
-            )
-        )
+        withdrawn = list(await stage_settlement.stop_dispatched_stages(self, reason=reason))
         for entry in list(self._inflight.values()):
             entry.task.cancel()
             withdrawn.append(entry.ready.path)

@@ -1548,8 +1548,12 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     #: `trust_answer` is the owner's Allow or Deny on an unknown-sender note
     #: (`answer_unknown_sender`): a note raised already answered would show no buttons, and the
     #: stranger it names would be neither let in nor refused.
+    #:
+    #: `kind_label` is the registry's name for the note's kind, set only when the kind is
+    #: registered: a note could otherwise call itself "Approval needed".
     _RESERVED_NOTE_KEYS: frozenset[str] = frozenset(
         {
+            "kind_label",
             "mode",
             "targets",
             "source",
@@ -1612,6 +1616,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """
         from personalclaw import identity
         from personalclaw import notification_addressing as addressing
+        from personalclaw import notification_kinds
         from personalclaw import notification_rules as rules
         from personalclaw.providers import entity_routes
 
@@ -1670,6 +1675,12 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # app's, and the app would read them.
         if raised_by_app:
             note["raised_by_app"] = raised_by_app
+        # What the kind is called, in its registration's words, for every surface that shows the
+        # note: the Notifications page names kinds from a map of its own, which has no row for a
+        # kind an app registered, and a note outlives the app that raised it.
+        kind_label = notification_kinds.label_for_wire(kind)
+        if kind_label:
+            note["kind_label"] = kind_label
 
         # Resolve the rule. Every failure path here falls through to immediate delivery:
         # a policy layer that can't read its own config must not be able to silence the

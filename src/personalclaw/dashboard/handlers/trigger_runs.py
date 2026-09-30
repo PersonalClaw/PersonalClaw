@@ -802,6 +802,7 @@ async def _record_manual_run(
             ScheduleRun(
                 run_id=run_id,
                 job_id=trigger_id,
+                job_name=str(getattr(trigger, "name", "") or ""),
                 trigger="manual",
                 started_at=started,
                 finished_at=finished,

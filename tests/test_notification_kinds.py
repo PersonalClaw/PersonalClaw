@@ -347,6 +347,60 @@ def test_attention_pairs_round_trip_through_the_wire():
         assert nk.kind_for_legacy(flat).key == f"{source}/{kind}"
 
 
+def test_every_registered_pair_round_trips_through_its_wire_string():
+    """pair → wire → pair for EVERY registered kind, and for the ones an app registers when it is
+    enabled, which no table here can list. A pair whose wire string resolves to another kind is a
+    rule row that governs nothing: `agent/room_paused` was one, and an app's proposal kind went out
+    as a bare `proposal:<suffix>` that resolved to system/generic and that two apps shared."""
+    from personalclaw import proposals_contract as pc
+    from personalclaw.apps.manifest import AppManifest
+
+    manifest = AppManifest.from_dict(
+        {
+            "name": "demo-a",
+            "version": "1.0.0",
+            "displayName": "Demo",
+            "description": "x",
+            "permissions": {"proposals": [{"kind_suffix": "draft", "label": "Draft reply"}]},
+        }
+    )
+    pc.register_app_proposal_kinds("demo-a", manifest)
+    pc.register_app_proposal_kinds("demo-b", manifest)
+
+    misses = {}
+    for k in nk.all_kinds():
+        wire = nk.kind_for_legacy_pair(k.source, k.kind)
+        if nk.kind_for_legacy(wire).key != k.key:
+            misses[k.key] = (wire, nk.kind_for_legacy(wire).key)
+    assert not misses, f"these pairs' wire strings resolve to another kind: {misses}"
+    assert nk.kind_for_legacy_pair("app:demo-a", "proposal:draft") != nk.kind_for_legacy_pair(
+        "app:demo-b", "proposal:draft"
+    )
+
+
+def test_a_wire_string_carries_the_label_its_kind_declared():
+    """What the note carries for the surfaces that show it: the registration's own label, or
+    nothing for a string no registration names (the page then shows what it can)."""
+    from personalclaw import proposals_contract as pc
+    from personalclaw.apps.manifest import AppManifest
+
+    manifest = AppManifest.from_dict(
+        {
+            "name": "demo",
+            "version": "1.0.0",
+            "displayName": "Demo",
+            "description": "x",
+            "permissions": {"proposals": [{"kind_suffix": "draft", "label": "Draft reply"}]},
+        }
+    )
+    pc.register_app_proposal_kinds("demo", manifest)
+    assert nk.label_for_wire(nk.kind_for_legacy_pair("app:demo", "proposal:draft")) == "Draft reply"
+    assert nk.label_for_wire("room_paused") == "Room paused"
+    assert nk.label_for_wire(nk.LOOP_FAILED) == "Loop failed"
+    assert nk.label_for_wire("no-such-kind") == ""
+    assert nk.label_for_wire("app:demo/proposal:gone") == ""
+
+
 def test_legacy_strings_win_a_collision_with_an_attention_kind():
     """A newly added attention kind must never re-point an existing persisted kind."""
     for flat, ident in nk._LEGACY_FLAT.items():

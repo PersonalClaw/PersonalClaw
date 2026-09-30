@@ -1901,7 +1901,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
 
 def _redact_run(run: dict[str, Any], *, job_name: str | None = None) -> dict[str, Any]:
     out = dict(run)
-    for key in ("summary", "trace", "error"):
+    for key in ("summary", "trace", "error", "job_name"):
         if out.get(key):
             out[key] = _redact(out[key])
     if job_name is not None:
@@ -2227,11 +2227,16 @@ async def api_trigger_history_all(request: web.Request) -> web.Response:
     if raw_filter:
         kind_filter, raw_filter = _split_id(raw_filter)
     runs, total = await _runs_store().list_all(offset, limit, raw_filter)
-    # 🔴 the history re-point: trigger NAMES come from the store. A run row carries only a
-    # `job_id`, so the name is a join — and joining against the legacy service would label a run of
-    # a store-created trigger with a blank, which reads in the UI as a run of a deleted automation.
+    # 🔴 the history re-point: trigger NAMES come from the store — a trigger is named as it is
+    # called now — and joining against the legacy service would label a run of a store-created
+    # trigger with a blank, which reads in the UI as a run of a deleted automation. A run whose
+    # trigger has left the list (a one-shot retires after its run, a deletion keeps the history) is
+    # named by the name it ran under, which its row keeps.
     names = _trigger_names(state)
-    enriched = [_redact_run(r, job_name=names.get(r.get("job_id", ""), "")) for r in runs]
+    enriched = [
+        _redact_run(r, job_name=names.get(r.get("job_id", "")) or str(r.get("job_name") or ""))
+        for r in runs
+    ]
 
     if (request.query.get("shape") or "").lower() == "legacy":
         return web.json_response({"runs": enriched, "total": total})

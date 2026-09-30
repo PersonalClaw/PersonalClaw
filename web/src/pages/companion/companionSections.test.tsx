@@ -387,6 +387,22 @@ describe('the Inbox section — resolve through plan 42\'s own lifecycle', () =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the Recent section — the notification feed', () => {
+  it('says what each note is in words, never its wire kind', async () => {
+    // The row read `loop`, `cron`, or an app's `app:demo-proposer/proposal:draft`.
+    fakeFeed([
+      note(),
+      note({
+        kind: 'app:demo-proposer/proposal:draft', kind_label: 'Draft reply', item_kind: 'proposal',
+        title: 'Reply to the venue?', ts: '2026-08-26T09:05:00Z',
+      }),
+    ])
+    render(<RecentSection />)
+    expect(await screen.findByText('Loop progress')).toBeTruthy()
+    expect(screen.getByText('Draft reply')).toBeTruthy()
+    expect(screen.queryByText('loop')).toBeNull()
+    expect(screen.queryByText(/proposal:draft/)).toBeNull()
+  })
+
   it('marks one read through POST /api/notifications/ack, keyed on its ts', async () => {
     fakeFeed([note()])
     render(<RecentSection />)

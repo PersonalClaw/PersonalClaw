@@ -134,6 +134,14 @@ deadline restarts at the release), and a turn the hold stopped is not counted as
 The gateway watches the switch (`guardrails/incident.watch`) and sends the `refresh` hint naming
 `incident` and `loops` when it moves, the CLI's flips included, so open pages re-read at once.
 
+A workflow run, and so a general loop, is held the same way (`workflows/incident_hold.py`). On its
+first step with the switch on, the run's controller withdraws the work in flight as a pause does: a
+stage's subagent is stopped ("Stopped: incident mode is on") and the stage goes back in the queue at
+the same epoch, its attempt not counted. It starts nothing more, looking again each tick, until the
+switch is off, when it carries on by itself. A stage the switch meets at dispatch, or one the subagent
+manager refuses for it, waits rather than failing. The status stays `running`; the run's status and
+its loop view carry the sentence (`held`), which the run page and the loop surfaces show.
+
 ### Mode: Attended and Unattended
 
 A loops-table loop's Mode (`loop.attended`) decides who answers its workers' tool calls. It is set on

@@ -931,6 +931,46 @@ def _put_back_the_registry_accessor() -> None:
         module.get_default_registry = real
 
 
+#: Where an app bundle's modules live in ``sys.modules``: ``_pclaw_app_<app>__<module>``
+#: (``apps.native_contract.namespaced_module_name``).
+_APP_MODULE_PREFIX = "_pclaw_app_"
+
+
+def _app_modules() -> set[str]:
+    return {name for name in sys.modules if name.startswith(_APP_MODULE_PREFIX)}
+
+
+def _forget_apps_registered_elsewhere(registry: object, loaded_before: set[str]) -> None:
+    """Take out of ``sys.modules`` every app first imported during the test whose provider type the
+    process-wide *registry* does not have.
+
+    An app registers its provider type once, when its module first runs, into whichever registry
+    the accessor returns then, and the module stays cached for the worker's life. Run while a test
+    had swapped the registry, or replaced its accessor, the type went into that registry and left
+    with it: every later test on the worker that loads the app gets the cached module and finds no
+    loaded app providing the type (measured: an Ollama entry at localhost priced as unpriced, and
+    its prompt scanned as one leaving the machine, after a test that booted the gateway on a
+    registry of its own). Forgotten, the app's next import registers its type where it belongs.
+    Only apps this test first imported: an earlier one may be held by a test module, and a second
+    copy of its classes is the failure the ``acp_agent`` reload caused.
+    """
+    from personalclaw.llm.capabilities import ProviderCapability
+
+    known = getattr(registry, "_capabilities", None)
+    if not isinstance(known, dict):
+        return
+    for name in sorted(_app_modules() - loaded_before):
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        declared = [v.type for v in vars(module).values() if isinstance(v, ProviderCapability)]
+        if any(type_ not in known for type_ in declared):
+            app = name[: name.index("__") + 2]
+            for sibling in _app_modules() - loaded_before:
+                if sibling.startswith(app):
+                    sys.modules.pop(sibling, None)
+
+
 @pytest.fixture(autouse=True)
 def _restore_provider_registry() -> object:
     """Undo any provider-registry ENTRY a test registers into the process-global singleton, and
@@ -961,11 +1001,14 @@ def _restore_provider_registry() -> object:
     sharded the suite: with fewer xdist workers a resetting test and
     `test_provider_resolution_unify`'s `acp_agent` cases land on the same worker in sequence.
     Restoring the original object (which still carries its import-time type registrations) heals
-    it; the `is` check makes the restore a no-op for the tests that already save/restore the
-    singleton themselves (`test_acp_bundles`, `test_agent_providers_endpoint`). Registered TYPES on
-    the original are still left alone (there is no `unregister_type`, so a mutation that would drop
-    a type can only be a reset/swap, which this catches): `register_type` is how a test simulates
-    an installed provider app, it is idempotent, and a type with no entry resolves nothing.
+    it; the `is` check makes the restore a no-op for a test that already put the singleton back
+    itself. An app bundle the test first imported while a swap was in place registered its type
+    into the registry that was thrown away, and its module stays cached: it is forgotten here
+    (`_forget_apps_registered_elsewhere`), so its next import registers the type in the original.
+    Registered TYPES on the original are still left alone
+    (there is no `unregister_type`, so a mutation that would drop a type can only be a reset/swap,
+    which this catches): `register_type` is how a test simulates an installed provider app, it is
+    idempotent, and a type with no entry resolves nothing.
 
     And every test STARTS with the real ACCESSOR in every module of ours that binds it. Many tests
     replace the accessor itself (`monkeypatch.setattr("personalclaw.llm.registry.
@@ -988,9 +1031,11 @@ def _restore_provider_registry() -> object:
     original = _registry_mod.get_default_registry()
     entries = getattr(original, "_entries", None)
     before = set(entries) if isinstance(entries, dict) else set()
+    apps_before = _app_modules()
     yield
     if _registry_mod.get_default_registry() is not original:
         _registry_mod.set_default_registry(original)
+    _forget_apps_registered_elsewhere(original, apps_before)
     entries = getattr(original, "_entries", None)
     if isinstance(entries, dict):
         for name in set(entries) - before:

@@ -139,9 +139,12 @@ class _State:
 
 
 @asynccontextmanager
-async def _client(tmp_path, monkeypatch):
+async def _client(tmp_path, monkeypatch, state=None):
     """``X-Test-App`` stands in for the verified app-scoped token: the middleware stamps
-    ``request["app"]`` exactly as token auth would, so identity is un-spoofable by body."""
+    ``request["app"]`` exactly as token auth would, so identity is un-spoofable by body.
+
+    *state* is the gateway's own ``DashboardState`` for a test that reads what the owner is
+    notified of; the stand-in above records the call and nothing more."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
@@ -159,7 +162,7 @@ async def _client(tmp_path, monkeypatch):
             return await handler(request)
 
         app = web.Application(middlewares=[stamp_app])
-        app["state"] = _State()
+        app["state"] = state if state is not None else _State()
         app.router.add_post("/api/inbox/proposals", handlers_inbox.api_inbox_proposal_create)
         app.router.add_post("/api/inbox/{id}/apply", handlers_inbox.api_inbox_proposal_apply)
         async with TestClient(TestServer(app)) as client:
@@ -363,3 +366,72 @@ async def test_apply_endpoint_404s_an_unknown_item(tmp_path, monkeypatch):
     async with _client(tmp_path, monkeypatch) as client:
         r = await client.post("/api/inbox/nope/apply", json={})
         assert r.status == 404
+
+
+# ── what the owner is notified of: the app's own kind, its own rule, its own words ──
+
+
+def _gateway_state(tmp_path, monkeypatch):
+    """The gateway's own state, its notification log in the test's home and nothing broadcast."""
+    from tests.chat_test_helpers import _make_state
+
+    state = _make_state(tmp_path)
+    monkeypatch.setattr(state, "_broadcast", lambda note: None)
+    return state
+
+
+def _notes_titled(state, title: str) -> list[dict]:
+    return [n for n in state._notification_log if n.get("title") == title]
+
+
+async def _raise(client, app: str, title: str):
+    r = await client.post(
+        "/api/inbox/proposals",
+        json={"kind_suffix": "draft", "title": title, "apply": {"app_callback": {"route": "send"}}},
+        headers={"X-Test-App": app},
+    )
+    assert r.status == 201, await r.text()
+
+
+@pytest.mark.asyncio
+async def test_the_notification_names_the_apps_own_kind_in_the_words_it_declared(
+    tmp_path, monkeypatch
+):
+    """The note an app's proposal raises names that app's kind, so the Notifications page and the
+    bell can say what it is in the words its manifest declared, and two apps that both declare
+    ``draft`` are two kinds on the wire, not one. It went out as the bare ``proposal:draft``,
+    which the page showed as that string and the rules read as the catch-all."""
+    state = _gateway_state(tmp_path, monkeypatch)
+    async with _client(tmp_path, monkeypatch, state=state) as client:
+        _install(tmp_path, "demo", proposals=[{"kind_suffix": "draft", "label": "Draft reply"}])
+        _install(tmp_path, "other", proposals=[{"kind_suffix": "draft", "label": "Draft post"}])
+        await _raise(client, "demo", "Reply to the venue?")
+        await _raise(client, "other", "Post the update?")
+
+    (demo,) = _notes_titled(state, "Reply to the venue?")
+    (other,) = _notes_titled(state, "Post the update?")
+    assert demo["kind"] == "app:demo/proposal:draft" and demo["source"] == "app:demo"
+    assert demo["kind_label"] == "Draft reply"
+    assert other["kind"] == "app:other/proposal:draft" and other["kind_label"] == "Draft post"
+
+
+@pytest.mark.asyncio
+async def test_the_owners_rule_for_an_apps_proposal_kind_decides_its_delivery(
+    tmp_path, monkeypatch
+):
+    """Settings → Notifications lists each app's proposal kind as a row of its own. Set to Never,
+    that app's proposals stop notifying, and another app's kind of the same name still does."""
+    state = _gateway_state(tmp_path, monkeypatch)
+    (tmp_path / "entity_settings").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "entity_settings" / "notification_rules.json").write_text(
+        json.dumps({"rules": {"app:demo/proposal:draft": {"mode": "never"}}}), encoding="utf-8"
+    )
+    async with _client(tmp_path, monkeypatch, state=state) as client:
+        _install(tmp_path, "demo", proposals=[{"kind_suffix": "draft"}])
+        _install(tmp_path, "other", proposals=[{"kind_suffix": "draft"}])
+        await _raise(client, "demo", "Muted by its rule")
+        await _raise(client, "other", "Still notified")
+
+    assert _notes_titled(state, "Muted by its rule") == []
+    (kept,) = _notes_titled(state, "Still notified")
+    assert kept["mode"] == "immediate" and kept["source"] == "app:other"

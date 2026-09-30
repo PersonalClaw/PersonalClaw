@@ -79,6 +79,10 @@ class ScheduleRun:
 
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     job_id: str = ""
+    # The trigger's name when it ran. The run feed names a run by its trigger as it is called now,
+    # and by this once the trigger has left the list: a one-shot retires after its run, and a
+    # deleted trigger keeps its history.
+    job_name: str = ""
     trigger: str = "scheduled"  # "scheduled" | "manual"
     started_at: float = 0.0
     finished_at: float = 0.0
@@ -107,6 +111,7 @@ class ScheduleRun:
         d: dict[str, Any] = {
             "run_id": self.run_id,
             "job_id": self.job_id,
+            "job_name": self.job_name,
             "trigger": self.trigger,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -125,6 +130,7 @@ class ScheduleRun:
         return cls(
             run_id=str(d.get("run_id", "")) or uuid.uuid4().hex[:12],
             job_id=str(d.get("job_id", "")),
+            job_name=str(d.get("job_name", "")),
             trigger=str(d.get("trigger", "scheduled")),
             started_at=float(d.get("started_at", 0.0) or 0.0),
             finished_at=float(d.get("finished_at", 0.0) or 0.0),
@@ -343,6 +349,7 @@ class ScheduleRunStore:
         run.summary = _redact_stored(run.summary)[:_SUMMARY_CAP]
         run.trace = _redact_stored(run.trace)[:_TRACE_CAP]
         run.error = _redact_stored(run.error)
+        run.job_name = _redact_stored(run.job_name)
         job_path = self._job_path(run.job_id)
         with self._lock():
             self._dir.mkdir(parents=True, exist_ok=True)

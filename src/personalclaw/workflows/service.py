@@ -36,6 +36,9 @@ from personalclaw.workflows import (
     blocks,
 )
 from personalclaw.workflows import defs as defs_mod
+from personalclaw.workflows import (
+    incident_hold,
+)
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import (
     judge_calibration,
@@ -1029,6 +1032,9 @@ def status(run_id: str) -> dict[str, Any]:
         # status still reads `running`. Reported so the page can say "Pausing…" rather than go
         # on showing a Pause button that looks like it did nothing.
         pause_requested=store.pause_requested(run_id),
+        # Why a running run is doing nothing while incident mode holds it (`incident_hold`), so the
+        # page does not read "Running" through the hold.
+        held=incident_hold.held_reason(run.status),
         nodes=_nodes_of(run_id),
     )
 
@@ -1764,7 +1770,7 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
 
     A pause is a STICKY INTENT (`store.request_pause`, a file like cancel's), applied by the tick
     loop on its next step — the single-writer discipline. What the step does with it is
-    `RunController._pause_inflight`: a running stage's subagent is stopped and re-queued, so
+    `RunController._withdraw_inflight`: a running stage's subagent is stopped and re-queued, so
     "paused" means paused rather than "stops launching new nodes while the current one writes for
     another ten minutes". The intent was a key in ``run.extra`` until this, which the live
     controller's next save overwrote and nothing ever read (#370), so Pause did nothing at all.

@@ -117,6 +117,22 @@ export function kindMeta(kind: string): KindMeta {
   return KINDS[kind] ?? { label: kind || 'Notification', icon: Bell, tone: 'var(--color-primary)' }
 }
 
+/** What a notification is, for a surface that shows one: its kind's row above, or, for a kind this
+ *  map has no row for, the name its registration declares, which the note carries (`kind_label`).
+ *  An app's proposal kind is one per app (`app:<name>/proposal:<suffix>`, named in the words its
+ *  manifest declared), so no row here could name it, and its raw wire string is what the page
+ *  used to show. A proposal wears the proposal icon whichever app raised it. */
+export function noteMeta(n: Pick<NotificationItem, 'kind' | 'kind_label' | 'item_kind'>): KindMeta {
+  const known = KINDS[n.kind]
+  if (known) return known
+  const fallback = kindMeta(n.kind)
+  return {
+    label: n.kind_label || fallback.label,
+    icon: n.item_kind === 'proposal' ? Lightbulb : fallback.icon,
+    tone: fallback.tone,
+  }
+}
+
 // ── shared visual helpers (consolidation) ──
 // The tinted icon-chip background was duplicated verbatim across NotificationsPage
 // (Row) and NotificationBell (ShadeRow). Centralize the EXACT same value so the
@@ -132,11 +148,15 @@ export function toneChipBg(tone: string): string {
   return `color-mix(in srgb, ${tone} 16%, transparent)`
 }
 
-/** Distinct kinds present in a list, for the filter row. */
-export function kindsPresent(items: NotificationItem[]): string[] {
-  const seen = new Set<string>()
-  for (const n of items) seen.add(n.kind || 'info')
-  return [...seen]
+/** Distinct kinds present in a list, for the filter row: each kind's key and the first note of it,
+ *  whose `noteMeta` names the kind. */
+export function kindsPresent(items: NotificationItem[]): Array<{ kind: string; note: NotificationItem }> {
+  const seen = new Map<string, NotificationItem>()
+  for (const n of items) {
+    const kind = n.kind || 'info'
+    if (!seen.has(kind)) seen.set(kind, n)
+  }
+  return [...seen].map(([kind, note]) => ({ kind, note }))
 }
 
 // ── time bucketing for grouped display ──

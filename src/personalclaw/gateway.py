@@ -2332,6 +2332,7 @@ class GatewayOrchestrator:
                 ScheduleRun(
                     run_id=f"fire-{int(now * 1000)}",
                     job_id=trigger_id,
+                    job_name=str(getattr(trigger, "name", "") or ""),
                     trigger=exit_type,
                     started_at=now,
                     finished_at=now,
@@ -2491,6 +2492,7 @@ class GatewayOrchestrator:
                 ScheduleRun(
                     run_id=f"{status}-{int(now * 1000)}",
                     job_id=str(getattr(trigger, "id", "") or ""),
+                    job_name=str(getattr(trigger, "name", "") or ""),
                     trigger=status,
                     started_at=now,
                     finished_at=now,

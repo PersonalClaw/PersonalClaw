@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toneChipBg, kindMeta } from './notificationMeta'
+import { toneChipBg, kindMeta, noteMeta } from './notificationMeta'
 
 // ── Consolidation guard ────────────────────────────────────────────────────
 // toneChipBg() replaced a verbatim-duplicated inline style in NotificationsPage
@@ -70,5 +70,30 @@ describe('kindMeta covers every kind the backend emits', () => {
     expect(km.tone).toMatch(/^var\(--color-/)
     // and an empty kind degrades to a generic noun, not an empty chip
     expect(kindMeta('').label).toBe('Notification')
+  })
+})
+
+// ── An app's proposal kind, which no row here can name ─────────────────────
+// Each app that may raise proposals registers its own kind (`app:<name>/proposal:<suffix>`), named
+// in the words its manifest declared, and the note carries that name. The page showed the raw
+// wire string ('proposal:draft') with a plain bell.
+describe('noteMeta names a kind this map has no row for from the note itself', () => {
+  const appProposal = { kind: 'app:demo-proposer/proposal:draft', kind_label: 'Draft reply', item_kind: 'proposal' }
+
+  it("an app's proposal reads as the kind its manifest named, with the proposal icon", () => {
+    const km = noteMeta(appProposal)
+    expect(km.label).toBe('Draft reply')
+    expect(km.icon).toBe(kindMeta('proposal').icon)
+    expect(km.tone).toMatch(/^var\(--color-/)
+  })
+
+  it("a kind with a row keeps the row's words", () => {
+    expect(noteMeta({ kind: 'loop_failed', kind_label: 'Loop failed' })).toBe(kindMeta('loop_failed'))
+    expect(noteMeta({ kind: 'proposal', kind_label: 'Skill proposal', item_kind: 'proposal' }).label).toBe('Skill proposal')
+  })
+
+  it('a note that names no kind label still reads as something usable', () => {
+    expect(noteMeta({ kind: 'zzz_not_a_kind' }).label).toBe('zzz_not_a_kind')
+    expect(noteMeta({ kind: '' }).label).toBe('Notification')
   })
 })

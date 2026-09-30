@@ -17,6 +17,7 @@ import { TextArea } from '../../ui/forms'
 import { useCompanionAction } from './useCompanionAction'
 import { signalPriority } from '../tasks/taskMeta'
 import { isChannelItem } from '../inbox/inboxMeta'
+import { noteMeta } from '../notifications/notificationMeta'
 
 /** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
  *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
@@ -352,7 +353,7 @@ export function RecentSection() {
         // unack / delete route takes, so it is the row identity by construction.
         const n = view(raw.ts, raw)
         return (
-          <Row key={n.ts} title={n.title} sub={n.body} meta={n.kind || 'info'}
+          <Row key={n.ts} title={n.title} sub={n.body} meta={noteMeta(n).label}
             actions={n.acked ? (
               <span data-type="body-m" className="inline-flex items-center gap-xs text-on-surface-low">
                 <Check size={14} aria-hidden /> read

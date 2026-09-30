@@ -1641,6 +1641,11 @@ export interface ChatHistoryMsg {
 // ── workspace / build entity types ──
 export interface NotificationItem {
   kind: string; title: string; body: string; ts: string
+  /** What the kind is called, in its registration's words — set when the kind is registered.
+   *  The one name for a kind the display map has no row for: an app's proposal kind. */
+  kind_label?: string
+  /** The Inbox row's kind when the note was raised for one (`proposal` for an app's proposal). */
+  item_kind?: string
   job_id?: string; loop_id?: string; loop_kind?: string; acked: boolean
   /** R18's deep link into the thing this note is ABOUT — `#/triggers?open=<id>` for a trigger fire,
    *  `#/workflows/runs/<id>` for a run. Caller-supplied meta, so it is followed only as an in-app
@@ -2109,6 +2114,9 @@ export interface WorkflowRunDetailData {
   /** A pause is applied on the controller's next step, so between the click and that step the
    *  status still reads `running`. True in that window, so the page says "Pausing…". */
   pause_requested?: boolean
+  /** Why a `running` run is doing nothing while incident mode holds it: it starts no step and
+   *  makes no model call, and carries on by itself once the switch is off. Empty otherwise. */
+  held?: string
   nodes: WorkflowNodeState[]
 }
 // One pending human-input gate. `ask` is the typed payload ONE renderer covers

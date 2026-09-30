@@ -28,6 +28,7 @@ import pytest
 
 from personalclaw.agents.registry import get_agent_provider_class
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
+from personalclaw.llm.acp_agent import _factory as acp_factory
 from personalclaw.llm.registry import get_default_registry, reset_default_registry
 
 # The claude-code / codex ACP bundles are standalone APPS now (apps/<name>-agent/).
@@ -62,44 +63,14 @@ codex = _load_app_provider("codex-agent")
 
 @pytest.fixture(autouse=True)
 def _isolate_registry():
-    """Each test gets a fresh default registry (re-import the acp_agent type),
-    then the process-wide singletons are RESTORED on teardown.
+    """Each test gets a default registry of its own, knowing only the ``acp_agent`` type.
 
-    ``importlib.reload(acp_agent)`` builds a NEW module + a NEW
-    ``AcpAgentProvider`` class and re-registers it on both the model registry
-    (``register_type``) and the agent registry (``register_agent_provider``).
-    If we left that in place, a later test holding the ORIGINAL class via
-    ``from … import AcpAgentProvider`` would fail an ``is`` identity check, and
-    the model registry — emptied by ``reset_default_registry`` — would be
-    missing every other provider (bedrock/anthropic/…) since ``import
-    personalclaw.llm`` is already cached and won't re-run their registration.
-    So snapshot everything we perturb and put it back. (#25c)
+    The type is registered here rather than by importing ``acp_agent`` again: a re-import builds a
+    second ``AcpAgentProvider`` class, which every module that imported the first one no longer
+    recognises. The process-wide registry comes back after the test (conftest).
     """
-    import importlib
-    import sys
-
-    import personalclaw.llm as _llm_pkg
-    from personalclaw.agents import registry as _agent_reg
-    from personalclaw.llm import registry as _model_reg
-
-    saved_registry = _model_reg._default_registry
-    saved_module = sys.modules.get("personalclaw.llm.acp_agent")
-    saved_pkg_attr = getattr(_llm_pkg, "acp_agent", None)
-    saved_agent_providers = dict(_agent_reg._providers)
-
     reset_default_registry()
-    import personalclaw.llm.acp_agent as _acp_agent
-
-    importlib.reload(_acp_agent)
-    try:
-        yield
-    finally:
-        _model_reg.set_default_registry(saved_registry)
-        if saved_module is not None:
-            sys.modules["personalclaw.llm.acp_agent"] = saved_module
-            _llm_pkg.acp_agent = saved_pkg_attr
-        _agent_reg._providers.clear()
-        _agent_reg._providers.update(saved_agent_providers)
+    get_default_registry().register_type(ACP_AGENT_CAPABILITY, acp_factory)
 
 
 def _make_exec(path: Path) -> None:

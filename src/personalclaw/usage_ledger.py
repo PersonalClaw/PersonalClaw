@@ -61,6 +61,11 @@ class TurnUsage:
     cache_creation_tokens: int = 0
     cost_usd: float = 0.0
     priced: bool = True
+    # Whether the model that answered runs on this machine, priced at its known $0 by the rule
+    # the spend caps charge by (``routing.rates``, ``llm.registry.served_on_this_machine``), as it
+    # was when the turn ran: what the Usage page's "ran locally at $0" share counts, whatever the
+    # prices and instances configured since say.
+    local: bool = False
     duration_ms: int = 0
     # The ``audit_id`` of each guarded model call this row's tokens came from, as
     # ``model_calls.jsonl`` records it (``LLMEvent.audit_ids``): the join that lets the usage fold
@@ -231,6 +236,7 @@ def record_from_event(
             cache_creation_tokens=cache_creation,
             cost_usd=price.dollars,
             priced=price.priced,
+            local=price.source == "local",
             duration_ms=int(getattr(event, "duration_ms", 0) or 0),
             audit_ids=_audit_ids(event),
         )
