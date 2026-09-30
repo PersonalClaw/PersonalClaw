@@ -142,7 +142,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A Temporary chat is forgotten when its session ends, as its notice says: when PersonalClaw stops or restarts, however it stops, the chat's messages, its working files and the files attached to it are deleted, its page no longer opens, a message sent to it starts nothing, and no snapshot or export taken while it ran carries it.**
 - **Turning the MCP surface on in Settings → External access serves `/mcp` at once, as `/v1`, `/a2a` and `/capture` are, and turning it off refuses the next call, with no restart.**
-- **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question.**
+- **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question (`MemoryService.recall_lessons` and `recall_facts`: SDK additions no app has to change for).**
 - **A program on another machine that calls `/mcp`, `/v1`, `/a2a` or `/capture` is told why it was refused and how to reach the surface, and `personalclaw inbound` no longer says `allow_remote` opens one to other machines.**
 - **Scanning an import source again shows an MCP server you signed in to as unchanged.**
 - **Archiving, pinning or filing an imported chat keeps where it came from.**

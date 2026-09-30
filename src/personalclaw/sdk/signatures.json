@@ -1766,6 +1766,23 @@
     ],
     "returns": "list[dict]"
    },
+   "recall_facts": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
+     {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"}
+    ],
+    "returns": "list[dict]"
+   },
+   "recall_lessons": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "keyword_only", "name": "query_text"},
+     {"annotation": "int", "default": "8", "kind": "keyword_only", "name": "limit"},
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "workspace"}
+    ],
+    "returns": "list[dict]"
+   },
    "recall_with_provenance": {
     "kind": "method",
     "params": [
