@@ -58,7 +58,7 @@ class _Channel(ChannelTransportProvider):
 
 
 def _app() -> web.Application:
-    """The trust routes, registered as `dashboard/server.py` registers them, behind the request
+    """The trust routes, registered as `dashboard/routes.py` registers them, behind the request
     boundary that serves a refused body."""
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 

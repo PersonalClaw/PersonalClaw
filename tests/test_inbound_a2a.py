@@ -955,9 +955,9 @@ def test_the_gateway_registers_the_surface():
     """Assert the CALL SITE. A module nothing mounts is a module that never runs."""
     import inspect
 
-    from personalclaw.dashboard import server as server_mod
+    from personalclaw.dashboard import routes as routes_mod
 
-    source = inspect.getsource(server_mod.start_dashboard)
+    source = inspect.getsource(routes_mod.register_dashboard_routes)
     assert "from personalclaw.inbound.a2a import register_routes" in source
     assert "_register_a2a(app)" in source
     # Vacuity floor: this matcher must be reading the block that mounts the OTHER inbound

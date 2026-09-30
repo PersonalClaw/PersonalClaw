@@ -139,8 +139,11 @@ routes all refuse it outright. A route that refuses an app token says so in its 
 Useful when you want the authoritative contract for a route, which is always its handler
 docstring rather than any prose:
 
-- `src/personalclaw/dashboard/server.py` — the gateway's own mounts, and the
-  `register_*_routes(app)` calls that pull in the rest.
+- `src/personalclaw/dashboard/routes.py` — the gateway's route table: its own mounts, in
+  the order they match, and the `register_*_routes(app)` calls that pull in the rest.
+- `src/personalclaw/dashboard/server.py` — the routes it registers around that table:
+  the ones the MCP tools share with the loopback API server, the provider extensions',
+  the knowledge library's, the static files and the SPA fallback.
 - `src/personalclaw/dashboard/handlers/` — the bulk of the `/api/*` surface.
 - Per-domain handler modules beside their domain: `tasks/handlers.py`,
   `workflows/handlers.py`, `artifacts/handlers.py`, `lexicon/handlers.py`,

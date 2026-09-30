@@ -671,7 +671,7 @@ async def test_a_missing_capture_store_still_forwards(monkeypatch):
 
 def test_both_routes_register_as_literal_posts():
     """Literal paths cannot be shadowed by the ``{...}`` patterns in
-    `dashboard/server.py`; this pins that they stay literal."""
+    `dashboard/routes.py`; this pins that they stay literal."""
     app = web.Application()
     proxy.register_routes(app)
     posts = {

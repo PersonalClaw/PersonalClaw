@@ -21,8 +21,8 @@ class TestBinaryArtifact:
         art = prov.create_binary(name="A Cat", data=_PNG, mime="image/png", actor="agent")
         assert art.kind == "image"
         assert art.mime == "image/png"
-        # content is the raw REF, never the bytes (no base64-in-content)
-        assert art.content == f"/api/artifacts/{art.slug}/raw"
+        # content is the raw REF of this version, never the bytes (no base64-in-content)
+        assert art.content == f"/api/artifacts/{art.slug}/raw?version=1"
         # bytes are on disk as current.png (not .html)
         assert (tmp_path / art.slug / "current.png").read_bytes() == _PNG
         assert (tmp_path / art.slug / "versions" / "v1.png").read_bytes() == _PNG
@@ -42,7 +42,7 @@ class TestBinaryArtifact:
         art = prov.create_binary(name="cat", data=_PNG, mime="image/png")
         fetched = prov.get(art.slug)
         assert fetched is not None
-        assert fetched.content == f"/api/artifacts/{art.slug}/raw"
+        assert fetched.content == f"/api/artifacts/{art.slug}/raw?version=1"
         assert fetched.mime == "image/png"
         assert fetched.live_dirty is False
 

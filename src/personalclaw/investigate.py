@@ -1054,8 +1054,9 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
     """An artifact, staged so the agent can ITERATE on it rather than just read it.
 
     This resolver is the only one that suggests ``agent`` mode. Every other kind
-    stages a read-only investigation, but iterating on an artifact means calling
-    ``artifact_update`` against this one slug — and (owner ruling, 2026-07-29) the
+    stages a read-only investigation, but iterating on an artifact means calling the
+    tool that makes its kind's next version against this one slug (``artifact_update``
+    for text, ``image_generate`` with ``edit_artifact`` for an image, …) — and the
     work legitimately needs the wider toolset too: searching the web, reading
     knowledge, running commands, investigating the project. A narrower mode would
     produce a panel where the agent cannot do the thing the panel is for.
@@ -1074,6 +1075,8 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         art = None
     if art is None:
         return None
+    from personalclaw.artifacts.models import is_binary_kind
+    from personalclaw.mcp_artifacts import iterate_instruction
 
     lines = [
         f"Artifact `{art.slug}`: {art.name}",
@@ -1084,7 +1087,11 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         lines.append(f"Description: {art.description}")
     if art.tags:
         lines.append(f"Tags: {', '.join(str(t) for t in art.tags)}")
-    if art.source_path:
+    if art.source_path and is_binary_kind(art.kind):
+        # A binary artifact saved from a file is a COPY of its bytes: its versions are its own,
+        # and editing the file changes nothing here.
+        lines.append(f"Saved as a copy of the file: {art.source_path}")
+    elif art.source_path:
         # A file-backed artifact's real source of truth is the workspace file; the
         # agent must edit THAT, not the snapshot, or the next read reverts its work.
         lines.append(f"File-backed — live source: {art.source_path}")
@@ -1099,7 +1106,7 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         lines.append(f"Existing versions: {', '.join('v' + str(v) for v in versions[-8:])}")
 
     body = art.content or ""
-    if art.kind in ("image",):
+    if is_binary_kind(art.kind):
         # A binary body is a raw URL reference, never bytes — putting a data URL in
         # the snapshot would blow the turn budget for no benefit.
         lines.append(f"\nBinary artifact; body served at: {body}")
@@ -1115,12 +1122,10 @@ def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         suggested_task_mode="agent",
         # Names the slug and the tool explicitly: the agent must update THIS artifact
         # in place (a new version on the same slug), not create a near-duplicate —
-        # which is exactly what a vaguer prompt produces.
-        opening_prompt=(
-            f"Iterate on artifact `{art.slug}`. Use artifact_update on that same slug "
-            f"so the change lands as a new version rather than a new artifact. What "
-            f"would you like changed?"
-        ),
+        # which is exactly what a vaguer prompt produces. The tool is the one that makes
+        # THIS kind's next version: naming `artifact_update` for an image is what had a
+        # retried turn file text as the picture's next version.
+        opening_prompt=iterate_instruction(art.kind, art.slug),
     )
 
 

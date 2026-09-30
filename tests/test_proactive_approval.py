@@ -657,9 +657,9 @@ def test_the_approval_rule_routes_are_registered():
     """A handler nobody can reach is not a feature."""
     import pathlib
 
-    from personalclaw.dashboard import handlers, server
+    from personalclaw.dashboard import handlers, routes
 
-    src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
+    src = pathlib.Path(routes.__file__).read_text(encoding="utf-8")
     for verb, name in (
         ("add_get", "api_memory_approval_rules"),
         ("add_post", "api_memory_approval_rule_add"),

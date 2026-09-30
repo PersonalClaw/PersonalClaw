@@ -108,7 +108,8 @@ describe('a card draws a thumbnail only when a browser can decode one', () => {
     render(<ArtifactCard art={art('image', 'a-chart')} onOpen={() => {}} />)
     const img = previewPane().querySelector('img')
     expect(img, 'the image thumbnail is the regression rail on this change').toBeTruthy()
-    expect(img!.getAttribute('src')).toBe('/api/artifacts/a-chart/raw')
+    // The version's own URL, so the card shows the next version once there is one.
+    expect(img!.getAttribute('src')).toBe('/api/artifacts/a-chart/raw?version=1')
   })
 
   it('a text kind still reads its body as an excerpt', () => {

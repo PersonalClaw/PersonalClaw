@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef, type ReactNode } from 'react'
 import { fvs } from '../../../design/fontWeight'
 import { Download, Loader2, BookmarkPlus, FileWarning, RotateCcw, FolderOpen } from 'lucide-react'
 import { api, type FsEntry } from '../../../lib/api'
@@ -26,6 +26,20 @@ export interface FileViewerHandle { save: () => void }
  *  when the gateway refused the save as stale; the notice is then on this viewer, holding the draft. */
 export type SaveAsArtifact = (create: (content: string, base: string) => Promise<unknown>) => Promise<boolean>
 
+/** "Save as artifact" for a file the viewer shows as bytes (an image, a PDF): the artifact is a COPY
+ *  of the file, which the gateway reads and checks itself (`api.saveFileCopyAsArtifact`), so there
+ *  is no draft to hand over and no base to name. */
+export interface ArtifactCopy { kind: 'image' | 'pdf' }
+
+/** What the host's naming dialog says the save does — a live pointer for a text file, a copy for an
+ *  image or PDF. One sentence for both hosts (Files, a chat's file panel). */
+export function artifactSaveNote(save: SaveAsArtifact | ArtifactCopy, fileName: string): ReactNode {
+  const name = <span className="font-mono">{fileName}</span>
+  return typeof save === 'function'
+    ? <>Creates a versioned artifact that live-points at {name}. Re-saving bumps it instead of duplicating.</>
+    : <>Saves a copy of {name} as a versioned artifact. Saving it again after the file changes adds its next version.</>
+}
+
 /** A guarded write of the draft: resolves with the revision the file now reads at, or `null` when
  *  the write does not say (an artifact save) and the file has to be read again to know. */
 type DraftWrite = (next: string, base: string) => Promise<string | null>
@@ -35,7 +49,7 @@ interface ViewerProps {
   /** Fired after a successful save; receives the saved content so a host can keep its
    *  own per-file baseline (e.g. the cockpit's diff-reveal last-seen map) accurate. */
   onSaved: (content?: string) => void
-  onSaveAsArtifact: (entry: FsEntry, save: SaveAsArtifact) => void
+  onSaveAsArtifact: (entry: FsEntry, save: SaveAsArtifact | ArtifactCopy) => void
   onDirtyChange?: (dirty: boolean) => void
   // An optional host-owned per-path draft cache. A multi-tab host (the Code cockpit)
   // mounts only the ACTIVE tab's FileViewer, so switching tabs unmounts the editor and
@@ -266,13 +280,20 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
       {!compact && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{fmtBytes(entry.size)}</span>}
     </>
   )
-  // Host actions: save-as-artifact (text only) + download (always, incl. binary).
+  // What "Save as artifact" hands the host: this viewer's guarded draft for a text file, or, for an
+  // image or PDF (shown by path, no draft), a copy of the file that the gateway reads and checks.
+  // Artifacts keep images and PDFs as versioned artifacts too, so both are offered the action.
+  const artifactSave: SaveAsArtifact | ArtifactCopy | null = isBinaryType
+    ? { kind: type.id === 'pdf' ? 'pdf' : 'image' }
+    : !noText && !truncated && content !== null ? saveAsArtifact : null
+  const artifactTitle = isBinaryType ? 'Save a copy as a versioned artifact' : 'Save as a versioned artifact'
+  // Host actions: save-as-artifact + download (always, incl. binary).
   const headerExtras = (
     <>
-      {!noText && !truncated && content !== null && (
+      {artifactSave && (
         compact
-          ? <SquareIconButton icon={BookmarkPlus} iconSize={13} label="Save as a versioned artifact" onClick={() => onSaveAsArtifact(entry, saveAsArtifact)} />
-          : <QuietButton onClick={() => onSaveAsArtifact(entry, saveAsArtifact)} title="Save as a versioned artifact">
+          ? <SquareIconButton icon={BookmarkPlus} iconSize={13} label={artifactTitle} onClick={() => onSaveAsArtifact(entry, artifactSave)} />
+          : <QuietButton onClick={() => onSaveAsArtifact(entry, artifactSave)} title={artifactTitle}>
               <BookmarkPlus size={13} /> Artifact
             </QuietButton>
       )}

@@ -94,7 +94,7 @@ Save content as a named, versioned artifact so it persists beyond chat scrollbac
 
 ### `artifact_update`
 
-Update a saved artifact by slug, creating a new version snapshot (each agent update is a checkpoint, like a commit). Pass new content inline or via content_file; or update metadata only (description/tags).
+Update a saved artifact by slug, creating a new version snapshot (each agent update is a checkpoint, like a commit). Pass new content inline or via content_file; or update metadata only (description/tags). An image, video, PDF or office document is not text: only its metadata changes here, and its next version comes from the tool that made it (image_generate with edit_artifact; document_create, sheet_create or deck_create with slug).
 
 **Response type:** `artifact.detail`
 

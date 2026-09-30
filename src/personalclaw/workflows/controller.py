@@ -2186,10 +2186,10 @@ class RunController:
             attention.cancel_run_approvals(
                 self.services.attention_state, self.run.id, run_ending(status)
             )
-            # A run started as a loop says it ended, the way a loops-table loop does — after the
-            # resolve above, so the row an escalated loop raises is not closed with the run's
-            # other rows.
-            attention.announce_loop_end(self.services.attention_state, self.run, status)
+            # A run says it ended when the ending is one to hear: a loop's the way a loops-table
+            # loop does, any other run's when it failed or escalated. After the resolve above, so
+            # the row it raises is not closed with the run's other rows.
+            attention.announce_run_end(self.services.attention_state, self.run, status)
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)

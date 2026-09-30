@@ -202,16 +202,16 @@ class TestTheTileActionRoute:
     def test_the_route_is_registered_and_its_handler_is_exported(self) -> None:
         """A handler nothing routes to is this repo's most repeated failure shape.
 
-        Audited STATICALLY (ast over `dashboard/server.py`), which is the house precedent —
+        Audited STATICALLY (ast over `dashboard/routes.py`), which is the house precedent —
         `test_api_manifest_drift` documents why: booting the dashboard to walk the live table
         has security-critical startup side effects. The handler half is checked by IMPORT, so
         a registered path pointing at a name that does not exist still fails here."""
         import ast
 
-        import personalclaw.dashboard.server as server_mod
+        import personalclaw.dashboard.routes as routes_mod
         from personalclaw.dashboard.handlers import views as views_mod
 
-        tree = ast.parse(Path(server_mod.__file__).read_text(encoding="utf-8"))
+        tree = ast.parse(Path(routes_mod.__file__).read_text(encoding="utf-8"))
         paths = {
             node.args[0].value
             for node in ast.walk(tree)

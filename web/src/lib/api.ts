@@ -9801,6 +9801,11 @@ export const api = {
   // built from (the `fileRead` ETag), and a file changed since is refused with `409 stale_write`.
   saveFileAsArtifact: (body: { name: string; content: string; kind: string; source_path: string }, base: string) =>
     post<Artifact>('/api/artifacts', { ...body, source: 'manual' }, basedOn(base)),
+  // "Save as artifact" for an image or PDF the viewer shows: the artifact is a COPY of the file's
+  // bytes, which the gateway reads and checks itself, and the file is never written — so the save
+  // carries no body and names no base. Saving the same file again adds its next version.
+  saveFileCopyAsArtifact: (body: { name: string; kind: 'image' | 'pdf'; source_path: string }) =>
+    post<Artifact>('/api/artifacts', { ...body, source: 'manual' }),
   // Metadata (name, description, collection) or a server-side revert. The body and the tags have
   // writers of their own below, because each needs something a metadata edit does not.
   updateArtifact: (slug: string, body: { name?: string; description?: string; collection?: string } | { event_type: 'reverted'; from_version: number }) =>

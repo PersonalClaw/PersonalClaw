@@ -435,22 +435,22 @@ def test_the_gateway_registers_the_chunk_backfill_maintenance_pass(monkeypatch):
     import ast
     import pathlib
 
+    from personalclaw.dashboard import lifecycle_hooks, server
     from personalclaw.dashboard.embedding_reindex import register_chunk_backfill_pass
     from personalclaw.knowledge import maintenance
 
-    src = pathlib.Path(
-        __import__("personalclaw.dashboard.server", fromlist=["x"]).__file__
-    ).read_text()
-    tree = ast.parse(src)
+    tree = ast.parse(pathlib.Path(server.__file__).read_text())
     called = {
         node.func.id
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert "register_chunk_backfill_pass" in called
+    # The gateway's start hooks are appended in `dashboard/lifecycle_hooks.py`.
+    hooks = ast.parse(pathlib.Path(lifecycle_hooks.__file__).read_text())
     appended = {
         node.args[0].id
-        for node in ast.walk(tree)
+        for node in ast.walk(hooks)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "append"
@@ -459,6 +459,7 @@ def test_the_gateway_registers_the_chunk_backfill_maintenance_pass(monkeypatch):
         and node.args
         and isinstance(node.args[0], ast.Name)
     }
+    assert "_model_providers_startup" in appended, "the scan found the start hooks"
     assert "_backfill_item_chunks_startup" not in appended, "the boot hook must stay deleted"
 
     # …and the registrar really registers, under the name the host will look up.

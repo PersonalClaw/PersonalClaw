@@ -71,7 +71,7 @@ while not terminal:
 | `checkpoints.py` | fork, revert, prune |
 | `human_input.py` | typed asks and durable resume tokens |
 | `gate_policy.py` | risk-scoped auto-approval |
-| `attention.py` | a step waiting on a human → a durable inbox row + one notification |
+| `attention.py` | a step waiting on a human → a durable inbox row + one notification; a run's ending that needs one (`announce_run_end`) → the same |
 | `context.py` | handoffs, carryover buckets, decision records |
 | `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it |
 | `macros.py` | template macros, expanded at definition time |
@@ -433,6 +433,16 @@ The page names a step the way the run's ending does, by its label: each node row
 `GET /api/workflows/runs/{id}` carries the `label` its node declares (absent on a step
 without one), and the rows, the graph, the dialogs, the inspector and the escalation
 panel read it, falling back to the node's id.
+
+A stopped run also says so where you will see it (`attention.announce_run_end`, from
+`_finish`): one Inbox row, "Workflow run failed" or "Workflow run stopped before it
+finished" over the run's name and its ending sentence, that opens the run
+(`refs.workflow` → `#/workflows/runs/<id>`), and its one notification through the rule for
+"a run needs you" (`loop/needs_input`, the pair a gate rides), deduped per run and ending.
+A run started as a loop announces its end the way a loops-table loop does instead; a run a
+trigger started is reported on that trigger's route (`run_finish.report_to_its_trigger`);
+a sub-run's ending is its parent's step. A run that completed, was cancelled or was
+declined raises nothing.
 
 ## Waiting on a person
 

@@ -635,13 +635,18 @@ def _maybe_refine_stumble(
         )
         if signal is None:
             return
-        # The FIRST used skill, which is the allocator's own admission order — the most
-        # relevant skill for the turn. One stumble files one proposal against one target;
-        # refining everything that happened to load would turn one bad turn into N proposals.
+        # One stumble files one proposal against one target; refining everything that happened
+        # to load would turn one bad turn into N proposals. A denied or retried CALL goes to the
+        # first used skill whose procedure names it — the one that asked for it — and to none when
+        # no skill did: a skill that joined the turn on a matching word never asked the agent for
+        # the call. Anything else goes to the first used skill, in the allocator's admission order.
+        target = refine.refine_target(signal.trigger, signal.detail, used)
+        if not target:
+            return
         prop = refine.propose_refinement(
             trigger=signal.trigger,
             detail=signal.detail,
-            skill=used[0],
+            skill=target,
             user_message=user_message,
             session_key=str(getattr(session, "key", "") or ""),
         )

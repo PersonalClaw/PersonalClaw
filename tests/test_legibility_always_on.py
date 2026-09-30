@@ -490,14 +490,14 @@ def _call(handler, **kwargs) -> tuple[int, dict]:
 
 
 def test_the_three_viewer_routes_are_registered_to_their_handlers():
-    """Registration is asserted at source because these routes are wired inside
-    ``start_dashboard``, which cannot be invoked in a unit test. A handler with no route is the
+    """Registration is asserted at source because these routes are wired in the route table
+    ``start_dashboard`` runs, which cannot be invoked in a unit test. A handler with no route is the
     inert-control shape this repo keeps finding."""
     import inspect
 
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import routes
 
-    source = inspect.getsource(server.start_dashboard)
+    source = inspect.getsource(routes.register_dashboard_routes)
     for line in (
         'app.router.add_get("/api/legibility/always-on", api_always_on)',
         'app.router.add_get("/api/legibility/always-on/doc", api_always_on_doc)',

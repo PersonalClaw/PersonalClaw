@@ -30,7 +30,7 @@ rail is about, and three of them are unreachable *by construction* from a per-ag
   · the store's identity is case-insensitive, so a raw-name comparison misses a real mute.
 
 🪤 THE ROUTE→CLIENT→CALLER CHAIN IS DERIVED, NOT LISTED. The endpoint names come out of
-``server.py``'s own registrations and the client names out of ``lib/api.ts``'s own URL strings,
+the route table's own registrations and the client names out of ``lib/api.ts``'s own URL strings,
 so a NEW routing endpoint (a mute-all, a bulk clear) joins this rail on the commit that
 registers it and has to ship a caller. A hand-written list is what let two clients sit inert
 across four re-confirmations of the issue.
@@ -48,7 +48,7 @@ import pytest
 from personalclaw.agents import routing
 
 REPO = Path(__file__).resolve().parent.parent
-SERVER = REPO / "src" / "personalclaw" / "dashboard" / "server.py"
+ROUTE_TABLE = REPO / "src" / "personalclaw" / "dashboard" / "routes.py"
 API_TS = REPO / "web" / "src" / "lib" / "api.ts"
 WEB_SRC = REPO / "web" / "src"
 
@@ -56,8 +56,8 @@ _ROUTE_PREFIX = "/api/agents/routing/"
 
 
 def _registered_routes() -> set[str]:
-    """Every ``/api/agents/routing/*`` path ``server.py`` registers, from its own source."""
-    src = SERVER.read_text()
+    """Every ``/api/agents/routing/*`` path the route table registers, from its own source."""
+    src = ROUTE_TABLE.read_text()
     return set(re.findall(rf'add_(?:get|post)\(\s*"({re.escape(_ROUTE_PREFIX)}[a-z_]+)"', src))
 
 
@@ -103,7 +103,7 @@ class TestEveryRoutingEndpointHasAProductCaller:
     def test_the_derivation_is_not_vacuous(self):
         routes = _registered_routes()
         clients = _api_ts_clients()
-        assert SERVER.exists() and API_TS.exists()
+        assert ROUTE_TABLE.exists() and API_TS.exists()
         # The three shipped routes: status, dismiss, unmute. A floor, so the rail fires when the
         # scanner breaks (renamed helper, reformatted registration) rather than reading as clean.
         assert len(routes) >= 3, f"the route scanner found {routes} — it broke, not the tree"

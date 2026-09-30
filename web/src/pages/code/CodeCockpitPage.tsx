@@ -40,7 +40,7 @@ import { DiffView } from './DiffView'
 import { WorkspacePicker } from './WorkspacePicker'
 import { useWorkspaceMissing } from '../../lib/useWorkspaceMissing'
 import { FileTree } from '../files/browse/FileTree'
-import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
+import { FileViewer, type ArtifactCopy, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
 import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { useFileTabs } from '../files/browse/useFileTabs'
 import { useDirCache, useGitStatus } from '../files/filesData'
@@ -2663,8 +2663,15 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
   // button). Was a no-op here (dead button) — the Files page wires this via a naming
   // modal; the cockpit has no Artifacts tab, so create directly with the file's
   // basename + a kind inferred from its extension, and report via ne:code-toast.
-  const saveFileAsArtifact = useCallback((entry: FsEntry, save: SaveAsArtifact) => {
+  const saveFileAsArtifact = useCallback((entry: FsEntry, save: SaveAsArtifact | ArtifactCopy) => {
     const base = entry.name || entry.path.split('/').pop() || 'file'
+    const saved = () => { window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'ok', text: `Saved “${base}” as an artifact.` } })) }
+    const failed = (e: unknown) => window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'error', text: `Couldn't save artifact: ${(e as Error).message || 'unknown error'}` } }))
+    if (typeof save !== 'function') {
+      // An image or PDF: a copy of the file's bytes, which the gateway reads and checks.
+      api.saveFileCopyAsArtifact({ name: base, kind: save.kind, source_path: entry.path }).then(saved).catch(failed)
+      return
+    }
     const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
     // Map to an ALLOWED artifact kind (widget/html/react/markdown/svg/json/text).
     // Source code has no dedicated kind → use 'text' (renders as a <pre>); NOT 'code'
@@ -2678,8 +2685,8 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
     // changed since is refused into the viewer's notice. The toast rides the create itself, so it
     // also reports the artifact a re-applied create makes from that notice.
     save((content, revision) => api.saveFileAsArtifact({ name: base, content, source_path: entry.path, kind }, revision)
-      .then(() => { window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'ok', text: `Saved “${base}” as an artifact.` } })) }))
-      .catch((e) => window.dispatchEvent(new CustomEvent('ne:code-toast', { detail: { kind: 'error', text: `Couldn't save artifact: ${(e as Error).message || 'unknown error'}` } })))
+      .then(saved))
+      .catch(failed)
   }, [])
   // Defensively drop any restored tab that isn't under this workspace (e.g. a
   // stale entry from before scoping) so a forbidden file-read can't 400.

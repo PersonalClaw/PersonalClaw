@@ -487,9 +487,9 @@ class TestTheRoutesAreRegistered:
     def test_the_server_registers_all_three_paths(self) -> None:
         import inspect
 
-        from personalclaw.dashboard import server
+        from personalclaw.dashboard import routes
 
-        source = inspect.getsource(server)
+        source = inspect.getsource(routes)
         for path in (
             '"/api/proactive/digest"',
             '"/api/proactive/digest/reply"',

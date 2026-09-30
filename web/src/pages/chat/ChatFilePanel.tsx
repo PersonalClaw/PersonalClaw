@@ -12,7 +12,7 @@ import { TextInput } from '../../ui/forms'
 import { spring } from '../../design/motion'
 import { api, type FsEntry } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
+import { FileViewer, artifactSaveNote, type ArtifactCopy, type FileViewerHandle, type SaveAsArtifact } from '../files/browse/FileViewer'
 import { attachedName } from '../files/fileMeta'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 
@@ -71,7 +71,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
   // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
-  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact; name: string } | null>(null)
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact | ArtifactCopy; name: string } | null>(null)
   const viewerRef = useRef<FileViewerHandle>(null)
   // An attachment is named as it was attached (`uploads/<uuid-hex>_image.png` is `image.png`):
   // the viewer's title, the name emphasized below and a download all read it. The full path
@@ -88,14 +88,19 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])
 
-  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact) => setArtModal({ entry: e, save, name: attachedName(e.path) })
+  const saveAsArtifact = (e: FsEntry, save: SaveAsArtifact | ArtifactCopy) => setArtModal({ entry: e, save, name: attachedName(e.path) })
   const confirmArtifact = async () => {
     if (!artModal || !artModal.name.trim()) return
     const { entry: target, save, name } = artModal
     try {
       // Closed either way: a save refused as stale leaves the draft under the viewer's notice.
-      await save((content, base) =>
-        api.saveFileAsArtifact({ name: name.trim(), content, source_path: target.path, kind: guessKind(target.name) }, base))
+      if (typeof save === 'function') {
+        await save((content, base) =>
+          api.saveFileAsArtifact({ name: name.trim(), content, source_path: target.path, kind: guessKind(target.name) }, base))
+      } else {
+        // An image or PDF: a copy of the file's bytes, which the gateway reads and checks.
+        await api.saveFileCopyAsArtifact({ name: name.trim(), kind: save.kind, source_path: target.path })
+      }
       setArtModal(null)
     } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
   }
@@ -126,7 +131,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
       {artModal && (
         <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
           <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
-            <p data-type="body-s" className="text-on-surface-low">Creates a versioned artifact that live-points at <span className="font-mono">{artModal.entry.name}</span>. Re-saving bumps it instead of duplicating.</p>
+            <p data-type="body-s" className="text-on-surface-low">{artifactSaveNote(artModal.save, artModal.entry.name)}</p>
             <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
             <div className="flex justify-end gap-s">
               <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>

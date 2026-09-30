@@ -109,10 +109,10 @@ def _route_source_files() -> list[Path]:
 
     The WHOLE package, not just ``dashboard/``. Entity route families live beside their
     domain (``artifacts/handlers.py``, ``tasks/handlers.py``, ``workflows/handlers.py``) and
-    are mounted by ``server.py`` via a ``register_*_routes(app)`` call — so a walk rooted at
-    ``dashboard/`` sees the mount call but never the routes themselves, and those families
-    were silently missing from the offline reference. An agent reading the reference to find
-    an endpoint would conclude it does not exist.
+    are mounted by the route table (``dashboard/routes.py``) via a ``register_*_routes(app)``
+    call — so a walk rooted at ``dashboard/`` sees the mount call but never the routes
+    themselves, and those families were silently missing from the offline reference. An agent
+    reading the reference to find an endpoint would conclude it does not exist.
     """
     import personalclaw
 

@@ -96,7 +96,7 @@ def capture_run_end(ctl: RunController) -> None:
 
 
 #: Endings a trigger does not report: whoever stopped the run, or declined what it asked,
-#: knows. The same rule `attention.announce_loop_end` holds for a loop.
+#: knows. The same rule `attention.announce_run_end` holds for every other run.
 _UNREPORTED_ENDINGS: frozenset[RunStatus] = frozenset({RunStatus.CANCELLED, RunStatus.DECLINED})
 
 

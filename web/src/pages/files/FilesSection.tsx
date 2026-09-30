@@ -20,7 +20,7 @@ import { confirm } from '../../ui/dialog'
 import { notify } from '../../app/appSdk'
 import { useFileRoots, useDirCache, useGitStatus } from './filesData'
 import { FileTree } from './browse/FileTree'
-import { FileViewer, type FileViewerHandle, type SaveAsArtifact } from './browse/FileViewer'
+import { FileViewer, artifactSaveNote, type ArtifactCopy, type FileViewerHandle, type SaveAsArtifact } from './browse/FileViewer'
 import type { DraftEntry } from '../../ui/content/ContentSurface'
 import { PathBar } from './browse/PathBar'
 import { useFileTabs } from './browse/useFileTabs'
@@ -114,7 +114,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   const uploadAbortRef = useRef<AbortController | null>(null)
   const [rootDrop, setRootDrop] = useState(false)
   // `save` is the viewer's own: it sends the draft over the copy it was built from (`FileViewer`).
-  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact; name: string } | null>(null)
+  const [artModal, setArtModal] = useState<{ entry: FsEntry; save: SaveAsArtifact | ArtifactCopy; name: string } | null>(null)
 
   // File-backed artifact paths — the drift badge in the tree. The full artifact
   // surface lives at #/artifacts; Files only needs to know WHICH paths are backed.
@@ -189,22 +189,28 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     return () => window.removeEventListener('keydown', onKey)
   }, [fileTabs.activePath])
 
-  const saveAsArtifact = (entry: FsEntry, save: SaveAsArtifact) => setArtModal({ entry, save, name: baseName(entry.path) })
+  const saveAsArtifact = (entry: FsEntry, save: SaveAsArtifact | ArtifactCopy) => setArtModal({ entry, save, name: baseName(entry.path) })
   const confirmArtifact = async () => {
     if (!artModal || !artModal.name.trim()) return
     const { entry, save, name } = artModal
+    const opened = async (created: { slug: string }) => {
+      await loadArtifacts()
+      // The artifact surface is its own page now — jump to the saved artifact there.
+      navigate(`artifacts/${created.slug}`)
+    }
     try {
-      // What a created artifact leads to lives IN the create, not after `save` resolves: a create
-      // refused because the file changed since the draft's copy was read is held under the viewer's
-      // notice, and when the user re-applies it there it lands without this handler — which used to
-      // leave the artifact made and the user told nothing.
-      await save((content, base) =>
-        api.saveFileAsArtifact({ name: name.trim(), content, source_path: entry.path, kind: guessKind(entry.name) }, base)
-          .then(async (created) => {
-            await loadArtifacts()
-            // The artifact surface is its own page now — jump to the saved artifact there.
-            navigate(`artifacts/${created.slug}`)
-          }))
+      if (typeof save === 'function') {
+        // What a created artifact leads to lives IN the create, not after `save` resolves: a create
+        // refused because the file changed since the draft's copy was read is held under the viewer's
+        // notice, and when the user re-applies it there it lands without this handler — which used to
+        // leave the artifact made and the user told nothing.
+        await save((content, base) =>
+          api.saveFileAsArtifact({ name: name.trim(), content, source_path: entry.path, kind: guessKind(entry.name) }, base)
+            .then(opened))
+      } else {
+        // An image or PDF: a copy of the file's bytes, which the gateway reads and checks.
+        await opened(await api.saveFileCopyAsArtifact({ name: name.trim(), kind: save.kind, source_path: entry.path }))
+      }
       setArtModal(null)
     } catch (e) { notify(`Could not save artifact: ${(e as Error).message}`, 'error') }
   }
@@ -512,7 +518,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
       {artModal && (
         <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
           <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
-            <p className="text-on-surface-low text-[0.8125rem]">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
+            <p className="text-on-surface-low text-[0.8125rem]">{artifactSaveNote(artModal.save, baseName(artModal.entry.path))}</p>
             <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
             <div className="flex justify-end gap-s">
               <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>

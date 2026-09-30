@@ -105,7 +105,7 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
     return (
       <p data-type="body-s" className="text-on-surface-low">
         {reason}{' '}
-        <TextLink onClick={() => navigate(`workflows/${runId}`)}>
+        <TextLink onClick={() => navigate(`workflows/runs/${encodeURIComponent(runId)}`)}>
           Open the run
         </TextLink>
       </p>

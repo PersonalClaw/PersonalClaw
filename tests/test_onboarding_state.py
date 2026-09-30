@@ -699,9 +699,9 @@ def test_post_route_is_registered():
     import ast
     from pathlib import Path
 
-    import personalclaw.dashboard.server as srv
+    import personalclaw.dashboard.routes as route_table
 
-    tree = ast.parse(Path(srv.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(route_table.__file__).read_text(encoding="utf-8"))
     posts = {
         node.args[0].value
         for node in ast.walk(tree)

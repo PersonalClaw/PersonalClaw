@@ -36,6 +36,7 @@ from personalclaw.artifacts.models import (
     MAX_BINARY_CONTENT_BYTES,
     MAX_CONTENT_BYTES,
     Artifact,
+    ArtifactKindMismatch,
     ArtifactStaleWrite,
     ArtifactVersionConflict,
     ext_for_mime,
@@ -230,6 +231,117 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
     return web.json_response({"artifacts": [_serialize(a) for a in arts]})
 
 
+def _save_file_copy(
+    request: web.Request,
+    prov: Any,
+    body: dict[str, Any],
+    *,
+    name: str,
+    kind: str,
+    content: str | None,
+    source_path: str,
+    session_id: str | None,
+) -> web.Response:
+    """``POST /api/artifacts`` for a binary kind: the artifact is a COPY of an image or PDF file.
+
+    A JSON body cannot carry bytes, so the body is the file's (``source_path``), admitted like a
+    text artifact's pointer (``source_files``) and read and checked by ``artifacts.file_copy``:
+    its bytes decide what it is, its name must agree, and its size is decided before it is read.
+    Nothing is written to the file, so the request names no revision of it. Saving the same file
+    again adds its next version when its bytes changed and answers the artifact as it is when they
+    did not, as a text file's re-save bumps its artifact rather than making a second one.
+    """
+    from personalclaw.apps.permissions import request_app
+    from personalclaw.artifacts import file_copy
+
+    if content is not None:
+        return json_error(
+            "bad_request",
+            message=f"a {kind} artifact's body is its file's bytes, so its save sends no content",
+            status=400,
+        )
+    if not source_path:
+        return json_error(
+            "bad_request",
+            message=f"a {kind} artifact is saved from a file: name the file in source_path",
+            status=400,
+        )
+    try:
+        canonical = source_files.admit(source_path)
+    except ValueError as exc:
+        _audit(request, "artifact.create", "denied", "source_path outside the allowed places")
+        if request_app():
+            return json_error("forbidden", message=str(exc), status=403)
+        return json_error("bad_request", message=str(exc), status=400)
+    try:
+        data, file_kind, mime = file_copy.read_file_body(Path(canonical))
+    except file_copy.FileCopyRefused as refused:
+        _audit(request, "artifact.create", "denied", f"source_path={canonical} {refused.reason}")
+        if refused.reason == file_copy.TOO_LARGE:
+            return json_error("file_too_large", message=str(refused), status=413)
+        if refused.reason == file_copy.UNSUPPORTED:
+            return json_error("file_type_unsupported", message=str(refused), status=415)
+        return json_error("not_found", message=str(refused), status=404)
+    if file_kind != kind:
+        _audit(request, "artifact.create", "denied", f"source_path={canonical} is {file_kind}")
+        return json_error(
+            "file_type_unsupported",
+            message=f"{Path(canonical).name} is a {file_kind} file by its contents, not {kind}.",
+            status=415,
+        )
+    existing = prov.find_by_source_path(canonical)
+    if existing is not None:
+        current = prov.raw_bytes(existing.slug)
+        if current is not None and current[0] == data:
+            _audit(request, "artifact.create", "deduped", f"slug={existing.slug}")
+            unchanged = prov.get(existing.slug)
+            return web.json_response(
+                _serialize(unchanged, include_content=True) if unchanged else {}, status=200
+            )
+        try:
+            updated = prov.update_binary(
+                existing.slug, data=data, mime=mime, actor="user", session_id=session_id
+            )
+        except ArtifactKindMismatch as mismatch:
+            return json_error(
+                "mime_kind_mismatch",
+                message=(
+                    f"{Path(canonical).name} is saved as the {mismatch.kind} artifact "
+                    f"{existing.slug!r}, and a {file_kind} cannot be its next version"
+                ),
+                status=409,
+                error_extra={"kind": mismatch.kind, "declared_kind": file_kind},
+            )
+        if updated is None:
+            return json_error("not_found", message=f"no artifact {existing.slug!r}", status=404)
+        _audit(
+            request,
+            "artifact.update",
+            "ok",
+            f"slug={updated.slug} version={updated.version} bytes={len(data)} mime={mime}",
+        )
+        return web.json_response(_serialize(updated, include_content=True), status=200)
+    if "project_id" in body:
+        project_id = str(body.get("project_id", "")).strip()
+    else:
+        project_id = _project_for_source_path(canonical)
+    art = prov.create_binary(
+        name=name,
+        data=data,
+        mime=mime,
+        kind=kind,
+        source=str(body.get("source", "manual")),
+        description=str(body.get("description", "")),
+        tags=body.get("tags"),
+        actor="user",
+        session_id=session_id,
+        project_id=project_id,
+        source_path=canonical,
+    )
+    _audit(request, "artifact.create", "ok", f"slug={art.slug} bytes={len(data)} mime={mime}")
+    return web.json_response(_serialize(art, include_content=True), status=201)
+
+
 async def api_artifacts_create(request: web.Request) -> web.Response:
     """POST /api/artifacts — create (or bump an existing file-backed artifact).
 
@@ -243,6 +355,9 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
 
     A ``source_path`` outside the places an artifact may point (``source_files``) is refused
     with the sentence saying where it may point: ``400`` for the owner, ``403`` for an app.
+
+    A binary ``kind`` (an image or a PDF) is saved from its file as a copy of the file's bytes
+    (:func:`_save_file_copy`), since a JSON body carries no bytes.
     """
     state = request.app["state"]
     if _is_restricted_session(state, request):
@@ -275,6 +390,18 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         return web.json_response({"error": exc.message}, status=exc.status)
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
+    kind = str(body.get("kind", "widget"))
+    if is_binary_kind(kind):
+        return _save_file_copy(
+            request,
+            prov,
+            body,
+            name=name,
+            kind=kind,
+            content=content,
+            source_path=source_path,
+            session_id=session_id,
+        )
     if source_path:
         # FIRST, before anything opens the file: a refused pointer is never read, so neither its
         # existence nor its content shows through the revision check below, and it cannot bump an
@@ -333,7 +460,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     # offer "open it / save anyway". `?force=1` bypasses (mint a new artifact anyway).
     force = request.query.get("force") in ("1", "true")
     if not requested_slug and not source_path and not force:
-        similar = prov.find_similar(name, kind=str(body.get("kind", "widget")))
+        similar = prov.find_similar(name, kind=kind)
         if similar is not None:
             _audit(request, "artifact.create", "deduped", f"similar={similar.slug}")
             return web.json_response(
@@ -358,7 +485,7 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
         art = prov.create(
             name=name,
             content=content,
-            kind=str(body.get("kind", "widget")),
+            kind=kind,
             source=str(body.get("source", "chat")),
             slug=requested_slug,
             source_path=source_path,
@@ -484,6 +611,19 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         refusal = cast(web.Response, stale_write_refusal(request, stale.current, what=what))
         _audit(request, "artifact.update", refusal_outcome(refusal), f"slug={slug}")
         return refusal
+    except ArtifactKindMismatch as mismatch:
+        # The twin of `kind_not_binary` on the raw write: a binary artifact's body is its bytes,
+        # and this route writes text.
+        _audit(request, "artifact.update", "denied", f"slug={slug} kind={mismatch.kind}")
+        return json_error(
+            "kind_is_binary",
+            message=(
+                f"artifact {slug!r} is kind {mismatch.kind!r}, whose body is bytes, not text — "
+                f"PUT /api/artifacts/{slug}/raw replaces it"
+            ),
+            status=409,
+            error_extra={"kind": mismatch.kind},
+        )
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except (ValueError, PermissionError) as e:

@@ -235,7 +235,7 @@ this shape: exempt, matched only to a sign-in the owner started by its single-us
 ten minutes, with the code exchanged only with that sign-in's PKCE verifier.
 
 **Login-page integration, not a second login page.** `/login` already exists (registered in
-`src/personalclaw/dashboard/server.py::start_dashboard`, page
+`src/personalclaw/dashboard/routes.py::register_dashboard_routes`, page
 `src/personalclaw/dashboard/handlers/auth.py::login_page`), and
 `src/personalclaw/dashboard/token_auth.py::_deny` already redirects page requests to it when login
 is offered (`src/personalclaw/dashboard/token_auth.py::_login_offered`). SSO adds a button to that

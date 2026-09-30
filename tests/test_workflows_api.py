@@ -194,9 +194,9 @@ class TestOneEngineTwoSurfaces:
     def test_the_server_mounts_them(self) -> None:
         import inspect
 
-        from personalclaw.dashboard import server
+        from personalclaw.dashboard import routes
 
-        assert "register_workflow_routes" in inspect.getsource(server)
+        assert "register_workflow_routes(app)" in inspect.getsource(routes)
 
     def test_the_gateway_publishes_the_supervisor_to_both_consumers(self) -> None:
         """Without this the routes create runs nobody drives and the trigger provider

@@ -616,11 +616,16 @@ def _registrars_called_by_the_gateway() -> set[str]:
     A registrar that is defined but never CALLED is a route that exists in a module and
     on no running server, which is the failure this guard exists for.
     """
+    import personalclaw.dashboard.routes as routes_mod
     import personalclaw.dashboard.server as server_mod
 
-    tree = ast.parse(Path(server_mod.__file__).read_text(encoding="utf-8"))
+    # The builder is `start_dashboard` and the route table it runs (`dashboard/routes.py`).
+    trees = [
+        ast.parse(Path(m.__file__).read_text(encoding="utf-8")) for m in (server_mod, routes_mod)
+    ]
     return {
         node.func.id
+        for tree in trees
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)

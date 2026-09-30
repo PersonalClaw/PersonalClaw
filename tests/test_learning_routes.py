@@ -451,6 +451,6 @@ def test_the_routes_are_registered_in_the_server():
     """A handler nobody registers is a page that 404s."""
     import inspect
 
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import routes
 
-    assert "register_learning_routes" in inspect.getsource(server)
+    assert "register_learning_routes(app)" in inspect.getsource(routes)

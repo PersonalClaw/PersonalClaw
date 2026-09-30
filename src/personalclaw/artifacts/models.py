@@ -169,6 +169,25 @@ class ArtifactVersionConflict(ValueError):
         self.supplied = supplied
 
 
+class ArtifactKindMismatch(ValueError):
+    """A write whose body is not of the artifact's kind, refused before anything is written.
+
+    Every version of an artifact is of its kind: an image's are images, a document's are that
+    document format. A text body handed to a binary artifact used to be filed anyway, as
+    ``versions/vN.html`` and ``current.html`` beside the image's own files, so the metadata counted
+    a new version while the page and Download kept serving the old bytes. ``kind`` is the
+    artifact's; ``offered`` names what the write brought (``"text"``, or a binary kind).
+    """
+
+    def __init__(self, slug: str, kind: str, offered: str) -> None:
+        super().__init__(
+            f"artifact {slug!r} is kind {kind!r}: a {offered!r} body cannot be one of its versions"
+        )
+        self.slug = slug
+        self.kind = kind
+        self.offered = offered
+
+
 class ArtifactStaleWrite(ValueError):
     """A body save named a revision the artifact's body no longer has.
 

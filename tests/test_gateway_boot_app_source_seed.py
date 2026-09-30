@@ -7,7 +7,7 @@ user's removal from being undone by the next start.
 
 ``tests/test_app_catalog.py`` rails the SEEDER — every assertion there calls
 ``catalog.seed_default_git_sources()`` itself. That leaves the WIRE unrailed: deleting
-``app.on_startup.append(_app_sources_seed_startup)`` from ``dashboard/server.py`` keeps
+``app.on_startup.append(_app_sources_seed_startup)`` from ``dashboard/lifecycle_hooks.py`` keeps
 that entire suite green while first-run seeding silently never happens (measured — see
 the module docstring of that file for the seeder's own rails, and this file's history
 for the falsification). A seeder nobody calls is an inert control, and the done-clause

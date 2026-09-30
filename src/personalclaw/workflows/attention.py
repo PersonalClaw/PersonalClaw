@@ -230,7 +230,81 @@ def resolve_run_items(state: Any, run_id: str) -> int:
     return resolve_gate_item(state, run_id)
 
 
-def announce_loop_end(state: Any, run: Any, status: Any) -> str:
+def announce_run_end(state: Any, run: Any, status: Any) -> str:
+    """Tell the user a run has ended, when the ending is one they need to hear.
+
+    A run started AS A LOOP announces its end as a loops-table loop always has
+    (:func:`_announce_loop_end`). Any other workflow run tells the user when it ended needing them
+    — it failed, or it escalated and stopped before it finished (:func:`_announce_workflow_end`) —
+    and says nothing when it completed, was cancelled or was declined. Returns the item id or "".
+    """
+    if state is None:
+        return ""
+    if getattr(run, "loop_kind", ""):
+        return _announce_loop_end(state, run, status)
+    return _announce_workflow_end(state, run, status)
+
+
+#: How a workflow run's ending that needs the user reads as its Inbox row's title.
+_WORKFLOW_ENDINGS: dict[str, str] = {
+    "failed": "Workflow run failed",
+    "escalated": "Workflow run stopped before it finished",
+}
+
+
+def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
+    """A workflow run that ended failed or escalated: one Inbox row and its one notification.
+
+    🔴 A run started from the Workflows page ended ``escalated`` — "The run continued past
+    “investigate”, which escalated." — and no bell entry, Inbox item or channel message followed:
+    only a run started as a loop, and a run a trigger started (on the trigger's own route), ever
+    said how they ended. The two endings are the ones the run page offers Retry for, so each is a
+    decision that is the user's now, and it is raised the way a loop's escalation is: a durable
+    row that deep-links to the run (``refs.workflow``), with its one notification through the
+    user's rule for "a run needs you" (``loop/needs_input``, the pair a workflow gate rides).
+
+    Said once, by whoever ends up telling the user: a run a TRIGGER started is reported on that
+    trigger's route (``run_finish.report_to_its_trigger``), and a sub-run's ending is its parent's
+    step, so neither raises a second note here. Deduped per run and ending.
+    """
+    from personalclaw.workflows.models import OriginKind
+
+    ending = str(getattr(status, "value", status))
+    title = _WORKFLOW_ENDINGS.get(ending, "")
+    if not title:
+        return ""
+    origin = getattr(run, "origin", None)
+    if getattr(origin, "kind", None) == OriginKind.HOOK and getattr(origin, "trigger_id", ""):
+        return ""
+    if getattr(run, "parent_run_id", None):
+        return ""
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        name = str(getattr(run, "title", "") or getattr(run, "workflow_name", "") or run.id)
+        attention = getattr(run, "attention", None) or {}
+        reason = str(
+            getattr(run, "error_message", "")
+            or attention.get("detail")
+            or attention.get("reason")
+            or ""
+        ).strip()
+        return emit_attention_item(
+            state,
+            source=SOURCE,
+            kind=KIND,
+            item_kind=ItemKind.NEEDS_INPUT.value,
+            title=title,
+            body=f"{name} — {reason}" if reason else name,
+            refs={"workflow": run.id},
+            dedup_key=f"workflow-run:{run.id}:{ending}",
+        )
+    except Exception:
+        logger.debug("workflow %s: could not announce the run's end", run.id, exc_info=True)
+    return ""
+
+
+def _announce_loop_end(state: Any, run: Any, status: Any) -> str:
     """Tell the user a run started AS A LOOP has ended, as a loops-table loop always has.
 
     🔴 A General loop is a workflow run (PP-16), and the workflow engine told nobody when one
@@ -253,8 +327,6 @@ def announce_loop_end(state: Any, run: Any, status: Any) -> str:
     the run page) AND ``workflow``, so deleting the run closes the row with the run's others.
     Deduped per run: a run ends once. Best-effort like everything here. Returns the item id or "".
     """
-    if state is None or not getattr(run, "loop_kind", ""):
-        return ""
     from personalclaw import notification_kinds
     from personalclaw.workflows.models import RunStatus
 

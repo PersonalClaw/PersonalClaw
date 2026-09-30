@@ -161,9 +161,9 @@ def test_pwa_routes_are_registered_at_the_origin_root() -> None:
     control ``/assets/``, so ``/sw.js`` must be registered at the root."""
     from pathlib import Path
 
-    import personalclaw.dashboard.server as server_mod
+    import personalclaw.dashboard.routes as routes_mod
 
-    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    source = Path(routes_mod.__file__).read_text(encoding="utf-8")
     assert 'add_get("/sw.js", handlers.service_worker)' in source
     assert 'add_get("/manifest.webmanifest", handlers.manifest_webmanifest)' in source
 
@@ -360,9 +360,9 @@ def test_the_licence_notices_are_registered_at_the_paths_settings_links() -> Non
     same two paths (``updatesPanelLicences.test.tsx`` holds the links themselves)."""
     from pathlib import Path
 
-    import personalclaw.dashboard.server as server_mod
+    import personalclaw.dashboard.routes as routes_mod
 
-    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    source = Path(routes_mod.__file__).read_text(encoding="utf-8")
     assert 'add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)' in source
     assert 'add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)' in source
     panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/UpdatesPanel.tsx"

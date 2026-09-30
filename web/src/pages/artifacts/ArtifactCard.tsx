@@ -212,7 +212,9 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
     if (isKindTile) return <KindTile icon={km.icon} tone={km.tone} />
     if (!near) return <Placeholder tone={km.tone} label={km.label} />
     if (isThumbnail) {
-      return <img src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
+      // The version's own URL: a page keeps the image one URL gave it, so an unversioned /raw
+      // left the card on the first version after the artifact had its next.
+      return <img src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw?version=${art.version}`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
     }
     if (content === null) return <Placeholder tone={km.tone} label={km.label} />
     if (isExcerpt) return <ExcerptPreview content={content} />

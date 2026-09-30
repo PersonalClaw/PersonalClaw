@@ -460,11 +460,14 @@ def test_discovery_cleanup_is_registered_before_the_app_is_frozen():
     """
     import pathlib
 
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import lifecycle_hooks, server
 
     src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
-    # Both raise ValueError if absent, so this rail can never pass vacuously.
-    append_at = src.index("app.on_cleanup.append(_discovery_shutdown)")
+    hooks = pathlib.Path(lifecycle_hooks.__file__).read_text(encoding="utf-8")
+    # The goodbye handler is one of the gateway's stop hooks, all appended by the one call below.
+    # Each `index` raises ValueError if absent, so this rail can never pass vacuously.
+    hooks.index("app.on_cleanup.append(_discovery_shutdown)")
+    append_at = src.index("register_lifecycle_hooks(app)")
     freeze_at = src.index("await runner.setup()")
     assert append_at < freeze_at, (
         "on_cleanup is frozen by runner.setup(); registering the discovery shutdown after it "

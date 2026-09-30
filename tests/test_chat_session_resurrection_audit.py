@@ -245,7 +245,7 @@ def _session_routes() -> set[tuple[str, str]]:
     modules that register them. Derived, not hand-listed."""
     out: set[tuple[str, str]] = set()
     for rel in (
-        "dashboard/server.py",
+        "dashboard/routes.py",
         "dashboard/session_bulk.py",
         "dashboard/session_starters.py",
     ):

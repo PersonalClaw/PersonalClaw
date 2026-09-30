@@ -593,9 +593,11 @@ class TestClientOnlyMechanicsAreCorrectlySilent:
             assert "fetch(" not in src, f"{name} gained a fetch — it now needs SEL cover"
 
     def test_no_find_endpoint_exists_to_audit(self):
-        server = (_ROOT / "src" / "personalclaw" / "dashboard" / "server.py").read_text(
-            encoding="utf-8"
+        dashboard = _ROOT / "src" / "personalclaw" / "dashboard"
+        server = "".join(
+            (dashboard / name).read_text(encoding="utf-8") for name in ("server.py", "routes.py")
         )
+        assert '"/api/chat/sessions/{session}"' in server, "the route table was read"
         # SESSION-MANAGEMENT owns CROSS-session search; in-conversation find is a
         # client-side scan of already-hydrated turns and adds no route.
         assert "find-in-conversation" not in server

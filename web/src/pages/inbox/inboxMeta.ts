@@ -183,7 +183,9 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
     return approvalDestination(refs.session).href.replace(/^#\//, '')
   }
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
-  if (refs.workflow) return `workflows/${refs.workflow}`
+  // A run opens at `workflows/runs/<id>`: `workflows/<id>` is no route of the Workflows section,
+  // which read the id as nothing and showed its list.
+  if (refs.workflow) return `workflows/runs/${encodeURIComponent(refs.workflow)}`
   // The identity report links the artifact it wrote. LAST in the chain, so every
   // pre-existing ref resolves exactly as before — an item that carries both a session and
   // an artifact still goes to the session, which is the referent it always went to.
@@ -218,7 +220,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
     return approvalDestination(refs.session).linkLabel
   }
   if (refs.session) return 'Go to chat'
-  if (refs.workflow) return 'Go to workflow'
+  if (refs.workflow) return 'Open the workflow run'
   if (refs.artifact) return 'Open the report'
   if (refs.room) return 'Go to the room'
   if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'Go to Triggers'

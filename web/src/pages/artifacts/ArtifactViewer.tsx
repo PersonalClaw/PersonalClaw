@@ -8,8 +8,7 @@ import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
 import { rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
-import { isArtifactUpdateFor } from './artifactUpdateSignal'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { notify } from '../../app/appSdk'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
@@ -159,20 +158,22 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
     onDiscard: () => { artifactDrafts.delete(slug); void reload() },
   })
 
-  // The live-refresh trigger behind the split-view iterate panel. The panel
-  // is a `ChatEmbed` (a sandboxed iframe, a separate document with no bridge back
-  // here), so a version the agent writes from inside it would otherwise sit
-  // invisible behind a stale preview until the user reloaded the page. This filters
-  // the `tool_call` frame the chat runner ALREADY broadcasts — see
-  // `artifactUpdateSignal`; no WS event is added.
+  // The live-refresh trigger behind the split-view iterate panel, and behind every other writer
+  // of this artifact: the gateway's `artifacts` refresh hint, sent once the store HAS written or
+  // removed one (`DashboardState.announce_artifact_change`) — the agent in the panel, in any chat,
+  // a workflow step, another tab. The panel is a `ChatEmbed` (a sandboxed iframe with no bridge
+  // back here), and the trigger this used to read was that chat's `tool_call` frame, which is sent
+  // when the model ASKS for the call: before its approval and before the write. So the view
+  // re-read the version it already showed and never read again, and an image edit (made by
+  // `image_generate`, not `artifact_update`) was never matched at all.
   //
-  // `keepVersion` so a live write never yanks a pinned `?v=N` snapshot out from
-  // under whoever is reading it: the rail gains the new version, the pinned body
-  // stays put. `onChanged` keeps the library grid's card in step. The socket coming back reads it
-  // again too: a version written while it was down sent its frame to nobody.
-  const reloadLive = () => { reload({ keepVersion: true, quiet: true }).then(() => onChanged()).catch(() => {}) }
+  // `keepVersion` so a live write never yanks a pinned `?v=N` snapshot out from under whoever is
+  // reading it: the rail gains the new version, the pinned body stays put. The library behind this
+  // view hears the same hint and re-reads itself (`ArtifactsSection`). The socket coming back reads
+  // it again too: a version written while it was down sent its hint to nobody.
+  const reloadLive = () => { reload({ keepVersion: true, quiet: true }).catch(() => {}) }
   useChatSocket((m: WsMessage) => {
-    if (isArtifactUpdateFor(m, slug)) reloadLive()
+    if (refreshKinds(m).includes('artifacts')) reloadLive()
   }, reloadLive)
 
   // Pull-on-view (WF2AUT-6 / R10): opening an artifact is the render that drives any `view` trigger

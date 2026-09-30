@@ -93,10 +93,16 @@ only via `POST /api/apps/{name}/update`.
   area: `sessions.py`, `knowledge.py`, `memory.py`, `apps.py`, `schedule.py`,
   `terminal.py`, `updates.py`, …) plus the chat pipeline modules directly under
   `dashboard/` (`chat_runner.py`, `chat_handlers.py`, `chat_persistence.py`, …).
+  The route table that registers them, in the order they match, is
+  `dashboard/routes.py`.
 - **Auth middleware** — token auth (`dashboard/token_auth.py`), CSRF, and
   app-permission middlewares; ordering is explicit in `server.py`. Modes and
   the `AUTH_MODE=none` loopback invariant are covered in
   [security.md](security.md).
+- **Start and stop hooks** — `dashboard/lifecycle_hooks.py` appends what the
+  gateway starts with it and stops with it (the control bridge, the ACP pool,
+  app backends, the embedding watch, …), in the order they run, before
+  `runner.setup()` freezes the lists.
 - **Live state** — `dashboard/state.py` (`DashboardState`) is the shared
   in-memory hub: WebSocket event broadcast, notifications
   (`DashboardState.notify()` is the single notification choke point), and the

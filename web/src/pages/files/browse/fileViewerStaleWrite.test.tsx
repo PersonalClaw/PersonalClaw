@@ -71,7 +71,7 @@ async function mount({ acceptFirst = false } = {}) {
   let saveAsArtifact: SaveAsArtifact | null = null
   await act(async () => {
     render(<FileViewer entry={{ name: 'notes.py', path: PATH, is_dir: false }} onSaved={onSaved}
-      onSaveAsArtifact={(_e, save) => { saveAsArtifact = save }} />)
+      onSaveAsArtifact={(_e, save) => { if (typeof save === 'function') saveAsArtifact = save }} />)
   })
   await waitFor(() => expect(seen.onSave).toBeTypeOf('function'))
   return { fileRead, fileWrite, onSaved, saveAsArtifact: () => saveAsArtifact }

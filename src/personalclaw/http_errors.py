@@ -529,6 +529,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The artifact's kind stores its body as text, so it has no binary body to replace. "
         "Fix: PATCH the artifact instead."
     ),
+    "kind_is_binary": (
+        "The artifact's kind stores its body as bytes, so text cannot be one of its versions. "
+        "Fix: PUT the new bytes to its raw route instead."
+    ),
+    # Saving an image or PDF file as an artifact (artifacts/file_copy.py): judged by its bytes.
+    "file_too_large": (
+        "The file is larger than an artifact can hold, so it was not read. Fix: save a smaller "
+        "file."
+    ),
+    "file_type_unsupported": (
+        "The file's bytes are not an image or PDF the artifact store keeps, or its name says "
+        "another type than its bytes are. Fix: save a PNG, JPEG, GIF, WebP or PDF file whose name "
+        "matches it."
+    ),
     "if_match_required": (
         "A whole-body write must declare the version it is replacing via `If-Match`. Fix: read "
         "the artifact, then resend with `If-Match: <version>`."

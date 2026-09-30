@@ -64,6 +64,70 @@ _DESCRIPTION = {
 }
 
 
+#: The stumbles about one TOOL call. Each body claims the procedure asked for that step ("the
+#: `X` action this procedure asked for", "the working form of that step belongs in this
+#: procedure"), so each is filed only against a skill whose procedure names the tool
+#: (:func:`refine_target`). A correction names no tool, and goes to the turn's first skill.
+_TOOL_TRIGGERS = frozenset({"rejection", "failure_retry"})
+
+#: What stands either side of a tool's name in a procedure's text: anything but a letter, a digit
+#: or a hyphen. An underscore separates, so the `mcp__server__tool` spelling names its server and
+#: its tool.
+_NAME_EDGE = r"A-Za-z0-9-"
+
+
+def _names_of(tool: str) -> list[str]:
+    """How a procedure may name *tool*: its name, and for a tool an MCP server provides
+    (``mcp/<server>/<tool>``) the tool's own name, its server's, and the ``mcp__server__tool``
+    spelling an imported skill may use."""
+    tool = (tool or "").strip()
+    if not tool:
+        return []
+    names = [tool]
+    parts = [p for p in re.split(r"/|__", tool) if p]
+    if len(parts) > 1:
+        if parts[0].lower() == "mcp":
+            parts = parts[1:]
+            names.append("mcp__" + "__".join(parts))
+        names.extend(parts)
+    return list(dict.fromkeys(names))
+
+
+def procedure_names_tool(procedure: str, tool: str) -> bool:
+    """Whether *procedure* (a skill's text) asks for *tool*: it names the tool, as a whole word."""
+    text = procedure or ""
+    return any(
+        re.search(rf"(?<![{_NAME_EDGE}]){re.escape(name)}(?![{_NAME_EDGE}])", text, re.IGNORECASE)
+        for name in _names_of(tool)
+    )
+
+
+def refine_target(trigger: str, detail: str, used: list[str]) -> str:
+    """The skill a stumble is filed against, or ``""`` when no skill of the turn earned it.
+
+    *used* is the turn's skills in the allocator's admission order. A correction goes to the first
+    of them, the most relevant. A stumble about a tool call goes to the first whose procedure
+    names that tool: a skill that joined the turn because a word matched, and never asked for the
+    call, is not the skill the user said no to, and a rewrite of it would teach it a step it
+    never had.
+    """
+    if not used:
+        return ""
+    if trigger not in _TOOL_TRIGGERS:
+        return used[0]
+    from personalclaw.skills.loader import SkillsLoader
+
+    loader = SkillsLoader(install_builtins=False)
+    for name in used:
+        body = loader.load_skill(name)
+        if body and procedure_names_tool(body, detail):
+            return name
+    logger.info(
+        "refine: no skill of the turn names %r, so its %s is filed against none", detail, trigger
+    )
+    return ""
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 

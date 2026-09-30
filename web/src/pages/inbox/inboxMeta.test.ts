@@ -111,7 +111,9 @@ describe('refTarget', () => {
 
   it('routes sessions and workflows', () => {
     expect(refTarget({ refs: { session: 'chat-1' } })).toBe('chat/chat-1')
-    expect(refTarget({ refs: { workflow: 'wf-1' } })).toBe('workflows/wf-1')
+    // The run's own route: `workflows/<id>` is no route of the Workflows section, which showed
+    // its list instead of the run the row is about.
+    expect(refTarget({ refs: { workflow: 'wf-1' } })).toBe('workflows/runs/wf-1')
   })
 
   it('encodes a session key that needs it', () => {
@@ -192,7 +194,7 @@ describe('refLabel', () => {
     // should name where it takes you.
     expect(refLabel({ refs: { loop: 'L1' } })).toBe('Go to loop')
     expect(refLabel({ refs: { session: 's1' } })).toBe('Go to chat')
-    expect(refLabel({ refs: { workflow: 'w1' } })).toBe('Go to workflow')
+    expect(refLabel({ refs: { workflow: 'w1' } })).toBe('Open the workflow run')
     expect(refLabel({ refs: { artifact: 'learning-identity-report' } })).toBe('Open the report')
     expect(refLabel({ refs: { room: 'pricing-debate' } })).toBe('Go to the room')
   })

@@ -604,9 +604,9 @@ def test_the_room_id_route_is_registered_after_its_siblings():
     """`/api/rooms/{room_id}` would swallow `/archive`, `/members`, `/messages`, `/continue`,
     `/export` if it came first — aiohttp resolves in registration order, and this is the failure
     `/api/channels/trust` already shipped once."""
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import routes
 
-    source = open(server.__file__, encoding="utf-8").read()
+    source = open(routes.__file__, encoding="utf-8").read()
     catch_all = source.index('"/api/rooms/{room_id}", api_room_get')
     for sibling in ("/archive", "/members", "/messages", "/continue", "/export"):
         assert source.index(f'"/api/rooms/{{room_id}}{sibling}"') < catch_all, sibling

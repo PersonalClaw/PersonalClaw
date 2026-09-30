@@ -9,6 +9,7 @@ import { Segmented } from '../../ui/forms'
 import { QuietButton } from '../../ui/QuietButton'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { api, type Artifact } from '../../lib/api'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { newSessionTarget } from '../../ui/content/commentTarget'
 import { notify } from '../../app/appSdk'
@@ -73,6 +74,11 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+  // An artifact written or removed anywhere (the agent in a chat or the Iterate panel, a workflow
+  // step, another tab) moves the library and the open artifact's header name: the gateway's
+  // `artifacts` refresh hint says so once the store has written it, and the socket coming back
+  // re-reads what it may have missed. The open viewer hears the same hint for its own body.
+  useChatSocket((m: WsMessage) => { if (refreshKinds(m).includes('artifacts')) void load() }, () => { void load() })
 
   const searchQuery = q.trim()
   useEffect(() => {

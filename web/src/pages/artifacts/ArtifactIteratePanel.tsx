@@ -24,8 +24,8 @@ export const ITERATE_PENDING = 'new'
  *  than a third chat implementation.
  *
  *  The embed is a separate document with no bridge back to the page, so the
- *  detail view learns about new versions from the socket instead — see
- *  `artifactUpdateSignal`. */
+ *  detail view learns about new versions from the gateway's `artifacts` refresh
+ *  hint instead, which the store sends once a version is written (`ArtifactViewer`). */
 export function ArtifactIteratePanel({ slug, name, session, onSession, onClose }: {
   slug: string
   /** The artifact's display name — the panel's accessible name, so two open

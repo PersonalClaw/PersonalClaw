@@ -396,14 +396,14 @@ def test_a_new_kind_proposal_carries_no_diff_and_no_version(home):
 def test_the_proposal_detail_route_is_registered(home):
     """A defined handler is not a reachable one.
 
-    The skills routes are registered inline inside ``start_dashboard``, which cannot be driven
-    without starting a server — so this scans the registration source. Comment lines are
+    The skills routes are registered in the route table ``start_dashboard`` runs, which cannot
+    be driven without starting a server — so this scans the registration source. Comment lines are
     stripped first (a text scanner otherwise reads a commented-out route as a live one), and a
     fabricated path is asserted ABSENT so the scan cannot pass vacuously.
     """
-    from personalclaw.dashboard import server as server_mod
+    from personalclaw.dashboard import routes as routes_mod
 
-    src = inspect.getsource(server_mod.start_dashboard)
+    src = inspect.getsource(routes_mod.register_dashboard_routes)
     code = "\n".join(ln for ln in src.split("\n") if not ln.strip().startswith("#"))
     for expected in (
         'add_get("/api/skills/proposals/{id}", api_skill_proposal_detail)',

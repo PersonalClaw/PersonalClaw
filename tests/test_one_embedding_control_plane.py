@@ -30,7 +30,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from personalclaw.dashboard import handlers, server
+from personalclaw.dashboard import handlers, routes, server
 from personalclaw.dashboard.handlers import memory as mem_mod
 
 #: The six retired handler names, and the route paths they were registered under.
@@ -63,7 +63,9 @@ def test_no_retired_handler_survives_on_the_barrel():
 
 
 def test_no_retired_route_is_registered():
-    src = inspect.getsource(server)
+    # The gateway's routes: the ones `start_dashboard` adds itself, and its route table's.
+    src = inspect.getsource(server) + inspect.getsource(routes)
+    assert '"/api/memory/facets"' in src, "vacuity: the route table was read"
     for path in RETIRED_PATHS:
         assert path not in src, f"{path} is still registered"
 

@@ -141,6 +141,10 @@ def is_environment_failure_claim(text: str) -> bool:
 #     * Mid-sentence negations ("…do not use tools"), which `is_correction_signal` already
 #       excludes by requiring directional negations to OPEN the message.
 #
+#   WHICH skill a stumble is about is not decided here: `skills.refine.refine_target` files a
+#   denied or retried call only against a loaded skill whose procedure names that tool, and
+#   against none when no loaded skill did (a skill that joined on a matching word never asked).
+#
 # It never calls a model. A stumble is decided from the turn's own record, so the refinement
 # arm has a full no-model floor: it degrades to *not proposing*, never to guessing.
 

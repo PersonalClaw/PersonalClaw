@@ -210,21 +210,21 @@ def test_trust_route_is_not_shadowed_by_the_name_route():
     aiohttp resolves in registration order, so the dynamic `{name}` route swallows any
     literal sibling registered after it — the request would reach `api_channel_get` and
     answer `{"error": "unknown transport"}` with a 404, which reads like a missing provider
-    rather than a mis-ordered router. The registration is inline in `start_dashboard` (a
-    function that boots a real server), so the order is asserted where it is decided: in
-    the source.
+    rather than a mis-ordered router. The registration is in the dashboard's route table
+    (`dashboard/routes.py`, run by a function that boots a real server), so the order is
+    asserted where it is decided: in the source.
     """
     from pathlib import Path
 
-    import personalclaw.dashboard.server as server
+    import personalclaw.dashboard.routes as routes
 
-    lines = Path(server.__file__).read_text(encoding="utf-8").splitlines()
+    lines = Path(routes.__file__).read_text(encoding="utf-8").splitlines()
     trust = [i for i, ln in enumerate(lines) if '"/api/channels/trust"' in ln]
     named = [i for i, ln in enumerate(lines) if '"/api/channels/{name}"' in ln]
 
     # Floor: both registrations were actually found, so a rename cannot make this vacuous.
-    assert trust, "no /api/channels/trust registration found in server.py"
-    assert named, "no /api/channels/{name} registration found in server.py"
+    assert trust, "no /api/channels/trust registration found in the route table"
+    assert named, "no /api/channels/{name} registration found in the route table"
     assert max(trust) < min(named), (
         "/api/channels/trust is registered after /api/channels/{name} and will be shadowed "
         f"(trust at {[i + 1 for i in trust]}, name at {[i + 1 for i in named]})"

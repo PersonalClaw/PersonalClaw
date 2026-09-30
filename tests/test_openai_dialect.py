@@ -176,7 +176,7 @@ async def _client(monkeypatch, *, script=None) -> tuple[TestClient, _FakeState]:
     state = _FakeState()
     app = web.Application()
     app["state"] = state
-    # Injected, exactly as `dashboard/server.py` does it — so these tests exercise the
+    # Injected, exactly as `dashboard/routes.py` does it — so these tests exercise the
     # real wiring contract rather than a patched-out import.
     dialect.register_routes(app, turn_runner=_fake_run)
     client = TestClient(TestServer(app))
@@ -690,12 +690,12 @@ def test_the_composition_root_actually_injects_the_runner():
     every `/v1` chat turn would 503 in production while the whole suite above stayed
     green on its own injected fake.
     """
-    from personalclaw.dashboard import server as server_module
+    from personalclaw.dashboard import routes as routes_module
 
-    source = Path(server_module.__file__).read_text(encoding="utf-8")
+    source = Path(routes_module.__file__).read_text(encoding="utf-8")
     assert (
         "_register_openai(app, turn_runner=_run_chat_scoped)" in source
-    ), "dashboard/server.py must inject the turn runner into the /v1 dialect"
+    ), "dashboard/routes.py must inject the turn runner into the /v1 dialect"
 
 
 @pytest.mark.asyncio

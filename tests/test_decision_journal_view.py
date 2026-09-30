@@ -118,16 +118,17 @@ def _resolve(store, triggers, memory, item_id: str, grade: str) -> None:
 class TestRegistration:
     def test_the_route_is_registered_and_points_at_this_handler(self) -> None:
         """A handler nothing routes to is the defect this repo keeps finding: its own tests are
-        green and the surface is unreachable. Asserted against ``server.py`` because that is the
-        one file that decides whether a URL exists."""
-        src = (SRC / "dashboard" / "server.py").read_text()
+        green and the surface is unreachable. Asserted against the route table
+        (``dashboard/routes.py``) because that is the one file that decides whether this URL
+        exists."""
+        src = (SRC / "dashboard" / "routes.py").read_text()
         assert 'add_get("/api/knowledge/decisions", handlers.api_decision_journal)' in src
         # Vacuity floor: if the probe string above ever stops matching the file's real spelling,
         # this line says so instead of the assertion silently passing on a renamed route.
         assert src.count("/api/knowledge/decisions") == 1
 
     def test_the_handler_is_exported_from_the_facade(self) -> None:
-        """``server.py`` reaches handlers as ``handlers.X``, so an unexported handler is an
+        """The route table reaches handlers as ``handlers.X``, so an unexported handler is an
         AttributeError at route-registration time — i.e. at gateway boot, not in a test."""
         from personalclaw.dashboard import handlers
 

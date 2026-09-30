@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **The Inbox reply panel asks what the reply should say, and Generate draft and Regenerate write the draft to it.**
+- **Files, a chat's file panel and the Code cockpit save an image or a PDF as a versioned artifact: a copy of the file, checked by its contents, which gains its next version each time it is saved again after the file changes.**
 - **An answer drawn from a learned lesson can cite it as [Lesson N], which opens that lesson in Memory (`ContextBuilder.build_session_context` and `MemoryService.lessons_context` take an optional `citations_out`: an SDK addition no app has to change for).**
 - **A watched-source provider can be handed the number of items one poll keeps and stop there, instead of moving its cursor past what the engine leaves out: `max_items` in `personalclaw.sdk.knowledge.ENGINE_POLL_KWARGS` (an SDK addition no app has to change for; `git-repo` can use it).**
 
@@ -146,6 +147,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Mission Control lists each loop once, by its name, however many of its workers are running, and never names a chat by its internal key.**
 - **The Inbox's "Needs reply" lists only messages that need a reply, not app-update notices, notes you wrote or requests from your agents.**
 - **The Inbox's Dismiss all dialog names the Done filter by the name the page shows.**
+- **An image or document artifact never takes text as its next version, so its file, the bytes it serves and its details always agree; the agent is told the tool that does make one (for an image, `image_generate` with its slug), and the Iterate panel names that tool from the start.**
+- **An open artifact shows each new version as soon as it is written, whoever wrote it: the Iterate panel's chat, another chat, a workflow step or another tab. An image's page and its library card draw the new picture, not the first one they loaded.**
+- **A declined or retried tool call proposes a refinement only of a skill whose procedure asked for that call, never of one that joined the turn on a matching word.**
+- **A workflow run that fails or stops before it finished says so in the Inbox and the bell, and the row opens that run.**
 - **A loop's model call on an instance with a Request Timeout waits as long as that timeout says, not a fixed 300 seconds, and a call that runs out of time says which model on which instance stopped, after how long, and where to bind a faster one.**
 - **A code loop has one writer at a time: a task worker starts only from a tree with no uncommitted changes while the stage worker is between cycles, the stage worker stands down while task workers run, and a loop on a model on this machine runs one task worker at a time.**
 - **A loop's planner writes its walkthrough files into the loop's own folder, never into your repository, and a file of the same name you keep there is never read or removed.**

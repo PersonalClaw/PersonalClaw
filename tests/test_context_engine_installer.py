@@ -8,7 +8,7 @@ no writer: nothing could install an engine, so nothing could be swapped.
 
 These rails therefore do NOT call `install_engine` to prove the seam works. They set a
 name in `config.json`, boot the real gateway, and read which engine came out active —
-the `_context_engine_startup` hook is a closure inside `start_dashboard` and cannot be
+the `_context_engine_startup` hook is a closure inside `register_lifecycle_hooks` and cannot be
 imported, so a boot is the only honest way to observe that it fires. A test that called
 `install_engine` directly would pass with the `on_startup.append` line deleted, which is
 precisely the shape that let this ship inert. The boot harness is

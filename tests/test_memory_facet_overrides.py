@@ -240,21 +240,21 @@ async def test_forgetting_an_unknown_facet_is_a_404(handlers, store, key):
 
 
 def _registered_facet_routes() -> list[tuple[str, str]]:
-    """The (verb, path) pairs `server.py` really registers under /api/memory/facets.
+    """The (verb, path) pairs the route table really registers under /api/memory/facets.
 
-    Read out of the source because the registrations live inside ``start_dashboard``,
-    which cannot be called without binding a port. The pattern STRING is what is under
-    test here, so reading it from the file that owns it is the faithful input — a
+    Read out of the source because the registrations live in ``dashboard/routes.py``, run by
+    ``start_dashboard``, which cannot be called without binding a port. The pattern STRING is
+    what is under test here, so reading it from the file that owns it is the faithful input — a
     hand-copied pattern would prove only that this test's copy works.
     """
     import ast
     from pathlib import Path
 
-    from personalclaw.dashboard import server as server_mod
+    from personalclaw.dashboard import routes as routes_mod
 
     verbs = {"add_get": "GET", "add_post": "POST"}
     out: list[tuple[str, str]] = []
-    tree = ast.parse(Path(server_mod.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(routes_mod.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue

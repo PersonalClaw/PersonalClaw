@@ -14,7 +14,7 @@ from typing import Any
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
-from personalclaw.artifacts.models import is_valid_slug
+from personalclaw.artifacts.models import ArtifactKindMismatch, is_valid_slug
 from personalclaw.mcp_core import _resolve_session_key
 from personalclaw.tool_providers.base import BUILDS_META_KEY, tool_failure
 from personalclaw.validation import decode_json_text
@@ -178,7 +178,11 @@ def _list_tools() -> list[dict[str, Any]]:
             "description": (
                 "Update a saved artifact by slug, creating a new version snapshot "
                 "(each agent update is a checkpoint, like a commit). Pass new content "
-                "inline or via content_file; or update metadata only (description/tags)."
+                "inline or via content_file; or update metadata only (description/tags). "
+                "An image, video, PDF or office document is not text: only its metadata "
+                "changes here, and its next version comes from the tool that made it "
+                "(image_generate with edit_artifact; document_create, sheet_create or "
+                "deck_create with slug)."
             ),
             "inputSchema": {
                 "type": "object",
@@ -662,6 +666,71 @@ def _materialize_image(result: Any) -> tuple[bytes, str] | None:
     return None
 
 
+#: How the agent makes the next version of a BINARY artifact: the tool, and what to pass it. Its
+#: body is bytes, so `artifact_update` (text) refuses it. `video` has no entry: no tool makes a
+#: video's next version (`video_generate` always saves a new video).
+_BINARY_NEXT_VERSION: dict[str, str] = {
+    "image": "call image_generate with edit_artifact='{slug}' and a prompt saying what to change",
+    "docx": "call document_create with slug='{slug}' and the new markdown",
+    "pdf": "call document_create with slug='{slug}', format='pdf' and the new markdown",
+    "xlsx": "call sheet_create with slug='{slug}' and the new rows",
+    "pptx": "call deck_create with slug='{slug}' and the new outline",
+}
+
+#: What is true of a kind no tool makes a next version of.
+_NO_NEXT_VERSION = "no tool makes a new version of a video: video_generate saves a new one"
+
+
+def next_version_instruction(kind: str, slug: str) -> str:
+    """What the agent does to land a change as the next version of artifact *slug* of *kind*, or
+    ``""`` when no tool makes one (a video).
+
+    One phrase per kind, shared by the refusal ``artifact_update`` gives a binary artifact and
+    the Iterate panel's opening prompt, so the two cannot name different tools.
+    """
+    from personalclaw.artifacts.models import is_binary_kind
+
+    if not is_binary_kind(kind):
+        return f"call artifact_update with slug='{slug}' and the new content"
+    how = _BINARY_NEXT_VERSION.get(kind)
+    return how.format(slug=slug) if how else ""
+
+
+def _a(word: str) -> str:
+    """*word* with its indefinite article: "an image", "a docx"."""
+    return f"{'an' if word[:1].lower() in 'aeiou' else 'a'} {word}"
+
+
+def _change_it(kind: str, slug: str, subject: str = "it") -> str:
+    """The sentence saying how to change artifact *slug* of *kind* itself."""
+    how = next_version_instruction(kind, slug)
+    return f"To change {subject}, {how}." if how else f"And {_NO_NEXT_VERSION}."
+
+
+def _kind_refusal(slug: str, kind: str) -> str:
+    """``artifact_update``'s answer to a text body for a binary artifact, in words to act on."""
+    return (
+        f"'{slug}' is {_a(kind)} artifact: each of its versions is {_a(kind)}, so text cannot "
+        f"be one of them. {_change_it(kind, slug)} To keep this text as well, save it as its own "
+        "artifact with artifact_save."
+    )
+
+
+def iterate_instruction(kind: str, slug: str) -> str:
+    """The Iterate panel's opening prompt for artifact *slug* of *kind*: the slug and the tool
+    that makes its next version, so the change lands on it rather than as a near-duplicate."""
+    how = next_version_instruction(kind, slug)
+    if not how:
+        return (
+            f"Iterate on artifact `{slug}`. Note that {_NO_NEXT_VERSION}. "
+            "What would you like changed?"
+        )
+    return (
+        f"Iterate on artifact `{slug}`. So the change lands as a new version of it rather than "
+        f"a new artifact, {how}. What would you like changed?"
+    )
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch artifact_* tools directly against the native provider entity.
 
@@ -777,16 +846,20 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if err:
                 _audit("denied", args.get("slug", ""), err)
                 return tool_failure(f"{err}")
-            upd = prov.update(
-                args["slug"],
-                content=content,
-                snapshot=True,  # every agent update is a checkpoint
-                description=args.get("description"),
-                tags=args.get("tags"),
-                collection=args.get("collection"),
-                actor="agent",
-                session_id=sk,
-            )
+            try:
+                upd = prov.update(
+                    args["slug"],
+                    content=content,
+                    snapshot=True,  # every agent update is a checkpoint
+                    description=args.get("description"),
+                    tags=args.get("tags"),
+                    collection=args.get("collection"),
+                    actor="agent",
+                    session_id=sk,
+                )
+            except ArtifactKindMismatch as mismatch:
+                _audit("denied", mismatch.slug, str(mismatch))
+                return tool_failure(_kind_refusal(mismatch.slug, mismatch.kind))
             if upd is None:
                 _audit("not_found", args["slug"])
                 return tool_failure(f"Artifact not found: {args['slug']}")
@@ -1428,7 +1501,20 @@ def _document_create(
     # the hint has nowhere to land: a document tool's whole job this turn is to produce the
     # file, and a caller who really wants a second document of the same name says so by
     # passing a new `slug`.
-    target = slug if slug and prov.get(slug) is not None else ""
+    target = ""
+    if slug:
+        named = prov.get(slug)
+        # A slug names the artifact this file becomes the next version OF, and a version is of
+        # its artifact's kind: a docx cannot be an image's next version, nor a csv a markdown
+        # note's. Said before anything is rendered into the store, with the way to do each.
+        if named is not None and named.kind != fmt:
+            _audit("denied", slug, f"{slug} is kind {named.kind}, not {fmt}")
+            return tool_failure(
+                f"'{slug}' is {_a(named.kind)} artifact, so {_a(fmt)} cannot be its next "
+                f"version. Leave out slug to make a new {fmt}. "
+                f"{_change_it(named.kind, slug, f'{slug!r} itself')}"
+            )
+        target = slug if named is not None else ""
     if not slug:
         similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
         if similar is not None:

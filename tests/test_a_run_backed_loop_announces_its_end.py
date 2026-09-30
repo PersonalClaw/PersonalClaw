@@ -66,7 +66,7 @@ def _run(status: RunStatus, **over: Any) -> WorkflowRun:
 
 def test_a_completed_loop_says_so(raised: list) -> None:
     state = _State()
-    attention.announce_loop_end(state, _run(RunStatus.COMPLETE), RunStatus.COMPLETE)
+    attention.announce_run_end(state, _run(RunStatus.COMPLETE), RunStatus.COMPLETE)
     assert state.notes == [
         (
             notification_kinds.LOOP_COMPLETE,
@@ -81,7 +81,7 @@ def test_a_completed_loop_says_so(raised: list) -> None:
 def test_a_failed_loop_says_why() -> None:
     state = _State()
     run = _run(RunStatus.FAILED, error_message="engine error: the provider is down")
-    attention.announce_loop_end(state, run, RunStatus.FAILED)
+    attention.announce_run_end(state, run, RunStatus.FAILED)
     [(kind, title, body, _meta)] = state.notes
     assert (kind, title) == (notification_kinds.LOOP_FAILED, "Loop failed")
     assert "the provider is down" in body
@@ -99,7 +99,7 @@ def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -
             "detail": "It used its budget of 6 cycles before its exit condition was met.",
         },
     )
-    assert attention.announce_loop_end(state, run, RunStatus.ESCALATED) == "item-1"
+    assert attention.announce_run_end(state, run, RunStatus.ESCALATED) == "item-1"
     [call] = raised
     assert call["title"] == "Loop stopped at its budget"
     assert "It used its budget of 6 cycles" in call["body"]
@@ -112,14 +112,14 @@ def test_a_loop_that_stopped_for_another_reason_says_it_stopped_before_it_finish
     raised: list,
 ) -> None:
     run = _run(RunStatus.ESCALATED, attention={"kind": "escalation", "reason": "iterations_failed"})
-    attention.announce_loop_end(_State(), run, RunStatus.ESCALATED)
+    attention.announce_run_end(_State(), run, RunStatus.ESCALATED)
     assert [c["title"] for c in raised] == ["Loop stopped before it finished"]
 
 
 def test_a_cancel_and_a_template_run_say_nothing(raised: list) -> None:
     state = _State()
-    attention.announce_loop_end(state, _run(RunStatus.CANCELLED), RunStatus.CANCELLED)
-    attention.announce_loop_end(state, _run(RunStatus.COMPLETE, loop_kind=""), RunStatus.COMPLETE)
+    attention.announce_run_end(state, _run(RunStatus.CANCELLED), RunStatus.CANCELLED)
+    attention.announce_run_end(state, _run(RunStatus.COMPLETE, loop_kind=""), RunStatus.COMPLETE)
     assert state.notes == [] and raised == []
 
 

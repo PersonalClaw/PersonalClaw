@@ -184,8 +184,8 @@ def test_the_tool_surface_is_unchanged_with_the_views_on(tmp_path, monkeypatch):
 
 
 def _registered_computer_use_routes() -> set[tuple[str, str]]:
-    """(verb, path) for every /api/computer-use route server.py registers, by AST."""
-    tree = ast.parse((SRC / "dashboard" / "server.py").read_text(encoding="utf-8"))
+    """(verb, path) for every /api/computer-use route the route table registers, by AST."""
+    tree = ast.parse((SRC / "dashboard" / "routes.py").read_text(encoding="utf-8"))
     found: set[tuple[str, str]] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):

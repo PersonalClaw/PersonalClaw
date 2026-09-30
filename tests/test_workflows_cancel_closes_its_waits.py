@@ -84,13 +84,20 @@ def _fake_state():
     return State()
 
 
-def _open_rows(state: Any, run_id: str) -> list[Any]:
+def _open_rows(state: Any, run_id: str, *, endings: bool = False) -> list[Any]:
+    """The run's open Inbox rows: the questions it asked, or (*endings*) the row its ending raised.
+
+    A run that ends failed or escalated tells you so with a row of its own
+    (`attention.announce_run_end`, keyed `workflow-run:<id>:<ending>`). That row is about the
+    ending, not a question the run asked, so it is counted apart."""
     from personalclaw.inbox import OPEN_STATUSES
 
     return [
         i
         for i in state._inbox_svc.inbox.items.values()
-        if i.status in OPEN_STATUSES and (i.refs or {}).get("workflow") == run_id
+        if i.status in OPEN_STATUSES
+        and (i.refs or {}).get("workflow") == run_id
+        and str((i.refs or {}).get("dedup_key", "")).startswith("workflow-run:") is endings
     ]
 
 
@@ -166,6 +173,10 @@ async def test_a_run_ending_any_other_way_closes_its_waits_too() -> None:
         await c._finish(RunStatus.FAILED, error="engine error: the disk went away")
 
     _assert_every_question_closed(state, run.id)
+    # …and the ending itself is the one row left, which says so and asks nothing.
+    [ended] = _open_rows(state, run.id, endings=True)
+    assert ended.message.startswith("Workflow run failed"), ended.message
+    assert "the disk went away" in ended.message
 
 
 async def test_a_cancel_nobody_woke_the_parked_controller_for_still_lands() -> None:

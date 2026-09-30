@@ -194,8 +194,14 @@ class ArtifactProvider(ABC):
         actor: str | None = None,
         session_id: str | None = None,
         project_id: str = "",
+        source_path: str = "",
     ) -> Artifact:
-        """Create a binary artifact (image). ``data`` is the raw bytes."""
+        """Create a binary artifact (image). ``data`` is the raw bytes.
+
+        ``source_path`` names the file a copy was saved from: provenance, never a live pointer.
+        A *mime* of another kind than *kind* raises
+        :class:`~personalclaw.artifacts.models.ArtifactKindMismatch`.
+        """
         raise NotImplementedError(f"{self.name} does not support binary artifacts")
 
     def update_binary(
@@ -219,6 +225,11 @@ class ArtifactProvider(ABC):
         writing second leaves exactly the race a whole-document save exists to detect
         (DOCUMENT-FIDELITY-EDITOR §C3). ``None`` means last-write-wins, which is what
         every agent-side edit path already does.
+
+        A body not of the artifact's kind raises
+        :class:`~personalclaw.artifacts.models.ArtifactKindMismatch` before anything is written:
+        a text artifact takes no bytes, and a *mime* of another binary kind is not this
+        artifact's next version. ``update`` refuses a text body for a binary artifact the same way.
         """
         raise NotImplementedError(f"{self.name} does not support binary artifacts")
 

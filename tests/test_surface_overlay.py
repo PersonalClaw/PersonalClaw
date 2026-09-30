@@ -370,7 +370,7 @@ def test_the_route_is_registered_in_the_shipped_reference():
     """The route reaches the router — proved through the generated route inventory.
 
     `reference/routes.md` is rendered by a STATIC scan of the registration calls in
-    `dashboard/server.py`, so its containing the path is evidence the router does too.
+    `dashboard/routes.py`, so its containing the path is evidence the router does too.
     """
     import personalclaw
 

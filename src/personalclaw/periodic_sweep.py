@@ -3,8 +3,8 @@
 The gateway's three watchdogs (app backends, app workers, model sidecars) were each a bare
 ``while True: time.sleep(30); sweep()`` daemon thread with no way to end it. A process that boots
 one gateway and exits never notices. Anything that stops a gateway and carries on does:
-``runner.cleanup()`` terminates every app backend (``dashboard/server.py``'s
-``_app_backends_shutdown``) and left the backend watchdog running to revive them 30 s later, and
+``runner.cleanup()`` terminates every app backend (``dashboard/lifecycle_hooks.py``'s
+``_app_processes_shutdown``) and left the backend watchdog running to revive them 30 s later, and
 every boot added three more sweepers that never ended.
 
 The test suite is the process that carries on. It boots a real gateway in 25 tests; measured with

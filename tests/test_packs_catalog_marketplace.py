@@ -141,9 +141,11 @@ def test_the_gateway_registers_the_skill_catalog_startup_hook():
     import ast
     import pathlib
 
-    src = pathlib.Path(
-        __import__("personalclaw.dashboard.server", fromlist=["x"]).__file__
-    ).read_text()
+    from personalclaw.dashboard import lifecycle_hooks, server
+
+    # The gateway appends its start hooks through the one call in `start_dashboard`.
+    assert "register_lifecycle_hooks(app)" in pathlib.Path(server.__file__).read_text()
+    src = pathlib.Path(lifecycle_hooks.__file__).read_text()
     tree = ast.parse(src)
     appended = {
         node.args[0].id

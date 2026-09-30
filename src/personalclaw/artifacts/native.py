@@ -37,6 +37,7 @@ from personalclaw.artifacts.models import (
     MAX_VERSIONS,
     Artifact,
     ArtifactEvent,
+    ArtifactKindMismatch,
     ArtifactStaleWrite,
     ArtifactVersionConflict,
     clean_event_metadata,
@@ -44,6 +45,7 @@ from personalclaw.artifacts.models import (
     ext_for_mime,
     is_binary_kind,
     is_valid_slug,
+    kind_for_mime,
     mime_for_ext,
     normalize_kind,
     normalize_source,
@@ -200,14 +202,18 @@ class NativeArtifactProvider(ArtifactProvider):
         return f"{stem}.{ext}"
 
     @staticmethod
-    def _raw_ref(slug: str, version: int | None = None) -> str:
-        """The reference stored in a binary artifact's ``content`` — the raw URL.
+    def _raw_ref(slug: str, version: int) -> str:
+        """The reference stored in a binary artifact's ``content`` — the raw URL of one version.
 
-        The bytes never live in ``content`` (no base64-in-context); the renderer
-        fetches them from this endpoint. A versioned read appends ``?version=N``.
+        The bytes never live in ``content`` (no base64-in-context); the renderer fetches them from
+        this endpoint. 🔴 The reference names its version, the current one's too. A page keeps the
+        image it loaded from a URL for as long as the page lives, whatever the response's cache
+        headers say, and the current read used to hand out the one unversioned ``/raw`` for every
+        version: an open artifact re-read its new version and went on showing the old picture.
+        Each version's URL is its own and immutable; the unversioned ``/raw`` still serves the
+        current body to a download.
         """
-        base = f"/api/artifacts/{slug}/raw"
-        return f"{base}?version={version}" if version is not None else base
+        return f"/api/artifacts/{slug}/raw?version={version}"
 
     # ── live-pointer (file-backed source_path) ──
 
@@ -289,7 +295,7 @@ class NativeArtifactProvider(ArtifactProvider):
         :meth:`_try_read_source_path` takes them.
         """
         if is_binary_kind(art.kind):
-            return self._raw_ref(art.slug)
+            return self._raw_ref(art.slug, art.version)
         live = self._try_read_source_path(art.source_path, places) if art.source_path else None
         return live if live is not None else self._current_content(art.slug)
 
@@ -523,7 +529,7 @@ class NativeArtifactProvider(ArtifactProvider):
                     art.content = self._raw_ref(slug, version)
                     art.version = version
                 else:
-                    art.content = self._raw_ref(slug)
+                    art.content = self._raw_ref(slug, art.version)
                 art.live_dirty = False
                 return art
             if version is not None:
@@ -582,12 +588,18 @@ class NativeArtifactProvider(ArtifactProvider):
         session_id: str | None = None,
         project_id: str = "",
         event_metadata: dict | None = None,
+        source_path: str = "",
     ) -> Artifact:
         """Create a BINARY artifact (kind:image): bytes stored on disk, content=raw ref.
 
         Mirrors :meth:`create` but the body is bytes — never text. The returned
         artifact's ``content`` is the raw-URL ref (what the API surfaces), so a
-        caller embeds ``/api/artifacts/<slug>/raw`` rather than the bytes.
+        caller embeds ``/api/artifacts/<slug>/raw?version=1`` rather than the bytes.
+
+        ``source_path`` is the file a copy was saved from (Files' "Save as artifact"), admitted
+        by ``source_files`` like a text artifact's pointer. For a binary artifact it is where the
+        bytes came from, never a live pointer: every read serves the artifact's own versions, and
+        nothing writes the file.
         """
         name = (name or "").strip()[:MAX_NAME_LEN] or "Untitled"
         # A non-binary kind reaching here is a PROGRAMMING ERROR, so it raises. This
@@ -602,6 +614,11 @@ class NativeArtifactProvider(ArtifactProvider):
                 f"expected one of {sorted(BINARY_KINDS)} — register the kind in both "
                 "ALLOWED_KINDS and BINARY_KINDS first"
             )
+        offered = kind_for_mime(mime)
+        if offered and offered != normalize_kind(kind):
+            raise ArtifactKindMismatch(slug or name, kind, offered)
+        # Admitted before any side effect, exactly as `create` admits a text artifact's pointer.
+        origin = source_files.admit(source_path.strip()) if source_path.strip() else ""
         with self._lock:
             base = slug.strip() if slug and is_valid_slug(slug.strip()) else slugify(name)
             final_slug = (
@@ -630,6 +647,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 updated_at=ts,
                 project_id=project_id or "",
                 mime=mime or "image/png",
+                source_path=origin,
                 events=[event],
             )
             d = self._artifact_dir(final_slug)
@@ -637,7 +655,7 @@ class NativeArtifactProvider(ArtifactProvider):
             self._write_bytes(d / self._body_filename(art), data)
             self._snapshot_binary(art, 1, data)
             self._write_meta(art)
-            art.content = self._raw_ref(final_slug)
+            art.content = self._raw_ref(final_slug, art.version)
         changes.emit(changes.UPSERT, art.slug)
         return art
 
@@ -657,6 +675,11 @@ class NativeArtifactProvider(ArtifactProvider):
         ``expect_version`` (see the protocol docstring) is compared INSIDE the lock and
         before a single byte is written, so a conflicting write cannot slip between the
         check and the store.
+
+        The body must be of the artifact's own kind (:class:`ArtifactKindMismatch`): a text
+        artifact takes no bytes, and a *mime* naming another binary kind (a PDF for an image) is
+        not this artifact's next version. Another format of the same kind is (a PNG edited into a
+        JPEG).
         """
         if event_type == "reverted":
             raise ValueError("use revert() to restore a version, not update_binary()")
@@ -664,8 +687,11 @@ class NativeArtifactProvider(ArtifactProvider):
             raise ValueError(f"invalid event_type: {event_type!r}")
         with self._lock:
             art = self._read_meta(slug)
-            if art is None or not is_binary_kind(art.kind):
+            if art is None:
                 return None
+            offered = kind_for_mime(mime)
+            if not is_binary_kind(art.kind) or (offered and offered != art.kind):
+                raise ArtifactKindMismatch(slug, art.kind, offered or "binary")
             _refuse_if_readonly(art)
             if expect_version is not None and art.version != expect_version:
                 raise ArtifactVersionConflict(slug, art.version, expect_version)
@@ -685,7 +711,7 @@ class NativeArtifactProvider(ArtifactProvider):
             self._append_event(art, ev)
             art.updated_at = _now()
             self._write_meta(art)
-            art.content = self._raw_ref(slug)
+            art.content = self._raw_ref(slug, art.version)
         changes.emit(changes.UPSERT, slug)
         return art
 
@@ -882,6 +908,14 @@ class NativeArtifactProvider(ArtifactProvider):
             if art is None:
                 return None
             _refuse_if_readonly(art)
+            # 🔴 A BINARY ARTIFACT TAKES NO TEXT BODY. Its versions are bytes of its kind, written by
+            # `update_binary` and `revert`. A text body here was filed as `current.html` and
+            # `versions/vN.html` beside them: the metadata counted a version whose bytes the raw
+            # read never served. Refused before anything is written, and first, because no
+            # revision could make it a body this artifact can hold.
+            binary = is_binary_kind(art.kind)
+            if content is not None and binary:
+                raise ArtifactKindMismatch(slug, art.kind, "text")
             # Read once: the precondition and the restore below are both taken of this one copy.
             live: str | None = None
             if content is not None or expect_revision is not None:
@@ -956,7 +990,11 @@ class NativeArtifactProvider(ArtifactProvider):
                     self._try_write_source_path(art.source_path, content)
 
             cut_version = False
-            if snapshot:
+            # A binary body changes only through its own writers, each of which cuts the version it
+            # writes, so its live body is always its latest version and a snapshot has nothing to
+            # record. The agent's metadata-only update asks for one every time; read as text it cut
+            # an empty `vN.html`.
+            if snapshot and not binary:
                 # Capture live state if no explicit content was passed.
                 snap_content = content
                 if snap_content is None:

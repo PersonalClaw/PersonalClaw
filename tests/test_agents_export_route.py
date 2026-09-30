@@ -242,6 +242,6 @@ def test_the_gateway_registers_the_route():
     """A handler nobody registers is the defect this route was written for."""
     import inspect
 
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import routes
 
-    assert '"/api/agents/export", api_agents_export' in inspect.getsource(server)
+    assert '"/api/agents/export", api_agents_export' in inspect.getsource(routes)

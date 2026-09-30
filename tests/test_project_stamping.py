@@ -166,12 +166,12 @@ class TestTheEndpointKeysOffTheHeaderOnly:
 def test_the_literal_route_is_registered_before_the_dynamic_one():
     """Vacuity floor for the route itself: registered AFTER ``{session}`` it would be
     captured as a session named "bound-project" and the endpoint would be unreachable —
-    the exact hazard ``bulk``/``templates`` are commented for in ``server.py``."""
+    the exact hazard ``bulk``/``templates`` are commented for in ``dashboard/routes.py``."""
     import pathlib
 
     import personalclaw
 
-    src = (pathlib.Path(personalclaw.__file__).parent / "dashboard" / "server.py").read_text()
+    src = (pathlib.Path(personalclaw.__file__).parent / "dashboard" / "routes.py").read_text()
     lit = src.index('add_get("/api/chat/sessions/bound-project"')
     dyn = src.index('add_get("/api/chat/sessions/{session}"')
     assert lit < dyn, "bound-project must register before the {session} pattern"

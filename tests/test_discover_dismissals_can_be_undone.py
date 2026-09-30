@@ -113,9 +113,9 @@ def test_the_delete_route_is_registered():
     of wiring. Asserted on the SAME path as the POST, which is the design — one resource,
     two verbs — so a future split into a ``/restore`` noun has to come through here.
     """
-    from personalclaw.dashboard import server
+    from personalclaw.dashboard import routes
 
-    src = inspect.getsource(server)
+    src = inspect.getsource(routes)
     assert 'add_post("/api/legibility/discover/dismiss"' in src, "POST anchor moved"
     assert (
         'add_delete("/api/legibility/discover/dismiss", api_discover_dismiss_clear)' in src

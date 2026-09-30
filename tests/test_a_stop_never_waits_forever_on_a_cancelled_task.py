@@ -156,7 +156,7 @@ async def test_the_caller_being_cancelled_is_not_swallowed(monkeypatch):
 async def test_the_availability_board_stop_is_not_held_by_a_start_that_never_leaves(
     monkeypatch, short_grace, caplog
 ):
-    """The gateway stop's hook (``dashboard/server.py``): the board's drain is starting the
+    """The gateway stop's hook (``dashboard/lifecycle_hooks.py``): the board's drain is starting the
     availability child when the stop cancels it. At ``origin/main`` the stop never returns."""
     start = _StartThatNeverLeaves()
     monkeypatch.setattr(asyncio, "create_subprocess_exec", start)

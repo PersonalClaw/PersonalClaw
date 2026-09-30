@@ -12,8 +12,8 @@ import { ArtifactsSection } from './ArtifactsSection'
 //
 // The two halves pinned separately (`artifactLiveRefresh` / `artifactIteratePanel`) are
 // only worth anything TOGETHER: the artifact detail view on the left, the ChatEmbed panel
-// on the right, and one socket frame that grows the rail and repaints the preview while
-// the conversation stays put.
+// on the right, and one socket frame — the store's `artifacts` hint, sent once the version is
+// written — that grows the rail and repaints the preview while the conversation stays put.
 //
 // 🪤 THE OBVIOUS WRONG IMPLEMENTATION refreshes by remounting the detail container. The
 // rail and the preview would both look correct — and the chat iframe would be torn down
@@ -24,15 +24,31 @@ const SLUG = 'revenue-widget'
 const V2_BODY = 'chart: revenue only'
 const V3_BODY = 'chart: revenue AND margin'
 
-let onMessage: ((m: WsMessage) => void) | null = null
-vi.mock('../../lib/useChatSocket', () => ({
-  useChatSocket: (cb: (m: WsMessage) => void) => { onMessage = cb },
-}))
+// Every subscriber's handler (the section and its viewer both listen), delivered to all as the
+// one socket does.
+const handlers = new Set<{ current: (m: WsMessage) => void }>()
+vi.mock('../../lib/useChatSocket', async (orig) => {
+  const real = await orig<typeof import('../../lib/useChatSocket')>()
+  const React = await import('react')
+  return {
+    ...real,
+    useChatSocket: (cb: (m: WsMessage) => void) => {
+      const ref = React.useRef(cb)
+      ref.current = cb
+      React.useEffect(() => {
+        handlers.add(ref)
+        return () => { handlers.delete(ref) }
+      }, [])
+    },
+  }
+})
+function deliver(m: WsMessage) { for (const h of [...handlers]) h.current(m) }
 
 let current = { version: 2, content: V2_BODY }
 let versions: number[] = [1, 2]
 let readonlyArtifact = false
 const investigate = vi.fn()
+const libraryReads = { n: 0 }
 
 function fixture(): Artifact {
   return {
@@ -49,7 +65,7 @@ vi.mock('../../lib/api', async (orig) => {
     ...real,
     api: {
       ...real.api,
-      artifacts: async () => [fixture()],
+      artifacts: async () => { libraryReads.n++; return [fixture()] },
       artifact: async () => fixture(),
       artifactVersions: async () => ({ slug: SLUG, versions }),
       artifactEvents: async () => ({ slug: SLUG, events: [] as ArtifactEvent[] }),
@@ -70,7 +86,8 @@ registerContentType({
 })
 
 beforeEach(() => {
-  onMessage = null
+  handlers.clear()
+  libraryReads.n = 0
   current = { version: 2, content: V2_BODY }
   versions = [1, 2]
   readonlyArtifact = false
@@ -162,12 +179,11 @@ describe('asking the agent to change the widget in the panel', () => {
     const embedBefore = embed()
     expect(paintedBefore.textContent).toBe(V2_BODY)
 
-    // The agent, in the panel, calls artifact_update on this slug.
+    // The agent, in the panel, writes a new version of this slug; the store then says so.
+    const libraryBefore = libraryReads.n
     current = { version: 3, content: V3_BODY }
     versions = [1, 2, 3]
-    await act(async () => {
-      onMessage!({ type: 'tool_call', data: { session: 'sess-42', tool: 'artifact_update', input: { slug: SLUG, content: V3_BODY } } })
-    })
+    await act(async () => { deliver({ type: 'refresh', data: { kinds: ['artifacts'] } }) })
 
     const after = railLabels()
     expect(after.length).toBe(before.length + 1)
@@ -177,5 +193,7 @@ describe('asking the agent to change the widget in the panel', () => {
     // The conversation the user is mid-way through survived the refresh.
     expect(embed()).toBe(embedBefore)
     expect(investigate).toHaveBeenCalledTimes(1)
+    // …and the library behind the view read once more: the one read the section owns.
+    expect(libraryReads.n).toBe(libraryBefore + 1)
   })
 })

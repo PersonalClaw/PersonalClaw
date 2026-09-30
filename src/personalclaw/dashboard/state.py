@@ -2501,10 +2501,27 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         Kinds in use: ``crons`` / ``cron_history`` (an automation changed / ran), ``loops``,
         ``workflow_runs`` (a workflow run started, changed status or ended —
-        ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``, and the
-        self-update's ``update_available`` / ``updating`` / ``update_failed``.
+        ``workflows/watchdog``), ``history`` (the chat list), ``agents``, ``lessons``,
+        ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
+        and the self-update's ``update_available`` / ``updating`` / ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
+
+    def announce_artifact_change(self, change: str, slug: str) -> None:
+        """Tell every open page that shows artifacts that one was written or removed.
+
+        The ``artifacts.changes`` listener the dashboard server subscribes at start. It fires
+        AFTER the write, whoever wrote: the agent's ``artifact_update`` or ``image_generate`` in
+        a chat (the Iterate panel's among them), a workflow step, another tab, a revert. The
+        artifact page used to learn of a new version from the chat's ``tool_call`` frame,
+        which is sent when the model asks for the call, before its approval and before the
+        write, so the page re-read the old version and never read again.
+
+        The hint names the kind only, never the artifact: a page that shows artifacts re-reads
+        what it shows. Safe from any thread, like every broadcast (the agent's tools write from
+        an executor thread).
+        """
+        self.push_refresh("artifacts")
 
     def push_update_progress(self, step: str, detail: str = "") -> None:
         """Broadcast an update progress event to all connected clients.
