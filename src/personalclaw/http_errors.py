@@ -738,6 +738,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # field and the WIRE type it expected — never the caller's value, which may be arbitrarily
     # large — e.g. "draft must be a string, got object".
     "invalid_field_type": "A request field carries a value of the wrong type for that field.",
+    # ── what a drafted reply should say (handlers_inbox.api_inbox_draft) ──
+    # The owner's instruction for one draft is bounded
+    # (`inbox_service.DRAFT_INSTRUCTIONS_MAX_CHARS`) and refused before the model runs. The reply
+    # panel's field stops at the same limit, so a caller meets this code only by sending past it,
+    # and the site's message names the limit.
+    "instructions_too_long": (
+        "What the reply should say is longer than the drafting limit. Shorten it and "
+        "generate the draft again."
+    ),
     # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
     # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
     # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system

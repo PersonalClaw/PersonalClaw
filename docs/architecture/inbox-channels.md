@@ -23,9 +23,9 @@ against core protocols). Paths are relative to
 - **AI drafts** write on behalf of the operator (the `dashboard.user_name`
   identity), not the bot. The reply panel's "What should the reply say?" field is the
   owner's instruction for one draft: `POST /api/inbox/{id}/draft {"instructions"}` (text of
-  at most `DRAFT_INSTRUCTIONS_MAX_CHARS`) hands it to the model after the `inbox_draft`
-  prompt, outside the fence around the sender's text, so it is followed whatever prompt is
-  bound for drafting.
+  at most `DRAFT_INSTRUCTIONS_MAX_CHARS`; longer is refused with `instructions_too_long`
+  before the model runs) hands it to the model after the `inbox_draft` prompt, outside the
+  fence around the sender's text, so it is followed whatever prompt is bound for drafting.
 - **Sources** — `inbox_providers/` ships native push + filesystem sources;
   the seam is entry-point discoverable (`provider_registry.py`) and apps
   contribute their own. A **channel app is expected to register one**: the
