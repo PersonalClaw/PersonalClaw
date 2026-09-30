@@ -1,7 +1,8 @@
 """Tests for incognito/temporary session support.
 
-Non-persistent sessions disable memory consolidation while keeping
-conversation log persistence intact for tab recovery and gateway restart.
+Non-persistent sessions disable memory consolidation. An incognito chat keeps its
+conversation log for tab recovery and gateway restart; a temporary chat keeps it only while
+its session runs (tests/test_a_temporary_chat_is_forgotten_when_its_session_ends.py).
 """
 
 import json as _json
@@ -235,19 +236,20 @@ class TestResumeFromHistory:
         assert "dashboard:e1" in state._restricted_keys
 
     @pytest.mark.asyncio
-    async def test_resume_restores_temporary(self, tmp_path, monkeypatch):
+    async def test_a_temporary_chat_whose_session_ended_is_not_resumed(self, tmp_path, monkeypatch):
+        """Not resumed at all, so it can never come back as a chat that reads or writes memory:
+        a temporary chat not running in this gateway has ended, and is forgotten."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         _write_session(state.conversation_log, "t1", [("user", "hi")], memory_mode="temporary")
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post("/api/chat/sessions/t1/resume", json={"key": "t1"})
-            data = await resp.json()
 
-        assert data["memory_mode"] == "temporary"
-        assert state._sessions["t1"].memory_mode == "temporary"
-        assert state._sessions["t1"].blocks_reads is True
-        assert "dashboard:t1" in state._restricted_keys
+        assert resp.status == 404
+        assert "t1" not in state._sessions
+        assert "dashboard:t1" not in state._restricted_keys
+        assert not state.conversation_log.has_log("t1")
 
     @pytest.mark.asyncio
     async def test_resume_persistent_leaves_restricted_keys_empty(self, tmp_path, monkeypatch):

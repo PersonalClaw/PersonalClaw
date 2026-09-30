@@ -901,5 +901,5 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/ws` — single multiplexed WebSocket for all real-time events.
 - `GET /api/ws/terminal/{session_id}` — WebSocket PTY for the built-in CLI panel.
 - `POST /confirm` — refused, always: only you confirm a control-bridge action.
-- `GET /mcp` — `GET /mcp` → 405. No SSE stream in v1 (spec-permitted).
+- `GET /mcp` — `GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the
 - `POST /mcp` — _(no summary)_

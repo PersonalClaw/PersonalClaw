@@ -9,10 +9,10 @@ import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './memoryModeCopy'
 // for the chat found it in neither the chat list nor its search: both keep incognito and temporary
 // chats out on purpose (`api_chat_sessions` skips them live and on disk, and `search_sessions`
 // and the search index refuse them — "restricted sessions promise to stay out of history"). What
-// IS true is that the transcript is still written: `save_session_to_history` saves every mode,
-// pinned by `test_restricted_session_still_saves_conversation_log`. The temporary notice had the
-// opposite fault, "forgotten when the session ends", about a transcript that stays and is restored
-// on reopen.
+// IS true of an incognito chat is that its transcript is still written. A Temporary chat promises
+// more, that it is forgotten when its session ends, and the gateway keeps that promise: the last
+// save before it stops deletes the chat instead, the next start deletes any it left behind, and
+// nothing reopens one (`dashboard/chat_forget.py`).
 
 const read = (p: string): string => readFileSync(join(process.cwd(), p), 'utf8')
 const GATEWAY = join('..', 'src', 'personalclaw')
@@ -27,21 +27,26 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(page).not.toMatch(/forgotten when the session ends|Forget when the session ends/)
   })
 
-  it('each notice says both halves: out of the history and its search, yet the transcript is kept', () => {
+  it('each notice says both halves: out of the history and its search, and what is kept', () => {
     for (const [mode, text] of Object.entries(MEMORY_MODE_NOTICE)) {
-      expect(text, mode).toContain('The chat stays out of your chat history and search')
-      expect(text, mode).toContain('PersonalClaw still keeps its transcript')
+      expect(text, mode).toMatch(/stays out of your chat history and search/)
     }
     expect(MEMORY_MODE_NOTICE.incognito).toContain('memory is still read for context')
+    expect(MEMORY_MODE_NOTICE.incognito).toContain('PersonalClaw still keeps its transcript')
     expect(MEMORY_MODE_NOTICE.temporary).toContain('memory is neither read nor written')
+    expect(MEMORY_MODE_NOTICE.temporary).toContain('this chat is forgotten when its session ends')
+    expect(MEMORY_MODE_NOTICE.temporary).toContain('its messages and the files attached to it are deleted')
+    expect(MEMORY_MODE_NOTICE.temporary).not.toMatch(/keeps its transcript/)
   })
 
-  it('no mode promises the chat a place in the history, or that it is forgotten', () => {
-    const words = [
-      ...Object.values(MEMORY_MODE_NOTICE),
-      ...MEMORY_MODES.filter((m) => m.id !== 'persistent').map((m) => m.hint),
-    ]
-    for (const text of words) expect(text).not.toMatch(/saved in your history|forgot|forget/i)
+  it('no mode promises the chat a place in the history, and only Temporary says it is forgotten', () => {
+    const incognito = [MEMORY_MODE_NOTICE.incognito, MEMORY_MODES.find((m) => m.id === 'incognito')!.hint]
+    for (const text of incognito) expect(text).not.toMatch(/saved in your history|forgot|forget/i)
+    const temporary = [MEMORY_MODE_NOTICE.temporary, MEMORY_MODES.find((m) => m.id === 'temporary')!.hint]
+    for (const text of temporary) {
+      expect(text).not.toMatch(/saved in your history/)
+      expect(text).toMatch(/forgotten when (its|the) session ends/)
+    }
   })
 
   it('the chat page states none of it itself: the picker and the notice read the owner', () => {
@@ -51,11 +56,28 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(page, 'a mode sentence spelled at the call site again').not.toMatch(/'(Incognito|Temporary) — /)
   })
 
+  it('the chat page keeps no copy of a Temporary chat that outlives the page', () => {
+    const page = strip(read('src/pages/ChatPage.tsx'))
+    // The one writer of the transcript cache persists every mode but Temporary to session storage.
+    expect(page).toMatch(/writeQuery\(detailKey\(key\), d, d\.memory_mode !== 'temporary'\)/)
+    expect(page.match(/writeQuery\(detailKey\(/g)?.length, 'a second writer of the transcript cache').toBe(1)
+    // The first message of a new chat is seeded with its mode, so that seed is not persisted either.
+    expect(page).toMatch(/messages: seedMessages, running: false, memory_mode: memoryMode \}/)
+    // A chat that is gone drops what the page held of it.
+    expect(page).toMatch(/status === 404\) \{ invalidateKeys\(detailKey\(sessionId\)\); setMissing\(true\) \}/)
+  })
+
   it('the backend facts the notices rest on still hold', () => {
     const handlers = read(join(GATEWAY, 'dashboard', 'chat_handlers.py'))
     // The chat list skips both modes, for resident chats and for chats read off disk.
     expect(handlers.match(/memory_mode[^\n]*in \("incognito", "temporary"\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
     const history = read(join(GATEWAY, 'history.py'))
     expect(history, 'content search refuses them').toMatch(/memory_mode"\) in \("incognito", "temporary"\):\s*\n\s*continue/)
+    // A Temporary chat is forgotten, not saved, when its gateway stops; the next start forgets
+    // any a crash left; a read of one that ended forgets it and finds nothing.
+    const persistence = read(join(GATEWAY, 'dashboard', 'chat_persistence.py'))
+    expect(persistence).toMatch(/memory_mode == TEMPORARY:\s*\n\s*forget_temporary_chat\(/)
+    expect(persistence).toMatch(/forget_ended_temporary_chats\(state\)/)
+    expect(persistence.match(/if forget_if_ended\(state, /g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 })

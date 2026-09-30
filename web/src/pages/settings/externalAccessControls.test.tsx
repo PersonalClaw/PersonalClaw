@@ -287,4 +287,25 @@ describe('the page says when an integration token stopped working', () => {
     expect(screen.getByText(/^token stopped working /)).toBeTruthy()
     expect(screen.getAllByText('expired')).toHaveLength(1)
   })
+
+  it('a control bridge that is on, with a token, and not listening yet says it starts at the next start', async () => {
+    // Every surface on the dashboard's port serves from its next request. The bridge listens on a
+    // port of its own, started with the gateway, so one turned on while PersonalClaw runs is the
+    // one surface that can be on and silent — and the row says so instead of reading as serving.
+    const bridge = {
+      surface: 'bridge', enabled: true, allow_remote: false, token_configured: true,
+      token_problem: '', loopback_only: true,
+    }
+    externalAccess.mockResolvedValue({ ...STATE, surfaces: [{ ...bridge, listening: false }] })
+    const view = render(<ExternalAccessPanel />)
+    const pill = await screen.findByText('not serving')
+    expect(pill.getAttribute('title')).toBe(
+      'On, but not serving: it starts listening the next time PersonalClaw starts.',
+    )
+    view.unmount()
+    externalAccess.mockResolvedValue({ ...STATE, surfaces: [{ ...bridge, listening: true }] })
+    render(<ExternalAccessPanel />)
+    await screen.findByText('Requests per second')
+    expect(screen.queryByText('not serving')).toBeNull()
+  })
 })

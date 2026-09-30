@@ -326,7 +326,14 @@ describe('two more bodies: one corrected, one confirmed', () => {
     expect(web('pages/ChatPage.tsx')).toContain('and its history will be permanently removed.')
     const h = py('dashboard/chat_handlers.py')
     const del = h.slice(h.indexOf('async def api_chat_session_delete'))
-    expect(del.slice(0, 6000), 'the on-disk artifacts are purged').toMatch(
+    // The handler hands the purge to the one owner of forgetting a chat (the end of a Temporary chat
+    // uses it too), so the claim is verified in the caller AND in what it calls.
+    expect(del.slice(0, 6000), 'the handler purges what the chat persisted').toMatch(
+      /purge_chat\(\s*state,\s*history_key,/,
+    )
+    const forget = py('dashboard/chat_forget.py')
+    const purge = forget.slice(forget.indexOf('def purge_chat('))
+    expect(purge.slice(0, 3000), 'the on-disk artifacts are purged').toMatch(
       /conversation_log\.delete_session\(history_key\)/,
     )
     // 🪤 And the reason the claim is worth pinning rather than assuming: the handler had to grow a

@@ -8,7 +8,13 @@ import uuid
 
 from personalclaw.agent import agents_dir
 from personalclaw.atomic_write import atomic_write
+from personalclaw.chat_traces import TEMPORARY
 from personalclaw.config.loader import AppConfig
+from personalclaw.dashboard.chat_forget import (
+    forget_ended_temporary_chats,
+    forget_if_ended,
+    forget_temporary_chat,
+)
 from personalclaw.dashboard.chat_utils import (
     _normalize_model,
     apply_task_mode,
@@ -232,9 +238,15 @@ def save_all_sessions_to_history(state: DashboardState) -> None:
 
     Called on shutdown and before a self-update restart. ``final`` because no turn gets to
     finish after it: an answer still streaming is written as far as the user saw it.
+
+    A Temporary chat's session ends here, so it is forgotten instead of saved: its transcript,
+    its files and its uploads are deleted (``chat_forget.forget_temporary_chat``).
     """
     for session in list(state._sessions.values()):
         try:
+            if session.memory_mode == TEMPORARY:
+                forget_temporary_chat(state, session, why="its gateway stopped")
+                continue
             save_session_to_history(state, session, force=True, final=True)
         except Exception:
             logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
@@ -447,6 +459,9 @@ def _rehydrate_session_from_history(
     # No metadata → session was never persisted. Don't create a phantom session.
     if not meta:
         return None
+    # A Temporary chat that is not running here has ended: it is forgotten, never reopened.
+    if forget_if_ended(state, session_name):
+        return None
     if meta.get("closed") and not include_archived:
         return None
     try:
@@ -585,6 +600,10 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
     """
     if name in state._sessions:
         return True
+    # A Temporary chat whose session ended exists no more, whatever is left on disk: a send to it
+    # must not mint it again (`chat_forget.forget_if_ended` forgets what is left).
+    if forget_if_ended(state, name):
+        return False
     try:
         log = state.conversation_log
         if log is None:
@@ -598,9 +617,15 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
 def restore_recent_sessions(
     state: DashboardState, window_minutes: int = 30, *, folders_only: bool = False
 ) -> int:
-    """Restore sessions as chat sessions."""
+    """Restore sessions as chat sessions.
+
+    The start's pass over the chats the last gateway left, so it first forgets every Temporary
+    one: their sessions ended with that gateway, however it ended
+    (``chat_forget.forget_ended_temporary_chats``).
+    """
     if not state.conversation_log:
         return 0
+    forget_ended_temporary_chats(state)
     cutoff = time.time() - (window_minutes * 60) if window_minutes > 0 else None
     restored = 0
 
@@ -620,6 +645,8 @@ def restore_recent_sessions(
         if session_name in state._sessions:
             continue
         meta = state.conversation_log.get_metadata(key)
+        if meta.get("memory_mode") == TEMPORARY:
+            continue  # forgotten above; one that could not be deleted is still not restored
         has_folder = bool(meta.get("folder_id"))
         has_pin = bool(meta.get("pinned"))
         if folders_only and not has_folder and not has_pin:
@@ -734,6 +761,10 @@ def save_session_to_history(
     """
     msgs = messages if messages is not None else session.messages
     if not state.conversation_log:
+        return
+    # A Temporary chat no longer running here has ended and is forgotten (`chat_forget`): a save
+    # still in flight for it, the flush loop's say, must not write its transcript back.
+    if session.memory_mode == TEMPORARY and state._sessions.get(session.key) is not session:
         return
     # Save back under the key this session is actually persisted under — the one owner
     # of on-disk identity (a channel-provider thread keeps its own bare key; a dashboard
@@ -927,6 +958,12 @@ def save_session_to_history(
         )
         if _creator:
             meta_line[CREATED_BY_APP_META_KEY] = _creator
+        # Where a chat brought over from another tool came from — written once by the importer,
+        # and nothing a live chat does changes it. Setup reads it to know the chat is the one it
+        # brought over (`onboarding_import.writers._plan_conversation`), so a pin, a folder or an
+        # archive that dropped it made setup call the chat someone else's.
+        if existing_meta.get("imported_from"):
+            meta_line["imported_from"] = existing_meta["imported_from"]
         # A message-less session is only worth a file if something was written to it AFTER
         # it was created. Every key below is one the CREATE path itself populates, so a
         # meta line carrying nothing else describes a pristine empty tab — and minting a

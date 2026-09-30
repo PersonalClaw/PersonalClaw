@@ -5,13 +5,15 @@ import type { MemoryMode } from '../../lib/api'
  *
  *  Every clause is a backend fact. Reads: `blocks_reads` is `memory_mode == 'temporary'` alone
  *  (state.py), so incognito injects memory context as a persistent chat does and only its writes
- *  are suppressed. History: both modes are kept out of the chat list and its search, yet the
- *  transcript is still saved, and a reopened chat is restored from it — so neither "saved in your
- *  history" nor "forgotten" is true, and each notice says both halves. `memoryModeNoticeIsTrue.
- *  test.ts` holds these words to those facts. */
+ *  are suppressed. History: both modes are kept out of the chat list and its search. An incognito
+ *  chat's transcript is still saved, and a reopened one is restored from it. A Temporary chat's
+ *  transcript lasts only while its session runs (a reload keeps it): when the gateway stops or
+ *  restarts, however it stops, the transcript and the files attached to it are deleted and the
+ *  chat never opens again (`dashboard/chat_forget.py`). `memoryModeNoticeIsTrue.test.ts` holds
+ *  these words to those facts. */
 export const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
   { id: 'persistent', label: 'Persistent', hint: 'Remember across sessions' },
-  { id: 'temporary', label: 'Temporary', hint: 'No memory read or written' },
+  { id: 'temporary', label: 'Temporary', hint: 'No memory read or written, and forgotten when the session ends' },
   { id: 'incognito', label: 'Incognito', hint: 'Reads memory, writes nothing back' },
 ]
 
@@ -22,6 +24,7 @@ export const MEMORY_MODE_NOTICE: Record<Exclude<MemoryMode, 'persistent'>, strin
     'Incognito — memory is still read for context, but nothing from this chat is written back to it. '
     + 'The chat stays out of your chat history and search, though PersonalClaw still keeps its transcript.',
   temporary:
-    'Temporary — memory is neither read nor written. '
-    + 'The chat stays out of your chat history and search, though PersonalClaw still keeps its transcript.',
+    'Temporary — memory is neither read nor written, and this chat is forgotten when its session ends: '
+    + 'when PersonalClaw stops or restarts, its messages and the files attached to it are deleted. '
+    + 'Until then it stays out of your chat history and search.',
 }

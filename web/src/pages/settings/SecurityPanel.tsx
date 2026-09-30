@@ -27,6 +27,7 @@ import { PanelHeader, Section, SavedToast, Row, RowGroup, ToggleRow, NumberRow, 
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
+import { absTime } from '../schedule/scheduleMeta'
 
 /** Security posture → /api/security/stats (counts) + /api/security/denied-commands
  *  (the bash denylist: always-on baseline shown read-only with its verified state; user
@@ -189,8 +190,14 @@ function SignInLifetime() {
     if (!data) return
     setStored(typeof data.session_ttl === 'string' && data.session_ttl ? data.session_ttl : '30d')
   }, [data])
+  // This browser's own sign-in, from the one list (Settings → Devices reads the same query). A link
+  // `personalclaw token` printed carries its own lifetime, which the choice here does not reach —
+  // and it is the only door a container install has, so the browser says when it ends.
+  const { data: devices, error: devicesError } = useQuery('settings:devices', () => api.devices())
+  const here = devices?.find((d) => d.current)
+  const byLink = here && here.issuer === 'token' && here.expires_at > 0 ? here : undefined
   const label = 'Sign-ins last'
-  const hint = 'How long a browser stays signed in after a password, a device code, a pairing, or the link the gateway opens at start, before it must sign in again. At most 90 days: the longer a sign-in keeps working, the longer anyone who copies it can use your dashboard. A change applies to the next sign-in; a device already signed in keeps the lifetime it signed in with.'
+  const hint = 'How long a browser stays signed in after a password, a device code, a pairing, or the link the gateway opens at start, before it must sign in again. At most 90 days: the longer a sign-in keeps working, the longer anyone who copies it can use your dashboard. A change applies to the next sign-in; a device already signed in keeps the lifetime it signed in with. A link from personalclaw token keeps its own lifetime instead: 20 hours, unless it was made with --ttl (at most 90 days).'
 
   if (!data && error) {
     return (
@@ -243,6 +250,14 @@ function SignInLifetime() {
               <ShieldAlert size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />
               <span>{`auth.session_ttl is “${current}”, which is not a length of time, so every sign-in lasts the 30-day default. Choose a lifetime.`}</span>
             </p>
+          ) : null}
+          {byLink && (
+            <p data-type="body-s" className="mt-s text-on-surface-low">
+              {`This browser signed in with a link from personalclaw token, so it stays signed in until ${absTime(byLink.expires_at)}: the link's own lifetime, not the one chosen here. To stay signed in longer, open a link from personalclaw token --ttl 30d.`}
+            </p>
+          )}
+          {!devices && devicesError ? (
+            <FieldError>{"Couldn't read this browser's sign-in, so when it ends isn't shown here."}</FieldError>
           ) : null}
         </Field>
       </RowGroup>
@@ -481,6 +496,13 @@ function ChildProcessCeilings({ note, onScopesSaved }: {
   )
 }
 
+/** Why there is no OS keychain to keep credentials in, keyed by the read's `keychain_missing`: the
+ *  sentence the unavailable switch carries, in the owner's terms rather than a backend's. */
+const KEYCHAIN_MISSING: Record<string, string> = {
+  not_installed: 'This install of PersonalClaw has no keychain support, so there is no OS keychain to keep credentials in. Installing PersonalClaw with its keychain extra (personalclaw[keychain]) adds it.',
+  no_service: 'No OS keychain answers on this machine: a container has none, and neither does a computer whose secret service is not running.',
+}
+
 /** Settings -> Security -> Credential storage.
  *
  *  Two controls with deliberately different weights. The TOGGLE is a plain config write: it
@@ -556,6 +578,10 @@ function CredentialStoreEditor() {
   }
 
   const inKeychain = cs.backend === 'keychain'
+  // Where no keychain answers, asking for one changes nothing: the switch is unavailable and says
+  // why. One asked for already (earlier, or on another machine) can still be turned off.
+  const missing = KEYCHAIN_MISSING[cs.keychain_missing] ?? ''
+  const cannotAsk = missing !== '' && cs.requested !== 'keychain'
   return (
     <Section title="Credential storage" hint="Where this instance keeps provider credentials. The default is the .env file in this instance's home folder, at mode 0600; the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Locker) is an opt-in upgrade. A machine with no usable secret service keeps using .env and says so — there is never a third location.">
       <div className="flex flex-col gap-4">
@@ -570,16 +596,16 @@ function CredentialStoreEditor() {
             <div data-type="body-s" className="mt-0.5 text-on-surface-low">
               {cs.keychain_keys} in the keychain · {cs.pending} still in .env
             </div>
-            {cs.blocked && cs.requested === 'keychain' && (
+            {missing && cs.requested === 'keychain' && (
               <div data-type="body-s" className="mt-1 text-error">
-                The keychain was requested but no usable OS keyring backend answered on this
-                machine. Credentials stay in .env at mode 0600.
+                {`${missing} Credentials stay in .env at mode 0600. Turn “Store credentials in the OS keychain” off to stop asking for one.`}
               </div>
             )}
           </div>
         </div>
         <div className="flex items-start gap-2.5 rounded-lg bg-surface-container px-3 py-2.5">
-          <Toggle on={cs.requested === 'keychain'} disabled={busy}
+          <Toggle on={cs.requested === 'keychain'} disabled={busy || cannotAsk}
+            disabledReason={cannotAsk ? `${missing} Credentials stay in .env at mode 0600.` : undefined}
             label="Store credentials in the OS keychain"
             onChange={async (on) => {
               setBusy(true); setErr(''); setNote('')
@@ -589,7 +615,11 @@ function CredentialStoreEditor() {
             }} />
           <span className="min-w-0">
             <span data-type="body-s" className="text-on-surface">Store credentials in the OS keychain</span>
-            <span data-type="body-s" className="block text-on-surface-low">Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below.</span>
+            <span data-type="body-s" className="block text-on-surface-low">
+              {cannotAsk
+                ? `${missing} Credentials stay in .env at mode 0600.`
+                : 'Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below.'}
+            </span>
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -597,7 +627,9 @@ function CredentialStoreEditor() {
               named rather than left to a control that silently leaves the tab order. */}
           <Button onClick={move} disabled={busy || cs.blocked || cs.pending === 0}
             disabledReason={cs.blocked
-              ? 'Turn on "Store credentials in the OS keychain" first — and this machine needs a working OS secret service'
+              ? missing
+                ? 'There is no OS keychain on this machine to move them into'
+                : 'Turn on "Store credentials in the OS keychain" first'
               : cs.pending === 0 ? 'There are no credentials left in .env to move' : undefined}>
             <KeyRound size={15} /> Move {cs.pending > 0 ? cs.pending : ''} to keychain
           </Button>

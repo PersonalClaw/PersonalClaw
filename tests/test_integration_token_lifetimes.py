@@ -94,7 +94,7 @@ _ROUTES = {
 async def _surface_client(surface: str) -> TestClient:
     app = web.Application()
     if surface == "mcp":
-        assert mcp_http.mount(app) is True
+        mcp_http.mount(app)
     elif surface == "capture":
         capture_proxy.register_routes(app)
     elif surface == "a2a":
@@ -652,6 +652,23 @@ class TestCommandLine:
         assert auth.load_surface_token("mcp") is None
         assert _cli("create", ttl="7d") == 0
         assert "It works for 7 days, until" in capsys.readouterr().out
+
+    def test_create_says_who_can_reach_the_surface_and_promises_no_config_that_widens_it(
+        self, capsys
+    ):
+        """The dashboard refuses a program's request from another address before any surface
+        reads it, so `public_url` + `allow_remote` never opened one: the closing line said they
+        did. It says what is true — this machine only, and an SSH tunnel from anywhere else — and
+        the bridge, which listens on its own port from the next start, says that."""
+        assert _cli("create", surface="mcp") == 0
+        out = capsys.readouterr().out
+        assert "It takes requests only from programs on this machine" in out
+        assert "over SSH" in out
+        assert "allow_remote" not in out and "public_url" not in out
+        assert _cli("create", surface="bridge") == 0
+        out = capsys.readouterr().out
+        assert "starts listening the next time PersonalClaw starts" in out
+        assert "allow_remote" not in out
 
     def test_show_says_until_when_and_revoke_ends_it(self, capsys):
         assert _cli("create") == 0

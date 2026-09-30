@@ -280,7 +280,8 @@ def test_memory_recall_and_approval_rule_patterns_are_masked(monkeypatch):
 
 def test_the_recall_route_masks_its_semantic_half():
     """The Memory page's recall test and the agent's `memory_recall` both read this route; its
-    fact list was masked and its recall of the same facts was not."""
+    fact list was masked and its recall of the same facts was not. The lessons it recalls beside
+    them are masked the same way."""
     from personalclaw.dashboard.handlers import memory as memory_handlers
 
     class _Svc:
@@ -293,6 +294,15 @@ def test_the_recall_route_masks_its_semantic_half():
         def recall_with_provenance(self, **kw: Any) -> list[dict[str, Any]]:
             return []
 
+        def recall_lessons(self, **kw: Any) -> list[dict[str, Any]]:
+            return [
+                {
+                    "text": f"Deploy with api_key={KEY} to staging only.",
+                    "source": "",
+                    "created_at": "",
+                }
+            ]
+
     svc = _Svc()
     request = MagicMock()
     request.query = {"q": "github"}
@@ -304,6 +314,7 @@ def test_the_recall_route_masks_its_semantic_half():
         response = asyncio.run(memory_handlers.api_memory_recall(request))
     body = json.loads(response.text)["result"]
     assert not _leaks(body) and MASK in body
+    assert "Deploy with" in body and "to staging only." in body, "the lesson is recalled, masked"
     assert "github_token" in svc.recorded, "the recall is still counted against the stored key"
 
 

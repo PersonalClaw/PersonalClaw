@@ -1755,41 +1755,20 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     # wrote the session to history with closed=True — which (a) left the raw
     # tool-result store (file contents / command output) on disk, and (b) let the
     # session RESURRECT if its URL was reopened (the rehydrate path clears `closed`).
-    # So we purge every on-disk artifact instead. The soft-close/archive path lives
-    # ONLY in /cleanup (api_chat_sessions_cleanup), which is unchanged. (history_key
-    # was resolved at the top so the disk-only path could check existence.)
-    # 1) the JSONL history file (keyed by the canonical history key).
-    try:
-        if state.conversation_log:
-            state.conversation_log.delete_session(history_key)
-    except Exception:
-        logger.warning("hard-delete: history file removal failed for %s", name, exc_info=True)
-    # 2) the per-session workspace dir(s) incl. the tool_results raw store. The store
-    #    is keyed by the canonical (dashboard:-prefixed) session key during a turn,
-    #    but the bare id is also used by some paths — purge both forms.
-    try:
-        from personalclaw.tool_providers import result_store
+    # So every on-disk artifact is purged instead (`chat_forget.purge_chat`: the transcript,
+    # the per-session workspace, the turn checkpoints — under every form of the key they were
+    # written with), and a Temporary chat's attached files go with it, as at the end of its
+    # session. The soft-close/archive path lives ONLY in /cleanup (api_chat_sessions_cleanup),
+    # which is unchanged. (history_key was resolved at the top so the disk-only path could
+    # check existence.)
+    from personalclaw.dashboard.chat_forget import purge_chat, temporary_attachments
 
-        for _sid in {history_key, name}:
-            result_store.purge_session(_sid)
-    except Exception:
-        logger.warning("hard-delete: workspace purge failed for %s", name, exc_info=True)
-    # 2b) the turn-checkpoint tree — pre-edit copies of the
-    #     user's workspace files. A hard delete that left these behind would keep bodies
-    #     of files the conversation that touched them no longer exists to explain, and the
-    #     store's cap is per session, so an undeleted tree is never reclaimed. Same
-    #     both-key-forms purge as the result store: the store is keyed by whatever
-    #     session key the tool handler saw.
-    try:
-        from personalclaw import turn_checkpoints
-
-        keys = {history_key, name}
-        if session is not None:
-            keys.add(session.key)
-        for _sid in keys:
-            turn_checkpoints.prune_session(_sid)
-    except Exception:
-        logger.warning("hard-delete: checkpoint purge failed for %s", name, exc_info=True)
+    purge_chat(
+        state,
+        history_key,
+        keys={history_key, name, *([session.key] if session is not None else [])},
+        attachments=temporary_attachments(state, history_key, session),
+    )
     state._restricted_keys.discard(f"dashboard:{name}")
     # Kill the per-tab session to free resources.
     await state.sessions.remove(history_key)
@@ -1802,7 +1781,8 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/cleanup — bulk-archive inactive sessions to history.
 
     Body: ``{"max_inactive_days": 3, "active_session": "chat-1-123"}``
-    Skips the active session and pinned sessions.
+    Skips the active session and pinned sessions. An inactive Temporary chat is forgotten
+    rather than archived: its session ends here.
     """
     state: DashboardState = request.app["state"]
     body = await json_object_body(request)
@@ -1873,6 +1853,9 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
                 "active_is_stale": active_is_stale,
             }
         )
+    from personalclaw.chat_traces import TEMPORARY
+    from personalclaw.dashboard.chat_forget import forget_temporary_chat
+
     archived: list[str] = []
     failed: list[str] = []
     _tasks_to_cancel: list[asyncio.Task] = []
@@ -1880,15 +1863,20 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         removed = state._sessions.pop(name, None)
         if not removed:
             continue
-        try:
-            save_session_to_history(state, removed, closed=True)
-        except Exception:
-            logger.error("Cleanup: failed to archive session %s", name, exc_info=True)
-            state._sessions[name] = removed
-            failed.append(name)
-            continue
+        if removed.memory_mode == TEMPORARY:
+            # Evicting a Temporary chat ends its session, and a Temporary chat is forgotten
+            # when its session ends: it has no transcript to be reloaded from.
+            forget_temporary_chat(state, removed, why="it was evicted as inactive")
         else:
-            state._restricted_keys.discard(f"dashboard:{name}")
+            try:
+                save_session_to_history(state, removed, closed=True)
+            except Exception:
+                logger.error("Cleanup: failed to archive session %s", name, exc_info=True)
+                state._sessions[name] = removed
+                failed.append(name)
+                continue
+            else:
+                state._restricted_keys.discard(f"dashboard:{name}")
         # Session cleanup is best-effort — history is already written
         try:
             await state.sessions.remove(_history_key_for(name))

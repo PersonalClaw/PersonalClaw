@@ -605,3 +605,21 @@ def check_origin(
         if is_loopback(parsed_host):
             return True
     return False
+
+
+def origin_refusal(request: web.Request) -> web.Response:
+    """The 403 for a state-changing request :func:`check_origin` refused, said for what it was.
+
+    A program on another machine calling one of the inbound surfaces (``/mcp``, ``/v1/…``,
+    ``/a2a/…``, ``/capture/…``) sends no browser origin at all, so "the request origin is not
+    allowed" told it neither why nor what would allow it: it is told that the surfaces take
+    requests only from this machine, and how to reach them (``inbound.auth.off_machine_refusal``).
+    Every other refusal is the browser-origin one. The code is the same for both, so a client
+    that branches on it still can.
+    """
+    from personalclaw.http_errors import json_error
+    from personalclaw.inbound.auth import off_machine_refusal
+
+    return json_error(
+        "auth_origin_not_allowed", message=off_machine_refusal(request) or None, status=403
+    )

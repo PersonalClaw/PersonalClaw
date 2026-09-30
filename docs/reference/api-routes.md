@@ -1058,7 +1058,7 @@ The remaining 7 registrations: real-time transport and the loopback control brid
 | `GET` | `/api/ws` | single multiplexed WebSocket for all real-time events. |
 | `GET` | `/api/ws/terminal/{session_id}` | WebSocket PTY for the built-in CLI panel. |
 | `POST` | `/confirm` | refused, always: only you confirm a control-bridge action. |
-| `GET` | `/mcp` | `GET /mcp` → 405. No SSE stream in v1 (spec-permitted). |
+| `GET` | `/mcp` | `GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the |
 | `POST` | `/mcp` | _(no summary)_ |
 
 ---

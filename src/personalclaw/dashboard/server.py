@@ -845,10 +845,10 @@ async def start_dashboard(
                 # text body parsed as JSON became {} — which the login page then
                 # reported as "Wrong username or password." for a correct password
                 # from any non-loopback origin. Same code the auth routes return for
-                # their own origin rejections.
-                from personalclaw.http_errors import json_error
+                # their own origin rejections; `origin_refusal` says what was refused.
+                from personalclaw.dashboard.origin import origin_refusal
 
-                return json_error("auth_origin_not_allowed", status=403)
+                return origin_refusal(request)
         return await handler(request)  # type: ignore[operator]
 
     # Generate per-session secret for local app / IPC authentication.

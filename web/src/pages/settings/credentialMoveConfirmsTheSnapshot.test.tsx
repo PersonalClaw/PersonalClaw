@@ -27,6 +27,7 @@ const STATE = {
   backend: 'keychain' as const,
   requested: 'keychain' as const,
   blocked: false,
+  keychain_missing: '' as '' | 'not_installed' | 'no_service',
   pending_keys: ['SH2_ALPHA', 'SH2_BETA'],
   pending: 2,
   keychain_keys: 0,
@@ -50,6 +51,7 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
     ...STATE, ...opts.state, ok: true, reason: '', moved: ['SH2_ALPHA'], already: [], failed: [],
   }))
   const confirmSpy = vi.fn((_req: ConfirmRequest) => Promise.resolve(opts.confirmed))
+  const setKeychain = vi.fn((_on: boolean) => Promise.resolve({}))
   vi.doMock('../../ui/dialog', () => ({ confirm: confirmSpy }))
   vi.doMock('../../lib/api', () => ({
     api: {
@@ -71,7 +73,7 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
       credentialStore: () => Promise.resolve({ ...STATE, ...opts.state }),
       migrateCredentialsToKeychain: migrate,
       rollbackCredentialsToKeychain: rollback,
-      setCredentialKeychain: () => Promise.resolve({}),
+      setCredentialKeychain: setKeychain,
       addDeniedCommand: () => Promise.resolve({}),
       removeDeniedCommand: () => Promise.resolve({}),
       setSecurityEgress: () => Promise.resolve({}),
@@ -89,7 +91,7 @@ async function mount(opts: { confirmed: boolean; state?: StateOverride } = { con
     render(<SecurityPanel />)
     await new Promise((res) => setTimeout(res, 0))
   })
-  return { migrate, rollback, confirmSpy }
+  return { migrate, rollback, confirmSpy, setKeychain }
 }
 
 afterEach(() => { cleanup(); vi.resetModules() })
@@ -200,13 +202,19 @@ describe('the dialog body is TRUE of the handler', () => {
 
 describe('the panel cannot offer a move that would refuse', () => {
   it('a blocked backend disables the button and says why', async () => {
-    await mount({ confirmed: true, state: { blocked: true, backend: 'dotenv' } })
+    await mount({ confirmed: true, state: { blocked: true, backend: 'dotenv', keychain_missing: 'no_service' } })
     const btn = screen.getByRole('button', { name: /move 2 to keychain/i })
     // `disabledReason` keeps the control REACHABLE (aria-disabled) so a keyboard user learns
     // the precondition instead of tabbing past a dead button.
     expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect(btn.getAttribute('title')).toMatch(/Store credentials in the OS keychain/)
-    expect(screen.getByText(/no usable OS keyring backend answered/i)).toBeTruthy()
+    expect(btn.getAttribute('title')).toBe('There is no OS keychain on this machine to move them into')
+    expect(screen.getByText(/No OS keychain answers on this machine: a container has none/)).toBeTruthy()
+  })
+
+  it('a keychain not asked for yet names the switch as the precondition', async () => {
+    await mount({ confirmed: true, state: { blocked: true, backend: 'dotenv', requested: 'dotenv' } })
+    const btn = screen.getByRole('button', { name: /move 2 to keychain/i })
+    expect(btn.getAttribute('title')).toBe('Turn on "Store credentials in the OS keychain" first')
   })
 
   it('nothing pending disables it with a different reason — the vacuity floor', async () => {
@@ -221,5 +229,48 @@ describe('the panel cannot offer a move that would refuse', () => {
     cleanup()
     await mount({ confirmed: true, state: { rollback_available: true } })
     expect(screen.getByRole('button', { name: /roll back/i })).toBeTruthy()
+  })
+})
+
+describe('the keychain switch where there is no keychain', () => {
+  const noKeychain = { blocked: true, backend: 'dotenv' as const, requested: 'dotenv' as const }
+
+  it('is unavailable, and says why in words, where no secret service answers', async () => {
+    const { setKeychain } = await mount({ confirmed: true, state: { ...noKeychain, keychain_missing: 'no_service' } })
+    const sw = screen.getByRole('switch', { name: 'Store credentials in the OS keychain' })
+    expect(sw.getAttribute('aria-disabled')).toBe('true')
+    expect(sw.getAttribute('title')).toBe(
+      'No OS keychain answers on this machine: a container has none, and neither does a computer '
+      + 'whose secret service is not running. Credentials stay in .env at mode 0600.',
+    )
+    // Said on the page too, not only on hover.
+    expect(screen.getByText(/^No OS keychain answers on this machine: a container has none/)).toBeTruthy()
+    await act(async () => { sw.click(); await new Promise((r) => setTimeout(r, 0)) })
+    expect(setKeychain, 'an unavailable switch asks for nothing').not.toHaveBeenCalled()
+  })
+
+  it('names an install with no keychain support for what it is', async () => {
+    await mount({ confirmed: true, state: { ...noKeychain, keychain_missing: 'not_installed' } })
+    const sw = screen.getByRole('switch', { name: 'Store credentials in the OS keychain' })
+    expect(sw.getAttribute('aria-disabled')).toBe('true')
+    expect(sw.getAttribute('title')).toMatch(/^This install of PersonalClaw has no keychain support/)
+  })
+
+  it('a keychain asked for where none answers can still be turned off, and says so', async () => {
+    const { setKeychain } = await mount({
+      confirmed: true, state: { ...noKeychain, requested: 'keychain', keychain_missing: 'no_service' },
+    })
+    const sw = screen.getByRole('switch', { name: 'Store credentials in the OS keychain' })
+    expect(sw.getAttribute('aria-disabled')).toBeNull()
+    expect(screen.getByText(/Turn “Store credentials in the OS keychain” off to stop asking for one\./)).toBeTruthy()
+    await act(async () => { sw.click(); await new Promise((r) => setTimeout(r, 0)) })
+    expect(setKeychain).toHaveBeenCalledWith(false)
+  })
+
+  it('stays a plain switch where a keychain answers', async () => {
+    await mount({ confirmed: true, state: { backend: 'dotenv', requested: 'dotenv', blocked: true } })
+    const sw = screen.getByRole('switch', { name: 'Store credentials in the OS keychain' })
+    expect(sw.getAttribute('aria-disabled')).toBeNull()
+    expect(screen.getByText(/^Changes where NEW credentials are written/)).toBeTruthy()
   })
 })

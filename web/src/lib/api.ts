@@ -247,7 +247,7 @@ export interface ExternalAccessSurface {
   allow_remote: boolean
   /** Whether a usable (≥32-byte, non-reserved) token is configured. Never the token. */
   token_configured: boolean
-  /** WHY the token is unusable, when it is — the mount refusal's own reason string. */
+  /** WHY the token is unusable, when it is — the refusal's own reason string. */
   token_problem: string
   /** Whether the configured token still works: `expired` / `revoked` / `replaced` refuse THAT
    *  token while the surface stays on for registered clients, and `unavailable` means the record
@@ -257,6 +257,10 @@ export interface ExternalAccessSurface {
   token_expires_at?: number
   /** True for the control bridge, which ignores `allow_remote` by construction. */
   loopback_only: boolean
+  /** The control bridge only: whether its listener is up. It starts with the gateway, so one
+   *  turned on while the gateway runs listens from the next start. Absent for every other surface,
+   *  which serves from the next request. */
+  listening?: boolean
 }
 export interface ExternalAccessClient {
   client_id: string
@@ -4888,6 +4892,9 @@ export interface CredentialStoreState {
   backend: 'keychain' | 'dotenv'
   requested: 'keychain' | 'dotenv'
   blocked: boolean
+  /** Why no OS keychain answers here, or '' when one does: this install has no keychain support,
+   *  or no secret service answers (a container has none). The keychain switch is unavailable then. */
+  keychain_missing: '' | 'not_installed' | 'no_service'
   pending_keys: string[]
   pending: number
   keychain_keys: number

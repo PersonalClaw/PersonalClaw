@@ -5,7 +5,7 @@ a small, deliberately boring surface: **six read-only tools** over `POST /mcp`, 
 you are already talking to can ask *your* PersonalClaw what it remembers, what you have open, and
 what you asked it to do — without you copy-pasting any of it.
 
-It is off by default. Turning it on takes three commands and a restart.
+It is off by default. Turning it on takes three commands, and no restart.
 
 **Read the next section before you start.** This surface works **on the same machine only**, and
 that is not a setting you can change.
@@ -23,18 +23,19 @@ Why: the gateway's CSRF middleware runs before the MCP surface does, and it only
 with no `Origin` header when the peer is loopback. A browser always sends `Origin`; an MCP client
 is not a browser and never does. So an off-machine MCP client is refused **before** the
 `allow_remote` check ever executes. Setting both fields correctly — remote allowed, public URL
-matching the request's `Host` exactly, a valid token presented — still returns:
+matching the request's `Host` exactly, a valid token presented — still returns `403`, and the
+refusal says so (here for a client at `192.0.2.10`):
 
-```
-HTTP/1.1 403 Forbidden
-CSRF check failed: request origin not allowed.
+```json
+{"error": {"code": "auth_origin_not_allowed", "message": "PersonalClaw's MCP surface takes requests only from programs on the machine PersonalClaw runs on; this one came from 192.0.2.10. To reach it, run your client on PersonalClaw's machine and connect to 127.0.0.1, or forward a port to that machine's 127.0.0.1 over SSH and connect through the tunnel."}}
 ```
 
 That is measured, not theoretical. The security outcome is fine — remote fails closed, harder than
 designed — but the two knobs are a promise the gateway currently cannot keep.
 
-**So: run your editor on the same machine as the gateway.** If your editor is somewhere else, put
-the two machines on a private network and reach the *dashboard* instead — see
+**So: run your editor on the same machine as the gateway.** If your editor is somewhere else,
+forward a port over SSH (`ssh -L 10000:127.0.0.1:10000 you@gateway-host`) and point the client at
+`http://127.0.0.1:10000/mcp` through the tunnel, or reach the *dashboard* instead — see
 [Remote access](remote-access.md). Do not try to publish `/mcp`.
 
 ---
@@ -71,7 +72,8 @@ reason about, never as instructions to follow.
 
 Some other things worth knowing up front:
 
-- **`POST` only.** There is no SSE stream; `GET /mcp` answers `405` on purpose.
+- **`POST` only.** There is no SSE stream; `GET /mcp` answers `405` on purpose while the surface
+  is on (and `404`, like every other request, while it is off).
 - **Stateless.** No session id is issued or required.
 - **Protocol revision `2025-06-18`** (and `2024-11-05` for older pinned clients). A client asking
   for something newer gets `2025-06-18` counter-offered rather than an error, which is what lets a
@@ -105,7 +107,7 @@ Copy it into your client now — it is not shown again:
 Then enable the surface (BOTH switches — the master gate is separate):
     personalclaw config set external_access.enabled true
     personalclaw config set external_access.mcp.enabled true
-The surface is loopback-only until you set external_access.public_url + external_access.mcp.allow_remote.
+It takes requests only from programs on this machine. From another one, forward a port to this machine's 127.0.0.1 over SSH and connect through the tunnel.
 ```
 
 **Copy it now.** There is no command that prints it again — `personalclaw inbound token show mcp`
@@ -121,10 +123,6 @@ The token works for 90 days. Ask for less with `--ttl` (`--ttl 7d`); longer is r
 
 If you lose it, mint a new one (see [Rotating the token](#rotating-the-token)) — that is cheaper
 than a credential you can read back out of the CLI.
-
-> The last line of that output oversells things: `external_access.public_url` + `allow_remote` do
-> **not** get you off-machine access. See
-> [the hard limit](#the-one-hard-limit-same-machine-full-stop).
 
 ---
 
@@ -143,24 +141,19 @@ personalclaw config set external_access.mcp.enabled true   # this surface
 ✅ external_access.mcp.enabled = true
 ```
 
-If you set only the second one, every request still returns `{"error": "not found"}` — the master
-gate is off and an off surface deliberately does not confirm its own existence.
+If you set only the second one, every request still returns `{"error": {"code": "not_found", …}}`
+— the master gate is off and an off surface deliberately does not confirm its own existence.
 
 The surface fails **closed**: a missing, unreadable, or `false` flag reads as disabled, and so
-does a missing or too-short token. Both must be right or `/mcp` does not exist.
+does a missing or too-short token. Both must be right or `/mcp` answers `404` like a path that
+does not exist. Each switch is read on every request, so a running gateway takes the change at
+once — there is nothing to restart, and the order of steps 1 and 2 does not matter.
 
 ---
 
-## Step 3 — start (or restart) the gateway
+## Step 3 — check that it answers
 
-**This step is required, and skipping it is the single most likely reason your client cannot
-connect.** The `/mcp` route is registered when the gateway starts, only if the flag and the token
-are already in place. Enabling the surface under a *running* gateway changes nothing until you
-restart it — you get a bare `404: Not Found` from the web server, because the route was never
-registered at all.
-
-Start the gateway the way you normally run it — or stop and restart it, if it was already running
-when you did steps 1 and 2. Then confirm the route exists:
+With the gateway running, send it a `GET`, the one method it refuses:
 
 ```bash
 curl -i http://127.0.0.1:10000/mcp
@@ -170,8 +163,9 @@ curl -i http://127.0.0.1:10000/mcp
 HTTP/1.1 405 Method Not Allowed
 ```
 
-**`405` is the good answer** — it means the surface is mounted and telling you it is POST-only. A
-`404` here means it is not mounted: re-check steps 1–3.
+**`405` is the good answer** — it means the surface is serving and telling you it is POST-only. A
+`404` here means it is not serving yet: a switch is off or the token is missing — re-check steps
+1 and 2 (`personalclaw inbound token show mcp` says whether a token works).
 
 Replace `10000` with your gateway's port throughout this guide (`personalclaw status` prints it).
 
@@ -289,7 +283,7 @@ personalclaw config set external_access.enabled false       # all of them
 Enablement is re-checked on every request, so the surface stops answering immediately:
 
 ```json
-{"error": "not found"}
+{"error": {"code": "not_found", "message": "The addressed resource does not exist."}}
 ```
 
 Your client notices. With the SDK script above, the connection dies mid-handshake:
@@ -301,14 +295,8 @@ mcp.shared.exceptions.McpError: Session terminated
 An editor will usually just show the server as failed or offline.
 
 **Flipping the flag back to `true` brings the surface straight back, with no restart** — the check
-is per-request, so it is live in both directions. What needs a restart is *mounting the route*, and
-that only ever happens at gateway startup (step 3): if the gateway came up while the surface was
-disabled or without a valid token, the route does not exist, and no amount of flag-flipping will
-create it.
-
-The two `404`s tell you which situation you are in — a JSON `{"error": "not found"}` means the
-route is mounted and the flag is simply off, so flipping it back is enough; a plain-text
-`404: Not Found` means the route was never mounted, so you need to restart.
+is per-request, so it is live in both directions, and so is a token you create or rotate while the
+gateway runs.
 
 ---
 
@@ -357,12 +345,11 @@ A client that still sends it is told it was revoked, and when.
 
 | What you see | What it means |
 |---|---|
-| plain-text `404: Not Found` | route never mounted — the flag or token was not in place when the gateway started. Fix, then **restart** (step 3). |
-| JSON `{"error": "not found"}` | route is mounted, but a switch is off — `external_access.enabled` **or** `external_access.mcp.enabled`. Check both; the master one is easy to forget. It takes effect on the next call, no restart. |
+| `{"error": {"code": "not_found", …}}` (404) | a switch is off — `external_access.enabled` **or** `external_access.mcp.enabled` — or the surface has no working token. Check both switches (the master one is easy to forget) and `personalclaw inbound token show mcp`. A fix takes effect on the next call, no restart. |
 | `{"error": "..."}` (503) | an incident is active (`~/.personalclaw/incident.json`). Every inbound surface is suspended while unattended work is paused; resume from Settings → Guardrails. |
-| `405 Method Not Allowed` on a `GET` | correct. The surface is POST-only; this is the mounted-and-healthy signal. |
+| `405 Method Not Allowed` on a `GET` | correct. The surface is POST-only; this is the serving-and-healthy signal. |
 | `{"error": "unauthorized"}` (401) | missing, malformed, or stale `Authorization: Bearer` header. Rotate and re-copy. |
-| `CSRF check failed: request origin not allowed.` (403) | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |
+| `auth_origin_not_allowed` (403), "…takes requests only from programs on the machine PersonalClaw runs on; this one came from …" | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |
 | `{"error": "forbidden"}` (403) | the MCP surface's *own* peer refusal — same cause (not loopback), but you rarely see it, because the CSRF check above fires first. |
 | `{"error": {"code": "auth_bearer_invalid", …}}` (403) | you pointed the client at an `/api/…` path instead of `/mcp`, with this surface's token in the Bearer header. That is the *dashboard's* auth talking, not this surface's. |
 | `{"error": "rate limited"}` (429) | you exceeded the burst of 20. The SDK drops the whole transport on this — reconnect and slow down. |

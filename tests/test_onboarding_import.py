@@ -529,6 +529,39 @@ def test_conflicting_mcp_server_reports_conflict_and_keeps_existing(
     assert mcp_config_path().read_bytes() == before
 
 
+def test_a_server_you_signed_in_to_or_turned_off_scans_again_as_already_here(
+    claude_root: Path, home: Path
+) -> None:
+    """Signing in to a server, turning it or one of its tools off, and approving its calls are
+    what you did with it here, not a different server: the spec keeps each as a key beside the
+    ones that say how the server starts. Scanned again, the server reads as already here. A
+    change to how it starts (its arguments) still reads as a different one."""
+    results = [scan_source("claude_code", claude_root)]
+    run_import(results, fingerprints=_picks(results, ImportCategory.MCP_SERVERS))
+    stored = json.loads(mcp_config_path().read_text(encoding="utf-8"))
+    weather = stored["mcpServers"]["weather"]
+    weather["signIn"] = {
+        "issuer": "https://auth.example.com",
+        "tokenEndpoint": "https://auth.example.com/token",
+        "clientId": "a-client",
+        "tokens": "{{secret:PCSECRET_MCP_SIGNED_IN_EXAMPLE}}",
+    }
+    weather["disabled"] = True
+    weather["disabledTools"] = ["forecast"]
+    weather["autoApprove"] = ["current"]
+    mcp_config_path().write_text(json.dumps(stored), encoding="utf-8")
+
+    again = [scan_source("claude_code", claude_root)]
+    (item,) = again[0].by_category(ImportCategory.MCP_SERVERS)
+    assert plans(again)[item.fingerprint].state is ItemState.EXISTING
+
+    weather["args"] = ["-y", "weather-mcp", "--units", "metric"]
+    mcp_config_path().write_text(json.dumps(stored), encoding="utf-8")
+    changed = [scan_source("claude_code", claude_root)]
+    (item,) = changed[0].by_category(ImportCategory.MCP_SERVERS)
+    assert plans(changed)[item.fingerprint].state is ItemState.CONFLICT
+
+
 def test_conflicting_skill_reports_conflict_and_keeps_existing(
     claude_root: Path, home: Path
 ) -> None:

@@ -709,6 +709,11 @@ def snapshot_main(
         # export — a "full backup" that silently dropped a user's whole task board.
         # Driven off the inventory so a store added later is captured by default.
         staged_extra: list[str] = []
+        # What a running Temporary chat keeps (its transcript, working folder and attached files)
+        # stays out: the chat is forgotten when its session ends, and a snapshot would outlive it.
+        from personalclaw.chat_traces import kept_by_temporary_chats
+
+        _temporary = kept_by_temporary_chats(pc)
         for rel in _everything_paths(pc):
             src = pc / rel
             if os.path.islink(src):
@@ -722,8 +727,15 @@ def snapshot_main(
                 _derived = _derived_ignore(rel, src)
 
                 def _ignore(directory: str, contents: list[str], _d=_derived) -> set[str]:
-                    return set(_tree_ignore_dbs(_db_names)(directory, contents)) | _d(
-                        directory, contents
+                    held = (
+                        {n for n in contents if (Path(directory) / n).resolve() in _temporary}
+                        if _temporary
+                        else set()
+                    )
+                    return (
+                        set(_tree_ignore_dbs(_db_names)(directory, contents))
+                        | _d(directory, contents)
+                        | held
                     )
 
                 _copytree_safe(src, stage / rel, dirs_exist_ok=True, ignore=_ignore)

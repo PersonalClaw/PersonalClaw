@@ -333,6 +333,12 @@ longer than 90 days. Setting `auth.session_ttl` longer anywhere else is refused 
 config file that already says longer is applied as 90 days, and `personalclaw doctor` (and the
 Doctor page, under Security) says so until you fix it.
 
+A link from `personalclaw token` is the exception: it keeps its own lifetime, 20 hours unless it
+was made with `--ttl` (at most 90 days), and a browser that opens it stays signed in that long —
+which is how a container install signs in, since its gateway opens no browser at start. For a
+longer sign-in, open a link from `personalclaw token --ttl 30d`. Settings → Security says when
+the browser you are using was signed in by such a link, and until when.
+
 ### Failed attempts
 
 After `auth.lockout_threshold` failures (default 5) from one address, sign-in is refused for

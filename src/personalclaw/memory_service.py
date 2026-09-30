@@ -19,6 +19,7 @@ After M3, nothing outside L2 (provider) / L3 (this) references ``vector_store``.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -1780,8 +1781,17 @@ class MemoryService:
         """Episodic recall that carries PROVENANCE, not just text — each hit keeps
         its source, originating session, and timestamp so the agent (and the UI)
         can see *where* and *when* a memory came from, the mem-tree provenance-
-        first-retrieval property expressed over the existing episodic store."""
-        hits = self.rank_episodic(query_text=query_text, limit=limit, now=now)
+        first-retrieval property expressed over the existing episodic store.
+
+        Only memories that answer the query (``vector_memory.recallable_episode``, the rule a new
+        chat's episodic block applies too): a workflow run's spec is not one, and the vector arm's
+        nearest neighbours are not either unless they are close. Without it "dishwasher" recalled
+        eight run summaries and task records that held no word of it. Over-fetched so the rule
+        leaves ``limit`` to return when there are that many."""
+        from personalclaw.vector_memory import recallable_episode
+
+        ranked = self.rank_episodic(query_text=query_text, limit=limit * 3, now=now)
+        hits = [h for h in ranked if recallable_episode(h, query_text=query_text)][:limit]
         out: list[dict] = []
         for h in hits:
             out.append(
@@ -1990,6 +2000,46 @@ class MemoryService:
         """
         vs = self._vs
         return vs.lesson_standings(rows) if vs else {}
+
+    def recall_facts(self, *, query_text: str, limit: int = 8) -> list[dict]:
+        """The facts that answer ``query_text`` — only related ones (``rank_semantic``'s
+        ``related_only``) — each as ``{"text", "created_at"}``, the text rendered as the fact
+        block renders it, holder and contributor included."""
+        vs = self._vs
+        if vs is None:
+            return []
+        rows = vs.rank_semantic(query_text, limit=limit, related_only=True)
+        return [
+            {"text": line, "created_at": str(row.get("updated_at") or "")}
+            for row, line in zip(rows, vs.fact_lines(rows))
+        ]
+
+    def recall_lessons(
+        self, *, query_text: str, limit: int = 8, workspace: str | None = None
+    ) -> list[dict]:
+        """The lessons that answer ``query_text`` (``VectorMemoryStore.rank_lessons``), each as
+        ``{"text", "source", "created_at"}``: the rule as the user taught it, who wrote it and
+        when. What ``memory_recall`` returns beside the facts and the episodes."""
+        vs = self._vs
+        if vs is None:
+            return []
+        ws = normalize_workspace_ref(workspace) or None
+        out: list[dict] = []
+        for row in vs.rank_lessons(query_text, limit=limit, workspace=ws):
+            try:
+                rule = json.loads(row.get("value_json") or '""')
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(rule, str) or not rule.strip():
+                continue
+            out.append(
+                {
+                    "text": rule,
+                    "source": str(row.get("source") or ""),
+                    "created_at": str(row.get("updated_at") or row.get("created_at") or ""),
+                }
+            )
+        return out
 
     def delete_lesson(self, rule_substring: str) -> bool:
         vs = self._vs

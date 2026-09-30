@@ -560,6 +560,7 @@ def export_shards(
     result = ExportResult()
     out_dir.mkdir(parents=True, exist_ok=True)
     wanted = set(entries) if entries else None
+    temporary: frozenset[Path] | None = None
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -609,6 +610,14 @@ def export_shards(
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows))
             elif entry.kind == inv.KIND_JSONL_APPEND:
                 files = [src] if src.is_file() else sorted(src.rglob("*.jsonl"))
+                # A running Temporary chat's transcript is never copied out: the chat is forgotten
+                # when its session ends, and a shard would outlive it.
+                if temporary is None:
+                    from personalclaw.chat_traces import kept_by_temporary_chats
+
+                    temporary = kept_by_temporary_chats(home)
+                if temporary:
+                    files = [f for f in files if f.resolve() not in temporary]
                 buckets: dict[str, list[dict]] = {}
                 for path in files:
                     for year, rows in _jsonl_rows_by_year(path).items():

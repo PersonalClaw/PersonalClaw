@@ -22,13 +22,29 @@ chat, channel thread, loop worker, webhook, subagent).
 - **`session_restrictions.py` — memory modes.** Two restriction registries,
   kept in core because any surface can request them:
   - **temporary** — blank-slate thread: memory READS suppressed
-    (`blocks_reads`) *and* writes suppressed.
-  - **incognito** — ephemeral: memory WRITES suppressed, reads allowed.
+    (`blocks_reads`) *and* writes suppressed, and the chat is forgotten when its
+    session ends (below).
+  - **incognito** — ephemeral: memory WRITES suppressed, reads allowed. Its
+    transcript is kept, out of the chat list and search.
 
   `is_restricted()` (either mode) gates the after-turn learning path, session
   listing/search, and memory recall (see
   [knowledge-memory.md](knowledge-memory.md)). Restricted sessions never write
   lessons (`after_turn_review.py` checks `session.is_restricted`).
+- **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
+  and forgetting it.** A chat leaves its transcript, its working folder
+  (`sessions/<key>/`), its turn checkpoints and the files attached to it
+  (`uploads/`, `screenshots/`); `chat_traces` reads that and `chat_forget` deletes it.
+  `purge_chat` deletes them for the Delete button (which keeps a kept chat's
+  uploads, since Files lists them) and for a **temporary** chat's end, which
+  takes its attachments too. A temporary chat's session lives in the gateway
+  running it, so it ends when that gateway stops or restarts, when the chat is
+  deleted, and when cleanup evicts it as inactive: the last save before a stop
+  forgets each one instead of saving it, the next start forgets any a crash or
+  a restored backup left behind before it restores anything, and a read or a
+  send naming one that is not running here forgets it and answers 404. While
+  it runs its transcript is written like any chat's (a reload keeps it); no
+  snapshot or shard export copies it (`chat_traces.kept_by_temporary_chats`).
 - **`session_workspace.py` / `session_pid.py`** — per-session working
   directory resolution and process-id tracking.
 

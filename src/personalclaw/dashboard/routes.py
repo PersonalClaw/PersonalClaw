@@ -96,9 +96,9 @@ def register_dashboard_routes(app: web.Application) -> None:
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
-    # Inbound read-only MCP surface. Mounts ONLY when
-    # enablement passes (config flag + a valid dedicated token); a refusal logs one
-    # line naming the failing condition and /mcp simply 404s. Registered here so it
+    # Inbound read-only MCP surface. Mounts unconditionally and refuses per request, like
+    # the three below, so a surface turned on in Settings serves its next request and one
+    # turned off refuses it (404, the audit trail naming the switch). Registered here so it
     # sits outside the dashboard's cookie-auth world — it carries its own bearer
     # credential and its own loopback rail.
     try:
@@ -113,7 +113,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     # ANTHROPIC_BASE_URL at. Registered HERE for the same reasons as /mcp above — its own
     # bearer, its own loopback rail, outside the cookie-auth world — and this early so no
     # `{...}` pattern below can capture the literal `capture` segment (the hazard the
-    # `bulk`/`templates` comments further down describe). Unlike /mcp it mounts
+    # `bulk`/`templates` comments further down describe). Like /mcp it mounts
     # unconditionally and refuses per-request, so toggling the surface in Settings needs
     # no restart; a disabled surface answers 404 either way.
     try:
@@ -126,7 +126,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     # OpenAI-compatible inbound dialect — `/v1/*`, where `model`
     # names one of the user's AGENTS. Registered HERE for the same three reasons as the
     # two surfaces above: its own bearer, its own peer rail, and outside the dashboard's
-    # cookie-auth world. Like /capture (and unlike /mcp) it mounts unconditionally and
+    # cookie-auth world. Like /capture and /mcp it mounts unconditionally and
     # refuses per request, so the Settings toggle needs no restart; a disabled surface
     # answers 404 either way. Early, so no `{...}` pattern below can capture `v1`.
     # The turn runner is handed IN rather than imported by the dialect: `inbound/` is

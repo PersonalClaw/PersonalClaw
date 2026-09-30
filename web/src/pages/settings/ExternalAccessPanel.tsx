@@ -221,7 +221,7 @@ export function ExternalAccessPanel() {
 
       <Section
         title="Surfaces"
-        hint={<>Each needs its own ≥32-byte token, created with <code>personalclaw inbound token create &lt;surface&gt;</code>. A token that is missing, too short, or equal to your dashboard token is refused — the surface will not mount and says so here.</>}>
+        hint={<>Each needs its own ≥32-byte token, created with <code>personalclaw inbound token create &lt;surface&gt;</code>. A token that is missing, too short, or equal to your dashboard token is refused — the surface does not serve and says so here.</>}>
         {surfaces.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             Couldn’t read the surface configuration.
@@ -409,7 +409,9 @@ function SurfaceRow({
     ? surface.token_problem || 'no usable token'
     : !master
       ? 'the master switch is off'
-      : ''
+      : surface.listening === false
+        ? 'it starts listening the next time PersonalClaw starts'
+        : ''
   const ended = surface.token_configured && surface.token_state ? TOKEN_ENDED[surface.token_state] ?? '' : ''
   const endedWhy = surface.token_state === 'unavailable'
     ? "The record of when each surface token stops working can't be read, so every surface token is refused until it can. Registered clients keep their own tokens."

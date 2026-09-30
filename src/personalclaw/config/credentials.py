@@ -161,6 +161,26 @@ def keychain_available() -> bool:
     return _usable_keyring() is not None
 
 
+#: Why there is no keychain to use: this install has no keychain support (the optional
+#: ``keyring`` package), or it has, and no OS secret service answers — a container has none.
+KEYCHAIN_NOT_INSTALLED = "not_installed"
+KEYCHAIN_NO_SERVICE = "no_service"
+
+
+def keychain_absence() -> str:
+    """``""`` when a keychain answers, else why none does: :data:`KEYCHAIN_NOT_INSTALLED` or
+    :data:`KEYCHAIN_NO_SERVICE`. What Settings says in words beside the keychain switch."""
+    if _usable_keyring() is not None:
+        return ""
+    if _keychain_off:
+        return KEYCHAIN_NO_SERVICE
+    try:
+        import keyring  # type: ignore[import-not-found]  # noqa: F401
+    except Exception:
+        return KEYCHAIN_NOT_INSTALLED
+    return KEYCHAIN_NO_SERVICE
+
+
 def requested_credential_backend() -> CredentialBackend:
     """The backend the operator ASKED for — intent, not outcome.
 

@@ -467,6 +467,41 @@ def test_status_reports_the_resolved_backend_not_the_request(
     assert st["pending_keys"] == list(_KEYS)
 
 
+def test_status_says_why_no_keychain_answers(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings makes the keychain switch unavailable where there is no keychain, and says why in
+    words — so the read names which of the two it is: an install with no keychain support, or one
+    whose OS answers with no secret service (a container)."""
+    keychain_stub.refused(monkeypatch)
+    assert mig.credential_migration_status()["keychain_missing"] == cred.KEYCHAIN_NOT_INSTALLED
+
+    _stub_keyring(monkeypatch, backend_module="keyring.backends.fail")
+    assert mig.credential_migration_status()["keychain_missing"] == cred.KEYCHAIN_NO_SERVICE
+
+    _stub_keyring(monkeypatch)
+    assert mig.credential_migration_status()["keychain_missing"] == ""
+
+
+def test_turning_the_request_off_asks_consent_whether_or_not_a_keychain_answers(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The request is intent: turned off where no keychain answers, it keeps new credentials in
+    `.env` once one does. So the owner is asked either way, and what she is asked is true either
+    way — no "instead of the OS keychain" on a machine that has none."""
+    from personalclaw.config.edit_spec import security_control
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    control = security_control(_EDITABLE_CONFIG["security.credential_keychain"])
+    keychain_stub.refused(monkeypatch)
+    assert control.loosens(True, False) is True
+    _stub_keyring(monkeypatch, backend_module="keyring.backends.fail")
+    assert control.loosens(True, False) is True
+    _stub_keyring(monkeypatch)
+    assert control.loosens(True, False) is True
+    assert not control.loosens(False, True) and not control.loosens(False, False)
+    assert "instead of" not in control.consent
+    assert "even where one is available" in control.consent
+
+
 def test_status_never_carries_a_secret_value(keychain_on, home: Path) -> None:
     blob = json.dumps(mig.credential_migration_status())
     assert "alpha-secret" not in blob and "beta-secret" not in blob

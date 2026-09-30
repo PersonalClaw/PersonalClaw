@@ -365,8 +365,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "type": "bool",
         "security": SecurityControl(
             loosens_when(False),
-            "New credentials will be saved to the .env file (mode 0600) instead of the OS "
-            "keychain.",
+            # True with or without a keychain answering: where none does they already go to
+            # .env, and turning the request off keeps them there once one does.
+            "New credentials will be saved to the .env file (mode 0600), and not to the OS "
+            "keychain even where one is available.",
         ),
     },
     # The per-server elicitation grant. A `str_list` and not a bool, because the

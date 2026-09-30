@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
@@ -170,6 +170,8 @@ _DEFAULT_EPISODIC_LIMIT = 8  # must match MemoryConfig.episodic_max_results defa
 _EPISODIC_RELEVANCE_THRESHOLD = 0.55  # min cosine sim for short texts (empirical)
 _EPISODIC_LONG_TEXT_CHARS = 300  # texts longer than this get a relaxed threshold
 _EPISODIC_LONG_TEXT_THRESHOLD = 0.42  # relaxed threshold for long entries
+
+
 _EPISODIC_TEXT_MIN = 10
 #: The longest text one episodic memory holds; :meth:`VectorMemoryStore.write_episodic` refuses
 #: a longer one. Public because a writer with a longer note has to split it into memories of this
@@ -774,6 +776,47 @@ _NON_FACT_KEY_CLAUSE = " AND ".join(f"key NOT LIKE '{p}%'" for p in _NON_FACT_KE
 def is_fact_key(key: str) -> bool:
     """Whether *key* names a fact about the user or the world, not a row another writer owns."""
     return not key.startswith(_NON_FACT_KEY_PREFIXES)
+
+
+def shares_a_query_word(query_text: str, text: str) -> bool:
+    """Whether *text* holds a word of *query_text* the way the keyword search matches one: a word
+    longer than two characters, found anywhere in the text (:meth:`_fts5_episodic_search`)."""
+    haystack = (text or "").lower()
+    return any(
+        word in haystack for word in re.findall(r"\w+", (query_text or "").lower()) if len(word) > 2
+    )
+
+
+def recallable_episode(hit: dict, *, query_text: str = "") -> bool:
+    """Whether an episodic search hit may be handed to a reader as a memory of the conversation.
+
+    Not an OCCURRENCE (a workflow run's spec, indexed for the repetition detector, is a record of
+    something that ran, not something the user said or was told), and related to what was asked:
+    a keyword hit matched a word of it, and a hit the vector arm scored must reach the cosine
+    floor its length gets (longer texts score lower for the same match, so they get a relaxed
+    one) — or, for an explicit lookup that passes its ``query_text``, hold one of its words. A
+    nearest neighbour is returned however far away it is, so without this any question read back
+    the closest memories whatever they held.
+
+    The ONE rule for both readers: what a new chat is handed (:meth:`get_episodic_context`, whose
+    query is the whole message, so only the floor decides) and what ``memory_recall`` returns
+    (``MemoryService.recall_with_provenance``).
+    """
+    raw = hit.get("tags") or "[]"
+    try:
+        tags = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except (TypeError, ValueError):
+        tags = []
+    if OCCURRENCE_TAG in {str(t).lower() for t in tags}:
+        return False
+    if "cosine_sim" not in hit:
+        return True
+    text = str(hit.get("text") or "")
+    if query_text and shares_a_query_word(query_text, text):
+        return True
+    long_text = len(text) > _EPISODIC_LONG_TEXT_CHARS
+    threshold = _EPISODIC_LONG_TEXT_THRESHOLD if long_text else _EPISODIC_RELEVANCE_THRESHOLD
+    return float(hit["cosine_sim"] or 0.0) >= threshold
 
 
 # ── Helpers ──
@@ -1920,19 +1963,75 @@ class VectorMemoryStore(MemoryProvider):
         *,
         limit: int = 100,
         arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
+        related_only: bool = False,
     ) -> list[dict]:
         """Rank semantic-memory rows against ``query_text`` — the recall ARITHMETIC.
 
         Extracted out of :meth:`get_semantic_context` so the ranking is measurable apart
         from the prompt block it renders into (EVALUATION-SUBSTRATE §5.1's memory target).
-        The formatter now calls this; there is exactly ONE hybrid-recall rule, and an
-        offline P@k/R@k measured here is measured on the object a live turn ranks with.
+        The formatter now calls this; there is exactly ONE hybrid-recall rule
+        (:meth:`_rank_rows`), and an offline P@k/R@k measured here is measured on the object a
+        live turn ranks with.
 
         ``arms`` masks which of :data:`RECALL_ARMS` contribute. ``None`` — every
         production caller — runs all three, so the live ranking is unchanged. A masked
         arm's *input* is never computed (no embedding call, no graph traversal), so an
         ablation cell measures the arm's absence and not merely its exclusion from the
         sum. The empty mask is legal and returns ``[]``: the harness's control cell.
+
+        ``related_only`` is for an explicit lookup (``memory_recall``): only the facts that answer
+        the question, never the best of the rest (see :meth:`_rank_rows`).
+        """
+        # `contributor` rides along for the owner-preference ordering term
+        # and for the recall label.
+        all_rows = self.db.execute(
+            "SELECT key, value_json, updated_at, contributor, holder, weight "
+            "FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
+        ).fetchall()
+        return self._rank_rows(
+            query_text, all_rows, limit=limit, arms=arms, related_only=related_only
+        )
+
+    def rank_lessons(
+        self, query_text: str, *, limit: int = 8, workspace: str | None = None
+    ) -> list[dict]:
+        """The lessons that answer ``query_text``, best first — what ``memory_recall`` finds of the
+        rules the user taught.
+
+        A lesson rides its own block into every prompt, so the fact ranking leaves ``lesson.*``
+        out (:data:`_NON_FACT_KEY_PREFIXES`), and no recall read lessons at all: a word the user
+        taught ("dishwasher") recalled eight unrelated memories and never the lesson. These are
+        the lessons a reader in ``workspace`` may be shown (:meth:`lessons_visible_in`: GLOBAL
+        only without one) that pass the confidence gate the prompt block applies, ranked by the
+        one hybrid rule, and only the RELATED ones: a lesson that shares a word with the question
+        or whose meaning is close to it, never merely the nearest there is.
+        """
+        lessons = self.lessons_visible_in(workspace)
+        standings = self.lesson_standings(lessons)
+        shown = [
+            row
+            for row in lessons
+            if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
+        ]
+        return self._rank_rows(query_text, shown, limit=limit, arms=None, related_only=True)
+
+    def _rank_rows(
+        self,
+        query_text: str,
+        rows: Iterable[Any],
+        *,
+        limit: int,
+        arms: "tuple[str, ...] | list[str] | set[str] | None",
+        related_only: bool = False,
+    ) -> list[dict]:
+        """The ONE hybrid-recall rule, over rows carrying ``key``, ``value_json``,
+        ``updated_at`` and ``contributor``: keyword overlap, vector similarity and the graph
+        boost, merged and ordered (see :meth:`rank_semantic` for ``arms``).
+
+        ``related_only`` (an explicit lookup) admits only a row that holds a word of the question
+        (:func:`shares_a_query_word`), is linked to an entity it names, or whose vector reaches the
+        relevance floor episodic recall uses; left False, any positive score admits, which is how
+        a prompt's fact block ranks everything it has.
         """
         active = RECALL_ARMS if arms is None else tuple(a for a in RECALL_ARMS if a in set(arms))
         query_words = (
@@ -1943,13 +2042,6 @@ class VectorMemoryStore(MemoryProvider):
         # One embedder for the query and every row it is scored against, even across a rebind.
         embed = self.embed_fn if RECALL_ARM_VECTOR in active else None
         query_embedding = self._try_embed(query_text, embed) if embed is not None else None
-
-        # `contributor` rides along for the owner-preference ordering term below
-        # and for the recall label.
-        all_rows = self.db.execute(
-            "SELECT key, value_json, updated_at, contributor, holder, weight "
-            "FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
-        ).fetchall()
         owner = current_username()
 
         # The graph arm: records linked to entities
@@ -1959,7 +2051,7 @@ class VectorMemoryStore(MemoryProvider):
         graph_boosts = self._graph_boosts(query_text) if RECALL_ARM_GRAPH in active else {}
 
         scored_rows: list[tuple[float, dict]] = []
-        for r in all_rows:
+        for r in rows:
             # Keyword score (always available)
             key_words = _stem_words(
                 set(re.findall(r"\w+", r["key"].replace("_", " ").replace(".", " ")))
@@ -1991,6 +2083,12 @@ class VectorMemoryStore(MemoryProvider):
             boost = graph_boosts.get(r["key"], 0.0)
             score += boost
 
+            if related_only and not (
+                boost > 0
+                or vec_score >= _EPISODIC_RELEVANCE_THRESHOLD
+                or shares_a_query_word(query_text, f"{r['key']} {r['value_json']}")
+            ):
+                continue
             if score > 0:
                 scored_rows.append((score, dict(r)))
 
@@ -2043,30 +2141,9 @@ class VectorMemoryStore(MemoryProvider):
 
         if not rows:
             return ""
-        holder_names = self._holder_entity_names(rows)
         lines: list[str] = []
         total = 0
-        for r in rows:
-            try:
-                val = json.loads(r["value_json"])
-            except (json.JSONDecodeError, TypeError):
-                val = r["value_json"]
-            # Format complex values as JSON, simple values as-is
-            val_str = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
-            # Contributor label: only foreign-contributed records are labeled, so
-            # the marker means something on the shared store it exists for.
-            label = _contributor_label(r["contributor"] if "contributor" in r.keys() else "", owner)
-            holder = memory_holder.normalize_holder(_row_value(r, "holder", ""))
-            line = (
-                memory_holder.render_fact_line(
-                    r["key"],
-                    val_str,
-                    holder=holder,
-                    weight=_row_value(r, "weight", 1.0),
-                    entity_name=holder_names.get(holder, ""),
-                )
-                + label
-            )
+        for line in self.fact_lines(rows, owner=owner):
             if total + len(line) > cap:
                 break
             lines.append(line)
@@ -2092,6 +2169,36 @@ class VectorMemoryStore(MemoryProvider):
             + "\n".join(lines)
             + "\n[End of semantic memory]\n"
         )
+
+    def fact_lines(self, rows, *, owner: str | None = None) -> list[str]:
+        """Each fact row as the fact block renders it: ``key: value``, with its holder when the
+        fact is about someone else and its contributor when another person wrote it — so a fact
+        read anywhere says whose it is. ``owner`` defaults to the current user."""
+        owner = current_username() if owner is None else owner
+        holder_names = self._holder_entity_names(rows)
+        lines: list[str] = []
+        for r in rows:
+            try:
+                val = json.loads(r["value_json"])
+            except (json.JSONDecodeError, TypeError):
+                val = r["value_json"]
+            # Format complex values as JSON, simple values as-is
+            val_str = json.dumps(val) if isinstance(val, (dict, list)) else str(val)
+            # Contributor label: only foreign-contributed records are labeled, so
+            # the marker means something on the shared store it exists for.
+            label = _contributor_label(r["contributor"] if "contributor" in r.keys() else "", owner)
+            holder = memory_holder.normalize_holder(_row_value(r, "holder", ""))
+            lines.append(
+                memory_holder.render_fact_line(
+                    r["key"],
+                    val_str,
+                    holder=holder,
+                    weight=_row_value(r, "weight", 1.0),
+                    entity_name=holder_names.get(holder, ""),
+                )
+                + label
+            )
+        return lines
 
     def _holder_entity_names(self, rows) -> dict[str, str]:
         """``person:<id>`` holder → entity display name, for the rows about to render.
@@ -3139,8 +3246,8 @@ class VectorMemoryStore(MemoryProvider):
     ) -> str:
         """Format episodic search results for prompt injection.
 
-        When vector search is used, results below ``_EPISODIC_RELEVANCE_THRESHOLD``
-        cosine similarity are filtered out to avoid injecting irrelevant context.
+        Only :func:`recallable_episode` hits are injected: no workflow run's spec, and no vector
+        hit below the relevance floor, so irrelevant context is not handed over.
 
         When *citations_out* is supplied (MEMORY-GRAPH-AND-VAULT §5.4), each emitted
         fragment is labelled ``[Memory N]`` (contiguous, 1-based) instead of ``N.``,
@@ -3161,18 +3268,10 @@ class VectorMemoryStore(MemoryProvider):
         lines: list[str] = []
         total = 0
         for i, r in enumerate(results, 1):
-            # Filter low-relevance results when vector scores are available.
-            # Longer texts produce lower cosine scores (embedding dilution),
-            # so we relax the threshold for entries above _EPISODIC_LONG_TEXT_CHARS.
-            if "cosine_sim" in r:
-                text_len = len(r.get("text", ""))
-                threshold = (
-                    _EPISODIC_LONG_TEXT_THRESHOLD
-                    if text_len > _EPISODIC_LONG_TEXT_CHARS
-                    else _EPISODIC_RELEVANCE_THRESHOLD
-                )
-                if r["cosine_sim"] < threshold:
-                    continue
+            # A workflow run's spec is not a memory, and a vector hit below the relevance floor
+            # is only the nearest thing there was (`recallable_episode`).
+            if not recallable_episode(r):
+                continue
             text = r["text"][:1500]
             # Citation mode numbers only EMITTED fragments (contiguous), so `[Memory N]`
             # always maps 1:1 onto a manifest entry; legacy mode keeps the raw enumerate

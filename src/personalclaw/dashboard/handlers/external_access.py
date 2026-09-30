@@ -63,9 +63,19 @@ def _surface_rows() -> list[dict]:
                 # The bridge's exception is reported as data so the FE does not have to
                 # re-derive a rule the backend already enforces.
                 "loopback_only": surface == auth.BRIDGE_SURFACE,
+                # Every surface on the dashboard's port serves from the next request; the bridge
+                # listens on its own port, started with the gateway, so it is the one that can be
+                # on, with a token, and not listening yet.
+                **({"listening": _bridge_listening()} if surface == auth.BRIDGE_SURFACE else {}),
             }
         )
     return rows
+
+
+def _bridge_listening() -> bool:
+    from personalclaw.inbound import bridge
+
+    return bridge.listening()
 
 
 def _token_lifetime(surface: str) -> dict:

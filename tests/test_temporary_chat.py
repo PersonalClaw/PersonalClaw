@@ -26,13 +26,14 @@ class TestChatSessionTemporary:
 
 
 # ---------------------------------------------------------------------------
-# Dashboard: save_session_to_history persists all modes (no skip)
+# Dashboard: save_session_to_history persists all modes while they run (no skip)
 # ---------------------------------------------------------------------------
 
 
 class TestSaveSessionToHistory:
     def test_temporary_slot_still_saved(self):
-        """All modes write .jsonl for tab recovery — temporary included."""
+        """All modes write .jsonl for tab recovery — a running temporary chat included (its
+        transcript is deleted when its session ends: test_a_temporary_chat_is_forgotten_…)."""
         from personalclaw.dashboard.state import _ChatSession
 
         session = _ChatSession(key="tmp-1", memory_mode="temporary")
@@ -41,6 +42,7 @@ class TestSaveSessionToHistory:
 
         mock_state = MagicMock()
         mock_state.conversation_log = MagicMock()
+        mock_state._sessions = {"tmp-1": session}
 
         with patch(
             "personalclaw.dashboard.chat_persistence.persisted_history_key",

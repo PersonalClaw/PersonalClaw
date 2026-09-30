@@ -54,6 +54,7 @@ from personalclaw.config.credentials import (
     _keychain_index,
     _keychain_save,
     credential_backend,
+    keychain_absence,
     requested_credential_backend,
 )
 
@@ -125,6 +126,9 @@ def credential_migration_status() -> dict:
         "backend": backend,
         "requested": requested_credential_backend(),
         "blocked": backend != "keychain",
+        # Why no keychain answers, when none does ("" when one does): the switch is unavailable
+        # then, and says why in words.
+        "keychain_missing": keychain_absence(),
         "pending_keys": pending,
         "pending": len(pending),
         "keychain_keys": len(_keychain_index()),

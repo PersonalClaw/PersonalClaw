@@ -969,8 +969,8 @@ async def handle_task_get(request: web.Request) -> web.Response:
 def register_routes(app: web.Application) -> None:
     """Mount the three A2A routes.
 
-    Registered UNCONDITIONALLY and refused per request, matching the capture proxy and
-    NOT ``mcp_http.mount``'s enablement-gated mount. A mount-time gate freezes the
+    Registered UNCONDITIONALLY and refused per request, like every inbound surface on the
+    dashboard's port (the capture proxy, ``/v1``, ``/mcp``). A mount-time gate freezes the
     decision at startup: enabling the surface in Settings would then need a gateway
     restart, and disabling it would leave the route live. ``_admit`` re-reads the config
     on every call, and a disabled surface answers 404 — the same answer an unmounted

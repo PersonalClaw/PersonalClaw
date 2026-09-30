@@ -124,30 +124,48 @@ async def _memory_recall(arguments: dict, state: Any) -> str:
 
     Recorded rather than silently skipped, because "the restriction gate is honored"
     and "the restriction gate does not apply" look identical in a diff.
+
+    **What it searches** is what the description promises: the lessons the user taught, the
+    facts it keeps, and the episodes it recorded, each only when it answers the query, in that
+    order (`MemoryService.recall_lessons` / `recall_facts` / `recall_with_provenance`). It read
+    the episodes alone, nearest first however far away, so a word the user taught recalled
+    eight unrelated run summaries and never the lesson.
     """
     _reject_unknown(arguments, ("query", "limit"))
     query = _require_text(arguments, "query")
     limit = _clamp_limit(arguments, default=8, ceiling=20)
 
-    def _run() -> list:
+    def _run() -> list[tuple[str, str, str]]:
         from personalclaw.memory_service import MemoryService
         from personalclaw.vector_memory import VectorMemoryStore
 
         store = VectorMemoryStore()
         store.init()
-        return MemoryService.over_vector_store(store).recall_with_provenance(
-            query_text=query, limit=limit
-        )
+        svc = MemoryService.over_vector_store(store)
+        found = [
+            ("lesson", str(hit.get("created_at") or ""), str(hit.get("text") or ""))
+            for hit in svc.recall_lessons(query_text=query, limit=limit)
+        ]
+        found += [
+            ("fact", str(hit.get("created_at") or ""), str(hit.get("text") or ""))
+            for hit in svc.recall_facts(query_text=query, limit=limit)
+        ]
+        found += [
+            (
+                str(hit.get("source") or "unknown"),
+                str(hit.get("created_at") or hit.get("ts") or ""),
+                str(hit.get("text") or hit.get("value") or ""),
+            )
+            for hit in svc.recall_with_provenance(query_text=query, limit=limit)
+        ]
+        return [(kind, when, text.strip()) for kind, when, text in found if text.strip()][:limit]
 
     hits = await asyncio.get_event_loop().run_in_executor(None, _run)
     if not hits:
         return f"No memories matched {query!r}."
     lines = [f"{len(hits)} memory hit(s) for {query!r}:"]
-    for hit in hits:
-        source = str(hit.get("source") or "unknown")
-        when = str(hit.get("created_at") or hit.get("ts") or "")[:19]
-        text = str(hit.get("text") or hit.get("value") or "").strip()
-        lines.append(f"- [{source}{f' · {when}' if when else ''}] {text}")
+    for kind, when, text in hits:
+        lines.append(f"- [{kind}{f' · {when[:19]}' if when else ''}] {text}")
     return "\n".join(lines)
 
 
@@ -350,7 +368,8 @@ TOOLS: dict[str, ToolSpec] = {
         name="memory_recall",
         description=(
             "Search what the assistant remembers about the user and their work — "
-            "facts, preferences, and episodes it recorded itself. This is the "
+            "the lessons the user taught it, the facts and preferences it keeps, and "
+            "episodes it recorded itself. This is the "
             "assistant's own internal memory, NOT the user's documents; use "
             "knowledge_search for those. Returns each hit with where and when it "
             "came from."

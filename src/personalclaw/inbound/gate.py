@@ -35,11 +35,11 @@ INCIDENT_REASON = "incident mode is active — inbound suspended"
 
 
 def surface_enablement_problem(surface: str) -> str | None:
-    """Why ``surface`` must not mount, or None when it may. Layers 1, 2 and the token.
+    """Why ``surface`` must not serve, or None when it may. Layers 1, 2 and the token.
 
-    Called at mount time AND per request, so flipping either config switch takes
-    effect on the next call instead of needing a restart — a kill switch that needs
-    a restart is not a kill switch.
+    Asked on every request (and by the control bridge before it starts its own listener), so
+    flipping either config switch takes effect on the next call instead of needing a restart — a
+    kill switch that needs a restart is not a kill switch, and neither is an on switch.
     """
     from personalclaw.inbound import auth
 

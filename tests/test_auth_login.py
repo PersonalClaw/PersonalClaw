@@ -279,8 +279,16 @@ def test_the_csrf_middleware_emits_the_wire_envelope_not_plain_text() -> None:
     assert 'text="CSRF check failed' not in src
     at = src.find("async def csrf_middleware")
     assert at != -1
-    body = src[at : at + 1200]
-    assert 'json_error("auth_origin_not_allowed", status=403)' in body
+    body = src[at : at + 1400]
+    assert "return origin_refusal(request)" in body
+    # `origin_refusal` is the envelope, with the auth routes' code, whatever its sentence says.
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.origin import origin_refusal
+
+    refused = origin_refusal(make_mocked_request("POST", "/api/config/personalclaw"))
+    assert refused.status == 403
+    assert json.loads(refused.body)["error"]["code"] == "auth_origin_not_allowed"
 
 
 # ── Lockout ───────────────────────────────────────────────────────────────

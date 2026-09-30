@@ -233,6 +233,62 @@ def is_loopback(request) -> bool:
     return _peer_host(request) in _LOOPBACK
 
 
+#: Where each inbound surface on the dashboard's port answers: an exact path, or a prefix ending
+#: in ``/``. The control bridge has none; it listens on a port of its own.
+_SURFACE_PATHS: tuple[tuple[str, str], ...] = (
+    ("/mcp", "mcp"),
+    ("/v1/", "openai"),
+    ("/a2a/", "a2a"),
+    ("/capture/", "capture"),
+)
+
+
+def surface_of_path(path: str) -> str | None:
+    """The inbound surface a request to *path* on the dashboard's port is for, or None."""
+    for route, surface in _SURFACE_PATHS:
+        if path == route or (route.endswith("/") and path.startswith(route)):
+            return surface
+    return None
+
+
+def off_machine_refusal(request) -> str:
+    """What a program on another machine is told when it calls an inbound surface, or ``""`` when
+    the request is not that.
+
+    Such a request carries no browser origin, and the dashboard refuses a state-changing request
+    from another address that carries none before any surface reads it — so the surfaces take
+    their requests only from programs on the machine PersonalClaw runs on, whatever
+    ``allow_remote`` says. The sentence says that, which address the request came from, and the
+    two things that do reach it: a client on that machine, or an SSH tunnel to its loopback. It
+    says the same whether the surface is on or off, so it tells a prober nothing a 404 hides.
+    """
+    surface = surface_of_path(str(getattr(request, "path", "") or ""))
+    if surface is None or is_loopback(request):
+        return ""
+    headers = getattr(request, "headers", {}) or {}
+    if headers.get("Origin") or headers.get("Referer"):
+        return ""
+    from dataclasses import fields
+
+    from personalclaw.config.external_access import ExternalAccessConfig
+
+    label = next(
+        (
+            f.metadata.get("label", surface)
+            for f in fields(ExternalAccessConfig)
+            if f.name == surface
+        ),
+        surface,
+    )
+    peer = _peer_host(request) or "another address"
+    return (
+        f"PersonalClaw's {label} takes requests only from programs on the machine PersonalClaw "
+        f"runs on; this one came from {peer}. To reach it, run your client on PersonalClaw's "
+        "machine and connect to 127.0.0.1, or forward a port to that machine's 127.0.0.1 over "
+        "SSH and connect through the tunnel."
+    )
+
+
 def peer_allowed(request, surface: str = "mcp") -> tuple[bool, str]:
     """Whether this peer may reach the surface. Returns ``(ok, reason)``.
 
@@ -394,8 +450,17 @@ def inbound_cmd(args) -> int:
     print("Then enable the surface (BOTH switches — the master gate is separate):")
     print("    personalclaw config set external_access.enabled true")
     print(f"    personalclaw config set external_access.{surface}.enabled true")
-    print(
-        "The surface is loopback-only until you set external_access.public_url "
-        f"+ external_access.{surface}.allow_remote."
-    )
+    if surface == BRIDGE_SURFACE:
+        # Its own listener, started with the gateway: the switches reach it at the next start.
+        print(
+            "The control bridge starts listening the next time PersonalClaw starts, and only "
+            "programs on this machine can reach it."
+        )
+    else:
+        # The truth whatever `allow_remote` says: the dashboard refuses a program's request from
+        # another address before the surface reads it (`off_machine_refusal`).
+        print(
+            "It takes requests only from programs on this machine. From another one, forward a "
+            "port to this machine's 127.0.0.1 over SSH and connect through the tunnel."
+        )
     return 0

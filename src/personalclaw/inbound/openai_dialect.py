@@ -1236,7 +1236,7 @@ def register_routes(app: web.Application, *, turn_runner: Any) -> None:
     """Mount `/v1/*`. ``turn_runner`` is INJECTED, never imported.
 
     Registered UNCONDITIONALLY and refusing per request, like the capture proxy and
-    unlike ``mcp_http.mount``: a mount-time gate freezes the decision at startup, so
+    ``mcp_http.mount``: a mount-time gate freezes the decision at startup, so
     enabling this surface in Settings would need a gateway restart and disabling it
     would leave the route live. A disabled surface answers 404 either way, so nothing
     is disclosed by the route existing.

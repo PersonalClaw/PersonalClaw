@@ -393,8 +393,7 @@ _BYPASS_EXACT.add("/api/logout")
 # carries a dedicated bearer token plus its own loopback rail, so it must bypass
 # the DASHBOARD's cookie auth rather than be reachable with a dashboard session.
 # Exempting it here does not make it open — inbound/mcp_http.py refuses every
-# request that fails enablement, peer, or token checks, and only mounts the route
-# at all when a valid dedicated token exists.
+# request that fails enablement, peer, or token checks, GET as well as POST.
 _BYPASS_EXACT.add("/mcp")
 # The Dialect-5 capture proxy authenticates ITSELF for exactly the same reason
 # (EXTERNAL-ACCESS §7.1): each route runs `capture_proxy._admit` — surface enablement,

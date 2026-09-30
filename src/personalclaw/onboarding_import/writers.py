@@ -443,10 +443,24 @@ def _mcp_plan(data: dict[str, Any] | None, item: ImportItem) -> Plan:
         # references, so the stored spec never equals the scanned one byte for byte. A spec
         # naming a credential its owner does not hold cannot be read to compare, so it is
         # "configured differently" — and kept, like any other.
-        from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_spec
+        #
+        # And only the keys that say how the server starts (`MCP_DEFINITION_KEYS`) are compared.
+        # The rest are what the owner did with it here — signed in to it, turned it or a tool
+        # off, approved its calls — which the other tool's copy never holds, so comparing them
+        # read every server she had used as a different one.
+        from personalclaw.config.secret_refs import (
+            MCP_DEFINITION_KEYS,
+            ForeignSecretReference,
+            resolve_mcp_spec,
+        )
+
+        def definition(spec: dict[str, Any]) -> dict[str, Any]:
+            return {
+                k: v for k, v in resolve_mcp_spec(name, spec).items() if k in MCP_DEFINITION_KEYS
+            }
 
         try:
-            same = resolve_mcp_spec(name, existing) == resolve_mcp_spec(name, item.payload)
+            same = definition(existing) == definition(item.payload)
         except ForeignSecretReference:
             same = False
         if same:

@@ -1378,7 +1378,7 @@ def _turn_attachments(session: _ChatSession) -> list[str]:
     """
     import os as _os
 
-    from personalclaw.config.loader import config_dir
+    from personalclaw.chat_traces import attachment_roots
 
     files: list[str] = []
     for m in reversed(session.messages):
@@ -1388,9 +1388,7 @@ def _turn_attachments(session: _ChatSession) -> list[str]:
             if isinstance(raw, list):
                 files = [str(p) for p in raw if isinstance(p, str) and p]
             break
-    roots = tuple(
-        str((config_dir() / name).resolve()) + _os.sep for name in ("uploads", "screenshots")
-    )
+    roots = attachment_roots()
     return [p for p in files if _os.path.realpath(p).startswith(roots)]
 
 

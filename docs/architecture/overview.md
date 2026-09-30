@@ -126,7 +126,8 @@ loop worker, a webhook run, or a subagent all get one:
   `channel_id` keys, so a dashboard chat can be linked to a channel thread and
   back.
 - `session_restrictions.py` — memory modes: **temporary** (blank slate — memory
-  reads AND writes suppressed) and **incognito** (writes suppressed, reads
+  reads AND writes suppressed, and the chat forgotten when its session ends:
+  `dashboard/chat_forget.py`) and **incognito** (writes suppressed, reads
   allowed). The registry is core because any surface (dashboard or channel) can
   request either mode.
 - `history.py` — one JSONL file per session under `~/.personalclaw/sessions/`,

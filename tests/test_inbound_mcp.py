@@ -65,7 +65,7 @@ def _enable(monkeypatch, *, enabled=True, allow_remote=False, public_url="", mas
 
 async def _client(monkeypatch) -> TestClient:
     app = web.Application()
-    assert mcp_http.mount(app) is True
+    mcp_http.mount(app)
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
@@ -140,44 +140,74 @@ class TestSurfaceToken:
         assert auth.verify_bearer("mcp", "") is False
 
 
-# ── Mount gating (fail-closed) ──
+# ── Serving follows the switches, request by request (fail-closed) ──
 
 
-class TestMountGating:
-    def test_disabled_config_refuses_to_mount(self, monkeypatch):
-        _enable(monkeypatch, enabled=False)
-        auth.create_surface_token("mcp")
-        app = web.Application()
-        assert mcp_http.mount(app) is False
-        assert list(app.router.routes()) == []
+class TestServingFollowsTheSwitches:
+    """The route is always there; whether it SERVES is decided on each request, like the other
+    inbound surfaces. A surface the owner turns on (and gives a token) while the gateway runs
+    answers its next request, and one turned off refuses its next request — no restart either
+    way. Off answers 404, the same answer a path that does not exist gives."""
 
-    def test_enabled_without_a_token_refuses_to_mount(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_a_surface_turned_on_after_the_start_serves_its_next_request(self, monkeypatch):
+        cfg = _enable(monkeypatch, enabled=False)
+        client = await _client(monkeypatch)
+        try:
+            off = await _rpc(client, "tools/list", token="t" * 48)
+            assert off.status == 404
+            assert (await off.json())["error"]["code"] == "not_found"
+            assert (await client.get("/mcp")).status == 404
+
+            # What Settings and `personalclaw inbound token create mcp` do, gateway running.
+            cfg.external_access.mcp.enabled = True
+            token = auth.create_surface_token("mcp")
+            on = await _rpc(client, "tools/list", token=token)
+            assert on.status == 200, await on.text()
+            assert {t["name"] for t in (await on.json())["result"]["tools"]} >= {"memory_recall"}
+            assert (await client.get("/mcp")).status == 405
+
+            cfg.external_access.enabled = False
+            again = await _rpc(client, "tools/list", token=token)
+            assert again.status == 404
+            assert (await client.get("/mcp")).status == 404
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_surface_with_no_token_refuses_and_the_trail_names_why(self, monkeypatch):
         _enable(monkeypatch)
-        app = web.Application()
-        assert mcp_http.mount(app) is False
+        client = await _client(monkeypatch)
+        try:
+            resp = await _rpc(client, "tools/list", token="t" * 48)
+            assert resp.status == 404
+        finally:
+            await client.close()
+        refused = [r["refused_reason"] for r in audit_mod.recent(limit=5)]
+        assert any("inbound token create mcp" in (reason or "") for reason in refused), refused
 
-    def test_unreadable_config_reads_as_disabled(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_an_unreadable_config_refuses(self, monkeypatch):
         """A parse failure must not turn a network surface ON."""
         from personalclaw.config.loader import AppConfig
+
+        token = auth.create_surface_token("mcp")
 
         def _boom(*a, **k):
             raise ValueError("corrupt config")
 
         monkeypatch.setattr(AppConfig, "load", staticmethod(_boom))
-        problem = mcp_http.enablement_problem()
-        assert problem is not None and "off" in problem
+        client = await _client(monkeypatch)
+        try:
+            assert (await _rpc(client, "tools/list", token=token)).status == 404
+            assert (await client.get("/mcp")).status == 404
+        finally:
+            await client.close()
 
-    def test_mount_refusal_names_the_failing_condition(self, monkeypatch, caplog):
+    def test_both_methods_are_registered_whatever_the_switches_say(self, monkeypatch):
         _enable(monkeypatch, enabled=False)
-        with caplog.at_level("INFO", logger="personalclaw.inbound.mcp_http"):
-            assert mcp_http.mount(web.Application()) is False
-        assert "external_access.mcp.enabled is off" in caplog.text
-
-    def test_enabled_with_token_mounts_both_methods(self, monkeypatch):
-        _enable(monkeypatch)
-        auth.create_surface_token("mcp")
         app = web.Application()
-        assert mcp_http.mount(app) is True
+        mcp_http.mount(app)
         # aiohttp adds HEAD alongside GET; POST and GET are what we registered.
         methods = {r.method for r in app.router.routes()}
         assert {"POST", "GET"} <= methods

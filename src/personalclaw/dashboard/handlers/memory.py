@@ -787,6 +787,16 @@ async def api_memory_recall(request: web.Request) -> web.Response:
             svc.record_recall([k for k in recalled_keys if k])
         except Exception:
             logger.debug("record_recall from memory_recall failed", exc_info=True)
+    # Lessons — the rules the user taught that answer the query. Each rides its own block into
+    # every prompt, so the fact ranking above leaves `lesson.*` out, and without this no recall
+    # found one: "dishwasher" never reached the lesson that names it (`rank_lessons`).
+    lessons = svc.recall_lessons(query_text=query, limit=10 if deep else 5)
+    if lessons:
+        parts.append(
+            "[Recalled lessons — rules the user taught.]\n"
+            + "\n".join(f"- {redact_for_display(lesson['text'])}" for lesson in lessons)
+            + "\n[End of recalled lessons]"
+        )
     # Episodic (relevant past fragments) — two-stage rank (relevance × heat boost),
     # returned WITH provenance (source · session · date) so the agent can see where
     # and when each fragment came from (mem-tree provenance-first retrieval).

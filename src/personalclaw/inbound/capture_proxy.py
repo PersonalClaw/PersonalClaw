@@ -815,8 +815,8 @@ async def handle_import(request: web.Request) -> web.StreamResponse:
 def register_routes(app: web.Application) -> None:
     """Mount both dialects and §8's import route.
 
-    Registered UNCONDITIONALLY, unlike `mcp_http.mount`'s enablement-gated mount, and
-    the difference matters: a mount-time gate freezes the decision at startup, so
+    Registered UNCONDITIONALLY, like every inbound surface on the dashboard's port, and
+    the reason matters: a mount-time gate freezes the decision at startup, so
     enabling capture in Settings would need a gateway restart and disabling it would
     leave the route live. Per-request `admission_problem` makes the config the truth at
     the moment of the request — and a disabled surface still answers 404 (aiohttp's own

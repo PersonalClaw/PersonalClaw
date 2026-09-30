@@ -150,7 +150,9 @@ function writeCachedDetail(key: string, d: ChatDetail): void {
   // Never cache a running turn's partial transcript — it would paint a stale,
   // mid-stream snapshot on revisit. Only settled sessions are safe to seed from.
   if (d.running) return
-  writeQuery(detailKey(key), d, true)
+  // A Temporary chat is forgotten when its session ends, so its copy lives in this page only,
+  // never in the browser's session storage, where it would outlive the chat.
+  writeQuery(detailKey(key), d, d.memory_mode !== 'temporary')
 }
 
 /** How long a chat's mount read waits for the chat to be listening (see the load effect in
@@ -1298,7 +1300,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }).catch((e) => {
       if (!alive) return
       setLoadingHistory(false)
-      if (e instanceof ApiError && e.status === 404) setMissing(true)
+      if (e instanceof ApiError && e.status === 404) { invalidateKeys(detailKey(sessionId)); setMissing(true) }
       else setLoadFailure(e)
     })
     return () => { alive = false }
@@ -2055,7 +2057,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // (seededDetail → loadingHistory=false): the user's message shows on the first
       // frame with NO skeleton over it, and only the pending agent reply loads.
       if (seedMessages?.length) {
-        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, running: false } as unknown as ChatDetail)
+        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, running: false, memory_mode: memoryMode } as unknown as ChatDetail)
       }
       // Hand the live run ACROSS the remount, before causing it. This instance is about
       // to be destroyed and its `streaming` state with it; the replacement reads the

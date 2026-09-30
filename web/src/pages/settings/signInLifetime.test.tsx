@@ -10,7 +10,11 @@ import { act, render, screen, fireEvent, waitFor, within } from '@testing-librar
 
 const DAY = 86400
 
-async function mount(auth: Record<string, unknown> | Error, patch?: (...a: unknown[]) => Promise<unknown>) {
+async function mount(
+  auth: Record<string, unknown> | Error,
+  patch?: (...a: unknown[]) => Promise<unknown>,
+  devices: Record<string, unknown>[] = [],
+) {
   vi.resetModules()
   sessionStorage.clear()
   const notify = vi.fn()
@@ -18,7 +22,7 @@ async function mount(auth: Record<string, unknown> | Error, patch?: (...a: unkno
   const patchConfig = vi.fn(patch ?? (() => Promise.resolve({})))
   vi.doMock('../../lib/api', () => ({
     api: {
-      devices: () => Promise.resolve([]),
+      devices: () => Promise.resolve(devices),
       securityStats: () => Promise.resolve({
         denied_commands: 1, suspicious_patterns: 1, tool_schemas: 1, redaction_paths: 1,
         child_ceilings: { contained: true, note: '' },
@@ -62,6 +66,42 @@ function optionValues(select: HTMLSelectElement): string[] {
 }
 
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
+
+describe('what a sign-in from a personalclaw token link lasts', () => {
+  // The link `personalclaw token` prints keeps its own lifetime (20 hours unless made with --ttl),
+  // and in a container it is the only way in: a browser signed in with one was signed out after 20
+  // hours, mid-turn, beside a Settings page that said sign-ins last 30 days.
+  const browser = {
+    id: 'd1', name: 'Firefox on Linux', kind: 'browser', minted_at: 0, last_seen: 0, ip: '',
+    pool: 'browser', current: true,
+  }
+  const ends = Math.floor(new Date(2026, 9, 1, 21, 5).getTime() / 1000)
+
+  it('says so beside the choice, for every browser', async () => {
+    await mount({ session_ttl: '30d' })
+    await waitFor(lifetimeSelect)
+    expect(lifetimeSelect().getAttribute('aria-describedby')).toBeTruthy()
+    const hint = document.getElementById(lifetimeSelect().getAttribute('aria-describedby')!)
+    expect(hint?.textContent).toContain(
+      'A link from personalclaw token keeps its own lifetime instead: 20 hours, unless it was made with --ttl (at most 90 days).',
+    )
+  })
+
+  it('tells a browser signed in with one when its sign-in ends', async () => {
+    await mount({ session_ttl: '30d' }, undefined, [{ ...browser, issuer: 'token', expires_at: ends }])
+    const { absTime } = await import('../schedule/scheduleMeta')
+    expect(await screen.findByText(
+      `This browser signed in with a link from personalclaw token, so it stays signed in until ${absTime(ends)}: the link's own lifetime, not the one chosen here. To stay signed in longer, open a link from personalclaw token --ttl 30d.`,
+    )).toBeTruthy()
+  })
+
+  it('says nothing of the kind to a browser that signed in another way', async () => {
+    await mount({ session_ttl: '30d' }, undefined, [{ ...browser, issuer: 'login', expires_at: ends }])
+    await waitFor(lifetimeSelect)
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(screen.queryByText(/This browser signed in with a link from personalclaw token/)).toBeNull()
+  })
+})
 
 describe('the sign-in lifetime control', () => {
   it('offers nothing longer than the 90-day limit', async () => {

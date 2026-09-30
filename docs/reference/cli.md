@@ -469,9 +469,10 @@ incident flag: while an incident is active every inbound request gets `503`. All
 parse **fail-closed** — an unreadable flag reads as *off*, which is the inverse of a
 guard flag, because for an inbound surface OFF is the safe state.
 
-When a surface refuses to mount, the gateway log carries one line naming the exact
-reason. Every request (allowed or refused) is recorded in `<home>/inbound_audit.jsonl`,
-and refusals also land in the security event log.
+A surface that is off, or has no working token, answers `404` on its next request, and the
+audit trail names the switch that refused it: every request (allowed or refused) is recorded in
+`<home>/inbound_audit.jsonl`, and refusals also land in the security event log. Nothing needs a
+restart — except the control bridge, whose own loopback listener starts with the gateway.
 
 Remote access (`external_access.<surface>.allow_remote` + `external_access.public_url`)
 exists but is **discouraged**, and does not work for an MCP client at all — see

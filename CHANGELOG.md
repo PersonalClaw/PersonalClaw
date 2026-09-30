@@ -138,6 +138,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A Temporary chat is forgotten when its session ends, as its notice says: when PersonalClaw stops or restarts, however it stops, the chat's messages, its working files and the files attached to it are deleted, its page no longer opens, a message sent to it starts nothing, and no snapshot or export taken while it ran carries it.**
+- **Turning the MCP surface on in Settings → External access serves `/mcp` at once, as `/v1`, `/a2a` and `/capture` are, and turning it off refuses the next call, with no restart.**
+- **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question.**
+- **A program on another machine that calls `/mcp`, `/v1`, `/a2a` or `/capture` is told why it was refused and how to reach the surface, and `personalclaw inbound` no longer says `allow_remote` opens one to other machines.**
+- **Scanning an import source again shows an MCP server you signed in to as unchanged.**
+- **Archiving, pinning or filing an imported chat keeps where it came from.**
+- **Settings → Security says how long a sign-in from a token link lasts, beside how long a browser sign-in lasts.**
+- **Where there is no keychain, the keychain switch in Settings → Security is unavailable and says why.**
+- **Settings → External access says when the control bridge is switched on but not listening yet, and that it starts listening the next time PersonalClaw starts.**
 - **A Deny, or an approval nobody answered in time, refuses the call it is about and the calls sent with it, and the next call the agent makes asks again, as the approval card says.**
 - **A finished turn's folded steps say how many of them failed, so a failed step shows under a reply that says it worked, without opening the fold.**
 - **A tool result shows its text without the markers that tell the model it is data: web search hits, fetched pages and every other fenced result, on the chat's tool card, in the full-result view and on the Tools page.**
@@ -298,7 +307,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A lesson learned from "never do X" reads as you said it, not "Never: never do X".**
 
-- **The Incognito and Temporary chat notices say what happens: the chat stays out of your history and search, and PersonalClaw still keeps its transcript.**
+- **The Incognito chat notice says what happens: the chat stays out of your history and search, and PersonalClaw still keeps its transcript.**
 
 - **The import step says why an item starts unticked: a skill the security scan warned about is named as that, not as something the other tool does not use.**
 

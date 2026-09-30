@@ -65,7 +65,7 @@ def _cfg(monkeypatch, *, master=True, surface="mcp", enabled=True, **kw):
 
 async def _client() -> TestClient:
     app = web.Application()
-    assert mcp_http.mount(app) is True
+    mcp_http.mount(app)
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
@@ -1129,6 +1129,34 @@ class TestOperatorSurface:
         assert mcp["enabled"] is True and mcp["token_configured"] is True
         assert body["clients"][0]["label"] == "ide"
         assert body["clients"][0]["agent"] == "researcher"
+
+    @pytest.mark.asyncio
+    async def test_the_read_says_whether_the_bridge_is_listening(self, monkeypatch):
+        """The bridge starts its own listener with the gateway, so the read says whether it is up
+        — and says it for the bridge alone, since every other surface serves from its next
+        request."""
+        from personalclaw.dashboard.handlers.external_access import api_external_access
+        from personalclaw.inbound import bridge
+
+        _cfg(monkeypatch, surface="bridge")
+        auth.create_surface_token("bridge")
+        app = web.Application()
+        app.router.add_get("/api/external-access", api_external_access)
+        http = TestClient(TestServer(app))
+        await http.start_server()
+        try:
+            silent = await (await http.get("/api/external-access")).json()
+            monkeypatch.setattr(bridge, "_runner", object())
+            up = await (await http.get("/api/external-access")).json()
+        finally:
+            await http.close()
+
+        def row(body, surface):
+            return next(s for s in body["surfaces"] if s["surface"] == surface)
+
+        assert row(silent, "bridge")["listening"] is False
+        assert row(up, "bridge")["listening"] is True
+        assert "listening" not in row(up, "mcp")
 
     @pytest.mark.asyncio
     async def test_the_endpoint_NEVER_returns_a_token_or_its_hash(self, monkeypatch):

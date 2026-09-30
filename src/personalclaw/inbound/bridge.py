@@ -837,6 +837,13 @@ _runner: web.AppRunner | None = None
 _site: Any = None
 
 
+def listening() -> bool:
+    """Whether the bridge's listener is up. It starts with the gateway (:func:`start`), so a
+    bridge its owner turned on, and gave a token, while the gateway ran is not listening until the
+    next start — which Settings says, rather than showing a surface that is on as serving."""
+    return _runner is not None
+
+
 def discovery_path() -> Path:
     from personalclaw.config.loader import config_dir
 

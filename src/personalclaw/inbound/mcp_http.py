@@ -118,21 +118,18 @@ def _json(payload: dict, status: int = 200) -> web.Response:
     return web.json_response(payload, status=status, headers=_NO_STORE)
 
 
-def enablement_problem() -> str | None:
-    """Why the surface must not mount, or None when it may.
-
-    Delegates to the shared admission gate (`gate.surface_enablement_problem`), which
-    owns the master + per-surface + token layers for all five surfaces. Kept as a
-    named function because `mount()` and the tests both call it, and because a
-    dialect asking "may I serve?" should not have to know how many layers there are.
-    """
-    from personalclaw.inbound.gate import surface_enablement_problem
-
-    return surface_enablement_problem(SURFACE)
-
-
 async def handle_mcp_get(request: web.Request) -> web.Response:
-    """`GET /mcp` → 405. No SSE stream in v1 (spec-permitted)."""
+    """`GET /mcp` → 405 while the surface serves (no SSE stream in v1, spec-permitted), and the
+    POST's own admission answer — 404, or 503 in an incident — while it does not, so a switched-off
+    surface does not confirm its own existence to a GET either."""
+    from personalclaw.inbound.gate import admission_problem
+
+    problem, status = admission_problem(SURFACE)
+    if problem:
+        audit_mod.audit(SURFACE, route="GET /mcp", status=status, refused=problem)
+        if status == 503:
+            return json_error("service_unavailable", status=503, headers=_NO_STORE)
+        return json_error("not_found", status=404, headers=_NO_STORE)
     audit_mod.audit(SURFACE, route="GET /mcp", status=405, refused="GET not supported")
     return json_error(
         "method_not_allowed",
@@ -533,17 +530,16 @@ def _server_info() -> dict:
     return {"name": "personalclaw", "version": version}
 
 
-def mount(app: web.Application) -> bool:
-    """Mount `/mcp` when enablement passes. Returns whether it mounted.
+def mount(app: web.Application) -> None:
+    """Register `POST /mcp` and `GET /mcp`, whatever the switches say.
 
-    A refusal logs ONE line naming the failing condition — "inbound disabled" with
-    no cause is the kind of message that costs an hour of debugging.
+    Registered unconditionally and refused per request, like every other inbound surface
+    (`capture_proxy`, `openai_dialect`, `a2a`). A mount-time gate froze the decision at startup:
+    a surface the owner turned on in Settings, and gave its token, answered a bare 404 until the
+    gateway restarted, while the page said no restart was needed. Both handlers ask
+    `gate.admission_problem` first, so an off, token-less or unreadable surface answers 404 (503
+    in an incident) — the answer a path that does not exist gives — and the audit trail names
+    which switch refused it.
     """
-    problem = enablement_problem()
-    if problem:
-        logger.info("inbound: /mcp NOT mounted — %s", problem)
-        return False
     app.router.add_post("/mcp", handle_mcp)
     app.router.add_get("/mcp", handle_mcp_get)
-    logger.info("inbound: /mcp mounted (loopback-only unless allow_remote + public_url)")
-    return True
