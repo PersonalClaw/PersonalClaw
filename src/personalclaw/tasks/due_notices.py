@@ -25,12 +25,13 @@ sent for. A record is dropped only once its date can no longer be announced (its
 that fails to list is skipped by `registry.collect_tasks` and one bad sweep would otherwise erase
 every record and announce them all again.
 
-**Quiet hours** are honoured by WAITING. The gate (`entity_routes.notification_posture`) drops an
-INFO note inside the window — right for a heartbeat, wrong for a reminder, which would then never
-arrive — so a notice whose moment falls in quiet hours is left unsent and unrecorded, and the first
-sweep after the window ends sends it. Mute and a raised minimum severity mean "not at all" rather
-than "not now": the notice is handed to `notify()`, whose gate drops it, and it is recorded, so
-unmuting next week does not deliver a week-old reminder.
+**Quiet hours** are honoured by WAITING. Inside the window the gate
+(`entity_routes.notification_posture`) answers ``hush``, and `notify()` suppresses the ping — right
+for a heartbeat, wrong for a reminder, which would then never ring — so a notice whose moment falls
+in quiet hours is left unsent and unrecorded, and the first sweep after the window ends sends it.
+Mute and a raised minimum severity mean "not at all" rather than "not now": the notice is handed to
+`notify()`, whose gate drops it, and it is recorded, so unmuting next week does not deliver a
+week-old reminder.
 
 **Who.** Only the owner's open tasks (`Task.belongs_to`, the same rule the ready count uses), and
 only a task whose ``due_reminder`` is on — the per-task opt-out.
@@ -212,7 +213,7 @@ def sweep(tasks: Iterable[Task], *, notify: Notify, now: float) -> list[str]:
         if ledger.get(task.id) == task.due or not is_due_for_notice(task, now=now, owner=owner):
             continue
         posture = entity_routes.notification_posture(notification_kinds.TASK_DUE, now=moment)
-        if posture == entity_routes.POSTURE_DROP and entity_routes.quiet_hours_now(now=moment):
+        if posture == entity_routes.POSTURE_HUSH:
             continue  # not now — the first sweep after the window ends sends it
         title, body = notice_text(task, now=now)
         notify(

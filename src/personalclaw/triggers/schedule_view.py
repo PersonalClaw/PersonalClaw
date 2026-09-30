@@ -206,6 +206,9 @@ def to_schedule_row(
         "schedule": describe_cadence(trigger),
         "cron_expr": str(spec.get("expr") or "") if kind == "cron" else None,
         "every_secs": _int_or_none(spec.get("interval_secs")) if kind == "interval" else None,
+        # A one-shot's own time, epoch seconds: what the edit form opens on, as it opens a cron on
+        # `cron_expr`. Without it the form showed the time blank.
+        "at_ts": _float_or_none(spec.get("at")) if kind == "at" else None,
         # A deliberate LEGACY_FIELD_MAP drop: `created_ts` was display-only. None rather than a
         # fabricated value — inventing a creation date would be a lie the UI renders as fact.
         "created_ts": None,

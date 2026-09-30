@@ -376,18 +376,24 @@ form:
 - `min_severity` compares against that rank;
 - midnight-wrapping quiet hours (severity-3 bypasses);
 - `mute_all`;
-- suppressed means **dropped entirely** (not queued); a gate failure fails
-  open (a broken settings file must not silence the system).
-- **one gradation**: inside quiet hours an `attention=True` kind returns `quiet` rather than
-  `drop`, and `notify()` records it as a `badge` — persisted, counted, auditable, silent. A
-  loop that needed an answer overnight used to leave no trace in the notification log at
-  all, while its durable inbox row still counted toward the badge.
+- mute and `min_severity` mean **dropped entirely** (`drop`, not queued); a gate failure
+  fails open (a broken settings file must not silence the system).
+- **quiet hours are "not now", never "not at all"**: they stop a *ping*, and the kind's rule
+  decides what that leaves. Inside the window a kind somebody must answer (an attention kind
+  ranked SEV_WARNING) returns `quiet` and every other kind `hush`. `notify()` then delivers a
+  `digest` rule to the digest queue and a `badge` rule as a badge, exactly as outside the
+  window — both already interrupt nobody. An `immediate` note becomes a `badge` (persisted,
+  counted, auditable, silent) under `quiet`, or when the user's own condition raised a quieter
+  rule to it; any other `immediate` note under `hush` is suppressed. Before this the gate
+  dropped every note below error inside the window before the rule was read, so a loop that
+  finished at 03:00 under a digest rule left no notice anywhere and the morning digest said
+  "nothing queued"; a loop that needed an answer overnight left no trace in the notification
+  log at all, while its durable inbox row still counted toward the badge.
 
-A producer that must not lose a notice to quiet hours asks before it sends:
-`quiet_hours_now()` is the gate's own window test, and the task due-date notice
-(`tasks/due_notices.py`) uses it to WAIT — a `drop` posture inside the window
-leaves the notice unsent and unrecorded, and the first sweep after the window
-sends it. Mute and `min_severity` still mean "not at all" for it.
+A producer whose ping must still ring LATER waits instead of sending: the task due-date
+notice (`tasks/due_notices.py`) reads a `hush` posture as "not now" and leaves the notice
+unsent and unrecorded, and the first sweep after the window sends it. Mute and
+`min_severity` still mean "not at all" for it.
 
 Preferences persist in `entity_settings/notifications.json` with enum/HH:MM
 domain-guarded PUTs.

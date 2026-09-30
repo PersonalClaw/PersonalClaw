@@ -81,7 +81,7 @@ export function NotificationsPanel() {
         </Field>
       </Section>
 
-      <Section title="Quiet hours" hint="Suppress non-critical notifications during these hours.">
+      <Section title="Quiet hours" hint="Only errors ping you during these hours. A notice your rules send to the digest or as a badge still arrives that way, and one that needs your answer waits silently in the bell.">
         <Row label="Enable quiet hours">
           <Toggle on={s.quiet_hours_enabled} onChange={(v) => patch({ quiet_hours_enabled: v })} label="Enable quiet hours" />
         </Row>

@@ -4,7 +4,7 @@ import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide
 import { api, type PendingApproval } from '../../../lib/api'
 import { reportingWrite } from '../../../app/reportingWrite'
 import { approvalDestination } from '../../../app/approvalDestination'
-import { mirroredApprovalId } from '../../../lib/attentionLanes'
+import { mirroredApprovalId, mirroredProposalId, proposalSummary, proposalTitle } from '../../../lib/attentionLanes'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
@@ -74,13 +74,13 @@ export function ActionCenter({ navigate }: RouteProps) {
   // to visible, never to vanished.
   const approvalIds = new Set(approvals.map((a) => a.id))
   const liveInbox = inbox.filter(
-    (i) => !(i.refs?.skill_proposal && proposalIds.has(String(i.refs.skill_proposal)))
-      && !approvalIds.has(mirroredApprovalId(i)),
+    (i) => !proposalIds.has(mirroredProposalId(i)) && !approvalIds.has(mirroredApprovalId(i)),
   )
   const allEntries: Entry[] = [
     ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: approvalSubtitle(a), session: a.session })),
     ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
-    ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: `Skill: ${p.slug}`, sub: p.description?.slice(0, 90) || '' })),
+    // Named and summarised as Mission Control's Your turn names it: one item, one rendering.
+    ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: proposalTitle(p), sub: proposalSummary(p) })),
   ].filter((e) => !done.has(e.key))
 
   // A lane whose READ failed keeps its last-good rows, so a partial failure would otherwise vanish

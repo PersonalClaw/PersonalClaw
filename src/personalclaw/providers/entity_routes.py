@@ -251,16 +251,19 @@ _MIN_SEVERITY_RANK: dict[str, int] = {"info": 1, "warning": 2, "error": 3}
 #: severity read below is deliberately lazy.
 SEV_WARNING_RANK = _MIN_SEVERITY_RANK["warning"]
 
-#: What the gate concluded about one notification. Three outcomes, because quiet hours needs a
-#: middle one: a kind that carries a durable row somebody has to ANSWER, and dropping it entirely
-#: left the notification log with no record that the system ever asked (#341, bug B).
+#: What the gate concluded about one notification. Quiet hours has two answers of its own, because
+#: quiet hours mean "not now", never "not at all": a kind somebody has to ANSWER is recorded
+#: (`quiet`: a ping becomes a badge — dropping it left no record that the system ever asked,
+#: #341 bug B), and any other kind is `hush`: a ping is suppressed, and a rule that already
+#: delivers quietly (the digest, a badge) still delivers. Only mute and the severity floor `drop`.
 POSTURE_DELIVER = "deliver"
 POSTURE_QUIET = "quiet"
+POSTURE_HUSH = "hush"
 POSTURE_DROP = "drop"
 
 
 def _must_be_answered(registered) -> bool:
-    """Whether quiet hours must RECORD this kind rather than drop it (#341, bug B).
+    """Whether quiet hours must RECORD this kind's ping rather than suppress it (#341, bug B).
 
     `attention` ALONE is too wide, and the tree says so. It means "this persists a durable row",
     which the info-ranked attention kinds use for the opposite purpose: `learning/report`'s
@@ -332,10 +335,8 @@ def _in_quiet_window(start: str, end: str, now_minutes: int) -> bool:
 def quiet_hours_now(*, now: "object | None" = None, settings: dict | None = None) -> bool:
     """Whether the quiet-hours window is in force right now — the ONE answer to "not now?".
 
-    :func:`notification_posture` reads it to downgrade or drop a note, and an emitter whose note
-    must still reach the user LATER reads it to wait instead: a task's due-date reminder
-    (`tasks/due_notices.py`) that the gate dropped at 02:00 would never arrive, so it holds the
-    notice until the window ends. ``settings`` lets the gate pass the document it already read.
+    :func:`notification_posture` reads it to answer ``quiet`` or ``hush`` for a note inside the
+    window. ``settings`` lets the gate pass the document it already read.
     """
     from datetime import datetime
 
@@ -355,10 +356,12 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
       * ``mute_all`` — pause every notification regardless of severity. Always ``drop``.
       * ``min_severity`` — deliver only kinds at or above the threshold
         (info < warning < error; unknown kinds rank as info). Below it ⇒ ``drop``.
-      * quiet hours — suppress everything below *error* inside the window
-        (24-hour, server-local time; the window may wrap midnight)… **except a kind that has
-        to be answered (see :func:`_must_be_answered`), which returns ``quiet`` instead of
-        ``drop``**.
+      * quiet hours — nothing below *error* pings inside the window (24-hour, server-local
+        time; the window may wrap midnight). A kind that has to be answered (see
+        :func:`_must_be_answered`) returns ``quiet``, and every other kind ``hush``: `notify()`
+        then asks the kind's rule, and a rule that already delivers quietly (the digest, a badge)
+        still delivers, while a ping is suppressed. Neither is ``drop``: quiet hours mean "not
+        now", and a notice the rule sends to the morning digest is exactly "not now".
 
     🔴 WHY ``quiet`` EXISTS (#341, bug B). Quiet hours used to drop an attention kind outright:
     a loop that needed an answer at 02:00, or an agent request, was *"not logged, not persisted,
@@ -385,17 +388,20 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
     if severity < threshold:
         return POSTURE_DROP
     if severity < 3 and quiet_hours_now(now=now, settings=s):
-        return POSTURE_QUIET if _must_be_answered(registered) else POSTURE_DROP
+        return POSTURE_QUIET if _must_be_answered(registered) else POSTURE_HUSH
     return POSTURE_DELIVER
 
 
 def notification_allowed(kind: str, *, now: "object | None" = None) -> bool:
-    """Whether *kind* is delivered at all — :func:`notification_posture` as a boolean.
+    """Whether *kind* is delivered under its default rule — :func:`notification_posture` as a
+    boolean.
 
     Kept as the name every caller and doc already uses ("the global gate"). A ``quiet`` posture
-    IS allowed: the note is recorded, it just does not interrupt. Only ``drop`` is a refusal.
+    IS allowed: the note is recorded, it just does not interrupt. A ``hush`` is not: the default
+    rule pings, and a ping is what quiet hours suppress — only a rule that already delivers
+    quietly (the digest, a badge) delivers one.
     """
-    return notification_posture(kind, now=now) != POSTURE_DROP
+    return notification_posture(kind, now=now) not in (POSTURE_DROP, POSTURE_HUSH)
 
 
 def register_entity_routes(app: web.Application) -> None:

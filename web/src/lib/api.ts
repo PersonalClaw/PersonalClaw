@@ -1681,6 +1681,7 @@ export interface ScheduleJob {
   schedule: string                          // human-rendered cadence string
   cron_expr?: string | null                 // when kind=cron
   every_secs?: number | null                // when kind=every
+  at_ts?: number | null                     // when kind=at: the one time it runs, epoch seconds
   created_ts?: number | null
   // 🔴 NOT a run outcome. `schedule_view.py` aliases the trigger's `health_status` onto this name
   // for wire compatibility, so its vocabulary is `TriggerHealth` (`ok | degraded | parked |

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type WorkflowRunSummary } from '../../lib/api'
-import { useQuery } from '../../lib/data'
+import { api, ApiError, hasApiCode, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval, type SkillProposal, type WorkflowRunSummary } from '../../lib/api'
+import { invalidateKeys, useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { Button } from '../../ui/Button'
@@ -94,6 +94,9 @@ interface Attention {
   /** Every RUNNING workflow run — the Working lane's evidence for a run that is neither a chat
    *  session nor a loop. */
   runs: WorkflowRunSummary[]
+  /** The skill proposals waiting on a yes or no — Home's To triage reads the same list, so a
+   *  proposal is named and decided the same way on both. */
+  proposals: SkillProposal[]
 }
 
 /** ── WHY A THIRD SOURCE ───────────────────────────────────────────────────────────────────────
@@ -152,15 +155,19 @@ function activityOf(s: ChatSessionSummary): SessionActivity {
  *  Concatenating the lists here would double-count every mirrored approval and make each lane's
  *  count a lie. */
 async function readAttention(): Promise<Attention> {
-  const [items, approvals, sessions, loops, running] = await Promise.all([
+  const [items, approvals, sessions, loops, running, proposals] = await Promise.all([
     api.inboxOpen(),
     api.approvals(),
     api.chatSessions(),
     api.uLoops(),
     // 200 is the route's own ceiling (`api_runs_list`), far past what one install runs at once.
     api.workflowRuns({ status: 'running', limit: 200 }),
+    api.skillProposals(),
   ])
-  return { items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs }
+  return {
+    items, approvals, activity: sessions.map(activityOf), loops, runs: running.runs,
+    proposals: proposals.proposals,
+  }
 }
 
 /** What answering a parked run needs, read off the inbox row's free-form `refs`.
@@ -297,8 +304,12 @@ export function MissionControl() {
   const activity = data?.activity ?? []
   const loops = data?.loops ?? []
   const runs = data?.runs ?? []
+  const proposals = data?.proposals ?? []
   // The sibling owns the split. This view never classifies an item itself — see the header note.
-  const lanes = useMemo(() => toLanes(items, approvals, activity, loops, runs), [items, approvals, activity, loops, runs])
+  const lanes = useMemo(
+    () => toLanes(items, approvals, activity, loops, runs, proposals),
+    [items, approvals, activity, loops, runs, proposals],
+  )
 
   const mark = useCallback((key: string, o: Outcome) => {
     setOutcomes((prev) => ({ ...prev, [key]: o }))
@@ -324,6 +335,31 @@ export function MissionControl() {
             return
           }
           mark(cardKey, { state: 'failed', text: failureText(`${action} this`, err) })
+        })
+    },
+    [mark, refresh],
+  )
+
+  // A skill proposal is decided through the calls Home's To triage and the Skills page make, so
+  // an Accept here writes the skill the same way; both read the proposal list, so it moves there too.
+  const decideProposal = useCallback(
+    (cardKey: string, proposalId: string, action: 'accept' | 'reject') => {
+      mark(cardKey, { state: 'busy' })
+      const sent = action === 'accept' ? api.acceptSkillProposal(proposalId) : api.rejectSkillProposal(proposalId)
+      sent
+        .then(() => {
+          mark(cardKey, { state: 'done', text: action === 'accept' ? 'Accepted — the skill is saved.' : 'Rejected.' })
+          invalidateKeys('skill-proposals', true)
+          refresh()
+        })
+        .catch((err) => {
+          const ended = endedText(err)
+          if (ended) {
+            mark(cardKey, { state: 'ended', text: ended })
+            refresh()
+            return
+          }
+          mark(cardKey, { state: 'failed', text: failureText(`${action} this proposal`, err) })
         })
     },
     [mark, refresh],
@@ -398,12 +434,15 @@ export function MissionControl() {
             outcomes={outcomes}
             onResolve={resolve}
             onAnswer={answer}
+            onProposal={decideProposal}
           />
         ))}
       </section>
     </WorkbenchLayout>
   )
 }
+
+type OnProposal = (cardKey: string, proposalId: string, action: 'accept' | 'reject') => void
 
 function AttentionLaneSection({
   lane,
@@ -412,6 +451,7 @@ function AttentionLaneSection({
   outcomes,
   onResolve,
   onAnswer,
+  onProposal,
 }: {
   lane: Lane
   cards: LaneCard[]
@@ -419,6 +459,7 @@ function AttentionLaneSection({
   outcomes: Record<string, Outcome>
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
+  onProposal: OnProposal
 }) {
   const headingId = `mission-control-lane-${lane}`
   return (
@@ -451,6 +492,7 @@ function AttentionLaneSection({
                 outcome={outcomes[c.key]}
                 onResolve={onResolve}
                 onAnswer={onAnswer}
+                onProposal={onProposal}
               />
             </li>
           ))}
@@ -465,15 +507,18 @@ function AttentionCard({
   outcome,
   onResolve,
   onAnswer,
+  onProposal,
 }: {
   card: LaneCard
   outcome: Outcome | undefined
   onResolve: (cardKey: string, approvalId: string, action: 'approve' | 'reject') => void
   onAnswer: (cardKey: string, q: CardQuestion, value: string | boolean) => void
+  onProposal: OnProposal
 }) {
   // Each verb's input comes off the card's own source object, reachable only once the union is
   // narrowed — so a card missing it is a compile error rather than a card with no buttons.
   const approval = card.origin === 'approval' ? card.approval : null
+  const proposal = card.origin === 'proposal' ? card.proposal : null
   const item = card.origin === 'inbox' ? card.item : null
   const question = questionOf(item)
   // ONE subject string feeds every control's accessible name on this card, capped by the shared
@@ -520,6 +565,12 @@ function AttentionCard({
         <TextLink href={card.refs.link} ink="emphasis" size="sm"
           aria-label={`${card.origin === 'run' ? 'Open the run' : 'Open the loop'}: ${subject}`}>
           {card.origin === 'run' ? 'Open the run' : 'Open the loop'}
+        </TextLink>
+      ) : null}
+      {/* What the proposal would write is on the Skills page's proposals, where Home's row opens. */}
+      {proposal ? (
+        <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>
+          Review it in Skills
         </TextLink>
       ) : null}
 
@@ -576,6 +627,31 @@ function AttentionCard({
                 disabled={busy} disabledReason={BUSY_REASON}
                 ariaLabel={`Reject ${subject}`}
                 onClick={() => onResolve(card.key, approval.id, 'reject')}
+              >
+                <X size={13} aria-hidden="true" /> Reject
+              </Button>
+            </>
+          ) : null}
+
+          {proposal ? (
+            <>
+              {/* `loading` on both, as a question's Approve and Deny: while the decision is on its
+                  way the pair says so to assistive tech, and neither can be sent twice. */}
+              <Button
+                size="xs"
+                variant="primary"
+                loading={busy}
+                ariaLabel={`Accept ${subject}`}
+                onClick={() => onProposal(card.key, proposal.id, 'accept')}
+              >
+                <Check size={13} aria-hidden="true" /> Accept
+              </Button>
+              <Button
+                size="xs"
+                variant="secondary"
+                loading={busy}
+                ariaLabel={`Reject ${subject}`}
+                onClick={() => onProposal(card.key, proposal.id, 'reject')}
               >
                 <X size={13} aria-hidden="true" /> Reject
               </Button>

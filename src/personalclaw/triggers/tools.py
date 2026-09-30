@@ -108,6 +108,28 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
 
+def _expiry_after_its_time(trigger: Any) -> None:
+    """Move a one-shot's expiry past its time when an edit moved the time past the expiry.
+
+    A one-time task that expires before its own time never runs, and says nothing — the rule
+    `create` keeps for a new one (its time plus `ONE_TIME_LATE_SECS`). A task the chat made
+    carries that expiry, so moving it to a later day on the Triggers page left it listed, armed and
+    certain to expire first. The expiry moves only as far as that bound, never earlier.
+    """
+    from personalclaw.triggers.service import to_epoch
+
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    expires = str(getattr(trigger, "expires_at", "") or "")
+    if str(spec.get("kind") or "") != "at" or not expires:
+        return
+    try:
+        at = float(spec.get("at") or 0.0)
+    except (TypeError, ValueError):
+        return
+    if at > 0 and to_epoch(expires) < at + ONE_TIME_LATE_SECS:
+        trigger.expires_at = _iso(at + ONE_TIME_LATE_SECS)
+
+
 @dataclass(frozen=True)
 class _Timing:
     """What a clock `when` read as: the spec it becomes and the sentence saying so, or the error."""
@@ -1043,6 +1065,8 @@ def update(
     before = copy.deepcopy(trigger)
     for key, value in applied.items():
         setattr(trigger, key, value)
+    if "spec" in applied and "expires_at" not in applied:
+        _expiry_after_its_time(trigger)
     # What the edit changed keeps no grant (`grants.narrow`), so `missing` below asks about it the
     # way it asks about a provider the trigger was never allowed.
     changed = grants.narrow(trigger, before) if "workflow" in applied else []

@@ -759,6 +759,10 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         "a database the export projects, from the same declared set",
     ),
     "/f": (frozenset({"personalclaw/snapshot.py"}), "a name from `CORE_FILES`, a fixed list"),
+    "/part": (
+        frozenset({"personalclaw/snapshot.py"}),
+        "a store partition from `inventory.partition_paths`, a declared entry's own glob",
+    ),
     "/path": (
         frozenset({"personalclaw/snapshot.py"}),
         "a restore-plan row for a store the inventory's merge selectors name",

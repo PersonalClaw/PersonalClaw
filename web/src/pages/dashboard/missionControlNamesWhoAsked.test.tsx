@@ -27,6 +27,8 @@ vi.mock('../../lib/api', async (orig) => ({
     chatSessions: (...a: unknown[]) => chatSessions(...a),
     uLoops: (...a: unknown[]) => uLoops(...a),
     workflowRuns: (...a: unknown[]) => workflowRuns(...a),
+    // No skill proposals waiting: this suite is about the other sources.
+    skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
   },
 }))
 

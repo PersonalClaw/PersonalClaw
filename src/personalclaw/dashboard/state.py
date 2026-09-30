@@ -1580,10 +1580,12 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         1. **The global gate** (`notification_posture`) — mute-all, minimum severity,
            quiet hours. Still outermost: mute means mute, whatever a rule says, and a dropped
-           notification is dropped entirely, not logged unread. The one gradation is quiet hours
-           over an ATTENTION kind, which returns `quiet` and is recorded as a `badge` below
-           instead of vanishing — a loop that needed an answer overnight has to leave a trace
-           (#341).
+           notification is dropped entirely, not logged unread. Quiet hours are "not now", not
+           "not at all": they stop a PING, and the rule below decides what that leaves. A note
+           whose rule already delivers quietly (the digest, a badge) is delivered as it says; a
+           ping of a kind somebody must answer (`quiet`), or one the user's own condition raised,
+           is recorded as a `badge` — a loop that needed an answer overnight has to leave a trace
+           (#341); any other ping (`hush`) is suppressed.
         2. **The per-(source, kind) rule** (`notification_rules`) — never / badge /
            immediate / digest, plus conditions that escalate a quieter mode when the text
            matches a keyword or names the operator.
@@ -1672,12 +1674,14 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # Resolve the rule. Every failure path here falls through to immediate delivery:
         # a policy layer that can't read its own config must not be able to silence the
         # system (the same reason the gate above fails open).
+        raised = False  # a condition turned a quieter rule into a ping
         try:
             rule = rules.resolve_rule_for_legacy(kind)
             # The USER's name (`identity.operator_name`), which is what "mentions you by name"
             # means — this read `agent.bot_name` once, and escalated on the assistant's name.
             reason = rule.conditions.matches(f"{title}\n{body}", identity.operator_name())
             if reason:
+                raised = rule.mode != "immediate"
                 rule = rule.escalated()
                 note["escalated_by"] = reason
         except Exception:
@@ -1685,12 +1689,22 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             rule = None
 
         mode = rule.mode if rule is not None else "immediate"
-        # QUIET HOURS ON AN ATTENTION KIND (#341, bug B). The gate no longer drops it — it says
-        # "record it, don't interrupt", which is what `badge` already means. Written here rather
-        # than inside the gate because the gate decides WHETHER, and the mode is HOW: this is the
-        # one place that vocabulary lives. Only `immediate` is downgraded; `digest` and `badge` are
-        # already quieter and `never` is the user's own instruction, honoured below.
-        if posture == entity_routes.POSTURE_QUIET and mode == "immediate":
+        # QUIET HOURS decide what a PING becomes; the gate said "not now" and the mode is HOW, so
+        # this is the one place that vocabulary lives. `digest` and `badge` are already quiet and
+        # are delivered as the rule says: the gate used to drop them before the rule was read, so
+        # a loop that finished at 03:00 under a digest rule left no notice anywhere and the
+        # morning digest said "nothing queued". `never` is the user's own instruction, honoured
+        # below. A ping is recorded as a `badge` — "in the list, without interrupting" — when the
+        # kind must be answered (#341, bug B) or the user's own condition raised it (a matched
+        # keyword must not be what loses a note its quiet rule would have kept); any other ping is
+        # suppressed, as quiet hours promise.
+        if mode == "immediate" and posture in (
+            entity_routes.POSTURE_QUIET,
+            entity_routes.POSTURE_HUSH,
+        ):
+            if posture == entity_routes.POSTURE_HUSH and not raised:
+                logger.debug("Notification suppressed by quiet hours: %s %r", kind, title)
+                return
             mode = "badge"
         note["mode"] = mode
         if rule is not None:

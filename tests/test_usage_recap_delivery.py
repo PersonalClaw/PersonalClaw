@@ -7,8 +7,10 @@ untested:
 
 1. **Exactly one per month.** The mark is checked before rendering, so a monthly cron that fires
    twice (an overdue trigger re-armed by the boot sweep, a hand fire, a reconcile) emits once.
-2. **Quiet hours / mute suppress it.** These live in `notification_allowed`, upstream of the rules
-   engine, and a recap is `SEV_INFO` — so both must swallow it whole.
+2. **Mute suppresses it; quiet hours never lose it.** Mute lives upstream of the rules engine and
+   swallows it whole. Quiet hours stop a ping only: the recap's own rule is `digest`, which pings
+   nobody, so inside the window it still waits in the digest queue — and a rule that pings is
+   held back.
 3. **The system cron exists and is ARMED.** A registered-but-unarmed trigger never runs; that is
    the exact S108 defect `digest_provider`'s tests were rewritten to catch.
 
@@ -264,14 +266,17 @@ def test_the_mark_records_which_month_was_sent(home, stub_rates, monkeypatch):
 # ── the gates (quiet hours + mute), each with its unsuppressed control ──────────────────
 
 
-def test_quiet_hours_suppress_the_recap(home, stub_rates, monkeypatch):
-    """A recap is SEV_INFO, and quiet hours drop everything below `error`.
+def test_quiet_hours_keep_the_recap_for_the_digest(home, stub_rates, monkeypatch):
+    """A recap rides the digest by its own rule, which interrupts nobody, so quiet hours have
+    nothing to stop: it waits in the queue for the digest, and no toast is raised. Quiet hours used
+    to drop it before the rule was read, which lost the month's recap for anyone whose window held
+    the moment it ran.
 
     The window is 00:00→23:59 so the test does not depend on the wall clock — a fixed window
     around "now" would pass or fail by time of day, which is a flake, not a gate.
     """
     _seed_fold(home)
-    _wire_state(monkeypatch, home)
+    state = _wire_state(monkeypatch, home)
     _write_notification_settings(
         home,
         quiet_hours_enabled=True,
@@ -280,13 +285,33 @@ def test_quiet_hours_suppress_the_recap(home, stub_rates, monkeypatch):
     )
 
     res = _fire()
-    assert res.success, "suppression by the user's own setting is not a failed action"
-    assert _queued(home) == [], "quiet hours did not suppress the recap"
+    assert res.success
+    assert [n["kind"] for n in _queued(home)] == ["usage_recap"]
+    assert state._notification_log == [], "quiet hours must not raise it now"
+
+
+def test_quiet_hours_hold_back_a_recap_whose_rule_pings(home, stub_rates, monkeypatch):
+    """A user who opted the recap out of the digest asked to be pinged, and a ping is what quiet
+    hours stop — so inside the window nothing is raised or queued."""
+    _seed_fold(home)
+    state = _wire_state(monkeypatch, home)
+    (home / "entity_settings" / "notification_rules.json").write_text(
+        json.dumps({"rules": {"system/usage_recap": {"mode": "immediate"}}}), encoding="utf-8"
+    )
+    _write_notification_settings(
+        home,
+        quiet_hours_enabled=True,
+        quiet_hours_start="00:00",
+        quiet_hours_end="23:59",
+    )
+
+    assert _fire().success, "held back by the user's own setting is not a failed action"
+    assert _queued(home) == [] and state._notification_log == []
 
 
 def test_the_recap_IS_delivered_when_quiet_hours_are_off(home, stub_rates, monkeypatch):
-    """The vacuity control for the test above. Identical fixture, `quiet_hours_enabled` false —
-    if this also produced nothing, the suppression test would be measuring a broken fixture."""
+    """The control for the quiet-hours tests above. Identical fixture, `quiet_hours_enabled`
+    false — the recap is queued for the digest exactly as it is inside the window."""
     _seed_fold(home)
     _wire_state(monkeypatch, home)
     _write_notification_settings(

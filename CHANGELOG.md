@@ -154,6 +154,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A PDF's text is read from its pages, not from the font and image data inside it.**
 - **The Reports page says when a report runs in words, with its time zone and its next run, as the Triggers page does, instead of its cron expression.**
 - **The Providers page follows a channel while it is open: a receiver that stops reads Error without a reload, and an earlier Test's answer is no longer shown as the channel's status.**
+- **A one-shot's time can be changed: Triggers › Edit opens on the time it runs at, and a new time is saved and its next run moves with it, for a one-shot made on the page or in chat; a time that has already passed is refused.**
+- **Quiet hours never lose a notice your own rule sends quietly: one your rule sends to the digest waits for the digest, one it shows as a badge lands in the bell without a sound or a push, and only a notice that would ping is held back.**
+- **What a project's sessions remember is in every snapshot and export and comes back from a restore, so Doctor and Home no longer report durability as degraded over a project's memory.**
+- **Mission Control's Your turn names each skill proposal and accepts or rejects it on its card, as Home's To triage does.**
 - **A Temporary chat is forgotten when its session ends, as its notice says: when PersonalClaw stops or restarts, however it stops, the chat's messages, its working files and the files attached to it are deleted, its page no longer opens, a message sent to it starts nothing, and no snapshot or export taken while it ran carries it.**
 - **Turning the MCP surface on in Settings → External access serves `/mcp` at once, as `/v1`, `/a2a` and `/capture` are, and turning it off refuses the next call, with no restart.**
 - **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question (`MemoryService.recall_lessons` and `recall_facts`: SDK additions no app has to change for).**

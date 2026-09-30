@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
@@ -147,7 +147,10 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   // parse, and Save gated only on a non-empty name — so an existing 9am automation could be edited
   // into one that never fires again. Same exported check the create page gates on, so an expression
   // is accepted or refused identically wherever it is typed.
+  // A one-shot saved with its time cleared would keep the old time and say nothing, so the time is
+  // a save requirement here as it is on the create page (`scheduleWhenMet`), in the same words.
   const scheduleReason = scheduleDraftInvalidReason(draft)
+    ?? (scheduleWhenMet(draft.kind, draft.at) ? null : 'Pick the date & time to fire once')
 
   async function save() {
     if (!draft.name.trim()) { setErr('Name is required'); return }

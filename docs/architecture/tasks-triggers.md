@@ -39,7 +39,7 @@ relative to `PersonalClaw/src/personalclaw/`.
   than a day gone. Moving the date re-arms it; a record is dropped only once
   its date can no longer be announced, never because one sweep did not see
   the task. Quiet hours hold the notice until the
-  window ends (the gate would otherwise drop an INFO note); mute and a raised
+  window ends (inside it the gate would suppress its ping); mute and a raised
   minimum severity mean "not at all". Only the owner's open tasks are
   announced, and only while the task's `due_reminder` is on — the per-task
   opt-out beside the Due field in the task form.

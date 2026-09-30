@@ -48,15 +48,7 @@ _API = _REPO_ROOT / "web" / "src" / "lib" / "api.ts"
 #: unread. A field belongs here only when leaving it unread is a decision someone made on purpose —
 #: never because a test went red. Rows are the exception surface; keep it short and keep the
 #: reasons true.
-_DELIBERATELY_UNREAD: dict[str, str] = {
-    "at": (
-        "One-shot scheduling is a declared-future axis: `scheduleMeta.ts` flags the `at` kind "
-        "`soon: true`, so the picker offers it behind a SoonTag and the payload carries it for "
-        "forward compatibility. `_create_schedule` reads it (a one-shot CAN be created); "
-        "`_update_schedule` does not, so its fire time is not editable yet. Landing one-shot edit "
-        "means reading it there and deleting this row."
-    ),
-}
+_DELIBERATELY_UNREAD: dict[str, str] = {}
 
 #: Floors. Each is the size of the set as measured when this test was written, minus a little slack
 #: for churn. They exist because every number below is produced by a regex over source text, and a

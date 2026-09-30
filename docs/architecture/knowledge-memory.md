@@ -393,6 +393,11 @@ item vector).
   partition gets its vector index once an embedding model is bound, asked at each
   use, so the first binding reaches a directory already open, or once it holds
   memories one wrote, so a clear leaves them searchable by keyword.
+- A partition's `memory_index.db` holds that folder's memories (its vector store and
+  its full-text index share the file), so the state manifest declares it a partition
+  of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through
+  the sqlite backup API, a merge restore merges its memories as it merges
+  `memory.db`'s, and Doctor's durability audit counts it declared.
 - **Project locality rides that seam** (`memory_locality.py`): a project-owned
   run binds the project's `context_dir` as its cwd, so what it learns lands in
   that project's partition instead of the shared pile.

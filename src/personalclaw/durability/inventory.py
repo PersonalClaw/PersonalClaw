@@ -126,6 +126,12 @@ class StateEntry:
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
     derived_within: tuple[str, ...] = field(default_factory=tuple)
+    # For a ``sqlite`` store kept once per key as well as at `path`: where the other copies are
+    # (home-relative globs, one ``*`` per path segment). Each is this store — the same kind,
+    # domain and merge — so a snapshot and an export copy it through the sqlite backup API as they
+    # copy `path`, a merge restore merges it as it merges `path`, and the undeclared-database audit
+    # counts it declared (`partition_paths`). Every memory partition keeps its own memory database.
+    partitions: tuple[str, ...] = field(default_factory=tuple)
     # For a ``json_file`` that holds user records (a list of them, or a document holding one):
     # where they are (`record_files.Shape`). A sync (`reconcile.reconcile_entry`), a restore's merge
     # and an import (`reconcile.bring_in`) take another machine's in one record at a time — by its
@@ -360,6 +366,15 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_MEMORY,
         merge=MERGE_SQLITE_ATTACH_IGNORE,
         help="semantic facts, episodes, lessons, memory events",
+        # 🔴 Memory is partitioned by working directory (`config.loader.memory_dir_for_cwd`), and a
+        # partition keeps what its sessions learn in its own database, where its vector store and
+        # its full-text index share one file (`context._attach_vector_store`). The name is the top
+        # level's DERIVED index's, but the rows are this store's — a project's facts and
+        # episodes, held nowhere else — so the partition database is this entry, not
+        # `memory_index_db`. Undeclared, no snapshot carried it (the tree copy skips every
+        # database), a replace restore moved it aside with `workspace/` and did not bring it back,
+        # and Doctor was right to say it was in no snapshot.
+        partitions=("workspace/_ext/*/memory_index.db",),
     ),
     StateEntry(
         id="memory_index_db",
@@ -2369,6 +2384,33 @@ def _parts(rel: str) -> tuple[str, ...]:
     return tuple(p for p in rel.replace("\\", "/").split("/") if p and p != ".")
 
 
+def _matches_partition(rel: str, glob: str) -> bool:
+    """Whether home-relative *rel* is a path *glob* names, segment for segment (so a ``*`` never
+    spans a folder)."""
+    parts, want = _parts(rel), _parts(glob)
+    return len(parts) == len(want) and all(fnmatch.fnmatchcase(p, w) for p, w in zip(parts, want))
+
+
+def partition_entry(rel: str) -> StateEntry | None:
+    """The store whose partition the home-relative path *rel* is (`StateEntry.partitions`)."""
+    for entry in INVENTORY:
+        if any(_matches_partition(rel, glob) for glob in entry.partitions):
+            return entry
+    return None
+
+
+def partition_paths(home: Path) -> list[str]:
+    """Home-relative paths of every store partition on disk under *home*, sorted: the databases
+    a snapshot, an export and a restore copy beside the entries' own paths."""
+    found: set[str] = set()
+    for entry in INVENTORY:
+        for glob in entry.partitions:
+            for path in home.glob(glob):
+                if path.is_file() and not path.is_symlink():
+                    found.add(path.relative_to(home).as_posix())
+    return sorted(found)
+
+
 def is_ignored(rel: str) -> bool:
     """Whether a home-relative path is deliberately not state."""
     parts = _parts(rel)
@@ -2493,7 +2535,7 @@ def audit_home(home: Path) -> AuditResult:
     declared_trees = tuple(e.path + "/" for e in INVENTORY if e.db_container)
     for db in _db_files(home):
         rel_db = db.relative_to(home).as_posix()
-        if is_ignored(rel_db) or rel_db in declared:
+        if is_ignored(rel_db) or rel_db in declared or partition_entry(rel_db) is not None:
             continue
         if rel_db.startswith(declared_trees):
             continue

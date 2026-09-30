@@ -1210,12 +1210,10 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     elif cron_expr:
         spec = {"kind": "cron", "expr": str(cron_expr).strip()}
     elif at_ts:
-        try:
-            spec = {"kind": "at", "at": float(at_ts), "delete_after_run": True}
-        except (ValueError, TypeError):
-            return web.json_response(
-                {"error": "'at' must be a Unix timestamp in seconds"}, status=400
-            )
+        at, problem = _one_shot_time(at_ts)
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
+        spec = {"kind": "at", "at": at, "delete_after_run": True}
     else:
         return web.json_response({"error": "every, cron, or at required"}, status=400)
 
@@ -1574,6 +1572,11 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         kwargs["cron_expr"] = body["cron"]
     if "every" in body:
         kwargs["every_secs"] = body["every"]
+    if body.get("at"):
+        # A one-shot's time. The edit form sends it on every save of a one-shot, and this function
+        # never read it, so a moved time answered 200 and the row kept the old one. Read below,
+        # against the time the row already has.
+        kwargs["at_ts"] = body["at"]
     if "timezone" in body:
         tz_val = (body["timezone"] or "").strip()
         if tz_val and tz_val not in available_timezones():
@@ -1606,12 +1609,31 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
 
         before = dict(row.trigger.spec or {})
         spec = dict(before)
+        if "at_ts" in kwargs:
+            was_once = str(before.get("kind") or "") == "at"
+            at_ts, problem = _one_shot_time(
+                kwargs["at_ts"], kept=before.get("at") if was_once else None
+            )
+            if problem:
+                return json_error("invalid_request", message=problem, status=400)
+            kwargs["at_ts"] = at_ts
         if "cron_expr" in kwargs and kwargs["cron_expr"]:
             spec = {"kind": "cron", "expr": str(kwargs["cron_expr"]).strip(), **_carried(spec)}
         elif "every_secs" in kwargs and kwargs["every_secs"]:
             spec = {
                 "kind": "interval",
                 "interval_secs": int(kwargs["every_secs"]),
+                **_carried(spec),
+            }
+        elif "at_ts" in kwargs:
+            # A one-shot keeps what it was made as while its time moves: the page's leaves the list
+            # after its run and the chat's stays (`service.retire_after_run`). A cadence changed
+            # into a one-shot here is the page's, as `_create_schedule` makes one.
+            was_once = str(before.get("kind") or "") == "at"
+            spec = {
+                "kind": "at",
+                "at": kwargs["at_ts"],
+                "delete_after_run": bool(before.get("delete_after_run")) if was_once else True,
                 **_carried(spec),
             }
         if "timezone" in kwargs:
@@ -1692,6 +1714,33 @@ def _carried(spec: dict[str, Any]) -> dict[str, Any]:
     catch going missing. A user changing `0 9 * * *` to `0 10 * * *` must not lose their holidays.
     """
     return {k: v for k, v in spec.items() if k in ("timezone", "skip_dates", "strict")}
+
+
+def _one_shot_time(value: Any, *, kept: Any = None) -> tuple[float, str]:
+    """A one-shot's ``at`` as a request sends it: epoch seconds still to come, or why not.
+
+    One reading for the create and the edit, so a time is taken or refused alike wherever it is
+    typed. A time already gone is refused rather than saved: the row would sit listed, switched on,
+    and never fire, which is why the chat's one-time task refuses it too, in these words. *kept* is
+    the time an edited row already has, which its form sends back with every save: taken as it is,
+    so a one-shot whose time has passed can still be renamed.
+    """
+    import math
+    import time as _time
+
+    try:
+        at = float(value)
+    except (TypeError, ValueError):
+        return 0.0, "'at' must be a Unix timestamp in seconds"
+    if not math.isfinite(at):
+        return 0.0, "'at' must be a Unix timestamp in seconds"
+    try:
+        unchanged = kept is not None and at == float(kept)
+    except (TypeError, ValueError):
+        unchanged = False
+    if at <= _time.time() and not unchanged:
+        return 0.0, "That time has already passed. Give a time that is still to come."
+    return at, ""
 
 
 # ── toggle (run, fire, answer and test are `trigger_runs`) ──

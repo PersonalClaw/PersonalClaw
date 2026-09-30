@@ -57,7 +57,7 @@
  *  item wrongly hidden is a worse failure on an attention surface than a resolved item wrongly
  *  shown. Neither is a fallthrough — both branches are written out.
  */
-import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, WorkflowRunSummary } from './api'
+import type { ChatSession, ChatSessionSummary, InboxItem, InboxItemKind, InboxItemStatus, Loop, PendingApproval, SkillProposal, WorkflowRunSummary } from './api'
 import { workflowApprovalSession } from '../app/approvalDestination'
 import { loopRoute } from './loopKind'
 import { shownCycle } from './loopStatus'
@@ -99,6 +99,10 @@ export type LoopInput = Pick<Loop, 'id' | 'kind' | 'name' | 'task' | 'status' | 
  *  neither source above sees it. Optional, like the two before it. */
 export type RunInput = Pick<WorkflowRunSummary, 'id' | 'workflow_name' | 'title' | 'status' | 'started_at' | 'created_at' | 'parent_run_id'>
 
+/** `GET /api/skills/proposals` rows — the skills waiting on your yes or no. Optional, like the
+ *  in-flight sources: omit them and a proposal still shows, as its Inbox row. */
+export type ProposalInput = Pick<SkillProposal, 'id' | 'slug' | 'description' | 'created_at'>
+
 /** What every card has, whichever source it came from.
  *  `at` is epoch **seconds** — the unit both `InboxItem.created_at` and `PendingApproval.ts` arrive
  *  in (`time.time()` on the backend) — or `null` when the source carried no timestamp at all. */
@@ -131,6 +135,7 @@ export type LaneCard =
   | (LaneCardBase & { origin: 'session'; session: ActivityInput })
   | (LaneCardBase & { origin: 'loop'; loop: LoopInput })
   | (LaneCardBase & { origin: 'run'; run: RunInput })
+  | (LaneCardBase & { origin: 'proposal'; proposal: ProposalInput })
 
 /** Base kind → lane, mirroring `inbox.py`'s two frozensets (fact 1).
  *
@@ -237,6 +242,26 @@ function timeOf(item: AttentionInput): number | null {
 export function mirroredApprovalId(item: Pick<InboxItem, 'refs'>): string {
   const raw = item.refs?.approval
   return typeof raw === 'string' && raw !== '' ? raw : ''
+}
+
+/** The skill proposal this Inbox row is the listing of (`refs.skill_proposal`), or ''.
+ *
+ *  THE one test for "this Inbox row and that proposal are the same item", as `mirroredApprovalId`
+ *  is for an approval: Home's To triage and Mission Control's Your turn both list the proposal and
+ *  drop its row, so neither shows one skill twice. */
+export function mirroredProposalId(item: Pick<InboxItem, 'refs'>): string {
+  const raw = item.refs?.skill_proposal
+  return typeof raw === 'string' && raw !== '' ? raw : ''
+}
+
+/** A skill proposal's name and summary, as every surface that decides one shows it — the skill
+ *  it is about, and what it would change. Mission Control's card read "Refine a skill" three times
+ *  over, with no skill named, beside Home's rows that named each; both read these now. */
+export function proposalTitle(p: Pick<ProposalInput, 'slug'>): string {
+  return `Skill: ${p.slug}`
+}
+export function proposalSummary(p: Pick<ProposalInput, 'description'>): string {
+  return p.description?.slice(0, 90) || ''
 }
 
 /** Which lane one inbox item belongs to, or `null` for "not on this surface".
@@ -393,8 +418,32 @@ export function toLanes(
   activity: ActivityInput[] = [],
   loops: LoopInput[] = [],
   runs: RunInput[] = [],
+  proposals: ProposalInput[] = [],
 ): Record<Lane, LaneCard[]> {
   const out = emptyLanes()
+
+  // ── Skill proposals: a skill waiting on your yes or no, carded as the proposal — named, with
+  // Accept and Reject — rather than as its Inbox row, whose first line is the same "Refine a skill"
+  // for every one. Its row is dropped below while the proposal is in this snapshot; a row whose
+  // proposal is not stays, as an approval's does (fact 2).
+  const proposalIds = new Set<string>()
+  for (const p of Array.isArray(proposals) ? proposals : []) {
+    if (p === null || typeof p !== 'object') continue
+    const id = typeof p.id === 'string' ? p.id : ''
+    if (id === '' || typeof p.slug !== 'string' || p.slug === '') continue
+    proposalIds.add(id)
+    out['your-turn'].push({
+      key: `proposal:${id}`,
+      lane: 'your-turn',
+      origin: 'proposal',
+      id,
+      title: proposalTitle(p),
+      subtitle: proposalSummary(p) || undefined,
+      raisedBy: 'Skills',
+      at: isoSeconds(p.created_at),
+      proposal: p,
+    })
+  }
 
   // ── Approvals: the authoritative form of a blocked decision, so they go in first and own the id.
   const approvalIds = new Set<string>()
@@ -432,6 +481,7 @@ export function toLanes(
     // than vanishing — losing a row is worse than showing a stale one on an attention surface.
     const mirrored = mirroredApprovalId(item)
     if (mirrored !== '' && approvalIds.has(mirrored)) continue
+    if (proposalIds.has(mirroredProposalId(item))) continue
 
     out[lane].push({
       key: `inbox:${id}`,

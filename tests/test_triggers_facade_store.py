@@ -1223,7 +1223,7 @@ def test_a_non_numeric_one_shot_at_is_400_not_500(home, state):
     for bad in ("2026-08-10T09:00", "not-a-date"):
         resp = _create_schedule(state, name="Once", cron=None, at=bad)
         assert resp.status == 400
-        assert "'at'" in _body(resp)["error"]
+        assert "'at'" in _body(resp)["error"]["message"]
     assert _store(home).load() == []
 
 

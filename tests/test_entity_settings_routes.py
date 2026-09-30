@@ -486,16 +486,17 @@ class TestNotificationAllowed:
         assert er.notification_posture("needs_input", now=night) == er.POSTURE_QUIET
         assert er.notification_posture("agent_request", now=night) == er.POSTURE_QUIET
         assert er.notification_allowed("needs_input", now=night) is True
-        # A non-attention kind of the same severity is still dropped — quiet hours keeps its
-        # meaning, and the carve-out is "this persists a row somebody must answer", not "warning".
-        assert er.notification_posture("warning", now=night) == er.POSTURE_DROP
+        # A non-attention kind of the same severity is hushed — its ping is suppressed, so quiet
+        # hours keep their meaning, and the carve-out is "this persists a row somebody must
+        # answer", not "warning".
+        assert er.notification_posture("warning", now=night) == er.POSTURE_HUSH
         assert er.notification_allowed("warning", now=night) is False
         # Outside the window nothing is downgraded.
         assert er.notification_posture("needs_input", now=datetime(2026, 1, 1, 12, 0)) == (
             er.POSTURE_DELIVER
         )
 
-    def test_quiet_hours_still_drops_an_INFO_ranked_attention_kind(self):
+    def test_quiet_hours_still_hushes_an_INFO_ranked_attention_kind(self):
         """🪤 THE CARVE-OUT IS NOT `attention` ALONE, and the tree says so.
 
         `attention` means "this persists a durable row", which the info-ranked attention kinds use
@@ -518,7 +519,7 @@ class TestNotificationAllowed:
             registered = nk.kind_for_legacy(wire)
             assert registered.attention is True, f"{wire} is not an attention kind any more"
             assert registered.default_severity == nk.SEV_INFO, f"{wire} was re-ranked"
-            assert er.notification_posture(wire, now=night) == er.POSTURE_DROP, wire
+            assert er.notification_posture(wire, now=night) == er.POSTURE_HUSH, wire
 
     def test_mute_all_and_min_severity_still_drop_an_attention_kind(self):
         """The carve-out is scoped to quiet hours ("not now"), not to "not at all"."""

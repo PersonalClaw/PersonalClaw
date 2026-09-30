@@ -35,6 +35,8 @@ vi.mock('../../lib/api', async (orig) => ({
     uLoops: () => Promise.resolve([]),
     // The Working lane's third source: nothing is running in these scenarios.
     workflowRuns: () => Promise.resolve({ runs: [], total: 0, limit: 200, offset: 0 }),
+    // No skill proposals waiting: this suite is about the other sources.
+    skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },

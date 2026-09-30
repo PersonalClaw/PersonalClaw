@@ -41,6 +41,8 @@ vi.mock('../../lib/api', async (orig) => ({
     chatSessions: (...a: unknown[]) => chatSessions(...a),
     uLoops: (...a: unknown[]) => uLoops(...a),
     workflowRuns: (...a: unknown[]) => workflowRuns(...a),
+    // No skill proposals waiting: this suite is about the other sources.
+    skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     resolveApproval: (...a: unknown[]) => resolveApproval(...a),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
     answerTriggerPark: (...a: unknown[]) => answerTriggerPark(...a),
@@ -389,6 +391,7 @@ describe('the lane split comes from lib/attentionLanes, not from this view', () 
         [item],
         [appr],
         [{ key: 'chat-1', title: 'nightly sweep', running: true, stopping: false, pending_approval: false }],
+        [],
         [],
         [],
       ),

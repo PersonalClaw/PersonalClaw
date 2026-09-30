@@ -16,11 +16,12 @@ user can fire a trigger by hand. So the month is the idempotency key, recorded i
 `usage_recap_sent.json` and checked BEFORE rendering. Without it the recap would be "one
 notification per boot in the first week of the month".
 
-The mark is written whether or not the notification survived the gate. A recap suppressed by the
-user's own quiet hours is suppressed, not deferred — retrying until it lands is exactly the
-escalation a quiet-hours setting exists to refuse, and a month-old spend summary has no urgency
-to justify it. `delivered` records which happened, so the state is legible rather than merely
-absent.
+The mark is written whether or not the notification survived the gate. Quiet hours do not lose
+it — its `digest` rule pings nobody, so inside the window it still waits for the digest — but a
+recap held back by mute, or by a rule that pings inside quiet hours, is not retried: retrying
+until it lands is exactly the escalation those settings exist to refuse, and a month-old spend
+summary has no urgency to justify it. `delivered` records which happened, so the state is legible
+rather than merely absent.
 """
 
 from __future__ import annotations

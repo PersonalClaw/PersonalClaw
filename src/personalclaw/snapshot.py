@@ -164,6 +164,22 @@ def _declared_db_paths() -> tuple[str, ...]:
         return ("memory.db", "memory_index.db")
 
 
+def _partition_paths(root: Path, *, of: str = "") -> list[str]:
+    """The store partitions under *root* (a home, or an unpacked snapshot), home-relative — see
+    `inventory.partition_paths` — or only those of the entry with the id *of*. Empty when the
+    inventory cannot be read, like its siblings: a snapshot must work even if that import breaks."""
+    try:
+        from personalclaw.durability import inventory as inv
+
+        return [
+            rel
+            for rel in inv.partition_paths(root)
+            if not of or getattr(inv.partition_entry(rel), "id", "") == of
+        ]
+    except Exception:  # noqa: BLE001 — snapshot must work even if this import breaks
+        return []
+
+
 def _safe_copy_db(src: Path, dst: Path) -> bool:
     """Copy one sqlite file consistently via the backup API. False if it isn't a
     readable database (caller falls back to a plain copy)."""
@@ -702,6 +718,17 @@ def snapshot_main(
         # Skills
         if (pc / "skills").is_dir():
             _copytree_safe(pc / "skills", stage / "skills", dirs_exist_ok=True)
+
+        # Every store partition (`StateEntry.partitions` — each memory partition's own memory
+        # database), through the backup API like the store it partitions. The tree copies above
+        # skip every database, and no other pass named these, so a project's memories were in no
+        # snapshot at all.
+        for part in _partition_paths(pc):
+            if os.path.islink(pc / part):
+                continue
+            if not _safe_copy_db(pc / part, stage / part):
+                (stage / part).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(pc / part), str(stage / part))
 
         # THE GAP CLOSURE (DURABILITY §1): every remaining inventory entry. Before
         # this, tasks/, projects/, loop/, artifacts/, prompts/, workflows/,
@@ -2059,6 +2086,11 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         if sd.is_dir():
             dd = pc / "workspace"
             dd.mkdir(parents=True, exist_ok=True)
+            # A project's memories are merged into the partition this home also has, as
+            # `memory.db`'s are above; the copy below brings a partition this home lacks.
+            for part in _partition_paths(snap, of="memory_db"):
+                if (pc / part).is_file():
+                    _merge_memory(snap / part, pc / part)
             _copy_tree_no_overwrite(sd, dd)
         print("  ✅ workspace")
 

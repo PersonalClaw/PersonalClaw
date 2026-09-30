@@ -21,6 +21,19 @@ export function epochSeconds(ts?: number | string | null): number | undefined {
   return Number.isFinite(ms) ? ms / 1000 : undefined
 }
 
+/** The value a `<input type="datetime-local">` shows for a stamp — `2026-10-05T09:50`, in the
+ *  BROWSER's zone, to the minute — or `''` when the stamp is unreadable (an empty picker).
+ *
+ *  The inverse of reading such a value back with `epochSeconds`, which parses a zone-less date-time
+ *  as local: a form seeded from this and saved untouched lands on the same minute. */
+export function localDateTimeInput(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  const at = new Date(secs * 1000)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`
+}
+
 /** ── ABSOLUTE stamps, for showing WHEN something happened rather than how long ago ────────────
  *
  *  These sit here rather than beside a caller because they share `epochSeconds`' parser AND its

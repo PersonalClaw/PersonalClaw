@@ -496,6 +496,13 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             db_names: list[str] = sorted(
                 e.path for e in _inv.sqlite_entries() if e.path in _export_paths
             )
+            # Each store partition on disk (a project's own memory database) leaves as its store
+            # does. The `workspace` walk below used to carry it as a raw file out of the tree.
+            db_names += [
+                rel
+                for rel in _inv.partition_paths(pc)
+                if getattr(_inv.partition_entry(rel), "path", "") in _export_paths
+            ]
         except Exception:  # noqa: BLE001 — an export must work even if this import breaks
             # Fail closed on the derived index: an export without the vector index is
             # complete (it rebuilds); an export WITH a stale one is a restore hazard.

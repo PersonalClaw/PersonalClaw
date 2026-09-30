@@ -8,7 +8,7 @@ import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError } from '../../ui/forms'
 import { SoonTag } from '../tasks/taskMeta'
-import { epochSeconds } from '../../lib/epoch'
+import { epochSeconds, localDateTimeInput } from '../../lib/epoch'
 import {
   KINDS, EXEC_MODES, deriveKind, deriveMode, kindMeta, modeMeta,
   secsToInterval, intervalToSecs, INTERVAL_UNITS, MIN_INTERVAL_SECS, CRON_PRESETS,
@@ -47,6 +47,12 @@ export type ScheduleDraft = {
   cron: string
   // at (one-shot) — local datetime-local string
   at: string
+  /** The one-shot's time this draft OPENED on, in epoch seconds — `undefined` for a new one.
+   *
+   *  The picker shows whole minutes, and a chat-made one-time task's time has seconds, so the
+   *  field's own value is not the stored time: an untouched field sends this back instead, the
+   *  way `everySecsOriginal` keeps an interval the form cannot display (#531). */
+  atSecsOriginal?: number
   mode: ScheduleExecMode
   agent: string
   model: string
@@ -105,7 +111,8 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     kind: deriveKind(j), intervalValue: iv.value, intervalUnit: iv.unit,
     // Recorded BEFORE the lossy display conversion above is ever sent back (#531).
     everySecsOriginal: j.every_secs ?? undefined,
-    cron: j.cron_expr ?? '0 9 * * *', at: '',
+    // The one-shot's own time, as the picker shows it (it opened blank: the row carried none).
+    cron: j.cron_expr ?? '0 9 * * *', at: localDateTimeInput(j.at_ts), atSecsOriginal: j.at_ts ?? undefined,
     mode: deriveMode(j), agent: j.agent ?? '', model: j.model ?? '', cwd: j.cwd ?? '',
     script: j.script ?? '', command: j.command ?? '',
     channel: j.channel ?? '', silent: !!j.silent, strict_schedule: !!j.strict_schedule,
@@ -193,7 +200,13 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // Omitted (not sent as NaN/null) when the picker is empty or unreadable: the handler's
   // "every, cron, or at required" 400 is the honest answer, and `scheduleWhenMet` gates Save so a
   // user does not reach it by accident.
-  else if (d.kind === 'at') { const at = epochSeconds(d.at); if (at !== undefined) body.at = at }
+  // An untouched time sends the stored instant, not the picker's whole minute (see
+  // `atSecsOriginal`); a changed one sends what the user picked.
+  else if (d.kind === 'at') {
+    const orig = d.atSecsOriginal
+    const at = orig !== undefined && d.at === localDateTimeInput(orig) ? orig : epochSeconds(d.at)
+    if (at !== undefined) body.at = at
+  }
   if (d.mode !== 'other') body.message = d.message.trim()
   // 🔴 `approval_mode` rides with the AGENT fields, not with the delivery block it is drawn next
   // to. It is `invoke-agent` action config (`schedule.py`'s `approval_mode` property returns ''
