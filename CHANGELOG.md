@@ -10,6 +10,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An email's attachments are listed in the Inbox by name, type and size, each with a download, and an agent reading the message is given each one's text inside a fence: `IncomingMessage.files` and `ChannelMessage.files` carry `personalclaw.sdk.inbox.Attachment` (`personalclaw.sdk.channel.Attachment`), used by `mail-inbox` and `email-channel`.**
+- **An automation that starts an agent can name the files its job changes (Files it may change): its agent may write those and nothing else, and its Allow says what its agent may do.**
+- **"Make me a button that runs …" makes an automation that runs when you run it, and the chat shows it with its Run now.**
+- **A trigger's run is told what started it (the file that arrived, the message, the page's new items, the webhook's body), and its agent may read that file: `ActionContext.fire_facts` and `fire_files`, and `SubagentManager.spawn(may_read=…, may_change=…)` (SDK additions no app has to change for).**
+- **`read_file` reads the text of a PDF, Word or PowerPoint document.**
 - **A search app's refusal names the network setting that lifts it, in the words a model provider's Test uses: `personalclaw.sdk.net.egress_refusal` (an SDK addition, used by `brave-search`, `duckduckgo-search`, `exa-search`, `perplexity-search`, `searxng-search`, `tavily-search`, `wikipedia-search` and `skills-sh`).**
 - **Settings → Backups → Sync asks for the sync passphrase when the chosen transport encrypts, before the first sync, and saves it to the credential store without showing it again.**
 - **An artifact's page pins it to Home, or unpins it, from its header: Pin to Home.**
@@ -92,6 +97,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **`ChannelMessage.attachments`, a list of names, is replaced by `ChannelMessage.files`, the files themselves (`email-channel` passes them).**
 - **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
 - **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
 
@@ -144,6 +150,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
 - **Settings → Usage counts the day the daily cap counts, this machine's local day, in its Today, its 7- and 30-day totals, its chart and the Settings tile, where it counted the UTC day.**
 - **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**
+- **A mail's attachment is no longer read into its message: the Inbox showed a PDF quote's font data as the message and listed no attachment.**
+- **A PDF's text is read from its pages, not from the font and image data inside it.**
+- **The Reports page says when a report runs in words, with its time zone and its next run, as the Triggers page does, instead of its cron expression.**
+- **The Providers page follows a channel while it is open: a receiver that stops reads Error without a reload, and an earlier Test's answer is no longer shown as the channel's status.**
 - **A Temporary chat is forgotten when its session ends, as its notice says: when PersonalClaw stops or restarts, however it stops, the chat's messages, its working files and the files attached to it are deleted, its page no longer opens, a message sent to it starts nothing, and no snapshot or export taken while it ran carries it.**
 - **Turning the MCP surface on in Settings → External access serves `/mcp` at once, as `/v1`, `/a2a` and `/capture` are, and turning it off refuses the next call, with no restart.**
 - **`memory_recall` finds what you taught it: the lessons that match what was asked come first, then the facts, then only the past conversations that share a word with the question (`MemoryService.recall_lessons` and `recall_facts`: SDK additions no app has to change for).**

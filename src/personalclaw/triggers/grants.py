@@ -252,28 +252,50 @@ def consent(
     now. The other controls on a run (the autonomy ladder, the denylist, the injection screen)
     still apply. A switch-on and an Allow say nothing about what the trigger was allowed before,
     because a grant an edit took away and one never given look the same from here.
+
+    An action that starts an agent ends the sentence with what that agent may do when it runs
+    (:func:`what_its_agent_may_do`): only read, change only the files its job names, or change
+    files and run commands. An automation allowed without being told it could only read was an
+    automation allowed to do a job it could not do.
     """
     from personalclaw.triggers.legacy_import import IMPORTED_BY
 
     name = _name(trigger)
     uses = _uses(providers)
     if creating:
-        return f"Creating “{name}” allows it to use {uses} when it runs."
-    if saving:
-        if changed and set(providers) <= set(changed):
-            return f"Saving “{name}” changes what {uses} runs, and allows the new version to run."
-        return (
+        said = f"Creating “{name}” allows it to use {uses} when it runs."
+    elif saving and changed and set(providers) <= set(changed):
+        said = f"Saving “{name}” changes what {uses} runs, and allows the new version to run."
+    elif saving:
+        said = (
             f"Saving “{name}” allows it to use {uses} when it runs. "
             "It has not been allowed to until now."
         )
-    if getattr(trigger, "created_by", "") == IMPORTED_BY:
-        return (
+    elif getattr(trigger, "created_by", "") == IMPORTED_BY:
+        said = (
             f"“{name}” was brought over from an older version of PersonalClaw and has not been "
             f"allowed to run here. Switching it on allows it to use {uses} when it fires."
         )
-    if getattr(trigger, "enabled", False):
-        return f"Allowing “{name}” lets it use {uses}, as it is now, when it runs."
-    return f"Switching “{name}” on allows it to use {uses}, as it is now, when it runs."
+    elif getattr(trigger, "enabled", False):
+        said = f"Allowing “{name}” lets it use {uses}, as it is now, when it runs."
+    else:
+        said = f"Switching “{name}” on allows it to use {uses}, as it is now, when it runs."
+    reach = what_its_agent_may_do(trigger)
+    return f"{said} {reach}" if reach else said
+
+
+def what_its_agent_may_do(trigger: Any) -> str:
+    """What the agent `trigger`'s action starts may do when it runs, in the Allow's words
+    (``automation_posture.what_its_agent_may_do``), or ``""`` when its action starts no agent."""
+    from personalclaw.automation_posture import what_its_agent_may_do as said_of
+
+    workflow = getattr(trigger, "workflow", None)
+    action: dict[str, Any] = workflow if isinstance(workflow, dict) else {}
+    nested = action.get("inline")
+    if isinstance(nested, dict):
+        action = nested
+    config = action.get("config")
+    return said_of(str(action.get("provider") or ""), config if isinstance(config, dict) else {})
 
 
 def _only_on_the_page(trigger: Any) -> str:

@@ -240,7 +240,7 @@ export const NATIVE_RENDERERS: ToolRenderer[] = [
  *  matching works on `post_message` rather than `mcp__slack_mcp__post_message`.
  *  MCP names are `mcp__<server>__<tool>` where server may contain underscores,
  *  so split on the `__` delimiter and keep the final segment. */
-function bareName(name: string): string {
+export function bareName(name: string): string {
   if (!name.startsWith('mcp__')) return name.toLowerCase()
   const parts = name.split('__').filter(Boolean)  // ['mcp','server','tool',...]
   return (parts.length >= 3 ? parts.slice(2).join('_') : name).toLowerCase()

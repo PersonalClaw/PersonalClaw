@@ -153,7 +153,9 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
       (prop) => prop['x-meta']?.tags?.includes('advanced'),
     )
 
-    expect(Object.keys(props)).toHaveLength(10)
+    // Eleven fields, eight of them advanced: the three a person fills in to make it do its job
+    // (the prompt, the message, the files it may change) stay on the form.
+    expect(Object.keys(props)).toHaveLength(11)
     expect(advanced).toHaveLength(8)
   })
 

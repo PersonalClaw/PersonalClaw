@@ -958,6 +958,51 @@ def _audit_send(item: InboxItem, outcome: str) -> None:
         logger.warning("SEL audit failed for inbox send", exc_info=True)
 
 
+async def api_inbox_attachment(request: web.Request) -> web.StreamResponse:
+    """GET /api/inbox/{id}/attachments/{aid} — download one of a message's attachments.
+
+    Served as a file to save, whatever the message said it is. The type a sender declares is
+    never what the browser is told: the body goes as ``application/octet-stream`` with
+    ``nosniff``, ``Content-Disposition: attachment`` and a sandboxing ``Content-Security-Policy``,
+    so an attachment can only be saved, never shown inside the dashboard. Nothing is cached, and
+    each download is audited. One that is listed but was not kept answers with why."""
+    from personalclaw import attachments
+    from personalclaw.http_download import attachment_disposition
+
+    state: "DashboardState" = request.app["state"]
+    _, inbox = _get_inbox(state)
+    item_id = request.match_info["id"]
+    item = inbox.items.get(item_id)
+    record = attachments.find(item.attachments, request.match_info["aid"]) if item else None
+    if record is None:
+        return json_error("inbox_attachment_not_found", status=404)
+    path = attachments.path_of(item_id, record)
+    if path is None:
+        why = record.get("not_kept") or "it is not on this machine"
+        return json_error(
+            "inbox_attachment_not_kept",
+            message=f"{record.get('name') or 'This attachment'} was not kept: {why}.",
+            status=404,
+        )
+    sel().log_api_access(
+        caller=request.get("user", "dashboard"),
+        operation="inbox.attachment_download",
+        outcome="allowed",
+        source="dashboard",
+        resources=f"item={item_id} attachment={record.get('id')}",
+    )
+    return web.FileResponse(
+        path,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": attachment_disposition(str(record.get("name") or "")),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 async def api_inbox_open(request: web.Request) -> web.Response:
     """POST /api/inbox/{id}/open — record that the user opened/read this item (a moderate
     positive engagement signal). Idempotent + best-effort: opening is a frequent, cheap

@@ -102,10 +102,10 @@ async def resolve(kind: str, entity_id: str, state) -> InvestigateContext | None
 # without adding import-order coupling to inbox_service/loop startup.
 
 
-def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | None:
+async def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | None:
     """An inbox item: sender/channel/classification + the message body and thread
-    context. The body is EXTERNAL text — it rides the snapshot raw here and is
-    fenced once, at injection."""
+    context, and the files the message came with, each with the text read from it. All of it
+    is EXTERNAL text — it rides the snapshot raw here and is fenced once, at injection."""
     try:
         svc = getattr(state, "_inbox_svc", None)
         item = svc.inbox.items.get(entity_id) if svc is not None else None
@@ -143,6 +143,10 @@ def _resolve_inbox_item(entity_id: str, state) -> InvestigateContext | None:
     lines.append(f"Message: {item.message or ''}")
     if item.draft:
         lines.append(f"Drafted reply: {item.draft}")
+    if item.attachments:
+        from personalclaw.attachments import raw_reading
+
+        lines.append(f"Attachments:\n{await raw_reading(item.id, item.attachments)}")
     return InvestigateContext(
         kind="inbox_item",
         id=entity_id,

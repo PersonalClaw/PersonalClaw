@@ -127,6 +127,21 @@ _KIND_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("idle", ("idle", "nothing happens", "no activity", "away from")),
     ("webhook", ("webhook", "incoming request", "posts to")),
+    # Before `event`, whose "when i " would claim "when I run it" and route an on-demand run to
+    # an event with nothing to match.
+    (
+        "manual",
+        (
+            "on demand",
+            "when i run it",
+            "when i ask",
+            "when i press",
+            "when i click",
+            "button",
+            "manually",
+            "by hand",
+        ),
+    ),
     (
         "event",
         ("when i ", "whenever i ", "memory", "session", "subagent", "approval", "compact", "hook"),

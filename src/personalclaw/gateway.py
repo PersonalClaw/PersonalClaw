@@ -1432,10 +1432,14 @@ class GatewayOrchestrator:
         # S122 used for chaining. A blocked payload is NEVER auto-retried (`blocked_injection` is
         # terminal by design), which is also why `payload_text_for` reads an allowlist of prose-
         # carrying keys instead of screening ids and URLs that would produce false blocks.
+        from personalclaw.triggers import fire_facts
         from personalclaw.triggers import screen as screen_mod
         from personalclaw.triggers.screen import payload_text_for
         from personalclaw.triggers.screen import screen as screen_text
 
+        # What the run is told started it, read from the event as it arrived: the per-key fence
+        # below would leave nothing to name a file by.
+        facts = await fire_facts.describe(trigger, payload)
         untrusted = payload_text_for(payload, kind=str(getattr(trigger, "kind", "") or ""))
         if untrusted:
             verdict = screen_text(untrusted)
@@ -1505,6 +1509,8 @@ class GatewayOrchestrator:
             payload=payload,
             status_url=_trigger_status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
             trigger_id=str(getattr(trigger, "id", "") or ""),
+            fire_facts=facts.text,
+            fire_files=facts.files,
         )
 
         # 🔴 THE DENYLIST, at the seam that lost it. §1.2 says

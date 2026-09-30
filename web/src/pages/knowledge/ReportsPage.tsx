@@ -11,7 +11,7 @@ import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaff
 import { api, type ResearchReport, type ResearchReportInput } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { notify } from '../../app/appSdk'
-import { relPast } from '../schedule/scheduleMeta'
+import { relFuture, relPast } from '../schedule/scheduleMeta'
 import { fvs } from '../../design/fontWeight'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -34,6 +34,32 @@ function blank(): ResearchReportInput {
   }
 }
 
+/** When the report runs, in words: its schedule as the Triggers page says it, the zone it runs
+ *  in, and its next run in that zone. The server words it (`schedule_shown`), off the same trigger
+ *  row that fires it, so this page and the Triggers page cannot tell two different times. */
+function when(r: ResearchReport): string {
+  const { words, timezone, next_run_at: next } = r.schedule_shown
+  if (!words) return 'No schedule: it runs when you press Run now'
+  const zone = timezone ? ` (${timezone})` : ''
+  if (!r.enabled) return `${words}${zone} · paused, so it does not run`
+  return next ? `${words}${zone} · next run ${nextRun(next, timezone)}` : `${words}${zone}`
+}
+
+/** A next run as a date and time in the zone the report runs in ("Mon, Oct 5, 8:00 AM EDT"),
+ *  and how far off it is. A zone this browser does not know reads in the browser's own. */
+function nextRun(iso: string, timezone: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+  const style: Intl.DateTimeFormatOptions = {
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }
+  let said: string
+  try { said = at.toLocaleString(undefined, { ...style, timeZone: timezone || undefined }) }
+  catch { said = at.toLocaleString(undefined, style) }
+  const off = relFuture(iso)
+  return off ? `${said}, ${off}` : said
+}
+
 /** One line naming what this report watches and when it last spoke.
  *
  *  `last_status` is rendered separately from `last_run_ts` on purpose: a failed run
@@ -41,16 +67,9 @@ function blank(): ResearchReportInput {
  *  skipping), which means "ran 3 hours ago" and "errored" are both true at once and
  *  blending them would hide the retry. */
 function meta(r: ResearchReport): string {
-  const when = r.schedule.cron_expr
-    ? `cron ${r.schedule.cron_expr}`
-    : r.schedule.every_secs
-      ? `every ${Math.round(r.schedule.every_secs / 60)} min`
-      : r.schedule.at_ts
-        ? 'once'
-        : 'no schedule'
   const watches = r.source.tags.length ? `tagged ${r.source.tags.join(', ')}` : 'anything new'
   const ran = r.last_run_ts ? `ran ${relPast(r.last_run_ts)}` : 'never run'
-  return `${when} · ${watches} · ${ran}`
+  return `${watches} · ${ran}`
 }
 
 export function ReportRow({ report, index, onChanged }: {
@@ -93,7 +112,8 @@ export function ReportRow({ report, index, onChanged }: {
               {report.citation_policy === 'cite-source-only' ? 'cites new material only' : 'may cite context'}
             </span>
           </div>
-          <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{meta(report)}</p>
+          <p data-type="body-s" className="mt-0.5 text-on-surface-var">{when(report)}</p>
+          <p data-type="body-s" className="truncate text-on-surface-low">{meta(report)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-s">
           <Toggle on={report.enabled} disabled={busy}

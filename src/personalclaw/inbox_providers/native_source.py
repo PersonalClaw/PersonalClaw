@@ -23,6 +23,8 @@ import time
 import uuid
 from typing import Any
 
+from personalclaw import attachments
+from personalclaw.attachments import Attachment
 from personalclaw.inbox import (
     Classification,
     Confidence,
@@ -116,8 +118,12 @@ def hold_from_someone_new(
     thread_id: str = "",
     message_id: str = "",
     ts: float = 0.0,
+    files: list[Attachment] | None = None,
 ) -> InboxItem | None:
     """Hold a message from someone a channel does not know in the Inbox, as someone new.
+
+    ``files`` are the files the message came with; the row keeps and lists them
+    (``attachments.keep``), as a polled message's row does.
 
     For a channel that speaks as the owner (``ChannelCapabilities.speaks_as_owner``): nothing
     was sent to the sender, and nothing is until the owner answers the row. Reply sends the
@@ -166,6 +172,7 @@ def hold_from_someone_new(
         reply_target=message_id,
         item_kind=ItemKind.MESSAGE.value,
         refs={SOMEONE_NEW_REF: provider, "channel_name": channel_name},
+        attachments=attachments.keep(item_id, files) if files else [],
     )
     store.add(item)
     store.flush()

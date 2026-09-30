@@ -55,6 +55,20 @@ against core protocols). Paths are relative to
   `{channel}_{ts}`, and two mails to one address in the same second shared it. Muting a
   row's thread writes `InboxItem.thread_key`: its thread id, or for the first message of
   a thread its own id at the source, which is what the replies name as their thread.
+  **A message's files** are its `files` (`IncomingMessage.files`, `ChannelMessage.files`:
+  `personalclaw.attachments.Attachment`, the name, type and bytes as the message gave
+  them), never text in its body. Core keeps them with the row (`attachments.keep`, under
+  `attachments/<row id>/`, each file `0600`, at most `MAX_COUNT` files of `MAX_BYTES` each;
+  one past either is listed with why it was not kept) and removes them with the row. The
+  row lists each one by name, type and size (`redact_item`), and
+  `GET /api/inbox/{id}/attachments/{aid}` serves it as a file to save
+  (`application/octet-stream`, `nosniff`, a sandboxing CSP): never by the type the sender
+  declared, so nothing a message carries renders in the dashboard. A draft is told what the
+  message came with inside the message's fence; Investigate and an inbox trigger's run get
+  each attachment's text (`attachments.reading`), each in a fence of its own, with an image
+  named and not read. A linked channel's message from someone trusted carries its files as
+  the turn's attached files (`attachments.keep_for_chat`, under `uploads/`); a fenced
+  sender's do not ride into the turn.
   **Watched channels.** Every source's `poll` is handed `inbox.watched_channels`; a source
   that reads it sets `watches_channels = True` (Slack's), and Settings → Inbox shows the
   list ("Channels to read"), named by those sources, while one is polled.

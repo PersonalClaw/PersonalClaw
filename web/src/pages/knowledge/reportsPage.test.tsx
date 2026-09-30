@@ -35,6 +35,9 @@ function report(over: Partial<ResearchReport> = {}): ResearchReport {
     last_status: '',
     last_error: '',
     watermark_ts: 0,
+    schedule_shown: {
+      words: 'At 8:00 AM PDT, only on Monday', timezone: 'America/Los_Angeles', next_run_at: '2026-10-05T15:00:00+00:00',
+    },
     ...over,
   }
 }
@@ -48,7 +51,7 @@ describe('a report row states its scoping decisions', () => {
   it('names the schedule, what it watches, and that it cites new material only', () => {
     render(<ReportRow report={report()} onChanged={() => {}} />)
     expect(screen.getByText(/Weekly contradiction scan/)).toBeTruthy()
-    expect(screen.getByText(/cron 0 8 \* \* 1/)).toBeTruthy()
+    expect(screen.getByText(/At 8:00 AM PDT, only on Monday/)).toBeTruthy()
     expect(screen.getByText(/tagged research/)).toBeTruthy()
     // The policy is the third leg of the triple — a row without it cannot be judged.
     expect(screen.getByText(/cites new material only/)).toBeTruthy()
@@ -78,6 +81,42 @@ describe('a report row states its scoping decisions', () => {
     render(<ReportRow report={report()} onChanged={() => {}} />)
     screen.getByRole('button', { name: /Run Weekly contradiction scan now/i }).click()
     await waitFor(() => expect(run).toHaveBeenCalledWith('rep-1'))
+  })
+})
+
+// ── A schedule is said in words, with its zone and its next run ─────────────────────────────────
+//
+// A report set for Monday 08:00 Toronto read "cron 0 8 * * 1" here, while the Triggers page said
+// "At 8:00 AM EDT, only on Monday … in 5d" of the very same schedule. The row now says it the way
+// the Triggers page does, names the zone, and says when it next runs, in that zone.
+describe('a report row says when it runs', () => {
+  const TORONTO = {
+    words: 'At 8:00 AM EDT, only on Monday', timezone: 'America/Toronto', next_run_at: '2026-10-05T12:00:00+00:00',
+  }
+  afterEach(() => { vi.useRealTimers() })
+
+  it('🔑 in words, with the zone it runs in and its next run in that zone', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T12:00:00Z'))
+    render(<ReportRow report={report({ tz: 'America/Toronto', schedule_shown: TORONTO })} onChanged={() => {}} />)
+    const line = screen.getByText(/At 8:00 AM EDT, only on Monday/)
+    expect(line.textContent).toBe(
+      'At 8:00 AM EDT, only on Monday (America/Toronto) · next run Mon, Oct 5, 8:00 AM EDT, in 4d')
+    expect(screen.queryByText(/cron/)).toBeNull()
+  })
+
+  it('a paused report says it does not run, not when it would', () => {
+    render(<ReportRow report={report({ enabled: false, schedule_shown: { ...TORONTO, next_run_at: '' } })}
+      onChanged={() => {}} />)
+    expect(screen.getByText(/At 8:00 AM EDT, only on Monday \(America\/Toronto\) · paused, so it does not run/))
+      .toBeTruthy()
+    expect(screen.queryByText(/next run/)).toBeNull()
+  })
+
+  it('a report with no schedule says how it runs', () => {
+    render(<ReportRow report={report({ schedule_shown: { words: '', timezone: '', next_run_at: '' } })}
+      onChanged={() => {}} />)
+    expect(screen.getByText('No schedule: it runs when you press Run now')).toBeTruthy()
   })
 })
 

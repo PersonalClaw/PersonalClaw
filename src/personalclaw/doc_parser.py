@@ -1,8 +1,8 @@
 """Document text extraction for .docx, .pdf, and .pptx files.
 
 Uses only Python stdlib (zipfile + xml.etree.ElementTree) for .docx and
-.pptx since these are ZIP archives containing XML.  PDF extraction uses
-a best-effort binary text scan (no third-party deps required).
+.pptx since these are ZIP archives containing XML.  A PDF's text is read from its
+pages by pdfplumber, the reader the knowledge library uses.
 
 All functions accept a file path and return extracted text as a string.
 They never raise — on failure they return an empty string and log a warning.
@@ -12,7 +12,6 @@ import logging
 import re
 import xml.etree.ElementTree as ETree
 import zipfile
-import zlib
 from pathlib import Path
 
 from personalclaw.security import is_sensitive_path
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ── Size limits ──
 
 _MAX_ZIP_ENTRY = 50 * 1024 * 1024  # 50 MB per ZIP entry (decompressed)
-_MAX_DECOMPRESS = 50 * 1024 * 1024  # 50 MB for zlib decompression
+_MAX_PDF_PAGES = 1000  # pages read from one PDF
 
 # ── Public API ──
 
@@ -83,18 +82,7 @@ def extract_text(path: str, mimetype: str = "", filename: str = "") -> str:
     return ""
 
 
-# ── Decompression safety ──
-
-
-def _safe_decompress(data: bytes, max_size: int | None = None) -> bytes:
-    """Decompress zlib data with an output size limit to prevent zip bombs."""
-    if max_size is None:
-        max_size = _MAX_DECOMPRESS
-    dobj = zlib.decompressobj()
-    result = dobj.decompress(data, max_size)
-    if dobj.unconsumed_tail:
-        raise ValueError("decompressed stream exceeds size limit")
-    return result
+# ── ZIP entry safety ──
 
 
 def _read_zip_entry(
@@ -184,54 +172,22 @@ def _extract_pptx(path: str) -> str:
     return "\n\n".join(parts)
 
 
-# ── PDF parser (best-effort binary text extraction) ──
-
-# Matches text between BT (begin text) and ET (end text) PDF operators,
-# then extracts parenthesized string literals.  This is a rough heuristic
-# that works for many simple PDFs but won't handle CIDFont encodings or
-# compressed streams.
-_PDF_TEXT_RE = re.compile(rb"\(([^)]*)\)")
+# ── PDF parser ──
 
 
 def _extract_pdf(path: str) -> str:
-    """Best-effort text extraction from a PDF using binary scanning.
+    """The text a PDF's pages show, read by pdfplumber.
+
+    Only the pages: a PDF's other streams hold its embedded fonts and images, which are not
+    text, and a scan that read every stream for string literals returned the font bytes as
+    if they were the document.
 
     Must only be called from extract_text() which enforces is_sensitive_path().
     """
     if is_sensitive_path(path):
         return ""
-    raw = Path(path).read_bytes()
-    # Try to decompress FlateDecode streams first
-    chunks: list[bytes] = []
-    # Scan for stream..endstream blocks and try zlib decompression
-    stream_re = re.compile(rb"stream\r?\n(.*?)endstream", re.DOTALL)
-    for m in stream_re.finditer(raw):
-        try:
-            decompressed = _safe_decompress(m.group(1))
-            chunks.append(decompressed)
-        except (zlib.error, OSError):
-            # Not valid zlib — might be an uncompressed text stream
-            chunks.append(m.group(1))
-        except ValueError:
-            # Size limit exceeded — skip entirely (zip bomb defense)
-            logger.warning("PDF stream exceeded decompression limit in %s", path)
-    if not chunks:
-        chunks = [raw]
-    # Extract parenthesized text strings from all chunks
-    text_parts: list[str] = []
-    for chunk in chunks:
-        for m in _PDF_TEXT_RE.finditer(chunk):
-            try:
-                decoded = m.group(1).decode("utf-8", errors="replace")
-                # Skip very short fragments that are likely operators
-                if len(decoded) > 1:
-                    text_parts.append(decoded)
-            except Exception:
-                pass
-    if not text_parts:
-        return ""
-    # Join and clean up
-    result = " ".join(text_parts)
-    # Collapse multiple spaces
-    result = re.sub(r" {2,}", " ", result)
-    return result.strip()
+    import pdfplumber
+
+    with pdfplumber.open(path) as pdf:
+        pages = [page.extract_text() or "" for page in pdf.pages[:_MAX_PDF_PAGES]]
+    return "\n".join(page for page in pages if page.strip()).strip()

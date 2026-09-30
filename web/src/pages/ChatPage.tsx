@@ -69,6 +69,7 @@ import { onToolResultFull } from './chat/toolResultBridge'
 import { withoutFence } from '../lib/untrustedFence'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
 import { WorkflowProgressCard, workflowRefFromTool } from './chat/WorkflowProgressCard'
+import { ManualAutomationCard, manualAutomationFromTool } from './chat/ManualAutomationCard'
 import { ApprovalCard } from './chat/ApprovalCard'
 import { RoomView } from './chat/RoomView'
 import { RoomsScope } from './chat/RoomsScope'
@@ -4554,6 +4555,10 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       // the same reason: a run is a living thing, not the frozen JSON the tool returned.
       const wf = t.done ? workflowRefFromTool(t.tool, t.output) : null
       if (wf) return <WorkflowProgressCard key={seg.id || i} refObj={wf} />
+      // An automation made to run when she runs it ("a button that runs …") is shown with its
+      // Run now, the button she asked for.
+      const manual = t.done && t.ok !== false ? manualAutomationFromTool(t.tool, t.output) : null
+      if (manual) return <ManualAutomationCard key={seg.id || i} refObj={manual} />
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />

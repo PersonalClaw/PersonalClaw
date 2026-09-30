@@ -339,6 +339,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/inbox/status` — current config status.
 - `PUT /api/inbox/{id}` — update draft, status, etc.
 - `POST /api/inbox/{id}/apply` — approve (or edit-then-approve) one proposal.
+- `GET /api/inbox/{id}/attachments/{aid}` — download one of a message's attachments.
 - `POST /api/inbox/{id}/draft` — generate draft reply on demand.
 - `POST /api/inbox/{id}/favorite` — {favorited: bool} — set the favorite flag + record a
 - `POST /api/inbox/{id}/open` — record that the user opened/read this item (a moderate

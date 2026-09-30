@@ -35,6 +35,12 @@ class ActionContext:
     its Test (`hooks.run_script_hook`). A provider that starts an agent hands it on
     (`SubagentManager.spawn(trigger_id=…)`), so an approval that agent asks for, and the note it
     leaves if nobody answers, can name the trigger and offer to run it again.
+    `fire_facts` is what started this fire, in the words the agent a provider starts is told it
+    (`triggers.fire_facts`): the store dispatches compose it from the event before its payload is
+    fenced, every value from outside inside a fence, and a provider that starts an agent adds it
+    to the agent's task. `fire_files` are the files the fire is about (the file that arrived),
+    which that agent's file tools may read. Both are the dispatch's alone, out of `payload` for
+    `answer`'s reason: third-party event data must not be able to spell them.
     """
 
     event: str
@@ -43,6 +49,8 @@ class ActionContext:
     status_url: str = ""
     answer: Any = None
     trigger_id: str = ""
+    fire_facts: str = ""
+    fire_files: tuple[str, ...] = ()
 
 
 @dataclass

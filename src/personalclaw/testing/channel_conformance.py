@@ -212,7 +212,9 @@ class CapturedSession:
     def append(self, role: str, content: str, cls: str = "", ts: str = "", **kw: Any) -> None:
         self.appended.append((role, content))
 
-    def queue_append(self, content: str, *, channel: str = "") -> str:
+    def queue_append(
+        self, content: str, *, channel: str = "", files: list[str] | None = None
+    ) -> str:
         self.queued.append(content)
         return "q"
 

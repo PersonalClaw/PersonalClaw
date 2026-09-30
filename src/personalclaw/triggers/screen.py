@@ -831,7 +831,7 @@ def freeze_capabilities(capabilities: dict[str, Any] | None) -> dict[str, list[s
 #: automation, so the screen must see exactly the fields that carry prose.
 UNTRUSTED_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "web_watch": ("new_items",),
-    "file": ("changed", "paths", "added", "modified"),
+    "file": ("changed", "paths", "added", "modified", "removed"),
     "event": ("value",),
     "webhook": ("body", "text", "payload"),
     "inbox": ("body", "text"),

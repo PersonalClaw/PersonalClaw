@@ -58,6 +58,24 @@ logger = logging.getLogger(__name__)
 _HOOK_INVOKE_MAX_DEPTH = 3
 
 
+def approval_mode_of(action_config: dict[str, Any]) -> str:
+    """Whether the agent an invoke-agent action starts approves its own tool calls: ``"auto"``
+    when the step opts in, or when the global ``auto_approve_subagent_spawn`` is set; ``""``
+    (it asks) otherwise. The run reads it, and so does the Allow that describes the run."""
+    approval_mode = str(action_config.get("approval_mode") or "").strip()
+    if approval_mode:
+        return approval_mode
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.hooks import HooksConfig
+
+        if HooksConfig.from_dict(AppConfig.load().hooks).auto_approve_subagent_spawn:
+            return "auto"
+    except Exception:
+        logger.debug("invoke-agent: auto-approve config lookup failed", exc_info=True)
+    return ""
+
+
 class InvokeAgentActionProvider(ActionProvider):
     @property
     def name(self) -> str:
@@ -88,6 +106,18 @@ class InvokeAgentActionProvider(ActionProvider):
         task = render_template(action_config.get("task_template", ""), ctx).strip()
         if not task:
             return ActionResult(success=False, error="invoke-agent hook is missing 'task_template'")
+        # What started this run (`ActionContext.fire_facts`), after the task: the file that
+        # arrived, the message that came. A template that names none of the event's keys gave the
+        # agent no way to know.
+        if ctx.fire_facts:
+            task = f"{task}\n\n{ctx.fire_facts}"
+        from personalclaw import write_scope
+
+        # The files it may change, as allowed (`write_scope`), checked again at the fire.
+        writes = write_scope.entries(action_config)
+        scope_refused = write_scope.problem(writes)
+        if scope_refused:
+            return ActionResult(success=False, error=f"invoke-agent: {scope_refused}")
 
         services = get_action_services()
         if services is None or services.subagents is None:
@@ -105,17 +135,7 @@ class InvokeAgentActionProvider(ActionProvider):
             max_turns = int(action_config.get("max_turns", 0) or 0)
         except (ValueError, TypeError):
             max_turns = 0
-        # Approval: opt-in per hook, else fall back to the global auto-approve.
-        approval_mode = (action_config.get("approval_mode") or "").strip() or None
-        if approval_mode is None:
-            try:
-                from personalclaw.config.loader import AppConfig
-                from personalclaw.hooks import HooksConfig
-
-                if HooksConfig.from_dict(AppConfig.load().hooks).auto_approve_subagent_spawn:
-                    approval_mode = "auto"
-            except Exception:
-                logger.debug("invoke-agent: auto-approve config lookup failed", exc_info=True)
+        approval_mode = approval_mode_of(action_config) or None
 
         parent_key = str((ctx.payload or {}).get("session_key", "") or "")
         # §4.1 creation-time write grant. An auto-fired fire (``approval_mode="auto"``) defaults the
@@ -147,6 +167,8 @@ class InvokeAgentActionProvider(ActionProvider):
                 trigger_id=ctx.trigger_id,
                 # What the run is called: its trigger's name, else its task's first line.
                 title=title,
+                may_read=ctx.fire_files,
+                may_change=write_scope.scope(writes),
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("invoke-agent: spawn failed", exc_info=True)

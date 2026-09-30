@@ -21,6 +21,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.attachments import Attachment
+
 #: The longest target id :meth:`ChannelTransportProvider.validate_target` accepts by default. A
 #: chat, channel or user id is far shorter on every platform; anything longer is pasted text.
 _TARGET_MAX_LEN = 256
@@ -42,7 +44,12 @@ class ChannelMessage:
     """The symmetric INBOUND shape (#40) — the dual of :class:`OutboundMessage`.
 
     A transport that owns an inbound source normalizes its native payload to this,
-    so the platform sees one canonical inbound message regardless of channel."""
+    so the platform sees one canonical inbound message regardless of channel.
+
+    ``files`` are the files the message came with, each as the message gave it
+    (:class:`~personalclaw.attachments.Attachment`, bytes included). Core keeps them with what
+    the message becomes: the Inbox row that holds someone new's message lists them, and a turn
+    in the linked chat carries them as that turn's attached files."""
 
     channel_id: str
     text: str
@@ -50,8 +57,8 @@ class ChannelMessage:
     thread_id: str = ""
     message_id: str = ""
     ts: float = 0.0
-    attachments: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    files: list[Attachment] = field(default_factory=list, kw_only=True)
 
 
 @dataclass

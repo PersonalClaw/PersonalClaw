@@ -359,6 +359,8 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/inbox/providers"),
     ("GET", "/api/inbox/settings"),
     ("GET", "/api/inbox/status"),
+    # A message's attachment: the file itself, as the sender sent it.
+    ("GET", "/api/inbox/{id}/attachments/{aid}"),
     # How loudly what reaches you reaches you: your mute, quiet hours and per-kind rules.
     ("GET", "/api/notifications/settings"),
     ("GET", "/api/notifications/rules"),
@@ -375,7 +377,12 @@ LIST_READS: list[tuple[str, str]] = [
 
 
 def _concrete(template: str) -> str:
-    return template.replace("{name}", "chat__20260101-000000.jsonl").replace("{room_id}", "r1")
+    return (
+        template.replace("{name}", "chat__20260101-000000.jsonl")
+        .replace("{room_id}", "r1")
+        .replace("{id}", "mail-inbox_0123456789abcdef_1790726807.0")
+        .replace("{aid}", "1")
+    )
 
 
 class TestYourOwnReadsAreYours:

@@ -238,6 +238,7 @@ def _hold_for_the_owner(state: Any, provider: str, msg: "ChannelMessage") -> boo
         thread_id=msg.thread_id,
         message_id=msg.message_id,
         ts=float(msg.ts or 0),
+        files=list(msg.files),
     )
     return row is not None
 
@@ -290,7 +291,17 @@ async def deliver_inbound(
         # verdict, which is also why the three transports that call `guard_inbound` directly
         # (and therefore never reach this line) are fixed by the same change.
         return verdict
-    await _route_to_session(services, provider, msg, verdict.fenced_text or msg.text, turn_runner)
+    # The files ride along as the turn's own attached files only when the message enters as
+    # someone the owner trusts (no fence): an attachment's text is read into the turn as the
+    # user's, and a fenced sender's words are not the user's.
+    await _route_to_session(
+        services,
+        provider,
+        msg,
+        verdict.fenced_text or msg.text,
+        turn_runner,
+        files=[] if verdict.fenced_text else list(msg.files),
+    )
     return verdict
 
 
@@ -300,12 +311,17 @@ async def _route_to_session(
     msg: "ChannelMessage",
     text: str,
     turn_runner: "Callable[[Any, Any, str], Awaitable[None]]",
+    *,
+    files: "list[Any] | None" = None,
 ) -> None:
     """Link a dashboard session to this channel thread and drive one turn.
 
     Reached only from :func:`deliver_inbound`, and only past an ``allowed`` verdict — the
     reason this is private. Every channel app used to carry its own copy of this routing;
     core owning it is what makes the trust check unavoidable rather than conventional.
+
+    *files* become the turn's attached files (``attachments.keep_for_chat``), as a file the
+    owner attaches in the dashboard does: the chat lists each one, and the turn reads it.
     """
     state = getattr(services, "dashboard_state", None)
     if state is None:
@@ -324,11 +340,18 @@ async def _route_to_session(
     safe, _ = redact_credentials(safe)
     broadcast = getattr(state, "broadcast_ws", None)
     push = getattr(state, "push_sessions_update", None)
+    from personalclaw.attachments import keep_for_chat
+
+    paths = keep_for_chat(files) if files else []
 
     if getattr(session, "running", False):
         # Queued the way a message typed in the dashboard mid-turn is: the queue adds it to
         # the chat when it runs it. Adding it here too put it in the chat twice.
-        queue_id = session.queue_append(text, channel=provider)
+        queue_id = (
+            session.queue_append(text, channel=provider, files=paths)
+            if paths
+            else session.queue_append(text, channel=provider)
+        )
         if broadcast is not None:
             broadcast(
                 "queue_push",
@@ -343,7 +366,10 @@ async def _route_to_session(
             push()
         return
 
-    session.append("user", safe, "msg msg-u")
+    if paths:
+        session.append("user", safe, "msg msg-u", meta={"files": paths})
+    else:
+        session.append("user", safe, "msg msg-u")
     # ``Session.append`` skips the global broadcast for role="user" because the
     # dashboard frontend adds its OWN sends optimistically — but this user line
     # originated in a channel, so no frontend has it. Broadcast it explicitly, and

@@ -492,6 +492,7 @@ def declared_tool_grant_denial(
     proposes: bool = False,
     tells_owner: bool = False,
     owner_notices: bool = False,
+    may_change: tuple[str, ...] = (),
     detail: str = "",
 ) -> str:
     """:func:`tool_grant_denial` for a call judged by what its tool DECLARES.
@@ -506,12 +507,21 @@ def declared_tool_grant_denial(
     owner something (``tells_owner``, ``tool_providers.base.only_tells_the_owner``). Only an
     automation's own agent is granted it (``subagent``): telling the owner what it found is what
     an automation is for, and the owner is the only one such a call reaches.
+
+    ``may_change`` widens it by the files the owner allowed the automation to change
+    (``write_scope``): a native file write into one of them is admitted, and a refusal of any
+    other change says which files the run may change.
     """
+    from personalclaw import write_scope
     from personalclaw.task_modes import read_grant_admits
 
-    within_read = read_grant_admits(
-        declared, tool_name, tool_kind, tool_input, proposes=proposes
-    ) or (owner_notices and tells_owner)
+    within_read = (
+        read_grant_admits(declared, tool_name, tool_kind, tool_input, proposes=proposes)
+        or (owner_notices and tells_owner)
+        or write_scope.admits(tool_name, tool_input, may_change)
+    )
+    if may_change and not detail:
+        detail = f"this run may change only {write_scope.sentence(may_change)}"
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)
 
 

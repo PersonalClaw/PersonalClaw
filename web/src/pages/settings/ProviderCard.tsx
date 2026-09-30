@@ -36,6 +36,9 @@ export function ProviderCard({ ext, runtime, channel, search, searchUnread, onSe
   // Set once Sign in opened the terminal: the card then says how to find out whether it worked.
   const [signingIn, setSigningIn] = useState(false)
   const [measuring, setMeasuring] = useState(false)
+  // Bumped by each save: the channel strip below starts over, so an answer it gave before the
+  // save (a Test's "getMe failed") is not shown beside the status the save produced.
+  const [saves, setSaves] = useState(0)
   const hasConfig = !!ext.enabled && ext.provider?.hasConfigSchema === true
   // Measured by the gateway in a child process, never on this request: a card the gateway has
   // not measured yet reads `checking` (the list no longer waits on an app's hook — one of them
@@ -187,7 +190,7 @@ export function ProviderCard({ ext, runtime, channel, search, searchUnread, onSe
       {/* Live channel runtime — connection health + connect/disconnect/test. This
           is the RUNTIME view (is the transport actually connected right now),
           distinct from the enable/config surface above. */}
-      {channel && <ChannelRuntimeRow channel={channel} onChanged={onChannelChanged} />}
+      {channel && <ChannelRuntimeRow key={saves} channel={channel} onChanged={onChannelChanged} />}
 
       {/* A search provider's state is what its last search measured, and its Test tries the key
           now — the pair a model provider's card and a channel's card already carry. */}
@@ -197,7 +200,7 @@ export function ProviderCard({ ext, runtime, channel, search, searchUnread, onSe
 
       {/* A save rebuilds the provider — for a channel, its receiver restarts on what was saved —
           so the card re-reads what the save changed instead of showing the status from before. */}
-      {open && hasConfig && <ProviderConfigForm name={ext.name} onSaved={onChanged} />}
+      {open && hasConfig && <ProviderConfigForm name={ext.name} onSaved={() => { setSaves((n) => n + 1); onChanged() }} />}
       {/* A chat channel's owner — who it reaches you as, and pairing it. After the settings: a
           channel pairs through its receiver, which runs once its token is saved. */}
       {open && channel?.owner && (
@@ -234,24 +237,33 @@ const CHANNEL_STATE_LABEL: Record<string, string> = {
   ready: 'Connected', starting: 'Starting…', error: 'Error', offline: 'Not connected',
 }
 
+/** What a press of Test, Connect or Disconnect said, named by the press. */
+const ACTION_SAID: Record<'test' | 'connect' | 'disconnect', string> = {
+  test: 'Test', connect: 'Connect', disconnect: 'Disconnect',
+}
+
 /** The live connection strip for a channel provider: a health dot + state/detail,
- *  plus Test / Connect|Disconnect actions that hit the /api/channels runtime. */
+ *  plus Test / Connect|Disconnect actions that hit the /api/channels runtime.
+ *
+ *  The status and its sentence are always the channel's own, as last read: the page re-reads it
+ *  while open. What a press answered is its own line under them, named by the press, so an old
+ *  Test's "getMe failed" never stands in for the status of a channel that has since recovered. */
 function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; onChanged?: () => void }) {
   const [busy, setBusy] = useState('')
-  const [detail, setDetail] = useState<string | null>(null)
+  const [answer, setAnswer] = useState<{ kind: 'test' | 'connect' | 'disconnect'; text: string } | null>(null)
   const state = channel.health.state
   const tone = CHANNEL_STATE_TONE[state] ?? 'var(--color-on-surface-low)'
   const act = async (kind: 'test' | 'connect' | 'disconnect') => {
     if (busy) return
-    setBusy(kind); setDetail(null)
+    setBusy(kind); setAnswer(null)
     try {
       const r = kind === 'test' ? await api.testChannel(channel.name)
         : kind === 'connect' ? await api.connectChannel(channel.name)
         : await api.disconnectChannel(channel.name)
       const d = (r as { health?: { detail?: string }; detail?: string })
-      setDetail(d.detail ?? d.health?.detail ?? (kind === 'test' ? 'Tested' : kind === 'connect' ? 'Connected' : 'Disconnected'))
+      setAnswer({ kind, text: d.detail ?? d.health?.detail ?? (kind === 'test' ? 'Tested' : kind === 'connect' ? 'Connected' : 'Disconnected') })
       onChanged?.()
-    } catch (e) { setDetail(e instanceof Error ? e.message : 'Failed') }
+    } catch (e) { setAnswer({ kind, text: e instanceof Error ? e.message : 'Failed' }) }
     finally { setBusy('') }
   }
   return (
@@ -264,7 +276,7 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
       </span>
       {/* Wrapped, never clipped: a failing channel's sentence says what to do, and its end is the
           part that says it ("…set CA Certificate File…"). */}
-      {(detail ?? channel.health.detail) && <span data-type="caption" className="min-w-0 flex-1 break-words text-on-surface-low">{detail ?? channel.health.detail}</span>}
+      {channel.health.detail && <span data-type="caption" className="min-w-0 flex-1 break-words text-on-surface-low">{channel.health.detail}</span>}
       <div className="ml-auto flex items-center gap-1.5">
         {/* One strip per channel provider, so these three share names across rows too. */}
         <button type="button" onClick={() => act('test')} disabled={!!busy} aria-label={`Test: ${channel.name}`}
@@ -281,6 +293,11 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
               {busy === 'connect' ? <Loader2 size={11} className="animate-spin" /> : <PlugZap size={11} />} Connect
             </button>}
       </div>
+      {answer && (
+        <p role="status" data-type="caption" className="w-full break-words text-on-surface-var">
+          {ACTION_SAID[answer.kind]}: {answer.text}
+        </p>
+      )}
       {channel.owner && (
         <div data-type="caption" className="flex w-full items-center gap-1.5 text-on-surface-low">
           {channel.owner.id ? <UserCheck size={11} aria-hidden="true" /> : <UserX size={11} aria-hidden="true" />}

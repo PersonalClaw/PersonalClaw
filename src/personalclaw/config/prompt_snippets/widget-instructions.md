@@ -12,6 +12,8 @@ Widgets can send events back to the agent. Add `data-action` and optional `data-
 ```
 When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`. The agent receives it and can respond with text, a new widget, or both.
 
+A widget button runs nothing by itself: its click only comes back to you as that message. When the owner asks for a button that runs something, make it an automation with `automation_create` and `kind: "manual"`: the chat shows it with a Run now button that runs it.
+
 Form inputs with `name` attributes are auto-collected on click and merged into the payload as `formData`. Use this for creation forms — render pre-filled inputs, user adjusts values, clicks submit, agent receives all field values.
 
 `data-action` is the ONLY way a widget can return data. Do not wrap controls in a `<form>` expecting a submit to post: the widget sandbox blocks form submission, so put `data-action` on the button instead.
@@ -27,5 +29,7 @@ Widgets can send events back to the agent. Add `data-action` and optional `data-
 <button data-action="approve" data-payload='{"id":"123"}'>Approve</button>
 ```
 When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`. Form inputs with `name` attributes are auto-collected and merged into the payload as `formData`.
+
+A widget button runs nothing by itself: its click only comes back to you as that message. For a button that runs something, make it an automation with `automation_create` and `kind: "manual"`.
 
 `data-action` is the ONLY way a widget can return data. Do not wrap controls in a `<form>` expecting a submit to post: the widget sandbox blocks form submission, so put `data-action` on the button instead.{% endif %}

@@ -3920,11 +3920,15 @@ export interface ResearchReport {
   last_status: string
   last_error: string
   watermark_ts: number
+  /** Its schedule as the Triggers page words it ("At 8:00 AM EDT, only on Monday"), the zone it
+   *  runs in, and its next run (ISO, UTC). `words` is '' for a report with no schedule, and
+   *  `next_run_at` is '' while it is paused. */
+  schedule_shown: { words: string; timezone: string; next_run_at: string }
 }
 
 export type ResearchReportInput = Omit<
   ResearchReport,
-  'id' | 'created_ts' | 'last_run_ts' | 'last_status' | 'last_error' | 'watermark_ts'
+  'id' | 'created_ts' | 'last_run_ts' | 'last_status' | 'last_error' | 'watermark_ts' | 'schedule_shown'
 >
 
 export interface KnowledgeStaleness {
@@ -4149,6 +4153,14 @@ export interface InboxItem {
   // why `isForeign()` compares against the owner rather than testing for presence.
   owner_username?: string
   origin_harness?: string
+  /** The files the message came with, as the sender named them; `[]` when it came with none. */
+  attachments?: InboxAttachment[]
+}
+/** One file a message came with. `kept` is false for one that could not be kept (too large, one
+ *  past the most a message keeps), and `not_kept` then says why; a kept one downloads from
+ *  `api.inboxAttachmentUrl`. `size` is in bytes. */
+export interface InboxAttachment {
+  id: string; name: string; mimetype: string; size: number; kept: boolean; not_kept?: string
 }
 /** INU-7 C6 — the proposal payload carried in `refs.proposal` on a `proposal` item.
  *  `apply` holds EXACTLY ONE of `action` / `workflow` / `skill_promotion` / `app_callback`;
@@ -9241,6 +9253,10 @@ export const api = {
   openInboxItem: (id: string) => post<{ ok: boolean }>(`/api/inbox/${encodeURIComponent(id)}/open`),
   favoriteInboxItem: (id: string, favorited: boolean) =>
     post<{ ok: boolean; favorited: boolean }>(`/api/inbox/${encodeURIComponent(id)}/favorite`, { favorited }),
+  // A message's attachment, served as a file to save (never shown in the page, whatever type the
+  // message gave it), so a link with `download` is all a caller needs (`downloadFrom`).
+  inboxAttachmentUrl: (id: string, attachmentId: string) =>
+    `/api/inbox/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`,
   // `proposals_rejected`: dismissing a proposal row ANSWERS the proposal it mirrors, so the
   // Skills page's queue falls with the inbox's rather than the two reporting one queue twice.
   dismissAllInbox: () =>

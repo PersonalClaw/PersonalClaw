@@ -772,6 +772,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "What the reply should say is longer than the drafting limit. Shorten it and "
         "generate the draft again."
     ),
+    # ── an Inbox message's attachment (handlers_inbox.api_inbox_attachment) ──
+    # Two codes because the row's panel says two different things: the row or attachment named
+    # does not exist, or the attachment is listed and was never kept (too large, past the count,
+    # or refused by the disk), which the site's message says in the row's own words.
+    "inbox_attachment_not_found": "That Inbox message has no attachment by that id.",
+    "inbox_attachment_not_kept": "That attachment is listed, but its file was not kept.",
     # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
     # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
     # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system

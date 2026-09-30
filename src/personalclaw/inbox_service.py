@@ -45,7 +45,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable
 
-from personalclaw import shutdown_event
+from personalclaw import attachments, shutdown_event
 from personalclaw import trace_recorder as _trace
 from personalclaw.guardrails.audit import caller_scope
 from personalclaw.identity import contributor_label, current_username, operator_name
@@ -211,6 +211,8 @@ def fence_message_for_prompt(item: InboxItem, owner: str | None = None) -> str:
             parts.append(f"{who}: {txt}")
     body = (item.message or "")[:_MAX_MESSAGE_CHARS]
     parts.append(f"{item.sender_name or 'sender'}{label}: {body}")
+    if item.attachments:
+        parts.append(f"Attached:\n{attachments.listing(item.attachments)}")
     return fence_untrusted(
         "\n".join(parts),
         source="inbox-message",
@@ -424,6 +426,9 @@ class InboxService:
                 # against the closed set — the inbox's kind filter is a live reader, so an
                 # unvalidated value here would be a row no chip can reach.
                 item_kind=_resolve_source_kind(m.kind, source_name),
+                # The files it came with, kept under the row and listed on it: the Inbox offers
+                # each for download, and an agent reading the message is told of them.
+                attachments=attachments.keep(item_id, m.files) if m.files else [],
             )
             self.inbox.add(item)
             count += 1
@@ -446,6 +451,8 @@ class InboxService:
                         "sender_name": m.sender_name or m.sender_id,
                         "address": m.channel_id,
                         "source_name": item.source,
+                        # How many files came with it: the fire reads them off the row (`key`).
+                        "attachments": str(len(item.attachments)),
                     },
                 )
             except Exception:

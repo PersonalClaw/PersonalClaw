@@ -2,7 +2,7 @@
 
 **The defect.** ``documents/``'s parsers hand raw bytes to python-docx / openpyxl /
 python-pptx, each of which opens the archive itself, so none of ``doc_parser.py``'s shipped
-zip-bomb posture (``_MAX_ZIP_ENTRY``, ``_MAX_DECOMPRESS``, ``_read_zip_entry``'s
+zip-bomb posture (``_MAX_ZIP_ENTRY`` and ``_read_zip_entry``'s
 actual-size check) reached them and nothing bounded the parse. Measured on ``main``: a
 **56 KB** ``.docx`` holding 200,000 one-character paragraphs cost **153 s** of CPU, and at
 that compression ratio the 16 MiB write cap admits roughly 12 hours and 23 GB.

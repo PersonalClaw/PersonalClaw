@@ -490,6 +490,11 @@ class SubagentInfo:
     # asking (`SubagentManager._spawn_grant`). 0 while nobody has. Last, for the reason
     # `trigger_id` is.
     approved_at: float = 0.0
+    # A trigger run's reach (`ActionContext.fire_files`, read) and the files it may change
+    # (`write_scope`, real paths): its file tools reach both, and a read-only run writes those.
+    # Last, for the reason `trigger_id` is.
+    may_read: tuple[str, ...] = ()
+    may_change: tuple[str, ...] = ()
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1152,6 +1157,8 @@ class SubagentManager:
         title: str = "",
         request_key: str = "",
         approved_at: float = 0.0,
+        may_read: tuple[str, ...] = (),
+        may_change: tuple[str, ...] = (),
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1398,6 +1405,8 @@ class SubagentManager:
             title=redact_credentials(redact_exfiltration_urls(title or "")[0])[0],
             request_key=request_key or "",
             approved_at=float(approved_at or 0.0) if request_key else 0.0,
+            may_read=tuple(may_read),
+            may_change=tuple(may_change),
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
 
@@ -2155,6 +2164,8 @@ class SubagentManager:
         # the run previews what WOULD happen with no side effects.
         if info.dry_run:
             extra_kwargs["dry_run"] = True
+        if info.may_read or info.may_change:
+            extra_kwargs["extra_tool_roots"] = [*info.may_read, *info.may_change]
         if info.extra_env:
             # The leaf's posture + lineage. Passed through the session's `extra_env` seam, which
             # already forces a cold (non-pooled) session — a warm pooled worker would carry the
@@ -2259,7 +2270,10 @@ class SubagentManager:
         # nothing more (`owner_notices`): an automation that finds something has to be able to
         # say so, and a research run changes nothing else.
         _grant_denial = partial(
-            declared_tool_grant_denial, _tool_profile, owner_notices=bool(info.trigger_id)
+            declared_tool_grant_denial,
+            _tool_profile,
+            owner_notices=bool(info.trigger_id),
+            may_change=info.may_change,
         )
 
         # 🔴 The grants are enforced in the approval loop below, which sees only the calls that

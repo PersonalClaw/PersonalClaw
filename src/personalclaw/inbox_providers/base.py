@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.attachments import Attachment
 from personalclaw.inbox import ItemKind
 
 
@@ -24,6 +25,11 @@ class IncomingMessage:
     (``personalclaw.inbox.SOURCE_DECLARABLE_KINDS``). Anything else is refused at
     ingestion: the row still arrives, filed as ``message``, and the service logs a warning
     naming the source and the value it tried to claim.
+
+    ``files`` are the files the message came with (a mail's attachments), each as the message
+    gave it (:class:`~personalclaw.attachments.Attachment`). The row lists them beside ``text``
+    and core keeps them (``attachments.keep``), so ``text`` is the message's words alone: a
+    source never turns an attached file into text in it.
     """
 
     id: str
@@ -37,6 +43,7 @@ class IncomingMessage:
     thread_context: list[dict[str, str]] = field(default_factory=list)
     is_dm: bool = False
     kind: str = ItemKind.MESSAGE.value
+    files: list[Attachment] = field(default_factory=list, kw_only=True)
 
 
 class MessageSourceProvider(ABC):

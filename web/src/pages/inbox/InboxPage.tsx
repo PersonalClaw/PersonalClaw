@@ -21,6 +21,7 @@ import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, isChannelItem, isOpenWithVerdict, itemKindOf, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
+import { AttachmentCount } from './InboxAttachments'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ComposeNoteModal } from './ComposeNoteModal'
 import { ProposalsLens } from './ProposalsLens'
@@ -705,6 +706,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                           a screen reader, which would leave the read half missing for exactly the
                           users who need it most. */}
                       {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
+                      <AttachmentCount item={it} />
                       {/* Whose item this is, on the ROW. Without it the attribution
                           would only appear once the panel is open, i.e. after the reader has
                           already taken the text as the owner's own. Renders nothing for the

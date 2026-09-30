@@ -5,8 +5,6 @@ import os
 import tempfile
 import zipfile
 
-import pytest
-
 from personalclaw.doc_parser import (
     extract_text,
     is_parseable_document,
@@ -174,37 +172,58 @@ class TestExtractPptx:
 # ── PDF extraction ──
 
 
-class TestExtractPdf:
-    def test_simple_pdf_text(self):
-        """A minimal PDF with uncompressed text."""
-        pdf_bytes = (
-            b"%PDF-1.0\n"
-            b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-            b"stream\n"
-            b"BT /F1 12 Tf (Hello from PDF) Tj ET\n"
-            b"endstream\n"
-            b"%%EOF"
+def _pdf(text: str, *, other_stream: bytes = b"") -> bytes:
+    """A real one-page PDF showing *text* in Helvetica, and optionally carrying *other_stream*
+    as an object no page shows (where a PDF keeps an embedded font's bytes)."""
+    content = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    if other_stream:
+        objects.append(
+            b"<< /Length %d >>\nstream\n" % len(other_stream) + other_stream + b"\nendstream"
         )
-        fd, path = tempfile.mkstemp(suffix=".pdf")
-        os.close(fd)
-        try:
-            with open(path, "wb") as f:
-                f.write(pdf_bytes)
-            result = extract_text(path, filename="test.pdf")
-            assert "Hello from PDF" in result
-        finally:
-            os.unlink(path)
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return bytes(out)
 
-    def test_empty_pdf(self):
-        fd, path = tempfile.mkstemp(suffix=".pdf")
-        os.close(fd)
-        try:
-            with open(path, "wb") as f:
-                f.write(b"%PDF-1.0\n%%EOF")
-            result = extract_text(path, filename="empty.pdf")
-            assert result == ""
-        finally:
-            os.unlink(path)
+
+class TestExtractPdf:
+    def test_a_pages_text_is_read(self, tmp_path):
+        path = tmp_path / "test.pdf"
+        path.write_bytes(_pdf("Hello from PDF"))
+        assert extract_text(str(path), filename="test.pdf") == "Hello from PDF"
+
+    def test_what_no_page_shows_is_not_read_as_text(self, tmp_path):
+        """A PDF's embedded fonts sit in streams no page shows. Their bytes hold string-shaped
+        runs, and a reader that took every stream's runs returned them as the document."""
+        font_like = b"(\x01\x02 binary glyph run) (\x7f\x10 another) (kern table)"
+        path = tmp_path / "quote.pdf"
+        path.write_bytes(_pdf("Subtotal 31080", other_stream=font_like))
+        text = extract_text(str(path), mimetype="application/pdf", filename="quote.pdf")
+        assert text == "Subtotal 31080"
+        assert "glyph" not in text and "kern" not in text
+
+    def test_empty_pdf(self, tmp_path):
+        path = tmp_path / "empty.pdf"
+        path.write_bytes(b"%PDF-1.0\n%%EOF")
+        assert extract_text(str(path), filename="empty.pdf") == ""
 
 
 # ── Error handling ──
@@ -264,15 +283,3 @@ class TestDecompressionGuards:
             assert "ZIP entry too large" in caplog.text
         finally:
             os.unlink(path)
-
-    def test_safe_decompress_rejects_oversized(self):
-        """_safe_decompress raises on output exceeding max_size."""
-        import zlib as _zlib
-
-        from personalclaw.doc_parser import _safe_decompress
-
-        # Compress 1 MB of zeros
-        big = _zlib.compress(b"\x00" * (1024 * 1024))
-        # Allow only 100 bytes of output
-        with pytest.raises(ValueError, match="exceeds size limit"):
-            _safe_decompress(big, max_size=100)

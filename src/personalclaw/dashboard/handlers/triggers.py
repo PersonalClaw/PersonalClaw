@@ -765,12 +765,16 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
     provider = str(action.get("provider") or stored.get("provider") or "")
     config = action.get("config") if "config" in action else stored.get("config")
     if provider in ("invoke-agent", "run-prompt") and isinstance(config, dict):
+        from personalclaw import write_scope
         from personalclaw.action_providers.services import validate_spawn_cwd
 
         cwd = str(config.get("cwd") or "").strip()
         refused = validate_spawn_cwd(cwd)
         if refused:
             return f"The working folder {cwd} can't be used: {refused}"
+        scope_refused = write_scope.problem(config.get("writes"))
+        if scope_refused:
+            return f"The files it may change can't be saved: {scope_refused}."
     if provider == "run-workflow":
         from personalclaw.action_providers.run_workflow_provider import config_problem
 

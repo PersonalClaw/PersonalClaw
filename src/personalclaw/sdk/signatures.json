@@ -58,7 +58,9 @@
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "payload"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "status_url"},
     {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "fire_facts"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "fire_files"}
    ],
    "returns": "None"
   },
@@ -448,6 +450,18 @@
    }
   }
  },
+ "personalclaw.sdk.channel.Attachment": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "kind": "positional_or_keyword", "name": "name"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "mimetype"},
+    {"annotation": "bytes", "default": "b''", "kind": "positional_or_keyword", "name": "data"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass"
+ },
  "personalclaw.sdk.channel.AuthConfig": {
   "bases": ["object"],
   "init": {
@@ -550,7 +564,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "content"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel"},
+     {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "files"}
     ],
     "returns": "str"
    }
@@ -827,8 +842,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "thread_id"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "message_id"},
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "ts"},
-    {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "attachments"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "metadata"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "metadata"},
+    {"annotation": "list[Attachment]", "default": "<factory>", "kind": "keyword_only", "name": "files"}
    ],
    "returns": "None"
   },
@@ -3167,7 +3182,9 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "title"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "declined"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "request_key"},
-    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "approved_at"}
+    {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "approved_at"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_read"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"}
    ],
    "returns": "None"
   },
@@ -3269,7 +3286,9 @@
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "trigger_id"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "title"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "request_key"},
-     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "approved_at"}
+     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "approved_at"},
+     {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_read"},
+     {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_change"}
     ],
     "returns": "SubagentInfo | None"
    },
@@ -4838,6 +4857,7 @@
   "params": [],
   "returns": "tuple[ImageGenProvider, str] | None"
  },
+ "personalclaw.sdk.inbox.Attachment": {"kind": "alias", "of": "personalclaw.sdk.channel.Attachment"},
  "personalclaw.sdk.inbox.IncomingMessage": {
   "bases": ["object"],
   "init": {
@@ -4852,7 +4872,8 @@
     {"annotation": "float", "default": "0.0", "kind": "positional_or_keyword", "name": "timestamp"},
     {"annotation": "list[dict[str, str]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "thread_context"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "is_dm"},
-    {"annotation": "str", "default": "'message'", "kind": "positional_or_keyword", "name": "kind"}
+    {"annotation": "str", "default": "'message'", "kind": "positional_or_keyword", "name": "kind"},
+    {"annotation": "list[Attachment]", "default": "<factory>", "kind": "keyword_only", "name": "files"}
    ],
    "returns": "None"
   },

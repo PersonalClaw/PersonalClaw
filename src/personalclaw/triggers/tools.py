@@ -406,6 +406,19 @@ def unsendable_message_refusal(
     return AutomationToolResult(False, f"Error: {problem}") if problem else None
 
 
+def write_scope_refusal(workflow: Any) -> AutomationToolResult | None:
+    """Refuse an agent-starting action whose ``writes`` names a file no automation may change
+    (`write_scope.problem`): PersonalClaw's own files, a credential location, a secret file, a
+    whole disk. The Triggers page asks the same question where it saves
+    (`dashboard/handlers/triggers._action_problem`); this is the chat's and the CLI's door."""
+    from personalclaw import write_scope
+
+    action = _inline_action_of(workflow)
+    config = action.get("config")
+    problem = write_scope.problem(config.get("writes") if isinstance(config, dict) else None)
+    return AutomationToolResult(False, f"Error: {problem}") if problem else None
+
+
 def posture_refusal(
     workflow: Any, *, stored: dict[str, Any], creating: bool
 ) -> AutomationToolResult | None:
@@ -556,6 +569,7 @@ def create(
     say: str = "",
     via: str = "",
     chat_channels: Any = None,
+    changes: list[str] | None = None,
 ) -> AutomationToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -702,7 +716,12 @@ def create(
             config["via"] = via_key
         workflow = {"provider": "send-message", "config": config}
     if message and not workflow:
-        workflow = {"provider": "run-prompt", "config": {"message": message}}
+        # `changes` are the files the job changes (`write_scope`): its agent may change those and
+        # nothing else, once the owner allows it, and the Allow says so.
+        run: dict[str, Any] = {"message": message}
+        if changes:
+            run["writes"] = [str(path).strip() for path in changes if str(path).strip()]
+        workflow = {"provider": "run-prompt", "config": run}
     if not workflow:
         return AutomationToolResult(
             False, "Error: give a message or a workflow for the automation to run."
@@ -721,6 +740,7 @@ def create(
         spec_error_refusal(resolved_kind, resolved_spec),
         unregistered_action_provider_refusal(workflow),
         unsendable_message_refusal(workflow, chat_channels=chat_channels),
+        write_scope_refusal(workflow),
         None if owner_consented else posture_refusal(workflow, stored={}, creating=True),
     ):
         if refusal is not None:
@@ -768,7 +788,9 @@ def create(
     # A self-scheduled (agent-created) trigger ALWAYS expires. Set before arming so
     # the row never exists without its bound; user-created rows keep their opt-in expiry
     # semantics untouched.
-    if created_by == "agent" and not trigger.expires_at:
+    # A `manual` row is the exception: it never fires on its own, only when the owner runs it, so
+    # the bound on self-scheduling has nothing to bound, and an expiry shown on it would be false.
+    if created_by == "agent" and not trigger.expires_at and resolved_kind != "manual":
         expiry = _agent_expiry(resolved_spec, ttl_secs)
         try:
             one_time_at = float(resolved_spec.get("at") or 0)
@@ -806,6 +828,11 @@ def create(
         lines.append(f"  cron: {resolved_spec['expr']}")
     if resolved_spec.get("paths"):
         lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    if saved.kind == "manual":
+        lines.append(
+            "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
+            "shown with this reply in the chat"
+        )
     if words:
         where = (
             f"on {shown_via}, and on no other channel"
@@ -813,6 +840,9 @@ def create(
             else "on the first connected chat channel that knows you, else in PersonalClaw"
         )
         lines.append(f"  sends you “{redact_for_display(words)}” {where}")
+    reach = grants.what_its_agent_may_do(saved)
+    if reach:
+        lines.append(f"  when it runs: {reach}")
     needs = grants.labels(saved)
     if created_by == "agent":
         # "active now" is a claim about state, so it tracks state — the switch, and whether the
@@ -971,6 +1001,7 @@ def update(
             unattended_action_refusal(applied["workflow"]),
             unregistered_action_provider_refusal(applied["workflow"]),
             unsendable_message_refusal(applied["workflow"], chat_channels=chat_channels),
+            write_scope_refusal(applied["workflow"]),
             (
                 None
                 if owner_consented

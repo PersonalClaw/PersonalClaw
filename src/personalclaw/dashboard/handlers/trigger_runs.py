@@ -580,8 +580,11 @@ async def _dispatch_store_action(
     # docstring for why `run_count` (the fire budget) is not spent. A `view.rendered` refresh
     # flows through this same recorder, so a pull-on-view fire leaves the same run
     # evidence a manual Run does.
+    from personalclaw.triggers import fire_facts
     from personalclaw.triggers.delivery import status_url
 
+    # What started it, as the gateway's fire tells its run (a webhook's body, a view's open).
+    facts = await fire_facts.describe(trigger, payload)
     # The same `status_url` the autonomous path hands the provider, so a hand-run notify links back
     # to its trigger exactly as a scheduled one does.
     ctx = ActionContext(
@@ -593,6 +596,8 @@ async def _dispatch_store_action(
         # A person's answer to this trigger's park (`api_trigger_answer`), on the one dispatch it
         # starts: the browse action you confirmed a sign-in for goes on to the run.
         answer=answer,
+        fire_facts=facts.text,
+        fire_files=facts.files,
     )
     from personalclaw.triggers.firepath import action_timeout
 

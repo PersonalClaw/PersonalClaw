@@ -560,6 +560,16 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="files uploaded through chat",
     ),
+    # One folder per Inbox row, holding the files its message came with (`attachments.keep`),
+    # which the row lists and the Inbox offers to download. Travels with the rows in inbox.json.
+    StateEntry(
+        id="attachments",
+        kind=KIND_TREE,
+        path="attachments",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="the files Inbox messages came with, one folder per message",
+    ),
     StateEntry(
         id="code",
         kind=KIND_TREE,

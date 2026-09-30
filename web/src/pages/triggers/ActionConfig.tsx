@@ -7,6 +7,7 @@ import { buildArgs, schemaProps, SchemaField, SchemaFields } from '../tools/sche
 import { usePromptWidgets } from '../prompts/promptWidgets'
 import { useWorkflowWidgets } from '../workflows/workflowWidgets'
 import { actionIcon } from './triggerMeta'
+import { PATH_WIDGETS } from './pathsWidget'
 
 /** Pick an Action provider + render its schema-driven config form. The available
  *  `$variables` (which depend on the chosen trigger) are shown as insertable
@@ -49,7 +50,8 @@ export function ActionConfig({ providers, provider, config, onProvider, onConfig
   const { prompts, widgets: promptWidgets } = usePromptWidgets(needsPrompt)
   const needsWorkflow = props.some(([, s]) => s['x-meta']?.widget === 'workflow')
   const { widgets: workflowWidgets } = useWorkflowWidgets(needsWorkflow, String(config.workflow ?? ''))
-  const widgets = useMemo(() => ({ ...promptWidgets, ...workflowWidgets }), [promptWidgets, workflowWidgets])
+  // "paths" lists the files an agent-starting action may change (`writes`), one chip each.
+  const widgets = useMemo(() => ({ ...promptWidgets, ...workflowWidgets, ...PATH_WIDGETS }), [promptWidgets, workflowWidgets])
 
   return (
     <div className="flex flex-col gap-l">

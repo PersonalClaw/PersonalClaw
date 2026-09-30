@@ -93,6 +93,13 @@ def _list_tools() -> list[dict[str, Any]]:
                 "…'), give them in `say` instead of `message`: they go out as written, and no "
                 "agent runs. When the owner named the chat channel ('on Telegram'), give it in "
                 "`via`: it sends there and on no other channel. "
+                "For a button or anything the owner runs on demand ('make me a button that "
+                "runs …', 'something I can run when I want'), give `kind` 'manual' and no `when`: "
+                "it runs only when the owner runs it, and the chat shows it with a Run now button. "
+                "A chat widget's button cannot run anything: it only sends its action back here. "
+                "When the job writes something ('summarise it into ~/notes/kitchen.md'), name "
+                "those files in `changes`: its agent then may change them and nothing else. "
+                "Without `changes` its agent only reads. "
                 "Announced to you on creation with the time it read, and capped by "
                 "workflows.self_schedule_max_outstanding. One that sends `say` is active at once; "
                 "one that runs `message` does not run until the owner allows it on the Triggers "
@@ -129,7 +136,15 @@ def _list_tools() -> list[dict[str, Any]]:
                     "kind": {
                         "type": "string",
                         "description": "Optional explicit kind, bypassing NL routing "
-                        "(file/clock/event/web_watch/idle/webhook/run_completed).",
+                        "(file/clock/event/web_watch/idle/webhook/run_completed, or manual for "
+                        "one that runs only when the owner runs it).",
+                    },
+                    "changes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The files the job changes, each a full path as the "
+                        "owner named it ('~/notes/kitchen.md'). Its agent may change these and "
+                        "nothing else; leave it out for a job that only reads or reports.",
                     },
                     # JSON TEXT: a trigger spec's keys depend on its kind, and a free-form object
                     # has no portable schema (tool_providers.portable_schema) — a strict provider
@@ -427,6 +442,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             via=via,
             chat_channels=_chat_channels() if via.strip() else None,
             created_by="agent",
+            changes=[str(c) for c in args.get("changes") or [] if isinstance(c, str)],
         )
     elif name == "set_onetime_task":
         resume, resume_err = _resolve_resume_target(args)

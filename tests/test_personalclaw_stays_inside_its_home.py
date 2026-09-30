@@ -94,6 +94,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("sandbox.py", "_build_seatbelt_profile"): "the OS sandbox profile confines the home",
     ("sandbox_providers/lima.py", "_host_mount"): "the sandbox VM's host mount, a sandbox setting",
     ("loop/validation.py", "workspace_write_target_errors"): "a guard: HOME is no workspace",
+    ("write_scope.py", "problem"): "a guard: the home folder itself is no file a job changes",
     ("agent.py", "_apply_user_agent_hooks"): "a guard: a configured hooks folder must sit in HOME",
     ("command_paths.py", "named_paths"): "a guard: reads ~ and $HOME in a command as a shell does",
     (

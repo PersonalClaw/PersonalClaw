@@ -55,6 +55,44 @@ POSTURE_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
+#: The actions that start an agent, whose Allow says what that agent may do.
+AGENT_STARTING_PROVIDERS: frozenset[str] = frozenset({"invoke-agent", "run-prompt"})
+
+
+def what_its_agent_may_do(provider: str, config: Mapping[str, Any]) -> str:
+    """What the agent an automation's action starts may do when it runs, as its Allow says it.
+
+    Read the way the run reads it: ``run-prompt`` always runs its agent with nobody to ask, so it
+    is read-only unless it names the files it changes (``write_scope``) or carries the
+    ``capability: "mutating"`` grant; ``invoke-agent`` runs the same way when its step (or the
+    global setting) lets the agent approve its own calls, and otherwise its agent asks. ``""`` for
+    an action that starts no agent."""
+    if provider not in AGENT_STARTING_PROVIDERS:
+        return ""
+    from personalclaw import write_scope
+    from personalclaw.subagent import CAPABILITY_MUTATING, resolve_capability_class
+
+    approval = "auto"
+    if provider == "invoke-agent":
+        from personalclaw.action_providers.invoke_agent_provider import approval_mode_of
+
+        approval = approval_mode_of(dict(config))
+    capability = resolve_capability_class(
+        capability_class=_posture_value(config, "capability"), approval_mode=approval
+    )
+    if capability == CAPABILITY_MUTATING:
+        if approval == "auto":
+            return "Its agent may change files and run commands, not only read."
+        return "Its agent asks you before it changes a file or runs a command."
+    writes = write_scope.entries(dict(config))
+    if writes:
+        return (
+            f"Its agent reads what it needs and may change only {write_scope.sentence(writes)}: "
+            "it cannot change anything else or run commands."
+        )
+    return "Its agent only reads: it cannot change files or run commands."
+
+
 def _posture_value(config: Mapping[str, Any], key: str) -> str:
     """A posture key as the runtime reads it: ``capability`` is case-folded by every reader
     (``resolve_capability_class``); ``approval_mode`` is compared as written, so a value such as

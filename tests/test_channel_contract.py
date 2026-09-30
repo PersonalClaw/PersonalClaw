@@ -23,7 +23,7 @@ def test_channel_message_shape():
     m = ChannelMessage(
         channel_id="C1", text="hi", sender="u", thread_id="t", message_id="m", ts=1.0
     )
-    assert m.channel_id == "C1" and m.attachments == [] and m.metadata == {}
+    assert m.channel_id == "C1" and m.files == [] and m.metadata == {}
 
 
 def test_capabilities_defaults_conservative():

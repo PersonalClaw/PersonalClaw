@@ -349,6 +349,10 @@ class InboxItem:
     # "workflow":…}. Deep-linking is what makes a needs_input row actionable rather than a
     # notification with extra steps.
     refs: dict = field(default_factory=dict)
+    #: The files the message came with, as `attachments.keep` listed them: ``{"id", "name",
+    #: "mimetype", "size"}`` and ``"file"`` when kept, or ``"not_kept"`` saying why. Set when the
+    #: row is made and never by a client, so it is not an updatable field.
+    attachments: list = field(default_factory=list)
     # ── Attribution (built on TSE2-1) ────────────────────────────────────────────────
     # WHO this item is for, and WHICH harness minted it. Same two fields, same names and
     # same defaults as `WorkflowRun` (`workflows/models.py:942-943`) — a shared inbox that
@@ -742,9 +746,13 @@ class InboxStore:
         by the remediation engine's ``inbox.maintenance`` job when auto-cleanup is
         enabled (PR2-11); the InboxService no longer runs its own maintenance loop.
         """
+        from personalclaw import attachments
+
         expired = self._expired_ids(retention_days)
         for item_id in expired:
-            self.items.pop(item_id, None)
+            gone = self.items.pop(item_id, None)
+            if gone is not None and gone.attachments:
+                attachments.forget(item_id)
         if expired:
             self.save()
             logger.info("Inbox auto-cleanup: deleted %d expired items", len(expired))
@@ -800,6 +808,17 @@ def redact_item(item: dict) -> dict:
     for ctx in item.get("thread_context", []):
         if ctx.get("text"):
             ctx["text"] = redact_for_display(ctx["text"])
+    # An attachment's name is the sender's text, masked as the message is; where it is kept on
+    # disk is the server's own, and no reader needs it.
+    item["attachments"] = [
+        {
+            **{k: v for k, v in record.items() if k != "file"},
+            "name": redact_for_display(str(record.get("name") or "")),
+            "kept": bool(record.get("file")),
+        }
+        for record in item.get("attachments") or []
+        if isinstance(record, dict)
+    ]
     # Feedback producer meta (additive): each judgment field on the
     # item names its producing artifact — the bound prompt ref — so the FE thumbs
     # can attribute a verdict without a second lookup. Digest items are their own

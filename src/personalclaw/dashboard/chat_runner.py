@@ -5772,10 +5772,13 @@ async def run_chat(
                 cron_label = _m.group(1) if _m else "cron"
                 cron_label, _ = redact_exfiltration_urls(cron_label)
                 cron_label, _ = redact_credentials(cron_label)
+                # The files the queued messages came with, which the turn carries as its own.
+                queued_files = [p for item in consumed for p in item.get("files") or []]
                 session.append(
                     "subagent" if is_subagent else "inject" if is_cron else "user",
                     next_msg,
                     json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
+                    meta={"files": queued_files} if queued_files else None,
                 )
                 # A queued user message is persisted here but session.append suppresses
                 # the SSE echo for role="user" (the live page normally adds the user

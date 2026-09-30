@@ -35,6 +35,18 @@
             "help": "What to run when no saved Prompt is picked. An automation made in chat carries its instruction here."
           }
         },
+        "writes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "x-meta": {
+            "label": "Files it may change",
+            "widget": "paths",
+            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads."
+          }
+        },
         "vars": {
           "type": "object",
           "x-meta": {

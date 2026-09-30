@@ -22,8 +22,10 @@ resolving + rendering the saved prompt.
         "agent": "PersonalClaw",        # optional child agent name
         "model": "...",                  # optional model override
         "max_turns": 20,                 # optional
-        "session": "cron:standup"        # optional: pinned session for continuity
+        "session": "cron:standup",       # optional: pinned session for continuity
                                           # (default: a fresh ephemeral session)
+        "writes": ["~/Notes/standup.md"] # optional: the files its job changes (`write_scope`);
+                                          # the run changes these and nothing else
     }
 
 When ``prompt_id`` is empty the action runs its ``message`` — the prompt an automation the
@@ -207,8 +209,21 @@ class RunPromptActionProvider(ActionProvider):
 
         # The turn runs unattended (no user to answer) — frame it so the model
         # doesn't fall back to questions / option menus, and rely on the spawn's
-        # auto-approve + T5 unattended toolset so it can't wedge.
-        task = with_autonomous_framing(rendered)
+        # auto-approve + T5 unattended toolset so it can't wedge. After the instruction comes what
+        # started this run (`ActionContext.fire_facts`): the file that arrived, the message that
+        # came. Without it, a file trigger's run read its own instruction as a request to set up
+        # the automation, and reported the automation already there.
+        task = with_autonomous_framing(
+            f"{rendered}\n\n{ctx.fire_facts}" if ctx.fire_facts else rendered
+        )
+        from personalclaw import write_scope
+
+        # The files it may change, as allowed (`write_scope`), checked again here: a scope no save
+        # would take, written some other way, changes nothing.
+        writes = write_scope.entries(action_config)
+        scope_refused = write_scope.problem(writes)
+        if scope_refused:
+            return ActionResult(success=False, error=f"run-prompt: {scope_refused}")
         # What the run is called: its trigger's name, else the prompt it runs — never the framing
         # above, which is what every run started this way used to be named by.
         from personalclaw.triggers.store import run_title
@@ -275,6 +290,8 @@ class RunPromptActionProvider(ActionProvider):
                 # it went on the trigger's route when it ends.
                 trigger_id=ctx.trigger_id,
                 title=title,
+                may_read=ctx.fire_files,
+                may_change=write_scope.scope(writes),
             )
         except Exception as exc:  # noqa: BLE001 - a spawn that raises is this fire's failure
             logger.warning("run-prompt: spawn failed", exc_info=True)

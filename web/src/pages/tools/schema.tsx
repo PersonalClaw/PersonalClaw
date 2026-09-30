@@ -26,6 +26,7 @@ export interface JsonSchema {
   properties?: Record<string, JsonSchema>
   required?: string[]
   items?: JsonSchema
+  maxItems?: number
   enum?: unknown[]
   default?: unknown
   'x-meta'?: SchemaMeta

@@ -38,6 +38,9 @@ from personalclaw.approval_brief import approval_brief_for
 from personalclaw.approval_grants import approval_window_secs
 from personalclaw.atomic_write import atomic_write
 
+# ── A file an inbound message came with (`ChannelMessage.files`) ──
+from personalclaw.attachments import Attachment
+
 # ── Auth posture (#3511) ──
 # `resolve_bind_host(auth_cfg)` is published, so its parameter type is too: an app that
 # resolves a bind address has to be able to CONSTRUCT the config it passes, and `AuthMode`
@@ -282,6 +285,7 @@ __all__ = [
     "AcpProcessDied",
     "AcpTimeoutError",
     "AppConfig",
+    "Attachment",
     "AuthConfig",
     "AuthMode",
     "AutoSkillProvenance",

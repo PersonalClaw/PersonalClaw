@@ -1139,6 +1139,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_post("/api/inbox/{id}/draft", handlers_inbox.api_inbox_draft)
     app.router.add_post("/api/inbox/{id}/open", handlers_inbox.api_inbox_open)
     app.router.add_post("/api/inbox/{id}/favorite", handlers_inbox.api_inbox_favorite)
+    app.router.add_get("/api/inbox/{id}/attachments/{aid}", handlers_inbox.api_inbox_attachment)
     # POST, not GET (#337). This route CREATES an inbox item and spends a model call, so a
     # browser prefetch, a retry, or a double render manufactured items — and a state-changing
     # GET also sits outside CSRF protection entirely. Registered beside `/{id}/...` above and

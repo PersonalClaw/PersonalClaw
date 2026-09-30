@@ -44,6 +44,18 @@
             "help": "The folder the agent works in, so its file tools reach the files there, e.g. ~/Documents. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace."
           }
         },
+        "writes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "x-meta": {
+            "label": "Files it may change",
+            "widget": "paths",
+            "help": "The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads."
+          }
+        },
         "max_turns": {
           "type": "integer",
           "x-meta": {

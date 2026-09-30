@@ -1508,6 +1508,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/inbox/providers": OwnerOnly(_YOUR_INBOX),
     "GET /api/inbox/settings": OwnerOnly(_YOUR_INBOX),
     "GET /api/inbox/status": OwnerOnly(_YOUR_INBOX),
+    "GET /api/inbox/{id}/attachments/{aid}": OwnerOnly(_YOUR_INBOX),
     # ── notifications ──
     # The log is what reached you from everything that can reach you. The handler answers an app
     # with what the app raised and what is about a conversation it started

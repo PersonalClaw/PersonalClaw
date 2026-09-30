@@ -31,6 +31,7 @@ from personalclaw.agents.native.decision_tool_defs import decision_tool_definiti
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions
+from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
 from personalclaw.security import (
     MASK_CONFLICT,
     MaskConflict,
@@ -671,7 +672,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 provider=self.name,
                 requires_approval=False,
                 risk_level=RiskLevel.SAFE,
-                description="Read a UTF-8 text file from the workspace. Args: path (str), optional max_bytes (int).",  # noqa: E501
+                description="Read a UTF-8 text file from the workspace, or the text of a PDF, Word or PowerPoint document. Args: path (str), optional max_bytes (int).",  # noqa: E501
                 parameters={
                     **s,
                     "properties": {"path": {"type": "string"}, "max_bytes": {"type": "integer"}},
@@ -1052,11 +1053,17 @@ class NativeBuiltinToolProvider(ToolProvider):
         # Sentinel distinguishes "not a file" (None) from "binary file" (a marker the
         # _read closure returns) so the caller maps each to its own message.
         _BINARY = object()
+        _DOCUMENT = object()
 
         def _read() -> object:
             if not path.is_file():
                 return None
             full = path.read_bytes()
+            # A PDF, Word or PowerPoint file is its pages' text, read by the document reader —
+            # named so AND shaped so, since a name alone is anyone's to write.
+            magic = b"%PDF-" if path.suffix.lower() == ".pdf" else b"PK\x03\x04"
+            if path.suffix.lower() in DOC_EXTENSIONS and full.startswith(magic):
+                return (_DOCUMENT, extract_text(str(path), filename=path.name))
             raw = full[:cap]
             # A NUL byte in the head means binary (image/compiled artifact/etc.) —
             # decoding it with errors='replace' would hand the model a wall of mojibake
@@ -1091,6 +1098,14 @@ class NativeBuiltinToolProvider(ToolProvider):
                 recovery_hints=[
                     "This is a binary file — read_file only handles text. Use list_dir/glob to inspect it, or a bash tool if you need its bytes."  # noqa: E501
                 ],
+            )
+        if isinstance(data, tuple) and data[0] is _DOCUMENT:
+            # Not recorded as an observation of the file: what was read is its text, and an
+            # edit or overwrite of the document itself stays refused until its bytes are seen.
+            if not data[1]:
+                return ToolResult(success=False, error=f"no text could be read from {a['path']}")
+            return _ok_capped(
+                f"[the text of {path.name}]\n{data[1]}", session_key=self._session_key
             )
         # (decoded text, digest of the FULL bytes, whether the byte cap left it whole) —
         # the sentinel-vs-tuple return keeps `_read`'s signature `object`, so name the

@@ -219,6 +219,27 @@ def to_trigger(defn: ReportDefinition, *, now: float = 0.0) -> Trigger | None:
     return trigger
 
 
+def shown(defn: ReportDefinition, *, now: float = 0.0) -> dict[str, Any]:
+    """How the Reports page states this report's schedule: ``{"words", "timezone",
+    "next_run_at"}``.
+
+    ``words`` is the sentence the Triggers page shows for the same schedule ("At 8:00 AM EDT, only
+    on Monday", `schedule_view.describe_cadence`), ``timezone`` the zone it runs in, and
+    ``next_run_at`` its next run (ISO, UTC), ``""`` while the report is paused or has none. Read off
+    the trigger row this report's schedule becomes (:func:`to_trigger`), so the page and the fire
+    cannot disagree about when that is."""
+    from personalclaw.triggers.schedule_view import describe_cadence
+
+    trigger = to_trigger(defn, now=now)
+    if trigger is None:
+        return {"words": "", "timezone": "", "next_run_at": ""}
+    return {
+        "words": describe_cadence(trigger),
+        "timezone": str(trigger.spec.get("timezone") or ""),
+        "next_run_at": str(trigger.next_fire_at or ""),
+    }
+
+
 def sync(defn: ReportDefinition) -> str:
     """Create/update the trigger row for `defn`. Returns "" on success, else the reason.
 

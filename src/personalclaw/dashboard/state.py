@@ -357,7 +357,7 @@ class _ChatSession:
         self.task: asyncio.Task | None = None  # type: ignore[type-arg]
         self.event = asyncio.Event()
         self._pending: list[dict[str, str]] = []
-        self._queue: list[dict[str, str]] = []  # [{"id": uuid, "content": str}, ...]
+        self._queue: list[dict[str, Any]] = []  # [{"id": uuid, "content": str}, ...]
         self._approval_futures: dict[str, asyncio.Future[str]] = {}  # type: ignore[type-arg]
         self._trust: bool = False  # auto-approve tools for this session
         self._trust_reads: bool = False  # auto-approve read-only bash commands
@@ -705,16 +705,21 @@ class _ChatSession:
 
     # ── Queue helpers (dict-based queue items) ──
 
-    def queue_append(self, content: str, *, channel: str = "") -> str:
+    def queue_append(
+        self, content: str, *, channel: str = "", files: list[str] | None = None
+    ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
         ``channel`` names the chat channel the message came from, when it came from one. That
         channel already shows it, so the turn that runs it does not send it back there.
+        ``files`` are its attached files, which the message carries when it runs.
         """
         qid = uuid.uuid4().hex[:12]
-        item = {"id": qid, "content": content}
+        item: dict[str, Any] = {"id": qid, "content": content}
         if channel:
             item["channel"] = channel
+        if files:
+            item["files"] = list(files)
         self._queue.append(item)
         return qid
 
@@ -737,7 +742,7 @@ class _ChatSession:
         self._queue.insert(0, item)
         return qid
 
-    def queue_pop(self, index: int = 0) -> dict[str, str]:
+    def queue_pop(self, index: int = 0) -> dict[str, Any]:
         """Pop a queue item by index. Returns {"id": ..., "content": ...}."""
         return self._queue.pop(index)
 

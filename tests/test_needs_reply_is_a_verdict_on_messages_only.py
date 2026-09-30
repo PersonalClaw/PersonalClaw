@@ -10,6 +10,7 @@ everywhere — reply machinery included.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -95,7 +96,7 @@ def test_investigate_hands_the_chat_a_verdict_only_for_a_message(kind, classifie
     store.add(item)
     state = SimpleNamespace(_inbox_svc=SimpleNamespace(inbox=store))
 
-    snapshot = _resolve_inbox_item(item.id, state).snapshot
+    snapshot = asyncio.run(_resolve_inbox_item(item.id, state)).snapshot
 
     assert ("Classification: needs_reply" in snapshot) is classified, snapshot
     if not classified:

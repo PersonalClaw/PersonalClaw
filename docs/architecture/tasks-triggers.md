@@ -292,6 +292,24 @@ switched on or off as it is here, and what it runs differently asks first. It
 used to come in as an automation this home did not have, switched off, so taking
 the other machine's schedule stopped one that ran here.
 
+**What a run is told, and what it may change.** An action that starts an agent
+(`run-prompt`, `invoke-agent`) hands it the automation's instruction followed by what
+started this run (`triggers.fire_facts.describe`): the file that arrived (its path, its
+name, and whether it was added, changed or removed), the Inbox message with each
+attachment's text, the page's new items, the webhook's body. All of it is data from
+outside, each piece in its own fence, and a Run now or a schedule adds nothing. The file
+that arrived is one the run's file tools may read (`ActionContext.fire_files` →
+`SubagentInfo.may_read`). A run that fires on its own is read-only; an action may name the
+files its job changes (`writes`, "Files it may change": at most ten full paths, files or
+folders), and its agent may then write those with the native file tools and nothing else:
+every other change and every command stays refused (`write_scope.admits`,
+`guardrails.policy.declared_tool_grant_denial`). A path inside PersonalClaw's own files
+(its workspace excepted), a credential location or the home folder itself is refused when
+the automation is saved and again when it fires (`write_scope.problem`). `writes` is part
+of what the action runs, so an edit to it asks the owner again, and the Allow says what its
+agent may do in words: only read, change only the files named, or change files and run
+commands (`automation_posture.what_its_agent_may_do`).
+
 **What another machine's owner allowed is theirs.** A workflow step's
 `approval_mode: auto` and `capability: mutating` are the owner's yes, given where
 a save shows them, so a workflow definition from another machine arrives without

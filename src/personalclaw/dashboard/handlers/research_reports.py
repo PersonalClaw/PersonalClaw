@@ -287,12 +287,20 @@ def _policies(rr: ModuleType) -> tuple[str, ...]:
     return tuple(str(p) for p in getattr(rr, "CITATION_POLICIES", ()))
 
 
+def _served(rr: ModuleType, defn: Any) -> dict[str, Any]:
+    """One definition as the page reads it: its stored form, and its schedule as the Reports page
+    states it (``knowledge.report_schedules.shown``) — in words, with its zone and next run."""
+    from personalclaw.knowledge.report_schedules import shown
+
+    return {**rr.to_dict(defn), "schedule_shown": shown(defn)}
+
+
 async def api_reports_list(request: web.Request) -> web.Response:
     """GET /api/knowledge/reports — every definition, newest state as persisted."""
     rr = _reports_module()
     if rr is None:
         return _unavailable()
-    return web.json_response({"reports": [rr.to_dict(d) for d in rr.load_reports()]})
+    return web.json_response({"reports": [_served(rr, d) for d in rr.load_reports()]})
 
 
 async def api_report_create(request: web.Request) -> web.Response:
@@ -306,7 +314,7 @@ async def api_report_create(request: web.Request) -> web.Response:
         return error or json_error("invalid_request", message="invalid request", status=400)
     saved = rr.save_report(rr.from_dict(fields))
     _sel_log("knowledge_report.create", f"report_id={getattr(saved, 'id', '')}")
-    return web.json_response({"report": rr.to_dict(saved)})
+    return web.json_response({"report": _served(rr, saved)})
 
 
 async def api_report_update(request: web.Request) -> web.Response:
@@ -332,7 +340,7 @@ async def api_report_update(request: web.Request) -> web.Response:
     raw["id"] = report_id
     saved = rr.save_report(rr.from_dict(raw))
     _sel_log("knowledge_report.update", f"report_id={report_id} fields={sorted(fields)}")
-    return web.json_response({"report": rr.to_dict(saved)})
+    return web.json_response({"report": _served(rr, saved)})
 
 
 async def api_report_delete(request: web.Request) -> web.Response:

@@ -47,6 +47,9 @@ const ENTITY_ORDER = ['agent', 'model', 'search', 'channel', 'inbox', 'notificat
  *  those answers from memory, so this polls a cache — it never re-runs a check. */
 const CHECKING_POLL_MS = 2500
 
+/** How often the panel re-reads the channels while it is open, so a channel's card follows it. */
+const CHANNEL_POLL_MS = 10_000
+
 // Within Actions, sub-group cards by the entity each action acts on (manifest entity).
 const ACTION_ENTITY_LABELS: Record<string, string> = {
   task: 'Task actions', agent: 'Agent actions', comms: 'Messaging actions',
@@ -152,9 +155,14 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   // checking. The reads start nothing.
   const providersChecking = (providers ?? []).some((p) => p.availability?.state === 'checking')
   useVisiblePoll(() => { if (providersChecking) refreshProviders() }, providersChecking ? CHECKING_POLL_MS : null)
-  // Same for a channel whose receiver the gateway is starting: re-read until it says how that went.
+  // A channel's card follows the channel while the page is open: a receiver that stops on its own
+  // (a revoked token, a lost connection) read Connected here until the page was reloaded. Quickly
+  // while a receiver is starting, until it says how that went; otherwise at CHANNEL_POLL_MS. The
+  // gateway answers from the receiver's own state, so a read never probes the platform.
   const channelsStarting = (channelsData ?? []).some((c) => c.health?.state === 'starting')
-  useVisiblePoll(() => { if (channelsStarting) refreshChannels() }, channelsStarting ? CHECKING_POLL_MS : null)
+  const hasChannels = (channelsData ?? []).length > 0
+  useVisiblePoll(() => refreshChannels(), channelsStarting ? CHECKING_POLL_MS : hasChannels ? CHANNEL_POLL_MS : null,
+    { immediate: false })
 
   // 🔑 THE FAILURE BRANCH COMES FIRST, and it has to: `providers` is `undefined` both while
   // loading and after a rejection, so the skeleton below would otherwise claim "still loading"

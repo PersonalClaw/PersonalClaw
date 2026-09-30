@@ -12,6 +12,7 @@ import { api, ApiError, type InboxItem, type InboxClassification, type SkillProp
 import { acceptedLabel } from '../skills/skillMeta'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
 import { InboxMessageBody } from './ForeignContent'
+import { InboxAttachments } from './InboxAttachments'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { DeniedCallRerun } from './DeniedCallRerun'
 import { InboxSection as Section } from './InboxSection'
@@ -155,6 +156,9 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
       {/* the message — FENCED + LABELLED when it is another owner's. `InboxMessageBody`
           renders it plain for the owner's own item, so a solo install is unchanged. */}
       <div data-type="body-m" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed"><InboxMessageBody item={item} owner={owner} /></div>
+
+      {/* What the message came with: named, typed and sized, each kept one to download. */}
+      <InboxAttachments item={item} />
 
       {/* thread context */}
       {(item.thread_context?.length ?? 0) > 0 && (

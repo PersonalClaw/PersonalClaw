@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **894 registrations** over **724 distinct paths** — 887 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **895 registrations** over **725 distinct paths** — 888 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -31,7 +31,7 @@ The 128 families the surface divides into, largest first.
 | `/api/models` | 37 | 29 |
 | `/api/artifacts` | 25 | 16 |
 | `/api/apps` | 23 | 15 |
-| `/api/inbox` | 22 | 21 |
+| `/api/inbox` | 23 | 22 |
 | `/api/loops` | 21 | 17 |
 | `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 887 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 888 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -492,6 +492,7 @@ The 887 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/inbox/status` | current config status. |
 | `PUT` | `/api/inbox/{id}` | update draft, status, etc. |
 | `POST` | `/api/inbox/{id}/apply` | approve (or edit-then-approve) one proposal. |
+| `GET` | `/api/inbox/{id}/attachments/{aid}` | download one of a message's attachments. |
 | `POST` | `/api/inbox/{id}/draft` | generate draft reply on demand. |
 | `POST` | `/api/inbox/{id}/favorite` | {favorited: bool} — set the favorite flag + record a |
 | `POST` | `/api/inbox/{id}/open` | record that the user opened/read this item (a moderate |
