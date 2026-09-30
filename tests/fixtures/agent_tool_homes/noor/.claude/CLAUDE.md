@@ -30,8 +30,8 @@ Assume I know Python, Postgres and Kafka well. Skip the basics and tell me what 
 - Do not read `~/Notes/Garden/Health/` or `~/Documents/Finance/` unless I ask in that message.
 
 ## Environment
-- Laptop: noor-mbp (M3 Max, 64 GB). Home server: mini (Mac mini M1) on Tailscale as
-  mini.tailnet.invalid.
+- Laptop: noor-mbp (M3 Max, 64 GB). Home server: mini (Mac mini M1) on Tailscale,
+  asleep most days.
 - Scratch Postgres for experiments: postgresql://noor:scratchpad-2026@localhost:5433/scratch
   (the docker compose file in ~/src/feedsmith binds 5433, not 5432).
 - On-call handoff is Monday 10:00. When I am on call, prefer small reversible changes.
