@@ -16,6 +16,7 @@ registry factory (not a hand-set string), so reverting the property reds the
 sentence.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,7 +26,7 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
 from personalclaw.llm.acp_agent import AcpAgentProvider, _factory
-from personalclaw.llm.base import EVENT_COMPLETE, LLMEvent
+from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.registry import ProviderEntry
 
 # The measured `O7` shape: the claude-code bundle registers the entry as
@@ -115,6 +116,7 @@ def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool):
     sessions.get_or_create = AsyncMock(return_value=(client, is_new, resumed))
     sessions.record_failure = AsyncMock()
     sessions.check_context_usage = MagicMock()
+    sessions.get_channel_link = MagicMock(return_value=("", ""))  # linked to no channel
     state = DashboardState(
         sessions=sessions,
         start_time=0.0,
@@ -129,9 +131,13 @@ def _state(tmp_path, *, provider_id: str, is_new: bool, resumed: bool):
     state._hook_store = hs
     state.broadcast_ws = MagicMock()
     state.push_sessions_update = MagicMock()
+    # An answer, as a turn gives: a turn with none is re-queued once, to be tried again.
     client.stream = MagicMock(
         side_effect=lambda *a, **kw: _async_iter(
-            [LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")]
+            [
+                LLMEvent(kind=EVENT_TEXT_CHUNK, text="an answer"),
+                LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+            ]
         )
     )
     return state, client
@@ -164,13 +170,27 @@ def _session(history) -> _ChatSession:
     return session
 
 
+async def _run_turn(state, session) -> None:
+    """One turn, over by the time it returns, with what it started after it (its title, its
+    follow-ups) over too.
+
+    Work a turn left running went on into the test's next turn and counted as that turn's: a
+    turn the stub left with no answer was re-queued to be tried again, and the retry restored
+    the conversation's history while the next turn's count of restores was being taken."""
+    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+        await run_chat(state, session, "hello")
+        started = [task for task in state._background_tasks if not task.done()]
+        if started:
+            _done, running = await asyncio.wait(started, timeout=10)
+            assert not running, f"{len(running)} task(s) the turn started never ended"
+    assert not session._queue, f"the turn queued {len(session._queue)} message(s) to run after it"
+
+
 async def _one_turn(
     tmp_path, *, provider_id: str, is_new: bool, resumed: bool, history=None
 ) -> list[str]:
     state, _client = _state(tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed)
-    session = _session(history)
-    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await run_chat(state, session, "hello")
+    await _run_turn(state, _session(history))
     return _session_lines(state)
 
 
@@ -178,9 +198,7 @@ async def _turn_and_state(tmp_path, *, provider_id: str, is_new: bool, resumed: 
     """Like :func:`_one_turn` but also hands back the state, so a test can assert what
     the turn DID (whether the history bootstrap ran) beside what it SAID."""
     state, _client = _state(tmp_path, provider_id=provider_id, is_new=is_new, resumed=resumed)
-    session = _session(history)
-    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await run_chat(state, session, "hello")
+    await _run_turn(state, _session(history))
     return _session_lines(state), state
 
 

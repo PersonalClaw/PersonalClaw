@@ -79,6 +79,7 @@ def _config_dir() -> Path:
 
 
 _PROMPTS_DIRNAME = "prompts"
+_SNIPPETS_DIRNAME = "prompt_snippets"
 
 
 def prompt_file(name: str) -> Path:
@@ -88,6 +89,12 @@ def prompt_file(name: str) -> Path:
     return _config_dir() / _PROMPTS_DIRNAME / f"{_safe_name(name)}.yaml"
 
 
+def store_folders() -> tuple[Path, Path]:
+    """The prompt store's folders, prompts and snippets, without creating either."""
+    home = _config_dir()
+    return home / _PROMPTS_DIRNAME, home / _SNIPPETS_DIRNAME
+
+
 def _prompts_dir() -> Path:
     d = _config_dir() / _PROMPTS_DIRNAME
     d.mkdir(parents=True, exist_ok=True)
@@ -95,7 +102,7 @@ def _prompts_dir() -> Path:
 
 
 def _snippets_dir() -> Path:
-    d = _config_dir() / "prompt_snippets"
+    d = _config_dir() / _SNIPPETS_DIRNAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
