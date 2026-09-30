@@ -721,6 +721,10 @@ Before the agent's shell runs a command, PersonalClaw reads it and refuses it
   `~`, `process.env.HOME + '/…'`).
 - **returns a credential folder under your home**, named from there: `~/.ssh`, `~/.aws`, `~/.gnupg`
   and the rest. A command that only uses one, such as `ssh -i ~/.ssh/key`, runs.
+- **shows what one of those folders holds**: it names the folder itself, whatever it does with it
+  (`ls ~/.aws`, `find ~/.ssh`, a `cd` into it), or a glob the shell expands to the folder or into
+  it (`ls ~/.a*`, `ls ~/.ssh/*`). A folder that only shares a name with one (`~/src/ssh-helper`)
+  is not one.
 
 The agent's file tools and the dashboard refuse all of these files. The shell's screen is defence in
 depth, not a fence:

@@ -17,7 +17,13 @@ from typing import Any, Iterable
 from urllib.parse import parse_qs
 
 from personalclaw import address_logins
-from personalclaw.command_paths import HOME_PATTERNS, named_paths, strip_shell_quotes
+from personalclaw.command_paths import (
+    HOME_PATTERNS,
+    is_glob,
+    named_paths,
+    shell_expands_to,
+    strip_shell_quotes,
+)
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 
 logger = logging.getLogger(__name__)
@@ -738,17 +744,48 @@ _SHELL_REFUSAL = {
 }
 
 
+def _credential_folders() -> tuple[str, ...]:
+    """The credential folders under ``$HOME`` themselves, as written and as resolved
+    (:func:`_path_forms`): each :data:`_SENSITIVE_HOME_DIRS` entry that is a folder there.
+
+    The entries that are files (``.netrc``, ``.kube/config``…) are used by their path, and a folder
+    that does not exist holds nothing a listing could show.
+    """
+    home = str(Path.home())
+    forms: set[str] = set()
+    for entry in _SENSITIVE_HOME_DIRS:
+        location = os.path.join(home, entry)
+        if os.path.isdir(location):
+            forms |= _path_forms(location)
+    return tuple(forms)
+
+
+def _shows_credential_folder(word: str, path: Path, folders: tuple[str, ...]) -> bool:
+    """Whether *word*, which a command names *path* with, shows what a credential folder holds:
+    it names the folder itself (``ls ~/.ssh``, ``find ~/.aws``, ``cd ~/.ssh``), or it is a glob
+    the shell expands to the folder or to what is inside it (``ls ~/.a*``, ``ls ~/.ssh/*``)."""
+    forms = _path_forms(str(path))
+    if is_glob(word):
+        return _under(forms, folders) and shell_expands_to(word, path)
+    return not forms.isdisjoint(folders)
+
+
 def is_sensitive_bash_command(
     command: str, *, cwd: str | os.PathLike[str] | None = None
 ) -> str | None:
     """Why a bash command must not run because of what it would read, or None if clean.
 
-    Two questions, one per kind of secret:
+    Three questions:
 
     * Does it RETURN the content of a credential folder under ``$HOME`` (``~/.ssh``, ``~/.aws``
       and the rest of :data:`_SENSITIVE_HOME_DIRS`) — ``cat``, ``grep``, a copy, a one-liner? A
       command that only uses one, such as ``ssh -i ~/.ssh/key``, passes: those keys exist to be
       used by the tools that read them.
+    * Does it show what such a folder HOLDS — name the folder itself, whatever it does with it
+      (``ls``, ``find``, ``tree``, ``du``, a ``cd`` into it), or a glob the shell expands to the
+      folder or into it (:func:`_shows_credential_folder`)? The folder is protected, not only the
+      files inside it: a listing hands over the names of the keys and profiles it holds. Refused
+      with the sentence a read of a file inside gets.
     * Does it NAME a file only its owner reads — PersonalClaw's own credential store and auth and
       audit material, in the active home and the default one, or another tool's sign-in
       (:class:`SensitivePaths` without the ``$HOME`` folders)? Refused whatever it does with the
@@ -770,10 +807,13 @@ def is_sensitive_bash_command(
     if _get_sensitive_re().search(normalised):
         return _SHELL_REFUSAL[CREDENTIAL]
     owned = SensitivePaths(home_credential_dirs=False)
-    for _word, path in named_paths(command, cwd=cwd, names=owned.names):
+    folders = _credential_folders()
+    for word, path in named_paths(command, cwd=cwd, names=owned.names):
         kind = owned.kind(str(path))
         if kind:
             return _SHELL_REFUSAL[kind]
+        if _shows_credential_folder(word, path, folders):
+            return _SHELL_REFUSAL[CREDENTIAL]
     return None
 
 

@@ -190,9 +190,11 @@ grants, is refused before its message is sent, and the owner is told why.
   that names a file only its owner reads (`SensitivePaths` without the `$HOME`
   folders: PersonalClaw's credential store and keys in the active home and the
   default one, `_pclaw_homes`, and another tool's sign-in, `_sign_in_files` and
-  `SIGN_IN_FILE_BASENAMES`), and one that returns a credential folder under
-  `$HOME` (`_SENSITIVE_HOME_DIRS`). For the first, the paths a command names are read
-  by `command_paths.named_paths`, the same reading the owner-only fence uses: the homes
+  `SIGN_IN_FILE_BASENAMES`), one that returns a credential folder under
+  `$HOME` (`_SENSITIVE_HOME_DIRS`), and one that names such a folder itself or a glob
+  the shell expands to it or into it (`_shows_credential_folder`, with the shell's own
+  glob rule from `command_paths.shell_expands_to`). For the first and the third, the
+  paths a command names are read by `command_paths.named_paths`, the same reading the owner-only fence uses: the homes
   written out as a shell or a one-liner spells them, a relative path against the folder
   it runs in and every folder a `cd` moves to, links, globs and brace lists. The file
   tools and the dashboard ask `is_sensitive_path`, the same declarations. What no

@@ -34,8 +34,9 @@ crossing is gated so the agent cannot act outside the owner's chosen posture:
   integrity](#baseline-denylist-integrity-anti-drift-and-anti-llm-tamper-not-anti-owner)),
   suspicious-pattern watchers (`SUSPICIOUS_BASH_PATTERNS`), and a credential screen
   (`is_sensitive_bash_command`) that refuses a command naming PersonalClaw's own credential
-  store and keys, in the home in use and the default one, or another tool's sign-in, and one
-  returning a credential folder under `$HOME`. The first is found the way the command's shell
+  store and keys, in the home in use and the default one, or another tool's sign-in, one
+  returning a credential folder under `$HOME`, and one naming such a folder itself (a listing).
+  The first and the last are found the way the command's shell
   would find it (`command_paths.named_paths`, the reading the owner-only fence uses too).
   Defence in depth: [limitations §13](limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files).
 - **OS child sandbox** (`sandbox.py`) with a credential-env denylist so secrets

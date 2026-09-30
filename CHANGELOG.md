@@ -858,6 +858,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **The agent's shell refuses a command that lists a credential folder under your home, such as `ls ~/.aws` or `find ~/.ssh`, or a glob that reaches one, with the sentence a read of a file inside it gets.**
 - **A prompt sent through an OpenAI-compatible instance on this machine gets the outbound secret scan the setting asks for, since a proxy there can pass it on to a cloud service.**
 - **The gateway's internal credential opens only the operations PersonalClaw's own processes call, each one method on one route; it used to open every route under a listed path, every trigger route among them.**
 - **An Attended loop asks before its workers act: a call that needs your approval, from any of its workers, the per-task workers' included, waits for your answer on the loop's page, the bell and your approval channel, as a chat's does, and "This loop" lets its workers act without asking until the run ends. An Unattended loop's standing grant ends for every worker when its trust window does.**

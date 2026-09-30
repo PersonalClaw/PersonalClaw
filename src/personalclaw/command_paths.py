@@ -237,6 +237,27 @@ def _globbed(path: Path, budget: list[int]) -> list[Path]:
     return [Path(p) for p in found]
 
 
+def is_glob(word: str) -> bool:
+    """Whether the shell expands *word* as a glob."""
+    return bool(_MAGIC.search(word))
+
+
+def shell_expands_to(word: str, path: Path) -> bool:
+    """Whether the shell's own expansion of *word* includes *path*, one of the paths
+    :func:`named_paths` read it as.
+
+    That reading is wider than the shell's, on purpose: its globs match hidden entries too. The
+    shell's do not: a glob component matches a name beginning with ``.`` only when it begins with
+    one itself, so ``du -sh ~/*`` never reaches ``~/.ssh`` and ``ls ~/.*`` does. A screen that
+    refuses by what a glob reaches asks this, so it refuses no more than the shell would reach.
+    """
+    pattern = Path(os.path.expanduser(word)).parts
+    return not any(
+        _MAGIC.search(want) and got.startswith(".") and not want.startswith(".")
+        for want, got in zip(reversed(pattern), reversed(path.parts))
+    )
+
+
 def named_paths(
     text: str,
     *,
