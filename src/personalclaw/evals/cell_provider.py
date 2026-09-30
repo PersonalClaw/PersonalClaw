@@ -146,6 +146,7 @@ def resolve_binding(model_ref: str, *, use_case: str = "chat") -> CellProviderBi
     ``LocalOllama:gemma4:12b`` is provider ``LocalOllama`` and model ``gemma4:12b``.
     """
     from personalclaw.llm.branded_specs import registered_spec
+    from personalclaw.llm.registry import ENDPOINT_OPTION
 
     ref = str(model_ref or "").strip()
     if ":" not in ref:
@@ -167,7 +168,7 @@ def resolve_binding(model_ref: str, *, use_case: str = "chat") -> CellProviderBi
         provider_name=provider_name,
         model=model or str(entry.get("model") or ""),
         protocol=(spec.protocol if spec is not None else "openai"),
-        base_url=str(options.get("base_url") or options.get("endpoint") or ""),
+        base_url=str(options.get(ENDPOINT_OPTION) or ""),
         api_key_env=(spec.api_key_env if spec is not None else ""),
         max_tokens=(spec.max_tokens if spec is not None else None),
     )
@@ -311,6 +312,7 @@ def _register_cell_type(binding: CellProviderBinding) -> str:
     from personalclaw.llm.capabilities import ProviderCapability
     from personalclaw.llm.credentials import Credential
     from personalclaw.llm.registry import (
+        ENDPOINT_OPTION,
         ProviderEntry,
         ProviderResolutionError,
         get_default_registry,
@@ -330,8 +332,7 @@ def _register_cell_type(binding: CellProviderBinding) -> str:
             source="env" if secret else "none",
         )
         options = dict(entry.options or {})
-        options.pop("base_url", None)
-        options.pop("endpoint", None)
+        options.pop(ENDPOINT_OPTION, None)
         # `kwargs` carries what the call asked for — the bound model, a per-call temperature,
         # the output budget. This factory used to drop all of it, so a best-of-N inside a cell
         # sampled one answer N times, and no call got the budget core sized for it.
@@ -376,7 +377,7 @@ def apply_in_child(binding: CellProviderBinding | None) -> list[str]:
         return []
 
     from personalclaw.evals import overlay as overlay_lib
-    from personalclaw.llm.registry import sync_entries_from_config
+    from personalclaw.llm.registry import ENDPOINT_OPTION, sync_entries_from_config
     from personalclaw.providers.use_cases import save_active_models
 
     try:
@@ -392,7 +393,7 @@ def apply_in_child(binding: CellProviderBinding | None) -> list[str]:
                     "name": binding.provider_name,
                     "type": CELL_PROVIDER_TYPE,
                     "model": binding.model,
-                    "options": {"base_url": binding.base_url} if binding.base_url else {},
+                    "options": {ENDPOINT_OPTION: binding.base_url} if binding.base_url else {},
                 }
             ],
         )

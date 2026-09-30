@@ -71,6 +71,11 @@ from personalclaw.llm.catalog import (  # noqa: F401
 )
 from personalclaw.llm.credentials import Credential  # noqa: F401
 
+# The requests a provider has open, so its ``cancel()`` can close one mid-flight: an HTTP model
+# client relays its stream through it (`InFlightRequests.relay`), and Stop, Pause and an incident
+# hold then end the request instead of waiting for it to return.
+from personalclaw.llm.inflight import InFlightRequests  # noqa: F401
+
 # The two supported inference-PROTOCOL clients — the standards PersonalClaw speaks,
 # not provider-specific. A model-provider app declares which protocol it speaks +
 # how it authenticates/configures: an OpenAI-compatible endpoint app (openai, vllm,
@@ -142,6 +147,8 @@ __all__ = [
     "ModelProvider",
     "LLMEvent",
     "CancelOutcome",
+    # What a provider's `cancel()` closes: the requests it relays (the bundled `ollama-models`).
+    "InFlightRequests",
     "EVENT_COMPLETE",
     "EVENT_TEXT_CHUNK",
     "EVENT_THINKING_CHUNK",

@@ -513,7 +513,7 @@ def _register_operator_provider(monkeypatch, base: str, secret: str) -> str:
             name="op-provider",
             type="stubprov",
             model="m",
-            options={"api_key": secret, "base_url": base},
+            options={"api_key": secret, "endpoint": base},
         )
     )
     return "op-provider"

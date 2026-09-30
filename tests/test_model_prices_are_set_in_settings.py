@@ -35,7 +35,7 @@ def home(tmp_path, monkeypatch):
             name="acme-cloud",
             type="openai_compatible",
             model="",
-            options={"base_url": "https://models.example.com/v1"},
+            options={"endpoint": "https://models.example.com/v1"},
         )
     )
     # Configured as the Add-instance form writes it, and bound to two uses.

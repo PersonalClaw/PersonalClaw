@@ -53,7 +53,7 @@ class _Model:
         entry = "at-" + re.sub(r"[^a-z0-9]+", "-", base_url.lower()).strip("-")
         get_default_registry().register_entry(
             ProviderEntry(
-                name=entry, type="openai_compatible", model="", options={"base_url": base_url}
+                name=entry, type="openai_compatible", model="", options={"endpoint": base_url}
             )
         )
         self.served_ref = f"{entry}:s"

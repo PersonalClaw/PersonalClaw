@@ -399,7 +399,7 @@ class TestEveryThresholdIsReachable:
                 name="here-gemma",
                 type="openai_compatible",
                 model="",
-                options={"base_url": "http://127.0.0.1:11434/v1"},
+                options={"endpoint": "http://127.0.0.1:11434/v1"},
             )
         )
 

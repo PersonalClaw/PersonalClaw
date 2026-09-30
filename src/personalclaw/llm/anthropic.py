@@ -38,6 +38,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.catalog import SAMPLING_PARAMETERS, refused_sampling
 from personalclaw.llm.credentials import Credential
+from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
 
@@ -436,6 +437,8 @@ class AnthropicProvider(ModelProvider):
         # ordinal — it compares a report against the largest prompt this binding has
         # already had measured — see personalclaw.context_gauge.
         self._gauge = ContextGauge()
+        # The requests open now, relayed so ``cancel()`` can close one where it is.
+        self._requests = InFlightRequests()
 
     @property
     def sampling_temperature(self) -> float | None:
@@ -506,6 +509,11 @@ class AnthropicProvider(ModelProvider):
     # ── Streaming ─────────────────────────────────────────────────────
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        """Stream a turn (:meth:`_stream_chat`), closable by :meth:`cancel`."""
+        async for event in self._requests.relay(self._stream_chat(message)):
+            yield event
+
+    async def _stream_chat(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a Messages turn; translate deltas to :class:`LLMEvent`.
 
         Anthropic emits a sequence of typed events:
@@ -681,6 +689,21 @@ class AnthropicProvider(ModelProvider):
     # ── Stateless completion (native loop) ────────────────────────────
 
     async def complete(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        reasoning_effort: str = "",
+    ) -> AsyncIterator[LLMEvent]:
+        """Stream a stateless completion (:meth:`_complete_chat`), closable by :meth:`cancel`."""
+        chat = self._complete_chat(
+            messages, tools=tools, model=model, reasoning_effort=reasoning_effort
+        )
+        async for event in self._requests.relay(chat):
+            yield event
+
+    async def _complete_chat(
         self,
         messages: list[dict],
         *,
@@ -879,8 +902,10 @@ class AnthropicProvider(ModelProvider):
         return resolved_context_window(self._model, override=self.context_window)
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
-        """Cancel is a no-op for now; later phases can wire abort plumbing."""
-        return "no_turn"
+        """Close the request in flight, so a stop ends the turn now instead of when the endpoint
+        finishes answering (and stops paying for an answer nobody reads). ``"no_turn"`` when none
+        is open."""
+        return await self._requests.cancel(wait_ack_timeout=wait_ack_timeout)
 
 
 # The provider TYPE registration (ANTHROPIC_CAPABILITY + factory + create_provider)

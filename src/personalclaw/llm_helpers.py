@@ -980,8 +980,19 @@ def is_model_call_failure(exc: BaseException) -> bool:
 
     from personalclaw.guardrails.failure import GuardError
     from personalclaw.llm.registry import ProviderResolutionError
+    from personalclaw.providers.provider_bridge import ProviderResolutionError as UseCaseUnresolved
 
-    kinds = (GuardError, ProviderResolutionError, httpx.HTTPError, TimeoutError, ConnectionError)
+    # Both refusals are "cannot be resolved": the registry's (an entry or type it cannot build)
+    # and the use-case resolver's, which carries the coded envelope. Only the first was named, so
+    # a home with no model bound logged the resolver's refusal as a defect, traceback and all.
+    kinds = (
+        GuardError,
+        ProviderResolutionError,
+        UseCaseUnresolved,
+        httpx.HTTPError,
+        TimeoutError,
+        ConnectionError,
+    )
     seen: BaseException | None = exc
     for _ in range(5):
         if seen is None:
@@ -1084,6 +1095,11 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
 
     These classes are answered BEFORE the matcher, because the matcher would get them wrong:
 
+    * A failure carrying a coded envelope (an ``agent_error`` whose code is registered in
+      ``errors.ERROR_CODES``) already knows what failed, why, and the fix — the model resolver's
+      refusal on a home with no model bound is one — so it is said as that envelope's
+      :meth:`~personalclaw.errors.AgentError.sentence`. Read as unrecognized, it told a person
+      with no model bound to try again.
     * ``PromptExceedsWindow`` is already the user-facing sentence (model, limit, fix). Its
       figures are this turn's own — "1,429 tokens" contains ``429``, which the substring map
       below reads as a rate limit — so it passes through verbatim.
@@ -1133,6 +1149,7 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
 def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None:
     """:func:`humanize_provider_error`'s sentence for a failure it recognizes, or ``None`` for
     one that carries a message it recognizes nothing in."""
+    from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
         FirstTokenTimeout,
         ModelCallTimeout,
@@ -1143,6 +1160,9 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.llm.registry import ProviderResolutionError
     from personalclaw.tool_providers.portable_schema import ToolSchemaRejected
 
+    envelope = getattr(exc, "agent_error", None)
+    if isinstance(envelope, AgentError) and envelope.code in ERROR_CODES:
+        return envelope.sentence()
     if isinstance(exc, ToolSchemaRejected):
         return exc.sentence()
     if isinstance(exc, (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout)):

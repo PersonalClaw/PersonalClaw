@@ -40,7 +40,7 @@ def bound_home(tmp_path, monkeypatch):
                         "name": "LocalRuntime",
                         "type": "openai_compatible",
                         "model": "test-model",
-                        "options": {"base_url": "http://127.0.0.1:9/v1"},
+                        "options": {"endpoint": "http://127.0.0.1:9/v1"},
                     },
                     {"name": "Other", "type": "openai_compatible", "model": "other-model"},
                 ]

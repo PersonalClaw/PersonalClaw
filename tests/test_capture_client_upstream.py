@@ -123,7 +123,7 @@ def _register_provider(base_url: str, *, name: str = _PROVIDER_NAME) -> None:
             name=name,
             type="openai",
             model="gpt-4o",
-            options={"base_url": base_url},
+            options={"endpoint": base_url},
             credential=_CREDENTIAL_NAME,
         )
     )

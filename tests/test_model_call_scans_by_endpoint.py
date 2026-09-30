@@ -52,11 +52,11 @@ def _ollama(endpoint: str):
     return module.OllamaProvider(model="qwen3:4b", endpoint=endpoint)
 
 
-def _entry(option: str, url: str, *, provider_type: str) -> str:
+def _entry(url: str, *, provider_type: str) -> str:
     """Register a configured provider entry that sends to *url*; its name. Conftest drops it."""
     name = "at-" + re.sub(r"[^a-z0-9]+", "-", url.lower()).strip("-")
     get_default_registry().register_entry(
-        ProviderEntry(name=name, type=provider_type, model="", options={option: url})
+        ProviderEntry(name=name, type=provider_type, model="", options={"endpoint": url})
     )
     return name
 
@@ -66,7 +66,7 @@ def _guard(endpoint: str, scan_mode: str):
     return wrap_model_call_guard(
         _ollama(endpoint),
         use_case="background",
-        provider_name=_entry("endpoint", endpoint, provider_type="ollama"),
+        provider_name=_entry(endpoint, provider_type="ollama"),
         model="qwen3:4b",
         scan_mode=scan_mode,
     )
@@ -133,7 +133,7 @@ def test_a_provider_no_configured_entry_names_gets_the_settings_scan(home):
     ],
 )
 def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url, ollama_app):
-    entry = _entry("base_url", base_url, provider_type="ollama")
+    entry = _entry(base_url, provider_type="ollama")
 
     assert served_on_this_machine(entry) is False
     assert sends_to_this_machine(entry) is False
@@ -151,7 +151,7 @@ def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url, 
     ],
 )
 def test_a_model_server_at_a_loopback_endpoint_is_local(base_url, ollama_app):
-    entry = _entry("base_url", base_url, provider_type="ollama")
+    entry = _entry(base_url, provider_type="ollama")
 
     assert served_on_this_machine(entry) is True
 
@@ -163,7 +163,7 @@ def test_a_model_server_at_a_loopback_endpoint_is_local(base_url, ollama_app):
 def test_an_openai_compatible_endpoint_on_this_machine_gets_the_settings_scan(home, base_url):
     """Its requests go to this machine, but a proxy there can pass the prompt on to a cloud API,
     so nothing says the prompt stays here: the setting's scan applies."""
-    entry = _entry("base_url", base_url, provider_type="openai_compatible")
+    entry = _entry(base_url, provider_type="openai_compatible")
     guard = wrap_model_call_guard(
         _ollama("http://localhost:11434"),
         use_case="background",

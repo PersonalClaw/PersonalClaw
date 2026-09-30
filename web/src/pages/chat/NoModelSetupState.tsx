@@ -12,11 +12,12 @@ export const MODELS_ROUTE = `#/${MODELS_PATH}`
 /** True when a turn-level error is the "no model configured yet" case — a fresh
  *  instance where no provider declares the capability the chat use case needs.
  *
- *  Keyed on the STABLE render() of `AgentError(code=ERR_MODEL_UNRESOLVED)` raised by
+ *  Keyed on the STABLE words of `AgentError(code=ERR_MODEL_UNRESOLVED)` raised by
  *  `resolve_provider_for_use_case` (src/personalclaw/providers/provider_bridge.py)
- *  on the final "No provider configured for use case" path. That WHAT/WHY prose is
- *  the tripwire the co-located test pins against, so a backend reword fails the test
- *  rather than silently reverting this surface to the raw envelope.
+ *  on the final "No provider configured for use case" path, which the chat says as the
+ *  envelope's `sentence()`. Those words are the tripwire the co-located test pins against,
+ *  so a backend reword fails the test rather than silently reverting this surface to the
+ *  raw refusal.
  *
  *  Deliberately NOT the stale-pin variant ("… cannot be built" / "isn't available"):
  *  there a model WAS chosen and later went missing, which is a different situation
@@ -35,17 +36,19 @@ export function isNoModelSetupError(text: string | null | undefined): boolean {
  *  Settings → Models — or `null` for every other cause. A model provider IS connected then, so
  *  "No model connected yet" would be false about it.
  *
- *  Keyed on the stable WHY of `no_model_chosen` (src/personalclaw/llm/registry.py), which the
- *  co-located test pins verbatim, as the WHAT above is. */
+ *  Keyed on the stable reason of `no_model_chosen` (src/personalclaw/llm/registry.py), which the
+ *  co-located test pins verbatim, as the words above are. Found wherever it sits: the chat says
+ *  the refusal as one sentence, and a surface that relays the model's labelled reading of it
+ *  carries the same reason on its `WHY:` line. */
 export function noModelChosenFor(text: string | null | undefined): string | null {
-  const m = /^WHY: no model is chosen for “(.+)”$/m.exec(text ?? '')
+  const m = /no model is chosen for “([^”]+)”/.exec(text ?? '')
   return m ? m[1] : null
 }
 
 /** WT-04: the calm setup empty-state shown in the transcript when a turn cannot run
- *  because no model is connected yet. Replaces the raw WHAT/WHY/FIX danger block —
- *  which read as a stack dump on a newcomer's very first screen — with one plain
- *  sentence, the way forward as a CTA, and the full envelope tucked behind a
+ *  because no model is connected yet. Replaces the danger strip — which put a refusal
+ *  worded for configuration on a newcomer's very first screen — with one plain
+ *  sentence, the way forward as a CTA, and the full refusal tucked behind a
  *  collapsed disclosure (charter: calm setup-framing, error-shape rule). When a provider is
  *  connected but no model is chosen for it, the sentence names that provider instead. */
 export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup: () => void }) {

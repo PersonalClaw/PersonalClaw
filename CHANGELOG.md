@@ -97,6 +97,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A model instance's address is its `endpoint`, the one option every provider reads: an address saved as `base_url` is refused with the field to use, and `ProviderEntry.endpoint` replaces `ProviderEntry.endpoints` (an SDK change; `alibaba-models`, `anthropic-models`, `claude-subscription`, `meta-muse-spark`, `openai-models`, `openrouter-models` and `vllm-models` read only `endpoint`).**
 - **`ChannelMessage.attachments`, a list of names, is replaced by `ChannelMessage.files`, the files themselves (`email-channel` passes them).**
 - **`personalclaw.sdk.search.search_with_fallback` returns the result alone, `SearchResult.fallback` (a `SearchFallback`) names the provider that failed when another answered, and when both fail its error says what each said; `web-tools` uses it.**
 - **`personalclaw.sdk.channel.transcribe_audio` raises `SttError` with the reason when there is no transcript, instead of answering `None` (`slack-channel` already catches it).**
@@ -147,6 +148,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Stop, Pause and an incident hold end a native turn at once: the model request in flight is closed instead of waited for, on Ollama and on every OpenAI- and Anthropic-compatible app (`personalclaw.sdk.model.InFlightRequests`, an SDK addition used by the bundled `ollama-models`).**
+- **A chat sent with no model set up says what is missing and what to do, instead of an error PersonalClaw doesn't recognize (`AgentError.sentence()`, an SDK addition no app has to change for).**
+- **A new chat on a model this machine runs is no longer compacted before its first reply: until usage is reported, its history is sized against the window the runtime says it serves.**
+- **A native chat sends one tool-catalog note per turn, not every earlier turn's as well.**
 - **A merge restore brings a snapshot's knowledge library back, from `personalclaw restore`, the Backups page and a folder sync, and one that leaves a part unchanged names it and does not say it completed (`personalclaw restore` exits 1).**
 - **Settings → Usage counts the day the daily cap counts, this machine's local day, in its Today, its 7- and 30-day totals, its chart and the Settings tile, where it counted the UTC day.**
 - **The agent is told what `~` means, so a path you write as `~/Notes` reaches your home's Notes folder, not one under the working directory.**

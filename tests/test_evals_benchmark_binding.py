@@ -557,7 +557,7 @@ def test_two_arms_whose_staged_artifacts_differ_score_differently(
                 "name": "Echo",
                 "type": "eval_echo",
                 "model": "echo-1",
-                "options": {"base_url": echo_endpoint.base_url},
+                "options": {"endpoint": echo_endpoint.base_url},
             }
         ],
         chain=["Echo:echo-1"],

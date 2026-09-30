@@ -186,15 +186,16 @@ def test_an_entry_that_names_no_endpoint_is_not_local(tmp_path):
     assert rate_for("in-process", _UNPRICED, home=tmp_path) is None
 
 
-@pytest.mark.parametrize("remote_key", ["endpoint", "base_url"])
-def test_an_entry_is_local_only_when_every_endpoint_it_names_is(tmp_path, remote_key):
-    """Clients differ on which spelling wins when an entry carries both, so one endpoint on
-    another machine is enough for its requests to leave this one."""
-    local_key = "base_url" if remote_key == "endpoint" else "endpoint"
-    _configured("mixed", **{local_key: _HERE[0], remote_key: _ELSEWHERE[0]})
+def test_an_entry_is_where_its_endpoint_is_whatever_else_its_options_say(tmp_path):
+    """An instance sends to its ``endpoint``, the one option every client reads; a ``base_url``
+    beside it is read by none, so it cannot move where the requests go, or what they cost."""
+    _configured("here", endpoint=_HERE[0], base_url=_ELSEWHERE[0])
+    _configured("elsewhere", endpoint=_ELSEWHERE[0], base_url=_HERE[0])
 
-    assert served_on_this_machine("mixed") is False
-    assert rate_for("mixed", _UNPRICED, home=tmp_path) is None
+    assert served_on_this_machine("here") is True
+    assert rate_for("here", _UNPRICED, home=tmp_path) == ModelRate(0.0, 0.0)
+    assert served_on_this_machine("elsewhere") is False
+    assert rate_for("elsewhere", _UNPRICED, home=tmp_path) is None
 
 
 def test_overlay_wins_over_local_zero(tmp_path):

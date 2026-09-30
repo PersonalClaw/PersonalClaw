@@ -853,17 +853,21 @@ def _endpoint_refusal(options: dict[str, Any]) -> str | None:
     """Why the endpoint in ``options`` cannot be saved, or ``None``.
 
     Refused at write time: a malformed endpoint used to be saved and only fail later, as
-    ``not%20a%20url/api/tags`` — the HTTP client's percent-encoded echo of it.
+    ``not%20a%20url/api/tags`` — the HTTP client's percent-encoded echo of it. So is an address
+    under ``base_url``, the other name some clients give it: no provider reads that option, and
+    one saved there was sent nowhere while the instance went to its default address.
     """
-    from personalclaw.llm.registry import ENDPOINT_OPTIONS
+    from personalclaw.llm.registry import ENDPOINT_OPTION
     from personalclaw.providers.failure_copy import endpoint_problem
 
-    for key in ENDPOINT_OPTIONS:
-        value = options.get(key)
-        if isinstance(value, str) and value.strip():
-            problem = endpoint_problem(value)
-            if problem:
-                return problem
+    if options.get("base_url") is not None:
+        return (
+            f"An instance's address is its {ENDPOINT_OPTION!r} option; 'base_url' is not read. "
+            f"Save the address as {ENDPOINT_OPTION!r}."
+        )
+    value = options.get(ENDPOINT_OPTION)
+    if isinstance(value, str) and value.strip():
+        return endpoint_problem(value)
     return None
 
 

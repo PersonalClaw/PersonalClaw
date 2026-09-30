@@ -58,6 +58,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     ContextGauge,
     Credential,
     FirstTokenTimeout,
+    InFlightRequests,
     LLMEvent,
     ModelDiscoveryError,
     ModelInfo,
@@ -551,6 +552,8 @@ class OllamaProvider(ModelProvider):
         # Flipped True the first time the server rejects a tools request for
         # this model, so subsequent complete() turns skip the doomed first try.
         self._tools_unsupported: bool = False
+        # The chat requests open now, relayed so ``cancel()`` can close one where it is.
+        self._requests = InFlightRequests()
 
     @property
     def sampling_temperature(self) -> float | None:
@@ -657,6 +660,11 @@ class OllamaProvider(ModelProvider):
     # ── Streaming ─────────────────────────────────────────────────────
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
+        """Stream a chat turn (:meth:`_stream_chat`), closable by :meth:`cancel`."""
+        async for event in self._requests.relay(self._stream_chat(message)):
+            yield event
+
+    async def _stream_chat(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a chat turn; translate NDJSON lines to :class:`LLMEvent`.
 
         POSTs to ``/api/chat`` with ``stream=true`` and reads the response
@@ -756,6 +764,19 @@ class OllamaProvider(ModelProvider):
         model: str | None = None,
         reasoning_effort: str = "",  # accepted for interface parity; Ollama has no effort axis
     ) -> AsyncIterator[LLMEvent]:
+        """Stream a stateless chat turn (:meth:`_complete_chat`), closable by :meth:`cancel`."""
+        async for event in self._requests.relay(
+            self._complete_chat(messages, tools=tools, model=model)
+        ):
+            yield event
+
+    async def _complete_chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[LLMEvent]:
         """Stream a stateless multi-message chat turn, tools included.
 
         Unlike :meth:`stream`, this NEVER touches ``self._history`` — the
@@ -813,7 +834,7 @@ class OllamaProvider(ModelProvider):
                             model or self._model,
                         )
                         self._tools_unsupported = True
-                        async for ev in self.complete(messages, tools=None, model=model):
+                        async for ev in self._complete_chat(messages, tools=None, model=model):
                             yield ev
                         return
                     logger.error(
@@ -1019,8 +1040,9 @@ class OllamaProvider(ModelProvider):
         return self._last_context_pct
 
     async def cancel(self, *, wait_ack_timeout: float = 0.0) -> CancelOutcome:
-        """Cancel is a no-op for now; later phases can wire abort plumbing."""
-        return "no_turn"
+        """Close the chat request in flight, so a stop ends the turn now and Ollama stops
+        generating (it does when the connection closes). ``"no_turn"`` when none is open."""
+        return await self._requests.cancel(wait_ack_timeout=wait_ack_timeout)
 
 
 # ── Capability descriptor ────────────────────────────────────────────────

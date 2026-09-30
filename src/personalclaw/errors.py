@@ -227,6 +227,24 @@ class AgentError:
             lines.append(f"DID YOU MEAN: {', '.join(self.suggestions)}")
         return "\n".join(lines)
 
+    def sentence(self) -> str:
+        """The same three facts as plain words for a person: what failed and why, then what to
+        do — "No model provider resolves for use case 'chat': no model is chosen for “local”.
+        Choose one of its models in Settings → Models."
+
+        :meth:`render` is the model's reading, labelled line by line so it can branch; a chat or
+        a channel shows this instead, where the labels read as a stack dump.
+        """
+        what = _sentence_case(self.what.strip().rstrip(".!?"))
+        why = self.why.strip().rstrip(".!?")
+        fix = _sentence_case(self.fix.strip().rstrip(".!?"))
+        said = f"{what}: {why}." if why else f"{what}."
+        if fix:
+            said += f" {fix}."
+        if self.suggestions:
+            said += f" Did you mean {', '.join(self.suggestions)}?"
+        return said
+
     def to_dict(self) -> dict[str, Any]:
         """The structural carrier for the FE tool card + external clients."""
         return {
@@ -236,3 +254,9 @@ class AgentError:
             "fix": self.fix,
             "suggestions": list(self.suggestions),
         }
+
+
+def _sentence_case(text: str) -> str:
+    """``text`` with its first letter raised when it starts with a lowercase word, so a clause
+    written to follow "WHAT: " opens a sentence. A name, a quote or a number is left as it is."""
+    return text[0].upper() + text[1:] if text[:1].islower() else text

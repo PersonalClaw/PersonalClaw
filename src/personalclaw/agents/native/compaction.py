@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from personalclaw.token_estimate import CONSERVATIVE_CHARS_PER_TOKEN
 
 if TYPE_CHECKING:
+    from personalclaw.context_headroom import Window
     from personalclaw.guardrails.loop_breaker import LoopBreaker
     from personalclaw.llm.base import ModelProvider
 
@@ -48,6 +49,7 @@ class InProcessCompaction:
     _cache_generation: int
     _breaker: LoopBreaker
     _model: ModelProvider
+    _turn_window: Window | None
 
     if TYPE_CHECKING:
 
@@ -84,20 +86,32 @@ class InProcessCompaction:
         endpoint here, whatever runs behind it: a proxy for a cloud model compacts a little
         early, which is cheap, while a local runtime reached that way and estimated against a
         cloud model's window would never compact. The per-binding ``context_window`` override
-        the provider popped out of its options overrides both.
+        the provider popped out of its options overrides both, and so does the window the runtime
+        says it SERVES, where it runs the model on this machine itself
+        (``llm.registry.served_on_this_machine``): Ollama publishes the window it loaded the model
+        with, the turn asked it as it started (``_turn_window``), and dividing a first inference's
+        history by the floor instead compacted a conversation whose model had room for it eight
+        times over. An endpoint here that passes requests on keeps the floor, because its "served"
+        answer can be a table's architectural maximum.
         """
         from personalclaw import context_compaction as cc
-        from personalclaw.llm.registry import sends_to_this_machine
+        from personalclaw.llm.registry import sends_to_this_machine, served_on_this_machine
         from personalclaw.model_windows import model_context_window
 
         chars = cc.total_chars(self._messages)
         if chars <= 0:
             return None
-        served = str(getattr(self._model, "served_ref", "") or "")
+        entry = str(getattr(self._model, "served_ref", "") or "").split(":", 1)[0]
+        window = self._turn_window
+        served = (
+            window.tokens
+            if window is not None and window.source == "served" and served_on_this_machine(entry)
+            else None
+        )
         window_tokens = model_context_window(
             self.agent_model or None,
-            local=sends_to_this_machine(served.split(":", 1)[0]),
-            override=getattr(self._model, "context_window", None),
+            local=sends_to_this_machine(entry),
+            override=getattr(self._model, "context_window", None) or served,
         )
         if window_tokens <= 0:
             return None

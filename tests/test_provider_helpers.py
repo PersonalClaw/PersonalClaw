@@ -83,7 +83,6 @@ def test_factory_strips_credential_and_routing_fields_from_extra_options():
         options={
             "api_key": "secret",
             "endpoint": "https://x",
-            "base_url": "https://x",
             "model": "test-model",
             "temperature": 0.5,
             "top_p": 0.9,
@@ -92,7 +91,7 @@ def test_factory_strips_credential_and_routing_fields_from_extra_options():
     prov = factory(entry=entry)
     extra = getattr(prov, "_extra_options", {})
     # Credential/routing fields must NOT reach the SDK call kwargs.
-    assert "api_key" not in extra and "endpoint" not in extra and "base_url" not in extra
+    assert "api_key" not in extra and "endpoint" not in extra
     assert "model" not in extra
     # Genuine model-call params survive.
     assert extra.get("temperature") == 0.5 and extra.get("top_p") == 0.9

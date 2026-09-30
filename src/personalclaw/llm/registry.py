@@ -91,10 +91,12 @@ class CredentialMissing(ProviderResolutionError):
 #: declares for it.
 DEFAULT_MODEL_OPTION = "default_model"
 
-#: The options that carry the URL an instance sends its requests to: the two spellings core's
-#: protocol clients and the model server apps read (``sdk.provider_helpers`` reads both, with
-#: ``base_url`` winning, and a model server's own client reads ``endpoint``).
-ENDPOINT_OPTIONS = ("endpoint", "base_url")
+#: The option that carries the URL an instance sends its requests to: the field every model app's
+#: settings schema declares, the one the Settings form writes, and the only one a provider's
+#: factory reads. One spelling, so where core believes an instance sends and where it does send
+#: cannot differ (an entry that named its address another way was counted as sending there while
+#: its client sent to its default).
+ENDPOINT_OPTION = "endpoint"
 
 
 def own_model(model: object, options: object) -> str:
@@ -175,14 +177,11 @@ class ProviderEntry:
         return own_model(self.model, self.options)
 
     @property
-    def endpoints(self) -> tuple[str, ...]:
-        """Every endpoint URL this entry's options name (:data:`ENDPOINT_OPTIONS`), or ``()``.
-
-        Each one, because the clients differ on which spelling wins when an entry carries both,
-        so a caller asking where this entry's requests go has to answer for all of them."""
+    def endpoint(self) -> str:
+        """The endpoint URL this entry's options name (:data:`ENDPOINT_OPTION`), or ``""``."""
         options = self.options if isinstance(self.options, dict) else {}
-        found = (options.get(key) for key in ENDPOINT_OPTIONS)
-        return tuple(value.strip() for value in found if isinstance(value, str) and value.strip())
+        value = options.get(ENDPOINT_OPTION)
+        return value.strip() if isinstance(value, str) else ""
 
 
 class ProviderRegistry:
@@ -522,17 +521,17 @@ def _entry_and_capability(name: str) -> tuple[ProviderEntry | None, ProviderCapa
         return entry, None
 
 
-def _endpoints_here(entry: ProviderEntry, capability: ProviderCapability | None) -> bool:
-    """Whether every endpoint *entry* sends to is on this machine (``net.guard``): the ones it
-    names (:attr:`ProviderEntry.endpoints`), else the default its type declares
+def _endpoint_here(entry: ProviderEntry, capability: ProviderCapability | None) -> bool:
+    """Whether the endpoint *entry* sends to is on this machine (``net.guard``): the one it
+    names (:attr:`ProviderEntry.endpoint`), else the default its type declares
     (:attr:`ProviderCapability.default_endpoint`), which is where an entry that names none
     sends. An entry with no endpoint either way sends nowhere this can see: not here."""
     from personalclaw.net.guard import reaches_this_machine
 
-    endpoints = entry.endpoints
-    if not endpoints and capability is not None and capability.default_endpoint.strip():
-        endpoints = (capability.default_endpoint.strip(),)
-    return bool(endpoints) and all(reaches_this_machine(url) for url in endpoints)
+    endpoint = entry.endpoint
+    if not endpoint and capability is not None:
+        endpoint = capability.default_endpoint.strip()
+    return bool(endpoint) and reaches_this_machine(endpoint)
 
 
 def served_on_this_machine(name: str) -> bool:
@@ -550,7 +549,7 @@ def served_on_this_machine(name: str) -> bool:
 
     So local means the entry's type runs its model inside the gateway's own process
     (:attr:`ProviderCapability.in_process`), or the type runs the models it serves where its
-    endpoint is (:attr:`ProviderCapability.hosts_model`) and every endpoint the entry sends to is
+    endpoint is (:attr:`ProviderCapability.hosts_model`) and the endpoint the entry sends to is
     on this machine. An entry of a type that passes requests on (an OpenAI-compatible endpoint),
     an entry with no endpoint either way, a name no configured entry has, an endpoint anywhere
     else, and an entry whose type is not registered (its app is not installed, so nothing says
@@ -561,12 +560,12 @@ def served_on_this_machine(name: str) -> bool:
         return False
     if capability.in_process:
         return True
-    return capability.hosts_model and _endpoints_here(entry, capability)
+    return capability.hosts_model and _endpoint_here(entry, capability)
 
 
 def sends_to_this_machine(name: str) -> bool:
     """Whether every request the provider entry named *name* makes goes to this machine: its type
-    runs its model inside the gateway's own process, or every endpoint it sends to is here.
+    runs its model inside the gateway's own process, or the endpoint it sends to is here.
 
     Not whether the model runs here (:func:`served_on_this_machine` answers that, and an endpoint
     here may be a proxy for a service anywhere). Asked where taking a model as one this machine
@@ -574,14 +573,14 @@ def sends_to_this_machine(name: str) -> bool:
     estimate's served window (a runtime here serves a small one, and a history estimated against a
     cloud model's window never compacts before it overflows) and a code loop's worker pool (calls
     sent at once to one machine's model queue behind each other). An entry whose type is not
-    registered is answered by the endpoints it names alone.
+    registered is answered by the endpoint it names alone.
     """
     entry, capability = _entry_and_capability(name)
     if entry is None:
         return False
     if capability is not None and capability.in_process:
         return True
-    return _endpoints_here(entry, capability)
+    return _endpoint_here(entry, capability)
 
 
 # Config-type → base-registry-type aliases. EMPTY after the model-provider-as-app

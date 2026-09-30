@@ -53,7 +53,7 @@ def relay() -> str:
     register_branded_app(BrandedProviderSpec(type="openai_compatible", protocol="openai"))
     get_default_registry().register_entry(
         ProviderEntry(
-            name="relay", type="openai_compatible", model="", options={"base_url": _RELAY_URL}
+            name="relay", type="openai_compatible", model="", options={"endpoint": _RELAY_URL}
         )
     )
     return "relay"
@@ -197,7 +197,7 @@ def test_a_type_that_runs_its_models_where_its_endpoint_is_is_local_only_there()
         ("forwarder-here", "request-forwarder", "http://localhost:4000/v1"),
     ):
         registry.register_entry(
-            ProviderEntry(name=name, type=type_, model="", options={"base_url": url})
+            ProviderEntry(name=name, type=type_, model="", options={"endpoint": url})
         )
 
     assert served_on_this_machine("box-here") is True

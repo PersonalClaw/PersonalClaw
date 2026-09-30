@@ -147,6 +147,11 @@
     "params": [],
     "returns": "str"
    },
+   "sentence": {
+    "kind": "method",
+    "params": [],
+    "returns": "str"
+   },
    "to_dict": {
     "kind": "method",
     "params": [],
@@ -6539,6 +6544,30 @@
    }
   }
  },
+ "personalclaw.sdk.model.InFlightRequests": {
+  "bases": ["object"],
+  "init": {
+   "params": [],
+   "returns": "None"
+  },
+  "kind": "class",
+  "members": {
+   "cancel": {
+    "kind": "async method",
+    "params": [
+     {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "wait_ack_timeout"}
+    ],
+    "returns": "CancelOutcome"
+   },
+   "relay": {
+    "kind": "async generator method",
+    "params": [
+     {"annotation": "AsyncIterator[LLMEvent]", "kind": "positional_or_keyword", "name": "source"}
+    ],
+    "returns": "AsyncIterator[LLMEvent]"
+   }
+  }
+ },
  "personalclaw.sdk.model.KIND_OUTSIDE": {"kind": "value", "type": "str", "value": "'text'"},
  "personalclaw.sdk.model.LLMEvent": {"kind": "alias", "of": "personalclaw.sdk.channel.LLMEvent"},
  "personalclaw.sdk.model.MediaCatalog": {
@@ -6865,7 +6894,7 @@
   },
   "kind": "dataclass",
   "members": {
-   "endpoints": {"kind": "property", "returns": "tuple[str, ...]", "settable": false},
+   "endpoint": {"kind": "property", "returns": "str", "settable": false},
    "own_model": {"kind": "property", "returns": "str", "settable": false}
   }
  },

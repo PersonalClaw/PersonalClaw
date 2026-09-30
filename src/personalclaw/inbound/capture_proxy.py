@@ -354,8 +354,8 @@ def _provider_upstream(name: str) -> tuple[str, str]:
       2. ``entry.options["api_key"]`` / ``["apiKey"]``, then the spec's subscription
          source, then ``spec.api_key_env`` — `resolve_spec_secret`
 
-    and base URL the same way the factory reads it: ``options["base_url"]``, else
-    ``options["endpoint"]``, else ``spec.default_base_url``. A private-name import is
+    and base URL the same way the factory reads it: the entry's endpoint
+    (:attr:`ProviderEntry.endpoint`), else ``spec.default_base_url``. A private-name import is
     the deliberate trade: importing the ladder is what makes it ONE ladder, and a
     hand-copied re-implementation here is precisely the drift that made a subscription
     provider 401 at first use (see that function's docstring).
@@ -371,8 +371,7 @@ def _provider_upstream(name: str) -> tuple[str, str]:
 
     entry = get_default_registry().get_entry(name)
     spec = registered_spec(entry.type)
-    options = dict(entry.options or {})
-    base = str(options.get("base_url") or options.get("endpoint") or "")
+    base = entry.endpoint
     if not base and spec is not None:
         base = str(spec.default_base_url or "")
 
@@ -380,6 +379,7 @@ def _provider_upstream(name: str) -> tuple[str, str]:
         entry, {"credential_store": CredentialStore(config_dir())}, label=name
     )
     if cred is None and spec is not None:
+        options = dict(entry.options or {})
         explicit = str(options.get("api_key", "") or "") or str(options.get("apiKey", "") or "")
         cred, _reason = resolve_spec_secret(spec, explicit_key=explicit)
     secret = str(getattr(cred, "secret", "") or "") if cred is not None else ""

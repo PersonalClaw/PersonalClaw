@@ -64,6 +64,7 @@ from personalclaw.llm.credentials import Credential  # noqa: F401
 from personalclaw.llm.openai import OpenAIProvider  # noqa: F401
 from personalclaw.llm.prompt_cache import PromptCache  # noqa: F401
 from personalclaw.llm.registry import (  # noqa: F401
+    ENDPOINT_OPTION,
     CredentialMissing,
     ProviderEntry,
     ProviderResolutionError,
@@ -307,11 +308,9 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         del session_key  # these providers are stateless
         cred = resolve_credential(entry, kwargs, label=spec.type)
         options = dict(entry.options or {})
-        # Pop BOTH base_url and endpoint unconditionally (a short-circuit `or` would
-        # leave the second in options → leak). base_url wins if both are set.
-        _base = options.pop("base_url", None)
-        _endpoint = options.pop("endpoint", None)
-        base_url = str(_base or _endpoint or spec.default_base_url)
+        # The instance's address is its `endpoint` (the one spelling, `ENDPOINT_OPTION`), popped
+        # so it never reaches the SDK call as a keyword.
+        base_url = str(options.pop(ENDPOINT_OPTION, None) or spec.default_base_url)
         # Credential resolution order for a config-registry entry:
         #   1. a named credential (entry.credential — resolved above from the store
         #      Settings → Secrets writes),
@@ -364,7 +363,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
             spec, explicit_key=str(cfg.get("api_key", "") or cfg.get("apiKey", "") or "")
         )
         cred = cred or _anon_credential(spec)
-        base_url = str(cfg.get("endpoint") or cfg.get("base_url") or spec.default_base_url)
+        base_url = str(cfg.get(ENDPOINT_OPTION) or spec.default_base_url)
         model = own_model(cfg.get("model"), cfg)  # the same answer as `_factory` above
         return build_protocol_provider(spec, model=model, credential=cred, base_url=base_url)
 
@@ -375,7 +374,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         # so its picker isn't empty.
         return BrandedCatalog(
             spec,
-            endpoint=str(opts.get("endpoint") or opts.get("base_url") or ""),
+            endpoint=str(opts.get(ENDPOINT_OPTION) or ""),
             api_key=str(opts.get("api_key") or ""),
             default_model=str(model or opts.get("default_model") or opts.get("model") or ""),
         )

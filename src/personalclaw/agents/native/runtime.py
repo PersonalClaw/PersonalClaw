@@ -102,6 +102,7 @@ from personalclaw.workflows.compaction import is_context_overflow
 if TYPE_CHECKING:
     from personalclaw.agents.native.failover import ModelFailover
     from personalclaw.agents.provider import AgentRuntimeDefinition
+    from personalclaw.context_headroom import Window
     from personalclaw.llm.base import ModelProvider, ModelSubstitution
     from personalclaw.providers.provider_bridge import ResolutionBasis
     from personalclaw.tool_providers.base import ToolProvider
@@ -319,8 +320,11 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # dispatches. Exact match always stays the primary path (see _resolve_name).
         self._tool_sanitized_index: dict[str, str] = {}
         self._tool_retriever: Any = None  # built in start() (per-turn tool retrieval)
-        # The characters of full tool schemas this turn's window affords (`_tool_schema_budget`),
-        # or None for no bound. Set at the start of every turn.
+        # The window this turn is served with (`context_headroom.resolve_window`), resolved once
+        # as the turn starts and read by both of its consumers: the characters of full tool
+        # schemas it affords (`_tool_schema_budget`, None for no bound) and, while no usage has
+        # been reported, the compaction estimate (`_estimated_context_pct`).
+        self._turn_window: Window | None = None
         self._schema_budget: int | None = None
         self._tool_search_def: Any = None  # synthetic escape-hatch def (built in start())
         self._tool_schema_def: Any = None  # synthetic schema-expander def (built in start())
@@ -892,8 +896,15 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         # A tool installed, removed or switched off since the last turn reaches this one.
         await self._follow_tool_surface()
-        self._schema_budget = await self._tool_schema_budget()
+        from personalclaw.context_headroom import resolve_window
+
+        self._turn_window = await resolve_window(serving=self)
+        self._schema_budget = self._tool_schema_budget(self._turn_window)
         tools_kwarg, turn_note = await self._prepare_turn_tools(message)
+        # The last turn's note leaves as this turn's arrives: it described the tools on offer
+        # THEN, and kept in the history each turn carried every earlier turn's catalog as well
+        # as its own — a request that grew by a whole catalog a turn and said nothing new.
+        self._messages[:] = [m for m in self._messages if not _is_turn_note(m)]
         if turn_note:
             # SYSTEM role: this is runtime metadata, not something the user said.
             # Tagged VOLATILE (PCS-1 / F1): the turn_note carries the per-turn tool
@@ -1339,20 +1350,18 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             self._owed.pending = False
             self._cancel.end_turn()
 
-    async def _tool_schema_budget(self) -> int | None:
-        """The characters of full tool schemas this turn's window affords, or ``None``.
+    def _tool_schema_budget(self, window: Window) -> int | None:
+        """The characters of full tool schemas this turn's *window* affords, or ``None``.
 
         The window is ``context_headroom.resolve_window``'s, the one answer the chat's assembly
         and its budget check are bounded by, asked of this loop because this loop serves the
-        turn (a subagent's or a loop's turn has no chat runner to ask). It never raises, and an
-        unknown window leaves the count as the only bound (``schema_budget_chars``).
+        turn (a subagent's or a loop's turn has no chat runner to ask). An unknown window leaves
+        the count as the only bound (``schema_budget_chars``).
         """
         if not self._tool_retriever:
             return None
         from personalclaw.agents.native.tool_retrieval import schema_budget_chars
-        from personalclaw.context_headroom import resolve_window
 
-        window = await resolve_window(serving=self)
         # Read defensively: a window question must never be what costs a turn.
         return schema_budget_chars(getattr(window, "budget_tokens", None))
 
@@ -2332,8 +2341,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         inner_cancel = getattr(self._model, "cancel", None)
         if inner_cancel is not None:
             try:
-                await inner_cancel(wait_ack_timeout=wait_ack_timeout)
-                self._cancel.note_model_request_aborted()
+                # Only what the provider says it closed: a provider with nothing to abort answers
+                # "no_turn", and the stop report counted that as an aborted request too.
+                if await inner_cancel(wait_ack_timeout=wait_ack_timeout) == "acked":
+                    self._cancel.note_model_request_aborted()
             except Exception:
                 logger.warning("native: aborting the in-flight model request failed", exc_info=True)
 
@@ -2598,6 +2609,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
 def _n_tools(n: int) -> str:
     return f"{n} tool" if n == 1 else f"{n} tools"
+
+
+def _is_turn_note(message: dict) -> bool:
+    """Whether *message* is a turn's tool note (``stream`` puts one in the history per turn): the
+    one system message the loop marks volatile, because its content changes every turn."""
+    return message.get("role") == "system" and bool(message.get("_volatile"))
 
 
 def _short_json(value: Any) -> str:
