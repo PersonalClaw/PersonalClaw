@@ -70,6 +70,8 @@ class FakeOllama:
     apart: a model that is generating, slowly. The judge's answer always arrives at once.
 
     `chats` is every `/api/chat` body a live server received: the outgoing request, parsed.
+    `refused_requests` names each request a DOWN server dropped by what it asked for
+    (`POST /api/chat` is a model call, `GET /api/tags` Ollama's connection test).
     """
 
     def __init__(self) -> None:
@@ -85,6 +87,7 @@ class FakeOllama:
         self.hold: asyncio.Event | None = None
         self.chats: list[dict[str, Any]] = []
         self.refused = 0
+        self.refused_requests: list[str] = []
         self.held = 0
         self._server: asyncio.base_events.Server | None = None
         self.port = 0
@@ -117,6 +120,9 @@ class FakeOllama:
             return
         if not self.up:
             self.refused += 1
+            self.refused_requests.append(
+                head.split(b"\r\n", 1)[0].decode("latin-1").rsplit(" ", 1)[0]
+            )
             writer.transport.abort()
             return
         lines = head.decode("latin-1").split("\r\n")
@@ -342,10 +348,43 @@ async def test_a_refusal_a_retry_can_clear_still_offers_one(monkeypatch, tmp_pat
         assert (failure["class"], failure["retryable"]) == ("transient", True)
 
 
+#: What a request asked the fake for: a model call, and Ollama's connection test.
+_CHAT = "POST /api/chat"
+_TAGS = "GET /api/tags"
+
+
+async def _measured(name: str, timeout: float = 5.0) -> Any:
+    """The connection answer the board holds for configured instance *name*, once it holds one."""
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.providers.connection import entry_fingerprint, get_connection_board
+
+    fingerprint = entry_fingerprint(get_default_registry().get_entry(name))
+    deadline = time.monotonic() + timeout
+    while (answer := get_connection_board().peek(name, fingerprint)) is None:
+        assert time.monotonic() < deadline, f"{name}'s connection was never measured again"
+        await asyncio.sleep(0.02)
+    return answer
+
+
 async def test_the_failures_that_open_the_breaker_say_when_a_retry_can_run(monkeypatch, tmp_path):
     """Five samples against a provider that is down: the fifth failure opens its breaker, and a
-    Retry before it lapses is refused without a call. The run says when it can run instead."""
+    Retry before it lapses is refused without a call. The run says when it can run instead.
+
+    Opening the breaker also measures the instance's connection again, once, so Settings →
+    Providers says it is not answering. That test is a request to the provider but not a model
+    call, and it runs in the background: its answer is awaited before the Retry is counted, or
+    its request lands inside the count."""
     from personalclaw.guardrails.breaker import get_breaker
+    from personalclaw.providers import connection
+
+    tests_run: list[Any] = []
+    real_measure = connection.measure
+
+    async def _counted(catalog: Any) -> Any:
+        tests_run.append(catalog)
+        return await real_measure(catalog)
+
+    monkeypatch.setattr(connection, "measure", _counted)
 
     async with _wired(monkeypatch, tmp_path) as (fake, supervisor):
         run_id = await _start(supervisor, n=5)
@@ -358,6 +397,14 @@ async def test_the_failures_that_open_the_breaker_say_when_a_retry_can_run(monke
         assert failure["providers"] == [ENTRY]
         assert failure["retry_at"] == pytest.approx(time.time() + breaker.retry_after(), abs=3)
 
+        # The trip's connection test says the instance is not answering. With it, everything the
+        # provider saw: the five samples, and that test's request (the HTTP client sends a GET
+        # again once when the server drops it, so it is named, not counted).
+        answer = await _measured(ENTRY)
+        assert answer.state == connection.FAILED, answer
+        assert fake.refused_requests.count(_CHAT) == 5, fake.refused_requests
+        assert set(fake.refused_requests) == {_CHAT, _TAGS}, fake.refused_requests
+
         # A Retry pressed anyway: the child is refused without a single call, and says when.
         refused_before = fake.refused
         forked = service.fork_run(run_id, note="retry inside the window")
@@ -368,6 +415,8 @@ async def test_the_failures_that_open_the_breaker_say_when_a_retry_can_run(monke
         child_failure = _failure(child, "sample")
         assert child_failure["retryable"] is True
         assert child_failure["retry_at"] > time.time() + 10, child_failure
+        # …and it measured nothing again: the trip's is the one connection test.
+        assert len(tests_run) == 1, tests_run
 
 
 # ── retry ────────────────────────────────────────────────────────────────────
