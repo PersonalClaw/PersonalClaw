@@ -266,7 +266,7 @@ describe('SenderTrustPanel manages every channel', () => {
     vi.spyOn(api, 'channelTrust').mockResolvedValue(trust({ providers: [provider({ display_name: 'Telegram' })] }))
     const set = vi.spyOn(api, 'setChannelTrustPolicies').mockResolvedValue({ ok: true, policies: { dm: 'pairing', group: 'off' } })
     mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Telegram group chats: None' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Telegram group chats: Ignore all groups' }))
     await waitFor(() => expect(set).toHaveBeenCalledWith('telegram', { group: 'off' }))
   })
 

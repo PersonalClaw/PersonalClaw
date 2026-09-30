@@ -5301,7 +5301,8 @@ export interface RunnerLease {
 }
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {
-  type?: string; default?: unknown; enum?: string[]; minimum?: number; maximum?: number
+  // A field that may also be null names both types (`["string", "null"]`).
+  type?: string | string[]; default?: unknown; enum?: string[]; minimum?: number; maximum?: number
   // The string constraints the backend enforces (schema_validate.ENFORCED_KEYWORDS). Carried so
   // the form can state them natively instead of letting a save be the first feedback (#491).
   minLength?: number; maxLength?: number; pattern?: string
@@ -5309,6 +5310,9 @@ export interface ProviderSchemaProp {
   // What a list's entries are, and a record entry's own fields — the form edits a list whose
   // schema describes its entries as a list rather than as JSON.
   items?: ProviderSchemaProp; properties?: Record<string, ProviderSchemaProp>; required?: string[]
+  // An object's entries by key: what each value is, and what its keys are — the form edits an
+  // object whose schema says what it holds as its fields or entries rather than as JSON.
+  additionalProperties?: ProviderSchemaProp | boolean; propertyNames?: ProviderSchemaProp
 }
 export interface ProviderSchema { type?: string; properties?: Record<string, ProviderSchemaProp>; required?: string[] }
 // One configured instance of a multiInstance=true provider (generic store —

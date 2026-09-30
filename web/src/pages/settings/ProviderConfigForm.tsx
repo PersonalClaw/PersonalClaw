@@ -6,6 +6,7 @@ import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api
 // array/object entry is (they already disagreed about secrets), or about what a save may send.
 import { unparsedLabels, unparsedSentence, useJsonFieldText } from '../apps/appConfigForm'
 import { listFieldKind, listValueFits, SchemaListField } from '../apps/schemaListField'
+import { objectFieldKind, objectValueFits, SchemaObjectField } from '../apps/schemaObjectField'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
@@ -143,16 +144,21 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
   const id = useId()
   const structured = prop.type === 'array' || prop.type === 'object'
   const expected = prop.type === 'object' ? 'object' : 'array'
-  // A list whose schema says what its entries are is edited as a list (`SchemaListField`); only a
-  // field that says nothing about its entries is left to the JSON editor below.
+  // A list whose schema says what its entries are is edited as a list (`SchemaListField`), and an
+  // object whose schema says what it holds as its fields or entries (`SchemaObjectField`); only a
+  // field that says nothing of what it holds is left to the JSON editor below.
   const asList = prop.type === 'array' && listFieldKind(prop) !== null && listValueFits(prop, value)
+  const asObject = prop.type === 'object' && objectFieldKind(prop) !== null && objectValueFits(prop, value)
+  const asControls = asList || asObject
   // The JSON editor's text, error and edit: the Apps dialog's own (`useJsonFieldText`), so the two
   // forms hand the form the same thing for the same text.
-  const json = useJsonFieldText(value, expected, label, onChange, structured && !asList)
+  const json = useJsonFieldText(value, expected, label, onChange, structured && !asControls)
   const jsonErr = json.error
   let control: React.ReactNode
   if (asList) {
     control = <SchemaListField label={label} schema={prop} value={value} onChange={onChange} />
+  } else if (asObject) {
+    control = <SchemaObjectField label={label} schema={prop} value={value} onChange={onChange} />
   } else if (structured) {
     // A structured field needs a JSON editor. It fell through to the text branch below,
     // whose `String(value)` renders an array of objects as the literal
@@ -230,9 +236,9 @@ export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet 
   const captionClass = 'mb-1 block text-on-surface'
   return (
     <div>
-      {/* A list is a group of controls that each carry their own name, so there is no one control
-          for a label to point at; its caption is plain text. */}
-      {asList
+      {/* A list or an object is a group of controls that each carry their own name, so there is no
+          one control for a label to point at; its caption is plain text. */}
+      {asControls
         ? <div data-type="body-s" className={captionClass}>{label}</div>
         : <label htmlFor={id} data-type="body-s" className={captionClass}>{label}</label>}
       {hint && <div data-type="caption" className="mb-1.5 text-on-surface-low">{hint}</div>}

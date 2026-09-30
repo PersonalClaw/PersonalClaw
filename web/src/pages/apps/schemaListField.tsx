@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Plus, X } from 'lucide-react'
 import { AddItemButton } from '../../ui/AddItemButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -14,6 +14,10 @@ export interface ListSchema {
   items?: ListSchema
   properties?: Record<string, ListSchema>
   required?: string[]
+  /** An object's entries by key: what each value is (`schemaObjectField`). */
+  additionalProperties?: ListSchema | boolean
+  /** What an object's keys are, for the form's label and placeholder of an entry's key. */
+  propertyNames?: ListSchema
   'x-meta'?: { label?: string; placeholder?: string }
 }
 
@@ -22,7 +26,7 @@ type Row = Record<string, unknown>
 const SCALAR_TYPES = new Set(['string', 'number', 'integer', 'boolean'])
 
 /** A field of a record the list can edit: a choice, a text, a number, a yes/no, or a list of texts. */
-function editableInRecord(s: ListSchema): boolean {
+export function editableInRecord(s: ListSchema): boolean {
   if (Array.isArray(s.enum) && s.enum.length > 0) return true
   if (s.type === 'array') return s.items?.type === 'string' && !s.items.enum
   return typeof s.type === 'string' && SCALAR_TYPES.has(s.type)
@@ -51,7 +55,7 @@ export function listValueFits(schema: ListSchema, value: unknown): boolean {
   return value.every((v) => typeof v === 'object' && v !== null && !Array.isArray(v))
 }
 
-function fieldLabel(key: string, s: ListSchema): string {
+export function fieldLabel(key: string, s: ListSchema): string {
   return s['x-meta']?.label || key
 }
 
@@ -67,7 +71,7 @@ function unfilled(row: Row, fields: [string, ListSchema][]): boolean {
 }
 
 /** A new entry: each field's declared default, a choice's first option when it declares none. */
-function newRow(fields: [string, ListSchema][]): Row {
+export function newRow(fields: [string, ListSchema][]): Row {
   const row: Row = {}
   for (const [k, s] of fields) {
     if (s.default !== undefined) row[k] = s.default
@@ -76,17 +80,22 @@ function newRow(fields: [string, ListSchema][]): Row {
   return row
 }
 
-function RecordFieldControl({ name, schema, required, value, onChange }: {
+/** One field's control inside a record or an object: a choice, a yes/no, chips, or a text or number.
+ *  `disabledReason` turns a text or a choice off, saying why (a field switched off, say). */
+export function RecordFieldControl({ name, schema, required, value, onChange, disabledReason }: {
   name: string
   schema: ListSchema
   required: boolean
   value: unknown
   onChange: (v: unknown) => void
+  disabledReason?: string
 }) {
   const placeholder = schema['x-meta']?.placeholder
+  const disabled = disabledReason !== undefined
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     return (
       <Select size="sm" surface="high" ariaLabel={name} required={required} value={String(value ?? '')}
+        disabled={disabled} disabledReason={disabledReason}
         onChange={onChange} options={schema.enum.map((o) => ({ value: String(o), label: String(o) }))} />
     )
   }
@@ -100,8 +109,26 @@ function RecordFieldControl({ name, schema, required, value, onChange }: {
   const numeric = schema.type === 'integer' || schema.type === 'number'
   return (
     <TextInput size="sm" surface="high" type={numeric ? 'number' : 'text'} ariaLabel={name} required={required}
+      disabled={disabled} disabledReason={disabledReason}
       placeholder={placeholder} value={value === undefined || value === null ? '' : String(value)}
       onChange={(v) => onChange(numeric ? (v === '' ? undefined : Number(v)) : v)} />
+  )
+}
+
+/** A field's caption above its control, in a record's row. The caption is for sight: each control
+ *  carries its own name, so the caption is hidden from assistive tech rather than read twice. */
+export function FieldCell({ caption, required = false, children }: {
+  caption: string
+  required?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div className="flex min-w-[10rem] flex-1 flex-col gap-xs">
+      <span data-type="caption" className="text-on-surface-low" aria-hidden>
+        {caption}{required ? ' *' : ''}
+      </span>
+      {children}
+    </div>
   )
 }
 
@@ -147,14 +174,11 @@ function RecordList({ label, items, value, onChange }: {
         <div key={id} role="group" aria-label={`${entry} ${i + 1}`}
           className="flex flex-wrap items-end gap-s rounded-md border border-outline-variant p-s">
           {fields.map(([k, s]) => (
-            <div key={k} className="flex min-w-[10rem] flex-1 flex-col gap-xs">
-              <span data-type="caption" className="text-on-surface-low" aria-hidden>
-                {fieldLabel(k, s)}{required.has(k) ? ' *' : ''}
-              </span>
+            <FieldCell key={k} caption={fieldLabel(k, s)} required={required.has(k)}>
               <RecordFieldControl name={`${fieldLabel(k, s)}, ${entry} ${i + 1}`} schema={s}
                 required={required.has(k)} value={row[k]}
                 onChange={(v) => commit(rows.map((r) => (r.id === id ? { id, row: { ...r.row, [k]: v } } : r)))} />
-            </div>
+            </FieldCell>
           ))}
           <SquareIconButton icon={X} iconSize={14} label={`Remove ${entry} ${i + 1}`}
             onClick={() => commit(rows.filter((r) => r.id !== id))} className="shrink-0" />

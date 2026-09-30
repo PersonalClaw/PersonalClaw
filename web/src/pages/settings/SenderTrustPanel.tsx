@@ -17,6 +17,9 @@ const CACHE_KEY = 'settings:sender-trust'
 /** How often the page re-reads the list while a pairing code is showing. */
 const POLL_MS = 2000
 
+/** How long after a code's time the page reads again: past it, so the gateway's clock agrees. */
+const EXPIRY_GRACE_MS = 1000
+
 /** The house form for a CAUGHT error (`lib/errText` takes a `Response`, not an exception). */
 const msg = (e: unknown) => String((e as Error)?.message || e)
 
@@ -54,9 +57,11 @@ const DM_OPTIONS: { key: string; label: string }[] = [
   { key: 'owner_only', label: 'Ignore them' },
   { key: 'open', label: 'Anyone' },
 ]
+// Each choice says what it does. "Tracked groups" and "None" side by side read as a label and its
+// value, "Tracked groups: None", right above the groups the channel does track.
 const GROUP_OPTIONS: { key: string; label: string }[] = [
-  { key: 'tracked_only', label: 'Tracked groups' },
-  { key: 'off', label: 'None' },
+  { key: 'tracked_only', label: 'Only tracked groups' },
+  { key: 'off', label: 'Ignore all groups' },
 ]
 
 /** An ISO-8601 timestamp as a date, or a distinct word when the store had none.
@@ -168,6 +173,15 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
     const timer = setInterval(onChanged, POLL_MS)
     return () => clearInterval(timer)
   }, [code, onChanged])
+  // A code made elsewhere is shown as outstanding until its time. The page reads the list again
+  // then, so the line goes when the code stops working rather than at the next reload.
+  useEffect(() => {
+    if (code || !p.pairing_active) return
+    const until = Date.parse(p.pairing_expires_at)
+    if (Number.isNaN(until)) return
+    const timer = setTimeout(onChanged, Math.max(0, until - Date.now()) + EXPIRY_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [code, p.pairing_active, p.pairing_expires_at, onChanged])
   useEffect(() => {
     if (!code) { seenLive.current = false; return }
     if (p.pairing_active) { seenLive.current = true; return }
@@ -416,27 +430,30 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
   return (
     <div className="space-y-2">
       {tracked.length > 0 && (
-        <RowGroup>
-          {tracked.map((g, i) => (
-            <ListRow key={g.channel_id} index={i} label={g.name || g.channel_id}>
-              <div className="flex items-center justify-between gap-l py-2">
-                <div className="min-w-0">
-                  <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>
-                  <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
-                    {g.name ? `${g.channel_id} · ` : ''}tracked {addedLabel(g.added_at)}{groupsOff ? ' · groups are off, so it is not read' : ''}
+        <div role="group" aria-label={`Tracked groups on ${label}`} className="space-y-xs">
+          <div data-type="label-m" className="text-on-surface-var">Tracked groups</div>
+          <RowGroup>
+            {tracked.map((g, i) => (
+              <ListRow key={g.channel_id} index={i} label={g.name || g.channel_id}>
+                <div className="flex items-center justify-between gap-l py-2">
+                  <div className="min-w-0">
+                    <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+                      {g.name ? `${g.channel_id} · ` : ''}tracked {addedLabel(g.added_at)}{groupsOff ? ' · groups are off, so it is not read' : ''}
+                    </div>
                   </div>
+                  <Button size="xs" variant="ghost" onClick={() => void untrack(g.channel_id, g.name)} loading={busy === g.channel_id}
+                    ariaLabel={`Stop tracking ${g.name || g.channel_id} on ${label}`}>
+                    Stop tracking
+                  </Button>
                 </div>
-                <Button size="xs" variant="ghost" onClick={() => void untrack(g.channel_id, g.name)} loading={busy === g.channel_id}
-                  ariaLabel={`Stop tracking ${g.name || g.channel_id} on ${label}`}>
-                  Stop tracking
-                </Button>
-              </div>
-            </ListRow>
-          ))}
-        </RowGroup>
+              </ListRow>
+            ))}
+          </RowGroup>
+        </div>
       )}
       {seen.length > 0 && (
-        <div className="space-y-1">
+        <div role="group" aria-label={`Groups that messaged your agent on ${label}`} className="space-y-xs">
           <div data-type="label-m" className="text-on-surface-var">Groups that messaged your agent</div>
           <RowGroup>
             {seen.map((g, i) => (

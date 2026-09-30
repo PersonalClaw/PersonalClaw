@@ -43,6 +43,7 @@ import { joinsATurnStartedElsewhere } from './chat/joinTurn'
 import { MEMORY_MODES, MEMORY_MODE_NOTICE } from './chat/memoryModeCopy'
 import { sessionRowMeta } from './chat/sessionRowMeta'
 import { AppPermissionNotice, StartedByApp, startedByName } from './chat/StartedByApp'
+import { FromChannel } from './chat/FromChannel'
 import { chatContextChips } from './chat/ChatContextLine'
 import { snapshotPredatesSend, streamingAtMount } from './chat/liveRun'
 import { OrganizeChip } from './chat/OrganizeChip'
@@ -5302,12 +5303,14 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           <span>{sessionRowMeta(s)}</span>
           {/* Origin chip on worker chats — names the loop / code project and opens its
               cockpit (not the raw chat) so the user dives into context. The 'loop' origin
-              covers every non-code kind (general/goal/design), so the label is neutral. */}
-          {s.origin && s.origin !== 'manual' && (() => {
-            const kind = s.origin === 'code' ? 'code project' : s.origin === 'loop' ? 'loop' : s.origin === 'channel' ? 'channel' : 'campaign'
+              covers every non-code kind (general/goal/design), so the label is neutral. A chat
+              that came in on a chat channel says which one instead (`FromChannel`). */}
+          <FromChannel s={s} />
+          {s.origin && s.origin !== 'manual' && s.origin !== 'channel' && (() => {
+            const kind = s.origin === 'code' ? 'code project' : s.origin === 'loop' ? 'loop' : 'campaign'
             const label = s.source_label || s.source_id || kind
             const canOpen = !!s.source_id && (s.origin === 'code' || s.origin === 'loop')
-            // A channel/campaign origin has no cockpit to open, so this chip is never actionable
+            // A campaign origin has no cockpit to open, so this chip is never actionable
             // — it is provenance, not a control. It used to render as a permanently disabled
             // button element: announced as a button that can never be pressed in ANY state, which
             // no reason could ever unblock. A span is what it actually is; the tag now follows

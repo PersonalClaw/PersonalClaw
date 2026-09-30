@@ -28,6 +28,7 @@ import { useQuery } from '../../lib/data'
 import { sessionRecencyMs } from '../../lib/epoch'
 import { sessionTitle } from '../../lib/sessionTitle'
 import { StartedByApp } from '../chat/StartedByApp'
+import { FromChannel } from '../chat/FromChannel'
 import { spring, expr } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
@@ -386,8 +387,10 @@ function Launcher({ navigate }: RouteProps) {
             >
               <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{sessionTitle(s)}</span>
               {/* An app's conversation says so here too: jumping back in to it means speaking under
-                  the APP's permissions, and the title alone cannot tell you that (#3632). */}
+                  the APP's permissions, and the title alone cannot tell you that (#3632). A chat that
+                  came in on a chat channel says which one. */}
               <StartedByApp s={s} />
+              <FromChannel s={s} />
             </button>
           ))}
         </div>

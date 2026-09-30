@@ -14,6 +14,7 @@ import {
 } from '../tools/schema'
 import { usePromptWidgets } from '../prompts/promptWidgets'
 import { listFieldKind, listValueFits, SchemaListField } from './schemaListField'
+import { objectFieldKind, objectValueFits, SchemaObjectField } from './schemaObjectField'
 
 /** Serialize a structured config value for the JSON editor's text buffer. */
 export function serializeJsonField(value: unknown, expected: 'array' | 'object'): string {
@@ -135,8 +136,8 @@ function helpHint(help?: string) {
   return help ? <Markdown inline>{help}</Markdown> : undefined
 }
 
-/** JSON editor for a structured (array/object) config field whose schema does not describe its
- *  entries — a list that does gets `SchemaListField` instead. The backend validates
+/** JSON editor for a structured (array/object) config field whose schema does not describe what it
+ *  holds — a list that does gets `SchemaListField` instead, an object `SchemaObjectField`. The backend validates
  *  the persisted type, so a plain text input (which stringifies an object to the
  *  literal "[object Object]") would both misrender AND be rejected on save. What it hands the
  *  form, and when its text follows the form, is `useJsonFieldText`. `name` is the field's label
@@ -176,6 +177,9 @@ export interface SchemaProp extends JsonSchema {
   minLength?: number
   maxLength?: number
   pattern?: string
+  // An object's entries by key: what each value is, and what its keys are (`schemaObjectField`).
+  additionalProperties?: SchemaProp | boolean
+  propertyNames?: SchemaProp
   'x-meta'?: SchemaMeta
 }
 
@@ -275,6 +279,13 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
           return (
             <Field key={key} label={label} hint={helpHint(meta.help)}>
               <SchemaListField label={label} schema={p} value={v} onChange={(nv) => set(key, nv)} />
+            </Field>
+          )
+        }
+        if (p.type === 'object' && objectFieldKind(p) && objectValueFits(p, v)) {
+          return (
+            <Field key={key} label={label} hint={helpHint(meta.help)}>
+              <SchemaObjectField label={label} schema={p} value={v} onChange={(nv) => set(key, nv)} />
             </Field>
           )
         }

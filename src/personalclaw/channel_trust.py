@@ -225,17 +225,26 @@ def is_allowed_sender(provider: str, sender_id: str) -> bool:
 
 
 def allow_sender(provider: str, sender_id: str, name: str = "", *, via: str = "owner") -> None:
-    """Approve ``sender_id`` on ``provider``. Idempotent; emits ``sender_paired``.
+    """Approve ``sender_id`` on ``provider``. Idempotent; emits ``sender_paired`` for a new grant.
 
     ``via`` records provenance (``owner`` = the owner clicked Allow; ``pairing`` = a
-    redeemed code) so the store can show *how* someone was trusted."""
+    redeemed code) so the store can show *how* someone was trusted.
+
+    A sender already let in by the same route is not let in again: the date they were added
+    stays, no second ``sender_paired`` row is written, and a ``name`` given is kept (an empty one
+    keeps the name they have). That is what lets a channel app write its own list through on every
+    start, names included. A grant by another route is new provenance, recorded and audited."""
     store = _read_store()
     rec = _provider_record(store, provider)
-    rec.setdefault("allowed_senders", {})[sender_id] = {
-        "name": name,
-        "added_at": _iso(_now()),
-        "via": via,
-    }
+    senders = rec.setdefault("allowed_senders", {})
+    held = senders.get(sender_id)
+    if isinstance(held, dict) and held.get("via") == via:
+        if name and held.get("name") != name:
+            held["name"] = name
+            store[provider] = rec
+            _write_store(store)
+        return
+    senders[sender_id] = {"name": name, "added_at": _iso(_now()), "via": via}
     store[provider] = rec
     _write_store(store)
     _emit_sel("sender_paired", via, provider, sender_id)
@@ -265,16 +274,21 @@ def track(provider: str, channel_id: str, name: str = "") -> None:
 
     A tracked group is one whose messages reach the agent, so tracking is a grant and is
     audited like one. The group leaves the seen-but-untracked list (:func:`note_untracked_channel`),
-    and a name it was seen with is kept when none is given."""
+    and a name it was seen with is kept when none is given. Tracking a group already tracked keeps
+    the date it was first tracked and takes a ``name`` given (none keeps the name it has)."""
     store = _read_store()
     rec = _provider_record(store, provider)
     raw_seen = rec.get("seen_channels")
     seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
     seen_as = seen.pop(channel_id, None) or {}
-    already = channel_id in (rec.get("tracked_channels") or {})
-    rec.setdefault("tracked_channels", {})[channel_id] = {
-        "name": name or str(seen_as.get("name", "") or ""),
-        "added_at": _iso(_now()),
+    tracked = rec.setdefault("tracked_channels", {})
+    already = channel_id in tracked
+    held = tracked.get(channel_id) if isinstance(tracked.get(channel_id), dict) else {}
+    if already and held and not seen_as and (not name or held.get("name") == name):
+        return
+    tracked[channel_id] = {
+        "name": name or str(held.get("name", "") or "") or str(seen_as.get("name", "") or ""),
+        "added_at": str(held.get("added_at", "") or "") or _iso(_now()),
     }
     if seen_as:
         rec["seen_channels"] = seen
@@ -401,6 +415,10 @@ def provider_trust(provider: str) -> dict[str, Any]:
     """
     rec = _provider_record(_read_store(), provider)
     pairing = rec.get("pairing") or {}
+    # A code past its time is refused at the gate (:func:`redeem_pairing_code`), so it is not
+    # outstanding here either, whether or not anyone has sent it since: the page must not say a
+    # code is live that nobody can redeem. Read only; the gate clears the record when it is tried.
+    pairing_live = bool(pairing.get("code_hash")) and not _code_expired(pairing)
     senders = rec.get("allowed_senders") or {}
     channels = rec.get("tracked_channels") or {}
     raw_seen = rec.get("seen_channels")
@@ -439,8 +457,8 @@ def provider_trust(provider: str) -> dict[str, Any]:
             )
             if cid not in channels
         ],
-        "pairing_active": bool(pairing.get("code_hash")),
-        "pairing_expires_at": str(pairing.get("expires_at", "") or ""),
+        "pairing_active": pairing_live,
+        "pairing_expires_at": str(pairing.get("expires_at", "") or "") if pairing_live else "",
     }
 
 
@@ -449,6 +467,15 @@ def provider_trust(provider: str) -> dict[str, Any]:
 
 def _hash_code(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def _code_expired(record: dict[str, Any]) -> bool:
+    """Whether a code record (a sender's or the owner's) is past its time. One whose time cannot be
+    read is expired: a code nobody can say is still valid is not honoured."""
+    try:
+        return _now() > datetime.fromisoformat(str(record.get("expires_at", "")))
+    except ValueError:
+        return True
 
 
 def create_pairing_code(provider: str) -> str:
@@ -533,11 +560,7 @@ def redeem_pairing_code(provider: str, sender_id: str, code: str, name: str = ""
         return False
 
     # Expired → clear the dead code and deny.
-    try:
-        expired = _now() > datetime.fromisoformat(pairing.get("expires_at", ""))
-    except ValueError:
-        expired = True
-    if expired:
+    if _code_expired(pairing):
         rec["pairing"] = {}
         store[provider] = rec
         _write_store(store)
@@ -597,13 +620,6 @@ def _ended(how: str) -> dict[str, Any]:
     return {"ended": how, "ended_at": _iso(_now())}
 
 
-def _owner_code_expired(record: dict[str, Any]) -> bool:
-    try:
-        return _now() > datetime.fromisoformat(str(record.get("expires_at", "")))
-    except ValueError:
-        return True
-
-
 def cancel_owner_pairing(provider: str) -> bool:
     """Cancel ``provider``'s outstanding owner code. True when one was outstanding."""
     store = _read_store()
@@ -625,7 +641,7 @@ def owner_pairing_status(provider: str) -> dict[str, Any]:
     tried it since."""
     record = _provider_record(_read_store(), provider).get("owner_pairing") or {}
     if record.get("code_hash"):
-        if _owner_code_expired(record):
+        if _code_expired(record):
             return {
                 "active": False,
                 "expires_at": "",
@@ -660,7 +676,7 @@ def _owner_code_verdict(provider: str, candidate: str) -> str:
     stored = str(record.get("code_hash", ""))
     if not stored:
         return ""
-    if _owner_code_expired(record):
+    if _code_expired(record):
         rec["owner_pairing"] = {"ended": "expired", "ended_at": str(record.get("expires_at", ""))}
         store[provider] = rec
         _write_store(store)

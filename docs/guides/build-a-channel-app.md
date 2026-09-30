@@ -263,7 +263,10 @@ What that one call gets you, and what you must not re-implement:
   button. Put the group's title in `ChannelMessage.metadata["channel_name"]` (or pass
   `channel_name=` to `guard_inbound`) so the owner sees a name rather than your vendor's id.
   Use core's `track()` / `untrack()` / `is_tracked_channel()`; a channel-local allowlist is a
-  second source of truth and will diverge.
+  second source of truth and will diverge. Pass the name the owner knows a sender or a group by
+  (`allow_sender(..., name)`, `track(..., name)`), or the page lists a bare id. A repeat call by the
+  same route is not a new grant: it keeps the date, writes no second audit row and takes the name
+  given, so a channel that keeps a list of its own can write it through on every start.
 - **Fencing.** Non-owner content comes back as `verdict.fenced_text`, already wrapped by
   `fence_channel_content(text, provider, sender)`. **Use it.** Passing the raw text into a
   session instead is a prompt-injection hole, and a hand-rolled fence loses the

@@ -620,6 +620,12 @@ def _shown(chat: Mapping[str, Any]) -> dict[str, str]:
     return {k: str(getattr(t, "display_name", "") or k) for k, t in chat.items()}
 
 
+def chat_channel_names() -> dict[str, str]:
+    """Every chat channel registered here, by key, with the name it is shown under (its key when it
+    gives none). Core names no vendor, so a channel's name is always the one it registered."""
+    return _shown(_chat_channels())
+
+
 def _set_up_here(shown: Mapping[str, str]) -> str:
     """The sentence naming the chat channels set up here, for a refusal to end with."""
     if not shown:

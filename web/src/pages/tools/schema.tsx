@@ -15,6 +15,8 @@ import { QuietButton } from '../../ui/QuietButton'
 export interface SchemaMeta {
   label?: string
   help?: string
+  /** An example or the default a blank field falls back to, shown in the empty control. */
+  placeholder?: string
   widget?: string
   tags?: string[]
   sensitive?: boolean

@@ -35,6 +35,7 @@ from urllib.parse import unquote
 from aiohttp import web
 
 from personalclaw import channel_trust
+from personalclaw.channel_delivery import chat_channel_names
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
@@ -44,18 +45,6 @@ logger = logging.getLogger(__name__)
 #: A group id is the vendor's, opaque to core; bounded so a request cannot store a novel.
 _CHANNEL_ID_MAX = 256
 _CHANNEL_NAME_MAX = 200
-
-
-def _chat_channels() -> dict[str, str]:
-    """Every registered chat channel (the dashboard itself is not one), key → display name."""
-    from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport, list_transports
-
-    names: dict[str, str] = {}
-    for name in list_transports():
-        transport = get_transport(name) if name != WEBUI_TRANSPORT else None
-        if transport is not None:
-            names[name] = str(getattr(transport, "display_name", "") or name)
-    return names
 
 
 def _entry(provider: str, channels: dict[str, str]) -> dict[str, Any]:
@@ -69,7 +58,7 @@ def _entry(provider: str, channels: dict[str, str]) -> dict[str, Any]:
 def _provider(request: web.Request) -> str:
     """The route's provider when it is a chat channel that is set up, else ""."""
     provider = request.match_info.get("provider", "")
-    return provider if provider in _chat_channels() else ""
+    return provider if provider in chat_channel_names() else ""
 
 
 def _unknown() -> web.Response:
@@ -78,7 +67,7 @@ def _unknown() -> web.Response:
 
 async def api_channel_trust(request: web.Request) -> web.Response:
     """GET /api/channels/trust — the whole sender-trust posture, per chat channel."""
-    channels = _chat_channels()
+    channels = chat_channel_names()
     providers = sorted(set(channels) | set(channel_trust.list_providers()))
     return web.json_response(
         {

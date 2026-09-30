@@ -582,13 +582,49 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
     return "manual", ""
 
 
+def _channel_link(state: DashboardState, name: str) -> tuple[str | None, str | None]:
+    """The channel thread the chat *name* is linked to, as ``(thread, channel id)``.
+
+    The inbound door and "send to a channel" keep a chat's link under its history key
+    (``DashboardState.link_channel``); a channel thread's own conversation is keyed by the
+    thread, so its bare name is asked too. Asking by the bare name alone missed every link the
+    door made, and each chat that came in on a channel listed as one opened here."""
+    for key in (_history_key_for(name), name):
+        try:
+            thread, channel_id = state.sessions.get_channel_link(key)
+        except Exception:
+            continue
+        if thread:
+            return thread, channel_id
+    return None, None
+
+
+def _chat_origin(
+    link: tuple[str | None, str | None], name: str, app: str, channels: dict[str, str]
+) -> tuple[str, str, str]:
+    """``(origin, source_id, source_label)`` for the history row of the chat *name*.
+
+    A chat is a channel's when it is linked to a channel thread, or when its origin tag is a chat
+    channel: the inbound door stamps the channel on every chat it opens
+    (``channel_inbound._route_to_session``), so the tag says where it came from after its link is
+    gone too. Its label is the channel's name as registered (*channels*, key → name), empty for
+    a channel no longer set up here. Anything else is classified by :func:`_origin_of`."""
+    thread, channel_id = link
+    if thread or app in channels:
+        provider = app if app in channels else ""
+        if not provider and channel_id:
+            from personalclaw.channel_delivery import channel_of_id
+
+            provider = channel_of_id(channel_id)[0]
+        return "channel", channel_id or "", channels.get(provider, "")
+    origin, source_id = _origin_of(name, app)
+    return origin, source_id, _origin_label(origin, source_id) if origin != "manual" else ""
+
+
 def _origin_label(origin: str, source_id: str) -> str:
     """A friendly name for a worker session's originating loop (any unified kind), for
     the history row's origin chip. Falls back to the id. Best-effort: a missing/failed
     lookup yields the bare id."""
-    if origin == "channel":
-        # source_id is the channel id; a friendly "Channel · <id>" chip.
-        return f"Channel · {source_id}" if source_id else "Channel"
     if not source_id:
         return ""
     try:
@@ -657,6 +693,9 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
 
     out: list[dict] = []
     seen: set[str] = set()
+    from personalclaw.channel_delivery import chat_channel_names
+
+    channels = chat_channel_names()
     # In-memory first — these are live and authoritative.
     for s in state._sessions.values():
         # A ROOM MEMBER'S OWN PROVIDER SESSION IS NOT A CHAT. Each member of an Agent Room
@@ -686,22 +725,15 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             continue
         d = s.to_dict()
         d.update(_started_by(s.created_by_app, app_names))
-        # A channel-linked session keeps its channel origin even once resumed live,
-        # so it stays grouped under the Channel scope rather than folding into
-        # 'manual'.
-        link_thread = link_channel = None
-        try:
-            link_thread, link_channel = state.sessions.get_channel_link(s.key)
-        except Exception:
-            link_thread = link_channel = None
-        if link_thread:
-            origin, sid = "channel", (link_channel or "")
-        else:
-            origin, sid = _origin_of(s.key, getattr(s, "_app", "") or "")
+        # A channel's chat keeps its channel origin once resumed live too, so it stays
+        # grouped under the Channels scope rather than folding into 'manual'.
+        origin, sid, label = _chat_origin(
+            _channel_link(state, s.key), s.key, getattr(s, "_app", "") or "", channels
+        )
         d["origin"] = origin
         if origin != "manual":
             d["source_id"] = sid
-            d["source_label"] = _origin_label(origin, sid)
+            d["source_label"] = label
         # `seen` is marked regardless of the lifecycle filter: a live session that is
         # filtered out here must NOT then be re-added by the disk-merge branch below.
         seen.add(s.key)
@@ -726,12 +758,9 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             # name regardless of prefix — surface + tag it origin=channel. Other
             # bare/non-dashboard namespaces (internal workers) are still skipped
             # below.
-            try:
-                link_thread, link_channel = state.sessions.get_channel_link(name)
-            except Exception:
-                link_thread = link_channel = None
+            link = _channel_link(state, name)
             if (
-                not link_thread
+                not link[0]
                 and raw_key == name
                 and not raw_key.startswith(("dashboard:", "dashboard_"))
             ):
@@ -746,10 +775,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             if meta.get("memory_mode") in ("incognito", "temporary"):
                 continue
             seen.add(name)
-            if link_thread:
-                origin, sid = "channel", (link_channel or "")
-            else:
-                origin, sid = _origin_of(name, meta.get("app", "") or "")
+            origin, sid, label = _chat_origin(link, name, meta.get("app", "") or "", channels)
             row = {
                 "key": name,
                 "title": d.get("title") or name,
@@ -788,7 +814,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
             }
             if origin != "manual":
                 row["source_id"] = sid
-                row["source_label"] = _origin_label(origin, sid)
+                row["source_label"] = label
             if not _lifecycle_ok(str(row.get("lifecycle") or "active")):
                 continue
             out.append(row)
