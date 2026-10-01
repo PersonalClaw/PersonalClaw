@@ -429,9 +429,11 @@ def provision_acp_adapter(
     Idempotent: an adapter already in the managed prefix is returned without re-installing. An
     install happens only inside :func:`adapter_installs_allowed` — the consent moment; at any
     other time (a gateway start, an update) this returns the installed adapter or None, so a
-    failed install is never retried behind the user's back. A failure is remembered with its
-    reason (:func:`adapter_install_failure`) until an install succeeds; the app's card says so
-    and offers Retry, which enables the app again.
+    failed install is never retried behind the user's back. And it happens only for a package the
+    calling app's manifest declares (``dependencies.npmPackages``, which install consent names):
+    any other is refused (:func:`personalclaw.apps.declared.declares_npm_package`). A failure is
+    remembered with its reason (:func:`adapter_install_failure`) until an install succeeds; the
+    app's card says so and offers Retry, which enables the app again.
 
     The install runs ``npm install --prefix <managed>`` with a Node ≥20 on PATH
     (:func:`resolve_node_ge`) so it never trips ``EBADENGINE``, and writes to a private prefix
@@ -469,6 +471,18 @@ def provision_acp_adapter(
         logger.debug(
             "acp adapter %s: not installing — an adapter installs only when you enable its app",
             npm_pkg,
+        )
+        return None
+
+    # Install consent named the npm packages the app's manifest declares, and only those: one an
+    # app asks for without declaring it is refused here, and the reason reaches its card.
+    from personalclaw.apps.declared import UNNAMED, declares_npm_package
+
+    if not declares_npm_package(npm_pkg):
+        _install_failed(
+            npm_pkg,
+            f"the app's manifest does not list {npm_pkg} under dependencies.npmPackages, "
+            f"{UNNAMED}",
         )
         return None
 

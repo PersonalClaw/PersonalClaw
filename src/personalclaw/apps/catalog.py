@@ -223,6 +223,12 @@ class CatalogEntry:
     # read before install from the same projection, so the card and the dialog say one thing.
     sidecarDependencies: list[str] = field(default_factory=list)  # noqa: N815
     requires: list[dict[str, str]] = field(default_factory=list)
+    # The programs it starts outside PersonalClaw and what of the owner's each runs with, the npm
+    # packages core installs for it, and where outside its own folder it writes — the same
+    # projection again, so the card and the dialog say one thing.
+    launches: list[dict[str, Any]] = field(default_factory=list)
+    npmPackages: list[str] = field(default_factory=list)  # noqa: N815
+    writes: list[dict[str, str]] = field(default_factory=list)
     # #492. Whether this app ships browser code — the one consent fact the permission
     # block cannot state. A UI bundle is imported into the DASHBOARD PAGE
     # (`appSdk.loadContributedModule`, no iframe), so it runs with the host DOM, the

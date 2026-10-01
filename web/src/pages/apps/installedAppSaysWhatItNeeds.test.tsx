@@ -22,7 +22,7 @@ const COMFYUI = {
 function disclosure(requires: AppPrerequisite[]): AppDisclosure {
   return {
     permissions: { network: true }, crons: [], pythonDependencies: [], sidecarDependencies: [],
-    requires, hasUI: false, uiComponents: '', hasBackend: false, backendSandbox: '', providers: [],
+    requires, launches: [], npmPackages: [], writes: [], hasUI: false, uiComponents: '', hasBackend: false, backendSandbox: '', providers: [],
     onInstall: '', onUpdate: '', onEnable: '', onDisable: '', onUninstall: '', cliSetup: '',
     cliDoctor: '', sources: [], mcpServers: [], skills: [], runsAsYou: '',
   }

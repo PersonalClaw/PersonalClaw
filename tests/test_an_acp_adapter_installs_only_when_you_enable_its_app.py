@@ -83,8 +83,9 @@ def _npm_runs(home: Path) -> list[str]:
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
-def _make_adapter_app(home: Path) -> Path:
-    """An agent app whose provider asks for its adapter the way claude-code-agent does."""
+def _make_adapter_app(home: Path, *, declares: tuple[str, ...] = (PKG,)) -> Path:
+    """An agent app whose provider asks for its adapter the way claude-code-agent does, and
+    whose manifest declares the npm packages in *declares* (its adapter, unless told not to)."""
     src = home / "src" / "adapter-app"
     src.mkdir(parents=True)
     (src / "app.json").write_text(
@@ -95,6 +96,7 @@ def _make_adapter_app(home: Path) -> Path:
                 "displayName": "Adapter App",
                 "description": "An agent app that needs an ACP adapter.",
                 "provider": {"type": "agent", "implementation": "provider:create_provider"},
+                **({"dependencies": {"npmPackages": list(declares)}} if declares else {}),
             }
         ),
         encoding="utf-8",
@@ -119,6 +121,21 @@ def test_a_gateway_start_installs_nothing_even_while_the_adapter_is_missing(home
     app_runtime.start_installed()
 
     assert _npm_runs(home) == installed, "a gateway start installed the adapter"
+
+
+@pytest.mark.parametrize("declares", [(), ("@example/another-adapter",)], ids=["none", "another"])
+def test_an_app_has_only_the_npm_packages_its_manifest_declares_installed(home, declares):
+    """Install consent names the npm packages the manifest declares (``dependencies.npmPackages``),
+    so core installs no other for the app, even at the consent moment, and says why on the
+    runtime's card. The default fixture declares its adapter, so every other test here is the
+    positive control."""
+    assert app_manager.install(_make_adapter_app(home, declares=declares), confirm=True).ok
+
+    assert _npm_runs(home) == [], "npm installed a package the install review never named"
+    failed = cli_resolve.adapter_install_failure(PKG)
+    assert failed is not None, "the refusal left no reason for the card"
+    assert "dependencies.npmPackages" in failed["error"], failed["error"]
+    assert "install review never named it" in failed["error"], failed["error"]
 
 
 def test_a_failed_install_is_kept_with_its_reason_and_not_retried_until_you_enable_again(home):

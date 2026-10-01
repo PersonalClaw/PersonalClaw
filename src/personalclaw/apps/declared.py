@@ -1,0 +1,63 @@
+"""What core does for an app outside PersonalClaw, held to what the app's manifest declared.
+
+Two things an agent app gets done by core rather than by its own code: core npm-installs the ACP
+adapter it asks for (``acp.cli_resolve.provision_acp_adapter``), and core starts the agent CLI it
+registers, for every chat on that runtime (``acp_bundles._register.register_acp_cli_entry``).
+Install consent names both from the manifest — ``dependencies.npmPackages`` and ``launches``
+(``apps.disclosure``) — so each of those two seams refuses what the calling app did not declare,
+and the review stays the whole of what core does for it. An app's own code can still start
+anything it likes, since it runs as the owner; the review says that in its own sentence
+(``disclosure._runs_as_you``).
+
+The caller is read off the stack (``app_code.owner``, the same authority that takes an app's
+registrations back when it is unloaded), never from a name the app passes, and its manifest is
+the one its providers were loaded from. A call core makes itself is not an app's, so it is not
+held to a manifest. A call from an app's code whose manifest is not loaded reads as one from an
+app that declares nothing: refused.
+"""
+
+from __future__ import annotations
+
+from personalclaw import app_code
+from personalclaw.apps.manifest import AppManifest
+
+#: How every refusal ends: why it matters, in the words the provider's card shows.
+UNNAMED = "so its install review never named it"
+
+
+class NotDeclared(Exception):
+    """Core was asked to do, for an app, something its manifest does not declare. The message is
+    the sentence the app's provider card shows (Settings → Providers)."""
+
+
+def _calling_manifest() -> tuple[bool, AppManifest | None]:
+    """``(is_an_app, manifest)``: whether an app's code made the current call, and the manifest
+    its providers were loaded from (``None`` when none is loaded for it)."""
+    app = app_code.owner()
+    if app is None:
+        return False, None
+    from personalclaw.providers.registry import get_provider_registry
+
+    record = get_provider_registry().get(app)
+    return True, (record.manifest if record is not None else None)
+
+
+def declares_npm_package(package: str) -> bool:
+    """Whether core may install (or fetch with ``npx``) *package* for the caller: the calling
+    app lists it under ``dependencies.npmPackages``, or core itself is the caller."""
+    is_app, manifest = _calling_manifest()
+    if not is_app:
+        return True
+    return manifest is not None and package in manifest.dependencies.npmPackages
+
+
+def declared_programs() -> set[str] | None:
+    """The programs the calling app lists under ``launches``, or ``None`` when core itself is the
+    caller (and so no manifest applies)."""
+    is_app, manifest = _calling_manifest()
+    if not is_app:
+        return None
+    return {p.program for p in manifest.launches} if manifest is not None else set()
+
+
+__all__ = ["UNNAMED", "NotDeclared", "declared_programs", "declares_npm_package"]

@@ -41,7 +41,7 @@ const GRANTS: AppDisclosure = {
   }],
   pythonDependencies: [], hasUI: false, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
     backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
-    sidecarDependencies: [], requires: [],
+    sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
     cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
 }
 

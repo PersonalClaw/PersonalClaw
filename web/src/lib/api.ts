@@ -1066,6 +1066,13 @@ export interface AppDisclosure {
   sidecarDependencies: string[]
   /** What it needs on this machine that PersonalClaw does not install. */
   requires: AppPrerequisite[]
+  /** Each program on this machine it starts, outside PersonalClaw, and what of yours it runs with. */
+  launches: AppLaunchedProgram[]
+  /** The npm packages installed for it into the PersonalClaw folder when it is installed or switched
+   *  on — and fetched with npx until they are. Core installs no other for it. */
+  npmPackages: string[]
+  /** Each place outside its own folder it writes. */
+  writes: AppExternalWrite[]
   hasUI: boolean
   uiComponents: string
   /** Its own server process, started on install and kept running while it is enabled. */
@@ -1110,6 +1117,22 @@ export interface AppPythonDependency { spec: string; coreOwned: boolean }
  *  app sends its work to), what the app uses it for, and what the owner does to have it — the
  *  manifest's `requires`. */
 export interface AppPrerequisite { name: string; why: string; how: string }
+/** What of yours a program an app starts runs with — the manifest's closed vocabulary
+ *  (`manifest.LAUNCH_INHERITS`). */
+export type AppLaunchInherit = 'sign-in' | 'settings' | 'auto-approve-rules'
+/** One program on this machine an app starts (an agent's own CLI, a tool), what the app uses it for,
+ *  and what of yours it runs with — the manifest's `launches`. `inheritsWhile` is the app setting
+ *  that decides that, with the label and starting value its Configure page shows (`default` is
+ *  `null` when the schema gives none); `null` when it always does. */
+export interface AppLaunchedProgram {
+  program: string
+  why: string
+  inherits: AppLaunchInherit[]
+  inheritsWhile: { setting: string; label: string; value: boolean; default: boolean | null } | null
+}
+/** A place outside the app's own folder it writes: relative to the PersonalClaw folder, or `~/…`
+ *  under your home folder — the manifest's `writes`. */
+export interface AppExternalWrite { path: string; why: string }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string
   icon: string; heroUrl?: string; author: string
@@ -1144,6 +1167,10 @@ export interface AppCatalogEntry {
   sidecarDependencies?: string[]
   /** What it needs that PersonalClaw does not install — see `AppDisclosure`. */
   requires?: AppPrerequisite[]
+  /** What it starts, installs with npm and writes outside its folder — see `AppDisclosure`. */
+  launches?: AppLaunchedProgram[]
+  npmPackages?: string[]
+  writes?: AppExternalWrite[]
   /** #492 — does this app ship browser code? Same two field names and meanings as
    *  `AppSummary` above, so ONE reading serves the pre-install card and the installed
    *  one (`consentHostUi`). A UI bundle runs in the dashboard PAGE, which the

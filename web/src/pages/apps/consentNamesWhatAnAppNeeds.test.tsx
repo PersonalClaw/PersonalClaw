@@ -34,7 +34,7 @@ const COMFYUI = {
 }
 
 const NOTHING: AppDisclosure = {
-  permissions: {}, crons: [], pythonDependencies: [], sidecarDependencies: [], requires: [],
+  permissions: {}, crons: [], pythonDependencies: [], sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
   hasUI: false, uiComponents: '', hasBackend: false, backendSandbox: '', providers: [],
   onInstall: '', onUpdate: '', onEnable: '', onDisable: '', onUninstall: '', cliSetup: '',
   cliDoctor: '', sources: [], mcpServers: [], skills: [], runsAsYou: '',

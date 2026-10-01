@@ -41,7 +41,7 @@ const BRINGS_CODE: AppDisclosure = {
   sources: [{ name: 'repo-issues', script: 'parse_issues.py' }],
   mcpServers: [{ name: 'notes', launches: 'python mcp.py' }],
   skills: ['deploy-site', 'release-notes'],
-  sidecarDependencies: [], requires: [],
+  sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
   runsAsYou: RUNS_AS_YOU,
 }
 
@@ -49,7 +49,7 @@ const NOTHING: AppDisclosure = {
   permissions: {}, crons: [], pythonDependencies: [], hasUI: false, uiComponents: '',
   hasBackend: false, backendSandbox: '', providers: [], onInstall: '', onUpdate: '',
   onEnable: '', onDisable: '', onUninstall: '', cliSetup: '', cliDoctor: '', sources: [],
-  sidecarDependencies: [], requires: [],
+  sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
   mcpServers: [], skills: [], runsAsYou: '',
 }
 

@@ -31,7 +31,7 @@ const WARNING: AppInstallResult = {
     permissions: {}, crons: [], pythonDependencies: [{ spec: 'slack-sdk>=3.27,<4', coreOwned: false }],
     hasUI: false, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
     backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
-    sidecarDependencies: [], requires: [],
+    sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
     cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
   },
 }

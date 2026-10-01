@@ -147,6 +147,13 @@ def register_acp_cli_entry(
     -------
     The registered :class:`ProviderEntry`, or ``None`` if the CLI was
     unavailable.
+
+    Raises
+    ------
+    personalclaw.apps.declared.NotDeclared
+        When an app's code registers a CLI its manifest does not declare: core starts this
+        command for every chat on the runtime, so it is held to what the app's install review
+        named (:func:`_held_to_the_review`). The message is the provider card's sentence.
     """
     if not command:
         logger.info(
@@ -155,6 +162,7 @@ def register_acp_cli_entry(
             cli,
         )
         return None
+    _held_to_the_review(command, requires_executable)
 
     name = f"acp:{cli}"
     options: dict[str, object] = {"command": list(command), "dialect": dialect}
@@ -216,6 +224,41 @@ def register_acp_cli_entry(
     logger.info("acp:%s bundle: registered AgentProvider (dialect=%s)", cli, dialect)
 
     return entry
+
+
+def _held_to_the_review(command: list[str], requires_executable: dict[str, str] | None) -> None:
+    """Refuse a CLI registration the calling app's install review did not name.
+
+    The review names the programs the app's manifest lists under ``launches`` and the npm
+    packages under ``dependencies.npmPackages`` (``apps.disclosure``). So an app that registers
+    an agent CLI must list a program; the engine an adapter hands each turn to
+    (``requires_executable``) must be one of them, being the program that runs as the owner with
+    its own sign-in; and an adapter run through ``npx``, which fetches it first, must be a listed
+    package. A registration core makes itself is not an app's and is not checked."""
+    from personalclaw.acp.cli_resolve import npx_package
+    from personalclaw.apps.declared import (
+        UNNAMED,
+        NotDeclared,
+        declared_programs,
+        declares_npm_package,
+    )
+
+    programs = declared_programs()
+    if programs is None:
+        return
+    engine = str((requires_executable or {}).get("label") or "").strip()
+    if engine and engine not in programs:
+        reason = f"it starts {engine}, and its manifest does not list that program under launches"
+    elif not programs:
+        reason = "it starts an agent CLI, and its manifest lists no program under launches"
+    elif (package := npx_package(command)) and not declares_npm_package(package):
+        reason = (
+            f"it fetches {package} with npx and runs it, and its manifest does not list that "
+            "package under dependencies.npmPackages"
+        )
+    else:
+        return
+    raise NotDeclared(f"Not started: {reason}, {UNNAMED}.")
 
 
 def _passthrough_names(cli: str, names: list[str] | None) -> list[str]:

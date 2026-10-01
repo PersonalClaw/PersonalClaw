@@ -879,6 +879,14 @@ class MarketplaceDependencies:
 _MAX_SIDECAR_DEPENDENCIES = 50
 _MAX_REQUIREMENT_LENGTH = 500
 
+#: How many programs, npm packages or outside places one manifest may declare: each is a row
+#: install consent shows.
+_MAX_DECLARATIONS = 10
+#: An npm package name as ``npm install`` reads one: lowercase, optionally ``@scope/``, never a
+#: version, a path, a URL or an option (``npm``'s own rules, ``validate-npm-package-name``).
+_NPM_PACKAGE_RE = re.compile(r"(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*")
+_MAX_NPM_NAME = 214
+
 
 def _as_list(value: Any) -> list[Any]:
     """A manifest list read as one: absent is empty, and a lone value is a list of one, so a
@@ -914,6 +922,12 @@ class Dependencies:
     ``app-python``, and only when the owner presses **Install engine** — a torch-sized engine
     is not something an app install should pull in unasked, and in the gateway's own packages
     it would sit beside core's.
+
+    ``npmPackages`` are the npm packages core may install for the app into
+    ``<home>/acp-adapters`` when it is installed or switched on — an agent app's ACP adapter
+    (``acp.cli_resolve.provision_acp_adapter``), and the package a runtime would otherwise fetch
+    with ``npx``. Core installs and registers no other package for the app, so the install review
+    that names these is the whole of what npm does for it.
     """
 
     managedBy: str = "gateway"  # noqa: N815
@@ -921,6 +935,8 @@ class Dependencies:
     commands: list[str] = field(default_factory=list)
     pythonDependencies: list[str] = field(default_factory=list)  # noqa: N815
     sidecarDependencies: list[str] = field(default_factory=list)  # noqa: N815
+    # Last, so no published field moves position (``sdk/signatures.json``).
+    npmPackages: list[str] = field(default_factory=list)  # noqa: N815
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -935,6 +951,8 @@ class Dependencies:
             d["pythonDependencies"] = self.pythonDependencies
         if self.sidecarDependencies:
             d["sidecarDependencies"] = self.sidecarDependencies
+        if self.npmPackages:
+            d["npmPackages"] = self.npmPackages
         return d
 
     @classmethod
@@ -951,13 +969,15 @@ class Dependencies:
             commands=[str(c) for c in data.get("commands", [])],
             pythonDependencies=[str(p) for p in data.get("pythonDependencies", [])],  # noqa: N815
             sidecarDependencies=[str(p) for p in _as_list(data.get("sidecarDependencies"))],
+            npmPackages=[str(p) for p in _as_list(data.get("npmPackages"))],  # noqa: N815
         )
 
     def validate(self, providers: "list[ProviderConfig]") -> list[str]:
         """Errors in the block. ``sidecarDependencies`` become the argv of a ``pip install``, so
         each must be a requirement pip reads as one (PEP 508) — never an option — and they need
-        a sidecar provider, whose environment is the only place they go."""
-        errors: list[str] = []
+        a sidecar provider, whose environment is the only place they go. ``npmPackages`` become
+        the argv of an ``npm install``, so each must be a package name npm reads as one."""
+        errors = self._validate_npm_packages()
         if not self.sidecarDependencies:
             return errors
         if not any(p.execution == EXECUTION_SIDECAR for p in providers):
@@ -987,6 +1007,25 @@ class Dependencies:
                     f"dependencies.sidecarDependencies entry {spec[:80]!r} is not a requirement "
                     f"pip can read: {exc}"
                 )
+        return errors
+
+    def _validate_npm_packages(self) -> list[str]:
+        errors: list[str] = []
+        if len(self.npmPackages) > _MAX_DECLARATIONS:
+            errors.append(
+                f"dependencies.npmPackages lists {len(self.npmPackages)} packages; at most "
+                f"{_MAX_DECLARATIONS} are shown"
+            )
+        seen: set[str] = set()
+        for name in self.npmPackages:
+            if not _NPM_PACKAGE_RE.fullmatch(name) or len(name) > _MAX_NPM_NAME:
+                errors.append(
+                    f"dependencies.npmPackages entry {name[:80]!r} is not an npm package name "
+                    "(a lowercase name, optionally @scope/name, with no version or option)"
+                )
+            elif name in seen:
+                errors.append(f"dependencies.npmPackages lists {name!r} more than once")
+            seen.add(name)
         return errors
 
 
@@ -1034,6 +1073,148 @@ class Prerequisite:
             why=str(data.get("why", "")),
             how=str(data.get("how", "")),
         )
+
+
+#: What of the owner's own a program an app starts may run with, each a phrase install consent
+#: composes: ``sign-in`` (the account the program is signed in to), ``settings`` (the program's
+#: own configuration folder), ``auto-approve-rules`` (rules in that configuration that let it act
+#: without asking — what they allow, it does without asking PersonalClaw first).
+LAUNCH_INHERITS = ("sign-in", "settings", "auto-approve-rules")
+
+#: A program as an app starts it by name: no path, no argument, nothing a shell would read.
+_PROGRAM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+_LAUNCH_LIMITS = {"program": 80, "why": 300}
+_WRITE_LIMITS = {"path": 200, "why": 300}
+
+
+@dataclass
+class SettingCondition:
+    """One of the app's own boolean settings, and the value under which a declaration holds —
+    so consent can say "while Isolated settings is off" in the words the app's Configure page
+    uses, rather than claiming always or never."""
+
+    setting: str = ""
+    value: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"setting": self.setting, "value": self.value}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SettingCondition":
+        return cls(setting=str(data.get("setting", "")), value=data.get("value") is True)
+
+
+@dataclass
+class LaunchedProgram:
+    """A program on this machine, outside PersonalClaw, that the app starts — an agent's own CLI
+    that core starts for the app's runtime, or a tool its code runs.
+
+    ``program`` is its name as it is found on this machine, ``why`` what the app uses it for, and
+    ``inherits`` what of the owner's own it runs with (:data:`LAUNCH_INHERITS`). When an app
+    setting decides that, ``inheritsWhile`` names it and the value under which it holds. Install
+    consent shows all of it, and core registers no agent CLI the app does not declare here.
+    """
+
+    program: str = ""
+    why: str = ""
+    inherits: list[str] = field(default_factory=list)
+    inheritsWhile: SettingCondition | None = None  # noqa: N815
+
+    def validate(self, boolean_settings: set[str]) -> list[str]:
+        errors: list[str] = []
+        label = self.program[:40]
+        for key, limit in _LAUNCH_LIMITS.items():
+            value = getattr(self, key)
+            if not value.strip():
+                errors.append(f"launches entry {label!r} is missing {key!r}")
+            elif len(value) > limit:
+                errors.append(
+                    f"launches entry {label!r}: {key!r} is {len(value)} characters; "
+                    f"at most {limit} are shown"
+                )
+        if self.program.strip() and not _PROGRAM_RE.fullmatch(self.program):
+            errors.append(
+                f"launches entry {label!r}: 'program' must be a program's name as it is found on "
+                "this machine (letters, digits, '.', '_', '+', '-'), not a path or a command line"
+            )
+        unknown = [w for w in self.inherits if w not in LAUNCH_INHERITS]
+        if unknown:
+            errors.append(
+                f"launches entry {label!r}: inherits entries must be among "
+                f"{list(LAUNCH_INHERITS)}, got {unknown}"
+            )
+        if len(set(self.inherits)) != len(self.inherits):
+            errors.append(f"launches entry {label!r} lists an inherits entry more than once")
+        cond = self.inheritsWhile
+        if cond is not None:
+            if not self.inherits:
+                errors.append(
+                    f"launches entry {label!r} inherits nothing, so an inheritsWhile has "
+                    "nothing to qualify"
+                )
+            if cond.setting not in boolean_settings:
+                errors.append(
+                    f"launches entry {label!r}: inheritsWhile.setting {cond.setting[:40]!r} must "
+                    "name a boolean setting of the app's provider settingsSchema"
+                )
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"program": self.program, "why": self.why}
+        if self.inherits:
+            d["inherits"] = list(self.inherits)
+        if self.inheritsWhile is not None:
+            d["inheritsWhile"] = self.inheritsWhile.to_dict()
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LaunchedProgram":
+        cond = data.get("inheritsWhile")
+        return cls(
+            program=str(data.get("program", "")),
+            why=str(data.get("why", "")),
+            inherits=[str(w) for w in _as_list(data.get("inherits"))],
+            inheritsWhile=SettingCondition.from_dict(cond) if isinstance(cond, dict) else None,
+        )
+
+
+@dataclass
+class ExternalWrite:
+    """A place outside the app's own folder that the app writes — its ``path`` relative to the
+    PersonalClaw folder, or under the owner's home folder as ``~/…`` — and ``why``. Shown at
+    install consent; never a path outside those two homes."""
+
+    path: str = ""
+    why: str = ""
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        label = self.path[:40]
+        for key, limit in _WRITE_LIMITS.items():
+            value = getattr(self, key)
+            if not value.strip():
+                errors.append(f"writes entry {label!r} is missing {key!r}")
+            elif len(value) > limit:
+                errors.append(
+                    f"writes entry {label!r}: {key!r} is {len(value)} characters; "
+                    f"at most {limit} are shown"
+                )
+        rel = self.path[2:] if self.path.startswith("~/") else self.path
+        if self.path.strip() and (rel.startswith(("/", "~")) or "\\" in rel or ":" in rel):
+            errors.append(
+                f"writes entry {label!r}: 'path' names a place inside your home folder ('~/…') "
+                "or inside the PersonalClaw folder (a relative path)"
+            )
+        if ".." in rel.split("/"):
+            errors.append(f"writes entry {label!r}: 'path' must not contain '..'")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"path": self.path, "why": self.why}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ExternalWrite":
+        return cls(path=str(data.get("path", "")), why=str(data.get("why", "")))
 
 
 @dataclass
@@ -1687,6 +1868,10 @@ _KNOWN_FIELDS = frozenset(
         "dependencies",
         # What the app needs that PersonalClaw does not install (``Prerequisite``).
         "requires",
+        # The programs it starts outside PersonalClaw (``LaunchedProgram``) and the places
+        # outside its own folder it writes (``ExternalWrite``).
+        "launches",
+        "writes",
         "provider",
         "providers",
         # Connector-pack parse-only source scripts.
@@ -1848,6 +2033,13 @@ class AppManifest:
     # the Store card.
     # Last, so no published field moves position (``sdk/signatures.json``).
     requires: list[Prerequisite] = field(default_factory=list)
+
+    # --- Outside PersonalClaw ---
+    # The programs on this machine it starts (an agent's own CLI, a tool), what of the owner's
+    # each runs with, and the places outside its own folder it writes. Shown at install consent;
+    # core registers no agent CLI an app does not declare here.
+    launches: list[LaunchedProgram] = field(default_factory=list)
+    writes: list[ExternalWrite] = field(default_factory=list)
 
     # -----------------------------------------------------------------
     # Validation
@@ -2021,6 +2213,7 @@ class AppManifest:
 
         errors.extend(self.dependencies.validate(self.all_providers()))
         errors.extend(self._validate_requires())
+        errors.extend(self._validate_outside())
 
         errors.extend(self._validate_sources())
 
@@ -2094,6 +2287,37 @@ class AppManifest:
             if key and key in seen:
                 errors.append(f"requires lists {entry.name!r} more than once")
             seen.add(key)
+        return errors
+
+    def _validate_outside(self) -> list[str]:
+        """Errors in ``launches`` and ``writes``: each entry within what install consent shows,
+        none listed twice, and a setting an inheritance depends on one the app really has."""
+        errors: list[str] = []
+        booleans = {
+            key
+            for p in self.all_providers()
+            for key, spec in ((p.settingsSchema or {}).get("properties") or {}).items()
+            if isinstance(spec, dict) and spec.get("type") == "boolean"
+        }
+        for what, entries, key in (
+            ("launches", self.launches, "program"),
+            ("writes", self.writes, "path"),
+        ):
+            if len(entries) > _MAX_DECLARATIONS:
+                errors.append(
+                    f"{what} lists {len(entries)} entries; at most {_MAX_DECLARATIONS} are shown"
+                )
+            seen: set[str] = set()
+            for entry in entries:
+                errors.extend(
+                    entry.validate(booleans)
+                    if isinstance(entry, LaunchedProgram)
+                    else entry.validate()
+                )
+                name = str(getattr(entry, key)).strip()
+                if name and name in seen:
+                    errors.append(f"{what} lists {name!r} more than once")
+                seen.add(name)
         return errors
 
     def _validate_sources(self) -> list[str]:
@@ -2213,6 +2437,10 @@ class AppManifest:
             d["dependencies"] = deps_d
         if self.requires:
             d["requires"] = [p.to_dict() for p in self.requires]
+        if self.launches:
+            d["launches"] = [p.to_dict() for p in self.launches]
+        if self.writes:
+            d["writes"] = [w.to_dict() for w in self.writes]
         platform_d = self.platform.to_dict()
         if platform_d:
             d["platform"] = platform_d
@@ -2339,6 +2567,18 @@ class AppManifest:
                 Prerequisite.from_dict(r if isinstance(r, dict) else {"name": str(r)})
                 for r in _as_list(data.get("requires"))
                 if r not in (None, "")
+            ],
+            # A bare string is kept as a program with no ``why`` (and a write with no ``why``),
+            # so ``validate`` reports the entry instead of it vanishing from consent.
+            launches=[
+                LaunchedProgram.from_dict(e if isinstance(e, dict) else {"program": str(e)})
+                for e in _as_list(data.get("launches"))
+                if e not in (None, "")
+            ],
+            writes=[
+                ExternalWrite.from_dict(e if isinstance(e, dict) else {"path": str(e)})
+                for e in _as_list(data.get("writes"))
+                if e not in (None, "")
             ],
             platform=platform_cfg,
             provider=provider_cfg,

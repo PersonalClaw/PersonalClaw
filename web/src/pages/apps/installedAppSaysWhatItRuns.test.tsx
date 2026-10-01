@@ -15,7 +15,7 @@ import type { AppDisclosure, AppSummary } from '../../lib/api'
 
 const DISCLOSURE: AppDisclosure = {
   permissions: { network: true }, crons: [], pythonDependencies: [], sidecarDependencies: [],
-  requires: [], hasUI: false, uiComponents: '', hasBackend: false, backendSandbox: '',
+  requires: [], launches: [], npmPackages: [], writes: [], hasUI: false, uiComponents: '', hasBackend: false, backendSandbox: '',
   providers: [{ type: 'search', implementation: 'provider:create_provider', execution: 'in-process' }],
   onInstall: 'npm run build', onUpdate: '', onEnable: '', onDisable: '', onUninstall: '',
   cliSetup: 'cli_setup:run', cliDoctor: '', sources: [], mcpServers: [], skills: [],

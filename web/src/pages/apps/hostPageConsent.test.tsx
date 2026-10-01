@@ -104,7 +104,7 @@ describe('the install dialog passes the fact through to the row', () => {
         permissions: { api: ['/api/tasks'] }, crons: [], pythonDependencies: [],
         hasUI: true, uiComponents: '', hasBackend: false, onInstall: '', onUpdate: '', mcpServers: [],
     backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
-    sidecarDependencies: [], requires: [],
+    sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
     cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
       },
     } satisfies AppInstallResult)

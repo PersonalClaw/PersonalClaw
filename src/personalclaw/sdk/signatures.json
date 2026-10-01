@@ -5346,7 +5346,9 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "uiCapabilities"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "tags"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"},
-    {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"}
+    {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"},
+    {"annotation": "list[LaunchedProgram]", "default": "<factory>", "kind": "positional_or_keyword", "name": "launches"},
+    {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"}
    ],
    "returns": "None"
   },
@@ -5596,7 +5598,8 @@
     {"annotation": "MarketplaceDependencies", "default": "<factory>", "kind": "positional_or_keyword", "name": "marketplace"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "commands"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "pythonDependencies"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sidecarDependencies"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sidecarDependencies"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "npmPackages"}
    ],
    "returns": "None"
   },
@@ -5618,6 +5621,70 @@
     "kind": "method",
     "params": [
      {"annotation": "list[ProviderConfig]", "kind": "positional_or_keyword", "name": "providers"}
+    ],
+    "returns": "list[str]"
+   }
+  }
+ },
+ "personalclaw.sdk.manifest.ExternalWrite": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "path"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "why"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "from_dict": {
+    "kind": "classmethod",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
+    ],
+    "returns": "ExternalWrite"
+   },
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
+   }
+  }
+ },
+ "personalclaw.sdk.manifest.LaunchedProgram": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "program"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "why"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "inherits"},
+    {"annotation": "SettingCondition | None", "default": "None", "kind": "positional_or_keyword", "name": "inheritsWhile"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "from_dict": {
+    "kind": "classmethod",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
+    ],
+    "returns": "LaunchedProgram"
+   },
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   },
+   "validate": {
+    "kind": "method",
+    "params": [
+     {"annotation": "set[str]", "kind": "positional_or_keyword", "name": "boolean_settings"}
     ],
     "returns": "list[str]"
    }
@@ -5935,6 +6002,31 @@
      {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
     ],
     "returns": "RouteEntry"
+   },
+   "to_dict": {
+    "kind": "method",
+    "params": [],
+    "returns": "dict[str, Any]"
+   }
+  }
+ },
+ "personalclaw.sdk.manifest.SettingCondition": {
+  "bases": ["object"],
+  "init": {
+   "params": [
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "setting"},
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "value"}
+   ],
+   "returns": "None"
+  },
+  "kind": "dataclass",
+  "members": {
+   "from_dict": {
+    "kind": "classmethod",
+    "params": [
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "data"}
+    ],
+    "returns": "SettingCondition"
    },
    "to_dict": {
     "kind": "method",

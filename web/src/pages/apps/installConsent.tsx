@@ -4,6 +4,7 @@ import { trustTierLabel } from '../../lib/trustTier'
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot,
   Globe, LayoutDashboard, PackagePlus, Copy, Check, Server, Download, RefreshCw, Sparkles, Loader2, Wrench,
+  FolderPen,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
@@ -12,6 +13,7 @@ import { FieldError } from '../../ui/forms'
 import {
   api, type AppSummary, type AppInstallResult, type AppCronSummary, type AppScanReport, type AppCatalogEntry,
   type AppPythonDependency, type AppDisclosure, type AppScanFinding, type AppPrerequisite,
+  type AppLaunchedProgram, type AppExternalWrite,
 } from '../../lib/api'
 import { terminalRefusalReason } from '../../lib/useGuardedInstall'
 import { readableErrText } from '../../lib/errText'
@@ -213,6 +215,9 @@ export function disclosureOf(entry: AppCatalogEntry | undefined): AppDisclosure 
     pythonDependencies: entry.pythonDependencies ?? [],
     sidecarDependencies: entry.sidecarDependencies ?? [],
     requires: entry.requires ?? [],
+    launches: entry.launches ?? [],
+    npmPackages: entry.npmPackages ?? [],
+    writes: entry.writes ?? [],
     hasUI: Boolean(entry.hasUI),
     uiComponents: entry.uiComponents ?? '',
     hasBackend: Boolean(entry.hasBackend),
@@ -250,6 +255,7 @@ export function AppDisclosureView({ disclosure, action }: { disclosure: AppDiscl
       <PermissionList perms={disclosure.permissions ?? {}} hostUi={consentHostUi(disclosure)}
         pythonDeps={disclosure.pythonDependencies} />
       <RunsRow disclosure={disclosure} action={action} />
+      <WritesRow writes={disclosure.writes} />
       <SkillsRow skills={disclosure.skills} />
     </div>
   )
@@ -282,6 +288,19 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
     items.push(p.execution === 'sidecar'
       ? <>Runs its {p.type} provider {cmd(p.implementation)} in a child process of the gateway.</>
       : <>Loads its {p.type} provider {cmd(p.implementation)} into the gateway's own process.</>)
+  }
+  for (const l of d.launches) items.push(<LaunchItem launch={l} />)
+  if (d.npmPackages.length) {
+    const one = d.npmPackages.length === 1
+    items.push(
+      <>When it is installed or switched on, installs the npm package{one ? '' : 's'}{' '}
+        {d.npmPackages.map((p, i) => <span key={p}>{i > 0 ? ', ' : ''}{cmd(p)}</span>)} into your
+        PersonalClaw folder ({cmd('acp-adapters')}), unless {one ? 'a copy is' : 'copies are'} already on this
+        machine. npm runs the install scripts of {one ? 'that package' : 'those packages'} and of every package
+        {one ? ' it depends' : ' they depend'} on. Until {one ? 'it is' : 'they are'} installed, npx fetches{' '}
+        {one ? 'it' : 'them'} each time PersonalClaw starts {one ? 'it' : 'them'}.
+      </>,
+    )
   }
   if (d.sidecarDependencies.length) {
     items.push(
@@ -331,6 +350,65 @@ function RunsRow({ disclosure: d, action }: { disclosure: AppDisclosure; action:
             {items.map((item, i) => <li key={i}>• {item}</li>)}
           </ul>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** What of yours a launched program runs with, in the consent's words (`manifest.LAUNCH_INHERITS`). */
+const INHERIT_WORDS: Record<AppLaunchedProgram['inherits'][number], string> = {
+  'sign-in': 'sign-in',
+  settings: 'settings',
+  'auto-approve-rules': 'auto-approve rules',
+}
+
+const onOff = (v: boolean) => (v ? 'on' : 'off')
+
+/** "It runs with your own claude sign-in, settings and auto-approve rules" — and, when an app
+ *  setting decides it, while which setting is on or off, and where that setting starts — so the row
+ *  says exactly what of yours the program runs with. Nothing when it runs with nothing of yours. */
+function InheritsSentence({ launch: l }: { launch: AppLaunchedProgram }) {
+  if (!l.inherits.length) return null
+  const words = l.inherits.map((w) => INHERIT_WORDS[w])
+  const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
+  const rules = l.inherits.includes('auto-approve-rules')
+    ? ' What those rules allow, it does without asking you here first.'
+    : ''
+  const w = l.inheritsWhile
+  const yours = <>your own {cmd(l.program)} {list}.{rules}</>
+  if (!w) return <> It runs with {yours}</>
+  const start = w.default === null ? ''
+    : w.default === w.value ? ` ${w.label} starts out ${onOff(w.value)}.`
+      : ` ${w.label} is ${onOff(w.default)} until you turn it ${onOff(!w.default)}.`
+  return <> While {w.label} is {onOff(w.value)}, it runs with {yours}{start}</>
+}
+
+/** One program the app starts outside PersonalClaw: what it is for, and what of yours it runs with. */
+function LaunchItem({ launch: l }: { launch: AppLaunchedProgram }) {
+  return (
+    <span data-testid="consent-launch">
+      Starts the {cmd(l.program)} program installed on this machine, as you and outside PersonalClaw.{' '}
+      {sentence(l.why)}<InheritsSentence launch={l} />
+    </span>
+  )
+}
+
+/** Where outside its own folder the app writes, each with why. A relative path is inside the
+ *  PersonalClaw folder; `~/…` is in your home folder. Renders nothing when it writes nowhere else. */
+function WritesRow({ writes }: { writes: AppExternalWrite[] }) {
+  if (!writes.length) return null
+  return (
+    <div className="flex gap-s rounded-md border border-outline-variant bg-surface-high p-m" data-testid="consent-writes">
+      <FolderPen size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
+      <div data-type="body-s" className="min-w-0 text-on-surface-low">
+        <div className="text-on-surface">What it writes outside its own folder</div>
+        <ul className="mt-xs flex flex-col gap-xs">
+          {writes.map((w) => (
+            <li key={w.path}>
+              • {cmd(w.path)} in your {w.path.startsWith('~/') ? 'home folder' : 'PersonalClaw folder'}: {w.why}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   )
@@ -393,6 +471,14 @@ function disclosureFacts(d: AppDisclosure): { key: string; label: string }[] {
     ...d.pythonDependencies.map((p) => ({ key: `py:${p.spec}`, label: `Python package ${p.spec}` })),
     ...d.sidecarDependencies.map((s) => ({ key: `engine:${s}`, label: `Engine package ${s}` })),
     ...d.requires.map((r) => ({ key: `requires:${JSON.stringify([r.name, r.why, r.how])}`, label: `Needs ${r.name}` })),
+    ...d.launches.map((l) => ({
+      key: `launch:${JSON.stringify([l.program, l.inherits, l.inheritsWhile?.setting ?? '', l.inheritsWhile?.value ?? null])}`,
+      label: `Starts ${l.program}${l.inherits.length
+        ? `, with your own ${l.inherits.map((w) => INHERIT_WORDS[w]).join(', ')}${l.inheritsWhile ? ` while ${l.inheritsWhile.label} is ${onOff(l.inheritsWhile.value)}` : ''}`
+        : ''}`,
+    })),
+    ...d.npmPackages.map((p) => ({ key: `npm:${p}`, label: `npm package ${p}` })),
+    ...d.writes.map((w) => ({ key: `writes:${w.path}`, label: `Writes ${w.path}` })),
     ...(d.hasUI || d.uiComponents ? [{ key: 'ui', label: 'Runs in this dashboard page' }] : []),
     ...(d.hasBackend ? [{ key: `backend:${d.backendSandbox}`, label: d.backendSandbox ? `Its own server process, in the ${d.backendSandbox} sandbox` : 'Its own server process' }] : []),
     ...d.providers.map((p) => ({ key: `provider:${p.type}:${p.implementation}:${p.execution}`, label: `Provider module ${p.implementation}` })),

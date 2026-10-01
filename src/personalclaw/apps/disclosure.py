@@ -45,6 +45,16 @@ def describe(m: AppManifest) -> dict[str, Any]:
     * ``requires`` — what the app needs that PersonalClaw does not install, each
       ``{name, why, how}`` (``manifest.Prerequisite``). Not something it gets or runs, and on
       this list because consent is where the owner has to learn it.
+    * ``launches`` — each program on this machine it starts, outside PersonalClaw: ``program``,
+      ``why``, ``inherits`` (what of the owner's own it runs with, ``manifest.LAUNCH_INHERITS``)
+      and ``inheritsWhile`` — ``None``, or the app setting that decides that inheritance, as
+      ``{setting, label, value, default}`` with the label and default its Configure page shows.
+      Core registers no agent CLI an app does not declare here (``acp_bundles._register``).
+    * ``npmPackages`` — what npm installs for it into ``<home>/acp-adapters`` when it is
+      installed or switched on, and what a runtime would otherwise fetch with ``npx``. Core
+      installs and starts no other npm package for it (``apps.declared``).
+    * ``writes`` — each place outside its own folder it writes, ``{path, why}``: relative to the
+      PersonalClaw folder, or ``~/…`` under the owner's home folder.
     * ``hasUI`` / ``uiComponents`` — browser code loaded into the dashboard page.
     * ``hasBackend`` — a server process of its own, started on install and kept running
       while the app is enabled. ``backendSandbox`` names the tier it launches inside
@@ -82,6 +92,9 @@ def describe(m: AppManifest) -> dict[str, Any]:
         "pythonDependencies": _python_dependencies(m),
         "sidecarDependencies": list(m.dependencies.sidecarDependencies),
         "requires": [p.to_dict() for p in m.requires],
+        "launches": _launches(m),
+        "npmPackages": list(m.dependencies.npmPackages),
+        "writes": [w.to_dict() for w in m.writes],
         "hasUI": bool(m.ui.pages),
         "uiComponents": m.ui.components,
         "hasBackend": bool(m.backend.entryPoint),
@@ -174,6 +187,43 @@ def _python_dependencies(m: AppManifest) -> list[dict[str, Any]]:
         return []
 
 
+def _launches(m: AppManifest) -> list[dict[str, Any]]:
+    """Each program the app starts, with the setting an inheritance depends on resolved to what
+    the owner sees: its label on the app's Configure page and the value it starts out at."""
+    try:
+        props: dict[str, Any] = {}
+        for p in m.all_providers():
+            props.update((p.settingsSchema or {}).get("properties") or {})
+        out: list[dict[str, Any]] = []
+        for launch in m.launches:
+            cond = launch.inheritsWhile
+            condition: dict[str, Any] | None = None
+            if cond is not None:
+                spec = props.get(cond.setting)
+                spec = spec if isinstance(spec, dict) else {}
+                meta = spec.get("x-meta")
+                label = str(meta.get("label") or "") if isinstance(meta, dict) else ""
+                default = spec.get("default")
+                condition = {
+                    "setting": cond.setting,
+                    "label": label or cond.setting,
+                    "value": cond.value,
+                    "default": default if isinstance(default, bool) else None,
+                }
+            out.append(
+                {
+                    "program": launch.program,
+                    "why": launch.why,
+                    "inherits": list(launch.inherits),
+                    "inheritsWhile": condition,
+                }
+            )
+        return out
+    except Exception:  # noqa: BLE001 — best-effort, see `describe`
+        logger.debug("disclosure: launches unreadable for %s", m.name, exc_info=True)
+        return []
+
+
 def _backend_sandbox(m: AppManifest) -> str:
     """The sandbox tier the app's server launches inside, or ``""`` when it runs on the host —
     no server, no tier named, or the ``none`` builtin, which is the host by definition
@@ -248,6 +298,11 @@ def _runs_as_you(d: dict[str, Any]) -> str:
         parts.append(("its server", False))
     if d["providers"]:
         parts.append(_counted(len(d["providers"]), "its provider module", "provider modules"))
+    if d["launches"]:
+        n = len(d["launches"])
+        parts.append(
+            ("the program it starts", False) if n == 1 else (f"the {n} programs it starts", True)
+        )
     if d["mcpServers"]:
         parts.append(_counted(len(d["mcpServers"]), "its MCP server", "MCP servers"))
     hooks = [when for when, key in _HOOKS if d[key]]
@@ -270,6 +325,13 @@ def _runs_as_you(d: dict[str, Any]) -> str:
             ("the Python package it installs", False)
             if n == 1
             else (f"the {n} Python packages it installs", True)
+        )
+    npm = d["npmPackages"]
+    if npm:
+        parts.append(
+            ("the npm package it installs", False)
+            if len(npm) == 1
+            else (f"the {len(npm)} npm packages it installs", True)
         )
     # A sidecar is a crash and dependency boundary, not a sandbox: its child runs as you too.
     engine = d["sidecarDependencies"]

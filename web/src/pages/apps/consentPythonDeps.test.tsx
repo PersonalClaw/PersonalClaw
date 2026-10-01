@@ -170,7 +170,7 @@ describe('the install-consent surface discloses the packages it will pip-install
         permissions: {}, crons: [], hasUI: false, uiComponents: '', hasBackend: false,
         onInstall: '', onUpdate: '', mcpServers: [],
     backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
-    sidecarDependencies: [], requires: [],
+    sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
     cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
         pythonDependencies: deps({ spec: 'slack-sdk>=3.27,<4', coreOwned: false }),
       },

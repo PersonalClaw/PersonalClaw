@@ -37,7 +37,7 @@ const REVIEW: AppInstallResult = {
     permissions: {}, crons: [], pythonDependencies: [], hasUI: false, uiComponents: '',
     hasBackend: false, onInstall: 'make setup', onUpdate: '', mcpServers: [],
     backendSandbox: '', providers: [], onEnable: '', onDisable: '', onUninstall: '',
-    sidecarDependencies: [], requires: [],
+    sidecarDependencies: [], requires: [], launches: [], npmPackages: [], writes: [],
     cliSetup: '', cliDoctor: '', sources: [], skills: [], runsAsYou: '',
   },
 }

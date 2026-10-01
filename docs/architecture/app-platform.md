@@ -71,7 +71,8 @@ backend**.
   it grants and runs (`apps/disclosure.describe`: permissions, scheduled jobs and
   whether each is switched on, Python packages, the engine packages Install engine would
   put in a sidecar's environment, dashboard code, its own server process, the install
-  hook, MCP servers), what it needs that PersonalClaw does not install, the scan, and a
+  hook, MCP servers, the programs it starts and the npm packages installed for it, and where
+  outside its own folder it writes), what it needs that PersonalClaw does not install, the scan, and a
   `consent` digest of the staged bytes. `POST /api/apps {source, consent}` commits only if the bytes still
   have that digest; anything else — `confirm: true` included — answers 409 with
   the review. The install invariant is scanned-bytes == reviewed-bytes ==
@@ -104,6 +105,32 @@ backend**.
 
 ## What an app needs, and its engine
 
+- **What it starts, installs and writes outside PersonalClaw** — three manifest declarations
+  install consent shows under what the app runs (`apps/disclosure.describe`), each of which an
+  update that adds or widens one asks for again:
+  - `launches: [{program, why, inherits, inheritsWhile}]` (`manifest.LaunchedProgram`) — each
+    program on this machine it starts by name, outside PersonalClaw: an agent app's own CLI, a
+    tool. `inherits` is what of the owner's it runs with, from a closed list: `sign-in` (the
+    account the program is signed in to), `settings` (its own configuration folder) and
+    `auto-approve-rules` (rules there that let it act without asking — consent says that what
+    they allow, it does without asking here first). `inheritsWhile: {setting, value}` names a
+    boolean setting of the app's provider when that decides it (Claude Code inherits all three
+    only while *Isolated Claude settings* is off); consent words it with the setting's label and
+    where it starts.
+  - `dependencies.npmPackages` — the npm packages core may install for the app into
+    `<home>/acp-adapters` as it is installed or switched on (an agent app's ACP adapter), and
+    that a runtime may otherwise fetch with `npx`. Consent says npm runs their install scripts.
+  - `writes: [{path, why}]` (`manifest.ExternalWrite`) — each place outside the app's own folder
+    its code writes: a path inside the PersonalClaw folder, or `~/…` in the home folder.
+
+  Core does two of these things for an app itself, and holds both to the declaration
+  (`apps/declared.py`, which reads the calling app off the stack the way `app_code` takes its
+  registrations back): `provision_acp_adapter` installs no package the calling app's manifest
+  does not list, and `register_acp_cli_entry` refuses (its provider card saying why) an agent
+  CLI from an app that lists no program, whose adapter's engine (`requires_executable`) it does
+  not list, or whose adapter runs through `npx` as a package it does not list. A registration
+  core makes itself is not held to a manifest. What an app's own code starts is its own: that
+  code runs as the owner, which consent's *runs as you* sentence says.
 - **Prerequisites** — `requires: [{name, why, how}]` (`manifest.Prerequisite`) lists what the
   app needs on this machine that PersonalClaw does not install: the ComfyUI server Local Image
   Generation sends its work to, a program a tool runs. Each is a name, what the app uses it
